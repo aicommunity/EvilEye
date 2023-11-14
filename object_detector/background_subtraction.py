@@ -10,7 +10,7 @@ class BackgroundSubtractor(ABC):
         pass
 
 
-class BackgroundSubtractorMOG2(BackgroundSubtractor, cv2.BackgroundSubtractorMOG2):
+class BackgroundSubtractorMOG2(BackgroundSubtractor):
 
     def __init__(self, history=500, var_threshold=16, detect_shadows=True):
         self.subtractor = cv2.createBackgroundSubtractorMOG2(history, var_threshold, detect_shadows)
