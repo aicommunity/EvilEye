@@ -1,10 +1,10 @@
-import background_subtraction
-import object_detection
+import background_subtraction_gmm
+import object_detection_yolov8
 import cv2
 
-video = cv2.VideoCapture("4ktraffic.mp4")
-back_sub = background_subtraction.BackgroundSubtractorMOG2(500, 16, False)
-object_detector = object_detection.YoloV8ObjectDetector('yolov8n.pt')
+video = cv2.VideoCapture("football.mp4")
+back_sub = background_subtraction_gmm.BackgroundSubtractorMOG2()
+object_detector = object_detection_yolov8.YoloV8ObjectDetector('yolov8n.pt')
 
 if not video.isOpened():
     print("Error opening video stream or file")
@@ -20,11 +20,12 @@ while video.isOpened():
     cv2.rectangle(frame, (10, 2), (100, 20), (255, 255, 255), -1)
     cv2.putText(frame, str(video.get(cv2.CAP_PROP_POS_FRAMES)), (15, 15),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0))
-
-    dilation = back_sub.apply_morphology(fgMask)
-    cv2.imshow('dilation2', dilation)
-    all_roi = back_sub.get_roi(frame_copy, dilation)
-    object_detector.detect(frame, all_roi, True, 0.4, False)
+    # dilation = back_sub.apply_morphology(fgMask)
+    # cv2.imshow("DIl", dilation)
+    all_roi = back_sub.get_roi(frame_copy, fgMask)
+    object_detector.init()
+    object_detector.set_params(show=True, conf=0.4, save=False)
+    object_detector.detect(frame, all_roi)
 
     cv2.imshow('Frame', frame)
     if cv2.waitKey(1) == ord('q'):
