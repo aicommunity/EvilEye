@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 
 
 class ObjectDetector(ABC):
-
+    
     def __init__(self):
         self.is_inited = False
         self.params = {}
@@ -13,10 +13,10 @@ class ObjectDetector(ABC):
     def get_params(self):
         return self.params
 
-    def reset(self):
+    def reset(self):    #Пока не до конца понимаю, как применить reset к модели yolov8, что нужно будет сбросить в начальное состояние, поэтому в производном классе функция пустая
         if self.get_init_flag():
             self.areset()
-        else:
+        else:           #Возможно, здесь надо бросать исключение?
             return -1
 
     def detect(self, image, all_roi):
@@ -28,6 +28,7 @@ class ObjectDetector(ABC):
     @abstractmethod
     def init(self):
         pass
+        
     @abstractmethod
     def areset(self):
         pass
