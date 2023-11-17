@@ -21,6 +21,10 @@ class BackgroundSubtractor(ABC):
             return -1
 
     @abstractmethod
+    def apply(self, image):
+        pass
+
+    @abstractmethod
     def init(self):
         pass
 
