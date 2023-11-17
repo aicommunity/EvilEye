@@ -5,7 +5,6 @@ import numpy as np
 
 class BackgroundSubtractorMOG2(base.BackgroundSubtractor):
     def __init__(self):
-        super().__init__()
         self.subtractor = cv2.createBackgroundSubtractorMOG2()
 
     def set_params(self, **params):
@@ -23,9 +22,6 @@ class BackgroundSubtractorMOG2(base.BackgroundSubtractor):
         self.subtractor.setVarThreshold(16.0)
         self.subtractor.setDetectShadows(True)
 
-    def apply(self, image):
-        return self.subtractor.apply(image)
-
     def get_roi(self, image, foreground_mask):
         all_roi = []
         dilation = self.apply_morphology(foreground_mask)
@@ -41,12 +37,6 @@ class BackgroundSubtractorMOG2(base.BackgroundSubtractor):
             roi = cv2.cvtColor(roi, cv2.COLOR_GRAY2BGR)
             all_roi.append([roi, [x0, y0]])
         return all_roi
-
-    def init(self):
-        self.is_inited = True
-
-    def areset(self):
-        pass
 
     @staticmethod
     def apply_morphology(foreground_mask):
