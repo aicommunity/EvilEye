@@ -5,28 +5,30 @@ import numpy as np
 
 class BackgroundSubtractorMOG2(base.BackgroundSubtractor):
     def __init__(self):
+        super().__init__()
         self.subtractor = cv2.createBackgroundSubtractorMOG2()
 
-    def set_params(self, **params):
-        self.subtractor.setHistory(params['history'])
-        self.subtractor.setVarThreshold(params['varThreshold'])
-        self.subtractor.setDetectShadows(params['detectShadows'])
-
-    def get_params(self):
-        params = {'history': self.subtractor.getHistory(), 'varThreshold': self.subtractor.getVarThreshold(),
-                  'detectShadows': self.subtractor.getDetectShadows()}
-        return params
+    def set_params_impl(self):
+        self.subtractor.setHistory(self.params['history'])
+        self.subtractor.setVarThreshold(self.params['varThreshold'])
+        self.subtractor.setDetectShadows(self.params['detectShadows'])
 
     def default(self):
-        self.subtractor.setHistory(500)
-        self.subtractor.setVarThreshold(16.0)
-        self.subtractor.setDetectShadows(True)
+        self.params['history'] = 500
+        self.params['varThreshold'] = 16.0
+        self.params['detectShadows'] = True
+        self.set_params_impl()
 
-    def get_roi(self, image, foreground_mask):
+    def init_impl(self):
+        return True
+
+    def reset_impl(self):
+        pass
+
+    def process_impl(self, image):
         all_roi = []
+        foreground_mask = self.subtractor.apply(image)
         dilation = self.apply_morphology(foreground_mask)
-        # cv2.imshow("DIl2", dilation)
-        # cv2.waitKey(0)
         contours, _ = cv2.findContours(dilation, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for contour in contours:
             x, y, width, height = cv2.boundingRect(contour)
@@ -36,7 +38,7 @@ class BackgroundSubtractorMOG2(base.BackgroundSubtractor):
             roi = roi.astype(np.uint8)
             roi = cv2.cvtColor(roi, cv2.COLOR_GRAY2BGR)
             all_roi.append([roi, [x0, y0]])
-        return all_roi
+        return foreground_mask, all_roi
 
     @staticmethod
     def apply_morphology(foreground_mask):

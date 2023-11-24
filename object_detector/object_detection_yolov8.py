@@ -11,22 +11,24 @@ class YoloV8ObjectDetector(base.ObjectDetector):
         super().__init__()
         self.model = YOLO(model_name)
 
-    def init(self):
-        self.is_inited = True
+    def init_impl(self):
+        return True
 
-    def areset(self):
+    def reset_impl(self):
         pass
 
-    def set_params(self, **params):
-        self.params = params
+    def set_params_impl(self):
+        pass
 
     def default(self):
         self.params.clear()
 
-    def adetect(self, image, all_roi):
+    def process_impl(self, image, all_roi=None):
         bboxes_coords = []
         confidences = []
         class_ids = []
+        if all_roi is None:
+            all_roi = [[image, [0, 0]]]
         for roi in all_roi:
             results = self.model(source=roi[0], **self.params)
             if len(results[0]) == 0:  # Если детекций не было, пропускаем
@@ -46,8 +48,8 @@ class YoloV8ObjectDetector(base.ObjectDetector):
             cv2.rectangle(image, (int(coord[0]), int(coord[1])),
                           (int(coord[2]), int(coord[3])), (0, 255, 0))
             cv2.putText(image, str(self.model.names[class_id]) + " " + "{:.2f}".format(conf),
-                                (int(coord[0]), int(coord[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
-                                (255, 255, 255), 2)
+                        (int(coord[0]), int(coord[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
+                        (255, 255, 255), 2)
 
     def get_bboxes(self, result, roi):
         bboxes_coords = []
