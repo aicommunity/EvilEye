@@ -23,7 +23,7 @@ class YoloV8ObjectDetector(base.ObjectDetector):
     def default(self):
         self.params.clear()
 
-    def process_impl(self, image, all_roi=None):
+    def process_impl(self, image, all_roi):
         bboxes_coords = []
         confidences = []
         class_ids = []
