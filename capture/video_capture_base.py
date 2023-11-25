@@ -1,10 +1,10 @@
 from abc import ABC, abstractmethod
 import numpy as np
 import cv2
-import base_class as core
+import core
 
 
-class VideoCapture(core.BaseClass):
+class VideoCaptureBase(core.EvilEyeBase):
     def __init__(self):
         super().__init__()
         self.capture = cv2.VideoCapture()

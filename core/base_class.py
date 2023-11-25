@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 
 
-class BaseClass(ABC):
+class EvilEyeBase(ABC):
     def __init__(self):
         self.is_inited = False
         self.params = {}

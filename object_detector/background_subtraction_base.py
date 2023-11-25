@@ -1,8 +1,8 @@
 from abc import ABC, abstractmethod
-import base_class as core
+import core
 
 
-class BackgroundSubtractor(core.BaseClass):
+class BackgroundSubtractorBase(core.EvilEyeBase):
     def process(self, image):
         if self.get_init_flag():
             return self.process_impl(image)

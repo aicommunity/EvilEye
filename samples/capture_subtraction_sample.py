@@ -5,8 +5,8 @@ To work with image sequences filename argument in OpenCV VideoCapture class shou
 program should expect every file name starting as "name"
 and "%03d" indicates that it takes 3 digit entries as "001" and accept 'integer increment'
 """
-import background_subtraction_gmm
-import video_capture_files as video_cap
+import object_detector.background_subtraction_gmm as background_subtraction_gmm
+import capture.video_capture_files as video_cap
 import cv2
 
 video = video_cap.VideoCaptureFile()
