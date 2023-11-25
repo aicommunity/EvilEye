@@ -1,8 +1,8 @@
 import cv2
-import video_capture_base as base
+import capture
 
 
-class VideoCaptureIpCam(base.VideoCapture):
+class VideoCaptureIpCam(capture.VideoCaptureBase):
     def set_params_impl(self):
         self.capture.open(**self.params)
 

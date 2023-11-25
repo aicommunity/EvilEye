@@ -1,10 +1,10 @@
-import background_subtraction_gmm
-import object_detection_yolov8
+import object_detector.background_subtraction_gmm as background_subtraction_gmm
+import object_detector.object_detection_yolov8 as object_detection_yolov8
 import cv2
 
 video = cv2.VideoCapture("football.mp4")
 back_sub = background_subtraction_gmm.BackgroundSubtractorMOG2()
-object_detector = object_detection_yolov8.YoloV8ObjectDetector('yolov8n.pt')
+object_detector = object_detection_yolov8.ObjectDetectorYoloV8('yolov8n.pt')
 
 if not video.isOpened():
     print("Error opening video stream or file")

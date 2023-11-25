@@ -1,8 +1,8 @@
-import base_class as core
 from abc import ABC, abstractmethod
+import core
 
 
-class ObjectDetector(core.BaseClass):
+class ObjectDetectorBase(core.EvilEyeBase):
     def process(self, image, all_roi=None):
         if self.get_init_flag():
             return self.process_impl(image, all_roi)

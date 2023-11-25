@@ -1,8 +1,8 @@
 import cv2
-import video_capture_base as base
+import capture
 
 
-class VideoCaptureFile(base.VideoCapture):
+class VideoCaptureFile(capture.VideoCaptureBase):
     def set_params_impl(self):
         if self.get_init_flag():
             self.capture.open(**self.params)

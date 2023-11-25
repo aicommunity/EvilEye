@@ -1,12 +1,12 @@
-import object_detection_base as base
 import cv2
 import numpy as np
 import ultralytics
 from ultralytics import YOLO
 import utils
+import object_detector
 
 
-class YoloV8ObjectDetector(base.ObjectDetector):
+class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
     def __init__(self, model_name):
         super().__init__()
         self.model = YOLO(model_name)

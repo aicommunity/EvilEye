@@ -5,15 +5,15 @@ To work with image sequences filename argument in OpenCV VideoCapture class shou
 program should expect every file name starting as "name"
 and "%03d" indicates that it takes 3 digit entries as "001" and accept 'integer increment'
 """
-import background_subtraction_gmm
-import object_detection_yolov8
-import video_capture_files as video_cap
+import object_detector.background_subtraction_gmm as background_subtraction_gmm
+import object_detector.object_detection_yolov8 as object_detection_yolov8
+import capture.video_capture_files as video_cap
 import cv2
 
 
 video = video_cap.VideoCaptureFile()
 back_sub = background_subtraction_gmm.BackgroundSubtractorMOG2()
-object_detector = object_detection_yolov8.YoloV8ObjectDetector('yolov8n.pt')
+object_detector = object_detection_yolov8.ObjectDetectorYoloV8('yolov8n.pt')
 
 capture_params = {'filename': 'fullpath', 'apiPreference': cv2.CAP_ANY}
 video.init()

@@ -1,9 +1,9 @@
-import background_subtraction_base as base
 import cv2
 import numpy as np
+import object_detector
 
 
-class BackgroundSubtractorMOG2(base.BackgroundSubtractor):
+class BackgroundSubtractorMOG2(object_detector.BackgroundSubtractorBase):
     def __init__(self):
         super().__init__()
         self.subtractor = cv2.createBackgroundSubtractorMOG2()
