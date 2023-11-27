@@ -1,0 +1,13 @@
+{
+  "cap_params": {
+    "source" : "file",
+    "fullpath" : "data/filename.format",
+    "apiPreference" : 0
+  },
+  "det_params": {
+    "model" : "yolov8n.pt",
+    "show" : true,
+    "conf" : 0.4,
+    "save" : false
+  }
+}

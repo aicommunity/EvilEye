@@ -1,12 +1,10 @@
-# Sample to check whether object detection works properly
+# Sample to check whether video capturing works properly
 """
 To work with image sequences filename argument in OpenCV VideoCapture class should be
 "c:/fullpath/name%03d.format". Here "name%03d" shows that
 program should expect every file name starting as "name"
 and "%03d" indicates that it takes 3 digit entries as "001" and accept 'integer increment'
 """
-import object_detector.background_subtraction_gmm as background_subtraction_gmm
-import object_detector.object_detection_yolov8 as object_detection_yolov8
 import capture.video_capture as video_cap
 import cv2
 import argparse
@@ -23,11 +21,10 @@ def main():
     parser.add_argument('apiPreference', help='VideoCapture API backends identifier',
                         type=int, default=0, nargs='?')
 
-    params_file = open('samples/capture_detection.json')
-    data = json.load(params_file)
-    det_params = data['det_params']
     args = parser.parse_args()
     if args.source is None or args.fullpath is None:
+        params_file = open('samples/capture.json')
+        data = json.load(params_file)
         cap_params = data['cap_params']
         capture_params = {'source': cap_params['source'], 'filename': cap_params['fullpath'],
                           'apiPreference': cap_params['apiPreference']}
@@ -35,30 +32,27 @@ def main():
         capture_params = {'source': args.source, 'filename': args.fullpath, 'apiPreference': args.apiPreference}
 
     video = video_cap.VideoCapture()
-    object_detector = object_detection_yolov8.ObjectDetectorYoloV8(det_params['model'])
     video.init()
     video.set_params(**capture_params)
 
     if not video.is_opened():
         print("Error opening video stream or file")
 
+    print('Press R to restart a video or image sequence. (Reset not implemented for IP camera)')
+
     while video.is_opened():
         ret, frame = video.process()
         if not ret:
             print("Can't receive frame (stream end?). Exiting ...")
             break
-        frame_copy = frame.copy()
-        frame_copy = cv2.cvtColor(frame_copy, cv2.COLOR_BGR2GRAY)
-        # back_sub.init()       # Uncomment to enable detection using ROI
-        # fgMask, all_roi = back_sub.process(frame_copy)
-        object_detector.init()
-        inf_params = det_params.copy()
-        del inf_params['model']
-        object_detector.set_params(**inf_params)
-        bboxes_coords, confidences, class_ids = object_detector.process(frame)
 
         cv2.imshow('Frame', frame)
-        if cv2.waitKey(1) == ord('q'):
+        if cv2.waitKey(100) == ord('r'):
+            video.reset()
+        # for roi in all_roi:  # Uncomment to see ROIs
+        #     cv2.imshow('Roi', roi[0])
+        #     cv2.waitKey(0)
+        if cv2.waitKey(100) == ord('q'):
             break
     video.release()
     cv2.destroyAllWindows()

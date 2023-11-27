@@ -1,0 +1,12 @@
+{
+  "cap_params": {
+    "source" : "file",
+    "fullpath" : "data/filename.format",
+    "apiPreference" : 0
+  },
+  "sub_params": {
+    "history" : 500,
+    "varThreshold" : 16.0,
+    "detectShadows" : true
+  }
+}
