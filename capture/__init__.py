@@ -1,4 +1,2 @@
 from .video_capture_base import VideoCaptureBase
-from .video_capture_files import VideoCaptureFile
-from .video_capture_ipcam import VideoCaptureIpCam
-from .video_capture_sequence import VideoCaptureSeq
+from .video_capture import VideoCapture
