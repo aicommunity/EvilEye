@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 import ultralytics
 from ultralytics import YOLO
-import utils
+from utils import utils
 import object_detector
 
 
