@@ -1,7 +1,7 @@
 {
   "cap_params": {
     "source" : "sequence",
-    "fullpath" : "data/filename%02d.format",
+    "fullpath" : "samples/data/filename%02d.format",
     "apiPreference" : 0
   }
 }

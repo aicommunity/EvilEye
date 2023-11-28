@@ -1,7 +1,7 @@
 {
   "cap_params": {
     "source" : "file",
-    "fullpath" : "data/filename.format",
+    "fullpath" : "samples/data/filename.format",
     "apiPreference" : 0
   },
   "det_params": {
