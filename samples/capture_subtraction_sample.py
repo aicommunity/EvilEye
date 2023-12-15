@@ -10,6 +10,7 @@ import capture.video_capture as video_cap
 import cv2
 import argparse
 import json
+import imutils
 
 
 def main():
@@ -22,7 +23,7 @@ def main():
     parser.add_argument('apiPreference', help='VideoCapture API backends identifier',
                         type=int, default=0, nargs='?')
 
-    params_file = open('samples/capture_subtraction.json')
+    params_file = open('./capture_subtraction.json')
     data = json.load(params_file)
     subt_params = data['sub_params']
     args = parser.parse_args()
@@ -52,6 +53,10 @@ def main():
         back_sub.init()
         fg_mask, all_roi = back_sub.process(frame_copy)
 
+        (h, w) = frame.shape[:2]
+        if w > 1280:
+            frame = imutils.resize(frame, width=1280)
+            fg_mask = imutils.resize(fg_mask, width=1280)
         cv2.imshow('Frame', frame)
         cv2.imshow('Foreground Mask', fg_mask)
         # for roi in all_roi:  # Uncomment to see ROIs

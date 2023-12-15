@@ -11,6 +11,7 @@ import capture.video_capture as video_cap
 import cv2
 import argparse
 import json
+from object_tracker import object_tracking_impl
 import imutils
 
 
@@ -23,6 +24,7 @@ def main():
                         type=str, default=None, nargs="?")
     parser.add_argument('apiPreference', help='VideoCapture API backends identifier',
                         type=int, default=0, nargs='?')
+
     params_file = open('./capture_detection.json')
     data = json.load(params_file)
     det_params = data['det_params']
@@ -37,6 +39,7 @@ def main():
 
     video = video_cap.VideoCapture()
     object_detector = object_detection_yolov8.ObjectDetectorYoloV8(det_params['model'])
+    tracker = object_tracking_impl.ObjectTrackingImpl()
     video.init()
     video.set_params(**capture_params)
     if not video.is_opened():
@@ -49,13 +52,13 @@ def main():
             break
         frame_copy = frame.copy()
         frame_copy = cv2.cvtColor(frame_copy, cv2.COLOR_BGR2GRAY)
-        # back_sub.init()       # Uncomment to enable detection using ROI
-        # fgMask, all_roi = back_sub.process(frame_copy)
         object_detector.init()
-        # inf_params = det_params.copy()
-        # del inf_params['model']
-        object_detector.set_params(**det_params)
+        tracker.init()
+        inf_params = det_params.copy()
+        del inf_params['model']
+        object_detector.set_params(**inf_params)
         bboxes_coords, confidences, class_ids = object_detector.process(frame)
+        tracker.process(frame, bboxes_coords)
         (h, w) = frame.shape[:2]
         if w > 1280:
             frame = imutils.resize(frame, width=1280)
