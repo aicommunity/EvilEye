@@ -29,7 +29,7 @@ def main():
         data = json.load(params_file)
         cap_params = data['cap_params']
         capture_params = {'source': cap_params['source'], 'filename': cap_params['fullpath'],
-                          'apiPreference': cap_params['apiPreferenceEnum']['CAP_ANY']}
+                          'apiPreference': cap_params['apiPreference']}
     else:
         capture_params = {'source': args.source, 'filename': args.fullpath,
                           'apiPreference': base.VideoCaptureBase.VideoCaptureAPIs[args.apiPreference]}
