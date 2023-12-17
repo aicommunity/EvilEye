@@ -1,19 +1,17 @@
 from PyQt5 import QtGui
-from PyQt5.QtWidgets import QWidget, QApplication, QLabel, QVBoxLayout, QPushButton, QFileDialog, QGridLayout, QDesktopWidget
+from PyQt5.QtWidgets import QWidget, QApplication, QLabel, QPushButton, QFileDialog, QGridLayout
 from PyQt5.QtGui import QPixmap
 import PyQt5.QtCore as QtCore
 import sys
 import cv2
 from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt, QThread, QTimer
-import numpy as np
 import json
 import capture
-import capture as cap
-import time
 
 
+# Поток, который отвечает за захват видео
 class VideoThread(QThread):
-    thread_counter = 0
+    # Сигнал, который отвечает за обновление label, в котором отображается изображение из потока
     change_pixmap_signal = pyqtSignal(list)
 
     def __init__(self, params_file):
@@ -21,12 +19,10 @@ class VideoThread(QThread):
         self._run_flag = True
         self.fps = 30
         self.params_file = params_file
-        self.thread_num = VideoThread.thread_counter
         self.timer = QTimer()
         self.timer.moveToThread(self)
         self.timer.timeout.connect(self.update_image)
         self.capture = capture.VideoCapture()
-        VideoThread.thread_counter += 1
 
     def run(self):
         params_file = open(self.params_file)
@@ -38,7 +34,7 @@ class VideoThread(QThread):
         self.capture.set_params(**capture_params)
         if cap_params['source'] == 'file':
             self.fps = cap_params['fps']
-            # Проигрывание роликов с указанным fps
+            # Проигрывание роликов с указанным fps, если запускаем из файла
             self.timer.start(int(1000//self.fps))
             loop = QtCore.QEventLoop()
             loop.exec_()
@@ -51,6 +47,7 @@ class VideoThread(QThread):
         ret, cv_img = self.capture.process()
         if ret:
             image = self.convert_cv_qt(cv_img)
+            # Сигнал из потока для обновления label на новое изображение
             self.change_pixmap_signal.emit([image, self.thread_num])
 
     def stop(self):
@@ -63,6 +60,7 @@ class VideoThread(QThread):
         h, w, ch = rgb_image.shape
         bytes_per_line = ch * w
         convert_to_qt = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
+        # Подгоняем под указанный размер, но сохраняем пропорции
         scaled_image = convert_to_qt.scaled(640, 480, Qt.KeepAspectRatio)
         return QPixmap.fromImage(scaled_image)
 
@@ -87,8 +85,10 @@ class App(QWidget):
         fname = QFileDialog.getOpenFileName(self, "Open File", "", "All Files (*)")
         # Создаем поток, в котором будет захватываться видео
         self.threads.append(VideoThread(str(fname[0])))
+        # Создаем новый label, в котором будет отображаться изображение из потока
         self.labels.append(QLabel(self))
         self.labels[-1].resize(self.display_width, self.display_height)
+        # Выставляем label в нужном порядке, три изображения в одной строке, в данном случае
         if self.cols > 2:
             self.cols = 0
             self.rows += 1
