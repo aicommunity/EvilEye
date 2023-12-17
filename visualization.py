@@ -11,6 +11,7 @@ import capture
 
 # Поток, который отвечает за захват видео
 class VideoThread(QThread):
+    thread_counter = 0
     # Сигнал, который отвечает за обновление label, в котором отображается изображение из потока
     change_pixmap_signal = pyqtSignal(list)
 
@@ -19,10 +20,12 @@ class VideoThread(QThread):
         self._run_flag = True
         self.fps = 30
         self.params_file = params_file
+        self.thread_num = VideoThread.thread_counter
         self.timer = QTimer()
         self.timer.moveToThread(self)
         self.timer.timeout.connect(self.update_image)
         self.capture = capture.VideoCapture()
+        VideoThread.thread_counter += 1
 
     def run(self):
         params_file = open(self.params_file)
