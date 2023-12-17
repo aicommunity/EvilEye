@@ -19,8 +19,13 @@ class VideoThread(QThread):
     def __init__(self, params_file):
         super().__init__()
         self._run_flag = True
+        self.fps = 30
         self.params_file = params_file
         self.thread_num = VideoThread.thread_counter
+        self.timer = QTimer()
+        self.timer.moveToThread(self)
+        self.timer.timeout.connect(self.update_image)
+        self.capture = capture.VideoCapture()
         VideoThread.thread_counter += 1
 
     def run(self):
@@ -29,30 +34,37 @@ class VideoThread(QThread):
         cap_params = data['cap_params']
         capture_params = {'source': cap_params['source'], 'filename': cap_params['fullpath'],
                           'apiPreference': cap_params['apiPreference']}
-        # capture from web cam
-        video = capture.VideoCapture()
-        video.init()
-        video.set_params(**capture_params)
-        while self._run_flag:
-            ret, cv_img = video.process()
-            if ret:
-                image = self.convert_cv_qt(cv_img)
-                self.change_pixmap_signal.emit([image, self.thread_num])
-        # shut down capture system
-        video.release()
+        self.capture.init()
+        self.capture.set_params(**capture_params)
+        if cap_params['source'] == 'file':
+            self.fps = cap_params['fps']
+            # Проигрывание роликов с указанным fps
+            self.timer.start(int(1000//self.fps))
+            loop = QtCore.QEventLoop()
+            loop.exec_()
+        else:
+            while self._run_flag:
+                self.update_image()
+        self.capture.release()
+
+    def update_image(self):
+        ret, cv_img = self.capture.process()
+        if ret:
+            image = self.convert_cv_qt(cv_img)
+            self.change_pixmap_signal.emit([image, self.thread_num])
 
     def stop(self):
         self._run_flag = False
         self.wait()
 
     def convert_cv_qt(self, cv_img):
-        # Convert from an opencv image to QPixmap
+        # Переводим из opencv image в QPixmap
         rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
         h, w, ch = rgb_image.shape
         bytes_per_line = ch * w
-        convert_to_Qt_format = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
-        p = convert_to_Qt_format.scaled(640, 480, Qt.KeepAspectRatio)
-        return QPixmap.fromImage(p)
+        convert_to_qt = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
+        scaled_image = convert_to_qt.scaled(640, 480, Qt.KeepAspectRatio)
+        return QPixmap.fromImage(scaled_image)
 
 
 class App(QWidget):
@@ -71,10 +83,9 @@ class App(QWidget):
         self.setLayout(layout)
         self.button.clicked.connect(self.start_thread)
 
-
     def start_thread(self):
         fname = QFileDialog.getOpenFileName(self, "Open File", "", "All Files (*)")
-        # create the video capture thread
+        # Создаем поток, в котором будет захватываться видео
         self.threads.append(VideoThread(str(fname[0])))
         self.labels.append(QLabel(self))
         self.labels[-1].resize(self.display_width, self.display_height)
@@ -86,9 +97,9 @@ class App(QWidget):
         else:
             self.layout().addWidget(self.labels[-1], self.rows, self.cols)
             self.cols += 1
-        # connect its signal to the update_image slot
+        # Подключаем сигнал из потока к функции обновления изображения
         self.threads[-1].change_pixmap_signal.connect(self.update_image)
-        # start the thread
+        # Запускаем поток
         self.threads[-1].start()
 
     def closeEvent(self, event):
@@ -97,10 +108,8 @@ class App(QWidget):
 
     @pyqtSlot(list)
     def update_image(self, data):
-        """Updates the image_label with a new opencv image"""
-        start = time.time()
+        # Обновляет label, в котором находится изображение
         self.labels[data[1]].setPixmap(data[0])
-        print(time.time() - start)
 
 
 if __name__ == "__main__":
