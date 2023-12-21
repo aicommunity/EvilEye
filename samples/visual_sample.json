@@ -10,7 +10,7 @@
       "num_split": 0,
       "roi": 0,
       "module": {
-        "name": "None",
+        "name": "detection",
         "det_params": {
           "model": "yolov8n.pt",
           "show" : false,
@@ -27,7 +27,7 @@
       "num_split": 2,
       "roi": [[0, 1300, 2304, 1292]],
       "module": {
-        "name": "None",
+        "name": "detection",
         "det_params": {
           "model": "yolov8n.pt",
           "show" : false,
