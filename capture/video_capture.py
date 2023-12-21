@@ -17,15 +17,15 @@ class VideoCapture(capture.VideoCaptureBase):
 
     def process_impl(self, split_stream=False, num_split=None, roi=None):
         is_read, src_image = self.capture.read()
+        streams = []
         if split_stream:
-            streams = []
             streams.append(src_image[0:int(roi[0][1]), 0:int(roi[0][2])].copy())
             for stream_cnt in range(num_split - 1):
                 streams.append(src_image[roi[stream_cnt][1]:roi[stream_cnt][1]+int(roi[stream_cnt][3]),
                                          roi[stream_cnt][0]:roi[stream_cnt][0]+int(roi[stream_cnt][2])].copy())
-            return is_read, streams
         else:
-            return is_read, src_image
+            streams.append(src_image)
+        return is_read, streams
 
     def default(self):
         self.params.clear()
