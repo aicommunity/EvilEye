@@ -9,6 +9,7 @@ import object_detector
 class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
     def __init__(self, model_name):
         super().__init__()
+        self.model_name = model_name
         self.model = YOLO(model_name)
 
     def init_impl(self):
@@ -18,7 +19,10 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
         pass
 
     def set_params_impl(self):
-        pass
+        if self.params['model'] == self.model_name:
+            del self.params['model']
+        else:
+            self.model_name = self.params['model']
 
     def default(self):
         self.params.clear()
@@ -46,7 +50,7 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
     def draw_boxes(self, image, bboxes_coords, confidences, class_ids):
         for coord, class_id, conf in zip(bboxes_coords, class_ids, confidences):
             cv2.rectangle(image, (int(coord[0]), int(coord[1])),
-                          (int(coord[2]), int(coord[3])), (0, 255, 0))
+                          (int(coord[2]), int(coord[3])), (0, 255, 0), thickness=8)
             cv2.putText(image, str(self.model.names[class_id]) + " " + "{:.2f}".format(conf),
                         (int(coord[0]), int(coord[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
                         (255, 255, 255), 2)
