@@ -1,0 +1,41 @@
+{
+  "num_width": 2,
+  "num_height": 2,
+  "sources": [
+    {
+      "source": "IPcam",
+      "camera": "rtsp://user:AutoZloboglaz9-@10.215.1.252:554/Streaming/Channels/101/",
+      "apiPreference": 1900,
+      "split": false,
+      "num_split": 0,
+      "roi": 0,
+      "module": {
+        "name": "None",
+        "det_params": {
+          "model": "yolov8n.pt",
+          "show" : false,
+          "conf" : 0.4,
+          "save" : false
+        }
+      }
+    },
+    {
+      "source": "IPcam",
+      "camera": "rtsp://user:AutoZloboglaz821-@10.255.254.21",
+      "apiPreference": 1900,
+      "split": true,
+      "num_split": 2,
+      "roi": [[0, 1300, 2304, 1292]],
+      "module": {
+        "name": "None",
+        "det_params": {
+          "model": "yolov8n.pt",
+          "show" : false,
+          "conf" : 0.4,
+          "save" : false
+        }
+      }
+    }
+  ]
+}
+
