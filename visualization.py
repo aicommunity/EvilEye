@@ -1,6 +1,5 @@
 from PyQt5 import QtGui
-from PyQt5.QtWidgets import QWidget, QApplication, QLabel, QPushButton, QFileDialog, QGridLayout, QVBoxLayout, \
-    QHBoxLayout, QSizePolicy
+from PyQt5.QtWidgets import QWidget, QApplication, QLabel, QVBoxLayout, QHBoxLayout, QSizePolicy
 from PyQt5.QtGui import QPixmap
 import PyQt5.QtCore as QtCore
 import sys
@@ -157,8 +156,11 @@ class App(QWidget):
         grid_rows = 0
         for i in range(self.num_labels):
             self.labels.append(MyLabel())
-            self.labels[-1].double_click_signal.connect(self.changeScreenSize)
+            # Изменяем размер изображения по двойному клику
+            self.labels[-1].double_click_signal.connect(self.change_screen_size)
             self.labels[-1].setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+
+            # Добавляем виджеты в layout в зависимости от начальных параметров (кол-во изображений по ширине и высоте)
             if grid_cols > self.cols - 1:
                 grid_cols = 0
                 grid_rows += 1
@@ -179,7 +181,7 @@ class App(QWidget):
         self.labels[thread_data[1]].setPixmap(thread_data[0])
 
     @pyqtSlot()
-    def changeScreenSize(self):
+    def change_screen_size(self):
         sender = self.sender()
         if sender.is_full:
             sender.is_full = False
