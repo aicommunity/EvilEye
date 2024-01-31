@@ -4,48 +4,118 @@ import ultralytics
 from ultralytics import YOLO
 from utils import utils
 import object_detector
+import threading
+from threading import Thread
+import time
 
 
 class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
-    def __init__(self, model_name):
+    def __init__(self):
         super().__init__()
-        self.model_name = model_name
-        self.model = YOLO(model_name)
+        self.bboxes_coords = []
+        self.confidences = []
+        self.class_ids = []
+        self.is_actual = []  # Флаг, показывающий актуальная рамка или нет
+        self.model_name = None
+        self.model = None
+        self.prev_time = 0  # Для параметра скважности, заданного временем; отсчет времени
+        self.stride = 1  # Параметр скважности
+        self.stride_cnt = self.stride  # Счетчик для кадров, которые необходимо пропустить
 
     def init_impl(self):
+        self.model = YOLO(self.model_name)
         return True
 
     def reset_impl(self):
         pass
 
     def set_params_impl(self):
-        if self.params['model'] == self.model_name:
-            del self.params['model']
-        else:
-            self.model_name = self.params['model']
+        self.model_name = self.params['model']
+        self.stride = self.params.get('vid_stride', 1)
+        self.stride_cnt = self.stride
 
     def default(self):
+        self.model_name = None
+        self.model = None
+        self.stride = 1
+        self.stride_cnt = self.stride
         self.params.clear()
 
     def process_impl(self, image, all_roi):
+        if not all_roi:
+            roi = [[image, [0, 0]]]
+        else:
+            roi = utils.create_roi(image, all_roi)  # Приводим ROI к виду, необходимому для функции детекции
+        if self.params.get('stride_type', 'frames') == "time":  # В зависимости от параметра скважности запускаем соответствующую функцию
+            bboxes_coords, confidences, class_ids, is_actual = self.process_time_stride(image, roi)
+        else:
+            bboxes_coords, confidences, class_ids, is_actual = self.process_frame_stride(image, roi)
+        self.draw_boxes(image, self.bboxes_coords[-1], self.confidences[-1], self.class_ids[-1])
+        return bboxes_coords, confidences, class_ids, is_actual
+
+    def process_time_stride(self, image, all_roi):
         bboxes_coords = []
         confidences = []
         class_ids = []
-        if all_roi is None:
-            all_roi = [[image, [0, 0]]]
-        for roi in all_roi:
-            results = self.model(source=roi[0], **self.params)
-            if len(results[0]) == 0:  # Если детекций не было, пропускаем
-                continue
-            for result in results:
-                print(self.is_inited)
-                bboxes_coord, confidence, class_id = self.get_bboxes(result, roi)  # Получаем координаты рамок на изображении
+        is_actual = False
+        inf_params = {"show": self.params['show'], 'conf': self.params['conf'], 'save': self.params['save']}
+        curr_time = int(time.time() * 1000)
+        if curr_time - self.prev_time >= self.stride:  # Если прошло нужное количество времени, запускаем детекцию
+            self.prev_time = curr_time
+            for roi in all_roi:
+                results = self.model(source=roi[0], **inf_params)
+                if len(results[0]) == 0:  # Если детекций не было, пропускаем
+                    continue
+                bboxes_coord, confidence, class_id = self.get_bboxes(results[0], roi)  # Получаем координаты рамок на изображении
                 confidences.extend(confidence)
                 class_ids.extend(class_id)
                 bboxes_coords.extend(bboxes_coord)
-        bboxes_coords, confidences, class_ids = utils.non_max_sup(bboxes_coords, confidences, class_ids)
-        self.draw_boxes(image, bboxes_coords, confidences, class_ids)
-        return bboxes_coords, confidences, class_ids
+            bboxes_coords, confidences, class_ids = utils.non_max_sup(bboxes_coords, confidences, class_ids)
+            bboxes_coords, confidences, class_ids = utils.merge_roi_boxes(self.params['roi'][0], bboxes_coords, confidences, class_ids)  # Объединение рамок из разных ROI
+            is_actual = True
+            self.confidences.append(confidences)
+            self.class_ids.append(class_ids)
+            self.bboxes_coords.append(bboxes_coords)
+            self.is_actual.append(is_actual)
+        else:
+            is_actual = False
+            self.bboxes_coords.append(self.bboxes_coords[-1])
+            self.class_ids.append(self.class_ids[-1])
+            self.confidences.append(self.confidences[-1])
+            self.is_actual.append(is_actual)
+        return bboxes_coords, confidences, class_ids, is_actual
+
+    def process_frame_stride(self, image, all_roi):
+        bboxes_coords = []
+        confidences = []
+        class_ids = []
+        is_actual = False
+        inf_params = {"show": self.params['show'], 'conf': self.params['conf'], 'save': self.params['save']}
+        if self.stride_cnt == self.stride:  # Если пропущено указанное количество кадров, запускаем детекцию
+            self.stride_cnt = 1
+            for roi in all_roi:
+                results = self.model(source=roi[0], **inf_params)
+                if len(results[0]) == 0:  # Если детекций не было, пропускаем
+                    continue
+                bboxes_coord, confidence, class_id = self.get_bboxes(results[0], roi)  # Получаем координаты рамок на изображении
+                confidences.extend(confidence)
+                class_ids.extend(class_id)
+                bboxes_coords.extend(bboxes_coord)
+            bboxes_coords, confidences, class_ids = utils.non_max_sup(bboxes_coords, confidences, class_ids)
+            bboxes_coords, confidences, class_ids = utils.merge_roi_boxes(self.params['roi'][0], bboxes_coords, confidences, class_ids)  # Объединение рамок из разных ROI
+            is_actual = True
+            self.confidences.append(confidences)
+            self.class_ids.append(class_ids)
+            self.bboxes_coords.append(bboxes_coords)
+            self.is_actual.append(is_actual)
+        else:
+            is_actual = False
+            self.stride_cnt += 1
+            self.bboxes_coords.append(self.bboxes_coords[-1])
+            self.class_ids.append(self.class_ids[-1])
+            self.confidences.append(self.confidences[-1])
+            self.is_actual.append(is_actual)
+        return bboxes_coords, confidences, class_ids, is_actual
 
     def draw_boxes(self, image, bboxes_coords, confidences, class_ids):
         for coord, class_id, conf in zip(bboxes_coords, class_ids, confidences):
