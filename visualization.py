@@ -4,7 +4,7 @@ from PyQt5.QtGui import QPixmap
 import PyQt5.QtCore as QtCore
 import sys
 import cv2
-from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt, QThread, QTimer
+from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt, QThread, QTimer, QMutex
 import json
 import capture
 from object_detector import object_detection_yolov8
@@ -31,7 +31,7 @@ class VideoThread(QThread):
     # Сигнал, который отвечает за обновление label, в котором отображается изображение из потока
     update_image_signal = pyqtSignal(list)
 
-    def __init__(self, params, labels, rows, cols):
+    def __init__(self, params, camera, labels, rows, cols):
         super().__init__()
         VideoThread.rows = rows  # Количество строк и столбцов для правильного перевода изображения в полный экран
         VideoThread.cols = cols
@@ -42,19 +42,28 @@ class VideoThread(QThread):
         self.fps = 30
         self.source_params = params
         self.thread_num = VideoThread.thread_counter  # Номер потока для определения, какой label обновлять
-        self.capture = capture.VideoCapture()
+        self.capture = camera
         self.detector = None
+        self.detectors = []
         self.det_params = None
         self.bboxes_coords = []
         self.confidences = []
         self.class_ids = []
+        self.threads = []
+        self.image = None
 
         # Если выбран модуль детекции, настраиваем детектор
         if params['module']['name'] == 'detection':
             self.det_params = params['module']['det_params']
-            self.detector = object_detection_yolov8.ObjectDetectorYoloV8(self.det_params['model'])
-            self.detector.init()
-            self.detector.set_params(**self.det_params)
+            if self.split:
+                for i in range(self.source_params['num_split']):
+                    self.detectors.append(object_detection_yolov8.ObjectDetectorYoloV8())
+                    self.detectors[i].set_params(**self.det_params)
+                    self.detectors[i].init()
+            else:
+                self.detectors.append(object_detection_yolov8.ObjectDetectorYoloV8())
+                self.detectors[-1].set_params(**self.det_params)
+                self.detectors[-1].init()
 
         # Таймер для задания fps у видеороликов
         self.timer = QTimer()
@@ -68,13 +77,8 @@ class VideoThread(QThread):
             VideoThread.thread_counter += 1
 
     def run(self):
-        capture_params = {'source': self.source_params['source'], 'filename': self.source_params['camera'],
-                          'apiPreference': self.source_params['apiPreference']}
-        self.capture.init()
-        self.capture.set_params(**capture_params)
-        if self.source_params['source'] == 'file':
+        if self.source_params['source'] == 'file':  # Проигрывание роликов с указанным fps, если запускаем из файла
             self.fps = self.source_params['fps']
-            # Проигрывание роликов с указанным fps, если запускаем из файла
             self.timer.start(int(1000 // self.fps))
             loop = QtCore.QEventLoop()
             loop.exec_()
@@ -86,17 +90,19 @@ class VideoThread(QThread):
     def update_image(self):
         ret, images = self.capture.process(split_stream=self.source_params['split'],
                                            num_split=self.source_params['num_split'],
-                                           roi=self.source_params['roi'])
+                                           src_coords=self.source_params['src_coords'])
         if ret:
             for count, image in enumerate(images):
                 if self.source_params['module']['name'] == 'detection':
-                    bboxes_coord, confidence, class_id = self.detector.process(image, all_roi=None)
+                    bboxes_coord, confidence, class_id, is_actual = self.detectors[count].process(image, all_roi=self.det_params['roi'][count])
                     self.bboxes_coords.append(bboxes_coord)
                     self.confidences.append(confidence)
                     self.class_ids.append(class_id)
                 conv_img = self.convert_cv_qt(image)
                 # Сигнал из потока для обновления label на новое изображение
                 self.update_image_signal.emit([conv_img, self.thread_num + count])
+        else:
+            self.capture.reset()
 
     def stop(self):
         self.run_flag = False
@@ -130,10 +136,12 @@ class App(QWidget):
         self.labels = []
         self.threads = []
         self.hlayouts = []
+        self.cameras = []
 
         for i in range(self.num_sources):
             if self.params['sources'][i]['split']:
                 self.num_labels += self.params['sources'][i]['num_split']
+                self.sources.append(self.params['sources'][i].copy())
             else:
                 self.num_labels += 1
         vertical_layout = QVBoxLayout()
@@ -142,12 +150,24 @@ class App(QWidget):
             vertical_layout.addLayout(self.hlayouts[-1])
         self.setLayout(vertical_layout)
         self.setup_layout()
-        self.setup_threads()
+        self.init_captures()  # Инициализируем объекты захват из источников
+        self.setup_threads()  # Создаем и запускаем потоки
+
+    def init_captures(self):
+        for i in range(self.num_sources):
+            src_params = self.sources[i]
+            capture_params = {'source': src_params['source'], 'filename': src_params['camera'],
+                              'apiPreference': src_params['apiPreference'], 'split': src_params['split'],
+                              'num_split': src_params['num_split'], 'src_coords': src_params['src_coords']}
+            camera = capture.VideoCapture()
+            camera.set_params(**capture_params)
+            camera.init()
+            self.cameras.append(camera)
 
     def setup_threads(self):
         for i in range(self.num_sources):
-            self.threads.append(VideoThread(self.sources[i], self.labels, self.rows, self.cols))
-            self.threads[-1].update_image_signal.connect(self.update_image)
+            self.threads.append(VideoThread(self.sources[i], self.cameras[i], self.labels, self.rows, self.cols))
+            self.threads[-1].update_image_signal.connect(self.update_image)  # Сигнал из потока для обновления label на новое изображение
             self.threads[-1].start()
 
     def setup_layout(self):
