@@ -23,7 +23,9 @@ def main():
     parser.add_argument('fullpath', help='Full path to file or images. Or RTSP for IP camera',
                         type=str, default=None, nargs="?")
     parser.add_argument('apiPreference', help='VideoCapture API backends identifier',
-                        type=int, default=0, nargs='?')
+                        type=str, default="CAP_GSTREAMER", nargs='?')
+    parser.add_argument('split', help='Split stream flag', type=bool,
+                        default=False, nargs='?')
 
     params_file = open('./capture_detection.json')
     data = json.load(params_file)
@@ -33,15 +35,21 @@ def main():
     if args.source is None or args.fullpath is None:
         cap_params = data['cap_params']
         capture_params = {'source': cap_params['source'], 'filename': cap_params['fullpath'],
-                          'apiPreference': cap_params['apiPreference']}
+                          'apiPreference': cap_params['apiPreference'], 'split': cap_params['split'],
+                          'num_split': cap_params['num_split'], 'src_coords': cap_params['src_coords']}
     else:
-        capture_params = {'source': args.source, 'filename': args.fullpath, 'apiPreference': args.apiPreference}
+        capture_params = {'source': args.source, 'filename': args.fullpath,
+                          'apiPreference': args.apiPreference, 'split': args.split}
 
     video = video_cap.VideoCapture()
     object_detector = object_detection_yolov8.ObjectDetectorYoloV8(det_params['model'])
     tracker = object_tracking_impl.ObjectTrackingImpl()
-    video.init()
     video.set_params(**capture_params)
+    video.init()
+    object_detector.set_params(**det_params)
+    object_detector.init()
+    tracker.init()
+
     if not video.is_opened():
         print("Error opening video stream or file")
 
@@ -52,11 +60,6 @@ def main():
             break
         frame_copy = frame.copy()
         frame_copy = cv2.cvtColor(frame_copy, cv2.COLOR_BGR2GRAY)
-        object_detector.init()
-        tracker.init()
-        inf_params = det_params.copy()
-        del inf_params['model']
-        object_detector.set_params(**inf_params)
         bboxes_coords, confidences, class_ids = object_detector.process(frame)
         tracker.process(frame, bboxes_coords)
         (h, w) = frame.shape[:2]

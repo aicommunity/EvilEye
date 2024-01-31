@@ -5,37 +5,42 @@
     {
       "source": "IPcam",
       "camera": "rtsp://user:AutoZloboglaz9-@10.215.1.252:554/Streaming/Channels/101/",
-      "apiPreference": 1900,
+      "apiPreference": "CAP_GSTREAMER",
       "split": false,
       "num_split": 0,
-      "roi": 0,
+      "src_coords": 0,
       "module": {
         "name": "detection",
         "det_params": {
           "model": "yolov8n.pt",
           "show" : false,
           "conf" : 0.4,
-          "save" : false
+          "save" : false,
+          "stride_type": "frames",
+          "vid_stride": 10,
+          "roi": [[[1840, 0, 500, 400], [1700, 395, 800, 650], [1500, 1030, 1400, 1130]]]
         }
       }
     },
     {
       "source": "IPcam",
-      "camera": "rtsp://user:AutoZloboglaz821-@10.255.254.21",
-      "apiPreference": 1900,
+      "camera": "rtsp://user:AutoZloboglaz821-@10.215.1.249",
+      "apiPreference": "CAP_GSTREAMER",
       "split": true,
       "num_split": 2,
-      "roi": [[0, 1300, 2304, 1292]],
+      "src_coords": [[0, 0, 2304, 1300], [0, 1300, 2304, 1292]],
       "module": {
         "name": "detection",
         "det_params": {
           "model": "yolov8n.pt",
           "show" : false,
           "conf" : 0.4,
-          "save" : false
+          "save" : false,
+          "stride_type": "frames",
+          "vid_stride": 10,
+          "roi": [[], [[0, 0, 350, 230], [0, 0, 2304, 2592]]]
         }
       }
     }
   ]
 }
-

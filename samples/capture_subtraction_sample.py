@@ -21,7 +21,9 @@ def main():
     parser.add_argument('fullpath', help='Full path to file or images. Or RTSP for IP camera',
                         type=str, default=None, nargs="?")
     parser.add_argument('apiPreference', help='VideoCapture API backends identifier',
-                        type=int, default=0, nargs='?')
+                        type=str, default="CAP_GSTREAMER", nargs='?')
+    parser.add_argument('split', help='Split stream flag', type=bool,
+                        default=False, nargs='?')
 
     params_file = open('./capture_subtraction.json')
     data = json.load(params_file)
@@ -30,34 +32,37 @@ def main():
     if args.source is None or args.fullpath is None:
         cap_params = data['cap_params']
         capture_params = {'source': cap_params['source'], 'filename': cap_params['fullpath'],
-                          'apiPreference': cap_params['apiPreference']}
+                          'apiPreference': cap_params['apiPreference'], 'split': cap_params['split'],
+                          'num_split': cap_params['num_split'], 'src_coords': cap_params['src_coords']}
     else:
-        capture_params = {'source': args.source, 'filename': args.fullpath, 'apiPreference': args.apiPreference}
+        capture_params = {'source': args.source, 'filename': args.fullpath,
+                          'apiPreference': args.apiPreference, 'split': args.split}
 
     video = video_cap.VideoCapture()
     back_sub = background_subtraction_gmm.BackgroundSubtractorMOG2()
-    video.init()
     video.set_params(**capture_params)
+    video.init()
+    back_sub.set_params(**subt_params)
+    back_sub.init()
 
     if not video.is_opened():
         print("Error opening video stream or file")
 
     while video.is_opened():
-        ret, frame = video.process()
+        ret, frames = video.process(split_stream=capture_params['split'],
+                                    num_split=capture_params['num_split'], src_coords=capture_params['src_coords'])
         if not ret:
             print("Can't receive frame (stream end?). Exiting ...")
             break
-        frame_copy = frame.copy()
+        frame_copy = frames[0].copy()
         frame_copy = cv2.cvtColor(frame_copy, cv2.COLOR_BGR2GRAY)
-        back_sub.set_params(**subt_params)
-        back_sub.init()
         fg_mask, all_roi = back_sub.process(frame_copy)
 
-        (h, w) = frame.shape[:2]
+        (h, w) = frames[0].shape[:2]
         if w > 1280:
-            frame = imutils.resize(frame, width=1280)
+            frames[0] = imutils.resize(frames[0], width=1280)
             fg_mask = imutils.resize(fg_mask, width=1280)
-        cv2.imshow('Frame', frame)
+        cv2.imshow('Frame', frames[0])
         cv2.imshow('Foreground Mask', fg_mask)
         # for roi in all_roi:  # Uncomment to see ROIs
         #     cv2.imshow('Roi', roi[0])

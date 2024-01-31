@@ -1,7 +1,10 @@
 {
   "cap_params": {
-    "source" : "file",
-    "fullpath" : "samples/data/filename.format",
-    "apiPreference" : 0
+    "source": "IPcam",
+    "fullpath": "rtsp://user:AutoZloboglaz9-@10.215.1.252:554/Streaming/Channels/101/",
+    "apiPreference": "CAP_GSTREAMER",
+    "split": false,
+    "num_split": 0,
+    "src_coords": []
   }
 }

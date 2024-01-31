@@ -12,6 +12,7 @@ import cv2
 import argparse
 import json
 import imutils
+from utils import utils
 
 
 def main():
@@ -22,44 +23,43 @@ def main():
     parser.add_argument('fullpath', help='Full path to file or images. Or RTSP for IP camera',
                         type=str, default=None, nargs="?")
     parser.add_argument('apiPreference', help='VideoCapture API backends identifier',
-                        type=int, default=0, nargs='?')
+                        type=str, default="CAP_GSTREAMER", nargs='?')
+    parser.add_argument('split', help='Split stream flag', type=bool,
+                        default=False, nargs='?')
+
     params_file = open('./capture_detection.json')
     data = json.load(params_file)
     det_params = data['det_params']
     args = parser.parse_args()
-    print()
     if args.source is None or args.fullpath is None:
         cap_params = data['cap_params']
         capture_params = {'source': cap_params['source'], 'filename': cap_params['fullpath'],
-                          'apiPreference': cap_params['apiPreference']}
+                          'apiPreference': cap_params['apiPreference'], 'split': cap_params['split'],
+                          'num_split': cap_params['num_split'], 'src_coords': cap_params['src_coords']}
     else:
-        capture_params = {'source': args.source, 'filename': args.fullpath, 'apiPreference': args.apiPreference}
+        capture_params = {'source': args.source, 'filename': args.fullpath,
+                          'apiPreference': args.apiPreference, 'split': args.split}
 
     video = video_cap.VideoCapture()
-    object_detector = object_detection_yolov8.ObjectDetectorYoloV8(det_params['model'])
-    video.init()
     video.set_params(**capture_params)
+    object_detector = object_detection_yolov8.ObjectDetectorYoloV8()
+    object_detector.set_params(**det_params)
+    video.init()
+    object_detector.init()
     if not video.is_opened():
         print("Error opening video stream or file")
 
     while video.is_opened():
-        ret, frame = video.process()
-        if not ret:
-            print("Can't receive frame (stream end?). Exiting ...")
-            break
-        frame_copy = frame.copy()
-        frame_copy = cv2.cvtColor(frame_copy, cv2.COLOR_BGR2GRAY)
-        # back_sub.init()       # Uncomment to enable detection using ROI
-        # fgMask, all_roi = back_sub.process(frame_copy)
-        object_detector.init()
-        # inf_params = det_params.copy()
-        # del inf_params['model']
-        object_detector.set_params(**det_params)
-        bboxes_coords, confidences, class_ids = object_detector.process(frame)
-        (h, w) = frame.shape[:2]
-        if w > 1280:
-            frame = imutils.resize(frame, width=1280)
-        cv2.imshow('Frame', frame)
+        ret, frames = video.process(split_stream=capture_params['split'],
+                                    num_split=capture_params['num_split'], src_coords=capture_params['src_coords'])
+        if ret:
+            bboxes_coords, confidences, class_ids, is_actual = object_detector.process(frames[0], all_roi=det_params['roi'][0])
+            (h, w) = frames[0].shape[:2]
+            if w > 1280:
+                frames[0] = imutils.resize(frames[0], width=1280)
+            cv2.imshow('Frame', frames[0])
+        else:
+            video.reset()
         if cv2.waitKey(1) == ord('q'):
             break
     video.release()

@@ -21,21 +21,23 @@ def main():
     parser.add_argument('fullpath', help='Full path to file or images. Or RTSP for IP camera',
                         type=str, default=None, nargs="?")
     parser.add_argument('apiPreference', help='VideoCapture API backends identifier',
-                        type=str, default=0, nargs='?')
-
+                        type=str, default="CAP_GSTREAMER", nargs='?')
+    parser.add_argument('split', help='Split stream flag', type=bool,
+                        default=False, nargs='?')
+    params_file = open('./capture.json')
+    data = json.load(params_file)
     args = parser.parse_args()
     if args.source is None or args.fullpath is None:
-        params_file = open('./capture.json')
-        data = json.load(params_file)
         cap_params = data['cap_params']
         capture_params = {'source': cap_params['source'], 'filename': cap_params['fullpath'],
-                          'apiPreference': cap_params['apiPreference']}
+                          'apiPreference': cap_params['apiPreference'], 'split': cap_params['split'],
+                          'num_split': cap_params['num_split'], 'src_coords': cap_params['src_coords']}
     else:
         capture_params = {'source': args.source, 'filename': args.fullpath,
-                          'apiPreference': base.VideoCaptureBase.VideoCaptureAPIs[args.apiPreference]}
+                          'apiPreference': args.apiPreference, 'split': args.split}
     video = video_cap.VideoCapture()
-    video.init()
     video.set_params(**capture_params)
+    video.init()
 
     if not video.is_opened():
         print("Error opening video stream or file")
@@ -43,22 +45,17 @@ def main():
     print('Press R to restart a video or image sequence. (Reset not implemented for IP camera)')
 
     while video.is_opened():
-        roi = [[0, 300, video.capture.get(cv2.CAP_PROP_FRAME_WIDTH), video.capture.get(cv2.CAP_PROP_FRAME_HEIGHT)]]
-        ret, frames = video.process(split_stream=True, num_split=2, roi=roi)
+        ret, frames = video.process(split_stream=capture_params['split'],
+                                    num_split=capture_params['num_split'], src_coords=capture_params['src_coords'])
         if not ret:
             print("Can't receive frame (stream end?). Exiting ...")
             break
         (h, w) = frames[0].shape[:2]
         if w > 1280:
-            for frame in frames:
-                frame = imutils.resize(frame, width=1280)
+            frames[0] = imutils.resize(frames[0], width=1280)
         cv2.imshow('Frame', frames[0])
-        cv2.imshow('Frame2', frames[1])
         if cv2.waitKey(1) == ord('r'):
             video.reset()
-        # for roi in all_roi:  # Uncomment to see ROIs
-        #     cv2.imshow('Roi', roi[0])
-        #     cv2.waitKey(0)
         if cv2.waitKey(50) == ord('q'):
             break
     video.release()
