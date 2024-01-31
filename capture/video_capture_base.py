@@ -34,12 +34,12 @@ class VideoCaptureBase(core.EvilEyeBase):
     def get_src_by_index(cls, index):
         return cls.video_sources[index]
 
-    def process(self, split_stream=False, num_split=None, roi=None):
+    def process(self, split_stream=False, num_split=None, src_coords=None):
         if self.get_init_flag():
-            return self.process_impl(split_stream, num_split, roi)
+            return self.process_impl(split_stream, num_split, src_coords)
         else:
             raise Exception('init function has not been called')
 
     @abstractmethod
-    def process_impl(self, split_stream=False, num_split=None, roi=None):
+    def process_impl(self, split_stream=False, num_split=None, src_coords=None):
         pass
