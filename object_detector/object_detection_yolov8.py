@@ -129,7 +129,7 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
         bboxes_coords = []
         confidences = []
         ids = []
-        boxes = result.boxes.numpy()
+        boxes = result.boxes.cpu().numpy()
         coords = boxes.xyxy
         confs = boxes.conf
         class_ids = boxes.cls
