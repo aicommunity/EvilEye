@@ -17,7 +17,7 @@
           "conf" : 0.4,
           "save" : false,
           "stride_type": "frames",
-          "vid_stride": 10,
+          "vid_stride": 5,
           "roi": [[[1840, 0, 500, 400], [1700, 395, 800, 650], [1500, 1030, 1400, 1130]]]
         }
       }
@@ -37,7 +37,7 @@
           "conf" : 0.4,
           "save" : false,
           "stride_type": "frames",
-          "vid_stride": 10,
+          "vid_stride": 5,
           "roi": [[], [[0, 0, 350, 230], [0, 0, 2304, 2592]]]
         }
       }
