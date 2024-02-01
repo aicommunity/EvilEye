@@ -57,28 +57,20 @@ def create_roi(image, coords):
 
 
 def merge_roi_boxes(all_roi, bboxes_coords, confidences, class_ids):
-    bboxes_merged = []
-    conf_merged = []
-    ids_merged = []
-    merged_idxs = []
-    for i in range(len(bboxes_coords)):
-        for j in range(i + 1, len(bboxes_coords)):
-            if j in merged_idxs:
-                continue
+    for i in range(len(list(bboxes_coords))):
+        for j in range(i + 1, len(list(bboxes_coords))):
             # Если рамки пересекаются, но находятся в разных регионах, то объединяем их в одну рамку
-            if (is_intersected(bboxes_coords[i], bboxes_coords[j])
-                    and not is_same_roi(all_roi, bboxes_coords[i], bboxes_coords[j])):
-                bboxes_merged.append([min(bboxes_coords[i][0], bboxes_coords[j][0]),
-                                      min(bboxes_coords[i][1], bboxes_coords[j][1]),
-                                      max(bboxes_coords[i][2], bboxes_coords[j][2]),
-                                      max(bboxes_coords[i][3], bboxes_coords[j][3])])
-                conf_merged.append(max(confidences[i], confidences[j]))
-                ids_merged.append(class_ids[i])
-                merged_idxs.append(j)
-        bboxes_merged.append(bboxes_coords[i])
-        conf_merged.append(confidences[i])
-        ids_merged.append(class_ids[i])
-    return bboxes_merged, conf_merged, ids_merged
+            if is_intersected(bboxes_coords[i], bboxes_coords[j]) and not is_same_roi(all_roi, bboxes_coords[i],
+                                                                                      bboxes_coords[j]):
+                bboxes_coords[i] = [min(bboxes_coords[i][0], bboxes_coords[j][0]),
+                                    min(bboxes_coords[i][1], bboxes_coords[j][1]),
+                                    max(bboxes_coords[i][2], bboxes_coords[j][2]),
+                                    max(bboxes_coords[i][3], bboxes_coords[j][3])]
+                confidences[i] = max(confidences[i], confidences[j])
+                del bboxes_coords[j]
+                del confidences[j]
+                del class_ids[j]
+    return bboxes_coords, confidences, class_ids
 
 
 def is_same_roi(all_roi, box1, box2):
