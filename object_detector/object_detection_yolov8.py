@@ -47,13 +47,13 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
         else:
             roi = utils.create_roi(image, all_roi)  # Приводим ROI к виду, необходимому для функции детекции
         if self.params.get('stride_type', 'frames') == "time":  # В зависимости от параметра скважности запускаем соответствующую функцию
-            bboxes_coords, confidences, class_ids, is_actual = self.process_time_stride(image, roi)
+            bboxes_coords, confidences, class_ids, is_actual = self.process_stride_time(image, roi)
         else:
-            bboxes_coords, confidences, class_ids, is_actual = self.process_frame_stride(image, roi)
+            bboxes_coords, confidences, class_ids, is_actual = self.process_stride_frame(image, roi)
         self.draw_boxes(image, self.bboxes_coords[-1], self.confidences[-1], self.class_ids[-1])
         return bboxes_coords, confidences, class_ids, is_actual
 
-    def process_time_stride(self, image, all_roi):
+    def process_stride_time(self, image, all_roi):
         bboxes_coords = []
         confidences = []
         class_ids = []
@@ -85,7 +85,7 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
             self.is_actual.append(is_actual)
         return bboxes_coords, confidences, class_ids, is_actual
 
-    def process_frame_stride(self, image, all_roi):
+    def process_stride_frame(self, image, all_roi):
         bboxes_coords = []
         confidences = []
         class_ids = []
