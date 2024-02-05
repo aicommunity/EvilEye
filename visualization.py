@@ -68,7 +68,7 @@ class VideoThread(QThread):
         # Таймер для задания fps у видеороликов
         self.timer = QTimer()
         self.timer.moveToThread(self)
-        self.timer.timeout.connect(self.update_image)
+        self.timer.timeout.connect(self.process_image)
 
         # Определяем количество потоков в зависимости от параметра split
         if self.source_params['split']:  # Если включен сплит, то увеличиваем количество потоков на соотв. число
@@ -84,10 +84,10 @@ class VideoThread(QThread):
             loop.exec_()
         else:
             while self.run_flag:
-                self.update_image()
+                self.process_image()
         self.capture.release()
 
-    def update_image(self):
+    def process_image(self):
         ret, images = self.capture.process(split_stream=self.source_params['split'],
                                            num_split=self.source_params['num_split'],
                                            src_coords=self.source_params['src_coords'])
