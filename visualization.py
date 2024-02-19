@@ -9,7 +9,7 @@ import json
 import capture
 from object_detector import object_detection_yolov8
 import argparse
-from objects_handler import ObjectsHandler
+from objects_handler.objects_handler import ObjectsHandler
 from utils import utils
 
 
