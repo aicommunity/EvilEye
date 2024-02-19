@@ -1,4 +1,6 @@
 import numpy as np
+import cv2
+import time
 
 
 def boxes_iou(box1, box2):
@@ -62,18 +64,36 @@ def merge_roi_boxes(all_roi, bboxes_coords, confidences, class_ids):
     ids_merged = []
     merged_idxs = []
     for i in range(len(bboxes_coords)):
+        intersected_idxs = []
         if i in merged_idxs:
             continue
         for j in range(i + 1, len(bboxes_coords)):
-            # Если рамки пересекаются, но находятся в разных регионах, то объединяем их в одну рамку
-            if (is_intersected(bboxes_coords[i], bboxes_coords[j])
+            # Если рамки пересекаются, но находятся в разных регионах, то добавляем их в список пересекающихся
+            if ((len(all_roi) != 0) and is_intersected(bboxes_coords[i], bboxes_coords[j])
                     and not is_same_roi(all_roi, bboxes_coords[i], bboxes_coords[j])):
-                bboxes_coords[i] = [min(bboxes_coords[i][0], bboxes_coords[j][0]),
-                                    min(bboxes_coords[i][1], bboxes_coords[j][1]),
-                                    max(bboxes_coords[i][2], bboxes_coords[j][2]),
-                                    max(bboxes_coords[i][3], bboxes_coords[j][3])]
-                confidences[i] = max(confidences[i], confidences[j])
-                merged_idxs.append(j)
+                intersected_idxs.append(j)
+        # Если рамка пересекается больше, чем с одной, то проверяем, с какой она пересекается больше, чтобы их объединить
+        if len(intersected_idxs) > 1:
+            iou = []
+            # Определяем, с какой рамкой iou выше
+            for k in range(len(intersected_idxs)):
+                iou.append(boxes_iou(bboxes_coords[i], bboxes_coords[intersected_idxs[k]]))
+            max_idx = iou.index(max(iou))
+            # Объединяем с этой рамкой
+            bboxes_coords[i] = [min(bboxes_coords[i][0], bboxes_coords[intersected_idxs[max_idx]][0]),
+                                min(bboxes_coords[i][1], bboxes_coords[intersected_idxs[max_idx]][1]),
+                                max(bboxes_coords[i][2], bboxes_coords[intersected_idxs[max_idx]][2]),
+                                max(bboxes_coords[i][3], bboxes_coords[intersected_idxs[max_idx]][3])]
+            confidences[i] = max(confidences[i], confidences[intersected_idxs[max_idx]])
+            merged_idxs.append(intersected_idxs[max_idx])
+        # Если пересекается только с одной, объединяем
+        elif len(intersected_idxs) == 1:
+            bboxes_coords[i] = [min(bboxes_coords[i][0], bboxes_coords[intersected_idxs[0]][0]),
+                                min(bboxes_coords[i][1], bboxes_coords[intersected_idxs[0]][1]),
+                                max(bboxes_coords[i][2], bboxes_coords[intersected_idxs[0]][2]),
+                                max(bboxes_coords[i][3], bboxes_coords[intersected_idxs[0]][3])]
+            confidences[i] = max(confidences[i], confidences[intersected_idxs[0]])
+            merged_idxs.append(intersected_idxs[0])
         bboxes_merged.append(bboxes_coords[i])
         conf_merged.append(confidences[i])
         ids_merged.append(class_ids[i])
@@ -81,9 +101,11 @@ def merge_roi_boxes(all_roi, bboxes_coords, confidences, class_ids):
 
 
 def is_same_roi(all_roi, box1, box2):
+    if len(all_roi) == 0:
+        return True
     for roi in all_roi:
-        if ((roi[1] <= box1[3] <= (roi[1] + roi[3]) and roi[1] <= box1[1] <= (roi[1] + roi[3])) and
-                (roi[1] <= box2[3] <= (roi[1] + roi[3]) and roi[1] <= box2[1] <= (roi[1] + roi[3]))):
+        if (((roi[1] <= box1[3] <= (roi[1] + roi[3])) and (roi[1] <= box1[1] <= (roi[1] + roi[3]))) and
+                ((roi[1] <= box2[3] <= (roi[1] + roi[3])) and (roi[1] <= box2[1] <= (roi[1] + roi[3])))):
             return True
     return False
 
@@ -93,3 +115,22 @@ def is_intersected(box1, box2):
         return True
     else:
         return False
+
+
+def get_objs_info(bboxes_coords, confidences, class_ids):
+    objects = []
+    for bbox, class_id, conf in zip(bboxes_coords, class_ids, confidences):
+        obj = {"bbox": bbox, "conf": conf, "class": class_id}
+        objects.append(obj)
+    return objects
+
+
+def draw_boxes(image, objects, cam_id, model_names):
+    for cam_objs in objects:
+        if cam_objs['cam_id'] == cam_id:
+            for obj in cam_objs['objects']:
+                cv2.rectangle(image, (int(obj['bbox'][0]), int(obj['bbox'][1])),
+                              (int(obj['bbox'][2]), int(obj['bbox'][3])), (0, 255, 0), thickness=8)
+                cv2.putText(image, str(model_names[obj['class']]) + " " + "{:.2f}".format(obj['conf']),
+                            (int(obj['bbox'][0]), int(obj['bbox'][1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
+                            (255, 255, 255), 2)
