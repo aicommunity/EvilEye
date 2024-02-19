@@ -99,9 +99,11 @@ def merge_roi_boxes(all_roi, bboxes_coords, confidences, class_ids):
 
 
 def is_same_roi(all_roi, box1, box2):
+    if len(all_roi) == 0:
+        return True
     for roi in all_roi:
-        if ((roi[1] <= box1[3] <= (roi[1] + roi[3]) and roi[1] <= box1[1] <= (roi[1] + roi[3])) and
-                (roi[1] <= box2[3] <= (roi[1] + roi[3]) and roi[1] <= box2[1] <= (roi[1] + roi[3]))):
+        if (((roi[1] <= box1[3] <= (roi[1] + roi[3])) and (roi[1] <= box1[1] <= (roi[1] + roi[3]))) and
+                ((roi[1] <= box2[3] <= (roi[1] + roi[3])) and (roi[1] <= box2[1] <= (roi[1] + roi[3])))):
             return True
     return False
 
