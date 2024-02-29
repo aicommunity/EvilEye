@@ -1,6 +1,4 @@
 import numpy as np
-import cv2
-import time
 
 
 def boxes_iou(box1, box2):
@@ -115,22 +113,3 @@ def is_intersected(box1, box2):
         return True
     else:
         return False
-
-
-def get_objs_info(bboxes_coords, confidences, class_ids):
-    objects = []
-    for bbox, class_id, conf in zip(bboxes_coords, class_ids, confidences):
-        obj = {"bbox": bbox, "conf": conf, "class": class_id}
-        objects.append(obj)
-    return objects
-
-
-def draw_boxes(image, objects, cam_id, model_names):
-    for cam_objs in objects:
-        if cam_objs['cam_id'] == cam_id:
-            for obj in cam_objs['objects']:
-                cv2.rectangle(image, (int(obj['bbox'][0]), int(obj['bbox'][1])),
-                              (int(obj['bbox'][2]), int(obj['bbox'][3])), (0, 255, 0), thickness=8)
-                cv2.putText(image, str(model_names[obj['class']]) + " " + "{:.2f}".format(obj['conf']),
-                            (int(obj['bbox'][0]), int(obj['bbox'][1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
-                            (255, 255, 255), 2)
