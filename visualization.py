@@ -9,8 +9,6 @@ import json
 import capture
 from object_detector import object_detection_yolov8
 import argparse
-from objects_handler.objects_handler import ObjectsHandler
-from utils import utils
 
 
 # Собственный класс для label, чтобы переопределить двойной клик мышкой
@@ -33,7 +31,7 @@ class VideoThread(QThread):
     # Сигнал, который отвечает за обновление label, в котором отображается изображение из потока
     update_image_signal = pyqtSignal(list)
 
-    def __init__(self, params, camera, labels, rows, cols, obj_handler):
+    def __init__(self, params, camera, labels, rows, cols):
         super().__init__()
         VideoThread.rows = rows  # Количество строк и столбцов для правильного перевода изображения в полный экран
         VideoThread.cols = cols
@@ -45,12 +43,14 @@ class VideoThread(QThread):
         self.source_params = params
         self.thread_num = VideoThread.thread_counter  # Номер потока для определения, какой label обновлять
         self.capture = camera
+        self.detector = None
         self.detectors = []
         self.det_params = None
         self.bboxes_coords = []
         self.confidences = []
         self.class_ids = []
-        self.handler = obj_handler
+        self.threads = []
+        self.image = None
 
         # Если выбран модуль детекции, настраиваем детектор
         if params['module']['name'] == 'detection':
@@ -88,16 +88,17 @@ class VideoThread(QThread):
         self.capture.release()
 
     def process_image(self):
-        ret, frames = self.capture.process(split_stream=self.source_params['split'],
+        ret, images = self.capture.process(split_stream=self.source_params['split'],
                                            num_split=self.source_params['num_split'],
                                            src_coords=self.source_params['src_coords'])
         if ret:
-            for count, frame in enumerate(frames):
+            for count, image in enumerate(images):
                 if self.source_params['module']['name'] == 'detection':
-                    frame_objects = self.detectors[count].process(frame, all_roi=self.det_params['roi'][count])
-                    self.handler.append(frame_objects)
-                    utils.draw_boxes(frame, self.handler.get('new'), self.detectors[count].id, self.detectors[count].model.names)
-                conv_img = self.convert_cv_qt(frame)
+                    bboxes_coord, confidence, class_id, is_actual = self.detectors[count].process(image, all_roi=self.det_params['roi'][count])
+                    self.bboxes_coords.append(bboxes_coord)
+                    self.confidences.append(confidence)
+                    self.class_ids.append(class_id)
+                conv_img = self.convert_cv_qt(image)
                 # Сигнал из потока для обновления label на новое изображение
                 self.update_image_signal.emit([conv_img, self.thread_num + count])
         else:
@@ -132,7 +133,6 @@ class App(QWidget):
         self.sources = self.params['sources']
         self.num_sources = len(self.params['sources'])
         self.num_labels = 0
-        self.handler = ObjectsHandler()
         self.labels = []
         self.threads = []
         self.hlayouts = []
@@ -166,7 +166,7 @@ class App(QWidget):
 
     def setup_threads(self):
         for i in range(self.num_sources):
-            self.threads.append(VideoThread(self.sources[i], self.cameras[i], self.labels, self.rows, self.cols, self.handler))
+            self.threads.append(VideoThread(self.sources[i], self.cameras[i], self.labels, self.rows, self.cols))
             self.threads[-1].update_image_signal.connect(self.update_image)  # Сигнал из потока для обновления label на новое изображение
             self.threads[-1].start()
 
