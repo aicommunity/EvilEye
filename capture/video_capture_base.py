@@ -26,13 +26,15 @@ class VideoCaptureBase(core.EvilEyeBase):
         return self.capture.isOpened()
 
     def release(self):
-        VideoCaptureBase.source_count -= 1
-        del VideoCaptureBase.video_sources[self.stream_idx]
         self.capture.release()
+        VideoCaptureBase.video_sources[self.stream_idx] = None
 
     @classmethod
     def get_src_by_index(cls, index):
-        return cls.video_sources[index]
+        try:
+            return cls.video_sources[index]
+        except IndexError:
+            print('Source index is out of range')
 
     def process(self, split_stream=False, num_split=None, src_coords=None):
         if self.get_init_flag():
