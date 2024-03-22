@@ -1,9 +1,18 @@
 import cv2
 import capture
 from capture import VideoCaptureBase as Base
+from threading import Thread
+from queue import Queue
+from threading import Lock
 
 
 class VideoCapture(capture.VideoCaptureBase):
+    def __init__(self):
+        super().__init__()
+        self.mutex = Lock()
+        self.frames_queue = Queue(maxsize=2)
+        self.writer = Thread(target=self._capture_frames, daemon=True)
+
     def set_params_impl(self):
         source = None
         if self.params['source'] == 'IPcam' and self.params['apiPreference'] == "CAP_GSTREAMER":  # Приведение rtsp ссылки к формату gstreamer
@@ -32,6 +41,7 @@ class VideoCapture(capture.VideoCaptureBase):
             self.capture.open(self.params['filename'], Base.VideoCaptureAPIs[self.params['apiPreference']])
 
     def init_impl(self):
+        self.writer.start()
         return True
 
     def reset_impl(self):
@@ -43,17 +53,34 @@ class VideoCapture(capture.VideoCaptureBase):
                 raise Exception("Could not connect to a camera: {0}".format(self.params['filename']))
             print("Connected to a camera: {0}".format(self.params['filename']))
 
+    def _capture_frames(self):
+        while True:
+            # print('CAPTURING')
+            is_read, src_image = self.capture.read()
+            # print(is_read)
+            if is_read:
+                with self.mutex:
+                    if self.frames_queue.full():
+                        self.frames_queue.get_nowait()
+                self.frames_queue.put([is_read, src_image])
+            else:
+                with self.mutex:
+                    if self.frames_queue.full():
+                        self.frames_queue.get_nowait()
+                self.frames_queue.put([is_read, src_image])
+
     def process_impl(self, split_stream=False, num_split=None, src_coords=None):
-        is_read, src_image = self.capture.read()
-        streams = []
-        if is_read:
+        ret, src_image = self.frames_queue.get()
+        # print('GOT')
+        if ret:
+            streams = []
             if split_stream:  # Если сплит, то возвращаем список с частями потока, иначе - исходное изображение
                 for stream_cnt in range(num_split):
                     streams.append(src_image[src_coords[stream_cnt][1]:src_coords[stream_cnt][1] + int(src_coords[stream_cnt][3]),
                                    src_coords[stream_cnt][0]:src_coords[stream_cnt][0] + int(src_coords[stream_cnt][2])].copy())
             else:
                 streams = [src_image]
-            return is_read, streams
+            return ret, streams
         else:
             return False, None
 
