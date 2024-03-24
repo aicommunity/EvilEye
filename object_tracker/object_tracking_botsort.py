@@ -12,6 +12,7 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
     def __init__(self):
         super().__init__()
         self.init_impl()
+        self.is_inited = True
 
     def init_impl(self):
         # TODO: add mechanism of setting cfg and replace this in the future
