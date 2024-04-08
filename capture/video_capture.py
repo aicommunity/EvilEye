@@ -4,6 +4,8 @@ from capture import VideoCaptureBase as Base
 from threading import Thread
 from queue import Queue
 from threading import Lock
+import time
+from timeit import default_timer as timer
 
 
 class VideoCapture(capture.VideoCaptureBase):
@@ -56,6 +58,7 @@ class VideoCapture(capture.VideoCaptureBase):
     def _capture_frames(self):
         while True:
             # print('CAPTURING')
+            begin_it = timer()
             is_read, src_image = self.capture.read()
             # print(is_read)
             if is_read:
@@ -63,11 +66,22 @@ class VideoCapture(capture.VideoCaptureBase):
                     if self.frames_queue.full():
                         self.frames_queue.get_nowait()
                 self.frames_queue.put([is_read, src_image])
-            else:
-                with self.mutex:
-                    if self.frames_queue.full():
-                        self.frames_queue.get_nowait()
-                self.frames_queue.put([is_read, src_image])
+#            else:
+#                with self.mutex:
+#                    if self.frames_queue.full():
+#                        self.frames_queue.get_nowait()
+#                self.frames_queue.put([is_read, src_image])
+#            time.sleep(0.01)
+            end_it = timer()
+            elapsed_seconds = end_it - begin_it
+            sleep_seconds = 0.04
+            source_fps = self.capture.get(cv2.CAP_PROP_FPS)
+            if source_fps > 0:
+                time_duration = 1. / source_fps
+                if time_duration > elapsed_seconds:
+                    sleep_seconds = time_duration - elapsed_seconds
+
+            time.sleep(sleep_seconds)
 
     def process_impl(self, split_stream=False, num_split=None, src_coords=None):
         ret, src_image = self.frames_queue.get()
