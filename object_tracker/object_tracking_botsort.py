@@ -32,27 +32,63 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
 
     def process_impl(
             self, 
-            bboxes_coords: np.ndarray, 
-            confidences: np.ndarray, 
-            class_ids: np.ndarray, 
+            det_info: dict,
             is_actual: bool = True, 
             img: np.ndarray = None) -> tuple:
         
         # TODO: add implementation for `is_actual` (ignoring frames)
+        cam_id, bboxes_xcycwh, confidences, class_ids = self._parse_det_info(det_info)
+    
+        # Update tracker with new detections and get current tracks
+        tracks = self.tracker.update(class_ids, bboxes_xcycwh, confidences, img)
+        
+        tracks_info = self._create_tracks_info(cam_id, tracks)
+        return tracks_info
+
+    def _parse_det_info(self, det_info: dict) -> tuple:
+        cam_id = det_info['cam_id']
+        objects = det_info['objects']
+
+        bboxes_xyxy = []
+        confidences = []
+        class_ids = []
+
+        for obj in objects:
+            bboxes_xyxy.append(obj['bbox'])
+            confidences.append(obj['conf'])
+            class_ids.append(obj['class'])
+
+        bboxes_xyxy = np.array(bboxes_xyxy)
+        confidences = np.array(confidences)
+        class_ids = np.array(class_ids)
+
+        bboxes_xyxy = np.array(bboxes_xyxy)
+        confidences = np.array(confidences)
+        class_ids = np.array(class_ids)
 
         # Convert XYXY input coordinates to XcYcWH
-        bboxes_xcycwh = bboxes_coords.astype('float64')
+        bboxes_xcycwh = bboxes_xyxy.astype('float64')
         bboxes_xcycwh[:, 2] -= bboxes_xcycwh[:, 0]
         bboxes_xcycwh[:, 3] -= bboxes_xcycwh[:, 1]
         bboxes_xcycwh[:, 0] += bboxes_xcycwh[:, 2] / 2
         bboxes_xcycwh[:, 1] += bboxes_xcycwh[:, 3] / 2
 
-        # Update tracker with new detections and get current tracks
-        tracks = self.tracker.update(class_ids, bboxes_xcycwh, confidences, img)
-        
-        track_bboxes = tracks[:, :4]
-        track_conf = tracks[:, 5]
-        track_cls = tracks[:, 6]
-        track_ids = tracks[:, 7]
+        return cam_id, bboxes_xcycwh, confidences, class_ids
 
-        return track_bboxes, track_conf, track_cls, track_ids 
+    def _create_tracks_info(self, cam_id: int, tracks: np.ndarray):
+        
+        tracks_info = {'cam_id': cam_id, 'objects': []}
+        for i in range(len(tracks)):
+            track_bbox = tracks[i, :4].tolist()
+            track_conf = tracks[i, 5]
+            track_cls = tracks[i, 6]
+            track_id = tracks[i, 7]
+            object_info = {
+                'bbox': track_bbox,
+                'conf': track_conf,
+                'class': track_cls,
+                'track_id': track_id,
+            }
+            tracks_info['objects'].append(object_info)
+
+        return tracks_info 
