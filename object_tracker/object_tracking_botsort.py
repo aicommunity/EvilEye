@@ -58,7 +58,7 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
             confidences.append(obj['conf'])
             class_ids.append(obj['class'])
 
-        bboxes_xyxy = np.array(bboxes_xyxy)
+        bboxes_xyxy = np.array(bboxes_xyxy).reshape(-1, 4)
         confidences = np.array(confidences)
         class_ids = np.array(class_ids)
 
@@ -78,11 +78,12 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
     def _create_tracks_info(self, cam_id: int, tracks: np.ndarray):
         
         tracks_info = {'cam_id': cam_id, 'objects': []}
+        print(tracks)
         for i in range(len(tracks)):
             track_bbox = tracks[i, :4].tolist()
             track_conf = tracks[i, 5]
             track_cls = tracks[i, 6]
-            track_id = tracks[i, 7]
+            track_id = tracks[i, 4]
             object_info = {
                 'bbox': track_bbox,
                 'conf': track_conf,
