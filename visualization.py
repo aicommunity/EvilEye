@@ -11,6 +11,8 @@ from object_detector import object_detection_yolov8
 import argparse
 from objects_handler.objects_handler import ObjectsHandler
 from utils import utils
+import time
+from timeit import default_timer as timer
 
 
 # Собственный класс для label, чтобы переопределить двойной клик мышкой
@@ -41,7 +43,7 @@ class VideoThread(QThread):
         self.labels = labels
         self.run_flag = True
         self.split = params['split']
-        self.fps = 30
+        self.fps = 10
         self.source_params = params
         self.thread_num = VideoThread.thread_counter  # Номер потока для определения, какой label обновлять
         self.capture = camera
@@ -84,7 +86,15 @@ class VideoThread(QThread):
             loop.exec_()
         else:
             while self.run_flag:
+                begin_it = timer()
                 self.process_image()
+                end_it = timer()
+                elapsed_seconds = end_it - begin_it
+                sleep_seconds = 1./self.fps - elapsed_seconds
+                if sleep_seconds > 0.0:
+                    time.sleep(sleep_seconds)
+                else:
+                    time.sleep(0.01)
         self.capture.release()
 
     def process_image(self):
