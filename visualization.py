@@ -4,7 +4,7 @@ from PyQt5.QtGui import QPixmap
 import PyQt5.QtCore as QtCore
 import sys
 import cv2
-from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt, QThread, QTimer, QMutex
+from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt, QThread, QTimer
 import json
 import capture
 from object_detector import object_detection_yolov8
@@ -13,7 +13,10 @@ from objects_handler.objects_handler import ObjectsHandler
 from utils import utils
 import time
 from timeit import default_timer as timer
-
+from pathlib import Path
+from object_tracker.trackers.cfg.utils import read_cfg
+from object_tracker.object_tracking_botsort import ObjectTrackingBotsort
+sys.path.append(str(Path(__file__).parent.parent.parent))
 
 # Собственный класс для label, чтобы переопределить двойной клик мышкой
 class MyLabel(QLabel):
@@ -43,7 +46,7 @@ class VideoThread(QThread):
         self.labels = labels
         self.run_flag = True
         self.split = params['split']
-        self.fps = 10
+        self.fps = 30
         self.source_params = params
         self.thread_num = VideoThread.thread_counter  # Номер потока для определения, какой label обновлять
         self.capture = camera
@@ -53,19 +56,24 @@ class VideoThread(QThread):
         self.confidences = []
         self.class_ids = []
         self.handler = obj_handler
+        self.trackers = []
 
         # Если выбран модуль детекции, настраиваем детектор
-        if params['module']['name'] == 'detection':
+        if params['module']['name'] == 'detection' or params['module']['name'] == 'tracking':
             self.det_params = params['module']['det_params']
             if self.split:
                 for i in range(self.source_params['num_split']):
                     self.detectors.append(object_detection_yolov8.ObjectDetectorYoloV8())
                     self.detectors[i].set_params(**self.det_params)
                     self.detectors[i].init()
+                    if params['module']['name'] == 'tracking':
+                        self.trackers.append(ObjectTrackingBotsort())
             else:
                 self.detectors.append(object_detection_yolov8.ObjectDetectorYoloV8())
                 self.detectors[-1].set_params(**self.det_params)
                 self.detectors[-1].init()
+                if params['module']['name'] == 'tracking':
+                    self.trackers.append(ObjectTrackingBotsort())
 
         # Таймер для задания fps у видеороликов
         self.timer = QTimer()
@@ -90,7 +98,7 @@ class VideoThread(QThread):
                 self.process_image()
                 end_it = timer()
                 elapsed_seconds = end_it - begin_it
-                sleep_seconds = 1./self.fps - elapsed_seconds
+                sleep_seconds = 1. / self.fps - elapsed_seconds
                 if sleep_seconds > 0.0:
                     time.sleep(sleep_seconds)
                 else:
@@ -103,11 +111,21 @@ class VideoThread(QThread):
                                            src_coords=self.source_params['src_coords'])
         if ret:
             for count, frame in enumerate(frames):
-                if self.source_params['module']['name'] == 'detection':
+                if self.source_params['module']['name'] == 'detection' or self.source_params['module']['name'] == 'tracking':
                     frame_objects = self.detectors[count].process(frame, all_roi=self.det_params['roi'][count])
-                    self.handler.append(frame_objects)
                     det_id = self.detectors[count].id
-                    utils.draw_boxes_tracking(frame, self.handler.get('new'), det_id, self.detectors[count].model.names)
+                    # print(len(frame_objects['objects']))
+                    if self.source_params['module']['name'] == 'tracking':
+                        track_info = self.trackers[count].process(frame_objects, True)
+                        # print(track_info)
+                        self.handler.append(track_info)
+                        objs = self.handler.get('active')
+                        # print(objs)
+                        utils.draw_boxes_tracking(frame, objs, det_id, self.detectors[count].model.names)
+                    else:
+                        self.handler.append(frame_objects)
+                        objs = self.handler.get('new')
+                        utils.draw_boxes(frame, objs, det_id, self.detectors[count].model.names)
                 conv_img = self.convert_cv_qt(frame)
                 # Сигнал из потока для обновления label на новое изображение
                 self.update_image_signal.emit([conv_img, self.thread_num + count])
