@@ -2,9 +2,9 @@
 
 import numpy as np
 
-from polytech_reid.trackers.basetrack import BaseTrack, TrackState
-from polytech_reid.trackers.utils import matching
-from polytech_reid.trackers.utils.kalman_filter import KalmanFilterXYAH
+from object_tracker.trackers.basetrack import BaseTrack, TrackState
+from object_tracker.trackers.utils import matching
+from object_tracker.trackers.utils.kalman_filter import KalmanFilterXYAH
 from ultralytics.utils.ops import xywh2ltwh
 from ultralytics.utils import LOGGER
 
