@@ -9,7 +9,7 @@ from threading import Condition
 Данные от трекера в виде dict: {'cam_id': int, 'objects': list}, где objects тоже содержит словари с данными о каждом
 объекте (айди, рамка, достоверность, класс). Эти данные затем преобразуются к виду массива словарей, где каждый словарь
 соответствует конкретному объекту и содержит его историю в виде dict:
-{'obj_id': int, 'obj_info': list, 'lost_frames': int, 'last_update': bool}, где obj_info содержит словари,
+{'track_id': int, 'obj_info': list, 'lost_frames': int, 'last_update': bool}, где obj_info содержит словари,
 полученные на входе (айди, рамка, достоверность, класс), которые соответствуют данному объекту.
 '''
 
@@ -33,7 +33,7 @@ class ObjectsHandler:
         self.handler = Thread(target=self.handle_objs, daemon=True)
         self.handler.start()
 
-    def append(self, objs):  # Добавление детекций с камеры в очередь
+    def append(self, objs):  # Добавление данных из детектора/трекера в очередь
         self.objs_queue.put(objs)
 
     def get(self, objs_type):  # Получение списка объектов в зависимости от указанного типа
@@ -49,13 +49,13 @@ class ObjectsHandler:
             else:
                 raise Exception('Such type of objects does not exist')
 
-    def handle_objs(self):  # Функция, отвечающая за работу с объектами (в данный момент полученными только от детектора)
+    def handle_objs(self):  # Функция, отвечающая за работу с объектами
         print('Handler running: waiting for objects...')
         while True:
             frame_objs = self.objs_queue.get()
             # Блокируем остальные потоки для предотвращения одновременного обращения к объектам
             with self.condition:
-                if frame_objs['objects'][0].get('obj_id') is not None:  # Если объекты получены от трекера
+                if frame_objs['module_name'] == 'tracking':  # Если объекты получены от трекера
                     self._handle_active(frame_objs)
                 else:  # Проверяем, есть ли в списке новых объектов предыдущая детекция с этой камеры, если да, заменяем на новую
                     idx = next((i for i, item in enumerate(self.new_objs) if item['cam_id'] == frame_objs['cam_id']), None)
@@ -71,7 +71,7 @@ class ObjectsHandler:
             if frame_objs['cam_id'] == cam_active['cam_id']:  # Если объекты были получены с данной камеры
                 if len(cam_active['objects']) == 0:  # Если нет отслеживаемых объектов, то просто добавляем все новые
                     for obj in frame_objs['objects']:
-                        tracked_obj = {'obj_id': obj['obj_id'], 'obj_info': [obj], 'lost_frames': 0, 'last_update': False}
+                        tracked_obj = {'track_id': obj['track_id'], 'obj_info': [obj], 'lost_frames': 0, 'last_update': False}
                         cam_active['objects'].append(tracked_obj)
                 else:  # Иначе проверяем все отслеживаемые объекты
                     self._find_in_tracked(cam_active, frame_objs)
@@ -85,7 +85,7 @@ class ObjectsHandler:
             was_appended = False  # Флаг, который показывает, новый ли это объект или его уже отслеживали
             for cam_obj in active_objs['objects']:
                 # Если объект с таким айди найден в отслеживаемых, то добавляем новые координаты рамки к его истории
-                if obj['obj_id'] == cam_obj['obj_id']:
+                if obj['track_id'] == cam_obj['track_id']:
                     cam_obj['obj_info'].append(obj)
                     cam_obj['last_update'] = True  # Был ли данный объект обновлен на этом кадре
                     was_appended = True
@@ -94,7 +94,7 @@ class ObjectsHandler:
                         del cam_obj['obj_info'][0]
                     break
             if not was_appended:  # Если это новый объект, то создаем новый словарь для него
-                tracked_obj = {'obj_id': obj['obj_id'], 'obj_info': [obj], 'lost_frames': 0, 'last_update': True}
+                tracked_obj = {'track_id': obj['track_id'], 'obj_info': [obj], 'lost_frames': 0, 'last_update': True}
                 active_objs['objects'].append(tracked_obj)
         del_idxs = []
         for i, cam_obj in enumerate(active_objs['objects']):  # Цикл для перевода объектов в потерянные
@@ -107,3 +107,8 @@ class ObjectsHandler:
                 cam_obj['last_update'] = False  # Сбрасываем флаги
         for idx in reversed(del_idxs):  # Удаление потерянных объектов из активных
             del active_objs['objects'][idx]
+        del_idxs.clear()
+        print('-----------------')
+        print(active_objs)
+        print('------------DDDDDD-----------')
+        print(self.active_objs)
