@@ -108,7 +108,7 @@ class ObjectsHandler:
         for idx in reversed(del_idxs):  # Удаление потерянных объектов из активных
             del active_objs['objects'][idx]
         del_idxs.clear()
-        print('-----------------')
-        print(active_objs)
-        print('------------DDDDDD-----------')
-        print(self.active_objs)
+        # print('-----------------')
+        # print(active_objs)
+        # print('------------DDDDDD-----------')
+        # print(self.active_objs)
