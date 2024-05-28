@@ -8,7 +8,7 @@ from object_tracker.trackers.cfg.utils import read_cfg
 
 class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
     tracker: BOTSORT
-    
+
     def __init__(self):
         super().__init__()
         self.init_impl()
@@ -25,23 +25,23 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
         self.tracker.reset()
 
     def set_params_impl(self, params: dict):
-        pass # TODO: add applying params to tracker instance
+        pass  # TODO: add applying params to tracker instance
 
     def default(self):
         self.params.clear()
 
     def process_impl(
-            self, 
+            self,
             det_info: dict,
-            is_actual: bool = True, 
+            is_actual: bool = True,
             img: np.ndarray = None) -> tuple:
-        
+
         # TODO: add implementation for `is_actual` (ignoring frames)
         cam_id, bboxes_xcycwh, confidences, class_ids = self._parse_det_info(det_info)
-    
+
         # Update tracker with new detections and get current tracks
         tracks = self.tracker.update(class_ids, bboxes_xcycwh, confidences, img)
-        
+
         tracks_info = self._create_tracks_info(cam_id, tracks)
         return tracks_info
 
@@ -76,9 +76,8 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
         return cam_id, bboxes_xcycwh, confidences, class_ids
 
     def _create_tracks_info(self, cam_id: int, tracks: np.ndarray):
-        
-        tracks_info = {'cam_id': cam_id, 'objects': []}
-        print(tracks)
+        tracks_info = {'cam_id': cam_id, 'objects': [], 'module_name': 'tracking'}
+        # print(tracks)
         for i in range(len(tracks)):
             track_bbox = tracks[i, :4].tolist()
             track_conf = tracks[i, 5]
@@ -92,4 +91,4 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
             }
             tracks_info['objects'].append(object_info)
 
-        return tracks_info 
+        return tracks_info
