@@ -10,10 +10,6 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
     def __init__(self):
         super().__init__()
         self.objects = []
-        self.bboxes_coords = []
-        self.confidences = []
-        self.class_ids = []
-        self.is_actual = []  # Флаг, показывающий актуальная рамка или нет
         self.model_name = None
         self.model = None
         self.prev_time = 0  # Для параметра скважности, заданного временем; отсчет времени
@@ -96,7 +92,7 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
             bboxes_coords, confidences, class_ids = utils.non_max_sup(bboxes_coords, confidences, class_ids)
             bboxes_coords, confidences, class_ids = utils.merge_roi_boxes(self.params['roi'][0], bboxes_coords, confidences, class_ids)  # Объединение рамок из разных ROI
             frame_objects = utils.get_objs_info(bboxes_coords, confidences, class_ids)
-            self.objects.append({'cam_id': self.id, 'objects': frame_objects, 'actual': True})
+            self.objects.append({'cam_id': self.id, 'objects': frame_objects, 'actual': True, 'module_name': 'detection'})
         else:
             self.stride_cnt += 1
             self.objects.append(self.objects[-1].copy())
