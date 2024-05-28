@@ -136,13 +136,16 @@ def draw_boxes(image, objects, cam_id, model_names):
                             (255, 255, 255), 2)
 
 
-def draw_boxes_tracking(image, cam_objects, cam_id, model_names):
+def draw_boxes_tracking(image, cameras_objs, cam_id, model_names):
     # Для трекинга отображаем только последние данные об объекте из истории
-    for obj in cam_objects['objects']:
-        last_info = obj['obj_info'][-1]
-        cv2.rectangle(image, (int(last_info['bbox'][0]), int(last_info['bbox'][1])),
-                      (int(last_info['bbox'][2]), int(last_info['bbox'][3])), (0, 255, 0), thickness=8)
-        cv2.putText(image, str(last_info['obj_id']) + ' ' + str(model_names[last_info['class']]) +
-                    " " + "{:.2f}".format(last_info['conf']),
-                    (int(last_info['bbox'][0]), int(last_info['bbox'][1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
-                    (255, 255, 255), 2)
+    for cam_objs in cameras_objs:
+        if cam_objs['cam_id'] == cam_id:
+            for obj in cam_objs['objects']:
+                # if obj['obj_info']
+                last_info = obj['obj_info'][-1]
+                cv2.rectangle(image, (int(last_info['bbox'][0]), int(last_info['bbox'][1])),
+                              (int(last_info['bbox'][2]), int(last_info['bbox'][3])), (0, 255, 0), thickness=8)
+                cv2.putText(image, str(last_info['track_id']) + ' ' + str(model_names[last_info['class']]) +
+                            " " + "{:.2f}".format(last_info['conf']),
+                            (int(last_info['bbox'][0]), int(last_info['bbox'][1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
+                            (0, 0, 255), 2)
