@@ -149,3 +149,14 @@ def draw_boxes_tracking(image, cameras_objs, cam_id, model_names):
                             " " + "{:.2f}".format(last_info['conf']),
                             (int(last_info['bbox'][0]), int(last_info['bbox'][1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
                             (0, 0, 255), 2)
+                # print(len(obj['obj_info']))
+                if len(obj['obj_info']) > 1:
+                    for i in range(len(obj['obj_info']) - 1):
+                        first_info = obj['obj_info'][i]
+                        second_info = obj['obj_info'][i+1]
+                        first_cm_x = int((first_info['bbox'][0] + first_info['bbox'][2]) / 2)
+                        first_cm_y = int((first_info['bbox'][1] + first_info['bbox'][3]) / 2)
+                        second_cm_x = int((second_info['bbox'][0] + second_info['bbox'][2]) / 2)
+                        second_cm_y = int((second_info['bbox'][1] + second_info['bbox'][3]) / 2)
+                        cv2.line(image, (first_cm_x, first_cm_y),
+                                        (second_cm_x, second_cm_y), (0, 0, 255), thickness=8)
