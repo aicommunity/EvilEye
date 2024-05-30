@@ -38,18 +38,18 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
         self.stride_cnt = self.stride
         self.params.clear()
 
-    def process_impl(self, image, all_roi):
-        if not all_roi:
+    def process_impl(self, image, all_roi_coords):
+        if not all_roi_coords:
             roi = [[image, [0, 0]]]
         else:
-            roi = utils.create_roi(image, all_roi)  # Приводим ROI к виду, необходимому для функции детекции
+            roi = utils.create_roi(image, all_roi_coords)  # Приводим ROI к виду, необходимому для функции детекции
         if self.params.get('stride_type', 'frames') == "time":  # В зависимости от параметра скважности запускаем соответствующую функцию
-            objects = self.process_stride_time(image, roi)
+            objects = self.process_stride_time(image, roi, all_roi_coords)
         else:
-            objects = self.process_stride_frame(image, roi)
+            objects = self.process_stride_frame(image, roi, all_roi_coords)
         return objects
 
-    def process_stride_time(self, image, all_roi):
+    def process_stride_time(self, image, all_roi, roi_coords):
         bboxes_coords = []
         confidences = []
         class_ids = []
@@ -66,7 +66,7 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
                 class_ids.extend(roi_ids)
                 bboxes_coords.extend(roi_bboxes)
             bboxes_coords, confidences, class_ids = utils.non_max_sup(bboxes_coords, confidences, class_ids)
-            bboxes_coords, confidences, class_ids = utils.merge_roi_boxes(self.params['roi'][0], bboxes_coords, confidences, class_ids)  # Объединение рамок из разных ROI
+            bboxes_coords, confidences, class_ids = utils.merge_roi_boxes(roi_coords, bboxes_coords, confidences, class_ids)  # Объединение рамок из разных ROI
             frame_objects = utils.get_objs_info(bboxes_coords, confidences, class_ids)
             self.objects.append({'cam_id': self.id, 'objects': frame_objects, 'actual': True})
         else:
@@ -74,7 +74,7 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
             self.objects[-1]['actual'] = False
         return self.objects[-1]
 
-    def process_stride_frame(self, image, all_roi):
+    def process_stride_frame(self, image, all_roi, roi_coords):
         bboxes_coords = []
         confidences = []
         class_ids = []
@@ -90,7 +90,7 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
                 class_ids.extend(roi_ids)
                 bboxes_coords.extend(roi_bboxes)
             bboxes_coords, confidences, class_ids = utils.non_max_sup(bboxes_coords, confidences, class_ids)
-            bboxes_coords, confidences, class_ids = utils.merge_roi_boxes(self.params['roi'][0], bboxes_coords, confidences, class_ids)  # Объединение рамок из разных ROI
+            bboxes_coords, confidences, class_ids = utils.merge_roi_boxes(roi_coords, bboxes_coords, confidences, class_ids)  # Объединение рамок из разных ROI
             frame_objects = utils.get_objs_info(bboxes_coords, confidences, class_ids)
             self.objects.append({'cam_id': self.id, 'objects': frame_objects, 'actual': True, 'module_name': 'detection'})
         else:
