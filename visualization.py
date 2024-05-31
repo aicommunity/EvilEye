@@ -172,7 +172,7 @@ class App(QWidget):
                 self.sources.append(self.params['sources'][i].copy())
             else:
                 self.num_labels += 1
-        self.handler = ObjectsHandler(self.num_labels)
+        self.handler = ObjectsHandler(self.num_labels, history_len=20)
         vertical_layout = QVBoxLayout()
         for i in range(self.rows):
             self.hlayouts.append(QHBoxLayout())
