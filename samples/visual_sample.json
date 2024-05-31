@@ -38,7 +38,7 @@
           "save": false,
           "stride_type": "frames",
           "vid_stride": 1,
-          "roi": [[], [[0, 0, 350, 230], [0, 0, 2304, 2592]]]
+          "roi": [[], []]
         }
       }
     }
