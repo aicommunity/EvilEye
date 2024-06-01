@@ -1,4 +1,6 @@
 import numpy as np
+import cv2
+import time
 
 
 def boxes_iou(box1, box2):
@@ -24,7 +26,7 @@ def non_max_sup(boxes_coords, confidences, class_ids):
     boxes_coords = np.array(boxes_coords, dtype='float64')
     class_ids = np.array(class_ids, dtype='float64')
     sorted_idxs = np.argsort(confidences)
-    iou_thresh = 0.3
+    iou_thresh = 0.5
     keep_idxs = []
     while len(sorted_idxs) > 0:
         last = len(sorted_idxs) - 1
@@ -113,3 +115,48 @@ def is_intersected(box1, box2):
         return True
     else:
         return False
+
+
+def get_objs_info(bboxes_coords, confidences, class_ids):
+    objects = []
+    for bbox, class_id, conf in zip(bboxes_coords, class_ids, confidences):
+        obj = {"bbox": bbox, "conf": conf, "class": class_id}
+        objects.append(obj)
+    return objects
+
+
+def draw_boxes(image, objects, cam_id, model_names):
+    for cam_objs in objects:
+        if cam_objs['cam_id'] == cam_id:
+            for obj in cam_objs['objects']:
+                cv2.rectangle(image, (int(obj['bbox'][0]), int(obj['bbox'][1])),
+                              (int(obj['bbox'][2]), int(obj['bbox'][3])), (0, 255, 0), thickness=8)
+                cv2.putText(image, str(model_names[obj['class']]) + " " + "{:.2f}".format(obj['conf']),
+                            (int(obj['bbox'][0]), int(obj['bbox'][1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
+                            (255, 255, 255), 2)
+
+
+def draw_boxes_tracking(image, cameras_objs, cam_id, model_names):
+    # Для трекинга отображаем только последние данные об объекте из истории
+    for cam_objs in cameras_objs:
+        if cam_objs['cam_id'] == cam_id:
+            for obj in cam_objs['objects']:
+                # if obj['obj_info']
+                last_info = obj['obj_info'][-1]
+                cv2.rectangle(image, (int(last_info['bbox'][0]), int(last_info['bbox'][1])),
+                              (int(last_info['bbox'][2]), int(last_info['bbox'][3])), (0, 255, 0), thickness=8)
+                cv2.putText(image, str(last_info['track_id']) + ' ' + str(model_names[last_info['class']]) +
+                            " " + "{:.2f}".format(last_info['conf']),
+                            (int(last_info['bbox'][0]), int(last_info['bbox'][1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
+                            (0, 0, 255), 2)
+                # print(len(obj['obj_info']))
+                if len(obj['obj_info']) > 1:
+                    for i in range(len(obj['obj_info']) - 1):
+                        first_info = obj['obj_info'][i]
+                        second_info = obj['obj_info'][i+1]
+                        first_cm_x = int((first_info['bbox'][0] + first_info['bbox'][2]) / 2)
+                        first_cm_y = int((first_info['bbox'][1] + first_info['bbox'][3]) / 2)
+                        second_cm_x = int((second_info['bbox'][0] + second_info['bbox'][2]) / 2)
+                        second_cm_y = int((second_info['bbox'][1] + second_info['bbox'][3]) / 2)
+                        cv2.line(image, (first_cm_x, first_cm_y),
+                                        (second_cm_x, second_cm_y), (0, 0, 255), thickness=8)

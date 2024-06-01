@@ -4,14 +4,19 @@ from PyQt5.QtGui import QPixmap
 import PyQt5.QtCore as QtCore
 import sys
 import cv2
-from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt, QThread, QTimer, QMutex
+from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt, QThread, QTimer
 import json
 import capture
 from object_detector import object_detection_yolov8
 import argparse
+from objects_handler.objects_handler import ObjectsHandler
+from utils import utils
 import time
 from timeit import default_timer as timer
-
+from pathlib import Path
+from object_tracker.trackers.cfg.utils import read_cfg
+from object_tracker.object_tracking_botsort import ObjectTrackingBotsort
+sys.path.append(str(Path(__file__).parent.parent.parent))
 
 # Собственный класс для label, чтобы переопределить двойной клик мышкой
 class MyLabel(QLabel):
@@ -33,7 +38,7 @@ class VideoThread(QThread):
     # Сигнал, который отвечает за обновление label, в котором отображается изображение из потока
     update_image_signal = pyqtSignal(list)
 
-    def __init__(self, params, camera, labels, rows, cols):
+    def __init__(self, params, camera, labels, rows, cols, obj_handler):
         super().__init__()
         VideoThread.rows = rows  # Количество строк и столбцов для правильного перевода изображения в полный экран
         VideoThread.cols = cols
@@ -41,31 +46,34 @@ class VideoThread(QThread):
         self.labels = labels
         self.run_flag = True
         self.split = params['split']
-        self.fps = 10
+        self.fps = 30
         self.source_params = params
         self.thread_num = VideoThread.thread_counter  # Номер потока для определения, какой label обновлять
         self.capture = camera
-        self.detector = None
         self.detectors = []
         self.det_params = None
         self.bboxes_coords = []
         self.confidences = []
         self.class_ids = []
-        self.threads = []
-        self.image = None
+        self.handler = obj_handler
+        self.trackers = []
 
         # Если выбран модуль детекции, настраиваем детектор
-        if params['module']['name'] == 'detection':
+        if params['module']['name'] == 'detection' or params['module']['name'] == 'tracking':
             self.det_params = params['module']['det_params']
             if self.split:
                 for i in range(self.source_params['num_split']):
                     self.detectors.append(object_detection_yolov8.ObjectDetectorYoloV8())
                     self.detectors[i].set_params(**self.det_params)
                     self.detectors[i].init()
+                    if params['module']['name'] == 'tracking':
+                        self.trackers.append(ObjectTrackingBotsort())
             else:
                 self.detectors.append(object_detection_yolov8.ObjectDetectorYoloV8())
                 self.detectors[-1].set_params(**self.det_params)
                 self.detectors[-1].init()
+                if params['module']['name'] == 'tracking':
+                    self.trackers.append(ObjectTrackingBotsort())
 
         # Таймер для задания fps у видеороликов
         self.timer = QTimer()
@@ -90,7 +98,7 @@ class VideoThread(QThread):
                 self.process_image()
                 end_it = timer()
                 elapsed_seconds = end_it - begin_it
-                sleep_seconds = 1./self.fps - elapsed_seconds
+                sleep_seconds = 1. / self.fps - elapsed_seconds
                 if sleep_seconds > 0.0:
                     time.sleep(sleep_seconds)
                 else:
@@ -98,17 +106,27 @@ class VideoThread(QThread):
         self.capture.release()
 
     def process_image(self):
-        ret, images = self.capture.process(split_stream=self.source_params['split'],
+        ret, frames = self.capture.process(split_stream=self.source_params['split'],
                                            num_split=self.source_params['num_split'],
                                            src_coords=self.source_params['src_coords'])
         if ret:
-            for count, image in enumerate(images):
-                if self.source_params['module']['name'] == 'detection':
-                    bboxes_coord, confidence, class_id, is_actual = self.detectors[count].process(image, all_roi=self.det_params['roi'][count])
-                    self.bboxes_coords.append(bboxes_coord)
-                    self.confidences.append(confidence)
-                    self.class_ids.append(class_id)
-                conv_img = self.convert_cv_qt(image)
+            for count, frame in enumerate(frames):
+                if self.source_params['module']['name'] == 'detection' or self.source_params['module']['name'] == 'tracking':
+                    frame_objects = self.detectors[count].process(frame, all_roi=self.det_params['roi'][count])
+                    det_id = self.detectors[count].id
+                    # print(len(frame_objects['objects']))
+                    if self.source_params['module']['name'] == 'tracking':
+                        track_info = self.trackers[count].process(frame_objects, True)
+                        # print(track_info)
+                        self.handler.append(track_info)
+                        objs = self.handler.get('active')
+                        # print(objs)
+                        utils.draw_boxes_tracking(frame, objs, det_id, self.detectors[count].model.names)
+                    else:
+                        self.handler.append(frame_objects)
+                        objs = self.handler.get('new')
+                        utils.draw_boxes(frame, objs, det_id, self.detectors[count].model.names)
+                conv_img = self.convert_cv_qt(frame)
                 # Сигнал из потока для обновления label на новое изображение
                 self.update_image_signal.emit([conv_img, self.thread_num + count])
         else:
@@ -154,6 +172,7 @@ class App(QWidget):
                 self.sources.append(self.params['sources'][i].copy())
             else:
                 self.num_labels += 1
+        self.handler = ObjectsHandler(self.num_labels, history_len=20)
         vertical_layout = QVBoxLayout()
         for i in range(self.rows):
             self.hlayouts.append(QHBoxLayout())
@@ -176,7 +195,7 @@ class App(QWidget):
 
     def setup_threads(self):
         for i in range(self.num_sources):
-            self.threads.append(VideoThread(self.sources[i], self.cameras[i], self.labels, self.rows, self.cols))
+            self.threads.append(VideoThread(self.sources[i], self.cameras[i], self.labels, self.rows, self.cols, self.handler))
             self.threads[-1].update_image_signal.connect(self.update_image)  # Сигнал из потока для обновления label на новое изображение
             self.threads[-1].start()
 

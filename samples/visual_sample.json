@@ -4,41 +4,41 @@
   "sources": [
     {
       "source": "IPcam",
-      "camera": "rtsp://user:AutoZloboglaz9-@10.215.1.252:554/Streaming/Channels/101/",
-      "apiPreference": "CAP_GSTREAMER",
+      "camera": "rtsp://user:AutoZloboglaz821@10.245.1.200",
+      "apiPreference": "CAP_FFMPEG",
       "split": false,
       "num_split": 0,
       "src_coords": 0,
       "module": {
-        "name": "detection",
+        "name": "tracking",
         "det_params": {
           "model": "yolov8n.pt",
           "show" : false,
           "conf" : 0.4,
           "save" : false,
           "stride_type": "frames",
-          "vid_stride": 5,
+          "vid_stride": 1,
           "roi": [[[1840, 0, 500, 400], [1700, 395, 800, 650], [1500, 1030, 1400, 1130]]]
         }
       }
     },
     {
       "source": "IPcam",
-      "camera": "rtsp://user:AutoZloboglaz821-@10.215.1.249",
-      "apiPreference": "CAP_GSTREAMER",
+      "camera": "rtsp://user:AutoZloboglaz821-@10.245.1.201",
+      "apiPreference": "CAP_FFMPEG",
       "split": true,
       "num_split": 2,
       "src_coords": [[0, 0, 2304, 1300], [0, 1300, 2304, 1292]],
       "module": {
-        "name": "detection",
+        "name": "tracking",
         "det_params": {
           "model": "yolov8n.pt",
-          "show" : false,
-          "conf" : 0.4,
-          "save" : false,
+          "show": false,
+          "conf": 0.4,
+          "save": false,
           "stride_type": "frames",
-          "vid_stride": 5,
-          "roi": [[], [[0, 0, 350, 230], [0, 0, 2304, 2592]]]
+          "vid_stride": 1,
+          "roi": [[], []]
         }
       }
     }
