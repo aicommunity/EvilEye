@@ -1,22 +1,17 @@
 from PyQt5 import QtGui
 from PyQt5.QtWidgets import QWidget, QApplication, QLabel, QVBoxLayout, QHBoxLayout, QSizePolicy
 from PyQt5.QtGui import QPixmap
-import PyQt5.QtCore as QtCore
 import sys
 import cv2
-from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt, QThread, QTimer
+from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt
 import json
-import capture
-from object_detector import object_detection_yolov8
 import argparse
 from objects_handler.objects_handler import ObjectsHandler
-from utils import utils
-import time
-from timeit import default_timer as timer
 from pathlib import Path
-from object_tracker.trackers.cfg.utils import read_cfg
-from object_tracker.object_tracking_botsort import ObjectTrackingBotsort
+from video_thread import VideoThread
+from controller import controller
 sys.path.append(str(Path(__file__).parent.parent.parent))
+
 
 # Собственный класс для label, чтобы переопределить двойной клик мышкой
 class MyLabel(QLabel):
@@ -31,129 +26,15 @@ class MyLabel(QLabel):
         self.double_click_signal.emit()
 
 
-class VideoThread(QThread):
-    thread_counter = 0
-    rows = 0
-    cols = 0
-    # Сигнал, который отвечает за обновление label, в котором отображается изображение из потока
-    update_image_signal = pyqtSignal(list)
-
-    def __init__(self, params, camera, labels, rows, cols, obj_handler):
-        super().__init__()
-        VideoThread.rows = rows  # Количество строк и столбцов для правильного перевода изображения в полный экран
-        VideoThread.cols = cols
-
-        self.labels = labels
-        self.run_flag = True
-        self.split = params['split']
-        self.fps = 30
-        self.source_params = params
-        self.thread_num = VideoThread.thread_counter  # Номер потока для определения, какой label обновлять
-        self.capture = camera
-        self.detectors = []
-        self.det_params = None
-        self.bboxes_coords = []
-        self.confidences = []
-        self.class_ids = []
-        self.handler = obj_handler
-        self.trackers = []
-
-        # Если выбран модуль детекции, настраиваем детектор
-        if params['module']['name'] == 'detection' or params['module']['name'] == 'tracking':
-            self.det_params = params['module']['det_params']
-            if self.split:
-                for i in range(self.source_params['num_split']):
-                    self.detectors.append(object_detection_yolov8.ObjectDetectorYoloV8())
-                    self.detectors[i].set_params(**self.det_params)
-                    self.detectors[i].init()
-                    if params['module']['name'] == 'tracking':
-                        self.trackers.append(ObjectTrackingBotsort())
-            else:
-                self.detectors.append(object_detection_yolov8.ObjectDetectorYoloV8())
-                self.detectors[-1].set_params(**self.det_params)
-                self.detectors[-1].init()
-                if params['module']['name'] == 'tracking':
-                    self.trackers.append(ObjectTrackingBotsort())
-
-        # Таймер для задания fps у видеороликов
-        self.timer = QTimer()
-        self.timer.moveToThread(self)
-        self.timer.timeout.connect(self.process_image)
-
-        # Определяем количество потоков в зависимости от параметра split
-        if self.source_params['split']:  # Если включен сплит, то увеличиваем количество потоков на соотв. число
-            VideoThread.thread_counter += self.source_params['num_split']
-        else:
-            VideoThread.thread_counter += 1
-
-    def run(self):
-        if self.source_params['source'] == 'file':  # Проигрывание роликов с указанным fps, если запускаем из файла
-            self.fps = self.source_params['fps']
-            self.timer.start(int(1000 // self.fps))
-            loop = QtCore.QEventLoop()
-            loop.exec_()
-        else:
-            while self.run_flag:
-                begin_it = timer()
-                self.process_image()
-                end_it = timer()
-                elapsed_seconds = end_it - begin_it
-                sleep_seconds = 1. / self.fps - elapsed_seconds
-                if sleep_seconds > 0.0:
-                    time.sleep(sleep_seconds)
-                else:
-                    time.sleep(0.01)
-        self.capture.release()
-
-    def process_image(self):
-        ret, frames = self.capture.process(split_stream=self.source_params['split'],
-                                           num_split=self.source_params['num_split'],
-                                           src_coords=self.source_params['src_coords'])
-        if ret:
-            for count, frame in enumerate(frames):
-                if self.source_params['module']['name'] == 'detection' or self.source_params['module']['name'] == 'tracking':
-                    frame_objects = self.detectors[count].process(frame, all_roi=self.det_params['roi'][count])
-                    det_id = self.detectors[count].id
-                    # print(len(frame_objects['objects']))
-                    if self.source_params['module']['name'] == 'tracking':
-                        track_info = self.trackers[count].process(frame_objects, True)
-                        # print(track_info)
-                        self.handler.append(track_info)
-                        objs = self.handler.get('active')
-                        # print(objs)
-                        utils.draw_boxes_tracking(frame, objs, det_id, self.detectors[count].model.names)
-                    else:
-                        self.handler.append(frame_objects)
-                        objs = self.handler.get('new')
-                        utils.draw_boxes(frame, objs, det_id, self.detectors[count].model.names)
-                conv_img = self.convert_cv_qt(frame)
-                # Сигнал из потока для обновления label на новое изображение
-                self.update_image_signal.emit([conv_img, self.thread_num + count])
-        else:
-            self.capture.reset()
-
-    def stop(self):
-        self.run_flag = False
-        self.wait()
-
-    def convert_cv_qt(self, cv_img):
-        # Переводим из opencv image в QPixmap
-        rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
-        h, w, ch = rgb_image.shape
-        bytes_per_line = ch * w
-        convert_to_qt = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
-        # Подгоняем под указанный размер, но сохраняем пропорции
-        scaled_image = convert_to_qt.scaled(int(a.geometry().width() / VideoThread.cols),
-                                            int(a.geometry().height() / VideoThread.rows), Qt.KeepAspectRatio)
-        return QPixmap.fromImage(scaled_image)
-
-
 class App(QWidget):
     def __init__(self, params, win_width, win_height):
         super().__init__()
         self.setWindowTitle("EvilEye")
         self.resize(win_width, win_height)
         self.adjustSize()
+
+        # self.handler = ObjectsHandler(self.num_labels, history_len=20)
+        self.controller = controller.Controller(self.update_image)
 
         self.params = params
         self.rows = self.params['num_height']
@@ -169,35 +50,35 @@ class App(QWidget):
         for i in range(self.num_sources):
             if self.params['sources'][i]['split']:
                 self.num_labels += self.params['sources'][i]['num_split']
-                self.sources.append(self.params['sources'][i].copy())
             else:
                 self.num_labels += 1
-        self.handler = ObjectsHandler(self.num_labels, history_len=20)
         vertical_layout = QVBoxLayout()
         for i in range(self.rows):
             self.hlayouts.append(QHBoxLayout())
             vertical_layout.addLayout(self.hlayouts[-1])
         self.setLayout(vertical_layout)
         self.setup_layout()
-        self.init_captures()  # Инициализируем объекты захват из источников
-        self.setup_threads()  # Создаем и запускаем потоки
+        self.controller.init(self.params)
+        # self.init_captures()  # Инициализируем объекты захват из источников
+        # self.setup_threads()  # Создаем и запускаем потоки
 
-    def init_captures(self):
-        for i in range(self.num_sources):
-            src_params = self.sources[i]
-            capture_params = {'source': src_params['source'], 'filename': src_params['camera'],
-                              'apiPreference': src_params['apiPreference'], 'split': src_params['split'],
-                              'num_split': src_params['num_split'], 'src_coords': src_params['src_coords']}
-            camera = capture.VideoCapture()
-            camera.set_params(**capture_params)
-            camera.init()
-            self.cameras.append(camera)
+    # def init_captures(self):
+    #     for i in range(self.num_sources):
+    #         src_params = self.sources[i]
+    #         capture_params = {'source': src_params['source'], 'filename': src_params['camera'],
+    #                           'apiPreference': src_params['apiPreference'], 'split': src_params['split'],
+    #                           'num_split': src_params['num_split'], 'src_coords': src_params['src_coords']}
+    #         camera = capture.VideoCapture()
+    #         camera.set_params(**capture_params)
+    #         camera.init()
+    #         self.cameras.append(camera)
 
-    def setup_threads(self):
-        for i in range(self.num_sources):
-            self.threads.append(VideoThread(self.sources[i], self.cameras[i], self.labels, self.rows, self.cols, self.handler))
-            self.threads[-1].update_image_signal.connect(self.update_image)  # Сигнал из потока для обновления label на новое изображение
-            self.threads[-1].start()
+
+    # def setup_threads(self):
+    #     for i in range(self.num_sources):
+    #         self.threads.append(VideoThread(self.sources[i], self.rows, self.cols))
+    #         self.threads[-1].update_image_signal.connect(self.update_image)  # Сигнал из потока для обновления label на новое изображение
+    #         self.threads[-1].start()
 
     def setup_layout(self):
         self.layout().setContentsMargins(0, 0, 0, 0)
@@ -224,10 +105,22 @@ class App(QWidget):
             thread.stop()
         event.accept()
 
+    def convert_cv_qt(self, cv_img):
+        # Переводим из opencv image в QPixmap
+        rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
+        h, w, ch = rgb_image.shape
+        bytes_per_line = ch * w
+        convert_to_qt = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
+        # Подгоняем под указанный размер, но сохраняем пропорции
+        scaled_image = convert_to_qt.scaled(int(self.geometry().width() / VideoThread.cols),
+                                            int(self.geometry().height() / VideoThread.rows), Qt.KeepAspectRatio)
+        return QPixmap.fromImage(scaled_image)
+
     @pyqtSlot(list)
     def update_image(self, thread_data):
+        qt_image = self.convert_cv_qt(thread_data[0])
         # Обновляет label, в котором находится изображение
-        self.labels[thread_data[1]].setPixmap(thread_data[0])
+        self.labels[thread_data[1]].setPixmap(qt_image)
 
     @pyqtSlot()
     def change_screen_size(self):
