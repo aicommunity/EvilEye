@@ -3,7 +3,6 @@ import cv2
 import time
 
 
-
 def boxes_iou(box1, box2):
     if (((box1[0] <= box2[0] and box1[1] <= box2[1]) and (
             box2[2] <= box1[2] and box2[3] <= box1[3])) or  # Находится ли один bbox внутри другого
@@ -139,11 +138,24 @@ def draw_boxes(image, objects, cam_id, model_names):
 
 def draw_boxes_tracking(image, cameras_objs):
     # Для трекинга отображаем только последние данные об объекте из истории
+    print(cameras_objs)
     for obj in cameras_objs['objects']:
         # if obj['obj_info']
-        cv2.rectangle(image, (int(obj['bbox'][0]), int(obj['bbox'][1])),
-                      (int(obj['bbox'][2]), int(obj['bbox'][3])), (0, 255, 0), thickness=8)
-        cv2.putText(image, str(obj['class']) +
-                    " " + "{:.2f}".format(obj['conf']),
-                    (int(obj['bbox'][0]), int(obj['bbox'][1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
+        last_info = obj['obj_info'][-1]
+        cv2.rectangle(image, (int(last_info['bbox'][0]), int(last_info['bbox'][1])),
+                      (int(last_info['bbox'][2]), int(last_info['bbox'][3])), (0, 255, 0), thickness=8)
+        cv2.putText(image, str(last_info['track_id']) + ' ' + str([last_info['class']]) +
+                    " " + "{:.2f}".format(last_info['conf']),
+                    (int(last_info['bbox'][0]), int(last_info['bbox'][1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
                     (0, 0, 255), 2)
+        # print(len(obj['obj_info']))
+        if len(obj['obj_info']) > 1:
+            for i in range(len(obj['obj_info']) - 1):
+                first_info = obj['obj_info'][i]
+                second_info = obj['obj_info'][i+1]
+                first_cm_x = int((first_info['bbox'][0] + first_info['bbox'][2]) / 2)
+                first_cm_y = int((first_info['bbox'][1] + first_info['bbox'][3]) / 2)
+                second_cm_x = int((second_info['bbox'][0] + second_info['bbox'][2]) / 2)
+                second_cm_y = int((second_info['bbox'][1] + second_info['bbox'][3]) / 2)
+                cv2.line(image, (first_cm_x, first_cm_y),
+                                (second_cm_x, second_cm_y), (0, 0, 255), thickness=8)

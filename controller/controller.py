@@ -3,6 +3,7 @@ import capture
 from object_detector import object_detection_yolov8
 from object_tracker import object_tracking_botsort
 from video_thread import VideoThread
+from objects_handler import objects_handler
 from time import sleep
 
 
@@ -14,7 +15,7 @@ class Controller:
         self.sources = []
         self.detectors = []
         self.trackers = []
-        # self.handler = obj_handler
+        self.obj_handler = None
         self.visual_threads = []
         self.qt_slot = pyqt_slot
 
@@ -47,7 +48,7 @@ class Controller:
                         detector.put((frame, count))
                         # frame_objects = detectors[count].process(frame, all_roi=detectors[count].params['roi'][count])
                         self.detections[i + count] = detector.get()
-                        print(self.detections[i + count])
+                        # print(self.detections[i + count])
                         # self.visual_threads[i + count].append_data((frame, self.detections[i + count]))
                 else:
                     self.sources[i].reset()
@@ -66,8 +67,8 @@ class Controller:
                         tracker = self.trackers[i + count]
                         tracker.put(self.detections[i + count])
                         self.track_info[i + count] = tracker.get()
-                        print(self.track_info[i + count])
-                        self.visual_threads[i + count].append_data((frame, self.track_info[i + count]))
+                        self.obj_handler.append(self.track_info[i + count])
+                        self.visual_threads[i + count].append_data((frame, self.obj_handler.get('active', i + count)))
                 else:
                     self.sources[i].reset()
 
@@ -86,13 +87,14 @@ class Controller:
         self._init_detectors(self.params['detectors'])
         self._init_trackers(self.params['trackers'])
         self._init_visualizer()
+        self.obj_handler = objects_handler.ObjectsHandler(self.num_tracks, history_len=30)
         self.control_thread.start()
 
     def _init_captures(self, params):
         num_sources = len(params)
         for i in range(num_sources):
             src_params = params[i]
-            print(src_params)
+            # print(src_params)
             camera = capture.VideoCapture()
             camera.set_params(**src_params)
             camera.init()
@@ -102,7 +104,7 @@ class Controller:
         num_det = len(params)
         for i in range(num_det):
             det_params = params[i]
-            print(det_params)
+            # print(det_params)
             self.detectors.append(object_detection_yolov8.ObjectDetectorYoloV8())
             self.detectors[i].set_params(**det_params)
             self.detectors[i].init()
