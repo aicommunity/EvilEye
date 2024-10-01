@@ -1,9 +1,13 @@
+import threading
+
 import cv2
 import numpy as np
 from utils import utils
 from object_tracker import object_tracking_base
 from object_tracker.trackers.bot_sort import BOTSORT
 from object_tracker.trackers.cfg.utils import read_cfg
+from time import sleep
+from queue import Queue
 
 
 class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
@@ -12,6 +16,11 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
     def __init__(self):
         super().__init__()
         self.init_impl()
+
+        self.queue_in = Queue()
+        self.queue_out = Queue()
+        self.processing_thread = threading.Thread(target=self._process_impl, daemon=True)
+        self.processing_thread.start()
         self.is_inited = True
 
     def init_impl(self):
@@ -19,6 +28,7 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
         cfg = read_cfg()
 
         self.tracker = BOTSORT(args=cfg, frame_rate=30)
+
         return True
 
     def reset_impl(self):
@@ -29,6 +39,22 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
 
     def default(self):
         self.params.clear()
+
+    def get(self):
+        return self.queue_out.get()
+
+    def put(self, det_info):
+        self.queue_in.put(det_info)
+
+    def _process_impl(self):
+        while True:
+            detections = self.queue_in.get()
+            cam_id, bboxes_xcycwh, confidences, class_ids = self._parse_det_info(detections)
+            tracks = self.tracker.update(class_ids, bboxes_xcycwh, confidences)
+
+            tracks_info = self._create_tracks_info(cam_id, tracks)
+            self.queue_out.put(tracks_info)
+            # sleep(0.01)
 
     def process_impl(
             self,

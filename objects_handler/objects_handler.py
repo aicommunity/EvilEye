@@ -1,6 +1,7 @@
 from queue import Queue
 from threading import Thread
 from threading import Condition
+from threading import Event
 
 '''
 Модуль работы с объектами ожидает данные от детектора в виде dict: {'cam_id': int, 'objects': list, 'actual': bool}, 
@@ -15,31 +16,47 @@ from threading import Condition
 
 
 class ObjectsHandler:
-    def __init__(self, cams_num, history_len=1, lost_thresh=5):
+    def __init__(self, params, history_len=1, lost_thresh=5):
         # Очередь для потокобезопасного приема данных от каждой камеры
         self.objs_queue = Queue()
         # Списки для хранения различных типов объектов
         self.new_objs = []
         self.active_objs = []
         self.lost_objs = []
+        self.events_handler = []
+        self.events_gui = []
         self.history = history_len
         self.lost_thresh = lost_thresh  # Порог перевода (в кадрах) в потерянные объекты
-        self.cams_num = cams_num
+        self.lists_updated = False
+
+        self.cams_num = 0
+        for source in params['sources']:
+            if source['split']:
+                self.cams_num += source['num_split']
+            else:
+                self.cams_num += 1
+
         for i in range(self.cams_num):
-            self.active_objs.append({'cam_id': i, 'objects': []})
+            self.events_handler.append(Event())
+            self.events_handler[-1].set()
+            self.events_gui.append(Event())
+            self.events_gui[-1].set()
+            self.active_objs.append({'cam_id': i, 'objects': [], 'cur_frame': None})
         # Условие для блокировки других потоков
         self.condition = Condition()
         # Поток, который отвечает за получение объектов из очереди и распределение их по спискам
         self.handler = Thread(target=self.handle_objs, daemon=True)
         self.handler.start()
 
-    def append(self, objs):  # Добавление данных из детектора/трекера в очередь
-        self.objs_queue.put(objs)
+    def append(self, objs, frame):  # Добавление данных из детектора/трекера в очередь
+        self.objs_queue.put((objs, frame))
 
     def get(self, objs_type):  # Получение списка объектов в зависимости от указанного типа
         # Блокируем остальные потоки на время получения объектов
         with self.condition:
-            self.condition.wait()
+            while not self.lists_updated:
+                self.condition.wait()
+            self.lists_updated = False
             if objs_type == 'new':
                 return self.new_objs
             elif objs_type == 'active':
@@ -52,23 +69,25 @@ class ObjectsHandler:
     def handle_objs(self):  # Функция, отвечающая за работу с объектами
         print('Handler running: waiting for objects...')
         while True:
-            frame_objs = self.objs_queue.get()
+            frame_objs, frame = self.objs_queue.get()
             # Блокируем остальные потоки для предотвращения одновременного обращения к объектам
             with self.condition:
                 if frame_objs['module_name'] == 'tracking':  # Если объекты получены от трекера
-                    self._handle_active(frame_objs)
+                    self._handle_active(frame_objs, frame)
                 else:  # Проверяем, есть ли в списке новых объектов предыдущая детекция с этой камеры, если да, заменяем на новую
                     idx = next((i for i, item in enumerate(self.new_objs) if item['cam_id'] == frame_objs['cam_id']), None)
                     if idx is not None:
                         del self.new_objs[idx]
                     self.new_objs.append(frame_objs)
                     # Оповещаем остальные потоки, снимаем блокировку
+                self.lists_updated = True
                 self.condition.notify()
             self.objs_queue.task_done()
 
-    def _handle_active(self, frame_objs):
+    def _handle_active(self, frame_objs, frame):
         for cam_active in self.active_objs:  # Проходим по данным со всех камер
-            if frame_objs['cam_id'] == cam_active['cam_id']:  # Если объекты были получены с данной камеры
+            if frame_objs['cam_id'] == cam_active['cam_id']:  # Если объекты были получены от данной камеры
+                cam_active['cur_frame'] = frame
                 if len(cam_active['objects']) == 0:  # Если нет отслеживаемых объектов, то просто добавляем все новые
                     for obj in frame_objs['objects']:
                         tracked_obj = {'track_id': obj['track_id'], 'obj_info': [obj], 'lost_frames': 0, 'last_update': False}
