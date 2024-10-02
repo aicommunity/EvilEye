@@ -1,11 +1,7 @@
 import cv2
 import capture
 from capture import VideoCaptureBase as Base
-from threading import Thread
-from queue import Queue
-from threading import Condition
 from threading import Lock
-from collections import deque
 from time import sleep
 
 
@@ -13,11 +9,8 @@ class VideoCapture(capture.VideoCaptureBase):
     def __init__(self):
         super().__init__()
         self.mutex = Lock()
-        self.frames_queue = Queue(maxsize=1)
-        self.writer = Thread(target=self._capture_frames, daemon=True)
 
     def set_params_impl(self):
-        source = None
         if self.params['source'] == 'IPcam' and self.params['apiPreference'] == "CAP_GSTREAMER":  # Приведение rtsp ссылки к формату gstreamer
             if '!' not in self.params['camera']:
                 str_h265 = (' ! rtph265depay ! h265parse ! avdec_h265 ! decodebin ! videoconvert ! '  # Указание кодеков и форматов
@@ -44,7 +37,7 @@ class VideoCapture(capture.VideoCaptureBase):
             self.capture.open(self.params['camera'], Base.VideoCaptureAPIs[self.params['apiPreference']])
 
     def init_impl(self):
-        self.writer.start()
+        super().init_impl()
         return True
 
     def reset_impl(self):
@@ -71,7 +64,7 @@ class VideoCapture(capture.VideoCaptureBase):
                     if self.frames_queue.full():
                         self.frames_queue.get()
                 self.frames_queue.put([is_read, None])
-            # sleep(0.01)
+            sleep(0.01)
 
     def process_impl(self, split_stream=False, num_split=None, src_coords=None):
         ret, src_image = self.frames_queue.get()

@@ -68,11 +68,12 @@ class Controller:
                         tracker.put(self.detections[i + count])
                         self.track_info[i + count] = tracker.get()
                         self.obj_handler.append(self.track_info[i + count])
+                        # print(self.obj_handler.get('active', i + count))
                         self.visual_threads[i + count].append_data((frame, self.obj_handler.get('active', i + count)))
                 else:
                     self.sources[i].reset()
 
-            # sleep(0.01)
+            sleep(0.01)
 
     def init(self, params):
         self.params = params
@@ -113,6 +114,7 @@ class Controller:
         num_trackers = len(params)
         for i in range(num_trackers):
             self.trackers.append(object_tracking_botsort.ObjectTrackingBotsort())
+            self.trackers[i].init()
 
     def _init_visualizer(self):
         num_videos = len(self.params['sources'])

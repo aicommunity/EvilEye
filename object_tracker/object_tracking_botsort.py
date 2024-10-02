@@ -1,13 +1,8 @@
-import threading
-
-import cv2
 import numpy as np
-from utils import utils
 from object_tracker import object_tracking_base
 from object_tracker.trackers.bot_sort import BOTSORT
 from object_tracker.trackers.cfg.utils import read_cfg
 from time import sleep
-from queue import Queue
 
 
 class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
@@ -15,26 +10,18 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
 
     def __init__(self):
         super().__init__()
-        self.init_impl()
-
-        self.queue_in = Queue()
-        self.queue_out = Queue()
-        self.processing_thread = threading.Thread(target=self._process_impl, daemon=True)
-        self.processing_thread.start()
-        self.is_inited = True
 
     def init_impl(self):
         # TODO: add mechanism of setting cfg and replace this in the future
         cfg = read_cfg()
-
         self.tracker = BOTSORT(args=cfg, frame_rate=30)
-
+        super().init_impl()
         return True
 
     def reset_impl(self):
         self.tracker.reset()
 
-    def set_params_impl(self, params: dict):
+    def set_params_impl(self):
         pass  # TODO: add applying params to tracker instance
 
     def default(self):
@@ -54,22 +41,7 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
 
             tracks_info = self._create_tracks_info(cam_id, tracks)
             self.queue_out.put(tracks_info)
-            # sleep(0.01)
-
-    def process_impl(
-            self,
-            det_info: dict,
-            is_actual: bool = True,
-            img: np.ndarray = None) -> tuple:
-
-        # TODO: add implementation for `is_actual` (ignoring frames)
-        cam_id, bboxes_xcycwh, confidences, class_ids = self._parse_det_info(det_info)
-
-        # Update tracker with new detections and get current tracks
-        tracks = self.tracker.update(class_ids, bboxes_xcycwh, confidences, img)
-
-        tracks_info = self._create_tracks_info(cam_id, tracks)
-        return tracks_info
+            sleep(0.01)
 
     def _parse_det_info(self, det_info: dict) -> tuple:
         cam_id = det_info['cam_id']

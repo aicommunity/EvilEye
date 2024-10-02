@@ -2,8 +2,6 @@ from ultralytics import YOLO
 from utils import utils
 import object_detector
 import time
-import threading
-from queue import Queue
 from time import sleep
 
 
@@ -12,10 +10,6 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
 
     def __init__(self):
         super().__init__()
-
-        self.queue_in = Queue()
-        self.queue_out = Queue()
-        self.processing_thread = threading.Thread(target=self._process_impl, daemon=True)
 
         self.objects = []
         self.model_name = None
@@ -28,8 +22,8 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
         print(self.id)
 
     def init_impl(self):
-        self.processing_thread.start()
         self.model = YOLO(self.model_name)
+        super().init_impl()
         return True
 
     def reset_impl(self):
@@ -47,12 +41,6 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
         self.stride_cnt = self.stride
         self.params.clear()
 
-    def get(self):
-        return self.queue_out.get()
-
-    def put(self, image):
-        self.queue_in.put(image)
-
     def _process_impl(self):
         while True:
             image, det_num = self.queue_in.get()
@@ -65,18 +53,7 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
             else:
                 objects = self.process_stride_frame(image, roi)
             self.queue_out.put(objects)
-            # sleep(0.01)
-
-    def process_impl(self, image, all_roi):
-        if not all_roi:
-            roi = [[image, [0, 0]]]
-        else:
-            roi = utils.create_roi(image, all_roi)  # Приводим ROI к виду, необходимому для функции детекции
-        if self.params.get('stride_type', 'frames') == "time":  # В зависимости от параметра скважности запускаем соответствующую функцию
-            objects = self.process_stride_time(image, roi)
-        else:
-            objects = self.process_stride_frame(image, roi)
-        return objects
+            sleep(0.01)
 
     def process_stride_time(self, image, all_roi):
         bboxes_coords = []

@@ -1,8 +1,9 @@
 from abc import ABC, abstractmethod
-import numpy as np
 import cv2
 import core
 from enum import IntEnum
+import threading
+from queue import Queue
 
 
 class VideoCaptureBase(core.EvilEyeBase):
@@ -19,6 +20,10 @@ class VideoCaptureBase(core.EvilEyeBase):
         super().__init__()
         self.capture = cv2.VideoCapture()
         self.stream_idx = VideoCaptureBase.source_count
+
+        self.frames_queue = Queue(maxsize=1)
+        self.writer = threading.Thread(target=self._capture_frames, daemon=True)
+
         VideoCaptureBase.video_sources.append(self.capture)
         VideoCaptureBase.source_count += 1
 
@@ -41,6 +46,14 @@ class VideoCaptureBase(core.EvilEyeBase):
             return self.process_impl(split_stream, num_split, src_coords)
         else:
             raise Exception('init function has not been called')
+
+    def init_impl(self):
+        self.writer.start()
+        return True
+
+    @abstractmethod
+    def _capture_frames(self):
+        pass
 
     @abstractmethod
     def process_impl(self, split_stream=False, num_split=None, src_coords=None):
