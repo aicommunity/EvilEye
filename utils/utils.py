@@ -103,10 +103,24 @@ def merge_roi_boxes(all_roi, bboxes_coords, confidences, class_ids):
 def is_same_roi(all_roi, box1, box2):
     if len(all_roi) == 0:
         return True
-    for roi in all_roi:
+    surrounding_rois_box1 = []
+    surrounding_rois_box2 = []
+    for i, roi in enumerate(all_roi):
         if (((roi[1] <= box1[3] <= (roi[1] + roi[3])) and (roi[1] <= box1[1] <= (roi[1] + roi[3]))) and
                 ((roi[1] <= box2[3] <= (roi[1] + roi[3])) and (roi[1] <= box2[1] <= (roi[1] + roi[3])))):
+            # Если рамки находятся в одном регионе, но хотя бы одна из рамок уже находится в другом, значит
+            # регионы вложенные, поэтому возвращаем False и объединяем рамки
+            if len(surrounding_rois_box1) > 0 or len(surrounding_rois_box2) > 0:
+                return False
             return True
+        elif ((roi[1] <= box1[3] <= (roi[1] + roi[3])) and (roi[1] <= box1[1] <= (roi[1] + roi[3])) and not
+                (roi[1] <= box2[3] <= (roi[1] + roi[3])) and (roi[1] <= box2[1] <= (roi[1] + roi[3]))):
+            # Проверка на вложенность регионов интереса, создаем для каждой рамки список окружающих регионов
+            surrounding_rois_box1.append(i)
+        elif ((roi[1] <= box2[3] <= (roi[1] + roi[3])) and (roi[1] <= box2[1] <= (roi[1] + roi[3])) and not
+                (roi[1] <= box1[3] <= (roi[1] + roi[3])) and (roi[1] <= box1[1] <= (roi[1] + roi[3]))):
+            # Проверка на вложенность регионов интереса, создаем для каждой рамки список окружающих регионов
+            surrounding_rois_box2.append(i)
     return False
 
 
@@ -152,10 +166,10 @@ def draw_boxes_tracking(image, cameras_objs):
         if len(obj['obj_info']) > 1:
             for i in range(len(obj['obj_info']) - 1):
                 first_info = obj['obj_info'][i]
-                second_info = obj['obj_info'][i+1]
+                second_info = obj['obj_info'][i + 1]
                 first_cm_x = int((first_info['bbox'][0] + first_info['bbox'][2]) / 2)
                 first_cm_y = int((first_info['bbox'][1] + first_info['bbox'][3]) / 2)
                 second_cm_x = int((second_info['bbox'][0] + second_info['bbox'][2]) / 2)
                 second_cm_y = int((second_info['bbox'][1] + second_info['bbox'][3]) / 2)
                 cv2.line(image, (first_cm_x, first_cm_y),
-                                (second_cm_x, second_cm_y), (0, 0, 255), thickness=8)
+                         (second_cm_x, second_cm_y), (0, 0, 255), thickness=8)

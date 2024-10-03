@@ -21,7 +21,7 @@ class VideoCaptureBase(core.EvilEyeBase):
         self.capture = cv2.VideoCapture()
         self.stream_idx = VideoCaptureBase.source_count
 
-        self.frames_queue = Queue(maxsize=1)
+        self.frames_queue = Queue(maxsize=2)
         self.writer = threading.Thread(target=self._capture_frames, daemon=True)
 
         VideoCaptureBase.video_sources.append(self.capture)

@@ -21,7 +21,7 @@
   ],
   "detectors":[
     {
-      "cameras": [1],
+      "cameras": [0],
       "model": "yolov8n.pt",
       "show" : false,
       "conf" : 0.4,
@@ -31,7 +31,7 @@
       "roi": [[[1840, 0, 500, 400], [1700, 395, 800, 650], [1500, 1030, 1400, 1130]]]
     },
     {
-      "cameras": [2],
+      "cameras": [1],
       "model": "yolov8n.pt",
       "show" : false,
       "conf" : 0.4,
@@ -41,7 +41,7 @@
       "roi": [[]]
     },
     {
-      "cameras": [3],
+      "cameras": [2],
       "model": "yolov8n.pt",
       "show" : false,
       "conf" : 0.4,
@@ -53,40 +53,13 @@
   ],
   "trackers":[
     {
-        "params": {
-          "cameras": [1],
-          "model": "yolov8n.pt",
-          "show" : false,
-          "conf" : 0.4,
-          "save" : false,
-          "stride_type": "frames",
-          "vid_stride": 1,
-          "roi": [[[1840, 0, 500, 400], [1700, 395, 800, 650], [1500, 1030, 1400, 1130]]]
-        }
+      "cameras": [0]
     },
     {
-        "params": {
-          "cameras": [1],
-          "model": "yolov8n.pt",
-          "show" : false,
-          "conf" : 0.4,
-          "save" : false,
-          "stride_type": "frames",
-          "vid_stride": 1,
-          "roi": [[[1840, 0, 500, 400], [1700, 395, 800, 650], [1500, 1030, 1400, 1130]]]
-        }
+      "cameras": [1]
     },
     {
-        "params": {
-          "cameras": [1],
-          "model": "yolov8n.pt",
-          "show" : false,
-          "conf" : 0.4,
-          "save" : false,
-          "stride_type": "frames",
-          "vid_stride": 1,
-          "roi": [[[1840, 0, 500, 400], [1700, 395, 800, 650], [1500, 1030, 1400, 1130]]]
-        }
+      "cameras": [2]
     }
   ]
 }

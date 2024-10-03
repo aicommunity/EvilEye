@@ -44,10 +44,12 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
     def _process_impl(self):
         while True:
             image, det_num = self.queue_in.get()
+            self.id = det_num
+            roi_idx = self.params['cameras'].index(det_num)
             if not self.params['roi'][0]:
                 roi = [[image, [0, 0]]]
             else:
-                roi = utils.create_roi(image, self.params['roi'][0])
+                roi = utils.create_roi(image, self.params['roi'][roi_idx])
             if self.params.get('stride_type', 'frames') == "time":  # В зависимости от параметра скважности запускаем соответствующую функцию
                 objects = self.process_stride_time(image, roi)
             else:

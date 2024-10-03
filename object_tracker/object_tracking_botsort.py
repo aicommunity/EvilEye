@@ -38,7 +38,6 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
             detections = self.queue_in.get()
             cam_id, bboxes_xcycwh, confidences, class_ids = self._parse_det_info(detections)
             tracks = self.tracker.update(class_ids, bboxes_xcycwh, confidences)
-
             tracks_info = self._create_tracks_info(cam_id, tracks)
             self.queue_out.put(tracks_info)
             sleep(0.01)

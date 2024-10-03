@@ -1,3 +1,4 @@
+import time
 from queue import Queue
 from threading import Thread
 from threading import Condition
@@ -70,6 +71,7 @@ class ObjectsHandler:
                     # Оповещаем остальные потоки, снимаем блокировку
                 self.condition.notify()
             self.objs_queue.task_done()
+            time.sleep(0.01)
 
     def _handle_active(self, frame_objs):
         for cam_active in self.active_objs:  # Проходим по данным со всех камер

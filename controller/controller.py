@@ -13,12 +13,13 @@ class Controller:
         self.control_thread = threading.Thread(target=self.run, daemon=True)
         self.params = None
         self.sources = []
-        self.detectors = []
-        self.trackers = []
+        self.detectors = {}
+        self.trackers = {}
         self.obj_handler = None
         self.visual_threads = []
         self.qt_slot = pyqt_slot
 
+        self.num_videos = 0
         self.num_sources = 0
         self.num_dets = 0
         self.num_tracks = 0
@@ -30,7 +31,6 @@ class Controller:
         while True:
             for i in range(self.num_sources):
                 source = self.sources[i]
-                # if source:
                 self.captures[i] = source.process(split_stream=source.params['split'],
                                                   num_split=source.params['num_split'],
                                                   src_coords=source.params['src_coords'])
@@ -40,34 +40,27 @@ class Controller:
             for i in range(self.num_sources):
                 is_read, frames = self.captures[i]
                 if is_read:
-                    # if not detectors:
-                    #     raise Exception('Detector has not been set in the configuration file')
-
                     for count, frame in enumerate(frames):
                         detector = self.detectors[i + count]
-                        detector.put((frame, count))
+                        detector.put((frame, i + count))
                         # frame_objects = detectors[count].process(frame, all_roi=detectors[count].params['roi'][count])
                         self.detections[i + count] = detector.get()
-                        # print(self.detections[i + count])
-                        # self.visual_threads[i + count].append_data((frame, self.detections[i + count]))
                 else:
                     self.sources[i].reset()
 
             for i in range(self.num_sources):
                 is_read, frames = self.captures[i]
                 if is_read:
-                    # if not detectors:
-                    #     raise Exception('Detector has not been set in the configuration file
                     for count, frame in enumerate(frames):
                         # for j in range(self.num_tracks):
                         #     detection = self.detections[j]
-                        #     print(detection)
-                        # if not trackers:
-                        #     raise Exception('Tracker has not been set in the configuration file')
+                        detection = self.detections[i + count]
                         tracker = self.trackers[i + count]
-                        tracker.put(self.detections[i + count])
+                        tracker.put(detection)
                         self.track_info[i + count] = tracker.get()
-                        self.obj_handler.append(self.track_info[i + count])
+                        tracks = self.track_info[i + count]
+                        print(tracks)
+                        self.obj_handler.append(tracks)
                         # print(self.obj_handler.get('active', i + count))
                         self.visual_threads[i + count].append_data((frame, self.obj_handler.get('active', i + count)))
                 else:
@@ -81,14 +74,12 @@ class Controller:
         self.num_dets = len(self.params['detectors'])
         self.num_tracks = len(self.params['trackers'])
         self.captures = [None] * self.num_sources
-        self.detections = [None] * self.num_dets
-        self.track_info = [None] * self.num_tracks
 
         self._init_captures(self.params['sources'])
         self._init_detectors(self.params['detectors'])
         self._init_trackers(self.params['trackers'])
         self._init_visualizer()
-        self.obj_handler = objects_handler.ObjectsHandler(self.num_tracks, history_len=30)
+        self.obj_handler = objects_handler.ObjectsHandler(self.num_videos, history_len=30)
         self.control_thread.start()
 
     def _init_captures(self, params):
@@ -103,18 +94,32 @@ class Controller:
 
     def _init_detectors(self, params):
         num_det = len(params)
+        cams_num = 0
         for i in range(num_det):
             det_params = params[i]
+            detector = object_detection_yolov8.ObjectDetectorYoloV8()
             # print(det_params)
-            self.detectors.append(object_detection_yolov8.ObjectDetectorYoloV8())
-            self.detectors[i].set_params(**det_params)
-            self.detectors[i].init()
+            cams_num += len(det_params['cameras'])
+            for cam_num in det_params['cameras']:
+                self.detectors[cam_num] = detector
+            detector.set_params(**det_params)
+            detector.init()
+        self.detections = [None] * cams_num
+        self.num_videos = cams_num
 
     def _init_trackers(self, params):
         num_trackers = len(params)
+        cams_num = 0
         for i in range(num_trackers):
-            self.trackers.append(object_tracking_botsort.ObjectTrackingBotsort())
-            self.trackers[i].init()
+            tracker_params = params[i]
+            tracker = object_tracking_botsort.ObjectTrackingBotsort()
+
+            cams_num += len(tracker_params['cameras'])
+            for cam_num in tracker_params['cameras']:
+                self.trackers[cam_num] = tracker
+            tracker.init()
+        self.track_info = [None] * cams_num
+        self.num_videos = cams_num
 
     def _init_visualizer(self):
         num_videos = len(self.params['sources'])
