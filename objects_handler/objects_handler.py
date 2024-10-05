@@ -3,6 +3,37 @@ from queue import Queue
 from threading import Thread
 from threading import Condition
 
+
+class DetectionResult:
+    def __init__(self):
+        self.camera_id = None
+        self.frame_id = None
+        self.time_stamp = None
+        self.rect = []
+        self.detection_conf = 0.0
+        self.class_id = None
+        self.detection_data = dict() # internal detection data
+
+
+class TrackingResult:
+    def __init__(self):
+        self.track_id = 0
+        self.rect = []
+        self.tracking_conf = 0.0
+        self.life_time = 0.0
+        self.frame_count = 0
+        self.class_id = None
+        self.detection_history = [] # list of DetectionResult
+        self.tracking_data = dict() # internal tracking data
+
+
+class Object:
+    def __init__(self):
+        self.object_id = 0
+        self.track = TrackingResult()
+        self.properties = dict() # some object features in scene (i.e. is_moving, is_immovable, immovable_time, zone_visited, zone_time_spent etc)
+        self.object_data = dict() # internal object data
+
 '''
 Модуль работы с объектами ожидает данные от детектора в виде dict: {'cam_id': int, 'objects': list, 'actual': bool}, 
 элемент objects при этом содержит словари с данными о каждом объекте (рамка, достоверность, класс)
