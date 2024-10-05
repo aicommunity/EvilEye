@@ -21,8 +21,9 @@ class VideoCaptureBase(core.EvilEyeBase):
         self.capture = cv2.VideoCapture()
         self.stream_idx = VideoCaptureBase.source_count
 
+        self.run_flag = False
         self.frames_queue = Queue(maxsize=2)
-        self.writer = threading.Thread(target=self._capture_frames, daemon=True)
+        self.writer = threading.Thread(target=self._capture_frames)
 
         VideoCaptureBase.video_sources.append(self.capture)
         VideoCaptureBase.source_count += 1
@@ -47,9 +48,15 @@ class VideoCaptureBase(core.EvilEyeBase):
         else:
             raise Exception('init function has not been called')
 
-    def init_impl(self):
+    def start(self):
+        self.run_flag = True
         self.writer.start()
-        return True
+
+    def stop(self):
+        self.run_flag = False
+        self.writer.join()
+        self.release()
+        print('Capture stopped')
 
     @abstractmethod
     def _capture_frames(self):

@@ -15,7 +15,6 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
         # TODO: add mechanism of setting cfg and replace this in the future
         cfg = read_cfg()
         self.tracker = BOTSORT(args=cfg, frame_rate=30)
-        super().init_impl()
         return True
 
     def reset_impl(self):
@@ -34,8 +33,10 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
         self.queue_in.put(det_info)
 
     def _process_impl(self):
-        while True:
+        while self.run_flag:
             detections = self.queue_in.get()
+            if detections is None:
+                break
             cam_id, bboxes_xcycwh, confidences, class_ids = self._parse_det_info(detections)
             tracks = self.tracker.update(class_ids, bboxes_xcycwh, confidences)
             tracks_info = self._create_tracks_info(cam_id, tracks)

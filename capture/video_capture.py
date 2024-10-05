@@ -37,7 +37,6 @@ class VideoCapture(capture.VideoCaptureBase):
             self.capture.open(self.params['camera'], Base.VideoCaptureAPIs[self.params['apiPreference']])
 
     def init_impl(self):
-        super().init_impl()
         return True
 
     def reset_impl(self):
@@ -50,10 +49,8 @@ class VideoCapture(capture.VideoCaptureBase):
             print("Connected to a camera: {0}".format(self.params['camera']))
 
     def _capture_frames(self):
-        while True:
-            # print('Capturing')
+        while self.run_flag:
             is_read, src_image = self.capture.read()
-            # print(is_read)
             if is_read:
                 with self.mutex:
                     if self.frames_queue.full():
@@ -65,6 +62,9 @@ class VideoCapture(capture.VideoCaptureBase):
                         self.frames_queue.get()
                 self.frames_queue.put([is_read, None])
             sleep(0.01)
+        if not self.run_flag:
+            while not self.frames_queue.empty:
+                self.frames_queue.get()
 
     def process_impl(self, split_stream=False, num_split=None, src_coords=None):
         ret, src_image = self.frames_queue.get()
