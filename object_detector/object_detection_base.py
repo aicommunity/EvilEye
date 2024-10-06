@@ -13,7 +13,7 @@ class DetectionResult:
 
 class DetectionResultList:
     def __init__(self):
-        self.camera_id = None
+        self.source_id = None
         self.frame_id = None
         self.time_stamp = None
         self.detections: list[DetectionResult] = []

@@ -20,7 +20,7 @@ class TrackingResult:
 
 class TrackingResultList:
     def __init__(self):
-        self.camera_id = None
+        self.source_id = None
         self.frame_id = None
         self.time_stamp = None
         self.tracks: list[TrackingResult] = [] # list of DetectionResult

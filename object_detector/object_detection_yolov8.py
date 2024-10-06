@@ -5,6 +5,7 @@ import time
 from time import sleep
 from object_detector.object_detection_base import DetectionResultList
 from object_detector.object_detection_base import DetectionResult
+from capture.video_capture_base import CaptureImage
 
 
 class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
@@ -49,17 +50,17 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
             except ValueError:
                 break
             # self.id = image.source_id
-            roi_idx = self.params['cameras'].index(image.source_id)
+            roi_idx = self.params['source_ids'].index(image.source_id)
             if not self.params['roi'][0]:
                 roi = [[image, [0, 0]]]
             else:
                 roi = utils.create_roi(image, self.params['roi'][roi_idx])
-            detection_result_list = self.process_stride(image, roi)
+            detection_result_list = self.process_stride(roi)
             if detection_result_list:
                 self.queue_out.put(detection_result_list)
             sleep(0.01)
 
-    def process_stride(self, image, all_roi):
+    def process_stride(self, all_roi):
         bboxes_coords = []
         confidences = []
         class_ids = []
@@ -70,7 +71,7 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
             self.prev_time = curr_time
             self.stride_cnt = 1
             for roi in all_roi:
-                results = self.model(source=roi[0], **inf_params)
+                results = self.model(source=roi[0].image, **inf_params)
                 if len(results[0]) == 0:  # Если детекций не было, пропускаем
                     continue
                 roi_bboxes, roi_confs, roi_ids = self.get_bboxes(results[0], roi)  # Получаем координаты рамок на изображении
@@ -80,7 +81,7 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
             bboxes_coords, confidences, class_ids = utils.non_max_sup(bboxes_coords, confidences, class_ids)
             bboxes_coords, confidences, class_ids = utils.merge_roi_boxes(self.params['roi'][0], bboxes_coords, confidences, class_ids)  # Объединение рамок из разных ROI
             frame_objects = utils.get_objs_info(bboxes_coords, confidences, class_ids)
-            detection_result_list.camera_id = self.id
+            detection_result_list.source_id = all_roi[0][0].source_id
             detection_result_list.time_stamp = time.time()
 
             for bbox, class_id, conf in zip(bboxes_coords, class_ids, confidences):
@@ -107,7 +108,7 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
         for coord, class_id, conf in zip(coords, class_ids, confs):
             if self.model.names[class_id] not in ['car', 'truck', 'bus', 'person']:
                 continue
-            abs_coords = utils.roi_to_image(coord, roi[1][0], roi[1][1])  # Получаем координаты рамки в СК всего изображения
+            abs_coords = utils.roi_to_image(coord, roi.image[1][0], roi.image[1][1])  # Получаем координаты рамки в СК всего изображения
             bboxes_coords.append(abs_coords)
             confidences.append(conf)
             ids.append(class_id)

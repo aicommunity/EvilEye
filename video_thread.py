@@ -72,7 +72,7 @@ class VideoThread(QThread):
             return
         utils.draw_boxes_tracking(frame, track_info)
         # Сигнал из потока для обновления label на новое изображение
-        self.update_image_signal.emit([frame, self.thread_num])
+        self.update_image_signal.emit([frame.image, self.thread_num])
 
     def stop(self):
         self.run_flag = False

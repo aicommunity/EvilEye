@@ -3,6 +3,10 @@ from object_tracker import object_tracking_base
 from object_tracker.trackers.bot_sort import BOTSORT
 from object_tracker.trackers.cfg.utils import read_cfg
 from time import sleep
+from object_detector.object_detection_base import DetectionResult
+from object_detector.object_detection_base import DetectionResultList
+from object_tracker.object_tracking_base import TrackingResult
+from object_tracker.object_tracking_base import TrackingResultList
 
 
 class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
@@ -39,22 +43,22 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
                 break
             cam_id, bboxes_xcycwh, confidences, class_ids = self._parse_det_info(detections)
             tracks = self.tracker.update(class_ids, bboxes_xcycwh, confidences)
-            tracks_info = self._create_tracks_info(cam_id, tracks)
+            tracks_info = self._create_tracks_info(cam_id, detections.frame_id, None, tracks)
             self.queue_out.put(tracks_info)
             sleep(0.01)
 
-    def _parse_det_info(self, det_info: dict) -> tuple:
-        cam_id = det_info['cam_id']
-        objects = det_info['objects']
+    def _parse_det_info(self, det_info: DetectionResultList) -> tuple:
+        cam_id = det_info.source_id
+        objects = det_info.detections
 
         bboxes_xyxy = []
         confidences = []
         class_ids = []
 
         for obj in objects:
-            bboxes_xyxy.append(obj['bbox'])
-            confidences.append(obj['conf'])
-            class_ids.append(obj['class'])
+            bboxes_xyxy.append(obj.bounding_box)
+            confidences.append(obj.confidence)
+            class_ids.append(obj.class_id)
 
         bboxes_xyxy = np.array(bboxes_xyxy).reshape(-1, 4)
         confidences = np.array(confidences)
@@ -73,20 +77,26 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
 
         return cam_id, bboxes_xcycwh, confidences, class_ids
 
-    def _create_tracks_info(self, cam_id: int, tracks: np.ndarray):
-        tracks_info = {'cam_id': cam_id, 'objects': [], 'module_name': 'tracking'}
+    def _create_tracks_info(self, cam_id: int, frame_id: int, detection: DetectionResult, tracks: np.ndarray):
+        tracks_info = TrackingResultList()
+        tracks_info.source_id = cam_id
+        tracks_info.frame_id = frame_id
+
         # print(tracks)
         for i in range(len(tracks)):
             track_bbox = tracks[i, :4].tolist()
             track_conf = tracks[i, 5]
             track_cls = tracks[i, 6]
             track_id = tracks[i, 4]
-            object_info = {
-                'bbox': track_bbox,
-                'conf': track_conf,
-                'class': track_cls,
-                'track_id': track_id,
-            }
-            tracks_info['objects'].append(object_info)
+            object_info = TrackingResult()
+            object_info.class_id = track_cls
+            object_info.bounding_box = track_bbox
+            object_info.confidence = track_conf
+            object_info.track_id = track_id
+            if detection:
+                object_info.detection_history.append(detection)
+
+            tracks_info.tracks.append(object_info)
 
         return tracks_info
+

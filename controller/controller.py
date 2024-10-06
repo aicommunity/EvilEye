@@ -7,6 +7,7 @@ from video_thread import VideoThread
 from objects_handler import objects_handler
 from time import sleep
 from capture.video_capture_base import CaptureImage
+import copy
 
 
 class Controller:
@@ -32,6 +33,7 @@ class Controller:
 
     def run(self):
         while self.run_flag:
+            sleep(0.01)
             self.captured_frames = []
             for i in range(self.num_sources):
                 source = self.sources[i]
@@ -40,8 +42,8 @@ class Controller:
                                                  src_coords=source.params['src_coords'])
                 self.captured_frames.extend(frames)
 
-#                if not is_read:
-#                    source.reset()
+                if len(frames) == 0:
+                    source.reset()
 
             det_params = self.params['detectors']
             for i in range(self.num_dets):
@@ -73,8 +75,8 @@ class Controller:
                     self.obj_handler.append(track_info)
 
             for i in range(self.num_videos):
-                self.visual_threads[i].append_data((self.captured_frames[i], self.obj_handler.get('active', i)))
-            sleep(0.01)
+                self.visual_threads[i].append_data((copy.deepcopy(self.captured_frames[i]), copy.deepcopy(self.obj_handler.get('active', i))))
+
 
     def start(self):
         for source in self.sources:
