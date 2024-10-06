@@ -59,6 +59,7 @@ class App(QWidget):
         self.setLayout(vertical_layout)
         self.setup_layout()
         self.controller.init(self.params)
+        self.controller.start()
         # self.init_captures()  # Инициализируем объекты захват из источников
         # self.setup_threads()  # Создаем и запускаем потоки
 
@@ -100,11 +101,6 @@ class App(QWidget):
                 self.hlayouts[grid_rows].addWidget(self.labels[-1], alignment=Qt.AlignCenter)
                 grid_cols += 1
 
-    def closeEvent(self, event):
-        for thread in self.threads:
-            thread.stop()
-        event.accept()
-
     def convert_cv_qt(self, cv_img):
         # Переводим из opencv image в QPixmap
         rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
@@ -140,6 +136,10 @@ class App(QWidget):
             VideoThread.rows = 1
             VideoThread.cols = 1
 
+    def closeEvent(self, event):
+        self.controller.stop()
+        event.accept()
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -154,4 +154,5 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     a = App(data, 1280, 720)
     a.show()
-    sys.exit(app.exec_())
+    ret = app.exec_()
+    sys.exit(ret)

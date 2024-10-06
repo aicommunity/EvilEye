@@ -23,7 +23,6 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
 
     def init_impl(self):
         self.model = YOLO(self.model_name)
-        super().init_impl()
         return True
 
     def reset_impl(self):
@@ -42,8 +41,11 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
         self.params.clear()
 
     def _process_impl(self):
-        while True:
-            image, det_num = self.queue_in.get()
+        while self.run_flag:
+            try:
+                image, det_num = self.queue_in.get()
+            except ValueError:
+                break
             self.id = det_num
             roi_idx = self.params['cameras'].index(det_num)
             if not self.params['roi'][0]:

@@ -152,7 +152,7 @@ def draw_boxes(image, objects, cam_id, model_names):
 
 def draw_boxes_tracking(image, cameras_objs):
     # Для трекинга отображаем только последние данные об объекте из истории
-    print(cameras_objs)
+    # print(cameras_objs)
     for obj in cameras_objs['objects']:
         # if obj['obj_info']
         last_info = obj['obj_info'][-1]

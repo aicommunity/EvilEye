@@ -25,7 +25,7 @@ class VideoThread(QThread):
 
         self.thread_num = VideoThread.thread_counter
 
-        self.run_flag = True
+        self.run_flag = False
         self.split = params['split']
         self.fps = 30
         self.source_params = params
@@ -39,6 +39,10 @@ class VideoThread(QThread):
 
         # Определяем количество потоков в зависимости от параметра split
         VideoThread.thread_counter += 1
+
+    def start_thread(self):
+        self.run_flag = True
+        self.start()
 
     def append_data(self, data):
         self.queue.put(data)
@@ -60,14 +64,18 @@ class VideoThread(QThread):
                     time.sleep(sleep_seconds)
                 else:
                     time.sleep(0.01)
-        self.capture.release()
 
     def process_image(self):
-        frame, track_info = self.queue.get()
+        try:
+            frame, track_info = self.queue.get()
+        except ValueError:
+            return
         utils.draw_boxes_tracking(frame, track_info)
         # Сигнал из потока для обновления label на новое изображение
         self.update_image_signal.emit([frame, self.thread_num])
 
     def stop(self):
         self.run_flag = False
+        self.queue.put('STOP')
         self.wait()
+        print('Video stopped')

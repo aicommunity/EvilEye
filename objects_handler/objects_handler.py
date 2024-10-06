@@ -62,7 +62,17 @@ class ObjectsHandler:
         # Условие для блокировки других потоков
         self.condition = Condition()
         # Поток, который отвечает за получение объектов из очереди и распределение их по спискам
-        self.handler = Thread(target=self.handle_objs, daemon=True)
+        self.handler = Thread(target=self.handle_objs)
+        self.run_flag = False
+
+    def stop(self):
+        self.run_flag = False
+        self.objs_queue.put(None)
+        self.handler.join()
+        print('Handler stopped')
+
+    def start(self):
+        self.run_flag = True
         self.handler.start()
 
     def append(self, objs):  # Добавление данных из детектора/трекера в очередь
@@ -88,8 +98,10 @@ class ObjectsHandler:
 
     def handle_objs(self):  # Функция, отвечающая за работу с объектами
         print('Handler running: waiting for objects...')
-        while True:
+        while self.run_flag:
             frame_objs = self.objs_queue.get()
+            if frame_objs is None:
+                break
             # Блокируем остальные потоки для предотвращения одновременного обращения к объектам
             with self.condition:
                 if frame_objs['module_name'] == 'tracking':  # Если объекты получены от трекера
