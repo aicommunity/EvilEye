@@ -3,6 +3,8 @@ from utils import utils
 import object_detector
 import time
 from time import sleep
+from object_detector.object_detection_base import DetectionResultList
+from object_detector.object_detection_base import DetectionResult
 
 
 class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
@@ -11,7 +13,7 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
     def __init__(self):
         super().__init__()
 
-        self.objects = []
+        #self.objects = []
         self.model_name = None
         self.model = None
         self.prev_time = 0  # Для параметра скважности, заданного временем; отсчет времени
@@ -43,30 +45,30 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
     def _process_impl(self):
         while self.run_flag:
             try:
-                image, det_num = self.queue_in.get()
+                image = self.queue_in.get()
             except ValueError:
                 break
-            self.id = det_num
-            roi_idx = self.params['cameras'].index(det_num)
+            # self.id = image.source_id
+            roi_idx = self.params['cameras'].index(image.source_id)
             if not self.params['roi'][0]:
                 roi = [[image, [0, 0]]]
             else:
                 roi = utils.create_roi(image, self.params['roi'][roi_idx])
-            if self.params.get('stride_type', 'frames') == "time":  # В зависимости от параметра скважности запускаем соответствующую функцию
-                objects = self.process_stride_time(image, roi)
-            else:
-                objects = self.process_stride_frame(image, roi)
-            self.queue_out.put(objects)
+            detection_result_list = self.process_stride(image, roi)
+            if detection_result_list:
+                self.queue_out.put(detection_result_list)
             sleep(0.01)
 
-    def process_stride_time(self, image, all_roi):
+    def process_stride(self, image, all_roi):
         bboxes_coords = []
         confidences = []
         class_ids = []
+        detection_result_list = DetectionResultList()
         inf_params = {"show": self.params['show'], 'conf': self.params['conf'], 'save': self.params['save']}
         curr_time = int(time.time() * 1000)
-        if curr_time - self.prev_time >= self.stride:  # Если прошло нужное количество времени, запускаем детекцию
+        if ((self.params.get('stride_type', 'frames') == "time") and (curr_time - self.prev_time >= self.stride)) or ((self.params.get('stride_type', 'frames') == "frames") and (self.stride_cnt == self.stride)):  # Если прошло нужное количество времени, запускаем детекцию
             self.prev_time = curr_time
+            self.stride_cnt = 1
             for roi in all_roi:
                 results = self.model(source=roi[0], **inf_params)
                 if len(results[0]) == 0:  # Если детекций не было, пропускаем
@@ -78,36 +80,21 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
             bboxes_coords, confidences, class_ids = utils.non_max_sup(bboxes_coords, confidences, class_ids)
             bboxes_coords, confidences, class_ids = utils.merge_roi_boxes(self.params['roi'][0], bboxes_coords, confidences, class_ids)  # Объединение рамок из разных ROI
             frame_objects = utils.get_objs_info(bboxes_coords, confidences, class_ids)
-            self.objects.append({'cam_id': self.id, 'objects': frame_objects, 'actual': True})
-        else:
-            self.objects.append(self.objects[-1].copy())
-            self.objects[-1]['actual'] = False
-        return self.objects[-1]
+            detection_result_list.camera_id = self.id
+            detection_result_list.time_stamp = time.time()
 
-    def process_stride_frame(self, image, all_roi):
-        bboxes_coords = []
-        confidences = []
-        class_ids = []
-        inf_params = {"show": self.params['show'], 'conf': self.params['conf'], 'save': self.params['save']}
-        if self.stride_cnt == self.stride:  # Если пропущено указанное количество кадров, запускаем детекцию
-            self.stride_cnt = 1
-            for roi in all_roi:
-                results = self.model(source=roi[0], **inf_params, verbose=False)
-                if len(results[0]) == 0:  # Если детекций не было, пропускаем
-                    continue
-                roi_bboxes, roi_confs, roi_ids = self.get_bboxes(results[0], roi)  # Получаем координаты рамок на изображении
-                confidences.extend(roi_confs)
-                class_ids.extend(roi_ids)
-                bboxes_coords.extend(roi_bboxes)
-            bboxes_coords, confidences, class_ids = utils.non_max_sup(bboxes_coords, confidences, class_ids)
-            bboxes_coords, confidences, class_ids = utils.merge_roi_boxes(self.params['roi'][0], bboxes_coords, confidences, class_ids)  # Объединение рамок из разных ROI
-            frame_objects = utils.get_objs_info(bboxes_coords, confidences, class_ids)
-            self.objects.append({'cam_id': self.id, 'objects': frame_objects, 'actual': True, 'module_name': 'detection'})
+            for bbox, class_id, conf in zip(bboxes_coords, class_ids, confidences):
+                detection_result = DetectionResult()
+                detection_result.bounding_box = bbox
+                detection_result.class_id = class_id
+                detection_result.confidence = conf
+                detection_result_list.detections.append(detection_result)
+            return detection_result_list
         else:
             self.stride_cnt += 1
-            self.objects.append(self.objects[-1].copy())
-            self.objects[-1]['actual'] = False
-        return self.objects[-1]
+
+        return None
+
 
     def get_bboxes(self, result, roi):
         bboxes_coords = []

@@ -8,7 +8,8 @@
       "apiPreference": "CAP_FFMPEG",
       "split": false,
       "num_split": 0,
-      "src_coords": 0
+      "src_coords": 0,
+      "source_ids": [0]
     },
     {
       "source": "IPcam",
@@ -16,12 +17,13 @@
       "apiPreference": "CAP_FFMPEG",
       "split": true,
       "num_split": 2,
-      "src_coords": [[0, 0, 2304, 1300], [0, 1300, 2304, 1292]]
+      "src_coords": [[0, 0, 2304, 1300], [0, 1300, 2304, 1292]],
+      "source_ids": [1, 2]
     }
   ],
   "detectors":[
     {
-      "cameras": [0],
+      "source_ids": [0],
       "model": "yolov8n.pt",
       "show" : false,
       "conf" : 0.4,
@@ -31,7 +33,7 @@
       "roi": [[[1840, 0, 500, 400], [1700, 395, 800, 650], [1500, 1030, 1400, 1130]]]
     },
     {
-      "cameras": [1],
+      "source_ids": [1],
       "model": "yolov8n.pt",
       "show" : false,
       "conf" : 0.4,
@@ -41,7 +43,7 @@
       "roi": [[]]
     },
     {
-      "cameras": [2],
+      "source_ids": [2],
       "model": "yolov8n.pt",
       "show" : false,
       "conf" : 0.4,
@@ -53,13 +55,13 @@
   ],
   "trackers":[
     {
-      "cameras": [0]
+      "source_ids": [0]
     },
     {
-      "cameras": [1]
+      "source_ids": [1]
     },
     {
-      "cameras": [2]
+      "source_ids": [2]
     }
   ]
 }

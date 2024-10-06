@@ -1,10 +1,12 @@
 import threading
 import capture
 from object_detector import object_detection_yolov8
+from object_detector.object_detection_base import DetectionResultList
 from object_tracker import object_tracking_botsort
 from video_thread import VideoThread
 from objects_handler import objects_handler
 from time import sleep
+from capture.video_capture_base import CaptureImage
 
 
 class Controller:
@@ -23,65 +25,52 @@ class Controller:
         self.num_sources = 0
         self.num_dets = 0
         self.num_tracks = 0
-        self.captured_frames = None
-        self.detections = None
+        self.captured_frames: list[CaptureImage] = []
+        self.detection_results: list[DetectionResultList] = []
         self.track_info = None
         self.run_flag = False
 
     def run(self):
         while self.run_flag:
+            self.captured_frames = []
             for i in range(self.num_sources):
                 source = self.sources[i]
-                is_read, frames = source.process(split_stream=source.params['split'],
+                frames = source.process(split_stream=source.params['split'],
                                                  num_split=source.params['num_split'],
                                                  src_coords=source.params['src_coords'])
-                if frames is not None:
-                    for frame_count, frame in enumerate(frames):
-                        self.captured_frames[i + frame_count] = frame
-                    # print(frame)
+                self.captured_frames.extend(frames)
 
-                if not is_read:
-                    source.reset()
+#                if not is_read:
+#                    source.reset()
 
             det_params = self.params['detectors']
             for i in range(self.num_dets):
                 detector = self.detectors[i]
-                cameras = det_params[i]['cameras']
-                # TODO: add batching to object_detection module
-                batch = []
-                for cam_num in cameras:
-                    if self.captured_frames[cam_num] is not None:
-                        if len(cameras) > 1:
-                            batch.append((self.captured_frames[cam_num], cam_num))
-                        else:
-                            detector.put((self.captured_frames[cam_num], cam_num))
-                if batch:
-                    detector.put(batch)
+                source_ids = det_params[i]['source_ids']
+                for capture_frame in self.captured_frames:
+                    if capture_frame.source_id in source_ids:
+                        detector.put(capture_frame)
 
+            self.detection_results = []
             for i in range(self.num_dets):
-                detection = self.detectors[i].get()
-                cam_num = detection['cam_id']
-                self.detections[cam_num] = detection
+                detection_result = self.detectors[i].get()
+                if detection_result:
+                    self.detection_results.append(detection_result)
 
+            tr_params = self.params['trackers']
             for i in range(self.num_tracks):
                 tracker = self.trackers[i]
-                cameras = det_params[i]['cameras']
-                batch = []
-                for cam_num in cameras:
-                    if len(cameras) > 1:
-                        batch.append((self.detections[cam_num], cam_num))
-                    else:
-                        tracker.put(self.detections[cam_num])
-                if batch:
-                    tracker.put(batch)
+                source_ids = tr_params[i]['source_ids']
+                for det_result in self.detection_results:
+                    if det_result.source_id in source_ids:
+                        tracker.put(det_result)
 
+            self.track_info = []
             for i in range(self.num_tracks):
                 track_info = self.trackers[i].get()
-                cam_num = track_info['cam_id']
-                self.track_info[cam_num] = track_info
-
-            for tracks in self.track_info:
-                self.obj_handler.append(tracks)
+                if track_info:
+                    self.track_info = track_info
+                    self.obj_handler.append(track_info)
 
             for i in range(self.num_videos):
                 self.visual_threads[i].append_data((self.captured_frames[i], self.obj_handler.get('active', i)))
@@ -152,7 +141,7 @@ class Controller:
             self.detectors.append(detector)
             detector.set_params(**det_params)
             detector.init()
-        self.detections = [None] * self.num_videos
+        self.detection_results = [None] * self.num_videos
 
     def _init_trackers(self, params):
         num_trackers = len(params)

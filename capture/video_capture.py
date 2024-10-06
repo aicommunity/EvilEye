@@ -2,7 +2,9 @@ import cv2
 import capture
 from capture import VideoCaptureBase as Base
 from threading import Lock
+import time
 from time import sleep
+from capture.video_capture_base import CaptureImage
 
 
 class VideoCapture(capture.VideoCaptureBase):
@@ -55,31 +57,41 @@ class VideoCapture(capture.VideoCaptureBase):
                 with self.mutex:
                     if self.frames_queue.full():
                         self.frames_queue.get()
-                self.frames_queue.put([is_read, src_image])
+                self.frames_queue.put([is_read, src_image, self.frame_id_counter])
+                self.frame_id_counter += 1
             else:
                 with self.mutex:
                     if self.frames_queue.full():
                         self.frames_queue.get()
-                self.frames_queue.put([is_read, None])
+                self.frames_queue.put([is_read, None, None])
             sleep(0.01)
         if not self.run_flag:
             while not self.frames_queue.empty:
                 self.frames_queue.get()
 
     def process_impl(self, split_stream=False, num_split=None, src_coords=None):
-        ret, src_image = self.frames_queue.get()
+        captured_images: list[CaptureImage] = []
+        ret, src_image, frame_id = self.frames_queue.get()
         # print('GOT')
         if ret:
-            streams = []
             if split_stream:  # Если сплит, то возвращаем список с частями потока, иначе - исходное изображение
                 for stream_cnt in range(num_split):
-                    streams.append(src_image[src_coords[stream_cnt][1]:src_coords[stream_cnt][1] + int(src_coords[stream_cnt][3]),
-                                   src_coords[stream_cnt][0]:src_coords[stream_cnt][0] + int(src_coords[stream_cnt][2])].copy())
+                    capture_image = CaptureImage()
+                    capture_image.source_id = self.params["source_ids"][stream_cnt]
+                    capture_image.time_stamp = time.time()
+                    capture_image.frame_id = frame_id
+                    capture_image.image = src_image[src_coords[stream_cnt][1]:src_coords[stream_cnt][1] + int(src_coords[stream_cnt][3]),
+                                   src_coords[stream_cnt][0]:src_coords[stream_cnt][0] + int(src_coords[stream_cnt][2])].copy()
+                    captured_images.append(capture_image)
             else:
-                streams = [src_image]
-            return ret, streams
-        else:
-            return False, None
+                capture_image = CaptureImage()
+                capture_image.source_id = self.params["source_ids"][0]
+                capture_image.time_stamp = time.time()
+                capture_image.frame_id = frame_id
+                capture_image.image = src_image
+                captured_images.append(capture_image)
+        return captured_images
+
 
     def default(self):
         self.params.clear()

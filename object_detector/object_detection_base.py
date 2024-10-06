@@ -3,9 +3,23 @@ import core
 from queue import Queue
 import threading
 
+class DetectionResult:
+    def __init__(self):
+        self.bounding_box = []
+        self.confidence = 0.0
+        self.class_id = None
+        self.detection_data = dict() # internal detection data
+
+
+class DetectionResultList:
+    def __init__(self):
+        self.camera_id = None
+        self.frame_id = None
+        self.time_stamp = None
+        self.detections: list[DetectionResult] = []
+
 
 class ObjectDetectorBase(core.EvilEyeBase):
-
     def __init__(self):
         super().__init__()
 
@@ -29,11 +43,6 @@ class ObjectDetectorBase(core.EvilEyeBase):
         self.queue_in.put('STOP')
         self.processing_thread.join()
         print('Detection stopped')
-    # def process(self, image, all_roi=[]):
-    #     if self.get_init_flag():
-    #         self._process_impl()
-    #     else:
-    #         raise Exception('init function has not been called')
 
     @abstractmethod
     def _process_impl(self):

@@ -6,6 +6,14 @@ import threading
 from queue import Queue
 
 
+class CaptureImage:
+    def __init__(self):
+        self.source_id = None
+        self.frame_id = None
+        self.time_stamp = None
+        self.image = None
+
+
 class VideoCaptureBase(core.EvilEyeBase):
     source_count = 0
     video_sources = []
@@ -24,6 +32,7 @@ class VideoCaptureBase(core.EvilEyeBase):
         self.run_flag = False
         self.frames_queue = Queue(maxsize=2)
         self.writer = threading.Thread(target=self._capture_frames)
+        self.frame_id_counter = 0
 
         VideoCaptureBase.video_sources.append(self.capture)
         VideoCaptureBase.source_count += 1
@@ -43,10 +52,12 @@ class VideoCaptureBase(core.EvilEyeBase):
             print('Source index is out of range')
 
     def process(self, split_stream=False, num_split=None, src_coords=None):
+        captured_images: list[CaptureImage] = []
         if self.get_init_flag():
-            return self.process_impl(split_stream, num_split, src_coords)
+            captured_images = self.process_impl(split_stream, num_split, src_coords)
         else:
-            raise Exception('init function has not been called')
+            print('init function has not been called')
+        return captured_images
 
     def start(self):
         self.run_flag = True
