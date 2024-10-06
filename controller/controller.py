@@ -47,6 +47,7 @@ class Controller:
             for i in range(self.num_dets):
                 detector = self.detectors[i]
                 cameras = det_params[i]['cameras']
+                # TODO: add batching to object_detection module
                 batch = []
                 for cam_num in cameras:
                     if self.captured_frames[cam_num] is not None:
