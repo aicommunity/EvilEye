@@ -125,6 +125,7 @@ class ObjectsHandler:
                 track_object.frame_id = tracking_results.frame_id
                 track_object.class_id = track.class_id
                 track_object.tracks.append(track)
+                print(f"object_id={track_object.object_id}, track_id={track_object.tracks[-1].track_id} len(tracks)={len(track_object.tracks)}")
                 if len(track_object.tracks) > self.history:  # Если количество данных превышает размер истории, удаляем самые старые данные об объекте
                     del track_object.tracks[0]
                 track_object.last_update = True
@@ -147,6 +148,8 @@ class ObjectsHandler:
                     self.lost_objs.objects.append(active_obj)
                 else:
                     filtered_active_objects.append(active_obj)
+            else:
+                filtered_active_objects.append(active_obj)
         self.active_objs.objects = filtered_active_objects
 
 

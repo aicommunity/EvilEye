@@ -176,5 +176,5 @@ def draw_boxes_tracking(image, cameras_objs):
                 first_cm_y = int((first_info.bounding_box[1] + first_info.bounding_box[3]) / 2)
                 second_cm_x = int((second_info.bounding_box[0] + second_info.bounding_box[2]) / 2)
                 second_cm_y = int((second_info.bounding_box[1] + second_info.bounding_box[3]) / 2)
-                cv2.line(image, (first_cm_x, first_cm_y),
+                cv2.line(image.image, (first_cm_x, first_cm_y),
                          (second_cm_x, second_cm_y), (0, 0, 255), thickness=8)
