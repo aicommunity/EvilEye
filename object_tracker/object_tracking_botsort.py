@@ -86,7 +86,7 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
         for i in range(len(tracks)):
             track_bbox = tracks[i, :4].tolist()
             track_conf = tracks[i, 5]
-            track_cls = tracks[i, 6]
+            track_cls = int(tracks[i, 6])
             track_id = int(tracks[i, 4])
             object_info = TrackingResult()
             object_info.class_id = track_cls
