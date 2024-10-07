@@ -76,6 +76,6 @@ class VideoThread(QThread):
 
     def stop(self):
         self.run_flag = False
-        self.queue.put('STOP')
-        self.wait()
+        # self.queue.put('STOP')
+        # self.wait()
         print('Video stopped')

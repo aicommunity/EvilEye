@@ -45,11 +45,17 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
 
     def _process_impl(self):
         while self.run_flag:
+            sleep(0.01)
             try:
-                image = self.queue_in.get()
+                if not self.queue_in.empty():
+                    image = self.queue_in.get()
+                else:
+                    image = None
             except ValueError:
                 break
-            # self.id = image.source_id
+            if not image:
+                continue
+
             roi_idx = self.params['source_ids'].index(image.source_id)
             if not self.params['roi'][0]:
                 roi = [[image, [0, 0]]]
@@ -58,7 +64,6 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
             detection_result_list = self.process_stride(roi)
             if detection_result_list:
                 self.queue_out.put(detection_result_list)
-            sleep(0.01)
 
     def process_stride(self, all_roi):
         bboxes_coords = []

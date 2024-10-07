@@ -40,7 +40,7 @@ class ObjectDetectorBase(core.EvilEyeBase):
 
     def stop(self):
         self.run_flag = False
-        self.queue_in.put('STOP')
+        # self.queue_in.put('STOP')
         self.processing_thread.join()
         print('Detection stopped')
 

@@ -52,6 +52,7 @@ class VideoCapture(capture.VideoCaptureBase):
 
     def _capture_frames(self):
         while self.run_flag:
+            sleep(0.01)
             is_read, src_image = self.capture.read()
             if is_read:
                 with self.mutex:
@@ -64,7 +65,6 @@ class VideoCapture(capture.VideoCaptureBase):
                     if self.frames_queue.full():
                         self.frames_queue.get()
                 self.frames_queue.put([is_read, None, None])
-            sleep(0.01)
         if not self.run_flag:
             while not self.frames_queue.empty:
                 self.frames_queue.get()

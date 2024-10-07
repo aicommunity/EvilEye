@@ -38,6 +38,7 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
 
     def _process_impl(self):
         while self.run_flag:
+            sleep(0.01)
             detections = self.queue_in.get()
             if detections is None:
                 break
@@ -45,7 +46,6 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
             tracks = self.tracker.update(class_ids, bboxes_xcycwh, confidences)
             tracks_info = self._create_tracks_info(cam_id, detections.frame_id, None, tracks)
             self.queue_out.put(tracks_info)
-            sleep(0.01)
 
     def _parse_det_info(self, det_info: DetectionResultList) -> tuple:
         cam_id = det_info.source_id
@@ -87,7 +87,7 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
             track_bbox = tracks[i, :4].tolist()
             track_conf = tracks[i, 5]
             track_cls = tracks[i, 6]
-            track_id = tracks[i, 4]
+            track_id = int(tracks[i, 4])
             object_info = TrackingResult()
             object_info.class_id = track_cls
             object_info.bounding_box = track_bbox
