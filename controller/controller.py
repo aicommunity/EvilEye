@@ -22,8 +22,6 @@ class Controller:
         self.visual_threads = []
         self.qt_slot = pyqt_slot
 
-        self.num_videos = 0
-        self.num_sources = 0
         self.num_dets = 0
         self.num_tracks = 0
         self.captured_frames: list[CaptureImage] = []
@@ -35,11 +33,8 @@ class Controller:
         while self.run_flag:
             sleep(0.01)
             self.captured_frames = []
-            for i in range(self.num_sources):
-                source = self.sources[i]
-                frames = source.process(split_stream=source.params['split'],
-                                                 num_split=source.params['num_split'],
-                                                 src_coords=source.params['src_coords'])
+            for source in self.sources:
+                frames = source.get_frames()
                 self.captured_frames.extend(frames)
 
                 if len(frames) == 0:
@@ -74,7 +69,7 @@ class Controller:
                     self.track_info = track_info
                     self.obj_handler.append(track_info)
 
-            for i in range(self.num_videos):
+            for i in range(len(self.visual_threads)):
                 self.visual_threads[i].append_data((copy.deepcopy(self.captured_frames[i]), copy.deepcopy(self.obj_handler.get('active', i))))
 
 
@@ -115,24 +110,23 @@ class Controller:
         self._init_detectors(self.params['detectors'])
         self._init_trackers(self.params['trackers'])
         self._init_visualizer()
-        self.obj_handler = objects_handler.ObjectsHandler(self.num_videos, history_len=30)
+        self.obj_handler = objects_handler.ObjectsHandler(history_len=30)
 
     def _init_captures(self, params):
         num_sources = len(params)
-        num_videos = 0
+#        num_videos = 0
         for i in range(num_sources):
             src_params = params[i]
-            if src_params['split']:
-                num_videos += src_params['num_split']
-            else:
-                num_videos += 1
-
+#            if src_params['split']:
+#                num_videos += src_params['num_split']
+#            else:
+#                num_videos += 1
             camera = capture.VideoCapture()
             camera.set_params(**src_params)
             camera.init()
             self.sources.append(camera)
-        self.captured_frames = [None] * num_videos
-        self.num_videos = num_videos
+#        self.captured_frames = [None] * num_videos
+#        self.num_videos = num_videos
 
     def _init_detectors(self, params):
         num_det = len(params)
@@ -143,7 +137,7 @@ class Controller:
             self.detectors.append(detector)
             detector.set_params(**det_params)
             detector.init()
-        self.detection_results = [None] * self.num_videos
+#        self.detection_results = [None] * self.num_videos
 
     def _init_trackers(self, params):
         num_trackers = len(params)
@@ -151,7 +145,7 @@ class Controller:
             tracker = object_tracking_botsort.ObjectTrackingBotsort()
             self.trackers.append(tracker)
             tracker.init()
-        self.track_info = [None] * self.num_videos
+#        self.track_info = [None] * self.num_videos
 
     def _init_visualizer(self):
         num_videos = len(self.params['sources'])

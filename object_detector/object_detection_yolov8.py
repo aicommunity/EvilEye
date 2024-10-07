@@ -28,6 +28,9 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
         self.model = YOLO(self.model_name)
         return True
 
+    def release_impl(self):
+        self.model = None
+
     def reset_impl(self):
         pass
 
@@ -76,7 +79,7 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
             self.prev_time = curr_time
             self.stride_cnt = 1
             for roi in all_roi:
-                results = self.model(source=roi[0].image, **inf_params)
+                results = self.model(source=roi[0].image, verbose=False, **inf_params)
                 if len(results[0]) == 0:  # Если детекций не было, пропускаем
                     continue
                 roi_bboxes, roi_confs, roi_ids = self.get_bboxes(results[0], roi)  # Получаем координаты рамок на изображении

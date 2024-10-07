@@ -27,7 +27,7 @@ class VideoThread(QThread):
 
         self.run_flag = False
         self.split = params['split']
-        self.fps = 30
+        self.fps = 10
         self.source_params = params
         self.thread_num = VideoThread.thread_counter  # Номер потока для определения, какой label обновлять
         self.det_params = None
@@ -49,7 +49,7 @@ class VideoThread(QThread):
 
     def run(self):
         if self.source_params['source'] == 'file':  # Проигрывание роликов с указанным fps, если запускаем из файла
-            self.fps = self.source_params['fps']
+            #self.fps = self.source_params['fps']
             self.timer.start(int(1000 // self.fps))
             loop = QEventLoop()
             loop.exec_()

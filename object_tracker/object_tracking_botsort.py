@@ -21,6 +21,9 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
         self.tracker = BOTSORT(args=cfg, frame_rate=30)
         return True
 
+    def release_impl(self):
+        self.tracker = None
+
     def reset_impl(self):
         self.tracker.reset()
 

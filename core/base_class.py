@@ -16,11 +16,13 @@ class EvilEyeBase(ABC):
     def reset(self):
         if self.get_init_flag():
             self.reset_impl()
-        else:
-            raise Exception('init function has not been called')
 
     def init(self):
         self.is_inited = self.init_impl()
+
+    def release(self):
+        self.release_impl()
+        self.is_inited = False
 
     def get_params(self):
         return self.params
@@ -31,6 +33,10 @@ class EvilEyeBase(ABC):
 
     @abstractmethod
     def init_impl(self):
+        pass
+
+    @abstractmethod
+    def release_impl(self):
         pass
 
     @abstractmethod

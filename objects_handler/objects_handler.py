@@ -38,7 +38,7 @@ class ObjectResultList:
 
 
 class ObjectsHandler:
-    def __init__(self, cams_num, history_len=1, lost_thresh=5):
+    def __init__(self, history_len=1, lost_thresh=5):
         # Очередь для потокобезопасного приема данных от каждой камеры
         self.objs_queue = Queue()
         # Списки для хранения различных типов объектов
@@ -47,9 +47,7 @@ class ObjectsHandler:
         self.lost_objs: ObjectResultList = ObjectResultList()
         self.history = history_len
         self.lost_thresh = lost_thresh  # Порог перевода (в кадрах) в потерянные объекты
-        self.cams_num = cams_num
-        # for i in range(self.cams_num):
-        #    self.active_objs.append({'cam_id': i, 'objects': []})
+
         # Условие для блокировки других потоков
         self.condition = Condition()
         # Поток, который отвечает за получение объектов из очереди и распределение их по спискам
@@ -88,7 +86,6 @@ class ObjectsHandler:
 
     def _get_active(self, cam_id):
         source_objects = ObjectResultList()
-
         for obj in self.active_objs.objects:
             if obj.source_id == cam_id:
                 source_objects.objects.append(copy.deepcopy(obj))
