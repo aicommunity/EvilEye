@@ -90,7 +90,7 @@ class ObjectsHandler:
         source_objects = ObjectResultList()
 
         for obj in self.active_objs.objects:
-            if obj.track.source_id == cam_id:
+            if obj.source_id == cam_id:
                 source_objects.objects.append(copy.deepcopy(obj))
         return source_objects
 
@@ -116,7 +116,7 @@ class ObjectsHandler:
         for track in tracking_results.tracks:
             track_object = None
             for active_obj in self.active_objs.objects:
-                if active_obj.track.track_id == track.track_id:
+                if active_obj.tracks[-1].track_id == track.track_id:
                     track_object = active_obj
                     break
 
@@ -143,8 +143,8 @@ class ObjectsHandler:
         for active_obj in self.active_objs.objects:
             if not active_obj.last_update:
                 active_obj.lost_frames += 1
-                if track_object.lost_frames >= self.lost_thresh:
-                    self.lost_objs.objects.append(track_object)
+                if active_obj.lost_frames >= self.lost_thresh:
+                    self.lost_objs.objects.append(active_obj)
                 else:
                     filtered_active_objects.append(active_obj)
         self.active_objs.objects = filtered_active_objects

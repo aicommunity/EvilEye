@@ -108,7 +108,7 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
         for coord, class_id, conf in zip(coords, class_ids, confs):
             if self.model.names[class_id] not in ['car', 'truck', 'bus', 'person']:
                 continue
-            abs_coords = utils.roi_to_image(coord, roi.image[1][0], roi.image[1][1])  # Получаем координаты рамки в СК всего изображения
+            abs_coords = utils.roi_to_image(coord, roi[1][0], roi[1][1])  # Получаем координаты рамки в СК всего изображения
             bboxes_coords.append(abs_coords)
             confidences.append(conf)
             ids.append(class_id)
