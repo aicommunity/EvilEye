@@ -24,15 +24,20 @@ class ObjectDetectorBase(core.EvilEyeBase):
         super().__init__()
 
         self.run_flag = False
-        self.queue_in = Queue()
+        self.queue_in = Queue(maxsize=2)
         self.queue_out = Queue()
         self.source_ids = []
         self.processing_thread = threading.Thread(target=self._process_impl)
 
     def put(self, image):
-        self.queue_in.put(image)
+        if not self.queue_in.full():
+            self.queue_in.put(image)
+            return True
+        return False
 
     def get(self):
+        if self.queue_out.empty():
+            return None
         return self.queue_out.get()
 
     def get_source_ids(self):

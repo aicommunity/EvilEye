@@ -9,6 +9,8 @@ from objects_handler import objects_handler
 from time import sleep
 from capture.video_capture_base import CaptureImage
 import copy
+import time
+from timeit import default_timer as timer
 
 
 class Controller:
@@ -22,34 +24,47 @@ class Controller:
         self.obj_handler = None
         self.visual_threads = []
         self.qt_slot = pyqt_slot
+        self.fps = 5
 
         self.captured_frames: list[CaptureImage] = []
+        self.processed_frames: list[CaptureImage] = []
         self.detection_results: list[DetectionResultList] = []
         self.tracking_results: list[TrackingResultList] = []
         self.run_flag = False
 
     def run(self):
         while self.run_flag:
-            sleep(0.01)
+            begin_it = timer()
+            # Get new frames from all sources
             self.captured_frames = []
             for source in self.sources:
                 frames = source.get_frames()
-                self.captured_frames.extend(frames)
 
                 if len(frames) == 0:
-                    source.reset()
+                    pass
+#                    source.reset()
+                else:
+                    self.captured_frames.extend(frames)
 
+            complete_capture_it = timer()
+
+            # Process detectors
             self.detection_results = []
             for detector in self.detectors:
                 source_ids = detector.get_source_ids()
                 for capture_frame in self.captured_frames:
                     if capture_frame.source_id in source_ids:
-                        detector.put(capture_frame)
-
+                        if detector.put(capture_frame):
+                            self.processed_frames.append(capture_frame)
                 detection_result = detector.get()
                 if detection_result:
                     self.detection_results.append(detection_result)
 
+
+
+            complete_detection_it = timer()
+
+            # Process trackers
             self.tracking_results = []
             for tracker in self.trackers:
                 source_ids = tracker.get_source_ids()
@@ -61,9 +76,54 @@ class Controller:
                     self.tracking_results = track_info
                     self.obj_handler.append(track_info)
 
-            for i in range(len(self.visual_threads)):
-                self.visual_threads[i].append_data((copy.deepcopy(self.captured_frames[i]), copy.deepcopy(self.obj_handler.get('active', i))))
+            complete_tracking_it = timer()
 
+            # Process visualization
+            remove_processed_idx = []
+            for i in range(len(self.visual_threads)):
+                objects = copy.deepcopy(self.obj_handler.get('active', i))
+                last_frame_id = None
+                if objects:
+                    last_frame_id = objects.find_last_frame_id()
+
+                if last_frame_id:
+                    for j in range(len(self.processed_frames)):
+                        if self.processed_frames[j].source_id == i:
+                            if self.processed_frames[j].frame_id < last_frame_id:
+                                remove_processed_idx.append(j)
+                            if self.processed_frames[j].frame_id == last_frame_id:
+                                self.visual_threads[i].append_data((copy.deepcopy(self.processed_frames[j]), objects))
+                                break
+                else:
+                    for j in reversed(range(len(self.processed_frames))):
+                        if self.processed_frames[j].source_id == i:
+                            self.visual_threads[i].append_data((copy.deepcopy(self.processed_frames[j]), objects))
+                            break
+
+            remove_processed_idx.sort(reverse=True)
+            for index in remove_processed_idx:
+                del self.processed_frames[index]
+
+            if len(self.processed_frames) > 30:
+                del self.processed_frames[(len(self.processed_frames)-30):]
+
+#            for j in range(len(self.processed_frames)):
+#                visual_index = self.processed_frames[j].source_id
+#                self.visual_threads[visual_index].append_data((copy.deepcopy(self.processed_frames[j]), copy.deepcopy(self.obj_handler.get('active', visual_index))))
+#            self.processed_frames = []
+
+            end_it = timer()
+            elapsed_seconds = end_it - begin_it
+
+            print(f"Time: cap[{complete_capture_it-begin_it}], det[{complete_detection_it-complete_capture_it}], track[{complete_tracking_it-complete_detection_it}], vis[{end_it-complete_tracking_it}] = {end_it-begin_it} secs")
+
+            if self.fps:
+                sleep_seconds = 1. / self.fps - elapsed_seconds
+                if sleep_seconds <= 0.0:
+                    sleep_seconds = 0.001
+            else:
+                sleep_seconds = 0.03
+            time.sleep(sleep_seconds)
 
     def start(self):
         for source in self.sources:

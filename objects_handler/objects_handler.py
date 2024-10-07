@@ -24,6 +24,14 @@ class ObjectResultList:
     def __init__(self):
         self.objects: list[ObjectResult] = []
 
+    def find_last_frame_id(self):
+        frame_id = 0
+        for obj in self.objects:
+            if frame_id < obj.frame_id:
+                frame_id = obj.frame_id
+
+        return frame_id
+
 
 '''
 Модуль работы с объектами ожидает данные от детектора в виде dict: {'cam_id': int, 'objects': list, 'actual': bool}, 
@@ -54,6 +62,7 @@ class ObjectsHandler:
         self.handler = Thread(target=self.handle_objs)
         self.run_flag = False
         self.object_id_counter = 1
+        self.last_sources = dict()
 
     def stop(self):
         self.run_flag = False

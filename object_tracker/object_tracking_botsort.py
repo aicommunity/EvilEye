@@ -34,12 +34,6 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
     def default(self):
         self.params.clear()
 
-    def get(self):
-        return self.queue_out.get()
-
-    def put(self, det_info):
-        self.queue_in.put(det_info)
-
     def _process_impl(self):
         while self.run_flag:
             sleep(0.01)

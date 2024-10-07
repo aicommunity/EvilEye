@@ -82,6 +82,11 @@ class VideoCapture(capture.VideoCaptureBase):
     def _capture_frames(self):
         while self.run_flag:
             begin_it = timer()
+            with self.mutex:
+                if not self.is_inited or self.capture is None or not self.capture.isOpened():
+                    time.sleep(0.01)
+                    continue
+
             is_read, src_image = self.capture.read()
             if is_read:
                 with self.mutex:
@@ -111,6 +116,8 @@ class VideoCapture(capture.VideoCaptureBase):
 
     def get_frames_impl(self) -> list[CaptureImage]:
         captured_images: list[CaptureImage] = []
+        if self.frames_queue.empty():
+            return captured_images
         ret, src_image, frame_id = self.frames_queue.get()
         if ret:
             if self.split_stream:  # Если сплит, то возвращаем список с частями потока, иначе - исходное изображение
