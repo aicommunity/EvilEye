@@ -3,6 +3,7 @@ import capture
 from object_detector import object_detection_yolov8
 from object_detector.object_detection_base import DetectionResultList
 from object_tracker import object_tracking_botsort
+from object_tracker.object_tracking_base import TrackingResultList
 from video_thread import VideoThread
 from objects_handler import objects_handler
 from time import sleep
@@ -22,11 +23,9 @@ class Controller:
         self.visual_threads = []
         self.qt_slot = pyqt_slot
 
-        self.num_dets = 0
-        self.num_tracks = 0
         self.captured_frames: list[CaptureImage] = []
         self.detection_results: list[DetectionResultList] = []
-        self.track_info = None
+        self.tracking_results: list[TrackingResultList] = []
         self.run_flag = False
 
     def run(self):
@@ -40,33 +39,26 @@ class Controller:
                 if len(frames) == 0:
                     source.reset()
 
-            det_params = self.params['detectors']
-            for i in range(self.num_dets):
-                detector = self.detectors[i]
-                source_ids = det_params[i]['source_ids']
+            self.detection_results = []
+            for detector in self.detectors:
+                source_ids = detector.get_source_ids()
                 for capture_frame in self.captured_frames:
                     if capture_frame.source_id in source_ids:
                         detector.put(capture_frame)
 
-            self.detection_results = []
-            for i in range(self.num_dets):
-                detection_result = self.detectors[i].get()
+                detection_result = detector.get()
                 if detection_result:
                     self.detection_results.append(detection_result)
 
-            tr_params = self.params['trackers']
-            for i in range(self.num_tracks):
-                tracker = self.trackers[i]
-                source_ids = tr_params[i]['source_ids']
+            self.tracking_results = []
+            for tracker in self.trackers:
+                source_ids = tracker.get_source_ids()
                 for det_result in self.detection_results:
                     if det_result.source_id in source_ids:
                         tracker.put(det_result)
-
-            self.track_info = []
-            for i in range(self.num_tracks):
-                track_info = self.trackers[i].get()
+                track_info = tracker.get()
                 if track_info:
-                    self.track_info = track_info
+                    self.tracking_results = track_info
                     self.obj_handler.append(track_info)
 
             for i in range(len(self.visual_threads)):
@@ -102,9 +94,6 @@ class Controller:
 
     def init(self, params):
         self.params = params
-        self.num_sources = len(self.params['sources'])
-        self.num_dets = len(self.params['detectors'])
-        self.num_tracks = len(self.params['trackers'])
 
         self._init_captures(self.params['sources'])
         self._init_detectors(self.params['detectors'])
@@ -114,19 +103,12 @@ class Controller:
 
     def _init_captures(self, params):
         num_sources = len(params)
-#        num_videos = 0
         for i in range(num_sources):
             src_params = params[i]
-#            if src_params['split']:
-#                num_videos += src_params['num_split']
-#            else:
-#                num_videos += 1
             camera = capture.VideoCapture()
             camera.set_params(**src_params)
             camera.init()
             self.sources.append(camera)
-#        self.captured_frames = [None] * num_videos
-#        self.num_videos = num_videos
 
     def _init_detectors(self, params):
         num_det = len(params)
@@ -134,18 +116,18 @@ class Controller:
             det_params = params[i]
 
             detector = object_detection_yolov8.ObjectDetectorYoloV8()
-            self.detectors.append(detector)
             detector.set_params(**det_params)
             detector.init()
-#        self.detection_results = [None] * self.num_videos
+            self.detectors.append(detector)
 
     def _init_trackers(self, params):
         num_trackers = len(params)
         for i in range(num_trackers):
+            tracker_params = params[i]
             tracker = object_tracking_botsort.ObjectTrackingBotsort()
-            self.trackers.append(tracker)
+            tracker.set_params(**tracker_params)
             tracker.init()
-#        self.track_info = [None] * self.num_videos
+            self.trackers.append(tracker)
 
     def _init_visualizer(self):
         num_videos = len(self.params['sources'])

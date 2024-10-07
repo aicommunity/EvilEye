@@ -16,7 +16,7 @@ class VideoCaptureBase(core.EvilEyeBase):
     def __init__(self):
         super().__init__()
         self.run_flag = False
-        self.frames_queue = Queue(maxsize=2)
+        self.frames_queue = Queue(maxsize=1)
         self.frame_id_counter = 0
         self.source_fps = None
         self.split_stream = False

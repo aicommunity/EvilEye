@@ -28,6 +28,7 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
         self.tracker.reset()
 
     def set_params_impl(self):
+        self.source_ids = self.params.get('source_ids', [])
         pass  # TODO: add applying params to tracker instance
 
     def default(self):

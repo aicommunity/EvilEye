@@ -34,6 +34,7 @@ class ObjectTrackingBase(core.EvilEyeBase):
         self.run_flag = False
         self.queue_in = Queue()
         self.queue_out = Queue()
+        self.source_ids = []
         self.processing_thread = threading.Thread(target=self._process_impl)
 
     def put(self, det_info):
@@ -41,6 +42,9 @@ class ObjectTrackingBase(core.EvilEyeBase):
 
     def get(self):
         return self.queue_out.get()
+
+    def get_source_ids(self):
+        return self.source_ids
 
     def start(self):
         self.run_flag = True

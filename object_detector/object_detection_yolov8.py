@@ -38,6 +38,7 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
         self.model_name = self.params['model']
         self.stride = self.params.get('vid_stride', 1)
         self.stride_cnt = self.stride
+        self.source_ids = self.params.get('source_ids', [])
 
     def default(self):
         self.model_name = None
