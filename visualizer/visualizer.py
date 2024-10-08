@@ -67,17 +67,20 @@ class Visualizer(core.EvilEyeBase):
             if len(self.objects) < source_id:
                 last_frame_id = objects[source_id].find_last_frame_id()
 
+            is_frame_found = False
             if last_frame_id:
                 for j in range(len(self.processing_frames)):
-                    if self.processing_frames[j].source_id == i:
+                    if self.processing_frames[j].source_id == source_id:
                         if self.processing_frames[j].frame_id < last_frame_id:
                             remove_processed_idx.append(j)
                         if self.processing_frames[j].frame_id == last_frame_id:
                             self.visual_threads[i].append_data((copy.deepcopy(self.processing_frames[j]), objects[source_id]))
+                            is_frame_found = True
                             break
-            else:
+
+            if not is_frame_found:
                 for j in reversed(range(len(self.processing_frames))):
-                    if self.processing_frames[j].source_id == i:
+                    if self.processing_frames[j].source_id == source_id:
                         self.visual_threads[i].append_data((copy.deepcopy(self.processing_frames[j]), objects[source_id]))
                         break
 

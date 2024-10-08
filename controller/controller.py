@@ -23,12 +23,10 @@ class Controller:
         self.trackers = []
         self.obj_handler = None
         self.visualizer = None
-        #self.visual_threads = []
         self.qt_slot = pyqt_slot
         self.fps = 5
 
         self.captured_frames: list[CaptureImage] = []
-        #self.processed_frames: list[CaptureImage] = []
         self.detection_results: list[DetectionResultList] = []
         self.tracking_results: list[TrackingResultList] = []
         self.run_flag = False
@@ -83,15 +81,8 @@ class Controller:
                 objects.append(copy.deepcopy(self.obj_handler.get('active', self.visualizer.source_ids[i])))
             self.visualizer.update(processing_frames, objects)
 
-#            for j in range(len(self.processed_frames)):
-#                visual_index = self.processed_frames[j].source_id
-#                self.visual_threads[visual_index].append_data((copy.deepcopy(self.processed_frames[j]), copy.deepcopy(self.obj_handler.get('active', visual_index))))
-#            self.processed_frames = []
-
             end_it = timer()
             elapsed_seconds = end_it - begin_it
-
-            print(f"Time: cap[{complete_capture_it-begin_it}], det[{complete_detection_it-complete_capture_it}], track[{complete_tracking_it-complete_detection_it}], vis[{end_it-complete_tracking_it}] = {end_it-begin_it} secs")
 
             if self.fps:
                 sleep_seconds = 1. / self.fps - elapsed_seconds
@@ -99,6 +90,7 @@ class Controller:
                     sleep_seconds = 0.001
             else:
                 sleep_seconds = 0.03
+            print(f"Time: cap[{complete_capture_it-begin_it}], det[{complete_detection_it-complete_capture_it}], track[{complete_tracking_it-complete_detection_it}], vis[{end_it-complete_tracking_it}] = {end_it-begin_it} secs, sleep {sleep_seconds} secs")
             time.sleep(sleep_seconds)
 
     def start(self):
@@ -110,8 +102,6 @@ class Controller:
             tracker.start()
         self.obj_handler.start()
         self.visualizer.start()
-        #for thread in self.visual_threads:
-        #    thread.start_thread()
         self.run_flag = True
         self.control_thread.start()
 
@@ -119,8 +109,6 @@ class Controller:
         self.run_flag = False
         self.control_thread.join()
         self.visualizer.stop()
-        #for thread in self.visual_threads:
-        #    thread.stop()
         self.obj_handler.stop()
         for tracker in self.trackers:
             tracker.stop()
@@ -171,21 +159,3 @@ class Controller:
         self.visualizer = Visualizer(self.qt_slot)
         self.visualizer.set_params(**params)
         self.visualizer.init()
-'''
-        num_videos = len(self.params['sources'])
-        src_params = []
-
-        for i in range(num_videos):
-            source = self.params['sources'][i]
-            if source['split']:
-                for j in range(source['num_split']):
-                    self.visual_threads.append(VideoThread(self.params['sources'][i], self.params['num_height'],
-                                                           self.params['num_width']))
-                    self.visual_threads[-1].update_image_signal.connect(
-                        self.qt_slot)  # Сигнал из потока для обновления label на новое изображение
-            else:
-                self.visual_threads.append(VideoThread(self.params['sources'][i], self.params['num_height'],
-                                                       self.params['num_width']))
-                self.visual_threads[-1].update_image_signal.connect(
-                    self.qt_slot)  # Сигнал из потока для обновления label на новое изображение
-'''
