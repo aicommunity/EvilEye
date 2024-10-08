@@ -6,9 +6,8 @@ import cv2
 from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt
 import json
 import argparse
-from objects_handler.objects_handler import ObjectsHandler
 from pathlib import Path
-from video_thread import VideoThread
+from visualizer.video_thread import VideoThread
 from controller import controller
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
@@ -37,8 +36,8 @@ class App(QWidget):
         self.controller = controller.Controller(self.update_image)
 
         self.params = params
-        self.rows = self.params['num_height']
-        self.cols = self.params['num_width']
+        self.rows = self.params['visualizer']['num_height']
+        self.cols = self.params['visualizer']['num_width']
         self.sources = self.params['sources']
         self.num_sources = len(self.params['sources'])
         self.num_labels = 0

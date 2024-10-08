@@ -17,18 +17,19 @@ class VideoThread(QThread):
     # Сигнал, отвечающий за обновление label, в котором отображается изображение из потока
     update_image_signal = pyqtSignal(list)
 
-    def __init__(self, params, rows, cols):
+    def __init__(self, source_id, fps, rows, cols):
         super().__init__()
         VideoThread.rows = rows  # Количество строк и столбцов для правильного перевода изображения в полный экран
         VideoThread.cols = cols
         self.queue = Queue()
 
         self.thread_num = VideoThread.thread_counter
+        self.source_id = source_id
 
         self.run_flag = False
-        self.split = params['split']
-        self.fps = 10
-        self.source_params = params
+        #self.split = params['split']
+        self.fps = fps
+        #self.source_params = params
         self.thread_num = VideoThread.thread_counter  # Номер потока для определения, какой label обновлять
         self.det_params = None
 
@@ -48,22 +49,16 @@ class VideoThread(QThread):
         self.queue.put(data)
 
     def run(self):
-        if self.source_params['source'] == 'file':  # Проигрывание роликов с указанным fps, если запускаем из файла
-            #self.fps = self.source_params['fps']
-            self.timer.start(int(1000 // self.fps))
-            loop = QEventLoop()
-            loop.exec_()
-        else:
-            while self.run_flag:
-                begin_it = timer()
-                self.process_image()
-                end_it = timer()
-                elapsed_seconds = end_it - begin_it
-                sleep_seconds = 1. / self.fps - elapsed_seconds
-                if sleep_seconds > 0.0:
-                    time.sleep(sleep_seconds)
-                else:
-                    time.sleep(0.01)
+        while self.run_flag:
+            begin_it = timer()
+            self.process_image()
+            end_it = timer()
+            elapsed_seconds = end_it - begin_it
+            sleep_seconds = 1. / self.fps - elapsed_seconds
+            if sleep_seconds > 0.0:
+                time.sleep(sleep_seconds)
+            else:
+                time.sleep(0.01)
 
     def process_image(self):
         try:
@@ -74,8 +69,6 @@ class VideoThread(QThread):
         # Сигнал из потока для обновления label на новое изображение
         self.update_image_signal.emit([frame.image, self.thread_num])
 
-    def stop(self):
+    def stop_thread(self):
         self.run_flag = False
-        # self.queue.put('STOP')
-        # self.wait()
-        print('Video stopped')
+        print('Visualization stopped')
