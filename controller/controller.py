@@ -72,7 +72,7 @@ class Controller:
                 track_info = tracker.get()
                 if track_info:
                     self.tracking_results = track_info
-                    self.obj_handler.append(track_info)
+                    self.obj_handler.put(track_info)
 
             complete_tracking_it = timer()
 

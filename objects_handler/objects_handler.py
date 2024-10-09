@@ -74,7 +74,7 @@ class ObjectsHandler:
         self.run_flag = True
         self.handler.start()
 
-    def append(self, objs):  # Добавление данных из детектора/трекера в очередь
+    def put(self, objs):  # Добавление данных из детектора/трекера в очередь
         self.objs_queue.put(objs)
 
     def get(self, objs_type, cam_id):  # Получение списка объектов в зависимости от указанного типа
@@ -157,40 +157,3 @@ class ObjectsHandler:
             else:
                 filtered_active_objects.append(active_obj)
         self.active_objs.objects = filtered_active_objects
-
-
-'''
-    def _find_in_tracked(self, active_objs, frame_objs):
-        for obj in frame_objs['objects']:
-            was_appended = False  # Флаг, который показывает, новый ли это объект или его уже отслеживали
-            for cam_obj in active_objs['objects']:
-                # Если объект с таким айди найден в отслеживаемых, то добавляем новые координаты рамки к его истории
-                if obj['track_id'] == cam_obj['track_id']:
-                    cam_obj['obj_info'].append(obj)
-                    cam_obj['last_update'] = True  # Был ли данный объект обновлен на этом кадре
-                    was_appended = True
-                    cam_obj['lost_frames'] = 0  # Кол-во последовательных кадров, на которых объекта не было
-                    if len(cam_obj[
-                               'obj_info']) > self.history:  # Если количество данных превышает размер истории, удаляем самые старые данные об объекте
-                        del cam_obj['obj_info'][0]
-                    break
-            if not was_appended:  # Если это новый объект, то создаем новый словарь для него
-                tracked_obj = {'track_id': obj['track_id'], 'obj_info': [obj], 'lost_frames': 0, 'last_update': True}
-                active_objs['objects'].append(tracked_obj)
-        del_idxs = []
-        for i, cam_obj in enumerate(active_objs['objects']):  # Цикл для перевода объектов в потерянные
-            if not cam_obj['last_update']:  # Если на последнем кадре не было обновления, то увеличиваем счетчик
-                cam_obj['lost_frames'] += 1
-                if cam_obj['lost_frames'] >= self.lost_thresh:
-                    del_idxs.append(i)
-                    self._move_to_lost(cam_obj)  # Отправляем в потерянные, если отсутствует больше порога кадров
-            else:
-                cam_obj['last_update'] = False  # Сбрасываем флаги
-        for idx in reversed(del_idxs):  # Удаление потерянных объектов из активных
-            del active_objs['objects'][idx]
-        del_idxs.clear()
-        # print('-----------------')
-        # print(active_objs)
-        # print('------------DDDDDD-----------')
-        # print(self.active_objs)
-'''
