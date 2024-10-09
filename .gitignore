@@ -143,3 +143,4 @@ x64/
 *.bin
 *.pdb
 *.exe
+yolov8n.pt

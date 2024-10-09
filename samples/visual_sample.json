@@ -1,26 +1,13 @@
 {
-  "num_width": 2,
-  "num_height": 2,
   "sources": [
-    {
+     {
       "source": "IPcam",
       "camera": "rtsp://user:AutoZloboglaz821@10.245.1.200",
       "apiPreference": "CAP_FFMPEG",
       "split": false,
       "num_split": 0,
       "src_coords": 0,
-      "module": {
-        "name": "tracking",
-        "det_params": {
-          "model": "yolov8n.pt",
-          "show" : false,
-          "conf" : 0.4,
-          "save" : false,
-          "stride_type": "frames",
-          "vid_stride": 1,
-          "roi": [[[1840, 0, 500, 400], [1700, 395, 800, 650], [1500, 1030, 1400, 1130]]]
-        }
-      }
+      "source_ids": [0]
     },
     {
       "source": "IPcam",
@@ -29,18 +16,56 @@
       "split": true,
       "num_split": 2,
       "src_coords": [[0, 0, 2304, 1300], [0, 1300, 2304, 1292]],
-      "module": {
-        "name": "tracking",
-        "det_params": {
-          "model": "yolov8n.pt",
-          "show": false,
-          "conf": 0.4,
-          "save": false,
-          "stride_type": "frames",
-          "vid_stride": 1,
-          "roi": [[], []]
-        }
-      }
+      "source_ids": [1, 2]
     }
-  ]
+  ],
+  "detectors":[
+    {
+      "source_ids": [0],
+      "model": "yolov8n.pt",
+      "show" : false,
+      "conf" : 0.4,
+      "save" : false,
+      "stride_type": "frames",
+      "vid_stride": 1,
+      "roi": [[[1840, 0, 500, 400], [1700, 395, 800, 650], [1500, 1030, 1400, 1130]]]
+    },
+    {
+      "source_ids": [1],
+      "model": "yolov8n.pt",
+      "show" : false,
+      "conf" : 0.4,
+      "save" : false,
+      "stride_type": "frames",
+      "vid_stride": 1,
+      "roi": [[]]
+    },
+    {
+      "source_ids": [2],
+      "model": "yolov8n.pt",
+      "show" : false,
+      "conf" : 0.4,
+      "save" : false,
+      "stride_type": "frames",
+      "vid_stride": 1,
+      "roi": [[]]
+    }
+  ],
+  "trackers":[
+    {
+      "source_ids": [0]
+    },
+    {
+      "source_ids": [1]
+    },
+    {
+      "source_ids": [2]
+    }
+  ],
+  "visualizer" : {
+    "num_width": 2,
+    "num_height": 2,
+    "source_ids": [0, 1, 2],
+    "fps": [5, 5, 5]
+  }
 }
