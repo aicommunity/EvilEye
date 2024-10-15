@@ -74,7 +74,7 @@
   "database": {
     "user_name": "postgres",
     "password": "12345",
-    "database_name": "postgres",
+    "database_name": "evil_eye",
     "host_name": "localhost",
     "port": 5432,
     "tables": {
