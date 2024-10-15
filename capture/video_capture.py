@@ -78,6 +78,10 @@ class VideoCapture(capture.VideoCaptureBase):
     def reset_impl(self):
         self.release()
         self.init()
+        if self.get_init_flag():
+            print("Reconnected to a camera: {0}".format(self.params['camera']))
+        else:
+            raise Exception(f"Could not connect to a camera: {self.params['camera']}")
 
     def _capture_frames(self):
         while self.run_flag:
@@ -95,10 +99,11 @@ class VideoCapture(capture.VideoCaptureBase):
                 self.frames_queue.put([is_read, src_image, self.frame_id_counter])
                 self.frame_id_counter += 1
             else:
-                with self.mutex:
-                    if self.frames_queue.full():
-                        self.frames_queue.get()
-                self.frames_queue.put([is_read, None, None])
+                self.reset()
+                # with self.mutex:
+                #     if self.frames_queue.full():
+                #         self.frames_queue.get()
+                # self.frames_queue.put([is_read, None, None])
             end_it = timer()
             elapsed_seconds = end_it - begin_it
 

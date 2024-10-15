@@ -62,9 +62,6 @@
       "source_ids": [2]
     }
   ],
-  "handler": {
-    "db_table": "emerged"
-  },
   "visualizer" : {
     "num_width": 2,
     "num_height": 2,
@@ -74,16 +71,21 @@
   "database": {
     "user_name": "postgres",
     "password": "12345",
-    "database_name": "evil_eye",
+    "database_name": "postgres",
     "host_name": "localhost",
     "port": 5432,
     "tables": {
-      "objects": {
-        "status": "varchar(7)",
+      "emerged": {
         "object_id": "integer PRIMARY KEY",
-        "bbox": "double precision ARRAY[4]",
+        "bounding_box": "real ARRAY[4]",
         "confidence": "double precision",
-        "class_id": "real"
+        "class_id": "integer"
+      },
+      "lost": {
+        "object_id": "integer PRIMARY KEY",
+        "bounding_box": "real ARRAY[4]",
+        "confidence": "double precision",
+        "class_id": "integer"
       }
     }
   }

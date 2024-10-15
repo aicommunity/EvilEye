@@ -145,7 +145,7 @@ class ObjectsHandler:
                 obj.object_id = self.object_id_counter
                 self.object_id_counter += 1
                 obj.tracks.append(track)
-                data = self._prepare_for_saving('objects', obj_status='emerged', obj=obj)
+                data = self._prepare_for_saving('emerged', copy.deepcopy(obj))
                 self.db_controller.put('objects', data)
                 self.active_objs.objects.append(obj)
 
@@ -154,7 +154,7 @@ class ObjectsHandler:
             if not active_obj.last_update:
                 active_obj.lost_frames += 1
                 if active_obj.lost_frames >= self.lost_thresh:
-                    data = self._prepare_for_saving('objects', obj_status='lost', obj=active_obj)
+                    data = self._prepare_for_saving('lost', copy.deepcopy(active_obj))
                     self.db_controller.put('objects', data)
                     self.lost_objs.objects.append(active_obj)
                 else:
@@ -163,19 +163,15 @@ class ObjectsHandler:
                 filtered_active_objects.append(active_obj)
         self.active_objs.objects = filtered_active_objects
 
-    def _prepare_for_saving(self, table_name, obj_status, obj: ObjectResult) -> list:
+    def _prepare_for_saving(self, table_name, obj: ObjectResult) -> list:
         table_fields = self.db_controller.get_fields_names(table_name)
         fields_for_saving = []
         for field in table_fields:
-            if field == 'status':
-                fields_for_saving.append(obj_status)
-                continue
-
             attr_value = getattr(obj, field, None)
             if not attr_value:
                 attr_value = getattr(obj.tracks[-1], field, None)
             if not attr_value:
-                raise Exception('Given object doesn\'t have required fields')
+                raise Exception(f'Given object doesn\'t have required fields {field}')
             fields_for_saving.append(attr_value)
         return fields_for_saving
 

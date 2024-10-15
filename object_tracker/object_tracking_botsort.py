@@ -88,8 +88,9 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
             track_id = int(tracks[i, 4])
             object_info = TrackingResult()
             object_info.class_id = track_cls
+            print(object_info.class_id)
             object_info.bounding_box = track_bbox
-            object_info.confidence = track_conf
+            object_info.confidence = float(track_conf)
             object_info.track_id = track_id
             if detection:
                 object_info.detection_history.append(detection)
