@@ -87,7 +87,8 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
         detection_result_list = DetectionResultList()
         inf_params = {"show": self.params['show'], 'conf': self.params['conf'], 'save': self.params['save']}
         curr_time = int(time.time() * 1000)
-        if ((self.params.get('stride_type', 'frames') == "time") and (curr_time - self.prev_time >= self.stride)) or ((self.params.get('stride_type', 'frames') == "frames") and (self.stride_cnt == self.stride)):  # Если прошло нужное количество времени, запускаем детекцию
+        if (((self.params.get('stride_type', 'frames') == "time") and (curr_time - self.prev_time >= self.stride)) or
+                ((self.params.get('stride_type', 'frames') == "frames") and (self.stride_cnt == self.stride))):  # Если прошло нужное количество времени, запускаем детекцию
             self.prev_time = curr_time
             self.stride_cnt = 1
 
@@ -113,7 +114,7 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
 
             bboxes_coords, confidences, class_ids = utils.non_max_sup(bboxes_coords, confidences, class_ids)
             bboxes_coords, confidences, class_ids = utils.merge_roi_boxes(self.params['roi'][0], bboxes_coords, confidences, class_ids)  # Объединение рамок из разных ROI
-            frame_objects = utils.get_objs_info(bboxes_coords, confidences, class_ids)
+            # frame_objects = utils.get_objs_info(bboxes_coords, confidences, class_ids)
             detection_result_list.source_id = split_image[0][0].source_id
             detection_result_list.time_stamp = time.time()
             detection_result_list.frame_id = split_image[0][0].frame_id

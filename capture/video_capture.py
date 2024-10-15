@@ -127,7 +127,7 @@ class VideoCapture(capture.VideoCaptureBase):
                     capture_image.time_stamp = time.time()
                     capture_image.frame_id = frame_id
                     capture_image.image = src_image[self.src_coords[stream_cnt][1]:self.src_coords[stream_cnt][1] + int(self.src_coords[stream_cnt][3]),
-                                   self.src_coords[stream_cnt][0]:self.src_coords[stream_cnt][0] + int(self.src_coords[stream_cnt][2])].copy()
+                                                    self.src_coords[stream_cnt][0]:self.src_coords[stream_cnt][0] + int(self.src_coords[stream_cnt][2])].copy()
                     captured_images.append(capture_image)
             else:
                 capture_image = CaptureImage()
@@ -137,7 +137,6 @@ class VideoCapture(capture.VideoCaptureBase):
                 capture_image.image = src_image
                 captured_images.append(capture_image)
         return captured_images
-
 
     def default(self):
         self.params.clear()

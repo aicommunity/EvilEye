@@ -11,6 +11,7 @@ import copy
 import time
 from timeit import default_timer as timer
 from visualizer.visualizer import Visualizer
+from database_controller.database_controller_pg import DatabaseControllerPg
 
 
 class Controller:
@@ -25,6 +26,7 @@ class Controller:
         self.visualizer = None
         self.qt_slot = pyqt_slot
         self.fps = 5
+        self.db_controller = None
 
         self.captured_frames: list[CaptureImage] = []
         self.detection_results: list[DetectionResultList] = []
@@ -102,6 +104,7 @@ class Controller:
             tracker.start()
         self.obj_handler.start()
         self.visualizer.start()
+        self.db_controller.connect()
         self.run_flag = True
         self.control_thread.start()
 
@@ -125,7 +128,13 @@ class Controller:
         self._init_detectors(self.params['detectors'])
         self._init_trackers(self.params['trackers'])
         self._init_visualizer(self.params['visualizer'])
-        self.obj_handler = objects_handler.ObjectsHandler(history_len=30)
+        self._init_db_controller(self.params['database'])
+        self.obj_handler = objects_handler.ObjectsHandler(db_controller=self.db_controller, history_len=30)
+
+    def _init_db_controller(self, params):
+        self.db_controller = DatabaseControllerPg()
+        self.db_controller.set_params(**params)
+        self.db_controller.init()
 
     def _init_captures(self, params):
         num_sources = len(params)

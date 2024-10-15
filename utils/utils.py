@@ -57,9 +57,9 @@ def create_roi(capture_image, coords):
     for count in range(len(coords)):
         roi_image = copy.deepcopy(capture_image)
         roi_image.image = capture_image.image[coords[count][1]:coords[count][1] + coords[count][3],
-                     coords[count][0]:coords[count][0] + coords[count][2]]
+                                              coords[count][0]:coords[count][0] + coords[count][2]]
 
-        rois.append([roi_image,  [coords[count][0], coords[count][1]]])
+        rois.append([roi_image, [coords[count][0], coords[count][1]]])
     return rois
 
 
@@ -119,11 +119,11 @@ def is_same_roi(all_roi, box1, box2):
                 return False
             return True
         elif ((roi[1] <= box1[3] <= (roi[1] + roi[3])) and (roi[1] <= box1[1] <= (roi[1] + roi[3])) and not
-                (roi[1] <= box2[3] <= (roi[1] + roi[3])) and (roi[1] <= box2[1] <= (roi[1] + roi[3]))):
+        (roi[1] <= box2[3] <= (roi[1] + roi[3])) and (roi[1] <= box2[1] <= (roi[1] + roi[3]))):
             # Проверка на вложенность регионов интереса, создаем для каждой рамки список окружающих регионов
             surrounding_rois_box1.append(i)
         elif ((roi[1] <= box2[3] <= (roi[1] + roi[3])) and (roi[1] <= box2[1] <= (roi[1] + roi[3])) and not
-                (roi[1] <= box1[3] <= (roi[1] + roi[3])) and (roi[1] <= box1[1] <= (roi[1] + roi[3]))):
+        (roi[1] <= box1[3] <= (roi[1] + roi[3])) and (roi[1] <= box1[1] <= (roi[1] + roi[3]))):
             # Проверка на вложенность регионов интереса, создаем для каждой рамки список окружающих регионов
             surrounding_rois_box2.append(i)
     return False

@@ -3,6 +3,7 @@ import core
 from queue import Queue
 import threading
 
+
 class DetectionResult:
     def __init__(self):
         self.bounding_box = []

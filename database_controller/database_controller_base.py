@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 import core
 
+
 class DatabaseControllerBase(core.EvilEyeBase):
     def __init__(self):
         super().__init__()
@@ -14,14 +15,16 @@ class DatabaseControllerBase(core.EvilEyeBase):
             return self.connect_impl()
         else:
             raise Exception('init function has not been called')
+
     def disconnect(self):
         if self.get_init_flag():
             return self.disconnect_impl()
         else:
             raise Exception('init function has not been called')
-    def query(self, query_string):
+
+    def query(self, query_string, data=None):
         if self.get_init_flag():
-            return self.query_impl(query_string)
+            return self.query_impl(query_string, data)
         else:
             raise Exception('init function has not been called')
 
@@ -34,6 +37,6 @@ class DatabaseControllerBase(core.EvilEyeBase):
         pass
 
     @abstractmethod
-    def query_impl(self, query_string):
+    def query_impl(self, query_string, data=None):
         pass
 

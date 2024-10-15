@@ -46,7 +46,7 @@ class ObjectResultList:
 
 
 class ObjectsHandler:
-    def __init__(self, history_len=1, lost_thresh=5):
+    def __init__(self, db_controller, history_len=1, lost_thresh=5):
         # Очередь для потокобезопасного приема данных от каждой камеры
         self.objs_queue = Queue()
         # Списки для хранения различных типов объектов
@@ -56,6 +56,7 @@ class ObjectsHandler:
         self.history = history_len
         self.lost_thresh = lost_thresh  # Порог перевода (в кадрах) в потерянные объекты
 
+        self.db_controller = db_controller
         # Условие для блокировки других потоков
         self.condition = Condition()
         # Поток, который отвечает за получение объектов из очереди и распределение их по спискам
@@ -131,7 +132,7 @@ class ObjectsHandler:
                 track_object.frame_id = tracking_results.frame_id
                 track_object.class_id = track.class_id
                 track_object.tracks.append(track)
-                print(f"object_id={track_object.object_id}, track_id={track_object.tracks[-1].track_id} len(tracks)={len(track_object.tracks)}")
+                print(f"object_id={track_object.object_id}, track_id={track_object.tracks[-1].track_id}, len(tracks)={len(track_object.tracks)}")
                 if len(track_object.tracks) > self.history:  # Если количество данных превышает размер истории, удаляем самые старые данные об объекте
                     del track_object.tracks[0]
                 track_object.last_update = True
@@ -144,6 +145,8 @@ class ObjectsHandler:
                 obj.object_id = self.object_id_counter
                 self.object_id_counter += 1
                 obj.tracks.append(track)
+                data = self._prepare_for_saving('objects', obj_status='emerged', obj=obj)
+                self.db_controller.put('objects', data)
                 self.active_objs.objects.append(obj)
 
         filtered_active_objects = []
@@ -151,9 +154,29 @@ class ObjectsHandler:
             if not active_obj.last_update:
                 active_obj.lost_frames += 1
                 if active_obj.lost_frames >= self.lost_thresh:
+                    data = self._prepare_for_saving('objects', obj_status='lost', obj=active_obj)
+                    self.db_controller.put('objects', data)
                     self.lost_objs.objects.append(active_obj)
                 else:
                     filtered_active_objects.append(active_obj)
             else:
                 filtered_active_objects.append(active_obj)
         self.active_objs.objects = filtered_active_objects
+
+    def _prepare_for_saving(self, table_name, obj_status, obj: ObjectResult) -> list:
+        table_fields = self.db_controller.get_fields_names(table_name)
+        fields_for_saving = []
+        for field in table_fields:
+            if field == 'status':
+                fields_for_saving.append(obj_status)
+                continue
+
+            attr_value = getattr(obj, field, None)
+            if not attr_value:
+                attr_value = getattr(obj.tracks[-1], field, None)
+            if not attr_value:
+                raise Exception('Given object doesn\'t have required fields')
+            fields_for_saving.append(attr_value)
+        return fields_for_saving
+
+

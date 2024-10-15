@@ -14,8 +14,8 @@ class TrackingResult:
         self.life_time = 0.0
         self.frame_count = 0
         self.class_id = None
-        self.detection_history: list[DetectionResult] = [] # list of DetectionResult
-        self.tracking_data = dict() # internal tracking data
+        self.detection_history: list[DetectionResult] = []  # list of DetectionResult
+        self.tracking_data = dict()  # internal tracking data
 
 
 class TrackingResultList:
@@ -23,7 +23,7 @@ class TrackingResultList:
         self.source_id = None
         self.frame_id = None
         self.time_stamp = None
-        self.tracks: list[TrackingResult] = [] # list of DetectionResult
+        self.tracks: list[TrackingResult] = []  # list of DetectionResult
 
 
 class ObjectTrackingBase(core.EvilEyeBase):
