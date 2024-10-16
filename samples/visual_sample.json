@@ -67,5 +67,26 @@
     "num_height": 2,
     "source_ids": [0, 1, 2],
     "fps": [5, 5, 5]
+  },
+  "database": {
+    "user_name": "postgres",
+    "password": "",
+    "database_name": "evil_eye_db",
+    "host_name": "localhost",
+    "port": 5433,
+    "tables": {
+      "emerged": {
+        "object_id": "integer PRIMARY KEY",
+        "bounding_box": "double precision ARRAY[4]",
+        "confidence": "double precision",
+        "class_id": "integer"
+      },
+      "lost": {
+        "object_id": "integer PRIMARY KEY",
+        "bounding_box": "double precision ARRAY[4]",
+        "confidence": "double precision",
+        "class_id": "integer"
+      }
+    }
   }
 }

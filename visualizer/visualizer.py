@@ -19,6 +19,7 @@ class Visualizer(core.EvilEyeBase):
         self.num_width = 1
         self.processing_frames: list[CaptureImage] = []
         self.objects: list[ObjectResultList] = []
+        self.last_displayed_frame = dict()
 
     def default(self):
         pass
@@ -61,32 +62,34 @@ class Visualizer(core.EvilEyeBase):
         self.objects = objects
         # Process visualization
         remove_processed_idx = []
-        for i in range(len(self.visual_threads)):
-            source_id = self.visual_threads[i].source_id
-            last_frame_id = None
-            if len(self.objects) < source_id:
-                last_frame_id = objects[source_id].find_last_frame_id()
 
-            is_frame_found = False
-            if last_frame_id:
-                for j in range(len(self.processing_frames)):
-                    if self.processing_frames[j].source_id == source_id:
-                        if self.processing_frames[j].frame_id < last_frame_id:
-                            remove_processed_idx.append(j)
-                        if self.processing_frames[j].frame_id == last_frame_id:
-                            self.visual_threads[i].append_data((copy.deepcopy(self.processing_frames[j]), objects[source_id]))
-                            is_frame_found = True
-                            break
+        processed_sources = []
 
-            if not is_frame_found:
-                for j in reversed(range(len(self.processing_frames))):
-                    if self.processing_frames[j].source_id == source_id:
-                        self.visual_threads[i].append_data((copy.deepcopy(self.processing_frames[j]), objects[source_id]))
-                        break
+        if len(self.processing_frames) < len(self.source_ids)*5:
+            return
+
+        for i in range(len(self.processing_frames)):
+            frame = self.processing_frames[i]
+            source_id = frame.source_id
+            if source_id in processed_sources:
+                continue
+
+            if source_id in self.last_displayed_frame.keys() and self.last_displayed_frame[source_id] > frame.frame_id:
+                remove_processed_idx.append(i)
+                continue
+
+            objs = objects[source_id].find_objects_by_frame_id(frame.frame_id)
+            for j in range(len(self.visual_threads)):
+                if self.visual_threads[j].source_id == source_id:
+                    self.visual_threads[j].append_data((copy.deepcopy(frame), objects[source_id]))
+                    self.last_displayed_frame[source_id] = frame.frame_id
+                    processed_sources.append(source_id)
+                    break
+            remove_processed_idx.append(i)
+
 
         remove_processed_idx.sort(reverse=True)
         for index in remove_processed_idx:
             del self.processing_frames[index]
 
-        if len(self.processing_frames) > 30:
-            del self.processing_frames[(len(self.processing_frames) - 30):]
+        print(f"Visual Queue size: {len(self.processing_frames)}")

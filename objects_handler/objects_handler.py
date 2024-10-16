@@ -32,6 +32,14 @@ class ObjectResultList:
 
         return frame_id
 
+    def find_objects_by_frame_id(self, frame_id):
+        objs = []
+        for obj in self.objects:
+            if frame_id == obj.frame_id:
+                objs.append(obj)
+
+        return objs
+
 
 '''
 Модуль работы с объектами ожидает данные от детектора в виде dict: {'cam_id': int, 'objects': list, 'actual': bool}, 
