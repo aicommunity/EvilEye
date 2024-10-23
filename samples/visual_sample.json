@@ -76,13 +76,8 @@
     "port": 5432,
     "tables": {
       "emerged": {
-        "object_id": "integer PRIMARY KEY",
-        "bounding_box": "real ARRAY[4]",
-        "confidence": "double precision",
-        "class_id": "integer"
-      },
-      "lost": {
-        "object_id": "integer PRIMARY KEY",
+        "time_stamp": "timestamp",
+        "object_id": "integer",
         "bounding_box": "real ARRAY[4]",
         "confidence": "double precision",
         "class_id": "integer"

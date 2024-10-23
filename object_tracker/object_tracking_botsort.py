@@ -1,4 +1,5 @@
 import numpy as np
+import datetime
 from object_tracker import object_tracking_base
 from object_tracker.trackers.bot_sort import BOTSORT
 from object_tracker.trackers.cfg.utils import read_cfg
@@ -88,10 +89,10 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
             track_id = int(tracks[i, 4])
             object_info = TrackingResult()
             object_info.class_id = track_cls
-            print(object_info.class_id)
             object_info.bounding_box = track_bbox
             object_info.confidence = float(track_conf)
             object_info.track_id = track_id
+            object_info.time_stamp = datetime.datetime.now()
             if detection:
                 object_info.detection_history.append(detection)
 

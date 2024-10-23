@@ -1,10 +1,13 @@
-import psycopg2
+import datetime
 
+import psycopg2
+from utils import event
 import database_controller
 import psycopg2 as pg
 from psycopg2 import sql
 from psycopg2 import pool
 import copy
+from PyQt5.QtSql import QSqlDatabase, QSqlTableModel
 
 
 # see https://ru.hexlet.io/blog/posts/python-postgresql
@@ -57,11 +60,17 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
     def query_impl(self, query_string, data=None):
         connection = None
         try:
+            result = []
             connection = self.conn_pool.getconn()
             with connection:
                 with connection.cursor() as curs:
                     print(query_string.as_string(curs))
                     curs.execute(query_string, data)
+                    try:
+                        result = curs.fetchall()
+                    except psycopg2.ProgrammingError:
+                        result = None
+            return result
         except psycopg2.OperationalError:
             print(f'Transaction ({query_string}) is not committed')
         finally:
@@ -72,21 +81,22 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
         return self.tables[table_name].keys()
 
     def create_table(self, table_name):
-        self.query(sql.SQL("DROP TABLE IF EXISTS {}").format(sql.Identifier(table_name)))
+        # self.query(sql.SQL("DROP TABLE IF EXISTS {}").format(sql.Identifier(table_name)))
 
-        fields = []
+        fields = [sql.SQL('count SERIAL PRIMARY KEY')]
         for key, value in self.tables[table_name].items():
             fields.append(sql.SQL("{} {}").format(sql.Identifier(key), sql.SQL(value)))
 
-        create_table = sql.SQL("CREATE TABLE {table}({fields})").format(
+        create_table = sql.SQL("CREATE TABLE IF NOT EXISTS {table}({fields})").format(
             table=sql.Identifier(table_name),
             fields=sql.SQL(',').join(fields))
         self.query(create_table)
 
     def put(self, table_name, data):
         fields = self.tables[table_name].keys()
-        insert_query = sql.SQL("INSERT INTO {} VALUES ({})").format(
+        insert_query = sql.SQL("INSERT INTO {} ({}) VALUES ({})").format(
             sql.Identifier(table_name),
+            sql.SQL(",").join(map(sql.Identifier, fields)),
             sql.SQL(', ').join(sql.Placeholder() * len(fields))
         )
         self.query(insert_query, data)
@@ -98,19 +108,19 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
             connection = self.conn_pool.getconn()
             with connection:
                 with connection.cursor() as curs:
-                    query = sql.SQL("SELECT * from {} WHERE id = %s").format(sql.Identifier(table_name))
+                    query = sql.SQL("SELECT * from {} WHERE object_id = %s").format(sql.Identifier(table_name))
                     curs.execute(query, (obj_id,))
                     result[table_name] = curs.fetchall()
             return result
         except psycopg2.OperationalError:
-            print(f'Transaction (get obj with id={obj_id}) is not committed')
+            print(f'Transaction (get obj with object_id={obj_id}) is not committed')
             return {}
         finally:
             if connection:
                 self.conn_pool.putconn(connection)
 
     def delete_obj(self, table_name, obj_id):
-        del_query = sql.SQL("DELETE from {} WHERE id = %s").format(sql.Identifier(table_name))
+        del_query = sql.SQL("DELETE from {} WHERE object_id = %s").format(sql.Identifier(table_name))
         self.query(del_query, (obj_id,))
 
     def release_impl(self):
@@ -128,9 +138,8 @@ if __name__ == '__main__':
     db.connect()
     db.create_table('emerged')
     db.create_table('lost')
-    db.put('emerged', (1, [45.0, 37.0, 94.0, 273.0], 77.5, 1.0))
-    db.put('emerged', (2, [55.0, 47.0, 94.0, 273.0], 70.5, 1.0))
-    db.put('lost', (1, [50.0, 20.0, 33.0, 144.0], 76.0, 1.0))
-    res = db.get_obj_info('emerged', obj_id=1)
+    db.put('emerged', (datetime.datetime.now(), 1, [45.0, 37.0, 94.0, 273.0], 77.5, 1.0))
+    db.put('emerged', (datetime.datetime.now(), 2, [55.0, 47.0, 94.0, 273.0], 70.5, 1.0))
+    res = db.query(sql.SQL('SELECT * FROM emerged;'))
     print(res)
     db.disconnect()

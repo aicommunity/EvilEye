@@ -1,5 +1,6 @@
 import copy
 import time
+from utils import event
 from queue import Queue
 from threading import Thread
 from threading import Condition
@@ -112,6 +113,8 @@ class ObjectsHandler:
             # Блокируем остальные потоки для предотвращения одновременного обращения к объектам
             with self.condition:
                 self._handle_active(tracking_results)
+                # self.db_controller.put('emerged', (1, [45.0, 37.0, 94.0, 273.0], 77.5, 1.0))
+                # event.notify('handler update', 'emerged', self.db_controller.get_fields_names('emerged'))
                 # Оповещаем остальные потоки, снимаем блокировку
                 self.condition.notify()
             self.objs_queue.task_done()
@@ -141,12 +144,14 @@ class ObjectsHandler:
                 obj = ObjectResult()
                 obj.source_id = tracking_results.source_id
                 obj.class_id = track.class_id
+                print(f'Class: {obj.class_id}')
                 obj.frame_id = tracking_results.frame_id
                 obj.object_id = self.object_id_counter
                 self.object_id_counter += 1
                 obj.tracks.append(track)
                 data = self._prepare_for_saving('emerged', copy.deepcopy(obj))
-                self.db_controller.put('objects', data)
+                self.db_controller.put('emerged', data)
+                event.notify('handler update')
                 self.active_objs.objects.append(obj)
 
         filtered_active_objects = []
@@ -154,8 +159,8 @@ class ObjectsHandler:
             if not active_obj.last_update:
                 active_obj.lost_frames += 1
                 if active_obj.lost_frames >= self.lost_thresh:
-                    data = self._prepare_for_saving('lost', copy.deepcopy(active_obj))
-                    self.db_controller.put('objects', data)
+                    # data = self._prepare_for_saving('lost', copy.deepcopy(active_obj))
+                    # self.db_controller.put('lost', data)
                     self.lost_objs.objects.append(active_obj)
                 else:
                     filtered_active_objects.append(active_obj)
@@ -168,9 +173,11 @@ class ObjectsHandler:
         fields_for_saving = []
         for field in table_fields:
             attr_value = getattr(obj, field, None)
-            if not attr_value:
+            print(f'field: {field}, value: {attr_value}')
+            if attr_value is None:
                 attr_value = getattr(obj.tracks[-1], field, None)
-            if not attr_value:
+                print(f'field: {field}, value: {attr_value}')
+            if attr_value is None:
                 raise Exception(f'Given object doesn\'t have required fields {field}')
             fields_for_saving.append(attr_value)
         return fields_for_saving
