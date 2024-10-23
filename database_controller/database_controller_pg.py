@@ -102,22 +102,8 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
         self.query(insert_query, data)
 
     def get_obj_info(self, table_name, obj_id):
-        connection = None
-        try:
-            result = {}
-            connection = self.conn_pool.getconn()
-            with connection:
-                with connection.cursor() as curs:
-                    query = sql.SQL("SELECT * from {} WHERE object_id = %s").format(sql.Identifier(table_name))
-                    curs.execute(query, (obj_id,))
-                    result[table_name] = curs.fetchall()
-            return result
-        except psycopg2.OperationalError:
-            print(f'Transaction (get obj with object_id={obj_id}) is not committed')
-            return {}
-        finally:
-            if connection:
-                self.conn_pool.putconn(connection)
+        query = sql.SQL("SELECT * from {} WHERE object_id = %s").format(sql.Identifier(table_name))
+        return self.query(query, (obj_id,))
 
     def delete_obj(self, table_name, obj_id):
         del_query = sql.SQL("DELETE from {} WHERE object_id = %s").format(sql.Identifier(table_name))
@@ -137,9 +123,8 @@ if __name__ == '__main__':
     db.init()
     db.connect()
     db.create_table('emerged')
-    db.create_table('lost')
     db.put('emerged', (datetime.datetime.now(), 1, [45.0, 37.0, 94.0, 273.0], 77.5, 1.0))
     db.put('emerged', (datetime.datetime.now(), 2, [55.0, 47.0, 94.0, 273.0], 70.5, 1.0))
-    res = db.query(sql.SQL('SELECT * FROM emerged;'))
+    res = db.get_obj_info('emerged', 2)
     print(res)
     db.disconnect()
