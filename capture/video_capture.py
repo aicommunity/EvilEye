@@ -116,6 +116,7 @@ class VideoCapture(capture.VideoCaptureBase):
             time.sleep(sleep_seconds)
 
         if not self.run_flag:
+            print('Not run flag')
             while not self.frames_queue.empty:
                 self.frames_queue.get()
 
