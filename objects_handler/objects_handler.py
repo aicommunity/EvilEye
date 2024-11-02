@@ -23,6 +23,7 @@ class ObjectResult:
         self.time_stamp = None
         self.tracks: list[TrackingResult] = []
         self.last_update = False
+        self.last_image = None
         self.lost_frames = 0
         self.properties = dict()  # some object features in scene (i.e. is_moving, is_immovable, immovable_time, zone_visited, zone_time_spent etc)
         self.object_data = dict()  # internal object data
@@ -154,6 +155,7 @@ class ObjectsHandler:
                 track_object.frame_id = tracking_results.frame_id
                 track_object.class_id = track.class_id
                 track_object.tracks.append(track)
+                track_object.last_image = image
                 print(
                     f"object_id={track_object.object_id}, track_id={track_object.tracks[-1].track_id}, len(tracks)={len(track_object.tracks)}")
                 if len(track_object.tracks) > self.history:  # Если количество данных превышает размер истории, удаляем самые старые данные об объекте
@@ -167,6 +169,7 @@ class ObjectsHandler:
                 obj.time_stamp = tracking_results.time_stamp
                 obj.frame_id = tracking_results.frame_id
                 obj.object_id = self.object_id_counter
+                obj.last_image = image
                 self.object_id_counter += 1
                 obj.tracks.append(track)
                 data = self._prepare_for_saving('emerged', copy.deepcopy(obj), image)
@@ -182,14 +185,14 @@ class ObjectsHandler:
                 active_obj.lost_frames += 1
                 if active_obj.lost_frames >= self.lost_thresh:
                     active_obj.time_lost = datetime.datetime.now()
-                    lost_preview_path = self._save_image('preview', 'lost', image, active_obj)
-                    lost_img_path = self._save_image('frame', 'lost', image, active_obj)
+                    lost_preview_path = self._save_image('preview', 'lost', active_obj.last_image, active_obj)
+                    lost_img_path = self._save_image('frame', 'lost', active_obj.last_image, active_obj)
                     # data = self._prepare_for_saving('emerged', copy.deepcopy(active_obj), image)
                     updated_fields_data = self.db_controller.update('emerged', fields=['time_lost', "lost_preview_path",
-                                                                                       'lost_frame_path'],
+                                                                                       'lost_frame_path', 'lost_bounding_box'],
                                                                     obj_id=active_obj.object_id,
                                                                     data=(active_obj.time_lost, lost_preview_path,
-                                                                          lost_img_path))
+                                                                          lost_img_path, active_obj.tracks[-1].bounding_box))
                     print(updated_fields_data)
                     event.notify('handler fields updated', ['time_lost', 'lost_preview_path', 'lost_frame_path'],
                                  updated_fields_data)

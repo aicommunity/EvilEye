@@ -80,6 +80,7 @@
         "time_lost": "timestamp DEFAULT NULL",
         "object_id": "integer",
         "bounding_box": "real ARRAY[4]",
+        "lost_bounding_box": "real ARRAY[4] DEFAULT NULL",
         "confidence": "double precision",
         "class_id": "integer",
         "preview_path": "text",
