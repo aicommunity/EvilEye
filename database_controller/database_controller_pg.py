@@ -151,7 +151,7 @@ if __name__ == '__main__':
     db.init()
     db.connect()
     # Uncomment, insert your path
-    # load_folder = pathlib.Path(r'D:\Git\EvilEye\images\frames\emerged')
+    # load_folder = pathlib.Path(r'D:\Git\EvilEye\images\frames')
     # save_folder = pathlib.Path(r'D:\Git\EvilEye\images\frames\with_boxes')
     # utils.utils.draw_boxes_from_db(db, 'emerged', load_folder, save_folder)
     db.disconnect()
