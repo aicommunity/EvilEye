@@ -75,10 +75,10 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
                 split_image = [[image, [0, 0]]]
             else:
                 roi_idx = self.params['source_ids'].index(image.source_id)
-                split_image = utils.create_roi(image, self.roi[roi_idx])
+                split_image = utils.create_roi(image, self.source_ids[0], self.roi[roi_idx])
             detection_result_list = self.process_stride(split_image)
             if detection_result_list:
-                self.queue_out.put(detection_result_list)
+                self.queue_out.put([detection_result_list, image])
 
     def process_stride(self, split_image):
         bboxes_coords = []

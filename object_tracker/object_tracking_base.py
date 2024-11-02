@@ -14,7 +14,6 @@ class TrackingResult:
         self.life_time = 0.0
         self.frame_count = 0
         self.class_id = None
-        self.time_stamp = None
         self.detection_history: list[DetectionResult] = []  # list of DetectionResult
         self.tracking_data = dict()  # internal tracking data
 

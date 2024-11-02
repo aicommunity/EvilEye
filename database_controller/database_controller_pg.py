@@ -1,15 +1,11 @@
-import datetime
-
+from utils import utils
 import psycopg2
-from utils import event
+import pathlib
+import utils.utils
 import database_controller
-import psycopg2 as pg
 from psycopg2 import sql
 from psycopg2 import pool
 import copy
-from PyQt5.QtSql import QSqlDatabase, QSqlTableModel
-
-
 # see https://ru.hexlet.io/blog/posts/python-postgresql
 
 
@@ -22,6 +18,7 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
         self.database_name = ""
         self.host_name = ""
         self.port = 0
+        self.image_dir = None
         self.tables = None
 
     def set_params_impl(self):
@@ -30,6 +27,7 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
         self.database_name = self.params['database_name']
         self.host_name = self.params['host_name']
         self.port = self.params['port']
+        self.image_dir = self.params['image_dir']
         self.tables = copy.deepcopy(self.params['tables'])
 
     def default(self):
@@ -38,6 +36,7 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
         self.params['database_name'] = "evil_eye_db"
         self.params['host_name'] = "localhost"
         self.params['port'] = 5432
+        self.params['image_dir'] = utils.get_project_root()
         self.set_params_impl()
 
     def init_impl(self):
@@ -112,19 +111,47 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
     def release_impl(self):
         pass
 
+    def update(self, table_name, fields, obj_id, data):
+        data = list(data)
+        data.append(obj_id)
+        data = tuple(data)
+        last_obj_query = sql.SQL('''SELECT distinct on (object_id) count FROM {table} WHERE object_id = {id} 
+                                    ORDER BY object_id, count DESC''').format(
+                        id=sql.Placeholder(),
+                        fields=sql.SQL(",").join(map(sql.Identifier, fields)),
+                        table=sql.Identifier(table_name))
+        query = sql.SQL('UPDATE {table} SET {data} WHERE count=({selected}) RETURNING count, {fields}').format(
+            table=sql.Identifier(table_name),
+            data=sql.SQL(', ').join(
+                sql.Composed([sql.Identifier(field), sql.SQL(" = "), sql.Placeholder()]) for field in fields),
+            selected=sql.Composed(last_obj_query),
+            fields=sql.SQL(",").join(map(sql.Identifier, fields)))
+        return self.query(query, data)
+
+    # def append_info(self, table_name, fields, data):
+    #     last_obj_query = sql.SQL('''SELECT distinct on (object_id) count FROM {table} WHERE object_id = {id}
+    #                                         ORDER BY object_id, count DESC''').format(
+    #         id=sql.Placeholder(),
+    #         fields=sql.SQL(",").join(map(sql.Identifier, fields)),
+    #         table=sql.Identifier(table_name))
+
+    def has_default(self, table_name, field):
+        table = self.tables[table_name]
+        if 'DEFAULT' not in table[field]:
+            return False
+        return True
+
 
 if __name__ == '__main__':
     import json
-
     params_file = open('D:/Git/EvilEye/samples/visual_sample.json')
     parameters = json.load(params_file)
     db = DatabaseControllerPg()
     db.set_params(**parameters['database'])
     db.init()
     db.connect()
-    db.create_table('emerged')
-    db.put('emerged', (datetime.datetime.now(), 1, [45.0, 37.0, 94.0, 273.0], 77.5, 1.0))
-    db.put('emerged', (datetime.datetime.now(), 2, [55.0, 47.0, 94.0, 273.0], 70.5, 1.0))
-    res = db.get_obj_info('emerged', 2)
-    print(res)
+    # Uncomment, insert your path
+    # load_folder = pathlib.Path(r'D:\Git\EvilEye\images\frames\emerged')
+    # save_folder = pathlib.Path(r'D:\Git\EvilEye\images\frames\with_boxes')
+    # utils.utils.draw_boxes_from_db(db, 'emerged', load_folder, save_folder)
     db.disconnect()

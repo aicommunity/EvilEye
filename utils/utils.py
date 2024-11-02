@@ -1,8 +1,16 @@
+import pathlib
+
 import numpy as np
 import cv2
-import time
-from capture.video_capture_base import CaptureImage
+from pathlib import Path
 import copy
+from pathlib import Path
+from database_controller import database_controller_pg
+from psycopg2 import sql
+
+
+def get_project_root() -> Path:
+    return Path(__file__).parent.parent
 
 
 def boxes_iou(box1, box2):
@@ -52,13 +60,18 @@ def roi_to_image(roi_box_coords, x0, y0):
     return image_box_coords
 
 
-def create_roi(capture_image, coords):
+def create_roi(capture_image, det_id, coords):
     rois = []
     for count in range(len(coords)):
         roi_image = copy.deepcopy(capture_image)
         roi_image.image = capture_image.image[coords[count][1]:coords[count][1] + coords[count][3],
                                               coords[count][0]:coords[count][0] + coords[count][2]]
-
+        # rois_path = pathlib.Path(get_project_root(), 'images', 'rois')
+        # if not rois_path.exists():
+        #     pathlib.Path.mkdir(rois_path)
+        # if det_id == 2:
+        #     roi_path = pathlib.Path(rois_path, str(det_id) + str(count) + '.jpg')
+        #     cv2.imwrite(roi_path.as_posix(), roi_image.image)
         rois.append([roi_image, [coords[count][0], coords[count][1]]])
     return rois
 
@@ -119,11 +132,11 @@ def is_same_roi(all_roi, box1, box2):
                 return False
             return True
         elif ((roi[1] <= box1[3] <= (roi[1] + roi[3])) and (roi[1] <= box1[1] <= (roi[1] + roi[3])) and not
-        (roi[1] <= box2[3] <= (roi[1] + roi[3])) and (roi[1] <= box2[1] <= (roi[1] + roi[3]))):
+        ((roi[1] <= box2[3] <= (roi[1] + roi[3])) and (roi[1] <= box2[1] <= (roi[1] + roi[3])))):
             # Проверка на вложенность регионов интереса, создаем для каждой рамки список окружающих регионов
             surrounding_rois_box1.append(i)
         elif ((roi[1] <= box2[3] <= (roi[1] + roi[3])) and (roi[1] <= box2[1] <= (roi[1] + roi[3])) and not
-        (roi[1] <= box1[3] <= (roi[1] + roi[3])) and (roi[1] <= box1[1] <= (roi[1] + roi[3]))):
+        ((roi[1] <= box1[3] <= (roi[1] + roi[3])) and (roi[1] <= box1[1] <= (roi[1] + roi[3])))):
             # Проверка на вложенность регионов интереса, создаем для каждой рамки список окружающих регионов
             surrounding_rois_box2.append(i)
     return False
@@ -153,6 +166,26 @@ def draw_boxes(image, objects, cam_id, model_names):
                 cv2.putText(image, str(model_names[obj['class']]) + " " + "{:.2f}".format(obj['conf']),
                             (int(obj['bbox'][0]), int(obj['bbox'][1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
                             (255, 255, 255), 2)
+
+
+def draw_boxes_from_db(db_controller, table_name, load_folder, save_folder):
+    query = sql.SQL('SELECT object_id, confidence, bounding_box, frame_path FROM {table};').format(
+        table=sql.Identifier(table_name))
+    res = db_controller.query(query)
+    for obj_id, conf, box, image_path in res:
+        load_path = pathlib.Path(load_folder, Path(image_path).name)
+        if not save_folder.exists():
+            pathlib.Path.mkdir(save_folder)
+        save_path = pathlib.Path(save_folder, Path(image_path).name)
+        image = cv2.imread(load_path.as_posix())
+        cv2.rectangle(image, (int(box[0]), int(box[1])),
+                      (int(box[2]), int(box[3])), (0, 255, 0), thickness=8)
+        cv2.putText(image, str(obj_id) + " " + "{:.2f}".format(conf),
+                    (int(box[0]), int(box[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
+                    (255, 255, 255), 2)
+        is_saved = cv2.imwrite(save_path.as_posix(), image)
+        if not is_saved:
+            print('Error saving image with boxes')
 
 
 def draw_boxes_tracking(image, cameras_objs):

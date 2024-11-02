@@ -67,13 +67,14 @@ class Controller:
             self.tracking_results = []
             for tracker in self.trackers:
                 source_ids = tracker.get_source_ids()
-                for det_result in self.detection_results:
+                for det_result, image in self.detection_results:
                     if det_result.source_id in source_ids:
-                        tracker.put(det_result)
+                        tracker.put((det_result, image))
                 track_info = tracker.get()
                 if track_info:
-                    self.tracking_results = track_info
-                    self.obj_handler.put(track_info)
+                    tracking_result, image = track_info
+                    self.tracking_results = tracking_result
+                    self.obj_handler.put((tracking_result, image))
 
             complete_tracking_it = timer()
 

@@ -1,12 +1,15 @@
 import datetime
+import os
 from psycopg2 import sql
 from utils import event
-from PyQt5.QtCore import QDate
+from utils import utils
+from PyQt5.QtCore import QDate, Qt
 from PyQt5.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout, QTabWidget, QPushButton,
     QSizePolicy, QDateTimeEdit, QHeaderView,
     QTableWidget, QTableWidgetItem
 )
+from PyQt5.QtGui import QPixmap
 from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt
 
 
@@ -35,17 +38,25 @@ class HandlerJournal(QWidget):
         self.setLayout(self.layout)
 
         self._retrieve_data()
-        event.subscribe('handler update', self.update_db)
+        event.subscribe('handler new object', self._update_db)
+        event.subscribe('handler fields updated', self._update_on_lost)
 
     def _setup_table(self):
-        self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(['Message type', 'Information', 'Time'])
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(['Message type', 'Time', 'Time lost',
+                                              'Information', 'Preview', 'Preview lost'])
         self.table.horizontalHeaderItem(0).setTextAlignment(Qt.AlignHCenter)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.table.horizontalHeaderItem(1).setTextAlignment(Qt.AlignHCenter)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.table.horizontalHeaderItem(2).setTextAlignment(Qt.AlignHCenter)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.table.horizontalHeaderItem(3).setTextAlignment(Qt.AlignHCenter)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
+        self.table.horizontalHeaderItem(4).setTextAlignment(Qt.AlignHCenter)
+        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self.table.horizontalHeaderItem(5).setTextAlignment(Qt.AlignHCenter)
+        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
 
     def _setup_time_layout(self):
         self._setup_datetime()
@@ -130,7 +141,7 @@ class HandlerJournal(QWidget):
         records = self.db_controller.query(query, data)
         self._append_rows(records)
 
-    def update_db(self):
+    def _update_db(self):
         if self.block_updates:
             return
         fields = self.db_table_params.keys()
@@ -140,6 +151,18 @@ class HandlerJournal(QWidget):
         records = self.db_controller.query(query)
         self._append_rows(records)
 
+    def _update_on_lost(self, fields_list, data):
+        record = data[0]
+        row_idx = record[0]
+        root = utils.get_project_root()
+        lost_img_idx = fields_list.index('lost_preview_path') + 1
+        time_lost_idx = fields_list.index('time_lost') + 1
+        lost_pixmap = QPixmap(os.path.join(root, record[lost_img_idx]))
+        lost_img = QTableWidgetItem()
+        lost_img.setData(Qt.DecorationRole, lost_pixmap)
+        self.table.setItem(row_idx - 1, 4, lost_img)
+        self.table.setItem(row_idx - 1, 2, record[time_lost_idx].strftime('%H:%M:%S %d/%m/%Y'))
+
     def _append_rows(self, records):
         info_str = 'Event'
         fields = list(self.db_table_params.keys())
@@ -148,12 +171,31 @@ class HandlerJournal(QWidget):
         conf_idx = fields.index('confidence') + 1
         class_idx = fields.index('class_id') + 1
         time_idx = fields.index('time_stamp') + 1
+        time_lost_idx = fields.index('time_lost') + 1
+        img_path_idx = fields.index('preview_path') + 1
+        lost_img_idx = fields.index('lost_preview_path') + 1
+        root = utils.get_project_root()
         for record in records:
+            pixmap = QPixmap(os.path.join(root, record[img_path_idx]))
+            preview_img = QTableWidgetItem()
+            preview_img.setData(Qt.DecorationRole, pixmap)
+            lost_pixmap = QPixmap()
+            if record[lost_img_idx]:
+                lost_pixmap.load(os.path.join(root, record[lost_img_idx]))
+            lost_img = QTableWidgetItem()
+            lost_img.setData(Qt.DecorationRole, lost_pixmap)
             row = self.table.rowCount()
             self.table.insertRow(row)
             res_str = ('Object ' + str(record[id_idx]) + ' emerged at [' +
                        str(record[bbox_idx]) + '], Conf: ' +
                        str(record[conf_idx]) + ', Class: ' + str(record[class_idx]))
             self.table.setItem(row, 0, QTableWidgetItem(info_str))
-            self.table.setItem(row, 1, QTableWidgetItem(res_str))
-            self.table.setItem(row, 2, QTableWidgetItem(record[time_idx].strftime('%H:%M:%S %d/%m/%Y')))
+            self.table.setItem(row, 1, QTableWidgetItem(record[time_idx].strftime('%H:%M:%S %d/%m/%Y')))
+            if record[time_lost_idx]:
+                self.table.setItem(row, 2, QTableWidgetItem(record[time_lost_idx].strftime('%H:%M:%S %d/%m/%Y')))
+            else:
+                self.table.setItem(row, 2, QTableWidgetItem(record[time_lost_idx]))
+            self.table.setItem(row, 3, QTableWidgetItem(res_str))
+            self.table.setItem(row, 4, preview_img)
+            self.table.setItem(row, 5, lost_img)
+        self.table.resizeRowsToContents()
