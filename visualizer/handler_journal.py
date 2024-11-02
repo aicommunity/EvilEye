@@ -154,14 +154,16 @@ class HandlerJournal(QWidget):
     def _update_on_lost(self, fields_list, data):
         record = data[0]
         row_idx = record[0]
+        print(row_idx)
         root = utils.get_project_root()
         lost_img_idx = fields_list.index('lost_preview_path') + 1
         time_lost_idx = fields_list.index('time_lost') + 1
+        print(record[lost_img_idx])
         lost_pixmap = QPixmap(os.path.join(root, record[lost_img_idx]))
         lost_img = QTableWidgetItem()
         lost_img.setData(Qt.DecorationRole, lost_pixmap)
-        self.table.setItem(row_idx - 1, 4, lost_img)
-        self.table.setItem(row_idx - 1, 2, record[time_lost_idx].strftime('%H:%M:%S %d/%m/%Y'))
+        self.table.setItem(row_idx - 1, 5, lost_img)
+        self.table.setItem(row_idx - 1, 2, QTableWidgetItem(record[time_lost_idx].strftime('%H:%M:%S %d/%m/%Y')))
 
     def _append_rows(self, records):
         info_str = 'Event'
