@@ -217,7 +217,7 @@ def draw_boxes_from_db(db_controller, table_name, load_folder, save_folder):
 def draw_boxes_tracking(image, cameras_objs):
     # Для трекинга отображаем только последние данные об объекте из истории
     # print(cameras_objs)
-    for obj in cameras_objs.objects:
+    for obj in cameras_objs:
         # if obj['obj_info']
         last_info = obj.tracks[-1]
         cv2.rectangle(image.image, (int(last_info.bounding_box[0]), int(last_info.bounding_box[1])),

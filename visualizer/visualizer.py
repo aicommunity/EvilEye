@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from datetime import datetime
 
 from numpy.lib.utils import source
 
@@ -74,14 +75,14 @@ class Visualizer(core.EvilEyeBase):
             if source_id in processed_sources:
                 continue
 
-            if source_id in self.last_displayed_frame.keys() and self.last_displayed_frame[source_id] > frame.frame_id:
+            if source_id in self.last_displayed_frame.keys() and self.last_displayed_frame[source_id] >= frame.frame_id:
                 remove_processed_idx.append(i)
                 continue
 
             objs = objects[source_id].find_objects_by_frame_id(frame.frame_id)
             for j in range(len(self.visual_threads)):
                 if self.visual_threads[j].source_id == source_id:
-                    self.visual_threads[j].append_data((copy.deepcopy(frame), objects[source_id]))
+                    self.visual_threads[j].append_data((copy.deepcopy(frame), objs))
                     self.last_displayed_frame[source_id] = frame.frame_id
                     processed_sources.append(source_id)
                     break
@@ -92,4 +93,4 @@ class Visualizer(core.EvilEyeBase):
         for index in remove_processed_idx:
             del self.processing_frames[index]
 
-        print(f"Visual Queue size: {len(self.processing_frames)}")
+        print(f"{datetime.now()}: Visual Queue size: {len(self.processing_frames)}. Processed sources: {processed_sources}")
