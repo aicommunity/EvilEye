@@ -1,11 +1,11 @@
-from PyQt5.QtWidgets import (
+from PyQt6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout, QTabWidget, QPushButton,
-    QSizePolicy, QMenuBar, QToolBar, QAction, QDateTimeEdit, QHeaderView,
+    QSizePolicy, QMenuBar, QToolBar, QDateTimeEdit, QHeaderView,
     QMenu, QMainWindow, QMessageBox, QTableView, QTableWidget, QTableWidgetItem
 )
-from PyQt5.QtGui import QPixmap, QIcon
+from PyQt6.QtGui import QPixmap, QIcon
 import sys
-from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt
+from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
 from pathlib import Path
 from database_controller import database_controller_pg
 from visualizer import handler_journal

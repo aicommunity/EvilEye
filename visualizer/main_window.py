@@ -1,13 +1,15 @@
-from PyQt5 import QtGui
-from PyQt5.QtWidgets import (
+from PyQt6 import QtGui
+from PyQt6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout,
-    QSizePolicy, QMenuBar, QToolBar, QAction,
+    QSizePolicy, QMenuBar, QToolBar,
     QMenu, QMainWindow, QApplication
 )
-from PyQt5.QtGui import QPixmap, QIcon
+from PyQt6.QtGui import QPixmap, QIcon
+from PyQt6.QtGui import QAction
+from PyQt6.QtCore import Qt
 import sys
 import cv2
-from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt
+from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
 from pathlib import Path
 from visualizer.video_thread import VideoThread
 from controller import controller
@@ -78,16 +80,16 @@ class MainWindow(QMainWindow):
             self.labels.append(MyLabel())
             # Изменяем размер изображения по двойному клику
             self.labels[-1].double_click_signal.connect(self.change_screen_size)
-            self.labels[-1].setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+            self.labels[-1].setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
 
             # Добавляем виджеты в layout в зависимости от начальных параметров (кол-во изображений по ширине и высоте)
             if grid_cols > self.cols - 1:
                 grid_cols = 0
                 grid_rows += 1
-                self.hlayouts[grid_rows].addWidget(self.labels[-1], alignment=Qt.AlignCenter)
+                self.hlayouts[grid_rows].addWidget(self.labels[-1], alignment=Qt.AlignmentFlag.AlignCenter)
                 grid_cols += 1
             else:
-                self.hlayouts[grid_rows].addWidget(self.labels[-1], alignment=Qt.AlignCenter)
+                self.hlayouts[grid_rows].addWidget(self.labels[-1], alignment=Qt.AlignmentFlag.AlignCenter)
                 grid_cols += 1
 
     def _create_menu_bar(self):
@@ -99,7 +101,7 @@ class MainWindow(QMainWindow):
 
     def _create_toolbar(self):
         view_toolbar = QToolBar('View', self)
-        self.addToolBar(Qt.RightToolBarArea, view_toolbar)
+        self.addToolBar(Qt.ToolBarArea.RightToolBarArea, view_toolbar)
         view_toolbar.addAction(self.db_journal)
 
     def _create_actions(self):

@@ -1,7 +1,7 @@
-from PyQt5.QtCore import QThread, pyqtSignal, QEventLoop, QTimer
-from PyQt5 import QtGui
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QPixmap
+from PyQt6.QtCore import QThread, pyqtSignal, QEventLoop, QTimer
+from PyQt6 import QtGui
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QPixmap
 from timeit import default_timer as timer
 from utils import utils
 from queue import Queue
@@ -69,10 +69,10 @@ class VideoThread(QThread):
         rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
         h, w, ch = rgb_image.shape
         bytes_per_line = ch * w
-        convert_to_qt = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
+        convert_to_qt = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format.Format_RGB888)
         # Подгоняем под указанный размер, но сохраняем пропорции
         scaled_image = convert_to_qt.scaled(int(widget_witdth / VideoThread.cols),
-                                            int(widget_height / VideoThread.rows), Qt.KeepAspectRatio)
+                                            int(widget_height / VideoThread.rows), Qt.AspectRatioMode.KeepAspectRatio)
         return QPixmap.fromImage(scaled_image)
 
     def process_image(self):
