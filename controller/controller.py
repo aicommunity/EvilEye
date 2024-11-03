@@ -110,6 +110,7 @@ class Controller:
 
     def stop(self):
         self.run_flag = False
+        self.db_controller.disconnect()
         self.control_thread.join()
         self.visualizer.stop()
         self.obj_handler.stop()

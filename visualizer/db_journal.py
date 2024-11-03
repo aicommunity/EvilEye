@@ -31,3 +31,6 @@ class DatabaseJournalWindow(QWidget):
         self.layout = QVBoxLayout()
         self.layout.addWidget(self.tabs)
         self.setLayout(self.layout)
+
+    def closeEvent(self, event):
+        self.db_controller.disconnect()
