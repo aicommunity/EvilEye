@@ -11,7 +11,7 @@ import capture.video_capture as video_cap
 import cv2
 import argparse
 import json
-import imutils
+import utils
 from utils import utils
 
 

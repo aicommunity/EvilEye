@@ -1,6 +1,16 @@
+import pathlib
+
 import numpy as np
 import cv2
-import time
+from pathlib import Path
+import copy
+from pathlib import Path
+from database_controller import database_controller_pg
+from psycopg2 import sql
+
+
+def get_project_root() -> Path:
+    return Path(__file__).parent.parent
 
 
 def boxes_iou(box1, box2):
@@ -50,11 +60,19 @@ def roi_to_image(roi_box_coords, x0, y0):
     return image_box_coords
 
 
-def create_roi(image, coords):
+def create_roi(capture_image, det_id, coords):
     rois = []
     for count in range(len(coords)):
-        rois.append([image[coords[count][1]:coords[count][1] + coords[count][3],
-                     coords[count][0]:coords[count][0] + coords[count][2]], [coords[count][0], coords[count][1]]])
+        roi_image = copy.deepcopy(capture_image)
+        roi_image.image = capture_image.image[coords[count][1]:coords[count][1] + coords[count][3],
+                                              coords[count][0]:coords[count][0] + coords[count][2]]
+        # rois_path = pathlib.Path(get_project_root(), 'images', 'rois')
+        # if not rois_path.exists():
+        #     pathlib.Path.mkdir(rois_path)
+        # if det_id == 2:
+        #     roi_path = pathlib.Path(rois_path, str(det_id) + str(count) + '.jpg')
+        #     cv2.imwrite(roi_path.as_posix(), roi_image.image)
+        rois.append([roi_image, [coords[count][0], coords[count][1]]])
     return rois
 
 
@@ -103,10 +121,24 @@ def merge_roi_boxes(all_roi, bboxes_coords, confidences, class_ids):
 def is_same_roi(all_roi, box1, box2):
     if len(all_roi) == 0:
         return True
-    for roi in all_roi:
+    surrounding_rois_box1 = []
+    surrounding_rois_box2 = []
+    for i, roi in enumerate(all_roi):
         if (((roi[1] <= box1[3] <= (roi[1] + roi[3])) and (roi[1] <= box1[1] <= (roi[1] + roi[3]))) and
                 ((roi[1] <= box2[3] <= (roi[1] + roi[3])) and (roi[1] <= box2[1] <= (roi[1] + roi[3])))):
+            # Если рамки находятся в одном регионе, но хотя бы одна из рамок уже находится в другом, значит
+            # регионы вложенные, поэтому возвращаем False и объединяем рамки
+            if len(surrounding_rois_box1) > 0 or len(surrounding_rois_box2) > 0:
+                return False
             return True
+        elif ((roi[1] <= box1[3] <= (roi[1] + roi[3])) and (roi[1] <= box1[1] <= (roi[1] + roi[3])) and not
+        ((roi[1] <= box2[3] <= (roi[1] + roi[3])) and (roi[1] <= box2[1] <= (roi[1] + roi[3])))):
+            # Проверка на вложенность регионов интереса, создаем для каждой рамки список окружающих регионов
+            surrounding_rois_box1.append(i)
+        elif ((roi[1] <= box2[3] <= (roi[1] + roi[3])) and (roi[1] <= box2[1] <= (roi[1] + roi[3])) and not
+        ((roi[1] <= box1[3] <= (roi[1] + roi[3])) and (roi[1] <= box1[1] <= (roi[1] + roi[3])))):
+            # Проверка на вложенность регионов интереса, создаем для каждой рамки список окружающих регионов
+            surrounding_rois_box2.append(i)
     return False
 
 
@@ -136,27 +168,72 @@ def draw_boxes(image, objects, cam_id, model_names):
                             (255, 255, 255), 2)
 
 
-def draw_boxes_tracking(image, cameras_objs, cam_id, model_names):
+def draw_boxes_from_db(db_controller, table_name, load_folder, save_folder):
+    query = sql.SQL('SELECT object_id, confidence, bounding_box, lost_bounding_box, frame_path, lost_frame_path FROM {table};').format(
+        table=sql.Identifier(table_name))
+    res = db_controller.query(query)
+    for obj_id, conf, box, lost_box, image_path, lost_image_path in res:
+        lost_load_dir = pathlib.Path(load_folder, 'lost')
+        emerged_load_dir = pathlib.Path(load_folder, 'emerged')
+
+        if not lost_load_dir.exists():
+            Path.mkdir(lost_load_dir)
+        lost_load_path = pathlib.Path(lost_load_dir, Path(lost_image_path).name)
+        if not emerged_load_dir.exists():
+            Path.mkdir(emerged_load_dir)
+        emerged_load_path = pathlib.Path(emerged_load_dir, Path(image_path).name)
+
+        if not save_folder.exists():
+            pathlib.Path.mkdir(save_folder)
+
+        lost_save_dir = pathlib.Path(save_folder, 'lost')
+        if not lost_save_dir.exists():
+            Path.mkdir(lost_save_dir)
+        emerged_save_dir = pathlib.Path(save_folder, 'emerged')
+        if not emerged_save_dir.exists():
+            Path.mkdir(emerged_save_dir)
+        lost_save_path = pathlib.Path(lost_save_dir, Path(lost_image_path).name)
+        emerged_save_path = pathlib.Path(emerged_save_dir, Path(image_path).name)
+
+        lost_image = cv2.imread(lost_load_path.as_posix())
+        cv2.rectangle(lost_image, (int(box[0]), int(box[1])),
+                      (int(box[2]), int(box[3])), (0, 255, 0), thickness=8)
+        cv2.putText(lost_image, str(obj_id) + " " + "{:.2f}".format(conf),
+                    (int(box[0]), int(box[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
+                    (255, 255, 255), 2)
+
+        emerged_image = cv2.imread(emerged_load_path.as_posix())
+        cv2.rectangle(emerged_image, (int(box[0]), int(box[1])),
+                      (int(box[2]), int(box[3])), (0, 255, 0), thickness=8)
+        cv2.putText(emerged_image, str(obj_id) + " " + "{:.2f}".format(conf),
+                    (int(box[0]), int(box[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
+                    (255, 255, 255), 2)
+        lost_saved = cv2.imwrite(lost_save_path.as_posix(), lost_image)
+        emerged_saved = cv2.imwrite(emerged_save_path.as_posix(), emerged_image)
+        if not lost_saved or not emerged_saved:
+            print('Error saving image with boxes')
+
+
+def draw_boxes_tracking(image, cameras_objs):
     # Для трекинга отображаем только последние данные об объекте из истории
-    for cam_objs in cameras_objs:
-        if cam_objs['cam_id'] == cam_id:
-            for obj in cam_objs['objects']:
-                # if obj['obj_info']
-                last_info = obj['obj_info'][-1]
-                cv2.rectangle(image, (int(last_info['bbox'][0]), int(last_info['bbox'][1])),
-                              (int(last_info['bbox'][2]), int(last_info['bbox'][3])), (0, 255, 0), thickness=8)
-                cv2.putText(image, str(last_info['track_id']) + ' ' + str(model_names[last_info['class']]) +
-                            " " + "{:.2f}".format(last_info['conf']),
-                            (int(last_info['bbox'][0]), int(last_info['bbox'][1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
-                            (0, 0, 255), 2)
-                # print(len(obj['obj_info']))
-                if len(obj['obj_info']) > 1:
-                    for i in range(len(obj['obj_info']) - 1):
-                        first_info = obj['obj_info'][i]
-                        second_info = obj['obj_info'][i+1]
-                        first_cm_x = int((first_info['bbox'][0] + first_info['bbox'][2]) / 2)
-                        first_cm_y = int((first_info['bbox'][1] + first_info['bbox'][3]) / 2)
-                        second_cm_x = int((second_info['bbox'][0] + second_info['bbox'][2]) / 2)
-                        second_cm_y = int((second_info['bbox'][1] + second_info['bbox'][3]) / 2)
-                        cv2.line(image, (first_cm_x, first_cm_y),
-                                        (second_cm_x, second_cm_y), (0, 0, 255), thickness=8)
+    # print(cameras_objs)
+    for obj in cameras_objs:
+        # if obj['obj_info']
+        last_info = obj.tracks[-1]
+        cv2.rectangle(image.image, (int(last_info.bounding_box[0]), int(last_info.bounding_box[1])),
+                      (int(last_info.bounding_box[2]), int(last_info.bounding_box[3])), (0, 255, 0), thickness=8)
+        cv2.putText(image.image, str(last_info.track_id) + ' ' + str([last_info.class_id]) +
+                    " " + "{:.2f}".format(last_info.confidence),
+                    (int(last_info.bounding_box[0]), int(last_info.bounding_box[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
+                    (0, 0, 255), 2)
+        # print(len(obj['obj_info']))
+        if len(obj.tracks) > 1:
+            for i in range(len(obj.tracks) - 1):
+                first_info = obj.tracks[i]
+                second_info = obj.tracks[i + 1]
+                first_cm_x = int((first_info.bounding_box[0] + first_info.bounding_box[2]) / 2)
+                first_cm_y = int(first_info.bounding_box[3])
+                second_cm_x = int((second_info.bounding_box[0] + second_info.bounding_box[2]) / 2)
+                second_cm_y = int(second_info.bounding_box[3])
+                cv2.line(image.image, (first_cm_x, first_cm_y),
+                         (second_cm_x, second_cm_y), (0, 0, 255), thickness=8)
