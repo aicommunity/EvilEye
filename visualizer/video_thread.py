@@ -38,6 +38,9 @@ class VideoThread(QThread):
         self.timer.moveToThread(self)
         self.timer.timeout.connect(self.process_image)
 
+        self.widget_width = 1920
+        self.widget_height = 1080
+
         # Определяем количество потоков в зависимости от параметра split
         VideoThread.thread_counter += 1
 
@@ -50,24 +53,41 @@ class VideoThread(QThread):
 
     def run(self):
         while self.run_flag:
-            begin_it = timer()
-            self.process_image()
-            end_it = timer()
-            elapsed_seconds = end_it - begin_it
+            elapsed_seconds = self.process_image()
             sleep_seconds = 1. / self.fps - elapsed_seconds
             if sleep_seconds > 0.0:
                 time.sleep(sleep_seconds)
             else:
                 time.sleep(0.01)
 
+    def set_main_widget_size(self, width, height):
+        self.widget_witdth = width
+        self.widget_height = height
+
+    def convert_cv_qt(self, cv_img, widget_witdth, widget_height):
+        # Переводим из opencv image в QPixmap
+        rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
+        h, w, ch = rgb_image.shape
+        bytes_per_line = ch * w
+        convert_to_qt = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
+        # Подгоняем под указанный размер, но сохраняем пропорции
+        scaled_image = convert_to_qt.scaled(int(widget_witdth / VideoThread.cols),
+                                            int(widget_height / VideoThread.rows), Qt.KeepAspectRatio)
+        return QPixmap.fromImage(scaled_image)
+
     def process_image(self):
         try:
             frame, track_info = self.queue.get()
         except ValueError:
-            return
+            return 0
+        begin_it = timer()
         utils.draw_boxes_tracking(frame, track_info)
+        qt_image = self.convert_cv_qt(frame.image, self.widget_width, self.widget_height)
+        end_it = timer()
+        elapsed_seconds = end_it - begin_it
         # Сигнал из потока для обновления label на новое изображение
-        self.update_image_signal.emit([frame.image, self.thread_num])
+        self.update_image_signal.emit([qt_image, self.thread_num])
+        return elapsed_seconds
 
     def stop_thread(self):
         self.run_flag = False

@@ -58,6 +58,11 @@ class Visualizer(core.EvilEyeBase):
         self.processing_frames = []
         self.objects = None
 
+    def set_current_main_widget_size(self, width, height):
+        for j in range(len(self.visual_threads)):
+            self.visual_threads[j].set_main_widget_size(width, height)
+
+
     def update(self, processing_frames: list[CaptureImage], objects: list[ObjectResultList]):
         self.processing_frames.extend(processing_frames)
         self.objects = objects

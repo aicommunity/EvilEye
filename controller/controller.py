@@ -33,6 +33,8 @@ class Controller:
         self.tracking_results: list[TrackingResultList] = []
         self.run_flag = False
 
+        self.current_main_widget_size = [1920, 1080]
+
     def run(self):
         while self.run_flag:
             begin_it = timer()
@@ -131,6 +133,10 @@ class Controller:
         self._init_visualizer(self.params['visualizer'])
         self._init_db_controller(self.params['database'])
         self.obj_handler = objects_handler.ObjectsHandler(db_controller=self.db_controller, history_len=30)
+
+    def set_current_main_widget_size(self, width, height):
+        self.current_main_widget_size = [width, height]
+        self.visualizer.set_current_main_widget_size(width, height)
 
     def _init_db_controller(self, params):
         self.db_controller = DatabaseControllerPg()
