@@ -177,6 +177,10 @@ class HandlerJournal(QWidget):
         img_path_idx = fields.index('preview_path') + 1
         lost_img_idx = fields.index('lost_preview_path') + 1
         root = utils.get_project_root()
+
+        if records is None:
+            return
+
         for record in records:
             pixmap = QPixmap(os.path.join(root, record[img_path_idx]))
             preview_img = QTableWidgetItem()

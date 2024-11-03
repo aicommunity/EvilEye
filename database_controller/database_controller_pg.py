@@ -46,20 +46,28 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
         pass
 
     def connect_impl(self):
-        self.conn_pool = pool.ThreadedConnectionPool(1, 10, user=self.user_name,
+        try:
+            self.conn_pool = pool.ThreadedConnectionPool(1, 10, user=self.user_name,
                                                      password=self.password, host=self.host_name,
                                                      port=self.port, database=self.database_name)
+        except Exception as ex:
+            print(f"Can't connect to database: {ex}")
+            self.conn_pool = None
+
         for table_name in self.tables.keys():
             self.create_table(table_name)
         # self.connection = pg.connect(dbname=self.database_name, user=self.user_name, password=self.password, host=self.host_name, port=self.port)
 
     def disconnect_impl(self):
-        self.conn_pool.closeall()
+        if self.conn_pool:
+            self.conn_pool.closeall()
 
     def query_impl(self, query_string, data=None):
+        if self.conn_pool is None:
+            return None
+
         connection = None
         try:
-            result = []
             connection = self.conn_pool.getconn()
             with connection:
                 with connection.cursor() as curs:
@@ -77,9 +85,13 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
                 self.conn_pool.putconn(connection)
 
     def get_fields_names(self, table_name):
+        if self.conn_pool is None:
+            return None
         return self.tables[table_name].keys()
 
     def create_table(self, table_name):
+        if self.conn_pool is None:
+            return
         # self.query(sql.SQL("DROP TABLE IF EXISTS {}").format(sql.Identifier(table_name)))
 
         fields = [sql.SQL('count SERIAL PRIMARY KEY')]
@@ -92,6 +104,9 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
         self.query(create_table)
 
     def put(self, table_name, data):
+        if self.conn_pool is None:
+            return
+
         fields = self.tables[table_name].keys()
         insert_query = sql.SQL("INSERT INTO {} ({}) VALUES ({})").format(
             sql.Identifier(table_name),
@@ -101,10 +116,16 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
         self.query(insert_query, data)
 
     def get_obj_info(self, table_name, obj_id):
+        if self.conn_pool is None:
+            return None
+
         query = sql.SQL("SELECT * from {} WHERE object_id = %s").format(sql.Identifier(table_name))
         return self.query(query, (obj_id,))
 
     def delete_obj(self, table_name, obj_id):
+        if self.conn_pool is None:
+            return
+
         del_query = sql.SQL("DELETE from {} WHERE object_id = %s").format(sql.Identifier(table_name))
         self.query(del_query, (obj_id,))
 
@@ -112,6 +133,9 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
         pass
 
     def update(self, table_name, fields, obj_id, data):
+        if self.conn_pool is None:
+            return
+
         data = list(data)
         data.append(obj_id)
         data = tuple(data)
@@ -136,6 +160,9 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
     #         table=sql.Identifier(table_name))
 
     def has_default(self, table_name, field):
+        if self.conn_pool is None:
+            return False
+
         table = self.tables[table_name]
         if 'DEFAULT' not in table[field]:
             return False

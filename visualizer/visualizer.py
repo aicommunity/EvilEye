@@ -1,8 +1,6 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
 
-#from numpy.lib.utils import source
-
 from visualizer.video_thread import VideoThread
 import core
 import copy
