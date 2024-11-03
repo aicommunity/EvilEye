@@ -3,7 +3,7 @@ import json
 import sys
 from pathlib import Path
 
-from PyQt5.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication
 
 from visualizer.main_window import MainWindow
 
@@ -23,5 +23,5 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     a = MainWindow(data, 1280, 720)
     a.show()
-    ret = app.exec_()
+    ret = app.exec()
     sys.exit(ret)

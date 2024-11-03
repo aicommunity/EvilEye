@@ -3,14 +3,14 @@ import os
 from psycopg2 import sql
 from utils import event
 from utils import utils
-from PyQt5.QtCore import QDate, Qt
-from PyQt5.QtWidgets import (
+from PyQt6.QtCore import QDate, Qt
+from PyQt6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout, QTabWidget, QPushButton,
     QSizePolicy, QDateTimeEdit, QHeaderView,
     QTableWidget, QTableWidgetItem
 )
-from PyQt5.QtGui import QPixmap
-from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt
+from PyQt6.QtGui import QPixmap
+from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
 
 
 class HandlerJournal(QWidget):
@@ -45,18 +45,18 @@ class HandlerJournal(QWidget):
         self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(['Message type', 'Time', 'Time lost',
                                               'Information', 'Preview', 'Preview lost'])
-        self.table.horizontalHeaderItem(0).setTextAlignment(Qt.AlignHCenter)
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        self.table.horizontalHeaderItem(1).setTextAlignment(Qt.AlignHCenter)
-        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self.table.horizontalHeaderItem(2).setTextAlignment(Qt.AlignHCenter)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self.table.horizontalHeaderItem(3).setTextAlignment(Qt.AlignHCenter)
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
-        self.table.horizontalHeaderItem(4).setTextAlignment(Qt.AlignHCenter)
-        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
-        self.table.horizontalHeaderItem(5).setTextAlignment(Qt.AlignHCenter)
-        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        self.table.horizontalHeaderItem(0).setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeaderItem(1).setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeaderItem(2).setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeaderItem(3).setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeaderItem(4).setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
+        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeaderItem(5).setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
+        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
 
     def _setup_time_layout(self):
         self._setup_datetime()
