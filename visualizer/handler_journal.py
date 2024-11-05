@@ -184,12 +184,12 @@ class HandlerJournal(QWidget):
         for record in records:
             pixmap = QPixmap(os.path.join(root, record[img_path_idx]))
             preview_img = QTableWidgetItem()
-            preview_img.setData(Qt.DecorationRole, pixmap)
+            preview_img.setData(Qt.ItemDataRole.DecorationRole, pixmap)
             lost_pixmap = QPixmap()
             if record[lost_img_idx]:
                 lost_pixmap.load(os.path.join(root, record[lost_img_idx]))
             lost_img = QTableWidgetItem()
-            lost_img.setData(Qt.DecorationRole, lost_pixmap)
+            lost_img.setData(Qt.ItemDataRole.DecorationRole, lost_pixmap)
             row = self.table.rowCount()
             self.table.insertRow(row)
             res_str = ('Object ' + str(record[id_idx]) + ' emerged at [' +
