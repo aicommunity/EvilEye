@@ -161,7 +161,7 @@ class HandlerJournal(QWidget):
         print(record[lost_img_idx])
         lost_pixmap = QPixmap(os.path.join(root, record[lost_img_idx]))
         lost_img = QTableWidgetItem()
-        lost_img.setData(Qt.DecorationRole, lost_pixmap)
+        lost_img.setData(Qt.ItemDataRole.DecorationRole, lost_pixmap)
         self.table.setItem(row_idx - 1, 5, lost_img)
         self.table.setItem(row_idx - 1, 2, QTableWidgetItem(record[time_lost_idx].strftime('%H:%M:%S %d/%m/%Y')))
 
