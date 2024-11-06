@@ -57,6 +57,7 @@ class MainWindow(QMainWindow):
         self._create_menu_bar()
         self._create_toolbar()
         self.db_journal_win = DatabaseJournalWindow(self.db_params)
+        self.db_journal_win.setVisible(False)
 
         for i in range(self.num_sources):
             if self.params['sources'][i]['split']:
@@ -114,9 +115,9 @@ class MainWindow(QMainWindow):
     @pyqtSlot()
     def open_journal(self):
         if self.db_journal_win.isVisible():
-            self.db_journal_win.hide()
+            self.db_journal_win.setVisible(False)
         else:
-            self.db_journal_win.show()
+            self.db_journal_win.setVisible(True)
 
     @pyqtSlot(list)
     def update_image(self, thread_data):
@@ -145,6 +146,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self.controller.stop()
+        self.db_journal_win.close()
         QApplication.closeAllWindows()
         event.accept()
 

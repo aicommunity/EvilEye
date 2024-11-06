@@ -96,4 +96,4 @@ class Visualizer(core.EvilEyeBase):
         for index in remove_processed_idx:
             del self.processing_frames[index]
 
-        print(f"{datetime.now()}: Visual Queue size: {len(self.processing_frames)}. Processed sources: {processed_sources}")
+        # print(f"{datetime.now()}: Visual Queue size: {len(self.processing_frames)}. Processed sources: {processed_sources}")

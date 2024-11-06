@@ -7,7 +7,7 @@ from PyQt6.QtCore import QDate, Qt
 from PyQt6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout, QTabWidget, QPushButton,
     QSizePolicy, QDateTimeEdit, QHeaderView,
-    QTableWidget, QTableWidgetItem
+    QTableWidget, QTableWidgetItem, QApplication
 )
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
@@ -25,6 +25,9 @@ class HandlerJournal(QWidget):
         self.db_table_params = table_params
         self.table_name = table_name
 
+        self.data_for_update = []
+        self.last_update_time = None
+        self.update_rate = 10
         self.start_time_updated = False
         self.finish_time_updated = False
         self.block_updates = False
@@ -37,7 +40,6 @@ class HandlerJournal(QWidget):
         self.layout.addWidget(self.table)
         self.setLayout(self.layout)
 
-        self._retrieve_data()
         event.subscribe('handler new object', self._update_db)
         event.subscribe('handler fields updated', self._update_on_lost)
 
@@ -91,6 +93,13 @@ class HandlerJournal(QWidget):
         self.search_button = QPushButton('Search')
         self.search_button.clicked.connect(self._filter_by_time)
 
+    def showEvent(self, show_event):
+        print('SHOW EVENT CALLED')
+        self.last_update_time = datetime.datetime.now()
+        self.table.setRowCount(0)
+        self._retrieve_data()
+        show_event.accept()
+
     @pyqtSlot()
     def start_time_update(self):
         self.block_updates = True
@@ -126,13 +135,20 @@ class HandlerJournal(QWidget):
         data = (start_time.toPyDateTime(), finish_time.toPyDateTime())
         records = self.db_controller.query(query, data)
         self.table.setRowCount(0)
+        self.setUpdatesEnabled(False)
+        self.blockSignals(True)
         self._append_rows(records)
+        self.setUpdatesEnabled(True)
+        self.blockSignals(False)
         self.start_time_updated = False
         self.finish_time_updated = False
+        QApplication.processEvents()
 
     def _retrieve_data(self):
+        if not self.isVisible():
+            return
         fields = self.db_table_params.keys()
-        query = sql.SQL('SELECT count, {fields} FROM {table} WHERE time_stamp BETWEEN %s AND %s;').format(
+        query = sql.SQL('SELECT count, {fields} FROM {table} WHERE time_stamp BETWEEN %s AND %s ORDER BY count;').format(
             fields=sql.SQL(",").join(map(sql.Identifier, fields)),
             table=sql.Identifier(self.table_name))
         start_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.min)
@@ -142,28 +158,58 @@ class HandlerJournal(QWidget):
         self._append_rows(records)
 
     def _update_db(self):
-        if self.block_updates:
+        if self.block_updates or not self.isVisible():
             return
+
+        cur_update_time = datetime.datetime.now()
+        if (cur_update_time - self.last_update_time).total_seconds() < self.update_rate:
+            return
+        self.last_update_time = cur_update_time
+
+        last_row = self.table.rowCount()
         fields = self.db_table_params.keys()
-        query = sql.SQL('SELECT count, {fields} FROM {table} WHERE count=(SELECT MAX(count) FROM {table});').format(
+        query = sql.SQL('SELECT count, {fields} FROM {table} WHERE count > {last_row};').format(
             fields=sql.SQL(",").join(map(sql.Identifier, fields)),
-            table=sql.Identifier(self.table_name))
+            table=sql.Identifier(self.table_name),
+            last_row=sql.Identifier(last_row))
         records = self.db_controller.query(query)
+        self.table.setUpdatesEnabled(False)
+        self.table.blockSignals(True)
         self._append_rows(records)
+        self.table.setUpdatesEnabled(True)
+        self.table.blockSignals(False)
+        QApplication.processEvents()
 
     def _update_on_lost(self, fields_list, data):
+        if not self.isVisible():
+            print('HIDDEN')
+            return
+
         record = data[0]
-        row_idx = record[0]
-        print(row_idx)
-        root = utils.get_project_root()
-        lost_img_idx = fields_list.index('lost_preview_path') + 1
-        time_lost_idx = fields_list.index('time_lost') + 1
-        print(record[lost_img_idx])
-        lost_pixmap = QPixmap(os.path.join(root, record[lost_img_idx]))
-        lost_img = QTableWidgetItem()
-        lost_img.setData(Qt.ItemDataRole.DecorationRole, lost_pixmap)
-        self.table.setItem(row_idx - 1, 5, lost_img)
-        self.table.setItem(row_idx - 1, 2, QTableWidgetItem(record[time_lost_idx].strftime('%H:%M:%S %d/%m/%Y')))
+        cur_update_time = datetime.datetime.now()
+        if (cur_update_time - self.last_update_time).total_seconds() < self.update_rate:
+            self.data_for_update.append(record)
+            return
+        self.last_update_time = cur_update_time
+        self.data_for_update.append(record)
+
+        for rec in self.data_for_update:
+            row_idx = rec[0]
+            print(row_idx)
+            root = utils.get_project_root()
+            lost_img_idx = fields_list.index('lost_preview_path') + 1
+            time_lost_idx = fields_list.index('time_lost') + 1
+            print(rec[lost_img_idx])
+            lost_pixmap = QPixmap(os.path.join(root, rec[lost_img_idx]))
+            lost_img = QTableWidgetItem()
+            lost_img.setData(Qt.ItemDataRole.DecorationRole, lost_pixmap)
+            self.table.setUpdatesEnabled(False)
+            self.table.blockSignals(True)
+            self.table.setItem(row_idx - 1, 5, lost_img)
+            self.table.setItem(row_idx - 1, 2, QTableWidgetItem(rec[time_lost_idx].strftime('%H:%M:%S %d/%m/%Y')))
+            self.table.setUpdatesEnabled(True)
+            self.table.blockSignals(False)
+            QApplication.processEvents()
 
     def _append_rows(self, records):
         info_str = 'Event'

@@ -173,29 +173,29 @@ class ObjectsHandler:
                 self.object_id_counter += 1
                 obj.tracks.append(track)
                 data = self._prepare_for_saving('emerged', copy.deepcopy(obj), image)
-                self.db_controller.put('emerged', data)
+                self.db_controller.insert('emerged', data)
                 event.notify('handler new object')
                 self.active_objs.objects.append(obj)
 
         filtered_active_objects = []
         for active_obj in self.active_objs.objects:
-            print(active_obj)
-            print(f'{active_obj.source_id} == {tracking_results.source_id}')
+            # print(active_obj)
+            # print(f'{active_obj.source_id} == {tracking_results.source_id}')
             if not active_obj.last_update and active_obj.source_id == tracking_results.source_id:
                 active_obj.lost_frames += 1
                 if active_obj.lost_frames >= self.lost_thresh:
-                    active_obj.time_lost = datetime.datetime.now()
-                    lost_preview_path = self._save_image('preview', 'lost', active_obj.last_image, active_obj)
-                    lost_img_path = self._save_image('frame', 'lost', active_obj.last_image, active_obj)
-                    # data = self._prepare_for_saving('emerged', copy.deepcopy(active_obj), image)
-                    updated_fields_data = self.db_controller.update('emerged', fields=['time_lost', "lost_preview_path",
-                                                                                       'lost_frame_path', 'lost_bounding_box'],
-                                                                    obj_id=active_obj.object_id,
-                                                                    data=(active_obj.time_lost, lost_preview_path,
-                                                                          lost_img_path, active_obj.tracks[-1].bounding_box))
-                    print(updated_fields_data)
-                    event.notify('handler fields updated', ['time_lost', 'lost_preview_path', 'lost_frame_path'],
-                                 updated_fields_data)
+                    # active_obj.time_lost = datetime.datetime.now()
+                    # lost_preview_path = self._save_image('preview', 'lost', active_obj.last_image, active_obj)
+                    # lost_img_path = self._save_image('frame', 'lost', active_obj.last_image, active_obj)
+                    # # data = self._prepare_for_saving('emerged', copy.deepcopy(active_obj), image)
+                    # updated_fields_data = self.db_controller.update('emerged', fields=['time_lost', "lost_preview_path",
+                    #                                                                    'lost_frame_path', 'lost_bounding_box'],
+                    #                                                 obj_id=active_obj.object_id,
+                    #                                                 data=(active_obj.time_lost, lost_preview_path,
+                    #                                                       lost_img_path, active_obj.tracks[-1].bounding_box))
+                    # # print(updated_fields_data)
+                    # event.notify('handler fields updated', ['time_lost', 'lost_preview_path', 'lost_frame_path'],
+                    #              updated_fields_data)
                     # data = self._prepare_for_saving('lost', copy.deepcopy(active_obj))
                     # self.db_controller.put('lost', data)
                     self.lost_objs.objects.append(active_obj)

@@ -16,7 +16,7 @@ class DatabaseJournalWindow(QWidget):
     def __init__(self, db_params):
         super().__init__()
         self.params = db_params
-        self.db_controller = database_controller_pg.DatabaseControllerPg()
+        self.db_controller = database_controller_pg.DatabaseControllerPg('Receiver')
         self.db_controller.init()
         self.db_controller.set_params(**self.params)
         self.db_controller.connect()
@@ -32,5 +32,5 @@ class DatabaseJournalWindow(QWidget):
         self.layout.addWidget(self.tabs)
         self.setLayout(self.layout)
 
-    def closeEvent(self, event):
+    def close(self):
         self.db_controller.disconnect()

@@ -1,3 +1,5 @@
+import time
+
 from utils import utils
 import psycopg2
 import pathlib
@@ -10,8 +12,8 @@ import copy
 
 
 class DatabaseControllerPg(database_controller.DatabaseControllerBase):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, controller_type='Writer'):
+        super().__init__(controller_type)
         self.conn_pool = None
         self.user_name = ""
         self.password = ""
@@ -40,6 +42,7 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
         self.set_params_impl()
 
     def init_impl(self):
+        self.start()
         return True
 
     def reset_impl(self):
@@ -56,9 +59,11 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
 
         for table_name in self.tables.keys():
             self.create_table(table_name)
+
         # self.connection = pg.connect(dbname=self.database_name, user=self.user_name, password=self.password, host=self.host_name, port=self.port)
 
     def disconnect_impl(self):
+        self.stop()
         if self.conn_pool:
             self.conn_pool.closeall()
 
@@ -84,6 +89,40 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
             if connection:
                 self.conn_pool.putconn(connection)
 
+    def _insert_impl(self):
+        while self.run_flag:
+            time.sleep(0.01)
+            # print(self.queue_in.empty())
+            if self.conn_pool is None:
+                continue
+
+            try:
+                if not self.queue_in.empty():
+                    query_string, data = self.queue_in.get()
+                    if query_string is not None:
+                        print('GOT QUERY')
+                    print(data)
+                else:
+                    query_string, data = None, None
+            except ValueError:
+                break
+
+            if query_string is None:
+                continue
+
+            connection = None
+            try:
+                connection = self.conn_pool.getconn()
+                with connection:
+                    with connection.cursor() as curs:
+                        print(query_string.as_string(curs))
+                        curs.execute(query_string, data)
+            except psycopg2.OperationalError:
+                print(f'Transaction ({query_string}) is not committed')
+            finally:
+                if connection:
+                    self.conn_pool.putconn(connection)
+
     def get_fields_names(self, table_name):
         if self.conn_pool is None:
             return None
@@ -103,17 +142,17 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
             fields=sql.SQL(',').join(fields))
         self.query(create_table)
 
-    def put(self, table_name, data):
+    def insert(self, table_name, data):
         if self.conn_pool is None:
             return
-
         fields = self.tables[table_name].keys()
         insert_query = sql.SQL("INSERT INTO {} ({}) VALUES ({})").format(
             sql.Identifier(table_name),
             sql.SQL(",").join(map(sql.Identifier, fields)),
             sql.SQL(', ').join(sql.Placeholder() * len(fields))
         )
-        self.query(insert_query, data)
+        self.queue_in.put((insert_query, data))
+        # print(f'Put. Empty: {self.queue_in.get()}')
 
     def get_obj_info(self, table_name, obj_id):
         if self.conn_pool is None:
@@ -182,3 +221,38 @@ if __name__ == '__main__':
     # save_folder = pathlib.Path(r'D:\Git\EvilEye\images\frames\with_boxes')
     # utils.utils.draw_boxes_from_db(db, 'emerged', load_folder, save_folder)
     db.disconnect()
+
+
+    # def query_impl(self):
+    #     while self.run_flag:
+    #         if self.conn_pool is None:
+    #             break
+    #
+    #         try:
+    #             if not self.queue_in.empty():
+    #                 query_string, data = self.queue_in.get()
+    #             else:
+    #                 query_string, data = None, None
+    #         except ValueError:
+    #             break
+    #
+    #         connection = None
+    #         try:
+    #             connection = self.conn_pool.getconn()
+    #             with connection:
+    #                 with connection.cursor() as curs:
+    #                     if query_string is not None:
+    #                         print(query_string.as_string(curs))
+    #                         curs.execute(query_string, data)
+    #                         try:
+    #                             result = curs.fetchall()
+    #                         except psycopg2.ProgrammingError:
+    #                             result = None
+    #                     else:
+    #                         result = None
+    #             self.queue_out.put(result)
+    #         except psycopg2.OperationalError:
+    #             print(f'Transaction ({query_string}) is not committed')
+    #         finally:
+    #             if connection:
+    #                 self.conn_pool.putconn(connection)
