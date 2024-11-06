@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QApplication
 )
 from PyQt6.QtGui import QPixmap
-from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
+from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer
 
 
 class HandlerJournal(QWidget):
@@ -31,6 +31,9 @@ class HandlerJournal(QWidget):
         self.start_time_updated = False
         self.finish_time_updated = False
         self.block_updates = False
+        self.timer = QTimer()
+        self.timer.setSingleShot(True)
+        self.timer.timeout.connect(self._update_db)
 
         self._setup_table()
         self._setup_time_layout()
@@ -136,10 +139,10 @@ class HandlerJournal(QWidget):
         records = self.db_controller.query(query, data)
         self.table.setRowCount(0)
         self.setUpdatesEnabled(False)
-        self.blockSignals(True)
+        # self.blockSignals(True)
         self._append_rows(records)
         self.setUpdatesEnabled(True)
-        self.blockSignals(False)
+        # self.blockSignals(False)
         self.start_time_updated = False
         self.finish_time_updated = False
         QApplication.processEvents()
@@ -163,21 +166,22 @@ class HandlerJournal(QWidget):
 
         cur_update_time = datetime.datetime.now()
         if (cur_update_time - self.last_update_time).total_seconds() < self.update_rate:
+            if not self.timer.isActive():
+                self.timer.start(10000)
             return
         self.last_update_time = cur_update_time
 
         last_row = self.table.rowCount()
         fields = self.db_table_params.keys()
-        query = sql.SQL('SELECT count, {fields} FROM {table} WHERE count > {last_row};').format(
+        query = sql.SQL('SELECT count, {fields} FROM {table} WHERE count > %s;').format(
             fields=sql.SQL(",").join(map(sql.Identifier, fields)),
-            table=sql.Identifier(self.table_name),
-            last_row=sql.Identifier(last_row))
-        records = self.db_controller.query(query)
+            table=sql.Identifier(self.table_name))
+        records = self.db_controller.query(query, (last_row,))
         self.table.setUpdatesEnabled(False)
-        self.table.blockSignals(True)
+        # self.table.blockSignals(True)
         self._append_rows(records)
         self.table.setUpdatesEnabled(True)
-        self.table.blockSignals(False)
+        # self.table.blockSignals(False)
         QApplication.processEvents()
 
     def _update_on_lost(self, fields_list, data):
@@ -250,4 +254,5 @@ class HandlerJournal(QWidget):
             self.table.setItem(row, 3, QTableWidgetItem(res_str))
             self.table.setItem(row, 4, preview_img)
             self.table.setItem(row, 5, lost_img)
-        self.table.resizeRowsToContents()
+            self.table.resizeRowToContents(row)
+        # self.table.resizeRowsToContents()
