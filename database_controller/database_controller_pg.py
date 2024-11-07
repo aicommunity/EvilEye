@@ -3,6 +3,7 @@ import cv2
 from utils import utils
 import psycopg2
 import pathlib
+import os
 import utils.utils
 import database_controller
 from psycopg2 import sql
@@ -125,10 +126,12 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
                     self.conn_pool.putconn(connection)
 
     def _save_image(self, preview_path, frame_path, image):
-        preview_saved = cv2.imwrite(preview_path, cv2.resize(image.image, (300, 150), cv2.INTER_NEAREST))
-        frame_saved = cv2.imwrite(frame_path, image.image)
+        preview_save_dir = os.path.join(self.image_dir, preview_path)
+        frame_save_dir = os.path.join(self.image_dir, frame_path)
+        preview_saved = cv2.imwrite(preview_save_dir, cv2.resize(image.image, (300, 150), cv2.INTER_NEAREST))
+        frame_saved = cv2.imwrite(frame_save_dir, image.image)
         if not preview_saved or not frame_saved:
-            print(f'ERROR: can\'t save image file {frame_path}')
+            print(f'ERROR: can\'t save image file {frame_save_dir}')
 
     def get_fields_names(self, table_name):
         if self.conn_pool is None:
