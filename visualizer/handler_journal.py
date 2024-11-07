@@ -25,6 +25,7 @@ class HandlerJournal(QWidget):
         self.db_table_params = table_params
         self.table_name = table_name
 
+        self.last_row_db = 0
         self.data_for_update = []
         self.last_update_time = None
         self.update_rate = 10
@@ -33,7 +34,7 @@ class HandlerJournal(QWidget):
         self.block_updates = False
         self.timer = QTimer()
         self.timer.setSingleShot(True)
-        self.timer.timeout.connect(self._update_db)
+        self.timer.timeout.connect(self._notify_db_update)
 
         self._setup_table()
         self._setup_time_layout()
@@ -62,6 +63,7 @@ class HandlerJournal(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeaderItem(5).setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
         self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.verticalHeader().setDefaultSectionSize(150)
 
     def _setup_time_layout(self):
         self._setup_datetime()
@@ -102,6 +104,10 @@ class HandlerJournal(QWidget):
         self.table.setRowCount(0)
         self._retrieve_data()
         show_event.accept()
+
+    @pyqtSlot()
+    def _notify_db_update(self):
+        event.notify('handler new object')
 
     @pyqtSlot()
     def start_time_update(self):
@@ -165,18 +171,21 @@ class HandlerJournal(QWidget):
             return
 
         cur_update_time = datetime.datetime.now()
-        if (cur_update_time - self.last_update_time).total_seconds() < self.update_rate:
+        time_elapsed = (cur_update_time - self.last_update_time).total_seconds()
+        if time_elapsed < self.update_rate:
             if not self.timer.isActive():
-                self.timer.start(10000)
+                self.timer.start((self.update_rate - time_elapsed) * 1000)
             return
+        if self.timer.isActive():
+            self.timer.stop()
         self.last_update_time = cur_update_time
 
-        last_row = self.table.rowCount()
         fields = self.db_table_params.keys()
-        query = sql.SQL('SELECT count, {fields} FROM {table} WHERE count > %s;').format(
+        start_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.min)
+        query = sql.SQL('SELECT count, {fields} FROM {table} WHERE count > %s AND time_stamp > %s;').format(
             fields=sql.SQL(",").join(map(sql.Identifier, fields)),
             table=sql.Identifier(self.table_name))
-        records = self.db_controller.query(query, (last_row,))
+        records = self.db_controller.query(query, (self.last_row_db, start_time))
         self.table.setUpdatesEnabled(False)
         # self.table.blockSignals(True)
         self._append_rows(records)
@@ -218,6 +227,7 @@ class HandlerJournal(QWidget):
     def _append_rows(self, records):
         info_str = 'Event'
         fields = list(self.db_table_params.keys())
+        count_idx = 0
         id_idx = fields.index('object_id') + 1
         bbox_idx = fields.index('bounding_box') + 1
         conf_idx = fields.index('confidence') + 1
@@ -231,6 +241,7 @@ class HandlerJournal(QWidget):
         if records is None:
             return
 
+        last_row = self.last_row_db
         for record in records:
             pixmap = QPixmap(os.path.join(root, record[img_path_idx]))
             preview_img = QTableWidgetItem()
@@ -254,5 +265,8 @@ class HandlerJournal(QWidget):
             self.table.setItem(row, 3, QTableWidgetItem(res_str))
             self.table.setItem(row, 4, preview_img)
             self.table.setItem(row, 5, lost_img)
-            self.table.resizeRowToContents(row)
+            # self.table.setRowHeight(row, 150)
+        if records:
+            last_row = record[count_idx]
+        self.last_row_db = last_row
         # self.table.resizeRowsToContents()
