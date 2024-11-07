@@ -103,6 +103,7 @@ class ObjectsHandler:
         # Блокируем остальные потоки на время получения объектов
         result = None
         with self.condition:
+            self.condition.acquire()
             if objs_type == 'new':
                 result = copy.deepcopy(self.new_objs)
             elif objs_type == 'active':
@@ -111,7 +112,8 @@ class ObjectsHandler:
                 result = copy.deepcopy(self.lost_objs)
             else:
                 raise Exception('Such type of objects does not exist')
-            self.condition.notify()
+            self.condition.release()
+            self.condition.notify_all()
 
         return result
 
@@ -132,11 +134,13 @@ class ObjectsHandler:
             tracks, image = tracking_results
             # Блокируем остальные потоки для предотвращения одновременного обращения к объектам
             with self.condition:
+                self.condition.acquire()
                 self._handle_active(tracks, image)
                 # self.db_controller.put('emerged', (1, [45.0, 37.0, 94.0, 273.0], 77.5, 1.0))
                 # event.notify('handler update', 'emerged', self.db_controller.get_fields_names('emerged'))
                 # Оповещаем остальные потоки, снимаем блокировку
-                self.condition.notify()
+                self.condition.release()
+                self.condition.notify_all()
             self.objs_queue.task_done()
 
     def _handle_active(self, tracking_results: TrackingResultList, image):
