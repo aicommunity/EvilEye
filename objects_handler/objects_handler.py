@@ -172,8 +172,8 @@ class ObjectsHandler:
                 obj.last_image = image
                 self.object_id_counter += 1
                 obj.tracks.append(track)
-                data = self._prepare_for_saving('emerged', copy.deepcopy(obj), image)
-                self.db_controller.insert('emerged', data)
+                data, preview_path, frame_path = self._prepare_for_saving('emerged', obj)
+                self.db_controller.insert('emerged', data, preview_path, frame_path, image)
                 event.notify('handler new object')
                 self.active_objs.objects.append(obj)
 
@@ -205,17 +205,19 @@ class ObjectsHandler:
                 filtered_active_objects.append(active_obj)
         self.active_objs.objects = filtered_active_objects
 
-    def _prepare_for_saving(self, table_name, obj: ObjectResult, image) -> list:
+    def _prepare_for_saving(self, table_name, obj: ObjectResult) -> tuple[list, str, str]:
         table_fields = self.db_controller.get_fields_names(table_name)
         fields_for_saving = []
+        preview_path = None
+        frame_path = None
         for field in table_fields:
             if field == 'preview_path':
-                img_path = self._save_image('preview', 'emerged', image, obj)
-                fields_for_saving.append(img_path)
+                preview_path = self._get_img_path('preview', 'emerged', obj)
+                fields_for_saving.append(preview_path)
                 continue
             if field == 'frame_path':
-                img_path = self._save_image('frame', 'emerged', image, obj)
-                fields_for_saving.append(img_path)
+                frame_path = self._get_img_path('frame', 'emerged', obj)
+                fields_for_saving.append(frame_path)
                 continue
             attr_value = getattr(obj, field, None)
             print(f'field: {field}, value: {attr_value}')
@@ -225,9 +227,9 @@ class ObjectsHandler:
             if attr_value is None and not self.db_controller.has_default(table_name, field):
                 raise Exception(f'Given object doesn\'t have required fields {field}')
             fields_for_saving.append(attr_value)
-        return fields_for_saving
+        return fields_for_saving, preview_path, frame_path
 
-    def _save_image(self, image_type, obj_event_type, image: CaptureImage, obj):
+    def _get_img_path(self, image_type, obj_event_type, obj):
         save_dir = self.db_params['image_dir']
         img_dir = os.path.join(save_dir, 'images')
         image_type_path = os.path.join(img_dir, image_type + 's')
@@ -245,11 +247,4 @@ class ObjectsHandler:
         elif obj_event_type == 'lost':
             timestamp = obj.time_lost.strftime('%d_%m_%Y_%H_%M_%S_%f')
             img_path = os.path.join(obj_event_path, f'{image_type}_at_{timestamp}.jpeg')
-
-        if image_type == 'preview':
-            is_saved = cv2.imwrite(img_path, cv2.resize(image.image, (300, 150), cv2.INTER_NEAREST))
-        elif image_type == 'frame':
-            is_saved = cv2.imwrite(img_path, image.image)
-        if not is_saved:
-            print('ERROR: can\'t save image file')
         return os.path.relpath(img_path, save_dir)

@@ -1,5 +1,5 @@
 import time
-
+import cv2
 from utils import utils
 import psycopg2
 import pathlib
@@ -98,12 +98,12 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
 
             try:
                 if not self.queue_in.empty():
-                    query_string, data = self.queue_in.get()
+                    query_string, data, preview_path, frame_path, image = self.queue_in.get()
                     if query_string is not None:
                         print('GOT QUERY')
                     print(data)
                 else:
-                    query_string, data = None, None
+                    query_string = data = preview_path = frame_path = image = None
             except ValueError:
                 break
 
@@ -117,11 +117,18 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
                     with connection.cursor() as curs:
                         print(query_string.as_string(curs))
                         curs.execute(query_string, data)
+                        self._save_image(preview_path, frame_path, image)
             except psycopg2.OperationalError:
                 print(f'Transaction ({query_string}) is not committed')
             finally:
                 if connection:
                     self.conn_pool.putconn(connection)
+
+    def _save_image(self, preview_path, frame_path, image):
+        preview_saved = cv2.imwrite(preview_path, cv2.resize(image.image, (300, 150), cv2.INTER_NEAREST))
+        frame_saved = cv2.imwrite(frame_path, image.image)
+        if not preview_saved or not frame_saved:
+            print(f'ERROR: can\'t save image file {frame_path}')
 
     def get_fields_names(self, table_name):
         if self.conn_pool is None:
@@ -142,7 +149,7 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
             fields=sql.SQL(',').join(fields))
         self.query(create_table)
 
-    def insert(self, table_name, data):
+    def insert(self, table_name, data, preview_path, frame_path, image):
         if self.conn_pool is None:
             return
         fields = self.tables[table_name].keys()
@@ -151,7 +158,7 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
             sql.SQL(",").join(map(sql.Identifier, fields)),
             sql.SQL(', ').join(sql.Placeholder() * len(fields))
         )
-        self.queue_in.put((insert_query, data))
+        self.queue_in.put((insert_query, data, preview_path, frame_path, image))
         # print(f'Put. Empty: {self.queue_in.get()}')
 
     def get_obj_info(self, table_name, obj_id):
