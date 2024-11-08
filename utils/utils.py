@@ -218,8 +218,11 @@ def draw_boxes_tracking(image, cameras_objs):
     # Для трекинга отображаем только последние данные об объекте из истории
     # print(cameras_objs)
     for obj in cameras_objs:
-        # if obj['obj_info']
-        last_info = obj.tracks[-1]
+       # if obj.frame_id < image.frame_id:
+       #     continue
+
+        last_info = obj.track
+
         cv2.rectangle(image.image, (int(last_info.bounding_box[0]), int(last_info.bounding_box[1])),
                       (int(last_info.bounding_box[2]), int(last_info.bounding_box[3])), (0, 255, 0), thickness=8)
         cv2.putText(image.image, str(last_info.track_id) + ' ' + str([last_info.class_id]) +
@@ -227,10 +230,10 @@ def draw_boxes_tracking(image, cameras_objs):
                     (int(last_info.bounding_box[0]), int(last_info.bounding_box[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
                     (0, 0, 255), 2)
         # print(len(obj['obj_info']))
-        if len(obj.tracks) > 1:
-            for i in range(len(obj.tracks) - 1):
-                first_info = obj.tracks[i]
-                second_info = obj.tracks[i + 1]
+        if len(obj.history) > 1:
+            for i in range(len(obj.history) - 1):
+                first_info = obj.history[i].track
+                second_info = obj.history[i + 1].track
                 first_cm_x = int((first_info.bounding_box[0] + first_info.bounding_box[2]) / 2)
                 first_cm_y = int(first_info.bounding_box[3])
                 second_cm_x = int((second_info.bounding_box[0] + second_info.bounding_box[2]) / 2)
