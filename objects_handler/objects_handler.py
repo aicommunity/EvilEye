@@ -231,7 +231,6 @@ class ObjectsHandler:
                 obj.history.append(obj.get_current_history_element())
                 data, preview_path, frame_path = self._prepare_for_saving('emerged', obj)
                 self.db_controller.insert('emerged', data, preview_path, frame_path, image)
-                event.notify('handler new object')
                 self.active_objs.objects.append(obj)
 
         filtered_active_objects = []

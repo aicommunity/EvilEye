@@ -9,6 +9,8 @@ import database_controller
 from psycopg2 import sql
 from psycopg2 import pool
 import copy
+from utils import event
+
 # see https://ru.hexlet.io/blog/posts/python-postgresql
 
 
@@ -52,8 +54,8 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
     def connect_impl(self):
         try:
             self.conn_pool = pool.ThreadedConnectionPool(1, 10, user=self.user_name,
-                                                     password=self.password, host=self.host_name,
-                                                     port=self.port, database=self.database_name)
+                                                         password=self.password, host=self.host_name,
+                                                         port=self.port, database=self.database_name)
         except Exception as ex:
             print(f"Can't connect to database: {ex}")
             self.conn_pool = None
@@ -118,7 +120,10 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
                     with connection.cursor() as curs:
                         print(query_string.as_string(curs))
                         curs.execute(query_string, data)
+                        record = curs.fetchone()
+                        last_row = record[0]
                         self._save_image(preview_path, frame_path, image)
+                event.notify('handler new object', last_row)
             except psycopg2.OperationalError:
                 print(f'Transaction ({query_string}) is not committed')
             finally:
@@ -156,7 +161,7 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
         if self.conn_pool is None:
             return
         fields = self.tables[table_name].keys()
-        insert_query = sql.SQL("INSERT INTO {} ({}) VALUES ({})").format(
+        insert_query = sql.SQL("INSERT INTO {} ({}) VALUES ({}) RETURNING count").format(
             sql.Identifier(table_name),
             sql.SQL(",").join(map(sql.Identifier, fields)),
             sql.SQL(', ').join(sql.Placeholder() * len(fields))
@@ -190,9 +195,9 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
         data = tuple(data)
         last_obj_query = sql.SQL('''SELECT distinct on (object_id) count FROM {table} WHERE object_id = {id} 
                                     ORDER BY object_id, count DESC''').format(
-                        id=sql.Placeholder(),
-                        fields=sql.SQL(",").join(map(sql.Identifier, fields)),
-                        table=sql.Identifier(table_name))
+            id=sql.Placeholder(),
+            fields=sql.SQL(",").join(map(sql.Identifier, fields)),
+            table=sql.Identifier(table_name))
         query = sql.SQL('UPDATE {table} SET {data} WHERE count=({selected}) RETURNING count, {fields}').format(
             table=sql.Identifier(table_name),
             data=sql.SQL(', ').join(
@@ -220,6 +225,7 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
 
 if __name__ == '__main__':
     import json
+
     params_file = open('D:/Git/EvilEye/samples/visual_sample.json')
     parameters = json.load(params_file)
     db = DatabaseControllerPg()
@@ -231,7 +237,6 @@ if __name__ == '__main__':
     # save_folder = pathlib.Path(r'D:\Git\EvilEye\images\frames\with_boxes')
     # utils.utils.draw_boxes_from_db(db, 'emerged', load_folder, save_folder)
     db.disconnect()
-
 
     # def query_impl(self):
     #     while self.run_flag:
