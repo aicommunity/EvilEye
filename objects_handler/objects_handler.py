@@ -3,6 +3,8 @@ import time
 import os
 import cv2
 import datetime
+
+import objects_handler.objects_handler
 from capture.video_capture_base import CaptureImage
 from utils import event
 from utils import utils
@@ -11,9 +13,10 @@ from threading import Thread
 from threading import Condition
 from object_tracker.object_tracking_base import TrackingResult
 from object_tracker.object_tracking_base import TrackingResultList
+from timeit import default_timer as timer
 
 
-class ObjectResult:
+class ObjectResultHistory:
     def __init__(self):
         self.object_id = 0
         self.source_id = None
@@ -21,15 +24,37 @@ class ObjectResult:
         self.class_id = None
         self.time_lost = None
         self.time_stamp = None
-        self.tracks: list[TrackingResult] = []
         self.last_update = False
         self.last_image = None
         self.lost_frames = 0
+        self.track = None
         self.properties = dict()  # some object features in scene (i.e. is_moving, is_immovable, immovable_time, zone_visited, zone_time_spent etc)
         self.object_data = dict()  # internal object data
 
+
+class ObjectResult(ObjectResultHistory):
+    def __init__(self):
+        super().__init__()
+        self.history: list[ObjectResultHistory] = []
+
     def __str__(self):
         return f'ID: {self.object_id}, Source: {self.source_id}, Updated: {self.last_update}, Lost: {self.lost_frames}'
+
+    def get_current_history_element(self):
+        result = ObjectResultHistory()
+        result.object_id = self.object_id
+        result.source_id = self.source_id
+        result.frame_id = self.frame_id
+        result.class_id = self.class_id
+        result.time_lost = self.time_lost
+        result.time_stamp = self.time_stamp
+        result.last_update = self.last_update
+        result.last_image = self.last_image
+        result.lost_frames = self.lost_frames
+        result.track = self.track
+        result.properties = self.properties
+        result.object_data = self.object_data
+        return result
 
 
 class ObjectResultList:
@@ -52,6 +77,11 @@ class ObjectResultList:
         for obj in self.objects:
             if frame_id == obj.frame_id:
                 objs.append(obj)
+            else:
+                for hist in obj.history:
+                    if hist.frame_id == frame_id:
+                        objs.append(obj)
+                        break
 
         return objs
 
@@ -172,7 +202,7 @@ class ObjectsHandler:
         for track in tracking_results.tracks:
             track_object = None
             for active_obj in self.active_objs.objects:
-                if active_obj.tracks[-1].track_id == track.track_id:
+                if active_obj.track.track_id == track.track_id:
                     track_object = active_obj
                     break
 
@@ -180,12 +210,12 @@ class ObjectsHandler:
                 track_object.source_id = tracking_results.source_id
                 track_object.frame_id = tracking_results.frame_id
                 track_object.class_id = track.class_id
-                track_object.tracks.append(track)
-                track_object.last_image = image
-                print(
-                    f"object_id={track_object.object_id}, track_id={track_object.tracks[-1].track_id}, len(tracks)={len(track_object.tracks)}")
-                if len(track_object.tracks) > self.history:  # Если количество данных превышает размер истории, удаляем самые старые данные об объекте
-                    del track_object.tracks[0]
+                track_object.track = track
+                #track_object.last_image = image
+                # print(f"object_id={track_object.object_id}, track_id={track_object.track.track_id}, len(history)={len(track_object.history)}")
+                track_object.history.append(track_object.get_current_history_element())
+                if len(track_object.history) > self.history:  # Если количество данных превышает размер истории, удаляем самые старые данные об объекте
+                    del track_object.history[0]
                 track_object.last_update = True
                 track_object.lost_frames = 0
             else:
@@ -195,9 +225,10 @@ class ObjectsHandler:
                 obj.time_stamp = tracking_results.time_stamp
                 obj.frame_id = tracking_results.frame_id
                 obj.object_id = self.object_id_counter
-                obj.last_image = image
+                #obj.last_image = image
                 self.object_id_counter += 1
-                obj.tracks.append(track)
+                obj.track = track
+                obj.history.append(obj.get_current_history_element())
                 data, preview_path, frame_path = self._prepare_for_saving('emerged', obj)
                 self.db_controller.insert('emerged', data, preview_path, frame_path, image)
                 event.notify('handler new object')
@@ -248,7 +279,7 @@ class ObjectsHandler:
             attr_value = getattr(obj, field, None)
             print(f'field: {field}, value: {attr_value}')
             if attr_value is None:
-                attr_value = getattr(obj.tracks[-1], field, None)
+                attr_value = getattr(obj.track, field, None)
                 print(f'field: {field}, value: {attr_value}')
             if attr_value is None and not self.db_controller.has_default(table_name, field):
                 raise Exception(f'Given object doesn\'t have required fields {field}')
