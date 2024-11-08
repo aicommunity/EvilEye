@@ -174,7 +174,7 @@ class HandlerJournal(QWidget):
         time_elapsed = (cur_update_time - self.last_update_time).total_seconds()
         if time_elapsed < self.update_rate:
             if not self.timer.isActive():
-                self.timer.start((self.update_rate - time_elapsed) * 1000)
+                self.timer.start(int(self.update_rate - time_elapsed) * 1000)
             return
         if self.timer.isActive():
             self.timer.stop()
