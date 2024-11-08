@@ -46,6 +46,9 @@ class ObjectResultList:
 
     def find_objects_by_frame_id(self, frame_id):
         objs = []
+        if frame_id is None:
+            return self.objects
+
         for obj in self.objects:
             if frame_id == obj.frame_id:
                 objs.append(obj)
@@ -107,9 +110,11 @@ class ObjectsHandler:
             if objs_type == 'new':
                 result = copy.deepcopy(self.new_objs)
             elif objs_type == 'active':
-                result = copy.deepcopy(self._get_active(cam_id))
+                result = self._get_active(cam_id)
             elif objs_type == 'lost':
-                result = copy.deepcopy(self.lost_objs)
+                result = self._get_lost(cam_id)
+            elif objs_type == 'all':
+                result = self._get_all(cam_id)
             else:
                 raise Exception('Such type of objects does not exist')
             self.condition.release()
@@ -120,6 +125,23 @@ class ObjectsHandler:
     def _get_active(self, cam_id):
         source_objects = ObjectResultList()
         for obj in self.active_objs.objects:
+            if obj.source_id == cam_id:
+                source_objects.objects.append(copy.deepcopy(obj))
+        return source_objects
+
+    def _get_lost(self, cam_id):
+        source_objects = ObjectResultList()
+        for obj in self.lost_objs.objects:
+            if obj.source_id == cam_id:
+                source_objects.objects.append(copy.deepcopy(obj))
+        return source_objects
+
+    def _get_all(self, cam_id):
+        source_objects = ObjectResultList()
+        for obj in self.active_objs.objects:
+            if obj.source_id == cam_id:
+                source_objects.objects.append(copy.deepcopy(obj))
+        for obj in self.lost_objs.objects:
             if obj.source_id == cam_id:
                 source_objects.objects.append(copy.deepcopy(obj))
         return source_objects

@@ -82,7 +82,7 @@ class Controller:
 
             objects = []
             for i in range(len(self.visualizer.source_ids)):
-                objects.append(copy.deepcopy(self.obj_handler.get('active', self.visualizer.source_ids[i])))
+                objects.append(copy.deepcopy(self.obj_handler.get('all', self.visualizer.source_ids[i])))
             self.visualizer.update(processing_frames, objects)
 
             end_it = timer()

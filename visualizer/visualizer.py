@@ -82,10 +82,11 @@ class Visualizer(core.EvilEyeBase):
                 remove_processed_idx.append(i)
                 continue
 
-            objs = objects[source_id].find_objects_by_frame_id(frame.frame_id)
+            objs = objects[source_id].find_objects_by_frame_id(None)
+            print(f"Found {len(objs)} objects for visualization")
             for j in range(len(self.visual_threads)):
                 if self.visual_threads[j].source_id == source_id:
-                    self.visual_threads[j].append_data((copy.deepcopy(frame), objs))
+                    self.visual_threads[j].append_data((copy.deepcopy(frame), copy.deepcopy(objs)))
                     self.last_displayed_frame[source_id] = frame.frame_id
                     processed_sources.append(source_id)
                     break
