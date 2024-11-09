@@ -7,7 +7,7 @@ from PyQt6.QtCore import QDate, Qt
 from PyQt6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout, QTabWidget, QPushButton,
     QSizePolicy, QDateTimeEdit, QHeaderView,
-    QTableWidget, QTableWidgetItem, QApplication
+    QTableWidget, QTableWidgetItem, QApplication, QAbstractItemView
 )
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer
@@ -69,6 +69,7 @@ class HandlerJournal(QWidget):
         self.table.horizontalHeaderItem(5).setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
         self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
         self.table.verticalHeader().setDefaultSectionSize(150)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
 
     def _setup_time_layout(self):
         self._setup_datetime()
@@ -164,7 +165,8 @@ class HandlerJournal(QWidget):
         if not self.isVisible():
             return
         fields = self.db_table_params.keys()
-        query = sql.SQL('SELECT count, {fields} FROM {table} WHERE time_stamp BETWEEN %s AND %s ORDER BY count;').format(
+        query = sql.SQL(
+            'SELECT count, {fields} FROM {table} WHERE time_stamp BETWEEN %s AND %s ORDER BY count;').format(
             fields=sql.SQL(",").join(map(sql.Identifier, fields)),
             table=sql.Identifier(self.table_name))
         start_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.min)
@@ -247,9 +249,9 @@ class HandlerJournal(QWidget):
             lost_img.setData(Qt.ItemDataRole.DecorationRole, lost_pixmap)
             row = self.table.rowCount()
             self.table.insertRow(row)
-            res_str = ('Object ' + str(record[id_idx]) + ' emerged at [' +
-                       str(record[bbox_idx]) + '], Conf: ' +
-                       str(record[conf_idx]) + ', Class: ' + str(record[class_idx]))
+            res_str = ('Object Id=' + str(record[id_idx]) + ', class: ' + str(record[
+                                                                                  class_idx])) + ' emerged at [' + f"{int(record[bbox_idx][0])} {int(record[bbox_idx][1])} {int(record[bbox_idx][2])} {int(record[bbox_idx][3])}" + '], conf: ' + "{:1.2f}".format(
+                record[conf_idx])
             self.table.setItem(row, 0, QTableWidgetItem(info_str))
             self.table.setItem(row, 1, QTableWidgetItem(record[time_idx].strftime('%H:%M:%S %d/%m/%Y')))
             if record[time_lost_idx]:
