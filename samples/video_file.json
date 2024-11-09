@@ -8,7 +8,8 @@
       "num_split": 0,
       "src_coords": 0,
       "source_ids": [0],
-       "source_names": ["Cam1"]
+      "source_names": ["Cam1"],
+      "loop_play": false
     }
   ],
   "detectors":[
@@ -56,5 +57,6 @@
       }
     },
     "image_dir": "/home/user/EvilEyeData/"
-  }
+  },
+  "autoclose": false
 }

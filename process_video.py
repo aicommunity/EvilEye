@@ -16,11 +16,11 @@ def create_args_parser():
     pars.add_argument('--config', nargs='?', const="1", type=str,
                       help="system configuration")
     pars.add_argument('--gui', action=argparse.BooleanOptionalAction, default=True,
-                      help="file name for processing")
+                      help="Show gui when processing")
     pars.add_argument('--autoclose', action=argparse.BooleanOptionalAction, default=False,
-                      help="file name for processing")
+                      help="Automatic close application when video ends")
     pars.add_argument('--sources_preset', nargs='?', const="", type=str,
-                      help="file name for processing")
+                      help="Use preset for multiple video sources")
 
     result = pars.parse_args()
     return result
@@ -60,6 +60,17 @@ if __name__ == "__main__":
     else:
         video_file = config_data["sources"][0]["camera"]
         print(f"Using video source file from config: {video_file}")
+
+    if not args.gui:
+        config_data["visualizer"]["gui_enabled"] = False
+    else:
+        config_data["visualizer"]["gui_enabled"] = True
+
+    if args.autoclose:
+        sources = config_data["sources"]
+        for source in sources:
+            source["loop_play"] = False
+        config_data["autoclose"] = True
 
     app = QApplication(sys.argv)
     a = MainWindow(config_data, 1280, 720)

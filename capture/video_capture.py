@@ -19,6 +19,8 @@ class VideoCapture(capture.VideoCaptureBase):
         super().__init__()
         self.capture = cv2.VideoCapture()
         self.mutex = Lock()
+        self.loop_play = True
+        self.source_type = None
 
     def is_opened(self):
         return self.capture.isOpened()
@@ -33,6 +35,9 @@ class VideoCapture(capture.VideoCaptureBase):
         self.src_coords = self.params.get('src_coords', None)
         self.source_ids = self.params.get('source_ids', None)
         self.source_names = self.params.get('source_names', self.source_ids)
+        self.loop_play = self.params.get('loop_play', True)
+        self.source_type = self.params.get('source', None)
+
 
     def init_impl(self):
         if self.params['source'] == 'IPcam' and self.params['apiPreference'] == "CAP_GSTREAMER":  # Приведение rtsp ссылки к формату gstreamer
@@ -62,6 +67,7 @@ class VideoCapture(capture.VideoCaptureBase):
 
         self.source_fps = None
         if self.capture.isOpened():
+            self.finished = False
             try:
                 self.source_fps = self.capture.get(cv2.CAP_PROP_FPS)
                 if self.source_fps == 0.0:
@@ -101,7 +107,10 @@ class VideoCapture(capture.VideoCaptureBase):
                 self.frames_queue.put([is_read, src_image, self.frame_id_counter])
                 self.frame_id_counter += 1
             else:
-                self.reset()
+                if self.source_type != "Video" or self.loop_play:
+                    self.reset()
+                else:
+                    self.finished = True
 
             end_it = timer()
             elapsed_seconds = end_it - begin_it

@@ -128,5 +128,6 @@
       }
     },
     "image_dir": "/home/user/EvilEyeData/"
-  }
+  },
+  "autoclose": false
 }

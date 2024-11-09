@@ -24,10 +24,14 @@ class VideoCaptureBase(core.EvilEyeBase):
         self.src_coords = None
         self.source_ids = None
         self.source_names = None
+        self.finished = False
         self.capture_thread = threading.Thread(target=self._capture_frames)
 
     def is_opened(self) -> bool:
         return False
+
+    def is_finished(self) -> bool:
+        return self.finished
 
     def get_frames(self) -> list[CaptureImage]:
         captured_images: list[CaptureImage] = []
