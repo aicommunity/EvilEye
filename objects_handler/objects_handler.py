@@ -266,6 +266,10 @@ class ObjectsHandler:
         fields_for_saving = []
         preview_path = None
         frame_path = None
+
+        if table_fields is None:
+            return fields_for_saving, preview_path, frame_path
+
         for field in table_fields:
             if field == 'preview_path':
                 preview_path = self._get_img_path('preview', 'emerged', obj)

@@ -37,7 +37,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(win_width, win_height)
 
         # self.handler = ObjectsHandler(self.num_labels, history_len=20)
-        self.controller = controller.Controller(self.update_image)
+        self.controller = controller.Controller(self, self.update_image)
 
         self.params = params
         self.rows = self.params['visualizer']['num_height']

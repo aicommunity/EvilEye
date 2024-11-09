@@ -14,6 +14,7 @@ class Visualizer(core.EvilEyeBase):
         self.qt_slot = pyqt_slot
         self.visual_threads: list[VideoThread] = []
         self.source_ids = []
+        self.source_id_name_table = dict()
         self.fps = []
         self.num_height = 1
         self.num_width = 1
@@ -94,7 +95,7 @@ class Visualizer(core.EvilEyeBase):
             start_append_data = timer()
             for j in range(len(self.visual_threads)):
                 if self.visual_threads[j].source_id == source_id:
-                    self.visual_threads[j].append_data((copy.deepcopy(frame), objs))
+                    self.visual_threads[j].append_data((copy.deepcopy(frame), objs, self.source_id_name_table[frame.source_id]))
                     self.last_displayed_frame[source_id] = frame.frame_id
                     processed_sources.append(source_id)
                     break

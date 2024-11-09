@@ -7,7 +7,8 @@
       "split": false,
       "num_split": 0,
       "src_coords": 0,
-      "source_ids": [0]
+      "source_ids": [0],
+      "source_names": ["Cam1"]
     },
     {
       "source": "IPcam",
@@ -16,7 +17,8 @@
       "split": true,
       "num_split": 2,
       "src_coords": [[0, 0, 2304, 1300], [0, 1300, 2304, 1292]],
-      "source_ids": [1, 2]
+      "source_ids": [1, 2],
+      "source_names": ["Cam2", "Cam3"]
     },
     {
       "source": "IPcam",
@@ -25,7 +27,8 @@
       "split": true,
       "num_split": 2,
       "src_coords": [[0, 0, 2304, 1300], [0, 1300, 2304, 1292]],
-      "source_ids": [3, 4]
+      "source_ids": [3, 4],
+      "source_names": ["Cam4", "Cam5"]
     }
   ],
   "detectors":[
@@ -124,6 +127,7 @@
         "lost_frame_path": "text DEFAULT NULL"
       }
     },
-    "image_dir": "/home/user/EvilEye/"
-  }
+    "image_dir": "/home/user/EvilEyeData/"
+  },
+  "autoclose": false
 }

@@ -19,6 +19,8 @@ class VideoCapture(capture.VideoCaptureBase):
         super().__init__()
         self.capture = cv2.VideoCapture()
         self.mutex = Lock()
+        self.loop_play = True
+        self.source_type = None
 
     def is_opened(self):
         return self.capture.isOpened()
@@ -31,6 +33,11 @@ class VideoCapture(capture.VideoCaptureBase):
         self.split_stream = self.params.get('split', False)
         self.num_split = self.params.get('num_split', None)
         self.src_coords = self.params.get('src_coords', None)
+        self.source_ids = self.params.get('source_ids', None)
+        self.source_names = self.params.get('source_names', self.source_ids)
+        self.loop_play = self.params.get('loop_play', True)
+        self.source_type = self.params.get('source', None)
+
 
     def init_impl(self):
         if self.params['source'] == 'IPcam' and self.params['apiPreference'] == "CAP_GSTREAMER":  # Приведение rtsp ссылки к формату gstreamer
@@ -60,14 +67,15 @@ class VideoCapture(capture.VideoCaptureBase):
 
         self.source_fps = None
         if self.capture.isOpened():
+            self.finished = False
             try:
                 self.source_fps = self.capture.get(cv2.CAP_PROP_FPS)
                 if self.source_fps == 0.0:
                     self.source_fps = None
             except cv2.error as e:
-                print(f"Failed to read source_fps: {e} for camera {self.params['camera']}")
+                print(f"Failed to read source_fps: {e} for sources {self.source_names}")
         else:
-            print(f"Could not connect to a camera: {self.params['camera']}")
+            print(f"Could not connect to a sources: {self.source_names}")
             return False
 
         return True
@@ -79,9 +87,9 @@ class VideoCapture(capture.VideoCaptureBase):
         self.release()
         self.init()
         if self.get_init_flag():
-            print("Reconnected to a camera: {0}".format(self.params['camera']))
+            print(f"Reconnected to a sources: {self.source_names}")
         else:
-            raise Exception(f"Could not connect to a camera: {self.params['camera']}")
+            raise Exception(f"Could not connect to a sources: {self.source_names}")
 
     def _capture_frames(self):
         while self.run_flag:
@@ -99,11 +107,11 @@ class VideoCapture(capture.VideoCaptureBase):
                 self.frames_queue.put([is_read, src_image, self.frame_id_counter])
                 self.frame_id_counter += 1
             else:
-                self.reset()
-                # with self.mutex:
-                #     if self.frames_queue.full():
-                #         self.frames_queue.get()
-                # self.frames_queue.put([is_read, None, None])
+                if self.source_type != "Video" or self.loop_play:
+                    self.reset()
+                else:
+                    self.finished = True
+
             end_it = timer()
             elapsed_seconds = end_it - begin_it
 
@@ -129,7 +137,7 @@ class VideoCapture(capture.VideoCaptureBase):
             if self.split_stream:  # Если сплит, то возвращаем список с частями потока, иначе - исходное изображение
                 for stream_cnt in range(self.num_split):
                     capture_image = CaptureImage()
-                    capture_image.source_id = self.params["source_ids"][stream_cnt]
+                    capture_image.source_id = self.source_ids[stream_cnt]
                     capture_image.time_stamp = time.time()
                     capture_image.frame_id = frame_id
                     capture_image.image = src_image[self.src_coords[stream_cnt][1]:self.src_coords[stream_cnt][1] + int(self.src_coords[stream_cnt][3]),
@@ -137,7 +145,7 @@ class VideoCapture(capture.VideoCaptureBase):
                     captured_images.append(capture_image)
             else:
                 capture_image = CaptureImage()
-                capture_image.source_id = self.params["source_ids"][0]
+                capture_image.source_id = self.source_ids[0]
                 capture_image.time_stamp = time.time()
                 capture_image.frame_id = frame_id
                 capture_image.image = src_image

@@ -214,7 +214,13 @@ def draw_boxes_from_db(db_controller, table_name, load_folder, save_folder):
             print('Error saving image with boxes')
 
 
-def draw_boxes_tracking(image, cameras_objs):
+def draw_boxes_tracking(image, cameras_objs, source_name):
+    height, width, channels = image.image.shape
+    if source_name is int:
+        cv2.putText(image.image, "Source Id: " + str(source_name), (100, height - 200), cv2.FONT_HERSHEY_SIMPLEX, 3,
+                    (0, 0, 255), 8)
+    else:
+        cv2.putText(image.image, str(source_name), (100, height-200), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 0, 255), 8)
     # Для трекинга отображаем только последние данные об объекте из истории
     # print(cameras_objs)
     for obj in cameras_objs:
@@ -229,6 +235,7 @@ def draw_boxes_tracking(image, cameras_objs):
                     " " + "{:.2f}".format(last_info.confidence),
                     (int(last_info.bounding_box[0]), int(last_info.bounding_box[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
                     (0, 0, 255), 2)
+
         # print(len(obj['obj_info']))
         if len(obj.history) > 1:
             for i in range(len(obj.history) - 1):

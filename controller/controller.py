@@ -1,3 +1,4 @@
+import sys
 import threading
 import capture
 from object_detector import object_detection_yolov8
@@ -12,14 +13,16 @@ import time
 from timeit import default_timer as timer
 from visualizer.visualizer import Visualizer
 from database_controller.database_controller_pg import DatabaseControllerPg
-
+from PyQt6.QtWidgets import QMainWindow
 
 class Controller:
-
-    def __init__(self, pyqt_slot):
+    def __init__(self, main_window: QMainWindow, pyqt_slot):
+        self.main_window = main_window
+        #self.application = application
         self.control_thread = threading.Thread(target=self.run)
         self.params = None
         self.sources = []
+        self.source_id_name_table = dict()
         self.detectors = []
         self.trackers = []
         self.obj_handler = None
@@ -33,6 +36,9 @@ class Controller:
         self.tracking_results: list[TrackingResultList] = []
         self.run_flag = False
 
+        self.gui_enabled = True
+        self.autoclose = False
+
         self.current_main_widget_size = [1920, 1080]
 
     def run(self):
@@ -40,13 +46,21 @@ class Controller:
             begin_it = timer()
             # Get new frames from all sources
             self.captured_frames = []
+            all_sources_finished = True
             for source in self.sources:
                 frames = source.get_frames()
 
                 if len(frames) == 0:
-                    pass
+                    if not source.is_finished():
+                        all_sources_finished = False
                 else:
+                    all_sources_finished = False
                     self.captured_frames.extend(frames)
+
+            if self.autoclose and all_sources_finished:
+                pass # todo
+                #self.run_flag = False
+                #break
 
             complete_capture_it = timer()
 
@@ -79,12 +93,14 @@ class Controller:
                     self.obj_handler.put((tracking_result, image))
 
             complete_tracking_it = timer()
-
-            objects = []
-            for i in range(len(self.visualizer.source_ids)):
-                objects.append(copy.deepcopy(self.obj_handler.get('active', self.visualizer.source_ids[i])))
-            complete_read_objects_it = timer()
-            self.visualizer.update(processing_frames, objects)
+            if self.gui_enabled:
+                objects = []
+                for i in range(len(self.visualizer.source_ids)):
+                    objects.append(copy.deepcopy(self.obj_handler.get('active', self.visualizer.source_ids[i])))
+                complete_read_objects_it = timer()
+                self.visualizer.update(processing_frames, objects)
+            else:
+                complete_read_objects_it = timer()
 
             end_it = timer()
             elapsed_seconds = end_it - begin_it
@@ -97,6 +113,7 @@ class Controller:
                 sleep_seconds = 0.03
             # print(f"Time: cap[{complete_capture_it-begin_it}], det[{complete_detection_it-complete_capture_it}], track[{complete_tracking_it-complete_detection_it}], read=[{complete_read_objects_it-complete_tracking_it}], vis[{end_it-complete_read_objects_it}] = {end_it-begin_it} secs, sleep {sleep_seconds} secs")
             time.sleep(sleep_seconds)
+
 
     def start(self):
         for source in self.sources:
@@ -133,6 +150,8 @@ class Controller:
         self._init_trackers(self.params['trackers'])
         self._init_visualizer(self.params['visualizer'])
         self._init_db_controller(self.params['database'])
+
+        self.autoclose = self.params.get("autoclose", False)
         self.obj_handler = objects_handler.ObjectsHandler(db_controller=self.db_controller, history_len=30)
 
     def set_current_main_widget_size(self, width, height):
@@ -152,6 +171,8 @@ class Controller:
             camera.set_params(**src_params)
             camera.init()
             self.sources.append(camera)
+            for source_id, source_name in zip(camera.source_ids, camera.source_names):
+                self.source_id_name_table[source_id] = source_name
 
     def _init_detectors(self, params):
         num_det = len(params)
@@ -173,6 +194,8 @@ class Controller:
             self.trackers.append(tracker)
 
     def _init_visualizer(self, params):
+        self.gui_enabled = params.get("gui_enabled", True)
         self.visualizer = Visualizer(self.qt_slot)
         self.visualizer.set_params(**params)
+        self.visualizer.source_id_name_table = self.source_id_name_table
         self.visualizer.init()
