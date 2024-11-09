@@ -20,7 +20,7 @@ class Controller:
         self.control_thread = threading.Thread(target=self.run)
         self.params = None
         self.sources = []
-        self.source_names = dict()
+        self.source_id_name_table = dict()
         self.detectors = []
         self.trackers = []
         self.obj_handler = None
@@ -154,7 +154,7 @@ class Controller:
             camera.init()
             self.sources.append(camera)
             for source_id, source_name in zip(camera.source_ids, camera.source_names):
-                self.source_names[source_id] = source_name
+                self.source_id_name_table[source_id] = source_name
 
     def _init_detectors(self, params):
         num_det = len(params)
@@ -178,4 +178,5 @@ class Controller:
     def _init_visualizer(self, params):
         self.visualizer = Visualizer(self.qt_slot)
         self.visualizer.set_params(**params)
+        self.visualizer.source_id_name_table = self.source_id_name_table
         self.visualizer.init()

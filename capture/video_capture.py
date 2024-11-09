@@ -32,7 +32,7 @@ class VideoCapture(capture.VideoCaptureBase):
         self.num_split = self.params.get('num_split', None)
         self.src_coords = self.params.get('src_coords', None)
         self.source_ids = self.params.get('source_ids', None)
-        self.source_names = self.params.get('source_ids', self.source_ids)
+        self.source_names = self.params.get('source_names', self.source_ids)
 
     def init_impl(self):
         if self.params['source'] == 'IPcam' and self.params['apiPreference'] == "CAP_GSTREAMER":  # Приведение rtsp ссылки к формату gstreamer
