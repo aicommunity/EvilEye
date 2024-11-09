@@ -262,7 +262,9 @@ class HandlerJournal(QWidget):
             self.table.setItem(row, 4, preview_img)
             self.table.setItem(row, 5, lost_img)
             # self.table.setRowHeight(row, 150)
-        if records and record[count_idx] > last_row:
-            last_row = record[count_idx]
+        if len(records)>0:
+            record = records[-1]
+            if record[count_idx] > last_row:
+                last_row = records[-1][count_idx]
         self.last_row_db = last_row
         # self.table.resizeRowsToContents()
