@@ -20,6 +20,7 @@ class Controller:
         self.control_thread = threading.Thread(target=self.run)
         self.params = None
         self.sources = []
+        self.source_names = dict()
         self.detectors = []
         self.trackers = []
         self.obj_handler = None
@@ -152,6 +153,8 @@ class Controller:
             camera.set_params(**src_params)
             camera.init()
             self.sources.append(camera)
+            for source_id, source_name in zip(camera.source_ids, camera.source_names):
+                self.source_names[source_id] = source_name
 
     def _init_detectors(self, params):
         num_det = len(params)

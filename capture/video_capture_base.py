@@ -22,6 +22,8 @@ class VideoCaptureBase(core.EvilEyeBase):
         self.split_stream = False
         self.num_split = None
         self.src_coords = None
+        self.source_ids = None
+        self.source_names = None
         self.capture_thread = threading.Thread(target=self._capture_frames)
 
     def is_opened(self) -> bool:
