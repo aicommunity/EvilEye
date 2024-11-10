@@ -21,6 +21,10 @@ class VideoCapture(capture.VideoCaptureBase):
         self.mutex = Lock()
         self.loop_play = True
         self.source_type = None
+        self.video_duration = None
+        self.video_length = None
+        self.video_current_frame = None
+        self.video_current_position = None
 
     def is_opened(self):
         return self.capture.isOpened()
@@ -67,15 +71,27 @@ class VideoCapture(capture.VideoCaptureBase):
 
         self.source_fps = None
         if self.capture.isOpened():
+            if self.source_type == "Video":
+                self.video_length = self.capture.get(cv2.CAP_PROP_FRAME_COUNT)
+                self.video_current_frame = 0
+                self.video_current_position = 0.0
             self.finished = False
             try:
                 self.source_fps = self.capture.get(cv2.CAP_PROP_FPS)
                 if self.source_fps == 0.0:
                     self.source_fps = None
+                    self.video_duration = None
+
+                if self.source_fps is not None and self.source_type == "Video":
+                    self.video_duration = self.video_length*1000.0/self.source_fps
             except cv2.error as e:
                 print(f"Failed to read source_fps: {e} for sources {self.source_names}")
         else:
             print(f"Could not connect to a sources: {self.source_names}")
+            self.video_duration = None
+            self.video_length = None
+            self.video_current_frame = None
+            self.video_current_position = None
             return False
 
         return True
@@ -104,8 +120,13 @@ class VideoCapture(capture.VideoCaptureBase):
                 with self.mutex:
                     if self.frames_queue.full():
                         self.frames_queue.get()
-                self.frames_queue.put([is_read, src_image, self.frame_id_counter])
+                if self.source_type == "Video":
+                    self.video_current_frame += 1
+                    if self.source_fps and self.source_fps > 0.0:
+                        self.video_current_position = (self.video_current_frame*1000.0) / self.source_fps
+                self.frames_queue.put([is_read, src_image, self.frame_id_counter, self.video_current_frame, self.video_current_position])
                 self.frame_id_counter += 1
+
             else:
                 if self.source_type != "Video" or self.loop_play:
                     self.reset()
@@ -132,7 +153,7 @@ class VideoCapture(capture.VideoCaptureBase):
         captured_images: list[CaptureImage] = []
         if self.frames_queue.empty():
             return captured_images
-        ret, src_image, frame_id = self.frames_queue.get()
+        ret, src_image, frame_id, current_video_frame, current_video_position = self.frames_queue.get()
         if ret:
             if self.split_stream:  # Если сплит, то возвращаем список с частями потока, иначе - исходное изображение
                 for stream_cnt in range(self.num_split):
@@ -140,6 +161,8 @@ class VideoCapture(capture.VideoCaptureBase):
                     capture_image.source_id = self.source_ids[stream_cnt]
                     capture_image.time_stamp = time.time()
                     capture_image.frame_id = frame_id
+                    capture_image.current_video_frame = current_video_frame
+                    capture_image.current_video_position = current_video_position
                     capture_image.image = src_image[self.src_coords[stream_cnt][1]:self.src_coords[stream_cnt][1] + int(self.src_coords[stream_cnt][3]),
                                                     self.src_coords[stream_cnt][0]:self.src_coords[stream_cnt][0] + int(self.src_coords[stream_cnt][2])].copy()
                     captured_images.append(capture_image)
@@ -148,6 +171,8 @@ class VideoCapture(capture.VideoCaptureBase):
                 capture_image.source_id = self.source_ids[0]
                 capture_image.time_stamp = time.time()
                 capture_image.frame_id = frame_id
+                capture_image.current_video_frame = current_video_frame
+                capture_image.current_video_position = current_video_position
                 capture_image.image = src_image
                 captured_images.append(capture_image)
         return captured_images

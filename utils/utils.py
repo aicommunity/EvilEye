@@ -5,6 +5,9 @@ import cv2
 from pathlib import Path
 import copy
 from pathlib import Path
+
+from sympy.multipledispatch.dispatcher import source
+
 from database_controller import database_controller_pg
 from psycopg2 import sql
 
@@ -214,13 +217,19 @@ def draw_boxes_from_db(db_controller, table_name, load_folder, save_folder):
             print('Error saving image with boxes')
 
 
-def draw_boxes_tracking(image, cameras_objs, source_name):
+def draw_boxes_tracking(image, cameras_objs, source_name, source_duration_msecs):
     height, width, channels = image.image.shape
     if source_name is int:
-        cv2.putText(image.image, "Source Id: " + str(source_name), (100, height - 200), cv2.FONT_HERSHEY_SIMPLEX, 3,
+        cv2.putText(image.image, "Source Id: " + str(source_name), (100, height - 100), cv2.FONT_HERSHEY_SIMPLEX, 3,
                     (0, 0, 255), 8)
     else:
-        cv2.putText(image.image, str(source_name), (100, height-200), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 0, 255), 8)
+        cv2.putText(image.image, str(source_name), (100, height-100), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 0, 255), 8)
+
+    if image.current_video_position and source_duration_msecs is not None:
+        time_position_secs = image.current_video_position/1000.0
+        pos_string = "{:.1f}".format(time_position_secs) + " [" + "{:.1f}".format(source_duration_msecs/1000.0)+"]"
+        cv2.putText(image.image, pos_string, (width-900, height-100), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 0, 255), 8)
+
     # Для трекинга отображаем только последние данные об объекте из истории
     # print(cameras_objs)
     for obj in cameras_objs:
