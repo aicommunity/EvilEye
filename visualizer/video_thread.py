@@ -77,11 +77,11 @@ class VideoThread(QThread):
 
     def process_image(self):
         try:
-            frame, track_info, source_name = self.queue.get()
+            frame, track_info, source_name, source_duration_secs = self.queue.get()
         except ValueError:
             return 0
         begin_it = timer()
-        utils.draw_boxes_tracking(frame, track_info, source_name)
+        utils.draw_boxes_tracking(frame, track_info, source_name, source_duration_secs)
         qt_image = self.convert_cv_qt(frame.image, self.widget_width, self.widget_height)
         end_it = timer()
         elapsed_seconds = end_it - begin_it

@@ -23,6 +23,7 @@ class Controller:
         self.params = None
         self.sources = []
         self.source_id_name_table = dict()
+        self.source_video_duration = dict()
         self.detectors = []
         self.trackers = []
         self.obj_handler = None
@@ -173,6 +174,7 @@ class Controller:
             self.sources.append(camera)
             for source_id, source_name in zip(camera.source_ids, camera.source_names):
                 self.source_id_name_table[source_id] = source_name
+                self.source_video_duration[source_id] = camera.video_duration
 
     def _init_detectors(self, params):
         num_det = len(params)
@@ -198,4 +200,5 @@ class Controller:
         self.visualizer = Visualizer(self.qt_slot)
         self.visualizer.set_params(**params)
         self.visualizer.source_id_name_table = self.source_id_name_table
+        self.visualizer.source_video_duration = self.source_video_duration
         self.visualizer.init()
