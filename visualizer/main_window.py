@@ -4,6 +4,8 @@ from PyQt6.QtWidgets import (
     QSizePolicy, QMenuBar, QToolBar,
     QMenu, QMainWindow, QApplication
 )
+
+from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QPixmap, QIcon
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt
@@ -72,6 +74,11 @@ class MainWindow(QMainWindow):
         self.setup_layout()
         self.controller.init(self.params)
         self.controller.start()
+
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.check_controller_status)
+        self.timer.setInterval(1000)
+        self.timer.start()
 
     def setup_layout(self):
         self.centralWidget().layout().setContentsMargins(0, 0, 0, 0)
@@ -153,3 +160,7 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         super().resizeEvent(event)
         self.controller.set_current_main_widget_size(self.geometry().width(), self.geometry().height())
+
+    def check_controller_status(self):
+        if not self.controller.is_running():
+            self.close()

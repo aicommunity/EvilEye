@@ -42,6 +42,9 @@ class Controller:
 
         self.current_main_widget_size = [1920, 1080]
 
+    def is_running(self):
+        return self.run_flag
+
     def run(self):
         while self.run_flag:
             begin_it = timer()
@@ -59,8 +62,7 @@ class Controller:
                     self.captured_frames.extend(frames)
 
             if self.autoclose and all_sources_finished:
-                pass # todo
-                #self.run_flag = False
+                self.run_flag = False
                 #break
 
             complete_capture_it = timer()
