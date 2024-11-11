@@ -126,11 +126,11 @@ class MainWindow(QMainWindow):
         else:
             self.db_journal_win.setVisible(True)
 
-    @pyqtSlot(list)
-    def update_image(self, thread_data):
+    @pyqtSlot(int, QPixmap)
+    def update_image(self, source_id: int, picture: QPixmap):
         # qt_image = self.convert_cv_qt(thread_data[0])
         # Обновляет label, в котором находится изображение
-        self.labels[thread_data[1]].setPixmap(thread_data[0])
+        self.labels[source_id].setPixmap(picture)
 
     @pyqtSlot()
     def change_screen_size(self):

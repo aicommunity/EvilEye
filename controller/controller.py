@@ -24,6 +24,7 @@ class Controller:
         self.sources = []
         self.source_id_name_table = dict()
         self.source_video_duration = dict()
+        self.source_last_processed_frame_id = dict()
         self.detectors = []
         self.trackers = []
         self.obj_handler = None
@@ -94,6 +95,7 @@ class Controller:
                     tracking_result, image = track_info
                     self.tracking_results = tracking_result
                     self.obj_handler.put((tracking_result, image))
+                    self.source_last_processed_frame_id[image.source_id] = image.frame_id
 
             complete_tracking_it = timer()
             if self.gui_enabled:
@@ -101,7 +103,7 @@ class Controller:
                 for i in range(len(self.visualizer.source_ids)):
                     objects.append(copy.deepcopy(self.obj_handler.get('active', self.visualizer.source_ids[i])))
                 complete_read_objects_it = timer()
-                self.visualizer.update(processing_frames, objects)
+                self.visualizer.update(processing_frames, self.source_last_processed_frame_id, objects)
             else:
                 complete_read_objects_it = timer()
 
@@ -177,6 +179,7 @@ class Controller:
             for source_id, source_name in zip(camera.source_ids, camera.source_names):
                 self.source_id_name_table[source_id] = source_name
                 self.source_video_duration[source_id] = camera.video_duration
+                self.source_last_processed_frame_id[source_id] = 0
 
     def _init_detectors(self, params):
         num_det = len(params)

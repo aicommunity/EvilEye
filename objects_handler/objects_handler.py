@@ -77,13 +77,16 @@ class ObjectResultList:
         for obj in self.objects:
             if frame_id == obj.frame_id:
                 objs.append(obj)
-            else:
+            elif obj.history:
                 for hist in obj.history:
                     if hist.frame_id == frame_id:
                         objs.append(obj)
                         break
 
         return objs
+
+    def get_num_objects(self):
+        return len(self.objects)
 
 
 '''
