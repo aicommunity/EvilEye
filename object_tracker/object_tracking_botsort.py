@@ -8,18 +8,38 @@ from object_detector.object_detection_base import DetectionResult
 from object_detector.object_detection_base import DetectionResultList
 from object_tracker.object_tracking_base import TrackingResult
 from object_tracker.object_tracking_base import TrackingResultList
+from dataclasses import dataclass
+
+@dataclass
+class BostSortCfg:
+    appearance_thresh: float = 0.25
+    gmc_method: str = "sparseOptFlow"
+    match_thresh: float = 0.8
+    new_track_thresh: float = 0.6
+    proximity_thresh: float = 0.5
+    track_buffer: int = 30
+    track_high_thresh: float = 0.5
+    track_low_thresh: float = 0.1
+    tracker_type: str = "botsort"
+    with_reid: bool = False
 
 
 class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
-    tracker: BOTSORT
+    #tracker: BOTSORT
 
     def __init__(self):
         super().__init__()
+        self.botsort_cfg = BostSortCfg()
+        self.tracker = None
+        self.fps = 5
 
     def init_impl(self):
-        # TODO: add mechanism of setting cfg and replace this in the future
-        cfg = read_cfg()
-        self.tracker = BOTSORT(args=cfg, frame_rate=30)
+        if not self.botsort_cfg:
+            print(f"BOTSORT parameters not found!")
+            self.tracker = None
+            return False
+
+        self.tracker = BOTSORT(args=self.botsort_cfg, frame_rate=self.fps)
         return True
 
     def release_impl(self):
@@ -30,7 +50,16 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
 
     def set_params_impl(self):
         self.source_ids = self.params.get('source_ids', [])
-        pass  # TODO: add applying params to tracker instance
+        self.fps = self.params.get('fps', 5)
+
+        cfg_dict = self.params.get('botsort_cfg', None)
+
+        if cfg_dict:
+            self.botsort_cfg = BostSortCfg(appearance_thresh=cfg_dict["appearance_thresh"], gmc_method=cfg_dict["gmc_method"],
+                                           match_thresh=cfg_dict["match_thresh"], new_track_thresh=cfg_dict["new_track_thresh"],
+                                           proximity_thresh=cfg_dict["proximity_thresh"], track_buffer=cfg_dict["track_buffer"],
+                                           track_high_thresh=cfg_dict["track_high_thresh"], track_low_thresh=cfg_dict["track_low_thresh"],
+                                           tracker_type=cfg_dict["tracker_type"], with_reid=cfg_dict["with_reid"])
 
     def default(self):
         self.params.clear()

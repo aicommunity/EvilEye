@@ -26,7 +26,20 @@
   ],
   "trackers":[
     {
-      "source_ids": [0]
+      "source_ids": [0],
+      "fps": 5,
+      "botsort_cfg": {
+        "appearance_thresh": 0.25, 
+        "gmc_method": "sparseOptFlow", 
+        "match_thresh": 0.8, 
+        "new_track_thresh": 0.6, 
+        "proximity_thresh": 0.5, 
+        "track_buffer": 30, 
+        "track_high_thresh": 0.5, 
+        "track_low_thresh": 0.1, 
+        "tracker_type": "botsort", 
+        "with_reid": false
+      }
     }
   ],
   "visualizer" : {
