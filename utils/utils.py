@@ -68,7 +68,7 @@ def create_roi(capture_image, det_id, coords):
     for count in range(len(coords)):
         roi_image = copy.deepcopy(capture_image)
         roi_image.image = capture_image.image[coords[count][1]:coords[count][1] + coords[count][3],
-                                              coords[count][0]:coords[count][0] + coords[count][2]]
+                          coords[count][0]:coords[count][0] + coords[count][2]]
         # rois_path = pathlib.Path(get_project_root(), 'images', 'rois')
         # if not rois_path.exists():
         #     pathlib.Path.mkdir(rois_path)
@@ -172,7 +172,8 @@ def draw_boxes(image, objects, cam_id, model_names):
 
 
 def draw_boxes_from_db(db_controller, table_name, load_folder, save_folder):
-    query = sql.SQL('SELECT object_id, confidence, bounding_box, lost_bounding_box, frame_path, lost_frame_path FROM {table};').format(
+    query = sql.SQL(
+        'SELECT object_id, confidence, bounding_box, lost_bounding_box, frame_path, lost_frame_path FROM {table};').format(
         table=sql.Identifier(table_name))
     res = db_controller.query(query)
     for obj_id, conf, box, lost_box, image_path, lost_image_path in res:
@@ -223,20 +224,27 @@ def draw_boxes_tracking(image, cameras_objs, source_name, source_duration_msecs)
         cv2.putText(image.image, "Source Id: " + str(source_name), (100, height - 100), cv2.FONT_HERSHEY_SIMPLEX, 3,
                     (0, 0, 255), 8)
     else:
-        cv2.putText(image.image, str(source_name), (100, height-100), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 0, 255), 8)
+        cv2.putText(image.image, str(source_name), (100, height - 100), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 0, 255), 8)
 
     if image.current_video_position and source_duration_msecs is not None:
-        time_position_secs = image.current_video_position/1000.0
-        pos_string = "{:.1f}".format(time_position_secs) + " [" + "{:.1f}".format(source_duration_msecs/1000.0)+"]"
-        cv2.putText(image.image, pos_string, (width-900, height-100), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 0, 255), 8)
+        time_position_secs = image.current_video_position / 1000.0
+        pos_string = "{:.1f}".format(time_position_secs) + " [" + "{:.1f}".format(source_duration_msecs / 1000.0) + "]"
+        cv2.putText(image.image, pos_string, (width - 900, height - 100), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 0, 255), 8)
 
     # Для трекинга отображаем только последние данные об объекте из истории
     # print(cameras_objs)
     for obj in cameras_objs:
-       # if obj.frame_id < image.frame_id:
-       #     continue
+        # if obj.frame_id < image.frame_id:
+        #     continue
 
+        last_hist_index = len(obj.history) - 1
         last_info = obj.track
+        if obj.frame_id != image.frame_id:
+            for i in range(len(obj.history) - 1):
+                if obj.history[i].frame_id == image.frame_id:
+                    last_hist_index = i
+                    last_info = obj.history[i].track
+                    break
 
         cv2.rectangle(image.image, (int(last_info.bounding_box[0]), int(last_info.bounding_box[1])),
                       (int(last_info.bounding_box[2]), int(last_info.bounding_box[3])), (0, 255, 0), thickness=8)
@@ -247,7 +255,7 @@ def draw_boxes_tracking(image, cameras_objs, source_name, source_duration_msecs)
 
         # print(len(obj['obj_info']))
         if len(obj.history) > 1:
-            for i in range(len(obj.history) - 1):
+            for i in range(0, last_hist_index):
                 first_info = obj.history[i].track
                 second_info = obj.history[i + 1].track
                 first_cm_x = int((first_info.bounding_box[0] + first_info.bounding_box[2]) / 2)

@@ -22,6 +22,7 @@ class Visualizer(core.EvilEyeBase):
         self.processing_frames: list[CaptureImage] = []
         self.objects: list[ObjectResultList] = []
         self.last_displayed_frame = dict()
+        self.visual_buffer_num_frames = 10
 
     def default(self):
         pass
@@ -48,6 +49,7 @@ class Visualizer(core.EvilEyeBase):
         self.fps = self.params['fps']
         self.num_height = self.params['num_height']
         self.num_width = self.params['num_width']
+        self.visual_buffer_num_frames = self.params.get('visual_buffer_num_frames', 10)
 
     def start(self):
         for thr in self.visual_threads:
@@ -73,7 +75,7 @@ class Visualizer(core.EvilEyeBase):
 
         processed_sources = []
 
-        if len(self.processing_frames) < len(self.source_ids)*5:
+        if len(self.processing_frames) < len(self.source_ids)*self.visual_buffer_num_frames:
             return
 
         for i in range(len(self.processing_frames)):
@@ -92,7 +94,7 @@ class Visualizer(core.EvilEyeBase):
 
             start_find_objects = timer()
 
-            objs = objects[source_id].find_objects_by_frame_id(frame.frame_id)
+            objs = objects[source_id].find_objects_by_frame_id(frame.frame_id, use_history=False)
 #            objs = objects[source_id].find_objects_by_frame_id(None)
 #            objs = objects[source_id].objects
 #            print(f"Found {len(objs)} objects for visualization for source_id={frame.source_id} frame_id={frame.frame_id}")

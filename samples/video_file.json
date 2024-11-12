@@ -32,6 +32,7 @@
   "visualizer" : {
     "num_width": 1,
     "num_height": 1,
+    "visual_buffer_num_frames": 10,
     "source_ids": [0],
     "fps": [5]
   },
