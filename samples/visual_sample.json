@@ -130,5 +130,8 @@
     },
     "image_dir": "/home/user/EvilEyeData/"
   },
-  "autoclose": false
+  "controller": {
+    "autoclose": false,
+    "fps": 5
+  }
 }

@@ -100,7 +100,7 @@ class Visualizer(core.EvilEyeBase):
 #            print(f"Found {len(objs)} objects for visualization for source_id={frame.source_id} frame_id={frame.frame_id}")
 
             if len(objs) == 0 and objects[source_id].get_num_objects() > 0:
-                remove_processed_idx.append(i)
+                #remove_processed_idx.append(i)
                 continue
 
             start_append_data = timer()

@@ -156,7 +156,8 @@ class Controller:
         self._init_visualizer(self.params['visualizer'])
         self._init_db_controller(self.params['database'])
 
-        self.autoclose = self.params.get("autoclose", False)
+        self.autoclose = self.params['controller'].get("autoclose", False)
+        self.fps = self.params['controller'].get("fps", 5)
         self.obj_handler = objects_handler.ObjectsHandler(db_controller=self.db_controller, history_len=30)
 
     def set_current_main_widget_size(self, width, height):
