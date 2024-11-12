@@ -69,7 +69,7 @@ class ObjectResultList:
 
         return frame_id
 
-    def find_objects_by_frame_id(self, frame_id):
+    def find_objects_by_frame_id(self, frame_id, use_history: bool):
         objs = []
         if frame_id is None:
             return self.objects
@@ -77,7 +77,7 @@ class ObjectResultList:
         for obj in self.objects:
             if frame_id == obj.frame_id:
                 objs.append(obj)
-            elif obj.history:
+            elif obj.history and use_history:
                 for hist in obj.history:
                     if hist.frame_id == frame_id:
                         objs.append(obj)
