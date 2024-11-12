@@ -4,6 +4,8 @@ from PyQt6.QtWidgets import (
     QSizePolicy, QMenuBar, QToolBar,
     QMenu, QMainWindow, QApplication
 )
+
+from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QPixmap, QIcon
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt
@@ -73,6 +75,11 @@ class MainWindow(QMainWindow):
         self.controller.init(self.params)
         self.controller.start()
 
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.check_controller_status)
+        self.timer.setInterval(1000)
+        self.timer.start()
+
     def setup_layout(self):
         self.centralWidget().layout().setContentsMargins(0, 0, 0, 0)
         grid_cols = 0
@@ -119,11 +126,11 @@ class MainWindow(QMainWindow):
         else:
             self.db_journal_win.setVisible(True)
 
-    @pyqtSlot(list)
-    def update_image(self, thread_data):
+    @pyqtSlot(int, QPixmap)
+    def update_image(self, source_id: int, picture: QPixmap):
         # qt_image = self.convert_cv_qt(thread_data[0])
         # Обновляет label, в котором находится изображение
-        self.labels[thread_data[1]].setPixmap(thread_data[0])
+        self.labels[source_id].setPixmap(picture)
 
     @pyqtSlot()
     def change_screen_size(self):
@@ -153,3 +160,7 @@ class MainWindow(QMainWindow):
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         super().resizeEvent(event)
         self.controller.set_current_main_widget_size(self.geometry().width(), self.geometry().height())
+
+    def check_controller_status(self):
+        if not self.controller.is_running():
+            self.close()

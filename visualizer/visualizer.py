@@ -64,7 +64,7 @@ class Visualizer(core.EvilEyeBase):
             self.visual_threads[j].set_main_widget_size(width, height)
 
 
-    def update(self, processing_frames: list[CaptureImage], objects: list[ObjectResultList]):
+    def update(self, processing_frames: list[CaptureImage], source_last_processed_frame_id: dict(), objects: list[ObjectResultList]):
         start_update = timer()
         self.processing_frames.extend(processing_frames)
         self.objects = objects
@@ -83,20 +83,28 @@ class Visualizer(core.EvilEyeBase):
             if source_id in processed_sources:
                 continue
 
-            if source_id in self.last_displayed_frame.keys() and self.last_displayed_frame[source_id] >= frame.frame_id:
+            if self.last_displayed_frame.get(source_id, 0) >= frame.frame_id:
                 remove_processed_idx.append(i)
+                continue
+
+            if frame.frame_id > source_last_processed_frame_id[frame.source_id]:
                 continue
 
             start_find_objects = timer()
 
-#            objs = objects[source_id].find_objects_by_frame_id(frame.frame_id)
-            objs = objects[source_id].find_objects_by_frame_id(None)
+            objs = objects[source_id].find_objects_by_frame_id(frame.frame_id)
+#            objs = objects[source_id].find_objects_by_frame_id(None)
 #            objs = objects[source_id].objects
 #            print(f"Found {len(objs)} objects for visualization for source_id={frame.source_id} frame_id={frame.frame_id}")
+
+            if len(objs) == 0 and objects[source_id].get_num_objects() > 0:
+                remove_processed_idx.append(i)
+                continue
+
             start_append_data = timer()
             for j in range(len(self.visual_threads)):
                 if self.visual_threads[j].source_id == source_id:
-                    self.visual_threads[j].append_data((copy.deepcopy(frame), objs, self.source_id_name_table[frame.source_id], self.source_video_duration.get(frame.source_id, None)))
+                    self.visual_threads[j].append_data((frame, objs, self.source_id_name_table[frame.source_id], self.source_video_duration.get(frame.source_id, None)))
                     self.last_displayed_frame[source_id] = frame.frame_id
                     processed_sources.append(source_id)
                     break
