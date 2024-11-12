@@ -237,7 +237,7 @@ def draw_boxes_tracking(image, cameras_objs, source_name, source_duration_msecs)
         # if obj.frame_id < image.frame_id:
         #     continue
 
-        last_hist_index = 0
+        last_hist_index = len(obj.history) - 1
         last_info = obj.track
         if obj.frame_id != image.frame_id:
             for i in range(len(obj.history) - 1):
@@ -255,7 +255,7 @@ def draw_boxes_tracking(image, cameras_objs, source_name, source_duration_msecs)
 
         # print(len(obj['obj_info']))
         if len(obj.history) > 1:
-            for i in range(last_hist_index):
+            for i in range(0, last_hist_index):
                 first_info = obj.history[i].track
                 second_info = obj.history[i + 1].track
                 first_cm_x = int((first_info.bounding_box[0] + first_info.bounding_box[2]) / 2)
