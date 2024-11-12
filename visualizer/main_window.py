@@ -4,6 +4,8 @@ from PyQt6.QtWidgets import (
     QSizePolicy, QMenuBar, QToolBar,
     QMenu, QMainWindow, QApplication
 )
+
+from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QPixmap, QIcon
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt
@@ -37,7 +39,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(win_width, win_height)
 
         # self.handler = ObjectsHandler(self.num_labels, history_len=20)
-        self.controller = controller.Controller(self.update_image)
+        self.controller = controller.Controller(self, self.update_image)
 
         self.params = params
         self.rows = self.params['visualizer']['num_height']
@@ -57,6 +59,7 @@ class MainWindow(QMainWindow):
         self._create_menu_bar()
         self._create_toolbar()
         self.db_journal_win = DatabaseJournalWindow(self.db_params)
+        self.db_journal_win.setVisible(False)
 
         for i in range(self.num_sources):
             if self.params['sources'][i]['split']:
@@ -71,6 +74,11 @@ class MainWindow(QMainWindow):
         self.setup_layout()
         self.controller.init(self.params)
         self.controller.start()
+
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.check_controller_status)
+        self.timer.setInterval(1000)
+        self.timer.start()
 
     def setup_layout(self):
         self.centralWidget().layout().setContentsMargins(0, 0, 0, 0)
@@ -114,15 +122,15 @@ class MainWindow(QMainWindow):
     @pyqtSlot()
     def open_journal(self):
         if self.db_journal_win.isVisible():
-            self.db_journal_win.hide()
+            self.db_journal_win.setVisible(False)
         else:
-            self.db_journal_win.show()
+            self.db_journal_win.setVisible(True)
 
-    @pyqtSlot(list)
-    def update_image(self, thread_data):
+    @pyqtSlot(int, QPixmap)
+    def update_image(self, source_id: int, picture: QPixmap):
         # qt_image = self.convert_cv_qt(thread_data[0])
         # Обновляет label, в котором находится изображение
-        self.labels[thread_data[1]].setPixmap(thread_data[0])
+        self.labels[source_id].setPixmap(picture)
 
     @pyqtSlot()
     def change_screen_size(self):
@@ -145,9 +153,14 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self.controller.stop()
+        self.db_journal_win.close()
         QApplication.closeAllWindows()
         event.accept()
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         super().resizeEvent(event)
         self.controller.set_current_main_widget_size(self.geometry().width(), self.geometry().height())
+
+    def check_controller_status(self):
+        if not self.controller.is_running():
+            self.close()

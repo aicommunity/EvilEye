@@ -1,10 +1,12 @@
-from PyQt6.QtCore import QThread, pyqtSignal, QEventLoop, QTimer
+from PyQt6.QtCore import QThread, QMutex, pyqtSignal, QEventLoop, QTimer
 from PyQt6 import QtGui
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QPixmap
 from timeit import default_timer as timer
 from utils import utils
 from queue import Queue
+from queue import Empty
+import copy
 import time
 import cv2
 
@@ -15,10 +17,11 @@ class VideoThread(QThread):
     rows = 0
     cols = 0
     # Сигнал, отвечающий за обновление label, в котором отображается изображение из потока
-    update_image_signal = pyqtSignal(list)
+    update_image_signal = pyqtSignal(int, QPixmap)
 
     def __init__(self, source_id, fps, rows, cols):
         super().__init__()
+
         VideoThread.rows = rows  # Количество строк и столбцов для правильного перевода изображения в полный экран
         VideoThread.cols = cols
         self.queue = Queue()
@@ -49,7 +52,7 @@ class VideoThread(QThread):
         self.start()
 
     def append_data(self, data):
-        self.queue.put(data)
+        self.queue.put(copy.deepcopy(data))
 
     def run(self):
         while self.run_flag:
@@ -77,17 +80,19 @@ class VideoThread(QThread):
 
     def process_image(self):
         try:
-            frame, track_info = self.queue.get()
+            frame, track_info, source_name, source_duration_secs = copy.deepcopy(self.queue.get())
+            begin_it = timer()
+            utils.draw_boxes_tracking(frame, track_info, source_name, source_duration_secs)
+            qt_image = self.convert_cv_qt(frame.image, self.widget_width, self.widget_height)
+            end_it = timer()
+            elapsed_seconds = end_it - begin_it
+            # Сигнал из потока для обновления label на новое изображение
+            self.update_image_signal.emit(self.thread_num, qt_image)
+            return elapsed_seconds
+        except Empty:
+            return 0
         except ValueError:
             return 0
-        begin_it = timer()
-        utils.draw_boxes_tracking(frame, track_info)
-        qt_image = self.convert_cv_qt(frame.image, self.widget_width, self.widget_height)
-        end_it = timer()
-        elapsed_seconds = end_it - begin_it
-        # Сигнал из потока для обновления label на новое изображение
-        self.update_image_signal.emit([qt_image, self.thread_num])
-        return elapsed_seconds
 
     def stop_thread(self):
         self.run_flag = False

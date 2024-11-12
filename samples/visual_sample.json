@@ -7,25 +7,28 @@
       "split": false,
       "num_split": 0,
       "src_coords": 0,
-      "source_ids": [0]
+      "source_ids": [0],
+      "source_names": ["Cam1"]
     },
     {
       "source": "IPcam",
-      "camera": "rtsp://user:AutoZloboglaz821-@10.245.1.201",
+      "camera": "rtsp://user:AutoZloboglaz821-@10.245.1.199",
       "apiPreference": "CAP_FFMPEG",
       "split": true,
       "num_split": 2,
       "src_coords": [[0, 0, 2304, 1300], [0, 1300, 2304, 1292]],
-      "source_ids": [1, 2]
+      "source_ids": [1, 2],
+      "source_names": ["Cam2", "Cam3"]
     },
     {
       "source": "IPcam",
-      "camera": "rtsp://user:AutoZloboglaz821@10.245.1.203",
+      "camera": "rtsp://user:AutoZloboglaz821@10.245.1.202",
       "apiPreference": "CAP_FFMPEG",
       "split": true,
       "num_split": 2,
       "src_coords": [[0, 0, 2304, 1300], [0, 1300, 2304, 1292]],
-      "source_ids": [3, 4]
+      "source_ids": [3, 4],
+      "source_names": ["Cam4", "Cam5"]
     }
   ],
   "detectors":[
@@ -82,24 +85,90 @@
   ],
   "trackers":[
     {
-      "source_ids": [0]
+      "source_ids": [0],
+      "fps": 5,
+      "botsort_cfg": {
+        "appearance_thresh": 0.25,
+        "gmc_method": "sparseOptFlow",
+        "match_thresh": 0.8,
+        "new_track_thresh": 0.6,
+        "proximity_thresh": 0.5,
+        "track_buffer": 30,
+        "track_high_thresh": 0.5,
+        "track_low_thresh": 0.1,
+        "tracker_type": "botsort",
+        "with_reid": false
+      }
     },
     {
-      "source_ids": [1]
+      "source_ids": [1],
+      "fps": 5,
+      "botsort_cfg": {
+        "appearance_thresh": 0.25,
+        "gmc_method": "sparseOptFlow",
+        "match_thresh": 0.8,
+        "new_track_thresh": 0.6,
+        "proximity_thresh": 0.5,
+        "track_buffer": 30,
+        "track_high_thresh": 0.5,
+        "track_low_thresh": 0.1,
+        "tracker_type": "botsort",
+        "with_reid": false
+      }
     },
     {
-      "source_ids": [2]
+      "source_ids": [2],
+      "fps": 5,
+      "botsort_cfg": {
+        "appearance_thresh": 0.25,
+        "gmc_method": "sparseOptFlow",
+        "match_thresh": 0.8,
+        "new_track_thresh": 0.6,
+        "proximity_thresh": 0.5,
+        "track_buffer": 30,
+        "track_high_thresh": 0.5,
+        "track_low_thresh": 0.1,
+        "tracker_type": "botsort",
+        "with_reid": false
+      }
     },
     {
-      "source_ids": [3]
+      "source_ids": [3],
+      "fps": 5,
+      "botsort_cfg": {
+        "appearance_thresh": 0.25,
+        "gmc_method": "sparseOptFlow",
+        "match_thresh": 0.8,
+        "new_track_thresh": 0.6,
+        "proximity_thresh": 0.5,
+        "track_buffer": 30,
+        "track_high_thresh": 0.5,
+        "track_low_thresh": 0.1,
+        "tracker_type": "botsort",
+        "with_reid": false
+      }
     },
     {
-      "source_ids": [4]
+      "source_ids": [4],
+      "fps": 5,
+      "botsort_cfg": {
+        "appearance_thresh": 0.25,
+        "gmc_method": "sparseOptFlow",
+        "match_thresh": 0.8,
+        "new_track_thresh": 0.6,
+        "proximity_thresh": 0.5,
+        "track_buffer": 30,
+        "track_high_thresh": 0.5,
+        "track_low_thresh": 0.1,
+        "tracker_type": "botsort",
+        "with_reid": false
+      }
     }
   ],
   "visualizer" : {
     "num_width": 3,
     "num_height": 2,
+    "visual_buffer_num_frames": 10,
     "source_ids": [0, 1, 2, 3, 4],
     "fps": [5, 5, 5, 5, 5]
   },
@@ -124,6 +193,10 @@
         "lost_frame_path": "text DEFAULT NULL"
       }
     },
-    "image_dir": "/home/user/EvilEye/"
+    "image_dir": "/home/user/EvilEyeData/"
+  },
+  "controller": {
+    "autoclose": false,
+    "fps": 5
   }
 }

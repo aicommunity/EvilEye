@@ -8,6 +8,8 @@ class CaptureImage:
     def __init__(self):
         self.source_id = None
         self.frame_id = None
+        self.current_video_frame = None
+        self.current_video_position = None
         self.time_stamp = None
         self.image = None
 
@@ -22,10 +24,16 @@ class VideoCaptureBase(core.EvilEyeBase):
         self.split_stream = False
         self.num_split = None
         self.src_coords = None
+        self.source_ids = None
+        self.source_names = None
+        self.finished = False
         self.capture_thread = threading.Thread(target=self._capture_frames)
 
     def is_opened(self) -> bool:
         return False
+
+    def is_finished(self) -> bool:
+        return self.finished
 
     def get_frames(self) -> list[CaptureImage]:
         captured_images: list[CaptureImage] = []
