@@ -56,7 +56,10 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(QWidget())
         self._create_actions()
         self._connect_actions()
+        self.menu_height = 0
         self._create_menu_bar()
+
+        self.toolbar_width = 0
         self._create_toolbar()
         self.db_journal_win = DatabaseJournalWindow(self.db_params)
         self.db_journal_win.setVisible(False)
@@ -106,11 +109,13 @@ class MainWindow(QMainWindow):
         view_menu = QMenu('&View', self)
         menu.addMenu(view_menu)
         view_menu.addAction(self.db_journal)
+        self.menu_height = view_menu.frameGeometry().height()
 
     def _create_toolbar(self):
         view_toolbar = QToolBar('View', self)
         self.addToolBar(Qt.ToolBarArea.RightToolBarArea, view_toolbar)
         view_toolbar.addAction(self.db_journal)
+        self.toolbar_width = view_toolbar.frameGeometry().width()
 
     def _create_actions(self):
         self.db_journal = QAction('&DB journal', self)
@@ -149,7 +154,7 @@ class MainWindow(QMainWindow):
                     label.hide()
             VideoThread.rows = 1
             VideoThread.cols = 1
-        self.controller.set_current_main_widget_size(self.geometry().width(), self.geometry().height())
+        self.controller.set_current_main_widget_size(self.geometry().width()-self.toolbar_width, self.geometry().height()-self.menu_height)
 
     def closeEvent(self, event):
         self.controller.stop()
@@ -159,7 +164,7 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         super().resizeEvent(event)
-        self.controller.set_current_main_widget_size(self.geometry().width(), self.geometry().height())
+        self.controller.set_current_main_widget_size(self.geometry().width()-self.toolbar_width, self.geometry().height()-self.menu_height)
 
     def check_controller_status(self):
         if not self.controller.is_running():

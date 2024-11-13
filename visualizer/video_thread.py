@@ -64,17 +64,17 @@ class VideoThread(QThread):
                 time.sleep(0.01)
 
     def set_main_widget_size(self, width, height):
-        self.widget_witdth = width
+        self.widget_width = width
         self.widget_height = height
 
-    def convert_cv_qt(self, cv_img, widget_witdth, widget_height):
+    def convert_cv_qt(self, cv_img, widget_width, widget_height):
         # Переводим из opencv image в QPixmap
         rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
         h, w, ch = rgb_image.shape
         bytes_per_line = ch * w
         convert_to_qt = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format.Format_RGB888)
         # Подгоняем под указанный размер, но сохраняем пропорции
-        scaled_image = convert_to_qt.scaled(int(widget_witdth / VideoThread.cols),
+        scaled_image = convert_to_qt.scaled(int(widget_width / VideoThread.cols),
                                             int(widget_height / VideoThread.rows), Qt.AspectRatioMode.KeepAspectRatio)
         return QPixmap.fromImage(scaled_image)
 
