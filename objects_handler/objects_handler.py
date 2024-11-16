@@ -3,6 +3,7 @@ import time
 import os
 import cv2
 import datetime
+import core
 
 import objects_handler.objects_handler
 from capture.video_capture_base import CaptureImage
@@ -101,16 +102,16 @@ class ObjectResultList:
 '''
 
 
-class ObjectsHandler:
-    def __init__(self, db_controller, history_len=1, lost_thresh=5):
+class ObjectsHandler(core.EvilEyeBase):
+    def __init__(self, db_controller):
         # Очередь для потокобезопасного приема данных от каждой камеры
         self.objs_queue = Queue()
         # Списки для хранения различных типов объектов
         self.new_objs: ObjectResultList = ObjectResultList()
         self.active_objs: ObjectResultList = ObjectResultList()
         self.lost_objs: ObjectResultList = ObjectResultList()
-        self.history = history_len
-        self.lost_thresh = lost_thresh  # Порог перевода (в кадрах) в потерянные объекты
+        self.history_len = 1
+        self.lost_thresh = 5  # Порог перевода (в кадрах) в потерянные объекты
 
         self.db_controller = db_controller
         self.db_params = self.db_controller.get_params()
@@ -122,6 +123,24 @@ class ObjectsHandler:
         self.object_id_counter = 1
         self.lost_store_time_secs = 10
         self.last_sources = dict()
+
+    def default(self):
+        pass
+
+    def init_impl(self):
+        pass
+
+    def release_impl(self):
+        pass
+
+    def reset_impl(self):
+        pass
+
+    def set_params_impl(self):
+        self.lost_store_time_secs = self.params.get('lost_store_time_secs', 60)
+        self.history_len = self.params.get('history_len', 1)
+        self.lost_thresh = self.params.get('lost_thresh', 5)
+
 
     def stop(self):
         self.run_flag = False
@@ -218,7 +237,7 @@ class ObjectsHandler:
                 #track_object.last_image = image
                 # print(f"object_id={track_object.object_id}, track_id={track_object.track.track_id}, len(history)={len(track_object.history)}")
                 track_object.history.append(track_object.get_current_history_element())
-                if len(track_object.history) > self.history:  # Если количество данных превышает размер истории, удаляем самые старые данные об объекте
+                if len(track_object.history) > self.history_len:  # Если количество данных превышает размер истории, удаляем самые старые данные об объекте
                     del track_object.history[0]
                 track_object.last_update = True
                 track_object.lost_frames = 0

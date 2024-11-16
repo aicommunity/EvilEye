@@ -72,6 +72,11 @@
     },
     "image_dir": "/home/user/EvilEyeData/"
   },
+  "objects_handler": {
+    "history_len": 30,
+    "lost_store_time_secs": 60,
+    "lost_thresh": 5
+  },
   "controller": {
     "autoclose": false,
     "fps": 5
