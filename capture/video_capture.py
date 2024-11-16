@@ -17,6 +17,7 @@ class VideoCapture(capture.VideoCaptureBase):
 
     def __init__(self):
         super().__init__()
+
         self.capture = cv2.VideoCapture()
         self.mutex = Lock()
 
@@ -31,29 +32,29 @@ class VideoCapture(capture.VideoCaptureBase):
 
     def init_impl(self):
         if self.source_type == CaptureDeviceType.IpCamera and self.params['apiPreference'] == "CAP_GSTREAMER":  # Приведение rtsp ссылки к формату gstreamer
-            if '!' not in self.params['camera']:
+            if '!' not in self.source_address:
                 str_h265 = (' ! rtph265depay ! h265parse ! avdec_h265 ! decodebin ! videoconvert ! '  # Указание кодеков и форматов
                             'video/x-raw, format=(string)BGR ! appsink')
                 str_h264 = (' ! rtph264depay ! h264parse ! avdec_h264 ! decodebin ! videoconvert ! '
                             'video/x-raw, format=(string)BGR ! appsink')
 
-                if self.params['camera'].find('tcp') == 0:  # Задание протокола
+                if self.source_address.find('tcp') == 0:  # Задание протокола
                     str1 = 'rtspsrc protocols=' + 'tcp ' + 'location='
-                elif self.params['camera'].find('udp') == 0:
+                elif self.source_address.find('udp') == 0:
                     str1 = 'rtspsrc protocols=' + 'udp ' + 'location='
                 else:
                     str1 = 'rtspsrc protocols=' + 'tcp ' + 'location='
 
-                pos = self.params['camera'].find('rtsp')
-                source = str1 + self.params['camera'][pos:] + str_h265
+                pos = self.source_address.find('rtsp')
+                source = str1 + self.source_address[pos:] + str_h265
                 self.capture.open(source, VideoCapture.VideoCaptureAPIs[self.params['apiPreference']])
                 if not self.is_opened():  # Если h265 не подойдет, используем h264
-                    source = str1 + self.params['camera'] + str_h264
+                    source = str1 + self.source_address + str_h264
                     self.capture.open(source, VideoCapture.VideoCaptureAPIs[self.params['apiPreference']])
             else:
-                self.capture.open(self.params['camera'], VideoCapture.VideoCaptureAPIs[self.params['apiPreference']])
+                self.capture.open(self.source_address, VideoCapture.VideoCaptureAPIs[self.params['apiPreference']])
         else:
-            self.capture.open(self.params['camera'], VideoCapture.VideoCaptureAPIs[self.params['apiPreference']])
+            self.capture.open(self.source_address, VideoCapture.VideoCaptureAPIs[self.params['apiPreference']])
 
         self.source_fps = None
         if self.capture.isOpened():
