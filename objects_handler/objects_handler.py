@@ -120,6 +120,7 @@ class ObjectsHandler:
         self.handler = Thread(target=self.handle_objs)
         self.run_flag = False
         self.object_id_counter = 1
+        self.lost_store_time_secs = 10
         self.last_sources = dict()
 
     def stop(self):
@@ -243,7 +244,7 @@ class ObjectsHandler:
             if not active_obj.last_update and active_obj.source_id == tracking_results.source_id:
                 active_obj.lost_frames += 1
                 if active_obj.lost_frames >= self.lost_thresh:
-                    # active_obj.time_lost = datetime.datetime.now()
+                    active_obj.time_lost = datetime.datetime.now()
                     # lost_preview_path = self._save_image('preview', 'lost', active_obj.last_image, active_obj)
                     # lost_img_path = self._save_image('frame', 'lost', active_obj.last_image, active_obj)
                     # # data = self._prepare_for_saving('emerged', copy.deepcopy(active_obj), image)
@@ -263,6 +264,15 @@ class ObjectsHandler:
             else:
                 filtered_active_objects.append(active_obj)
         self.active_objs.objects = filtered_active_objects
+
+        start_index_for_remove = None
+        for i in reversed(range(len(self.lost_objs.objects))):
+            if (datetime.datetime.now() - self.lost_objs.objects[i].time_lost).total_seconds() > self.lost_store_time_secs:
+                start_index_for_remove = i
+                break
+        if start_index_for_remove:
+            self.lost_objs.objects = self.lost_objs.objects[start_index_for_remove:]
+
 
     def _prepare_for_saving(self, table_name, obj: ObjectResult) -> tuple[list, str, str]:
         table_fields = self.db_controller.get_fields_names(table_name)
