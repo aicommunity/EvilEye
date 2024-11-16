@@ -155,14 +155,19 @@ class Controller:
         self._init_trackers(self.params['trackers'])
         self._init_visualizer(self.params['visualizer'])
         self._init_db_controller(self.params['database'])
+        self.__init_object_handler(self.db_controller, params['objects_handler'])
 
         self.autoclose = self.params['controller'].get("autoclose", False)
         self.fps = self.params['controller'].get("fps", 5)
-        self.obj_handler = objects_handler.ObjectsHandler(db_controller=self.db_controller, history_len=30)
 
     def set_current_main_widget_size(self, width, height):
         self.current_main_widget_size = [width, height]
         self.visualizer.set_current_main_widget_size(width, height)
+
+    def __init_object_handler(self, db_controller, params):
+        self.obj_handler = objects_handler.ObjectsHandler(db_controller=db_controller)
+        self.obj_handler.set_params(**params)
+        self.obj_handler.init()
 
     def _init_db_controller(self, params):
         self.db_controller = DatabaseControllerPg()
