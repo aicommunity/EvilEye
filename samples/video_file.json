@@ -1,7 +1,7 @@
 {
   "sources": [
      {
-      "source": "Video",
+      "source": "VideoFile",
       "camera": "/home/user/Videos/12638-video.mp4",
       "apiPreference": "CAP_FFMPEG",
       "split": false,
