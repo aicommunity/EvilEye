@@ -18,7 +18,8 @@ class EvilEyeBase(ABC):
             self.reset_impl()
 
     def init(self):
-        self.is_inited = self.init_impl()
+        if not self.get_init_flag():
+            self.is_inited = self.init_impl()
 
     def release(self):
         self.release_impl()

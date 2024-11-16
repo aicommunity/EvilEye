@@ -1,8 +1,8 @@
 {
   "sources": [
      {
-      "source": "IPcam",
-      "camera": "rtsp://user:AutoZloboglaz821@10.245.1.200",
+      "source": "IpCamera",
+      "camera": "rtsp://10.245.1.200",
       "apiPreference": "CAP_FFMPEG",
       "split": false,
       "num_split": 0,
@@ -11,8 +11,8 @@
       "source_names": ["Cam1"]
     },
     {
-      "source": "IPcam",
-      "camera": "rtsp://user:AutoZloboglaz821-@10.245.1.199",
+      "source": "IpCamera",
+      "camera": "rtsp://10.245.1.199",
       "apiPreference": "CAP_FFMPEG",
       "split": true,
       "num_split": 2,
@@ -21,8 +21,8 @@
       "source_names": ["Cam2", "Cam3"]
     },
     {
-      "source": "IPcam",
-      "camera": "rtsp://user:AutoZloboglaz821@10.245.1.202",
+      "source": "IpCamera",
+      "camera": "rtsp://10.245.1.202",
       "apiPreference": "CAP_FFMPEG",
       "split": true,
       "num_split": 2,

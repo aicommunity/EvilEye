@@ -104,6 +104,7 @@ class ObjectResultList:
 
 class ObjectsHandler(core.EvilEyeBase):
     def __init__(self, db_controller):
+        super().__init__()
         # Очередь для потокобезопасного приема данных от каждой камеры
         self.objs_queue = Queue()
         # Списки для хранения различных типов объектов
