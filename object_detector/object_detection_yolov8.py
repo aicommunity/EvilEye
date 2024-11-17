@@ -56,6 +56,7 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
         self.stride = self.params.get('vid_stride', 1)
         self.stride_cnt = self.stride
         self.source_ids = self.params.get('source_ids', [])
+        self.num_detection_threads = self.params.get('num_detection_threads', 3)
         self.roi = self.params.get('roi', [[]])
 
     def default(self):

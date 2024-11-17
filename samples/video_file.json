@@ -21,6 +21,7 @@
       "save" : false,
       "stride_type": "frames",
       "vid_stride": 1,
+      "num_detection_threads": 3,
       "roi": [[[1840, 0, 500, 400], [1700, 395, 800, 650], [1500, 1030, 1400, 1130]]]
     }
   ],
