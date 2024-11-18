@@ -24,9 +24,6 @@ class VideoCapture(capture.VideoCaptureBase):
     def is_opened(self):
         return self.capture.isOpened()
 
-    def release(self):
-        self.capture.release()
-
     def set_params_impl(self):
         super().set_params_impl()
 
@@ -90,18 +87,22 @@ class VideoCapture(capture.VideoCaptureBase):
     def reset_impl(self):
         self.release()
         self.init()
-        if self.get_init_flag():
+        if self.get_init_flag() and self.is_opened():
             print(f"Reconnected to a sources: {self.source_names}")
         else:
-            raise Exception(f"Could not connect to a sources: {self.source_names}")
+            print(f"Could not connect to a sources: {self.source_names}")
 
     def _capture_frames(self):
         while self.run_flag:
             begin_it = timer()
             with self.mutex:
-                if not self.is_inited or self.capture is None or not self.capture.isOpened():
+                if not self.is_inited or self.capture is None:
                     time.sleep(0.01)
                     continue
+
+                if not self.is_opened():
+                    time.sleep(0.1)
+                    self.reset()
 
             is_read, src_image = self.capture.read()
             if is_read:

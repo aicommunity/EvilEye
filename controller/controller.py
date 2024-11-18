@@ -68,6 +68,11 @@ class Controller:
                 self.run_flag = False
                 #break
 
+            if self.run_flag:
+                for source in self.sources:
+                    if not source.is_running():
+                        source.start()
+
             complete_capture_it = timer()
 
             # Process detectors
