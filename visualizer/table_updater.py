@@ -29,7 +29,7 @@ class TableUpdater(core.EvilEyeBase):
         query = sql.SQL('SELECT count, {fields} FROM {table} WHERE count = %s AND time_stamp > %s;').format(
             fields=sql.SQL(",").join(map(sql.Identifier, fields)),
             table=sql.Identifier(self.table_name))
-        print(f'COUNT: {last_db_row}')
+        # print(f'COUNT: {last_db_row}')
         self.data_thread.append_data((query, (last_db_row, start_time)))
 
     def init_impl(self):

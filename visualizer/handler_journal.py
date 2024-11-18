@@ -202,11 +202,11 @@ class HandlerJournal(QWidget):
 
         for rec in self.data_for_update:
             row_idx = rec[0]
-            print(row_idx)
+            #print(row_idx)
             root = utils.get_project_root()
             lost_img_idx = fields_list.index('lost_preview_path') + 1
             time_lost_idx = fields_list.index('time_lost') + 1
-            print(rec[lost_img_idx])
+            #print(rec[lost_img_idx])
             lost_pixmap = QPixmap(os.path.join(root, rec[lost_img_idx]))
             lost_img = QTableWidgetItem()
             lost_img.setData(Qt.ItemDataRole.DecorationRole, lost_pixmap)
