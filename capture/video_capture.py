@@ -124,7 +124,9 @@ class VideoCapture(capture.VideoCaptureBase):
             elapsed_seconds = end_it - begin_it
 
             if self.source_fps:
-                sleep_seconds = 1. / (1.5*self.source_fps) - elapsed_seconds  # Todo: reduce sleep time for prevent fail in rtsp stream (remove it and implement separate thread for grub later)
+                # Todo: reduce sleep time for prevent fail in rtsp stream (remove it and implement separate thread for grub later)
+                fps_multiplier = 1.5 if self.source_type == CaptureDeviceType.IpCamera else 1.0
+                sleep_seconds = 1. / (fps_multiplier*self.source_fps) - elapsed_seconds
                 if sleep_seconds <= 0.0:
                     sleep_seconds = 0.001
             else:
