@@ -60,8 +60,6 @@ class VideoCaptureBase(core.EvilEyeBase):
         captured_images: list[CaptureImage] = []
         if self.get_init_flag():
             captured_images = self.get_frames_impl()
-        else:
-            raise Exception('init function has not been called')
         return captured_images
 
     def start(self):

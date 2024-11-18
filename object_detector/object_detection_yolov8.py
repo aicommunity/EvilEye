@@ -67,19 +67,35 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
 
     def _process_impl(self):
         while self.run_flag:
-            sleep(0.01)
-            try:
-                if not self.queue_in.empty():
-                    image = self.queue_in.get()
-                else:
-                    image = None
-            except ValueError:
-                break
+            if not self.is_inited:
+                sleep(0.01)
+                continue
+
+            image = self.queue_in.get()
             if not image:
                 continue
 
-            self.detection_threads[self.thread_counter].put(image)
+            if not self.detection_threads[self.thread_counter].put(image, force=True):
+                print(f"Failed to put image {image.source_id}:{image.frame_id} to detection thread {self.thread_counter}")
             self.thread_counter += 1
             if self.thread_counter >= self.num_detection_threads:
                 self.thread_counter = 0
+            '''
+            is_image_put = False
+            for i in range(self.num_detection_threads):
+                if self.detection_threads[self.thread_counter].put(image):
+                    is_image_put = True
+                    self.thread_counter += 1
+                    if self.thread_counter >= self.num_detection_threads:
+                        self.thread_counter = 0
+                    break
+                else:
+                    self.thread_counter += 1
+                    if self.thread_counter >= self.num_detection_threads:
+                        self.thread_counter = 0
+
+
+            if not is_image_put:
+                print(f"Failed to put image {image.source_id}:{image.frame_id} to detection thread")
+            '''
 

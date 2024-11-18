@@ -40,11 +40,17 @@ class DetectionThreadYolo:
         self.processing_thread.join()
         print('Detection stopped')
 
-    def put(self, image):
-        if not self.queue_in.full():
-            self.queue_in.put(image)
-            return True
-        return False
+    def put(self, image, force=False):
+        if not self.run_flag:
+            print(f"Detection thread doesn't started. Put ignored for {image.source_id}:{image.frame_id}")
+
+        if self.queue_in.full():
+            if force:
+                self.queue_in.get()
+            else:
+                return False
+        self.queue_in.put(image)
+        return True
 
     def _process_impl(self):
         while self.run_flag:
@@ -55,9 +61,12 @@ class DetectionThreadYolo:
                     image = self.queue_in.get()
                 else:
                     image = None
-            except ValueError:
+            except ValueError as ex:
+                print(f"Exception in detection thread: _process_impl: {ex}")
+
                 break
             if not image:
+                sleep(0.01)
                 continue
 
             if not self.roi[0]:
