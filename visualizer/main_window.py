@@ -157,7 +157,7 @@ class MainWindow(QMainWindow):
         self.controller.set_current_main_widget_size(self.geometry().width()-self.toolbar_width, self.geometry().height()-self.menu_height)
 
     def closeEvent(self, event):
-        self.controller.stop()
+        self.controller.release()
         self.db_journal_win.close()
         QApplication.closeAllWindows()
         event.accept()
