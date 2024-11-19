@@ -45,7 +45,7 @@ class VideoCaptureBase(core.EvilEyeBase):
         self.video_current_frame = None
         self.video_current_position = None
 
-        self.capture_thread = threading.Thread(target=self._capture_frames)
+        self.capture_thread = None
 
     def is_opened(self) -> bool:
         return False
@@ -53,24 +53,28 @@ class VideoCaptureBase(core.EvilEyeBase):
     def is_finished(self) -> bool:
         return self.finished
 
+    def is_running(self):
+        return self.run_flag
+
     def get_frames(self) -> list[CaptureImage]:
         captured_images: list[CaptureImage] = []
         if self.get_init_flag():
             captured_images = self.get_frames_impl()
-        else:
-            raise Exception('init function has not been called')
         return captured_images
 
     def start(self):
-        self.init()
+        if not self.is_inited:
+            return
         self.run_flag = True
+        self.capture_thread = threading.Thread(target=self._capture_frames)
         self.capture_thread.start()
 
     def stop(self):
         self.run_flag = False
-        self.capture_thread.join()
-        self.release()
-        print('Capture stopped')
+        if self.capture_thread:
+            self.capture_thread.join()
+            self.capture_thread = None
+            print('Capture stopped')
 
     def set_params_impl(self):
         self.release()

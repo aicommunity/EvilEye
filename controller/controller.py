@@ -68,6 +68,11 @@ class Controller:
                 self.run_flag = False
                 #break
 
+            if self.run_flag:
+                for source in self.sources:
+                    if not source.is_running():
+                        source.start()
+
             complete_capture_it = timer()
 
             # Process detectors
@@ -137,8 +142,8 @@ class Controller:
 
     def stop(self):
         self.run_flag = False
-        self.db_controller.disconnect()
         self.control_thread.join()
+        self.db_controller.disconnect()
         self.visualizer.stop()
         self.obj_handler.stop()
         for tracker in self.trackers:
@@ -167,6 +172,17 @@ class Controller:
 
         self.autoclose = self.params['controller'].get("autoclose", False)
         self.fps = self.params['controller'].get("fps", 5)
+
+    def release(self):
+        self.stop()
+
+        for tracker in self.trackers:
+            tracker.release()
+        for detector in self.detectors:
+            detector.release()
+        for source in self.sources:
+            source.release()
+        print('Everything released')
 
     def set_current_main_widget_size(self, width, height):
         self.current_main_widget_size = [width, height]

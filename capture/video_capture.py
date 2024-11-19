@@ -24,9 +24,6 @@ class VideoCapture(capture.VideoCaptureBase):
     def is_opened(self):
         return self.capture.isOpened()
 
-    def release(self):
-        self.capture.release()
-
     def set_params_impl(self):
         super().set_params_impl()
 
@@ -84,24 +81,27 @@ class VideoCapture(capture.VideoCaptureBase):
         return True
 
     def release_impl(self):
-        self.stop()
         self.capture.release()
 
     def reset_impl(self):
         self.release()
         self.init()
-        if self.get_init_flag():
+        if self.get_init_flag() and self.is_opened():
             print(f"Reconnected to a sources: {self.source_names}")
         else:
-            raise Exception(f"Could not connect to a sources: {self.source_names}")
+            print(f"Could not connect to a sources: {self.source_names}")
 
     def _capture_frames(self):
         while self.run_flag:
             begin_it = timer()
             with self.mutex:
-                if not self.is_inited or self.capture is None or not self.capture.isOpened():
+                if not self.is_inited or self.capture is None:
                     time.sleep(0.01)
                     continue
+
+                if not self.is_opened():
+                    time.sleep(0.1)
+                    self.reset()
 
             is_read, src_image = self.capture.read()
             if is_read:
@@ -114,7 +114,6 @@ class VideoCapture(capture.VideoCaptureBase):
                         self.video_current_position = (self.video_current_frame*1000.0) / self.source_fps
                 self.frames_queue.put([is_read, src_image, self.frame_id_counter, self.video_current_frame, self.video_current_position])
                 self.frame_id_counter += 1
-
             else:
                 if self.source_type != CaptureDeviceType.VideoFile or self.loop_play:
                     self.reset()
@@ -125,7 +124,9 @@ class VideoCapture(capture.VideoCaptureBase):
             elapsed_seconds = end_it - begin_it
 
             if self.source_fps:
-                sleep_seconds = 1. / self.source_fps - elapsed_seconds
+                # Todo: reduce sleep time for prevent fail in rtsp stream (remove it and implement separate thread for grub later)
+                fps_multiplier = 1.5 if self.source_type == CaptureDeviceType.IpCamera else 1.0
+                sleep_seconds = 1. / (fps_multiplier*self.source_fps) - elapsed_seconds
                 if sleep_seconds <= 0.0:
                     sleep_seconds = 0.001
             else:

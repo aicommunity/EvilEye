@@ -204,6 +204,8 @@ class ObjectsHandler(core.EvilEyeBase):
         print('Handler running: waiting for objects...')
         while self.run_flag:
             time.sleep(0.01)
+            #if self.objs_queue.empty():
+            #    continue
             tracking_results = self.objs_queue.get()
             if tracking_results is None:
                 continue
@@ -313,10 +315,10 @@ class ObjectsHandler(core.EvilEyeBase):
                 fields_for_saving.append(frame_path)
                 continue
             attr_value = getattr(obj, field, None)
-            print(f'field: {field}, value: {attr_value}')
+            #print(f'field: {field}, value: {attr_value}')
             if attr_value is None:
                 attr_value = getattr(obj.track, field, None)
-                print(f'field: {field}, value: {attr_value}')
+            #    print(f'field: {field}, value: {attr_value}')
             if attr_value is None and not self.db_controller.has_default(table_name, field):
                 raise Exception(f'Given object doesn\'t have required fields {field}')
             fields_for_saving.append(attr_value)

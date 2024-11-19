@@ -24,7 +24,7 @@ class VideoThread(QThread):
 
         VideoThread.rows = rows  # Количество строк и столбцов для правильного перевода изображения в полный экран
         VideoThread.cols = cols
-        self.queue = Queue()
+        self.queue = Queue(maxsize=fps)
 
         self.thread_num = VideoThread.thread_counter
         self.source_id = source_id
@@ -52,6 +52,8 @@ class VideoThread(QThread):
         self.start()
 
     def append_data(self, data):
+        if self.queue.full():
+            self.queue.get()
         self.queue.put(copy.deepcopy(data))
 
     def run(self):

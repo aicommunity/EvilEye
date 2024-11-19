@@ -41,12 +41,16 @@ class ObjectTrackingBase(core.EvilEyeBase):
         if not self.queue_in.full():
             self.queue_in.put(det_info)
             return True
+        print(f"Failed to put detection info {det_info.source_id}:{det_info.frame_id} to ObjectTracking queue. Queue is Full.")
         return False
 
     def get(self):
         if self.queue_out.empty():
             return None
         return self.queue_out.get()
+
+    def get_oueue_out_size(self):
+        return self.queue_out.qsize()
 
     def get_source_ids(self):
         return self.source_ids

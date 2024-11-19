@@ -47,11 +47,11 @@ class TableDataThread(QThread):
         except ValueError:
             return 0
         begin_it = timer()
-        print(data)
+        # print(data)
         records = self.db_controller.query(query_string, data)
         end_it = timer()
         elapsed_seconds = end_it - begin_it
-        print(records)
+        # print(records)
         self.update_table_signal.emit(records)
         return elapsed_seconds
 

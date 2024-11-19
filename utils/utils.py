@@ -63,7 +63,7 @@ def roi_to_image(roi_box_coords, x0, y0):
     return image_box_coords
 
 
-def create_roi(capture_image, det_id, coords):
+def create_roi(capture_image, coords):
     rois = []
     for count in range(len(coords)):
         roi_image = copy.deepcopy(capture_image)

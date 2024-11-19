@@ -79,7 +79,7 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
             connection = self.conn_pool.getconn()
             with connection:
                 with connection.cursor() as curs:
-                    print(query_string.as_string(curs))
+                    #print(query_string.as_string(curs))
                     curs.execute(query_string, data)
                     try:
                         result = curs.fetchall()
@@ -103,8 +103,9 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
                 if not self.queue_in.empty():
                     query_string, data, preview_path, frame_path, image = self.queue_in.get()
                     if query_string is not None:
-                        print('GOT QUERY')
-                    print(data)
+                        pass
+                        #print('GOT QUERY')
+                    #print(data)
                 else:
                     query_string = data = preview_path = frame_path = image = None
             except ValueError:
@@ -118,7 +119,7 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
                 connection = self.conn_pool.getconn()
                 with connection:
                     with connection.cursor() as curs:
-                        print(query_string.as_string(curs))
+                        #print(query_string.as_string(curs))
                         curs.execute(query_string, data)
                         record = curs.fetchone()
                         last_row = record[0]
