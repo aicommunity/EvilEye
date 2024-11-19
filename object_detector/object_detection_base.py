@@ -42,6 +42,9 @@ class ObjectDetectorBase(core.EvilEyeBase):
             return None
         return self.queue_out.get()
 
+    def get_oueue_out_size(self):
+        return self.queue_out.qsize()
+
     def get_source_ids(self):
         return self.source_ids
 
