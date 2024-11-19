@@ -1,7 +1,7 @@
 {
   "sources": [
      {
-      "source": "Video",
+      "source": "VideoFile",
       "camera": "/home/user/Videos/12638-video.mp4",
       "apiPreference": "CAP_FFMPEG",
       "split": false,
@@ -21,6 +21,7 @@
       "save" : false,
       "stride_type": "frames",
       "vid_stride": 1,
+      "num_detection_threads": 3,
       "roi": [[[1840, 0, 500, 400], [1700, 395, 800, 650], [1500, 1030, 1400, 1130]]]
     }
   ],
@@ -71,6 +72,11 @@
       }
     },
     "image_dir": "/home/user/EvilEyeData/"
+  },
+  "objects_handler": {
+    "history_len": 30,
+    "lost_store_time_secs": 60,
+    "lost_thresh": 5
   },
   "controller": {
     "autoclose": false,

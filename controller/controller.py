@@ -14,6 +14,7 @@ from timeit import default_timer as timer
 from visualizer.visualizer import Visualizer
 from database_controller.database_controller_pg import DatabaseControllerPg
 from PyQt6.QtWidgets import QMainWindow
+import json
 
 class Controller:
     def __init__(self, main_window: QMainWindow, pyqt_slot):
@@ -22,6 +23,7 @@ class Controller:
         self.control_thread = threading.Thread(target=self.run)
         self.params = None
         self.sources = []
+        self.credentials = dict()
         self.source_id_name_table = dict()
         self.source_video_duration = dict()
         self.source_last_processed_frame_id = dict()
@@ -65,6 +67,11 @@ class Controller:
             if self.autoclose and all_sources_finished:
                 self.run_flag = False
                 #break
+
+            if self.run_flag:
+                for source in self.sources:
+                    if not source.is_running():
+                        source.start()
 
             complete_capture_it = timer()
 
@@ -135,8 +142,8 @@ class Controller:
 
     def stop(self):
         self.run_flag = False
-        self.db_controller.disconnect()
         self.control_thread.join()
+        self.db_controller.disconnect()
         self.visualizer.stop()
         self.obj_handler.stop()
         for tracker in self.trackers:
@@ -150,19 +157,41 @@ class Controller:
     def init(self, params):
         self.params = params
 
+        try:
+            with open("credentials.json") as creds_file:
+                self.credentials = json.load(creds_file)
+        except FileNotFoundError as ex:
+            pass
+
         self._init_captures(self.params['sources'])
         self._init_detectors(self.params['detectors'])
         self._init_trackers(self.params['trackers'])
         self._init_visualizer(self.params['visualizer'])
         self._init_db_controller(self.params['database'])
+        self.__init_object_handler(self.db_controller, params['objects_handler'])
 
         self.autoclose = self.params['controller'].get("autoclose", False)
         self.fps = self.params['controller'].get("fps", 5)
-        self.obj_handler = objects_handler.ObjectsHandler(db_controller=self.db_controller, history_len=30)
+
+    def release(self):
+        self.stop()
+
+        for tracker in self.trackers:
+            tracker.release()
+        for detector in self.detectors:
+            detector.release()
+        for source in self.sources:
+            source.release()
+        print('Everything released')
 
     def set_current_main_widget_size(self, width, height):
         self.current_main_widget_size = [width, height]
         self.visualizer.set_current_main_widget_size(width, height)
+
+    def __init_object_handler(self, db_controller, params):
+        self.obj_handler = objects_handler.ObjectsHandler(db_controller=db_controller)
+        self.obj_handler.set_params(**params)
+        self.obj_handler.init()
 
     def _init_db_controller(self, params):
         self.db_controller = DatabaseControllerPg()
@@ -173,6 +202,10 @@ class Controller:
         num_sources = len(params)
         for i in range(num_sources):
             src_params = params[i]
+            camera_creds = self.credentials.get(src_params["camera"], None)
+            if camera_creds and (not src_params.get("username", None) or not src_params.get("password", None)):
+                src_params["username"] = camera_creds["username"]
+                src_params["password"] = camera_creds["password"]
             camera = capture.VideoCapture()
             camera.set_params(**src_params)
             camera.init()

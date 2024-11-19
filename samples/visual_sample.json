@@ -1,8 +1,8 @@
 {
   "sources": [
      {
-      "source": "IPcam",
-      "camera": "rtsp://user:AutoZloboglaz821@10.245.1.200",
+      "source": "IpCamera",
+      "camera": "rtsp://10.245.1.200",
       "apiPreference": "CAP_FFMPEG",
       "split": false,
       "num_split": 0,
@@ -11,8 +11,8 @@
       "source_names": ["Cam1"]
     },
     {
-      "source": "IPcam",
-      "camera": "rtsp://user:AutoZloboglaz821-@10.245.1.199",
+      "source": "IpCamera",
+      "camera": "rtsp://10.245.1.199",
       "apiPreference": "CAP_FFMPEG",
       "split": true,
       "num_split": 2,
@@ -21,8 +21,8 @@
       "source_names": ["Cam2", "Cam3"]
     },
     {
-      "source": "IPcam",
-      "camera": "rtsp://user:AutoZloboglaz821@10.245.1.202",
+      "source": "IpCamera",
+      "camera": "rtsp://10.245.1.202",
       "apiPreference": "CAP_FFMPEG",
       "split": true,
       "num_split": 2,
@@ -40,6 +40,7 @@
       "save" : false,
       "stride_type": "frames",
       "vid_stride": 1,
+      "num_detection_threads": 3,
       "roi": [[[1840, 0, 500, 400], [1700, 395, 800, 650], [1500, 1030, 1400, 1130]]]
     },
     {
@@ -50,6 +51,7 @@
       "save" : false,
       "stride_type": "frames",
       "vid_stride": 1,
+      "num_detection_threads": 3,
       "roi": [[]]
     },
     {
@@ -60,6 +62,7 @@
       "save" : false,
       "stride_type": "frames",
       "vid_stride": 1,
+      "num_detection_threads": 3,
       "roi": [[[0, 0, 250, 200], [0, 0, 500, 400], [0, 0, 1000, 800], [0, 0, 2304, 1292]]]
     },
     {
@@ -70,6 +73,7 @@
       "save" : false,
       "stride_type": "frames",
       "vid_stride": 1,
+      "num_detection_threads": 3,
       "roi": [[]]
     },
     {
@@ -80,6 +84,7 @@
       "save" : false,
       "stride_type": "frames",
       "vid_stride": 1,
+      "num_detection_threads": 3,
       "roi": [[]]
     }
   ],
@@ -170,7 +175,8 @@
     "num_height": 2,
     "visual_buffer_num_frames": 10,
     "source_ids": [0, 1, 2, 3, 4],
-    "fps": [5, 5, 5, 5, 5]
+    "fps": [5, 5, 5, 5, 5],
+    "gui_enabled": true
   },
   "database": {
     "user_name": "postgres",
@@ -194,6 +200,11 @@
       }
     },
     "image_dir": "/home/user/EvilEyeData/"
+  },
+  "objects_handler": {
+    "history_len": 30,
+    "lost_store_time_secs": 60,
+    "lost_thresh": 5
   },
   "controller": {
     "autoclose": false,

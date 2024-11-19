@@ -3,6 +3,7 @@ import time
 import os
 import cv2
 import datetime
+import core
 
 import objects_handler.objects_handler
 from capture.video_capture_base import CaptureImage
@@ -101,16 +102,17 @@ class ObjectResultList:
 '''
 
 
-class ObjectsHandler:
-    def __init__(self, db_controller, history_len=1, lost_thresh=5):
+class ObjectsHandler(core.EvilEyeBase):
+    def __init__(self, db_controller):
+        super().__init__()
         # Очередь для потокобезопасного приема данных от каждой камеры
         self.objs_queue = Queue()
         # Списки для хранения различных типов объектов
         self.new_objs: ObjectResultList = ObjectResultList()
         self.active_objs: ObjectResultList = ObjectResultList()
         self.lost_objs: ObjectResultList = ObjectResultList()
-        self.history = history_len
-        self.lost_thresh = lost_thresh  # Порог перевода (в кадрах) в потерянные объекты
+        self.history_len = 1
+        self.lost_thresh = 5  # Порог перевода (в кадрах) в потерянные объекты
 
         self.db_controller = db_controller
         self.db_params = self.db_controller.get_params()
@@ -120,7 +122,26 @@ class ObjectsHandler:
         self.handler = Thread(target=self.handle_objs)
         self.run_flag = False
         self.object_id_counter = 1
+        self.lost_store_time_secs = 10
         self.last_sources = dict()
+
+    def default(self):
+        pass
+
+    def init_impl(self):
+        pass
+
+    def release_impl(self):
+        pass
+
+    def reset_impl(self):
+        pass
+
+    def set_params_impl(self):
+        self.lost_store_time_secs = self.params.get('lost_store_time_secs', 60)
+        self.history_len = self.params.get('history_len', 1)
+        self.lost_thresh = self.params.get('lost_thresh', 5)
+
 
     def stop(self):
         self.run_flag = False
@@ -183,6 +204,8 @@ class ObjectsHandler:
         print('Handler running: waiting for objects...')
         while self.run_flag:
             time.sleep(0.01)
+            #if self.objs_queue.empty():
+            #    continue
             tracking_results = self.objs_queue.get()
             if tracking_results is None:
                 continue
@@ -217,7 +240,7 @@ class ObjectsHandler:
                 #track_object.last_image = image
                 # print(f"object_id={track_object.object_id}, track_id={track_object.track.track_id}, len(history)={len(track_object.history)}")
                 track_object.history.append(track_object.get_current_history_element())
-                if len(track_object.history) > self.history:  # Если количество данных превышает размер истории, удаляем самые старые данные об объекте
+                if len(track_object.history) > self.history_len:  # Если количество данных превышает размер истории, удаляем самые старые данные об объекте
                     del track_object.history[0]
                 track_object.last_update = True
                 track_object.lost_frames = 0
@@ -243,7 +266,7 @@ class ObjectsHandler:
             if not active_obj.last_update and active_obj.source_id == tracking_results.source_id:
                 active_obj.lost_frames += 1
                 if active_obj.lost_frames >= self.lost_thresh:
-                    # active_obj.time_lost = datetime.datetime.now()
+                    active_obj.time_lost = datetime.datetime.now()
                     # lost_preview_path = self._save_image('preview', 'lost', active_obj.last_image, active_obj)
                     # lost_img_path = self._save_image('frame', 'lost', active_obj.last_image, active_obj)
                     # # data = self._prepare_for_saving('emerged', copy.deepcopy(active_obj), image)
@@ -264,6 +287,15 @@ class ObjectsHandler:
                 filtered_active_objects.append(active_obj)
         self.active_objs.objects = filtered_active_objects
 
+        start_index_for_remove = None
+        for i in reversed(range(len(self.lost_objs.objects))):
+            if (datetime.datetime.now() - self.lost_objs.objects[i].time_lost).total_seconds() > self.lost_store_time_secs:
+                start_index_for_remove = i
+                break
+        if start_index_for_remove:
+            self.lost_objs.objects = self.lost_objs.objects[start_index_for_remove:]
+
+
     def _prepare_for_saving(self, table_name, obj: ObjectResult) -> tuple[list, str, str]:
         table_fields = self.db_controller.get_fields_names(table_name)
         fields_for_saving = []
@@ -283,10 +315,10 @@ class ObjectsHandler:
                 fields_for_saving.append(frame_path)
                 continue
             attr_value = getattr(obj, field, None)
-            print(f'field: {field}, value: {attr_value}')
+            #print(f'field: {field}, value: {attr_value}')
             if attr_value is None:
                 attr_value = getattr(obj.track, field, None)
-                print(f'field: {field}, value: {attr_value}')
+            #    print(f'field: {field}, value: {attr_value}')
             if attr_value is None and not self.db_controller.has_default(table_name, field):
                 raise Exception(f'Given object doesn\'t have required fields {field}')
             fields_for_saving.append(attr_value)

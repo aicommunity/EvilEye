@@ -144,3 +144,4 @@ x64/
 *.pdb
 *.exe
 yolov8n.pt
+credentials.json
