@@ -34,6 +34,7 @@ class Controller:
         self.qt_slot = pyqt_slot
         self.fps = 5
         self.db_controller = None
+        self.class_names = list()
 
         self.captured_frames: list[CaptureImage] = []
         self.detection_results: list[DetectionResultList] = []
@@ -172,6 +173,7 @@ class Controller:
 
         self.autoclose = self.params['controller'].get("autoclose", False)
         self.fps = self.params['controller'].get("fps", 5)
+        self.class_names = self.params['controller'].get("class_names", list())
 
     def release(self):
         self.stop()

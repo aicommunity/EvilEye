@@ -14,7 +14,7 @@ from capture.video_capture_base import CaptureImage
 class DetectionThreadYolo:
     id_cnt = 0  # Переменная для присвоения каждому детектору своего идентификатора
 
-    def __init__(self, model_name: str, source_ids: list, roi: list, inf_params: dict, queue_out: Queue):
+    def __init__(self, model_name: str, classes: list, source_ids: list, roi: list, inf_params: dict, queue_out: Queue):
         super().__init__()
 
         #self.objects = []
@@ -23,6 +23,7 @@ class DetectionThreadYolo:
         self.prev_time = 0  # Для параметра скважности, заданного временем; отсчет времени
         self.stride = 1  # Параметр скважности
         self.stride_cnt = self.stride  # Счетчик для кадров, которые необходимо пропустить
+        self.classes = classes
         self.roi = roi #[[]]
         self.inf_params = inf_params
         self.run_flag = False
@@ -87,7 +88,7 @@ class DetectionThreadYolo:
         images = []
         for img in split_image:
             images.append(img[0].image)
-        yolo_results = self.model.predict(source=images, verbose=False, **self.inf_params)
+        yolo_results = self.model.predict(source=images, classes=self.classes, verbose=False, **self.inf_params)
 
         for i in range(len(split_image)):
             roi_bboxes, roi_confs, roi_ids = self.get_bboxes(yolo_results[i], split_image[i])
@@ -119,7 +120,7 @@ class DetectionThreadYolo:
         confs = boxes.conf
         class_ids = boxes.cls
         for coord, class_id, conf in zip(coords, class_ids, confs):
-            if self.model.names[class_id] not in ['car', 'truck', 'bus', 'person']:
+            if int(class_id) not in self.classes:
                 continue
             abs_coords = utils.roi_to_image(coord, roi[1][0], roi[1][1])  # Получаем координаты рамки в СК всего изображения
             bboxes_coords.append(abs_coords)

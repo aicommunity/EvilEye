@@ -21,6 +21,7 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
 
         #self.objects = []
         self.model_name = None
+        self.classes = []
         self.prev_time = 0  # Для параметра скважности, заданного временем; отсчет времени
         self.stride = 1  # Параметр скважности
         self.stride_cnt = self.stride  # Счетчик для кадров, которые необходимо пропустить
@@ -38,7 +39,7 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
         inf_params = {"show": self.params['show'], 'conf': self.params['conf'], 'save': self.params['save']}
 
         for i in range(self.num_detection_threads):
-            thread = DetectionThreadYolo(self.model_name, self.source_ids, self.roi, inf_params, self.queue_out)
+            thread = DetectionThreadYolo(self.model_name, self.classes, self.source_ids, self.roi, inf_params, self.queue_out)
             thread.start()
             self.detection_threads.append(thread)
         return True
@@ -53,6 +54,7 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
 
     def set_params_impl(self):
         self.model_name = self.params['model']
+        self.classes = self.params['classes']
         self.stride = self.params.get('vid_stride', 1)
         self.stride_cnt = self.stride
         self.source_ids = self.params.get('source_ids', [])
