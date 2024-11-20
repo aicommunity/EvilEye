@@ -255,7 +255,8 @@ class ObjectsHandler(core.EvilEyeBase):
                 self.object_id_counter += 1
                 obj.track = track
                 obj.history.append(obj.get_current_history_element())
-                data, preview_path, frame_path = self._prepare_for_saving('emerged', obj)
+                height, width, _ = image.image.shape
+                data, preview_path, frame_path = self._prepare_for_saving('emerged', obj, width, height)
                 self.db_controller.insert('emerged', data, preview_path, frame_path, image)
                 self.active_objs.objects.append(obj)
 
@@ -296,7 +297,7 @@ class ObjectsHandler(core.EvilEyeBase):
             self.lost_objs.objects = self.lost_objs.objects[start_index_for_remove:]
 
 
-    def _prepare_for_saving(self, table_name, obj: ObjectResult) -> tuple[list, str, str]:
+    def _prepare_for_saving(self, table_name, obj: ObjectResult, image_width, image_height) -> tuple[list, str, str]:
         table_fields = self.db_controller.get_fields_names(table_name)
         fields_for_saving = []
         preview_path = None
@@ -322,6 +323,12 @@ class ObjectsHandler(core.EvilEyeBase):
             if attr_value is None and not self.db_controller.has_default(table_name, field):
                 raise Exception(f'Given object doesn\'t have required fields {field}')
             fields_for_saving.append(attr_value)
+
+        fields_for_saving[3] = copy.deepcopy(fields_for_saving[3])
+        fields_for_saving[3][0] /= image_width
+        fields_for_saving[3][1] /= image_height
+        fields_for_saving[3][2] /= image_width
+        fields_for_saving[3][3] /= image_height
         return fields_for_saving, preview_path, frame_path
 
     def _get_img_path(self, image_type, obj_event_type, obj):

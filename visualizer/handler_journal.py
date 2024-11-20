@@ -9,13 +9,16 @@ from PyQt6.QtWidgets import (
     QSizePolicy, QDateTimeEdit, QHeaderView,
     QTableWidget, QTableWidgetItem, QApplication, QAbstractItemView
 )
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtGui import QPixmap, QPainter, QPen
 from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer
 from visualizer.table_updater import TableUpdater
 
 
 class HandlerJournal(QWidget):
     retrieve_data_signal = pyqtSignal()
+
+    preview_width = 300
+    preview_height = 150
 
     def __init__(self, db_controller, table_name, params, table_params, parent=None):
         super().__init__(parent)
@@ -53,22 +56,17 @@ class HandlerJournal(QWidget):
         self.table_updater.start()
 
     def _setup_table(self):
-        self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(['Message type', 'Time', 'Time lost',
-                                              'Information', 'Preview', 'Preview lost'])
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(['Message type', 'Time', 'Information', 'Preview'])
         self.table.horizontalHeaderItem(0).setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeaderItem(1).setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeaderItem(2).setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeaderItem(3).setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeaderItem(4).setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
-        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeaderItem(5).setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
-        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.verticalHeader().setDefaultSectionSize(150)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.verticalHeader().setDefaultSectionSize(HandlerJournal.preview_height)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
 
     def _setup_time_layout(self):
@@ -105,7 +103,7 @@ class HandlerJournal(QWidget):
         self.search_button.clicked.connect(self._filter_by_time)
 
     def showEvent(self, show_event):
-        print('SHOW EVENT CALLED')
+        # print('SHOW EVENT CALLED')
         self.last_update_time = datetime.datetime.now()
         self.table.setRowCount(0)
         self.last_row_db = 0
@@ -212,7 +210,7 @@ class HandlerJournal(QWidget):
             lost_img.setData(Qt.ItemDataRole.DecorationRole, lost_pixmap)
             self.table.setUpdatesEnabled(False)
             self.table.blockSignals(True)
-            self.table.setItem(row_idx - 1, 5, lost_img)
+            self.table.setItem(row_idx - 1, 4, lost_img)
             self.table.setItem(row_idx - 1, 2, QTableWidgetItem(rec[time_lost_idx].strftime('%H:%M:%S %d/%m/%Y')))
             self.table.setUpdatesEnabled(True)
             self.table.blockSignals(False)
@@ -239,7 +237,23 @@ class HandlerJournal(QWidget):
         for record in records:
             if record[count_idx] <= last_row:
                 continue
+            rect = record[bbox_idx]
             pixmap = QPixmap(os.path.join(root, record[img_path_idx]))
+            qp = QPainter(pixmap)
+            pen = QPen(Qt.GlobalColor.green, 1)
+            qp.setPen(pen)
+            qp.drawRect(int(rect[0]*HandlerJournal.preview_width), int(rect[1]*HandlerJournal.preview_height),
+                        int((rect[2]-rect[0])*HandlerJournal.preview_width), int((rect[3]-rect[1])*HandlerJournal.preview_height))
+            qp.end()
+
+#            cv2.rectangle(image.image, (int(last_info.bounding_box[0]), int(last_info.bounding_box[1])),
+#                          (int(last_info.bounding_box[2]), int(last_info.bounding_box[3])), (0, 255, 0), thickness=8)
+#            cv2.putText(image.image, str(last_info.track_id) + ' ' + str([last_info.class_id]) +
+#                        " " + "{:.2f}".format(last_info.confidence),
+#                        (int(last_info.bounding_box[0]), int(last_info.bounding_box[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX,
+#                        1,
+#                        (0, 0, 255), 2)
+
             preview_img = QTableWidgetItem()
             preview_img.setData(Qt.ItemDataRole.DecorationRole, pixmap)
             lost_pixmap = QPixmap()
@@ -247,20 +261,21 @@ class HandlerJournal(QWidget):
                 lost_pixmap.load(os.path.join(root, record[lost_img_idx]))
             lost_img = QTableWidgetItem()
             lost_img.setData(Qt.ItemDataRole.DecorationRole, lost_pixmap)
+
             row = self.table.rowCount()
             self.table.insertRow(row)
             res_str = ('Object Id=' + str(record[id_idx]) + ', class: ' + str(record[
-                                                                                  class_idx])) + ' emerged at [' + f"{int(record[bbox_idx][0])} {int(record[bbox_idx][1])} {int(record[bbox_idx][2])} {int(record[bbox_idx][3])}" + '], conf: ' + "{:1.2f}".format(
+                                                                                  class_idx])) + ' conf: ' + "{:1.2f}".format(
                 record[conf_idx])
             self.table.setItem(row, 0, QTableWidgetItem(info_str))
             self.table.setItem(row, 1, QTableWidgetItem(record[time_idx].strftime('%H:%M:%S %d/%m/%Y')))
-            if record[time_lost_idx]:
-                self.table.setItem(row, 2, QTableWidgetItem(record[time_lost_idx].strftime('%H:%M:%S %d/%m/%Y')))
-            else:
-                self.table.setItem(row, 2, QTableWidgetItem(record[time_lost_idx]))
-            self.table.setItem(row, 3, QTableWidgetItem(res_str))
-            self.table.setItem(row, 4, preview_img)
-            self.table.setItem(row, 5, lost_img)
+            #if record[time_lost_idx]:
+            #    self.table.setItem(row, 2, QTableWidgetItem(record[time_lost_idx].strftime('%H:%M:%S %d/%m/%Y')))
+            #else:
+            #    self.table.setItem(row, 2, QTableWidgetItem(record[time_lost_idx]))
+            self.table.setItem(row, 2, QTableWidgetItem(res_str))
+            self.table.setItem(row, 3, preview_img)
+            #self.table.setItem(row, 5, lost_img)
             # self.table.setRowHeight(row, 150)
         if len(records)>0:
             record = records[-1]
