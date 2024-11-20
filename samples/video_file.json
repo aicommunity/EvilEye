@@ -17,11 +17,13 @@
       "source_ids": [0],
       "model": "yolov8n.pt",
       "show" : false,
+      "inference_size": 1280,
+      "device": null,
       "conf" : 0.4,
       "save" : false,
       "stride_type": "frames",
       "vid_stride": 1,
-      "classes" : [0, 24, 66],
+      "classes" : [0, 1, 24, 25, 63, 66, 67],
       "num_detection_threads": 3,
       "roi": [[[1840, 0, 500, 400], [1700, 395, 800, 650], [1500, 1030, 1400, 1130]]]
     }

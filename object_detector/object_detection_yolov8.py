@@ -12,34 +12,35 @@ from capture.video_capture_base import CaptureImage
 from object_detector.detection_thread_yolo import DetectionThreadYolo
 
 
-
 class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
     id_cnt = 0  # Переменная для присвоения каждому детектору своего идентификатора
 
     def __init__(self):
         super().__init__()
 
-        #self.objects = []
+        # self.objects = []
         self.model_name = None
         self.classes = []
         self.prev_time = 0  # Для параметра скважности, заданного временем; отсчет времени
         self.stride = 1  # Параметр скважности
         self.stride_cnt = self.stride  # Счетчик для кадров, которые необходимо пропустить
         self.num_detection_threads = 3
-#        self.id = ObjectDetectorYoloV8.id_cnt  # ID детектора
+        #        self.id = ObjectDetectorYoloV8.id_cnt  # ID детектора
         self.roi = [[]]
-#        ObjectDetectorYoloV8.id_cnt += 1
-#        print(self.id)
+        #        ObjectDetectorYoloV8.id_cnt += 1
+        #        print(self.id)
         self.detection_threads = []
         self.thread_counter = 0
 
-
     def init_impl(self):
         self.detection_threads = []
-        inf_params = {"show": self.params['show'], 'conf': self.params['conf'], 'save': self.params['save']}
+        inf_params = {"show": self.params.get('show', False), 'conf': self.params.get('conf', 0.25),
+                      'save': self.params.get('save', False), "imgsz": self.params.get('inference_size', 640),
+                      "device": self.params.get('device', None)}
 
         for i in range(self.num_detection_threads):
-            thread = DetectionThreadYolo(self.model_name, self.classes, self.source_ids, self.roi, inf_params, self.queue_out)
+            thread = DetectionThreadYolo(self.model_name, self.classes, self.source_ids, self.roi, inf_params,
+                                         self.queue_out)
             thread.start()
             self.detection_threads.append(thread)
         return True
@@ -78,7 +79,8 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
                 continue
 
             if not self.detection_threads[self.thread_counter].put(image, force=True):
-                print(f"Failed to put image {image.source_id}:{image.frame_id} to detection thread {self.thread_counter}")
+                print(
+                    f"Failed to put image {image.source_id}:{image.frame_id} to detection thread {self.thread_counter}")
             self.thread_counter += 1
             if self.thread_counter >= self.num_detection_threads:
                 self.thread_counter = 0
@@ -100,4 +102,3 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
             if not is_image_put:
                 print(f"Failed to put image {image.source_id}:{image.frame_id} to detection thread")
             '''
-
