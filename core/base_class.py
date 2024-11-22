@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 class EvilEyeBase(ABC):
     def __init__(self):
         self.is_inited = False
+        self.id : int = 0
         self.params = {}
 
     def set_params(self, **params):
@@ -12,6 +13,12 @@ class EvilEyeBase(ABC):
 
     def get_init_flag(self):
         return self.is_inited
+
+    def get_id(self):
+        return self.id
+
+    def set_id(self, id_value: int):
+        self.id = id_value
 
     def reset(self):
         if self.get_init_flag():
@@ -27,6 +34,9 @@ class EvilEyeBase(ABC):
 
     def get_params(self):
         return self.params
+
+    def get_debug_info(self, debug_info: dict):
+        debug_info['is_inited'] = self.is_inited
 
     @abstractmethod
     def default(self):

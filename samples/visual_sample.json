@@ -191,7 +191,8 @@
     "visual_buffer_num_frames": 10,
     "source_ids": [0, 1, 2, 3, 4],
     "fps": [5, 5, 5, 5, 5],
-    "gui_enabled": true
+    "gui_enabled": true,
+    "show_debug_info": true
   },
   "database": {
     "user_name": "postgres",

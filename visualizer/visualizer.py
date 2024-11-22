@@ -19,6 +19,7 @@ class Visualizer(core.EvilEyeBase):
         self.fps = []
         self.num_height = 1
         self.num_width = 1
+        self.show_debug_info = False
         self.processing_frames: list[CaptureImage] = []
         self.objects: list[ObjectResultList] = []
         self.last_displayed_frame = dict()
@@ -32,7 +33,7 @@ class Visualizer(core.EvilEyeBase):
             self.visual_threads = []
         for i in range(len(self.source_ids)):
             self.visual_threads.append(VideoThread(self.source_ids[i], self.fps[i], self.num_height,
-                                                           self.num_width))
+                                                           self.num_width, self.show_debug_info))
             self.visual_threads[-1].update_image_signal.connect(
                         self.qt_slot)  # Сигнал из потока для обновления label на новое изображение
 
@@ -46,6 +47,7 @@ class Visualizer(core.EvilEyeBase):
 
     def set_params_impl(self):
         self.source_ids = self.params['source_ids']
+        self.show_debug_info = self.params.get('show_debug_info', False)
         self.fps = self.params['fps']
         self.num_height = self.params['num_height']
         self.num_width = self.params['num_width']
@@ -66,7 +68,7 @@ class Visualizer(core.EvilEyeBase):
             self.visual_threads[j].set_main_widget_size(width, height)
 
 
-    def update(self, processing_frames: list[CaptureImage], source_last_processed_frame_id: dict(), objects: list[ObjectResultList]):
+    def update(self, processing_frames: list[CaptureImage], source_last_processed_frame_id: dict, objects: list[ObjectResultList], debug_info: dict):
         start_update = timer()
         self.processing_frames.extend(processing_frames)
         self.objects = objects
@@ -106,7 +108,7 @@ class Visualizer(core.EvilEyeBase):
             start_append_data = timer()
             for j in range(len(self.visual_threads)):
                 if self.visual_threads[j].source_id == source_id:
-                    self.visual_threads[j].append_data((frame, objs, self.source_id_name_table[frame.source_id], self.source_video_duration.get(frame.source_id, None)))
+                    self.visual_threads[j].append_data((frame, objs, self.source_id_name_table[frame.source_id], self.source_video_duration.get(frame.source_id, None), debug_info))
                     self.last_displayed_frame[source_id] = frame.frame_id
                     processed_sources.append(source_id)
                     break

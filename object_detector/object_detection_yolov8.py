@@ -62,6 +62,13 @@ class ObjectDetectorYoloV8(object_detector.ObjectDetectorBase):
         self.num_detection_threads = self.params.get('num_detection_threads', 3)
         self.roi = self.params.get('roi', [[]])
 
+    def get_debug_info(self, debug_info: dict):
+        super().get_debug_info(debug_info)
+        debug_info['roi'] = self.roi
+        debug_info['classes'] = self.classes
+        debug_info['model_name'] = self.model_name
+        debug_info['source_ids'] = self.source_ids
+
     def default(self):
         self.model_name = None
         self.stride = 1

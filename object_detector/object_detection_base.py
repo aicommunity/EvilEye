@@ -1,4 +1,6 @@
 from abc import ABC, abstractmethod
+from logging import debug
+
 import core
 from queue import Queue
 import threading
@@ -42,11 +44,15 @@ class ObjectDetectorBase(core.EvilEyeBase):
             return None
         return self.queue_out.get()
 
-    def get_oueue_out_size(self):
+    def get_queue_out_size(self):
         return self.queue_out.qsize()
 
     def get_source_ids(self):
         return self.source_ids
+
+    def get_debug_info(self, debug_info: dict):
+        super().get_debug_info(debug_info)
+        debug_info['run_flag'] = self.run_flag
 
     def start(self):
         self.run_flag = True

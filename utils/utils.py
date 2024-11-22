@@ -10,6 +10,7 @@ from sympy.multipledispatch.dispatcher import source
 
 from database_controller import database_controller_pg
 from psycopg2 import sql
+from capture import CaptureImage
 
 
 def get_project_root() -> Path:
@@ -63,7 +64,7 @@ def roi_to_image(roi_box_coords, x0, y0):
     return image_box_coords
 
 
-def create_roi(capture_image, coords):
+def create_roi(capture_image: CaptureImage, coords):
     rois = []
     for count in range(len(coords)):
         roi_image = copy.deepcopy(capture_image)
@@ -218,7 +219,7 @@ def draw_boxes_from_db(db_controller, table_name, load_folder, save_folder):
             print('Error saving image with boxes')
 
 
-def draw_boxes_tracking(image, cameras_objs, source_name, source_duration_msecs):
+def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_duration_msecs):
     height, width, channels = image.image.shape
     if source_name is int:
         cv2.putText(image.image, "Source Id: " + str(source_name), (100, height - 100), cv2.FONT_HERSHEY_SIMPLEX, 3,
@@ -264,3 +265,18 @@ def draw_boxes_tracking(image, cameras_objs, source_name, source_duration_msecs)
                 second_cm_y = int(second_info.bounding_box[3])
                 cv2.line(image.image, (first_cm_x, first_cm_y),
                          (second_cm_x, second_cm_y), (0, 0, 255), thickness=8)
+
+def draw_debug_info(image: CaptureImage, debug_info: dict):
+    if not debug_info:
+        return
+    if not 'detectors' in debug_info.keys():
+        return
+
+    for det_id, det_debug_info in debug_info['detectors'].items():
+        if image.source_id in det_debug_info['source_ids']:
+            source_id_index = det_debug_info['source_ids'].index(image.source_id)
+            rois = det_debug_info['roi']
+            if type(rois) is list and source_id_index in range(len(rois)):
+                for roi in rois[source_id_index]:
+                    cv2.rectangle(image.image, (int(roi[0]), int(roi[1])),
+                                  (int(roi[0]+roi[2]), int(roi[1]+roi[3])), (255, 0, 0), thickness=8)
