@@ -18,21 +18,21 @@ def get_project_root() -> Path:
 
 
 def boxes_iou(box1, box2):
+    area1 = (box1[2] - box1[0] + 1) * (box1[3] - box1[1] + 1)
+    area2 = (box2[2] - box2[0] + 1) * (box2[3] - box2[1] + 1)
     if (((box1[0] <= box2[0] and box1[1] <= box2[1]) and (
             box2[2] <= box1[2] and box2[3] <= box1[3])) or  # Находится ли один bbox внутри другого
             ((box2[0] <= box1[0] and box2[1] <= box1[1]) and (box1[2] <= box2[2] and box1[3] <= box2[3]))):
-        return 1.0
+        return 1.0, box1 if area1 > area2 else box2
     x_left = max(box1[0], box2[0])
     y_top = max(box1[1], box2[1])
     x_right = min(box1[2], box2[2])
     y_bottom = min(box1[3], box2[3])
     if x_right - x_left + 1 <= 0 or y_bottom - y_top + 1 <= 0:  # Если рамки никак не пересекаются
-        return -1.0
-    area1 = (box1[2] - box1[0] + 1) * (box1[3] - box1[1] + 1)
-    area2 = (box2[2] - box2[0] + 1) * (box2[3] - box2[1] + 1)
+        return -1.0, None
     intersection = (x_right - x_left + 1) * (y_bottom - y_top + 1)
     iou = intersection / float(area1 + area2 - intersection)
-    return iou
+    return iou, box1 if area1 > area2 else box2
 
 
 def non_max_sup(boxes_coords, confidences, class_ids):
@@ -48,8 +48,9 @@ def non_max_sup(boxes_coords, confidences, class_ids):
         keep_idxs.append(sorted_idxs[last])
         for i in range(len(sorted_idxs) - 1):
             idx = sorted_idxs[i]
-            iou = boxes_iou(boxes_coords[sorted_idxs[last]], boxes_coords[idx])
+            iou, max_box = boxes_iou(boxes_coords[sorted_idxs[last]], boxes_coords[idx])
             if iou > iou_thresh:  # Если iou превышает порог, то добавляем данную рамку на удаление
+                boxes_coords[idx] = copy.deepcopy(max_box)
                 suppress_idxs.append(i)
         sorted_idxs = np.delete(sorted_idxs, suppress_idxs)
     boxes_coords = boxes_coords[keep_idxs].tolist()
