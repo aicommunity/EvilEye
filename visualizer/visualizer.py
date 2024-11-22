@@ -95,13 +95,13 @@ class Visualizer(core.EvilEyeBase):
                 continue
 
             start_find_objects = timer()
-
-            objs = objects[source_id].find_objects_by_frame_id(frame.frame_id, use_history=False)
+            source_index = self.source_ids.index(source_id)
+            objs = objects[source_index].find_objects_by_frame_id(frame.frame_id, use_history=False)
 #            objs = objects[source_id].find_objects_by_frame_id(None)
 #            objs = objects[source_id].objects
 #            print(f"Found {len(objs)} objects for visualization for source_id={frame.source_id} frame_id={frame.frame_id}")
 
-            if len(objs) == 0 and objects[source_id].get_num_objects() > 0:
+            if len(objs) == 0 and objects[source_index].get_num_objects() > 0:
                 #remove_processed_idx.append(i)
                 continue
 
