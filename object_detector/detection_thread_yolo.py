@@ -96,8 +96,8 @@ class DetectionThreadYolo:
             class_ids.extend(roi_ids)
             bboxes_coords.extend(roi_bboxes)
 
-        bboxes_coords, confidences, class_ids = utils.non_max_sup(bboxes_coords, confidences, class_ids)
         bboxes_coords, confidences, class_ids = utils.merge_roi_boxes(self.roi[0], bboxes_coords, confidences, class_ids)  # Объединение рамок из разных ROI
+        bboxes_coords, confidences, class_ids = utils.non_max_sup(bboxes_coords, confidences, class_ids)
 
         detection_result_list.source_id = split_image[0][0].source_id
         detection_result_list.time_stamp = time.time()
