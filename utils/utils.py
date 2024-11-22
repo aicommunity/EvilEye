@@ -279,4 +279,4 @@ def draw_debug_info(image: CaptureImage, debug_info: dict):
             if type(rois) is list and source_id_index in range(len(rois)):
                 for roi in rois[source_id_index]:
                     cv2.rectangle(image.image, (int(roi[0]), int(roi[1])),
-                                  (int(roi[0]+roi[2]), int(roi[1]+roi[3])), (255, 0, 0), thickness=8)
+                                  (int(roi[0]+roi[2]), int(roi[1]+roi[3])), (255, 0, 0), thickness=9)
