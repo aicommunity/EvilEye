@@ -14,14 +14,14 @@ from capture.video_capture_base import CaptureImage
 class DetectionThreadYolo:
     id_cnt = 0  # Переменная для присвоения каждому детектору своего идентификатора
 
-    def __init__(self, model_name: str, classes: list, source_ids: list, roi: list, inf_params: dict, queue_out: Queue):
+    def __init__(self, model_name: str, stride: int, classes: list, source_ids: list, roi: list, inf_params: dict, queue_out: Queue):
         super().__init__()
 
         #self.objects = []
         self.model_name = model_name
         self.model = None
         self.prev_time = 0  # Для параметра скважности, заданного временем; отсчет времени
-        self.stride = 1  # Параметр скважности
+        self.stride = stride  # Параметр скважности
         self.stride_cnt = self.stride  # Счетчик для кадров, которые необходимо пропустить
         self.classes = classes
         self.roi = roi #[[]]

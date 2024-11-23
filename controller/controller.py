@@ -1,7 +1,7 @@
 import sys
 import threading
 import capture
-from object_detector import object_detection_yolov8
+from object_detector import object_detection_yolo
 from object_detector.object_detection_base import DetectionResultList
 from object_tracker import object_tracking_botsort
 from object_tracker.object_tracking_base import TrackingResultList
@@ -227,7 +227,7 @@ class Controller:
         for i in range(num_det):
             det_params = params[i]
 
-            detector = object_detection_yolov8.ObjectDetectorYoloV8()
+            detector = object_detection_yolo.ObjectDetectorYolo()
             detector.set_params(**det_params)
             detector.set_id(i)
             detector.init()

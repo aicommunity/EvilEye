@@ -6,7 +6,7 @@ program should expect every file name starting as "name"
 and "%03d" indicates that it takes 3 digit entries as "001" and accept 'integer increment'
 """
 import object_detector.background_subtraction_gmm as background_subtraction_gmm
-import object_detector.object_detection_yolov8 as object_detection_yolov8
+import object_detector.object_detection_yolo as object_detection_yolov8
 import capture.video_capture as video_cap
 import cv2
 import argparse
@@ -42,7 +42,7 @@ def main():
                           'apiPreference': args.apiPreference, 'split': args.split}
 
     video = video_cap.VideoCapture()
-    object_detector = object_detection_yolov8.ObjectDetectorYoloV8(det_params['model'])
+    object_detector = object_detection_yolov8.ObjectDetectorYolo(det_params['model'])
     tracker = object_tracking_impl.ObjectTrackingImpl()
     video.set_params(**capture_params)
     video.init()
