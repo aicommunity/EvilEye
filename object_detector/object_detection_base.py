@@ -1,4 +1,5 @@
-from abc import ABC, abstractmethod
+from abc import ABC
+
 from capture.video_capture_base import CaptureImage
 
 import core
@@ -12,7 +13,7 @@ class DetectionResult:
         self.bounding_box = []
         self.confidence = 0.0
         self.class_id = None
-        self.detection_data = dict() # internal detection data
+        self.detection_data = dict()  # internal detection data
 
 
 class DetectionResultList:
@@ -23,7 +24,7 @@ class DetectionResultList:
         self.detections: list[DetectionResult] = []
 
 
-class ObjectDetectorBase(core.EvilEyeBase):
+class ObjectDetectorBase(core.EvilEyeBase, ABC):
     def __init__(self):
         super().__init__()
 
@@ -62,7 +63,7 @@ class ObjectDetectorBase(core.EvilEyeBase):
     def set_params_impl(self):
         super().set_params_impl()
         self.roi = self.params.get('roi', [[]])
-        self.classes = self.params.get('classes',[])
+        self.classes = self.params.get('classes', [])
         self.stride = self.params.get('vid_stride', 1)
         self.source_ids = self.params.get('source_ids', [])
         self.num_detection_threads = self.params.get('num_detection_threads', 3)
@@ -112,4 +113,3 @@ class ObjectDetectorBase(core.EvilEyeBase):
             self.thread_counter += 1
             if self.thread_counter >= self.num_detection_threads:
                 self.thread_counter = 0
-
