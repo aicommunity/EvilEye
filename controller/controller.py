@@ -1,7 +1,7 @@
 import sys
 import threading
 import capture
-from object_detector import object_detection_yolov8
+from object_detector import object_detection_yolo
 from object_detector.object_detection_base import DetectionResultList
 from object_tracker import object_tracking_botsort
 from object_tracker.object_tracking_base import TrackingResultList
@@ -34,6 +34,7 @@ class Controller:
         self.qt_slot = pyqt_slot
         self.fps = 5
         self.db_controller = None
+        self.class_names = list()
 
         self.captured_frames: list[CaptureImage] = []
         self.detection_results: list[DetectionResultList] = []
@@ -54,6 +55,8 @@ class Controller:
             # Get new frames from all sources
             self.captured_frames = []
             all_sources_finished = True
+            debug_info = dict()
+
             for source in self.sources:
                 frames = source.get_frames()
 
@@ -78,7 +81,10 @@ class Controller:
             # Process detectors
             processing_frames = []
             self.detection_results = []
+            debug_info["detectors"] = dict()
             for detector in self.detectors:
+                det_debug_info = debug_info["detectors"][detector.get_id()] = dict()
+                detector.get_debug_info(det_debug_info)
                 source_ids = detector.get_source_ids()
                 for capture_frame in self.captured_frames:
                     if capture_frame.source_id in source_ids:
@@ -110,7 +116,7 @@ class Controller:
                 for i in range(len(self.visualizer.source_ids)):
                     objects.append(copy.deepcopy(self.obj_handler.get('active', self.visualizer.source_ids[i])))
                 complete_read_objects_it = timer()
-                self.visualizer.update(processing_frames, self.source_last_processed_frame_id, objects)
+                self.visualizer.update(processing_frames, self.source_last_processed_frame_id, objects, debug_info)
             else:
                 complete_read_objects_it = timer()
 
@@ -172,6 +178,7 @@ class Controller:
 
         self.autoclose = self.params['controller'].get("autoclose", False)
         self.fps = self.params['controller'].get("fps", 5)
+        self.class_names = self.params['controller'].get("class_names", list())
 
     def release(self):
         self.stop()
@@ -220,8 +227,9 @@ class Controller:
         for i in range(num_det):
             det_params = params[i]
 
-            detector = object_detection_yolov8.ObjectDetectorYoloV8()
+            detector = object_detection_yolo.ObjectDetectorYolo()
             detector.set_params(**det_params)
+            detector.set_id(i)
             detector.init()
             self.detectors.append(detector)
 

@@ -19,7 +19,7 @@ class VideoThread(QThread):
     # Сигнал, отвечающий за обновление label, в котором отображается изображение из потока
     update_image_signal = pyqtSignal(int, QPixmap)
 
-    def __init__(self, source_id, fps, rows, cols):
+    def __init__(self, source_id, fps, rows, cols, show_debug_info):
         super().__init__()
 
         VideoThread.rows = rows  # Количество строк и столбцов для правильного перевода изображения в полный экран
@@ -30,6 +30,7 @@ class VideoThread(QThread):
         self.source_id = source_id
 
         self.run_flag = False
+        self.show_debug_info = show_debug_info
         #self.split = params['split']
         self.fps = fps
         #self.source_params = params
@@ -82,9 +83,11 @@ class VideoThread(QThread):
 
     def process_image(self):
         try:
-            frame, track_info, source_name, source_duration_secs = copy.deepcopy(self.queue.get())
+            frame, track_info, source_name, source_duration_secs, debug_info = copy.deepcopy(self.queue.get())
             begin_it = timer()
             utils.draw_boxes_tracking(frame, track_info, source_name, source_duration_secs)
+            if self.show_debug_info:
+                utils.draw_debug_info(frame, debug_info)
             qt_image = self.convert_cv_qt(frame.image, self.widget_width, self.widget_height)
             end_it = timer()
             elapsed_seconds = end_it - begin_it

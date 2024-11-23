@@ -10,6 +10,7 @@ from sympy.multipledispatch.dispatcher import source
 
 from database_controller import database_controller_pg
 from psycopg2 import sql
+from capture import CaptureImage
 
 
 def get_project_root() -> Path:
@@ -17,21 +18,21 @@ def get_project_root() -> Path:
 
 
 def boxes_iou(box1, box2):
+    area1 = (box1[2] - box1[0] + 1) * (box1[3] - box1[1] + 1)
+    area2 = (box2[2] - box2[0] + 1) * (box2[3] - box2[1] + 1)
     if (((box1[0] <= box2[0] and box1[1] <= box2[1]) and (
             box2[2] <= box1[2] and box2[3] <= box1[3])) or  # Находится ли один bbox внутри другого
             ((box2[0] <= box1[0] and box2[1] <= box1[1]) and (box1[2] <= box2[2] and box1[3] <= box2[3]))):
-        return 1.0
+        return 1.0, box1 if area1 > area2 else box2
     x_left = max(box1[0], box2[0])
     y_top = max(box1[1], box2[1])
     x_right = min(box1[2], box2[2])
     y_bottom = min(box1[3], box2[3])
     if x_right - x_left + 1 <= 0 or y_bottom - y_top + 1 <= 0:  # Если рамки никак не пересекаются
-        return -1.0
-    area1 = (box1[2] - box1[0] + 1) * (box1[3] - box1[1] + 1)
-    area2 = (box2[2] - box2[0] + 1) * (box2[3] - box2[1] + 1)
+        return -1.0, None
     intersection = (x_right - x_left + 1) * (y_bottom - y_top + 1)
     iou = intersection / float(area1 + area2 - intersection)
-    return iou
+    return iou, box1 if area1 > area2 else box2
 
 
 def non_max_sup(boxes_coords, confidences, class_ids):
@@ -47,8 +48,9 @@ def non_max_sup(boxes_coords, confidences, class_ids):
         keep_idxs.append(sorted_idxs[last])
         for i in range(len(sorted_idxs) - 1):
             idx = sorted_idxs[i]
-            iou = boxes_iou(boxes_coords[sorted_idxs[last]], boxes_coords[idx])
+            iou, max_box = boxes_iou(boxes_coords[sorted_idxs[last]], boxes_coords[idx])
             if iou > iou_thresh:  # Если iou превышает порог, то добавляем данную рамку на удаление
+                boxes_coords[idx] = copy.deepcopy(max_box)
                 suppress_idxs.append(i)
         sorted_idxs = np.delete(sorted_idxs, suppress_idxs)
     boxes_coords = boxes_coords[keep_idxs].tolist()
@@ -63,7 +65,7 @@ def roi_to_image(roi_box_coords, x0, y0):
     return image_box_coords
 
 
-def create_roi(capture_image, coords):
+def create_roi(capture_image: CaptureImage, coords):
     rois = []
     for count in range(len(coords)):
         roi_image = copy.deepcopy(capture_image)
@@ -218,7 +220,7 @@ def draw_boxes_from_db(db_controller, table_name, load_folder, save_folder):
             print('Error saving image with boxes')
 
 
-def draw_boxes_tracking(image, cameras_objs, source_name, source_duration_msecs):
+def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_duration_msecs):
     height, width, channels = image.image.shape
     if source_name is int:
         cv2.putText(image.image, "Source Id: " + str(source_name), (100, height - 100), cv2.FONT_HERSHEY_SIMPLEX, 3,
@@ -264,3 +266,18 @@ def draw_boxes_tracking(image, cameras_objs, source_name, source_duration_msecs)
                 second_cm_y = int(second_info.bounding_box[3])
                 cv2.line(image.image, (first_cm_x, first_cm_y),
                          (second_cm_x, second_cm_y), (0, 0, 255), thickness=8)
+
+def draw_debug_info(image: CaptureImage, debug_info: dict):
+    if not debug_info:
+        return
+    if not 'detectors' in debug_info.keys():
+        return
+
+    for det_id, det_debug_info in debug_info['detectors'].items():
+        if image.source_id in det_debug_info['source_ids']:
+            source_id_index = det_debug_info['source_ids'].index(image.source_id)
+            rois = det_debug_info['roi']
+            if type(rois) is list and source_id_index in range(len(rois)):
+                for roi in rois[source_id_index]:
+                    cv2.rectangle(image.image, (int(roi[0]), int(roi[1])),
+                                  (int(roi[0]+roi[2]), int(roi[1]+roi[3])), (255, 0, 0), thickness=9)
