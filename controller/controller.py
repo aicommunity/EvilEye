@@ -16,10 +16,11 @@ from database_controller.database_controller_pg import DatabaseControllerPg
 from PyQt6.QtWidgets import QMainWindow
 import json
 
+
 class Controller:
     def __init__(self, main_window: QMainWindow, pyqt_slot):
         self.main_window = main_window
-        #self.application = application
+        # self.application = application
         self.control_thread = threading.Thread(target=self.run)
         self.params = None
         self.sources = []
@@ -173,7 +174,7 @@ class Controller:
         self._init_detectors(self.params['detectors'])
         self._init_trackers(self.params['trackers'])
         self._init_visualizer(self.params['visualizer'])
-        self._init_db_controller(self.params['database'])
+        self._init_db_controller(self.params['database'], system_params=self.params)
         self.__init_object_handler(self.db_controller, params['objects_handler'])
 
         self.autoclose = self.params['controller'].get("autoclose", False)
@@ -200,8 +201,8 @@ class Controller:
         self.obj_handler.set_params(**params)
         self.obj_handler.init()
 
-    def _init_db_controller(self, params):
-        self.db_controller = DatabaseControllerPg()
+    def _init_db_controller(self, params, system_params):
+        self.db_controller = DatabaseControllerPg(system_params)
         self.db_controller.set_params(**params)
         self.db_controller.init()
 

@@ -1,8 +1,10 @@
 import pathlib
-
+import json
+import datetime
 import numpy as np
 import cv2
-from pathlib import Path
+from object_tracker.object_tracking_base import TrackingResult
+from objects_handler.object_result import ObjectResultHistory
 import copy
 from pathlib import Path
 
@@ -10,7 +12,7 @@ from sympy.multipledispatch.dispatcher import source
 
 from database_controller import database_controller_pg
 from psycopg2 import sql
-from capture import CaptureImage
+from capture.video_capture_base import CaptureImage
 
 
 def get_project_root() -> Path:
@@ -173,6 +175,12 @@ def draw_boxes(image, objects, cam_id, model_names):
                             (255, 255, 255), 2)
 
 
+def draw_preview_boxes(image, width, height, box):
+    cv2.rectangle(image, (int(box[0] * width), int(box[1] * height)),
+                  (int(box[2] * width), int(box[3] * height)), (0, 255, 0), thickness=1)
+    return image
+
+
 def draw_boxes_from_db(db_controller, table_name, load_folder, save_folder):
     query = sql.SQL(
         'SELECT object_id, confidence, bounding_box, lost_bounding_box, frame_path, lost_frame_path FROM {table};').format(
@@ -267,10 +275,11 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
                 cv2.line(image.image, (first_cm_x, first_cm_y),
                          (second_cm_x, second_cm_y), (0, 0, 255), thickness=8)
 
+
 def draw_debug_info(image: CaptureImage, debug_info: dict):
     if not debug_info:
         return
-    if not 'detectors' in debug_info.keys():
+    if 'detectors' not in debug_info.keys():
         return
 
     for det_id, det_debug_info in debug_info['detectors'].items():
@@ -280,4 +289,19 @@ def draw_debug_info(image: CaptureImage, debug_info: dict):
             if type(rois) is list and source_id_index in range(len(rois)):
                 for roi in rois[source_id_index]:
                     cv2.rectangle(image.image, (int(roi[0]), int(roi[1])),
-                                  (int(roi[0]+roi[2]), int(roi[1]+roi[3])), (255, 0, 0), thickness=9)
+                                  (int(roi[0] + roi[2]), int(roi[1] + roi[3])), (255, 0, 0), thickness=9)
+
+
+class ObjectResultEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, (datetime.datetime, datetime.date, datetime.time)):
+            return obj.isoformat()
+        if isinstance(obj, TrackingResult):
+            return obj.__dict__
+        if isinstance(obj, ObjectResultHistory):
+            return obj.__dict__
+        if isinstance(obj, CaptureImage):
+            return None
+
+        return super().default(obj)
+

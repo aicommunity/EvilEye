@@ -5,17 +5,16 @@ mutex = Lock()
 
 
 def subscribe(event, subscriber_func):
-    if event not in events:
-        events[event] = []
-    events[event].append(subscriber_func)
+    with mutex:
+        if event not in events:
+            events[event] = []
+        events[event].append(subscriber_func)
 
 
 def notify(event, *args, **kwargs):
-    if mutex.acquire(blocking=False):
-        try:
-            if event not in events:
-                return
-            for func in events[event]:
-                func(*args, **kwargs)
-        finally:
-            mutex.release()
+    with mutex:
+        if event not in events:
+            return
+        functions = events[event]
+    for func in functions:
+        func(*args, **kwargs)

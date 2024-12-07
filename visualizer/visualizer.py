@@ -67,7 +67,6 @@ class Visualizer(core.EvilEyeBase):
         for j in range(len(self.visual_threads)):
             self.visual_threads[j].set_main_widget_size(width, height)
 
-
     def update(self, processing_frames: list[CaptureImage], source_last_processed_frame_id: dict, objects: list[ObjectResultList], debug_info: dict):
         start_update = timer()
         self.processing_frames.extend(processing_frames)

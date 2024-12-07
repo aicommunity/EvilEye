@@ -23,9 +23,9 @@ class HandlerJournal(QWidget):
     def __init__(self, db_controller, table_name, params, table_params, parent=None):
         super().__init__(parent)
         self.db_controller = db_controller
-        self.table_updater = TableUpdater(table_name, self._update_db, self.db_controller)
+        self.table_updater = TableUpdater(table_name, self._insert_rows, self._update_on_lost, self.db_controller)
 
-        self.params = params
+        self.params = params['database']
         self.db_params = (self.params['user_name'], self.params['password'], self.params['database_name'],
                           self.params['host_name'], self.params['port'], self.params['image_dir'])
         self.username, self.password, self.db_name, self.host, self.port, self.image_dir = self.db_params
@@ -56,16 +56,21 @@ class HandlerJournal(QWidget):
         self.table_updater.start()
 
     def _setup_table(self):
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(['Message type', 'Time', 'Information', 'Preview'])
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(
+            ['Message type', 'Time', 'Time Lost', 'Information', 'Preview', 'Preview Lost'])
         self.table.horizontalHeaderItem(0).setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeaderItem(1).setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeaderItem(2).setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeaderItem(3).setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeaderItem(4).setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
+        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeaderItem(5).setTextAlignment(Qt.AlignmentFlag.AlignHCenter)
+        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
         self.table.verticalHeader().setDefaultSectionSize(HandlerJournal.preview_height)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
 
@@ -144,7 +149,7 @@ class HandlerJournal(QWidget):
 
     def _filter_records(self, start_time, finish_time):
         fields = self.db_table_params.keys()
-        query = sql.SQL('SELECT count, {fields} FROM {table} WHERE time_stamp BETWEEN %s AND %s;').format(
+        query = sql.SQL('SELECT {fields} FROM {table} WHERE time_stamp BETWEEN %s AND %s;').format(
             fields=sql.SQL(",").join(map(sql.Identifier, fields)),
             table=sql.Identifier(self.table_name))
         data = (start_time.toPyDateTime(), finish_time.toPyDateTime())
@@ -163,8 +168,9 @@ class HandlerJournal(QWidget):
         if not self.isVisible():
             return
         fields = self.db_table_params.keys()
+        # print(fields)
         query = sql.SQL(
-            'SELECT count, {fields} FROM {table} WHERE time_stamp BETWEEN %s AND %s ORDER BY count;').format(
+            'SELECT {fields} FROM {table} WHERE time_stamp BETWEEN %s AND %s ORDER BY record_id;').format(
             fields=sql.SQL(",").join(map(sql.Identifier, fields)),
             table=sql.Identifier(self.table_name))
         start_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.min)
@@ -174,7 +180,7 @@ class HandlerJournal(QWidget):
         self._append_rows(records)
 
     @pyqtSlot(list)
-    def _update_db(self, records):
+    def _insert_rows(self, records):
         if self.block_updates or not self.isVisible():
             return
 
@@ -185,49 +191,50 @@ class HandlerJournal(QWidget):
         # self.table.blockSignals(False)
         QApplication.processEvents()
 
-    def _update_on_lost(self, fields_list, data):
+    @pyqtSlot(list)
+    def _update_on_lost(self, records):
         if not self.isVisible():
             print('HIDDEN')
             return
 
-        record = data[0]
-        cur_update_time = datetime.datetime.now()
-        if (cur_update_time - self.last_update_time).total_seconds() < self.update_rate:
-            self.data_for_update.append(record)
-            return
-        self.last_update_time = cur_update_time
-        self.data_for_update.append(record)
+        record = records[0]
+        fields = list(self.db_table_params.keys())
+        # cur_update_time = datetime.datetime.now()
+        # if (cur_update_time - self.last_update_time).total_seconds() < self.update_rate:
+        #     self.data_for_update.append(record)
+        #     return
+        # self.last_update_time = cur_update_time
+        # self.data_for_update.append(record)
 
-        for rec in self.data_for_update:
-            row_idx = rec[0]
-            #print(row_idx)
-            root = utils.get_project_root()
-            lost_img_idx = fields_list.index('lost_preview_path') + 1
-            time_lost_idx = fields_list.index('time_lost') + 1
-            #print(rec[lost_img_idx])
-            lost_pixmap = QPixmap(os.path.join(root, rec[lost_img_idx]))
-            lost_img = QTableWidgetItem()
-            lost_img.setData(Qt.ItemDataRole.DecorationRole, lost_pixmap)
-            self.table.setUpdatesEnabled(False)
-            self.table.blockSignals(True)
-            self.table.setItem(row_idx - 1, 4, lost_img)
-            self.table.setItem(row_idx - 1, 2, QTableWidgetItem(rec[time_lost_idx].strftime('%H:%M:%S %d/%m/%Y')))
-            self.table.setUpdatesEnabled(True)
-            self.table.blockSignals(False)
-            QApplication.processEvents()
+        row_idx = record[0]
+        # print(row_idx)
+        root = utils.get_project_root()
+        lost_img_idx = fields.index('lost_preview_path')
+        time_lost_idx = fields.index('time_lost')
+        # print(rec[lost_img_idx])
+        lost_pixmap = QPixmap(os.path.join(root, record[lost_img_idx]))
+        lost_img = QTableWidgetItem()
+        lost_img.setData(Qt.ItemDataRole.DecorationRole, lost_pixmap)
+        # self.table.setUpdatesEnabled(False)
+        # self.table.blockSignals(True)
+        self.table.setItem(row_idx - 1, 5, lost_img)
+        self.table.setItem(row_idx - 1, 2, QTableWidgetItem(record[time_lost_idx].strftime('%H:%M:%S %d/%m/%Y')))
+        # self.table.setUpdatesEnabled(True)
+        # self.table.blockSignals(False)
+        # QApplication.processEvents()
 
     def _append_rows(self, records):
         info_str = 'Event'
         fields = list(self.db_table_params.keys())
         count_idx = 0
-        id_idx = fields.index('object_id') + 1
-        bbox_idx = fields.index('bounding_box') + 1
-        conf_idx = fields.index('confidence') + 1
-        class_idx = fields.index('class_id') + 1
-        time_idx = fields.index('time_stamp') + 1
-        time_lost_idx = fields.index('time_lost') + 1
-        img_path_idx = fields.index('preview_path') + 1
-        lost_img_idx = fields.index('lost_preview_path') + 1
+        id_idx = fields.index('object_id')
+        bbox_idx = fields.index('bounding_box')
+        conf_idx = fields.index('confidence')
+        class_idx = fields.index('class_id')
+        time_idx = fields.index('time_stamp')
+        time_lost_idx = fields.index('time_lost')
+        img_path_idx = fields.index('preview_path')
+        lost_img_idx = fields.index('lost_preview_path')
         root = self.image_dir
 
         if records is None:
@@ -235,24 +242,18 @@ class HandlerJournal(QWidget):
 
         last_row = self.last_row_db
         for record in records:
+            # print(record)
             if record[count_idx] <= last_row:
                 continue
             rect = record[bbox_idx]
+            # print((img_path_idx, record[img_path_idx]))
             pixmap = QPixmap(os.path.join(root, record[img_path_idx]))
-            qp = QPainter(pixmap)
-            pen = QPen(Qt.GlobalColor.green, 1)
-            qp.setPen(pen)
-            qp.drawRect(int(rect[0]*HandlerJournal.preview_width), int(rect[1]*HandlerJournal.preview_height),
-                        int((rect[2]-rect[0])*HandlerJournal.preview_width), int((rect[3]-rect[1])*HandlerJournal.preview_height))
-            qp.end()
-
-#            cv2.rectangle(image.image, (int(last_info.bounding_box[0]), int(last_info.bounding_box[1])),
-#                          (int(last_info.bounding_box[2]), int(last_info.bounding_box[3])), (0, 255, 0), thickness=8)
-#            cv2.putText(image.image, str(last_info.track_id) + ' ' + str([last_info.class_id]) +
-#                        " " + "{:.2f}".format(last_info.confidence),
-#                        (int(last_info.bounding_box[0]), int(last_info.bounding_box[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX,
-#                        1,
-#                        (0, 0, 255), 2)
+            # qp = QPainter(pixmap)
+            # pen = QPen(Qt.GlobalColor.green, 1)
+            # qp.setPen(pen)
+            # qp.drawRect(int(rect[0]*HandlerJournal.preview_width), int(rect[1]*HandlerJournal.preview_height),
+            #             int((rect[2]-rect[0])*HandlerJournal.preview_width), int((rect[3]-rect[1])*HandlerJournal.preview_height))
+            # qp.end()
 
             preview_img = QTableWidgetItem()
             preview_img.setData(Qt.ItemDataRole.DecorationRole, pixmap)
@@ -264,20 +265,19 @@ class HandlerJournal(QWidget):
 
             row = self.table.rowCount()
             self.table.insertRow(row)
-            res_str = ('Object Id=' + str(record[id_idx]) + ', class: ' + str(record[
-                                                                                  class_idx])) + ' conf: ' + "{:1.2f}".format(
-                record[conf_idx])
+            res_str = (('Object Id=' + str(record[id_idx]) + ', class: ' + str(record[class_idx])) +
+                       ' conf: ' + "{:1.2f}".format(record[conf_idx]))
             self.table.setItem(row, 0, QTableWidgetItem(info_str))
             self.table.setItem(row, 1, QTableWidgetItem(record[time_idx].strftime('%H:%M:%S %d/%m/%Y')))
-            #if record[time_lost_idx]:
-            #    self.table.setItem(row, 2, QTableWidgetItem(record[time_lost_idx].strftime('%H:%M:%S %d/%m/%Y')))
-            #else:
-            #    self.table.setItem(row, 2, QTableWidgetItem(record[time_lost_idx]))
-            self.table.setItem(row, 2, QTableWidgetItem(res_str))
-            self.table.setItem(row, 3, preview_img)
-            #self.table.setItem(row, 5, lost_img)
+            if record[time_lost_idx]:
+                self.table.setItem(row, 2, QTableWidgetItem(record[time_lost_idx].strftime('%H:%M:%S %d/%m/%Y')))
+            else:
+                self.table.setItem(row, 2, QTableWidgetItem(record[time_lost_idx]))
+            self.table.setItem(row, 3, QTableWidgetItem(res_str))
+            self.table.setItem(row, 4, preview_img)
+            self.table.setItem(row, 5, lost_img)
             # self.table.setRowHeight(row, 150)
-        if len(records)>0:
+        if len(records) > 0:
             record = records[-1]
             if record[count_idx] > last_row:
                 last_row = records[-1][count_idx]

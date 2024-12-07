@@ -6,7 +6,7 @@
       "apiPreference": "CAP_FFMPEG",
       "split": false,
       "num_split": 0,
-      "src_coords": 0,
+      "src_coords": [0],
       "source_ids": [0],
       "source_names": ["Cam1"],
       "loop_play": true
@@ -60,8 +60,42 @@
     "database_name": "evil_eye_db",
     "host_name": "localhost",
     "port": 5433,
+    "default_database_name": "postgres",
+    "default_password": "",
+    "default_user_name": "postgres",
+    "default_host_name": "localhost",
+    "default_port": 5433,
+    "preview_height": 150,
+    "preview_width": 300,
     "tables": {
-      "emerged": {
+      "projects": {
+        "project_id": "SERIAL PRIMARY KEY",
+        "creation_time": "timestamp"
+      },
+      "jobs": {
+        "job_id": "SERIAL PRIMARY KEY",
+        "finish_time": "timestamp",
+        "first_record": "integer",
+        "last_record": "integer DEFAULT -1",
+        "is_terminated": "boolean NOT NULL",
+        "creation_time": "timestamp",
+        "configuration_info": "json",
+        "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE"
+      },
+      "camera_information":  {
+        "full_address": "text PRIMARY KEY",
+        "short_address": "text",
+        "sources": "integer[]",
+        "roi": "integer[][]",
+        "video_dur_frames": "integer",
+        "video_dur_ms": "time(3)",
+        "creation_time": "timestamp",
+        "calibration_info": "json DEFAULT NULL",
+        "additional_info": "json DEFAULT NULL"
+      },
+      "objects": {
+        "record_id": "SERIAL PRIMARY KEY",
+        "source_id": "integer",
         "time_stamp": "timestamp",
         "time_lost": "timestamp DEFAULT NULL",
         "object_id": "integer",
@@ -72,10 +106,15 @@
         "preview_path": "text",
         "lost_preview_path": "text DEFAULT NULL",
         "frame_path": "text",
-        "lost_frame_path": "text DEFAULT NULL"
+        "lost_frame_path": "text DEFAULT NULL",
+        "object_data": "json DEFAULT NULL",
+        "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE",
+        "job_id": "integer REFERENCES jobs (job_id) ON DELETE CASCADE",
+        "camera_full_address": "text REFERENCES camera_information (full_address) ON DELETE CASCADE"
       }
     },
-    "image_dir": "/home/user/EvilEyeData/"
+    "image_dir": "/home/user/EvilEyeData/",
+    "create_new_project": true
   },
   "objects_handler": {
     "history_len": 30,
