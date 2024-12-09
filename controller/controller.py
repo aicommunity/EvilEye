@@ -159,7 +159,7 @@ class Controller:
             detector.stop()
         for source in self.sources:
             source.stop()
-        print('Everything stopped')
+        print('Everything in controller stopped')
 
     def init(self, params):
         self.params = params
@@ -190,7 +190,7 @@ class Controller:
             detector.release()
         for source in self.sources:
             source.release()
-        print('Everything released')
+        print('Everything in controller released')
 
     def set_current_main_widget_size(self, width, height):
         self.current_main_widget_size = [width, height]

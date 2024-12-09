@@ -217,8 +217,8 @@ class HandlerJournal(QWidget):
         lost_img.setData(Qt.ItemDataRole.DecorationRole, lost_pixmap)
         # self.table.setUpdatesEnabled(False)
         # self.table.blockSignals(True)
-        self.table.setItem(row_idx - 1, 5, lost_img)
-        self.table.setItem(row_idx - 1, 2, QTableWidgetItem(record[time_lost_idx].strftime('%H:%M:%S %d/%m/%Y')))
+        self.table.setItem(self.last_row_db - row_idx, 5, lost_img)
+        self.table.setItem(self.last_row_db - row_idx, 2, QTableWidgetItem(record[time_lost_idx].strftime('%H:%M:%S %d/%m/%Y')))
         # self.table.setUpdatesEnabled(True)
         # self.table.blockSignals(False)
         # QApplication.processEvents()
@@ -264,18 +264,18 @@ class HandlerJournal(QWidget):
             lost_img.setData(Qt.ItemDataRole.DecorationRole, lost_pixmap)
 
             row = self.table.rowCount()
-            self.table.insertRow(row)
+            self.table.insertRow(0)
             res_str = (('Object Id=' + str(record[id_idx]) + ', class: ' + str(record[class_idx])) +
                        ' conf: ' + "{:1.2f}".format(record[conf_idx]))
-            self.table.setItem(row, 0, QTableWidgetItem(info_str))
-            self.table.setItem(row, 1, QTableWidgetItem(record[time_idx].strftime('%H:%M:%S %d/%m/%Y')))
+            self.table.setItem(0, 0, QTableWidgetItem(info_str))
+            self.table.setItem(0, 1, QTableWidgetItem(record[time_idx].strftime('%H:%M:%S %d/%m/%Y')))
             if record[time_lost_idx]:
-                self.table.setItem(row, 2, QTableWidgetItem(record[time_lost_idx].strftime('%H:%M:%S %d/%m/%Y')))
+                self.table.setItem(0, 2, QTableWidgetItem(record[time_lost_idx].strftime('%H:%M:%S %d/%m/%Y')))
             else:
-                self.table.setItem(row, 2, QTableWidgetItem(record[time_lost_idx]))
-            self.table.setItem(row, 3, QTableWidgetItem(res_str))
-            self.table.setItem(row, 4, preview_img)
-            self.table.setItem(row, 5, lost_img)
+                self.table.setItem(0, 2, QTableWidgetItem(record[time_lost_idx]))
+            self.table.setItem(0, 3, QTableWidgetItem(res_str))
+            self.table.setItem(0, 4, preview_img)
+            self.table.setItem(0, 5, lost_img)
             # self.table.setRowHeight(row, 150)
         if len(records) > 0:
             record = records[-1]
@@ -283,3 +283,6 @@ class HandlerJournal(QWidget):
                 last_row = records[-1][count_idx]
         self.last_row_db = last_row
         # self.table.resizeRowsToContents()
+
+    def close(self):
+        self.table_updater.stop()

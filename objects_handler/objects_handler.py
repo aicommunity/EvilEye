@@ -272,18 +272,24 @@ class ObjectsHandler(core.EvilEyeBase):
         save_dir = self.db_params['image_dir']
         img_dir = os.path.join(save_dir, 'images')
         image_type_path = os.path.join(img_dir, image_type + 's')
-        obj_event_path = os.path.join(image_type_path, obj_event_type)
+
+        cur_date = datetime.date.today()
+        cur_date_str = cur_date.strftime('%Y_%m_%d')
+        current_day_path = os.path.join(image_type_path, cur_date_str)
+        obj_event_path = os.path.join(current_day_path, obj_event_type)
         if not os.path.exists(img_dir):
             os.mkdir(img_dir)
         if not os.path.exists(image_type_path):
             os.mkdir(image_type_path)
+        if not os.path.exists(current_day_path):
+            os.mkdir(current_day_path)
         if not os.path.exists(obj_event_path):
             os.mkdir(obj_event_path)
 
         if obj_event_type == 'emerged':
-            timestamp = obj.time_stamp.strftime('%d_%m_%Y_%H_%M_%S_%f')
-            img_path = os.path.join(obj_event_path, f'{image_type}_at_{timestamp}.jpeg')
+            timestamp = obj.time_stamp.strftime('%Y_%m_%d_%H_%M_%S.%f')
+            img_path = os.path.join(obj_event_path, f'{timestamp}_{image_type}.jpeg')
         elif obj_event_type == 'lost':
-            timestamp = obj.time_lost.strftime('%d_%m_%Y_%H_%M_%S_%f')
-            img_path = os.path.join(obj_event_path, f'{image_type}_at_{timestamp}.jpeg')
+            timestamp = obj.time_lost.strftime('%Y_%m_%d_%H_%M_%S_%f')
+            img_path = os.path.join(obj_event_path, f'{timestamp}_{image_type}.jpeg')
         return os.path.relpath(img_path, save_dir)

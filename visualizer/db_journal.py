@@ -36,3 +36,7 @@ class DatabaseJournalWindow(QWidget):
 
     def close(self):
         self.db_controller.disconnect()
+        for tab_idx in range(self.tabs.count()):
+            tab = self.tabs.widget(tab_idx)
+            tab.close()
+        print('Database journal closed')
