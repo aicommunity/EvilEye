@@ -208,7 +208,7 @@ class HandlerJournal(QWidget):
 
         row_idx = record[0]
         # print(row_idx)
-        root = utils.get_project_root()
+        root = self.image_dir
         lost_img_idx = fields.index('lost_preview_path')
         time_lost_idx = fields.index('time_lost')
         # print(rec[lost_img_idx])
