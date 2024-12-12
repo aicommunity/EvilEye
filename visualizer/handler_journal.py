@@ -155,11 +155,12 @@ class HandlerJournal(QWidget):
         data = (start_time.toPyDateTime(), finish_time.toPyDateTime())
         records = self.db_controller.query(query, data)
         self.table.setRowCount(0)
+        self.last_row_db = 0
         self.setUpdatesEnabled(False)
-        # self.blockSignals(True)
+        self.blockSignals(True)
         self._append_rows(records)
         self.setUpdatesEnabled(True)
-        # self.blockSignals(False)
+        self.blockSignals(False)
         self.start_time_updated = False
         self.finish_time_updated = False
         QApplication.processEvents()
