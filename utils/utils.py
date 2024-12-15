@@ -188,14 +188,14 @@ def draw_boxes_from_db(db_controller, table_name, load_folder, save_folder):
     res = db_controller.query(query)
     for obj_id, conf, box, lost_box, image_path, lost_image_path in res:
         lost_load_dir = pathlib.Path(load_folder, 'lost')
-        emerged_load_dir = pathlib.Path(load_folder, 'emerged')
+        detected_load_dir = pathlib.Path(load_folder, 'detected')
 
         if not lost_load_dir.exists():
             Path.mkdir(lost_load_dir)
         lost_load_path = pathlib.Path(lost_load_dir, Path(lost_image_path).name)
-        if not emerged_load_dir.exists():
-            Path.mkdir(emerged_load_dir)
-        emerged_load_path = pathlib.Path(emerged_load_dir, Path(image_path).name)
+        if not detected_load_dir.exists():
+            Path.mkdir(detected_load_dir)
+        detected_load_path = pathlib.Path(detected_load_dir, Path(image_path).name)
 
         if not save_folder.exists():
             pathlib.Path.mkdir(save_folder)
@@ -203,11 +203,11 @@ def draw_boxes_from_db(db_controller, table_name, load_folder, save_folder):
         lost_save_dir = pathlib.Path(save_folder, 'lost')
         if not lost_save_dir.exists():
             Path.mkdir(lost_save_dir)
-        emerged_save_dir = pathlib.Path(save_folder, 'emerged')
-        if not emerged_save_dir.exists():
-            Path.mkdir(emerged_save_dir)
+        detected_save_dir = pathlib.Path(save_folder, 'detected')
+        if not detected_save_dir.exists():
+            Path.mkdir(detected_save_dir)
         lost_save_path = pathlib.Path(lost_save_dir, Path(lost_image_path).name)
-        emerged_save_path = pathlib.Path(emerged_save_dir, Path(image_path).name)
+        detected_save_path = pathlib.Path(detected_save_dir, Path(image_path).name)
 
         lost_image = cv2.imread(lost_load_path.as_posix())
         cv2.rectangle(lost_image, (int(box[0]), int(box[1])),
@@ -216,15 +216,15 @@ def draw_boxes_from_db(db_controller, table_name, load_folder, save_folder):
                     (int(box[0]), int(box[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
                     (255, 255, 255), 2)
 
-        emerged_image = cv2.imread(emerged_load_path.as_posix())
-        cv2.rectangle(emerged_image, (int(box[0]), int(box[1])),
+        detected_image = cv2.imread(detected_load_path.as_posix())
+        cv2.rectangle(detected_image, (int(box[0]), int(box[1])),
                       (int(box[2]), int(box[3])), (0, 255, 0), thickness=8)
-        cv2.putText(emerged_image, str(obj_id) + " " + "{:.2f}".format(conf),
+        cv2.putText(detected_image, str(obj_id) + " " + "{:.2f}".format(conf),
                     (int(box[0]), int(box[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
                     (255, 255, 255), 2)
         lost_saved = cv2.imwrite(lost_save_path.as_posix(), lost_image)
-        emerged_saved = cv2.imwrite(emerged_save_path.as_posix(), emerged_image)
-        if not lost_saved or not emerged_saved:
+        detected_saved = cv2.imwrite(detected_save_path.as_posix(), detected_image)
+        if not lost_saved or not detected_saved:
             print('Error saving image with boxes')
 
 

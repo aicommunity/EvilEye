@@ -148,6 +148,7 @@ class Controller:
         self.control_thread.start()
 
     def stop(self):
+        self._save_video_duration()
         self.run_flag = False
         self.control_thread.join()
         self.db_controller.disconnect()
@@ -250,3 +251,6 @@ class Controller:
         self.visualizer.source_id_name_table = self.source_id_name_table
         self.visualizer.source_video_duration = self.source_video_duration
         self.visualizer.init()
+
+    def _save_video_duration(self):
+        self.db_controller.update_video_dur(self.source_video_duration)

@@ -224,6 +224,7 @@ class ObjectsHandler(core.EvilEyeBase):
 
     def _prepare_for_saving(self, obj: ObjectResult, image_width, image_height) -> tuple[list, list, str, str]:
         fields_for_saving = {'source_id': obj.source_id,
+                             'source_name': '',
                              'time_stamp': obj.time_stamp,
                              'time_lost': obj.time_lost,
                              'object_id': obj.object_id,
@@ -231,9 +232,9 @@ class ObjectsHandler(core.EvilEyeBase):
                              'lost_bounding_box': None,
                              'confidence': obj.track.confidence,
                              'class_id': obj.class_id,
-                             'preview_path': self._get_img_path('preview', 'emerged', obj),
+                             'preview_path': self._get_img_path('preview', 'detected', obj),
                              'lost_preview_path': None,
-                             'frame_path': self._get_img_path('frame', 'emerged', obj),
+                             'frame_path': self._get_img_path('frame', 'detected', obj),
                              'lost_frame_path': None,
                              'object_data': json.dumps(obj.__dict__, cls=ObjectResultEncoder),
                              'project_id': self.db_controller.get_project_id(),
@@ -242,6 +243,8 @@ class ObjectsHandler(core.EvilEyeBase):
 
         for camera in self.cameras_params:
             if obj.source_id in camera['source_ids']:
+                id_idx = camera['source_ids'].index(obj.source_id)
+                fields_for_saving['source_name'] = camera['source_names'][id_idx]
                 fields_for_saving['camera_full_address'] = camera['camera']
                 break
 
@@ -271,25 +274,25 @@ class ObjectsHandler(core.EvilEyeBase):
     def _get_img_path(self, image_type, obj_event_type, obj):
         save_dir = self.db_params['image_dir']
         img_dir = os.path.join(save_dir, 'images')
-        image_type_path = os.path.join(img_dir, image_type + 's')
-
         cur_date = datetime.date.today()
         cur_date_str = cur_date.strftime('%Y_%m_%d')
-        current_day_path = os.path.join(image_type_path, cur_date_str)
-        obj_event_path = os.path.join(current_day_path, obj_event_type)
+
+        current_day_path = os.path.join(img_dir, cur_date_str)
+        obj_type_path = os.path.join(current_day_path, obj_event_type + '_' + image_type + 's')
+        # obj_event_path = os.path.join(current_day_path, obj_event_type)
         if not os.path.exists(img_dir):
             os.mkdir(img_dir)
-        if not os.path.exists(image_type_path):
-            os.mkdir(image_type_path)
         if not os.path.exists(current_day_path):
             os.mkdir(current_day_path)
-        if not os.path.exists(obj_event_path):
-            os.mkdir(obj_event_path)
+        if not os.path.exists(obj_type_path):
+            os.mkdir(obj_type_path)
+        # if not os.path.exists(obj_event_path):
+        #     os.mkdir(obj_event_path)
 
-        if obj_event_type == 'emerged':
+        if obj_event_type == 'detected':
             timestamp = obj.time_stamp.strftime('%Y_%m_%d_%H_%M_%S.%f')
-            img_path = os.path.join(obj_event_path, f'{timestamp}_{image_type}.jpeg')
+            img_path = os.path.join(obj_type_path, f'{timestamp}_{image_type}.jpeg')
         elif obj_event_type == 'lost':
             timestamp = obj.time_lost.strftime('%Y_%m_%d_%H_%M_%S_%f')
-            img_path = os.path.join(obj_event_path, f'{timestamp}_{image_type}.jpeg')
+            img_path = os.path.join(obj_type_path, f'{timestamp}_{image_type}.jpeg')
         return os.path.relpath(img_path, save_dir)

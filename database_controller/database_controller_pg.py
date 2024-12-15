@@ -340,6 +340,15 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
         for value in values:
             self.query(query, value)
 
+    def update_video_dur(self, source_video_dur):
+        sources = source_video_dur.keys()
+        for source in sources:
+            if self.cameras_params[source]['source'] != 'VideoFile':
+                continue
+            full_address = self.cameras_params[source]['camera']
+            query = sql.SQL('UPDATE camera_information SET video_dur_ms = %s WHERE full_address = %s')
+            self.query(query, (source_video_dur[source], full_address))
+
     @staticmethod
     def get_project_id():
         return DatabaseControllerPg.cur_project_id

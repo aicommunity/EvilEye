@@ -27,7 +27,7 @@ class DatabaseJournalWindow(QWidget):
 
         self.tabs = QTabWidget()
         self.tabs.addTab(handler_journal.HandlerJournal(self.db_controller, 'objects', self.params,
-                                                        self.tables['objects']), 'Handler journal')
+                                                        self.tables['objects'], parent=self), 'Handler journal')
         self.tabs.addTab(QWidget(), 'Alarms journal')
 
         self.layout = QVBoxLayout()
@@ -35,8 +35,8 @@ class DatabaseJournalWindow(QWidget):
         self.setLayout(self.layout)
 
     def close(self):
-        self.db_controller.disconnect()
         for tab_idx in range(self.tabs.count()):
             tab = self.tabs.widget(tab_idx)
             tab.close()
         print('Database journal closed')
+        self.db_controller.disconnect()

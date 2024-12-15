@@ -88,7 +88,7 @@
         "sources": "integer[]",
         "roi": "integer[][]",
         "video_dur_frames": "integer",
-        "video_dur_ms": "time(3)",
+        "video_dur_ms": "integer",
         "creation_time": "timestamp",
         "calibration_info": "json DEFAULT NULL",
         "additional_info": "json DEFAULT NULL"
@@ -96,6 +96,7 @@
       "objects": {
         "record_id": "SERIAL PRIMARY KEY",
         "source_id": "integer",
+        "source_name": "text",
         "time_stamp": "timestamp",
         "time_lost": "timestamp DEFAULT NULL",
         "object_id": "integer",
