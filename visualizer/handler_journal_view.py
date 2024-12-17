@@ -16,12 +16,14 @@ from visualizer.table_updater_view import TableUpdater
 
 
 class ImageDelegate(QStyledItemDelegate):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, image_dir=None):
         super().__init__(parent)
+        self.image_dir = image_dir
 
     def paint(self, painter, option, index):
         if index.isValid():
             path = index.data(Qt.ItemDataRole.DisplayRole)
+            path = os.path.join(self.image_dir, path)
             pixmap = QPixmap()
             if path:
                 pixmap.load(path)
@@ -39,7 +41,7 @@ class DateTimeDelegate(QStyledItemDelegate):
 
 
 class ImageWindow(QLabel):
-    def __init__(self, image, box, parent=None):
+    def __init__(self, image, box=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle('Image')
         self.setFixedSize(900, 600)
@@ -62,42 +64,6 @@ class ImageWindow(QLabel):
         self.hide()
         event.accept()
 
-
-class CustomPixmap(QPixmap):
-    def __init__(self, file=None, obj_box=None):
-        super().__init__(file)
-        if obj_box is None:
-            obj_box = []
-        self.file_path = file
-        self.box = obj_box
-
-    def set_path(self, file_path):
-        self.file_path = file_path
-
-    def get_file_path(self):
-        return self.file_path
-
-    def get_box(self):
-        return self.box
-
-    def set_box(self, obj_box):
-        self.box = obj_box
-
-
-class ImageLabel(QLabel):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.pixmap_data = []
-
-    def setPixmap(self, pixmap: CustomPixmap) -> None:
-        super().setPixmap(pixmap)
-        self.pixmap_data = [pixmap.get_file_path(), pixmap.get_box()]
-
-    def pixmap(self) -> tuple[QPixmap, str, list[int]]:
-        file_path, box = self.pixmap_data
-        return super().pixmap(), file_path, box
-
-
 # class CustomModel(QSqlQueryModel):
 #     def data(self, idx: QModelIndex, role: int):
 #         if not idx.isValid():
@@ -111,6 +77,7 @@ class ImageLabel(QLabel):
 #             return pixmap
 #         return super().data(idx, role)
 
+
 class HandlerJournal(QWidget):
     retrieve_data_signal = pyqtSignal()
 
@@ -122,6 +89,7 @@ class HandlerJournal(QWidget):
         self.db_controller = db_controller
         self.table_updater = TableUpdater(table_name, self._insert_rows, self._update_on_lost)
         self.update_timer = QTimer()
+        self.update_timer.setSingleShot(True)
         self.update_timer.timeout.connect(self._update_table)
 
         self.params = params
@@ -133,19 +101,7 @@ class HandlerJournal(QWidget):
         self.table_name = table_name
         self.table_data_thread = None
 
-        self.db = QSqlDatabase.addDatabase("QPSQL")
-        self.db.setHostName("localhost")
-        self.db.setDatabaseName("evil_eye_db")
-        self.db.setUserName("postgres")
-        self.db.setPassword("12345")
-        self.db.setPort(5432)
-        if not self.db.open():
-            QMessageBox.critical(
-                None,
-                "QTableView Example - Error!",
-                "Database Error: %s" % self.db.lastError().databaseText(),
-            )
-
+        self._connect_to_db()
         self.source_name_id_address = self._create_dict_source_name_address_id()
 
         self.last_row_db = 0
@@ -173,9 +129,25 @@ class HandlerJournal(QWidget):
         self.setLayout(self.layout)
 
         self.retrieve_data_signal.connect(self._retrieve_data)
+        self.table.doubleClicked.connect(self._display_image)
+
+    def _connect_to_db(self):
+        self.db = QSqlDatabase.addDatabase("QPSQL")
+        self.db.setHostName(self.host)
+        self.db.setDatabaseName(self.db_name)
+        self.db.setUserName(self.username)
+        self.db.setPassword(self.password)
+        self.db.setPort(self.port)
+        if not self.db.open():
+            QMessageBox.critical(
+                None,
+                "QTableView Example - Error!",
+                "Database Error: %s" % self.db.lastError().databaseText(),
+            )
 
     def _setup_table(self):
         self._setup_model()
+
         self.table = QTableView()
         self.table.setModel(self.model)
         header = self.table.verticalHeader()
@@ -188,15 +160,16 @@ class HandlerJournal(QWidget):
         header.setDefaultSectionSize(HandlerJournal.preview_height)
         h_header.setDefaultSectionSize(HandlerJournal.preview_width)
 
-        self.delegate = ImageDelegate(None)
+        self.image_delegate = ImageDelegate(None, image_dir=self.image_dir)
         self.date_delegate = DateTimeDelegate(None)
         self.table.setItemDelegateForColumn(3, self.date_delegate)
         self.table.setItemDelegateForColumn(4, self.date_delegate)
-        self.table.setItemDelegateForColumn(5, self.delegate)
-        self.table.setItemDelegateForColumn(6, self.delegate)
+        self.table.setItemDelegateForColumn(5, self.image_delegate)
+        self.table.setItemDelegateForColumn(6, self.image_delegate)
 
     def _setup_model(self):
         self.model = QSqlQueryModel()
+
         query = QSqlQuery()
         query.prepare('SELECT source_name, CAST(\'Event\' AS text) AS event_type, '
                       '\'Object Id=\' || object_id || \'; class: \' || class_id || \'; conf: \' || confidence AS information,'
@@ -207,6 +180,7 @@ class HandlerJournal(QWidget):
         query.bindValue(":start", self.current_start_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
         query.bindValue(":finish", self.current_end_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
         query.exec()
+
         self.model.setQuery(query)
         self.model.setHeaderData(0, Qt.Orientation.Horizontal, self.tr('Name'))
         self.model.setHeaderData(1, Qt.Orientation.Horizontal, self.tr('Event'))
@@ -273,24 +247,39 @@ class HandlerJournal(QWidget):
         self.retrieve_data_signal.emit()
         show_event.accept()
 
-    @pyqtSlot(int, int)
-    def _display_image(self, row, col):
-        # print(type(self.table.cellWidget(row, col)))
-        widget = self.table.cellWidget(row, col)
-        if type(widget) == ImageLabel:
-            pixmap, file_path, box = widget.pixmap()
-            if not file_path:
-                return
-            previews_folder_path, file_name = os.path.split(file_path)
-            beg = file_name.find('preview')
-            end = beg + len('preview')
-            new_file_name = file_name[:beg] + 'frame' + file_name[end:]
-            date_folder_path, preview_folder_name = os.path.split(os.path.normpath(previews_folder_path))
-            beg = preview_folder_name.find('previews')
-            file_folder_name = preview_folder_name[:beg] + 'frames'
-            res_image_path = os.path.join(date_folder_path, file_folder_name, new_file_name)
-            self.image_win = ImageWindow(res_image_path, box)
-            self.image_win.show()
+    @pyqtSlot(QModelIndex)
+    def _display_image(self, index):
+        col = index.column()
+        if col != 5 and col != 6:
+            return
+
+        path = index.data()
+        if not path:
+            return
+
+        query = QSqlQuery()  # Getting a bounding_box of the current image
+        if 'detected' in path:
+            query.prepare('SELECT bounding_box from objects WHERE preview_path = :path')
+            query.bindValue(':path', path)
+        else:
+            query.prepare('SELECT lost_bounding_box from objects WHERE lost_preview_path = :path')
+            query.bindValue(':path', path)
+        query.exec()
+        query.next()
+        box_str = query.value(0).replace('{', '').replace('}', '')  # Qt query returns QString, so converting it to box
+        box = [float(coord) for coord in box_str.split(',')]
+
+        image_path = os.path.join(self.image_dir, path)
+        previews_folder_path, file_name = os.path.split(image_path)
+        beg = file_name.find('preview')
+        end = beg + len('preview')
+        new_file_name = file_name[:beg] + 'frame' + file_name[end:]
+        date_folder_path, preview_folder_name = os.path.split(os.path.normpath(previews_folder_path))
+        beg = preview_folder_name.find('previews')
+        file_folder_name = preview_folder_name[:beg] + 'frames'
+        res_image_path = os.path.join(date_folder_path, file_folder_name, new_file_name)
+        self.image_win = ImageWindow(res_image_path, box)
+        self.image_win.show()
 
     @pyqtSlot()
     def _show_filters(self):
@@ -342,9 +331,13 @@ class HandlerJournal(QWidget):
     def _filter_by_camera(self, camera_name):
         if not self.isVisible():
             return
+        self.block_updates = True
 
         fields = self.db_table_params.keys()
         if camera_name == 'All':
+            if (self.current_start_time == datetime.datetime.combine(datetime.datetime.now(), datetime.time.min) and
+                    self.current_end_time == datetime.datetime.combine(datetime.datetime.now(), datetime.time.max)):
+                self.block_updates = False
             self._filter_records(self.current_start_time, self.current_end_time)
             return
 
@@ -398,14 +391,6 @@ class HandlerJournal(QWidget):
         if self.block_updates or not self.isVisible() or self.update_timer.isActive():
             return
         self.update_timer.start(10000)
-        self.update_timer.setSingleShot(True)
-
-        # self.table.setUpdatesEnabled(False)
-        # # self.table.blockSignals(True)
-        # self._append_rows(records)
-        # self.table.setUpdatesEnabled(True)
-        # # self.table.blockSignals(False)
-        # QApplication.processEvents()
 
     @pyqtSlot()
     def _update_on_lost(self):
@@ -414,68 +399,9 @@ class HandlerJournal(QWidget):
         self.update_timer.start(10000)
         print('Timer_started')
 
-    def _append_rows(self, records):
-        info_str = 'Event'
-        fields = list(self.db_table_params.keys())
-        sources_params = self.params['sources']
-        count_idx = 0
-        id_idx = fields.index('object_id')
-        box_idx = fields.index('bounding_box')
-        lost_box_idx = fields.index('lost_bounding_box')
-        source_name_idx = fields.index('source_name')
-        conf_idx = fields.index('confidence')
-        class_idx = fields.index('class_id')
-        time_idx = fields.index('time_stamp')
-        time_lost_idx = fields.index('time_lost')
-        img_path_idx = fields.index('preview_path')
-        lost_img_idx = fields.index('lost_preview_path')
-        root = self.image_dir
-
-        if records is None:
-            return
-
-        last_row = self.last_row_db
-        for record in records:
-            # print(record)
-            if record[count_idx] <= last_row:
-                continue
-
-            pixmap = CustomPixmap(os.path.join(root, record[img_path_idx]), obj_box=record[box_idx])
-            preview_img = ImageLabel()
-            preview_img.setPixmap(pixmap)
-            lost_pixmap = CustomPixmap()
-            if record[lost_img_idx]:
-                lost_pixmap.load(os.path.join(root, record[lost_img_idx]))
-                lost_pixmap.set_path(os.path.join(root, record[lost_img_idx]))
-                lost_pixmap.set_box(obj_box=record[lost_box_idx])
-            lost_img = ImageLabel()
-            lost_img.setPixmap(lost_pixmap)
-
-            source_name = record[source_name_idx]
-            self.table.insertRow(0)
-            res_str = (('Object Id=' + str(record[id_idx]) + ', class: ' + str(record[class_idx])) +
-                       ' conf: ' + "{:1.2f}".format(record[conf_idx]))
-            self.table.setItem(0, 0, QTableWidgetItem(source_name))
-            self.table.setItem(0, 1, QTableWidgetItem(info_str))
-            self.table.setItem(0, 2, QTableWidgetItem(record[time_idx].strftime('%H:%M:%S %d/%m/%Y')))
-            if record[time_lost_idx]:
-                self.table.setItem(0, 3, QTableWidgetItem(record[time_lost_idx].strftime('%H:%M:%S %d/%m/%Y')))
-            else:
-                self.table.setItem(0, 3, QTableWidgetItem(record[time_lost_idx]))
-            self.table.setItem(0, 4, QTableWidgetItem(res_str))
-            self.table.setCellWidget(0, 5, preview_img)
-            self.table.setCellWidget(0, 6, lost_img)
-            # self.table.setRowHeight(row, 150)
-        if len(records) > 0:
-            record = records[-1]
-            if record[count_idx] > last_row:
-                last_row = records[-1][count_idx]
-        self.last_row_db = last_row
-        # self.table.resizeRowsToContents()
-
     def close(self):
         self._update_job_first_last_records()
-        self.db.close()
+        self.db.removeDatabase(self.db_name)
 
     def _create_dict_source_name_address_id(self):
         camera_address_id_name = {}
