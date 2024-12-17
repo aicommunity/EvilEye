@@ -8,7 +8,9 @@ import sys
 from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
 from pathlib import Path
 from database_controller import database_controller_pg
+from visualizer import handler_journal_view
 from visualizer import handler_journal
+
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 
@@ -26,8 +28,8 @@ class DatabaseJournalWindow(QWidget):
         self.resize(900, 600)
 
         self.tabs = QTabWidget()
-        self.tabs.addTab(handler_journal.HandlerJournal(self.db_controller, 'objects', self.params,
-                                                        self.tables['objects'], parent=self), 'Handler journal')
+        self.tabs.addTab(handler_journal_view.HandlerJournal(self.db_controller, 'objects', self.params,
+                                                             self.tables['objects'], parent=self), 'Handler journal')
         self.tabs.addTab(QWidget(), 'Alarms journal')
 
         self.layout = QVBoxLayout()

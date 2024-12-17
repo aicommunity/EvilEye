@@ -64,5 +64,6 @@ class TableUpdater(core.EvilEyeBase):
         self.data_thread.start_thread()
 
     def stop(self):
-        self.data_thread.stop_thread()
-        self.data_thread = None
+        if self.data_thread:
+            self.data_thread.stop_thread()
+            self.data_thread = None
