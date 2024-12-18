@@ -181,8 +181,13 @@ class ObjectsHandler(core.EvilEyeBase):
                 obj.track = track
                 obj.history.append(obj.get_current_history_element())
                 height, width, _ = image.image.shape
+                start_prepare_it = timer()
                 fields, data, preview_path, frame_path = self._prepare_for_saving(obj, width, height)
+                end_prepare_it = timer()
+                start_insert_it = timer()
                 self.db_controller.insert('objects', fields, data, preview_path, frame_path, image)
+                end_insert_it = timer()
+                # print(f'Insert time: {end_insert_it - start_insert_it}; Preparation time: {end_prepare_it-start_prepare_it}')
                 self.active_objs.objects.append(obj)
 
         filtered_active_objects = []
@@ -194,9 +199,14 @@ class ObjectsHandler(core.EvilEyeBase):
                 if active_obj.lost_frames >= self.lost_thresh:
                     active_obj.time_lost = datetime.datetime.now()
                     height, width, _ = active_obj.last_image.image.shape
+                    start_prepare_it = timer()
                     fields, data, preview_path, frame_path = self._prepare_for_updating(active_obj, width, height)
+                    end_prepare_it = timer()
+                    start_update_it = timer()
                     self.db_controller.update('objects', fields, data, active_obj.object_id,
                                               preview_path, frame_path, active_obj.last_image)
+                    end_update_it = timer()
+                    # print(f'Update time: {end_update_it - start_update_it}; Preparation time:{end_prepare_it-start_prepare_it}')
                     # updated_fields_data = self.db_controller.update('emerged', fields=['time_lost', "lost_preview_path",
                     #                                                                    'lost_frame_path', 'lost_bounding_box'],
                     #                                                 obj_id=active_obj.object_id,

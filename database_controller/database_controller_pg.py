@@ -13,7 +13,7 @@ from psycopg2 import pool
 import copy
 from utils import event
 
-
+from timeit import default_timer as timer
 # see https://ru.hexlet.io/blog/posts/python-postgresql
 
 
@@ -170,11 +170,16 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
                         # print(record)
                         row_num = record[0]
                         box = record[1]
+                        start_save_it = timer()
                         self._save_image(preview_path, frame_path, image, box)
+                        end_save_it = timer()
+                start_notify_it = timer()
                 if query_type == 'Insert':
                     event.notify('handler new object', row_num)
                 elif query_type == 'Update':
                     event.notify('handler update object', row_num)
+                end_notify_it = timer()
+                # print(f'Notification:{end_notify_it-start_notify_it}; Saving:{end_save_it-start_save_it}')
             except psycopg2.OperationalError:
                 print(f'Transaction ({query_string}) is not committed')
             finally:
@@ -343,6 +348,7 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
     def update_video_dur(self, source_video_dur):
         sources = source_video_dur.keys()
         for source in sources:
+            print(source)
             if self.cameras_params[source]['source'] != 'VideoFile':
                 continue
             full_address = self.cameras_params[source]['camera']

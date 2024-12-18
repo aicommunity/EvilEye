@@ -115,7 +115,7 @@ class Controller:
             if self.gui_enabled:
                 objects = []
                 for i in range(len(self.visualizer.source_ids)):
-                    objects.append(copy.deepcopy(self.obj_handler.get('active', self.visualizer.source_ids[i])))
+                    objects.append(self.obj_handler.get('active', self.visualizer.source_ids[i]))
                 complete_read_objects_it = timer()
                 self.visualizer.update(processing_frames, self.source_last_processed_frame_id, objects, debug_info)
             else:
@@ -148,7 +148,7 @@ class Controller:
         self.control_thread.start()
 
     def stop(self):
-        self._save_video_duration()
+        # self._save_video_duration()
         self.run_flag = False
         self.control_thread.join()
         self.db_controller.disconnect()
@@ -252,5 +252,5 @@ class Controller:
         self.visualizer.source_video_duration = self.source_video_duration
         self.visualizer.init()
 
-    def _save_video_duration(self):
-        self.db_controller.update_video_dur(self.source_video_duration)
+    # def _save_video_duration(self):
+    #     self.db_controller.update_video_dur(self.source_video_duration)

@@ -248,6 +248,7 @@ class HandlerJournal(QWidget):
     def start_time_update(self):
         self.block_updates = True
         if self.start_time.calendarWidget().hasFocus():
+            print('RETURNED')
             return
         self.start_time_updated = True
 
@@ -329,6 +330,7 @@ class HandlerJournal(QWidget):
         self.current_end_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.max)
         data = (self.current_start_time, self.current_end_time)
         records = self.db_controller.query(query, data)
+        # print(records)
         self._append_rows(records)
         self.table.resizeColumnsToContents()
 

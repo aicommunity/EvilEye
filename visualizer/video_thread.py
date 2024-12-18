@@ -55,7 +55,7 @@ class VideoThread(QThread):
     def append_data(self, data):
         if self.queue.full():
             self.queue.get()
-        self.queue.put(copy.deepcopy(data))
+        self.queue.put(data)
 
     def run(self):
         while self.run_flag:

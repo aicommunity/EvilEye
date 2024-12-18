@@ -107,19 +107,21 @@ class Visualizer(core.EvilEyeBase):
             start_append_data = timer()
             for j in range(len(self.visual_threads)):
                 if self.visual_threads[j].source_id == source_id:
-                    self.visual_threads[j].append_data((frame, objs, self.source_id_name_table[frame.source_id], self.source_video_duration.get(frame.source_id, None), debug_info))
+                    data = copy.deepcopy((frame, objs, self.source_id_name_table[frame.source_id], self.source_video_duration.get(frame.source_id, None), debug_info))
+                    self.visual_threads[j].append_data(data)
                     self.last_displayed_frame[source_id] = frame.frame_id
                     processed_sources.append(source_id)
                     break
             remove_processed_idx.append(i)
+            end_proc_frame = timer()
+            # print(f"Time frame: proc_frame[{end_proc_frame - start_proc_frame}], find_objects[{start_append_data - start_find_objects}, append[{end_proc_frame - start_find_objects}] secs")
 
         start_remove = timer()
         remove_processed_idx.sort(reverse=True)
         for index in remove_processed_idx:
             del self.processing_frames[index]
 
-        end_proc_frame = timer()
         end_update = timer()
-        # print(f"Time: update=[{end_update-start_update}], proc_frame[{end_proc_frame - start_proc_frame}], find_objects[{start_append_data - start_find_objects}], append_to_thread[{start_remove - start_append_data}], remove[{end_proc_frame - start_remove}] secs")
+        # print(f"Time: update=[{end_update-start_update}] secs")
 
         # print(f"{datetime.now()}: Visual Queue size: {len(self.processing_frames)}. Processed sources: {processed_sources}")
