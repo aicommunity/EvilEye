@@ -44,7 +44,6 @@ class MainWindow(QMainWindow):
         self.params = params
         self.rows = self.params['visualizer']['num_height']
         self.cols = self.params['visualizer']['num_width']
-        self.db_params = self.params['database']
         self.sources = self.params['sources']
         self.num_sources = len(self.params['sources'])
         self.num_labels = 0
@@ -61,7 +60,7 @@ class MainWindow(QMainWindow):
 
         self.toolbar_width = 0
         self._create_toolbar()
-        self.db_journal_win = DatabaseJournalWindow(self.db_params)
+        self.db_journal_win = DatabaseJournalWindow(self.params)
         self.db_journal_win.setVisible(False)
 
         for i in range(self.num_sources):

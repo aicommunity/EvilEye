@@ -19,7 +19,7 @@ class DetectionThreadBase:
         self.stride = stride  # Параметр скважности
         self.stride_cnt = self.stride  # Счетчик для кадров, которые необходимо пропустить
         self.classes = classes
-        self.roi = roi #[[]]
+        self.roi = roi  # [[]]
         self.inf_params = inf_params
         self.run_flag = False
         self.queue_in = Queue(maxsize=2)

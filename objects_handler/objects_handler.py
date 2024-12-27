@@ -1,94 +1,19 @@
 import copy
+import json
 import time
 import os
-import cv2
 import datetime
 import core
-
-import objects_handler.objects_handler
 from capture.video_capture_base import CaptureImage
 from utils import event
-from utils import utils
+from utils.utils import ObjectResultEncoder
 from queue import Queue
 from threading import Thread
 from threading import Condition
 from object_tracker.object_tracking_base import TrackingResult
 from object_tracker.object_tracking_base import TrackingResultList
 from timeit import default_timer as timer
-
-
-class ObjectResultHistory:
-    def __init__(self):
-        self.object_id = 0
-        self.source_id = None
-        self.frame_id = None
-        self.class_id = None
-        self.time_lost = None
-        self.time_stamp = None
-        self.last_update = False
-        self.last_image = None
-        self.lost_frames = 0
-        self.track = None
-        self.properties = dict()  # some object features in scene (i.e. is_moving, is_immovable, immovable_time, zone_visited, zone_time_spent etc)
-        self.object_data = dict()  # internal object data
-
-
-class ObjectResult(ObjectResultHistory):
-    def __init__(self):
-        super().__init__()
-        self.history: list[ObjectResultHistory] = []
-
-    def __str__(self):
-        return f'ID: {self.object_id}, Source: {self.source_id}, Updated: {self.last_update}, Lost: {self.lost_frames}'
-
-    def get_current_history_element(self):
-        result = ObjectResultHistory()
-        result.object_id = self.object_id
-        result.source_id = self.source_id
-        result.frame_id = self.frame_id
-        result.class_id = self.class_id
-        result.time_lost = self.time_lost
-        result.time_stamp = self.time_stamp
-        result.last_update = self.last_update
-        result.last_image = self.last_image
-        result.lost_frames = self.lost_frames
-        result.track = self.track
-        result.properties = self.properties
-        result.object_data = self.object_data
-        return result
-
-
-class ObjectResultList:
-    def __init__(self):
-        self.objects: list[ObjectResult] = []
-
-    def find_last_frame_id(self):
-        frame_id = 0
-        for obj in self.objects:
-            if frame_id < obj.frame_id:
-                frame_id = obj.frame_id
-
-        return frame_id
-
-    def find_objects_by_frame_id(self, frame_id, use_history: bool):
-        objs = []
-        if frame_id is None:
-            return self.objects
-
-        for obj in self.objects:
-            if frame_id == obj.frame_id:
-                objs.append(obj)
-            elif obj.history and use_history:
-                for hist in obj.history:
-                    if hist.frame_id == frame_id:
-                        objs.append(obj)
-                        break
-
-        return objs
-
-    def get_num_objects(self):
-        return len(self.objects)
-
+from .object_result import ObjectResultHistory, ObjectResult, ObjectResultList
 
 '''
 Модуль работы с объектами ожидает данные от детектора в виде dict: {'cam_id': int, 'objects': list, 'actual': bool}, 
@@ -116,6 +41,7 @@ class ObjectsHandler(core.EvilEyeBase):
 
         self.db_controller = db_controller
         self.db_params = self.db_controller.get_params()
+        self.cameras_params = self.db_controller.get_cameras_params()
         # Условие для блокировки других потоков
         self.condition = Condition()
         # Поток, который отвечает за получение объектов из очереди и распределение их по спискам
@@ -141,7 +67,6 @@ class ObjectsHandler(core.EvilEyeBase):
         self.lost_store_time_secs = self.params.get('lost_store_time_secs', 60)
         self.history_len = self.params.get('history_len', 1)
         self.lost_thresh = self.params.get('lost_thresh', 5)
-
 
     def stop(self):
         self.run_flag = False
@@ -204,7 +129,7 @@ class ObjectsHandler(core.EvilEyeBase):
         print('Handler running: waiting for objects...')
         while self.run_flag:
             time.sleep(0.01)
-            #if self.objs_queue.empty():
+            # if self.objs_queue.empty():
             #    continue
             tracking_results = self.objs_queue.get()
             if tracking_results is None:
@@ -237,7 +162,7 @@ class ObjectsHandler(core.EvilEyeBase):
                 track_object.frame_id = tracking_results.frame_id
                 track_object.class_id = track.class_id
                 track_object.track = track
-                #track_object.last_image = image
+                track_object.last_image = image
                 # print(f"object_id={track_object.object_id}, track_id={track_object.track.track_id}, len(history)={len(track_object.history)}")
                 track_object.history.append(track_object.get_current_history_element())
                 if len(track_object.history) > self.history_len:  # Если количество данных превышает размер истории, удаляем самые старые данные об объекте
@@ -251,13 +176,18 @@ class ObjectsHandler(core.EvilEyeBase):
                 obj.time_stamp = tracking_results.time_stamp
                 obj.frame_id = tracking_results.frame_id
                 obj.object_id = self.object_id_counter
-                #obj.last_image = image
+                obj.last_image = image
                 self.object_id_counter += 1
                 obj.track = track
                 obj.history.append(obj.get_current_history_element())
                 height, width, _ = image.image.shape
-                data, preview_path, frame_path = self._prepare_for_saving('emerged', obj, width, height)
-                self.db_controller.insert('emerged', data, preview_path, frame_path, image)
+                start_prepare_it = timer()
+                fields, data, preview_path, frame_path = self._prepare_for_saving(obj, width, height)
+                end_prepare_it = timer()
+                start_insert_it = timer()
+                self.db_controller.insert('objects', fields, data, preview_path, frame_path, image)
+                end_insert_it = timer()
+                # print(f'Insert time: {end_insert_it - start_insert_it}; Preparation time: {end_prepare_it-start_prepare_it}')
                 self.active_objs.objects.append(obj)
 
         filtered_active_objects = []
@@ -268,9 +198,15 @@ class ObjectsHandler(core.EvilEyeBase):
                 active_obj.lost_frames += 1
                 if active_obj.lost_frames >= self.lost_thresh:
                     active_obj.time_lost = datetime.datetime.now()
-                    # lost_preview_path = self._save_image('preview', 'lost', active_obj.last_image, active_obj)
-                    # lost_img_path = self._save_image('frame', 'lost', active_obj.last_image, active_obj)
-                    # # data = self._prepare_for_saving('emerged', copy.deepcopy(active_obj), image)
+                    height, width, _ = active_obj.last_image.image.shape
+                    start_prepare_it = timer()
+                    fields, data, preview_path, frame_path = self._prepare_for_updating(active_obj, width, height)
+                    end_prepare_it = timer()
+                    start_update_it = timer()
+                    self.db_controller.update('objects', fields, data, active_obj.object_id,
+                                              preview_path, frame_path, active_obj.last_image)
+                    end_update_it = timer()
+                    # print(f'Update time: {end_update_it - start_update_it}; Preparation time:{end_prepare_it-start_prepare_it}')
                     # updated_fields_data = self.db_controller.update('emerged', fields=['time_lost', "lost_preview_path",
                     #                                                                    'lost_frame_path', 'lost_bounding_box'],
                     #                                                 obj_id=active_obj.object_id,
@@ -296,57 +232,77 @@ class ObjectsHandler(core.EvilEyeBase):
         if start_index_for_remove:
             self.lost_objs.objects = self.lost_objs.objects[start_index_for_remove:]
 
+    def _prepare_for_saving(self, obj: ObjectResult, image_width, image_height) -> tuple[list, list, str, str]:
+        fields_for_saving = {'source_id': obj.source_id,
+                             'source_name': '',
+                             'time_stamp': obj.time_stamp,
+                             'time_lost': obj.time_lost,
+                             'object_id': obj.object_id,
+                             'bounding_box': obj.track.bounding_box,
+                             'lost_bounding_box': None,
+                             'confidence': obj.track.confidence,
+                             'class_id': obj.class_id,
+                             'preview_path': self._get_img_path('preview', 'detected', obj),
+                             'lost_preview_path': None,
+                             'frame_path': self._get_img_path('frame', 'detected', obj),
+                             'lost_frame_path': None,
+                             'object_data': json.dumps(obj.__dict__, cls=ObjectResultEncoder),
+                             'project_id': self.db_controller.get_project_id(),
+                             'job_id': self.db_controller.get_job_id(),
+                             'camera_full_address': ''}
 
-    def _prepare_for_saving(self, table_name, obj: ObjectResult, image_width, image_height) -> tuple[list, str, str]:
-        table_fields = self.db_controller.get_fields_names(table_name)
-        fields_for_saving = []
-        preview_path = None
-        frame_path = None
+        for camera in self.cameras_params:
+            if obj.source_id in camera['source_ids']:
+                id_idx = camera['source_ids'].index(obj.source_id)
+                fields_for_saving['source_name'] = camera['source_names'][id_idx]
+                fields_for_saving['camera_full_address'] = camera['camera']
+                break
 
-        if table_fields is None:
-            return fields_for_saving, preview_path, frame_path
+        fields_for_saving['bounding_box'] = copy.deepcopy(fields_for_saving['bounding_box'])
+        fields_for_saving['bounding_box'][0] /= image_width
+        fields_for_saving['bounding_box'][1] /= image_height
+        fields_for_saving['bounding_box'][2] /= image_width
+        fields_for_saving['bounding_box'][3] /= image_height
+        return (list(fields_for_saving.keys()), list(fields_for_saving.values()),
+                fields_for_saving['preview_path'], fields_for_saving['frame_path'])
 
-        for field in table_fields:
-            if field == 'preview_path':
-                preview_path = self._get_img_path('preview', 'emerged', obj)
-                fields_for_saving.append(preview_path)
-                continue
-            if field == 'frame_path':
-                frame_path = self._get_img_path('frame', 'emerged', obj)
-                fields_for_saving.append(frame_path)
-                continue
-            attr_value = getattr(obj, field, None)
-            #print(f'field: {field}, value: {attr_value}')
-            if attr_value is None:
-                attr_value = getattr(obj.track, field, None)
-            #    print(f'field: {field}, value: {attr_value}')
-            if attr_value is None and not self.db_controller.has_default(table_name, field):
-                raise Exception(f'Given object doesn\'t have required fields {field}')
-            fields_for_saving.append(attr_value)
+    def _prepare_for_updating(self, obj: ObjectResult, image_width, image_height):
+        fields_for_updating = {'lost_bounding_box': obj.track.bounding_box,
+                               'time_lost': obj.time_lost,
+                               'lost_preview_path': self._get_img_path('preview', 'lost', obj),
+                               'lost_frame_path': self._get_img_path('frame', 'lost', obj),
+                               'object_data': json.dumps(obj.__dict__, cls=ObjectResultEncoder)}
 
-        fields_for_saving[3] = copy.deepcopy(fields_for_saving[3])
-        fields_for_saving[3][0] /= image_width
-        fields_for_saving[3][1] /= image_height
-        fields_for_saving[3][2] /= image_width
-        fields_for_saving[3][3] /= image_height
-        return fields_for_saving, preview_path, frame_path
+        fields_for_updating['lost_bounding_box'] = copy.deepcopy(fields_for_updating['lost_bounding_box'])
+        fields_for_updating['lost_bounding_box'][0] /= image_width
+        fields_for_updating['lost_bounding_box'][1] /= image_height
+        fields_for_updating['lost_bounding_box'][2] /= image_width
+        fields_for_updating['lost_bounding_box'][3] /= image_height
+        return (list(fields_for_updating.keys()), list(fields_for_updating.values()),
+                fields_for_updating['lost_preview_path'], fields_for_updating['lost_frame_path'])
 
     def _get_img_path(self, image_type, obj_event_type, obj):
         save_dir = self.db_params['image_dir']
         img_dir = os.path.join(save_dir, 'images')
-        image_type_path = os.path.join(img_dir, image_type + 's')
-        obj_event_path = os.path.join(image_type_path, obj_event_type)
+        cur_date = datetime.date.today()
+        cur_date_str = cur_date.strftime('%Y_%m_%d')
+
+        current_day_path = os.path.join(img_dir, cur_date_str)
+        obj_type_path = os.path.join(current_day_path, obj_event_type + '_' + image_type + 's')
+        # obj_event_path = os.path.join(current_day_path, obj_event_type)
         if not os.path.exists(img_dir):
             os.mkdir(img_dir)
-        if not os.path.exists(image_type_path):
-            os.mkdir(image_type_path)
-        if not os.path.exists(obj_event_path):
-            os.mkdir(obj_event_path)
+        if not os.path.exists(current_day_path):
+            os.mkdir(current_day_path)
+        if not os.path.exists(obj_type_path):
+            os.mkdir(obj_type_path)
+        # if not os.path.exists(obj_event_path):
+        #     os.mkdir(obj_event_path)
 
-        if obj_event_type == 'emerged':
-            timestamp = obj.time_stamp.strftime('%d_%m_%Y_%H_%M_%S_%f')
-            img_path = os.path.join(obj_event_path, f'{image_type}_at_{timestamp}.jpeg')
+        if obj_event_type == 'detected':
+            timestamp = obj.time_stamp.strftime('%Y_%m_%d_%H_%M_%S.%f')
+            img_path = os.path.join(obj_type_path, f'{timestamp}_{image_type}.jpeg')
         elif obj_event_type == 'lost':
-            timestamp = obj.time_lost.strftime('%d_%m_%Y_%H_%M_%S_%f')
-            img_path = os.path.join(obj_event_path, f'{image_type}_at_{timestamp}.jpeg')
+            timestamp = obj.time_lost.strftime('%Y_%m_%d_%H_%M_%S_%f')
+            img_path = os.path.join(obj_type_path, f'{timestamp}_{image_type}.jpeg')
         return os.path.relpath(img_path, save_dir)

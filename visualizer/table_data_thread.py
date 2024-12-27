@@ -10,7 +10,8 @@ import cv2
 
 
 class TableDataThread(QThread):
-    update_table_signal = pyqtSignal(list)
+    append_record_signal = pyqtSignal(list)
+    update_record_signal = pyqtSignal(list)
 
     def __init__(self, fps, db_controller):
         super().__init__()
@@ -43,7 +44,7 @@ class TableDataThread(QThread):
 
     def process_query(self):
         try:
-            query_string, data = self.queue.get()
+            query_type, query_string, data = self.queue.get()
         except ValueError:
             return 0
         begin_it = timer()
@@ -52,6 +53,9 @@ class TableDataThread(QThread):
         end_it = timer()
         elapsed_seconds = end_it - begin_it
         # print(records)
-        self.update_table_signal.emit(records)
+        if query_type == 'Insert':
+            self.append_record_signal.emit(records)
+        elif query_type == 'Update':
+            self.update_record_signal.emit(records)
         return elapsed_seconds
 

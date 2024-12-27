@@ -16,10 +16,11 @@ from database_controller.database_controller_pg import DatabaseControllerPg
 from PyQt6.QtWidgets import QMainWindow
 import json
 
+
 class Controller:
     def __init__(self, main_window: QMainWindow, pyqt_slot):
         self.main_window = main_window
-        #self.application = application
+        # self.application = application
         self.control_thread = threading.Thread(target=self.run)
         self.params = None
         self.sources = []
@@ -114,7 +115,7 @@ class Controller:
             if self.gui_enabled:
                 objects = []
                 for i in range(len(self.visualizer.source_ids)):
-                    objects.append(copy.deepcopy(self.obj_handler.get('active', self.visualizer.source_ids[i])))
+                    objects.append(self.obj_handler.get('active', self.visualizer.source_ids[i]))
                 complete_read_objects_it = timer()
                 self.visualizer.update(processing_frames, self.source_last_processed_frame_id, objects, debug_info)
             else:
@@ -147,6 +148,7 @@ class Controller:
         self.control_thread.start()
 
     def stop(self):
+        # self._save_video_duration()
         self.run_flag = False
         self.control_thread.join()
         self.db_controller.disconnect()
@@ -158,7 +160,7 @@ class Controller:
             detector.stop()
         for source in self.sources:
             source.stop()
-        print('Everything stopped')
+        print('Everything in controller stopped')
 
     def init(self, params):
         self.params = params
@@ -173,7 +175,7 @@ class Controller:
         self._init_detectors(self.params['detectors'])
         self._init_trackers(self.params['trackers'])
         self._init_visualizer(self.params['visualizer'])
-        self._init_db_controller(self.params['database'])
+        self._init_db_controller(self.params['database'], system_params=self.params)
         self.__init_object_handler(self.db_controller, params['objects_handler'])
 
         self.autoclose = self.params['controller'].get("autoclose", False)
@@ -189,7 +191,7 @@ class Controller:
             detector.release()
         for source in self.sources:
             source.release()
-        print('Everything released')
+        print('Everything in controller released')
 
     def set_current_main_widget_size(self, width, height):
         self.current_main_widget_size = [width, height]
@@ -200,8 +202,8 @@ class Controller:
         self.obj_handler.set_params(**params)
         self.obj_handler.init()
 
-    def _init_db_controller(self, params):
-        self.db_controller = DatabaseControllerPg()
+    def _init_db_controller(self, params, system_params):
+        self.db_controller = DatabaseControllerPg(system_params)
         self.db_controller.set_params(**params)
         self.db_controller.init()
 
@@ -249,3 +251,6 @@ class Controller:
         self.visualizer.source_id_name_table = self.source_id_name_table
         self.visualizer.source_video_duration = self.source_video_duration
         self.visualizer.init()
+
+    # def _save_video_duration(self):
+    #     self.db_controller.update_video_dur(self.source_video_duration)
