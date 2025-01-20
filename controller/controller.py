@@ -102,7 +102,7 @@ class Controller:
                 det_debug_info = debug_info["detectors"][detector.get_id()] = dict()
                 detector.get_debug_info(det_debug_info)
                 source_ids = detector.get_source_ids()
-                for preprocessed_frame in processing_frames:
+                for preprocessed_frame in preprocessing_frames:
                     if preprocessed_frame.source_id in source_ids:
                         if detector.put(preprocessed_frame):
                             processing_frames.append(preprocessed_frame)

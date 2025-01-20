@@ -28,9 +28,9 @@
       "save" : false,
       "stride_type": "frames",
       "vid_stride": 1,
-      "classes" : [0],
+      "classes" : [0, 1, 2, 3, 5, 6, 7, 9, 11, 12],
       "num_detection_threads": 3,
-      "roi": [[[1790, 0, 500, 400], [1700, 0, 1000, 1045], [1500, 0, 2340, 2160]]]
+      "roi": [[[0, 0, 1920, 1080], [500, 265, 900, 400], [700, 400, 550, 200]]]
     }
   ],
   "trackers":[
@@ -64,12 +64,12 @@
     "password": "postgres",
     "database_name": "evil_eye_db",
     "host_name": "localhost",
-    "port": 5432,
+    "port": 5433,
     "default_database_name": "postgres",
     "default_password": "postgres",
     "default_user_name": "postgres",
     "default_host_name": "localhost",
-    "default_port": 5432,
+    "default_port": 5433,
     "preview_height": 150,
     "preview_width": 300,
     "tables": {
@@ -119,7 +119,7 @@
         "camera_full_address": "text REFERENCES camera_information (full_address) ON DELETE CASCADE"
       }
     },
-    "image_dir": "/home/user/EvilEyeData/",
+    "image_dir": "/media/user/Data/EvilEyeCarData",
     "create_new_project": true
   },
   "objects_handler": {
