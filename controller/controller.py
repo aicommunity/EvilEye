@@ -1,6 +1,7 @@
 import sys
 import threading
 import capture
+import preprocessing
 from object_detector import object_detection_yolo
 from object_detector.object_detection_base import DetectionResultList
 from object_tracker import object_tracking_botsort
@@ -28,6 +29,7 @@ class Controller:
         self.source_id_name_table = dict()
         self.source_video_duration = dict()
         self.source_last_processed_frame_id = dict()
+        self.preprocessors = []
         self.detectors = []
         self.trackers = []
         self.obj_handler = None
@@ -38,6 +40,7 @@ class Controller:
         self.class_names = list()
 
         self.captured_frames: list[CaptureImage] = []
+        self.preprocessed_frames: list[CaptureImage] = []
         self.detection_results: list[DetectionResultList] = []
         self.tracking_results: list[TrackingResultList] = []
         self.run_flag = False
@@ -79,18 +82,30 @@ class Controller:
 
             complete_capture_it = timer()
 
-            # Process detectors
+            preprocessing_frames = []
+
+            for preprocessor in self.preprocessors:
+                source_ids = preprocessor.get_source_ids()
+                for capture_frame in self.captured_frames:
+                    if capture_frame.source_id in source_ids:
+                        preprocessor.put(capture_frame)
+                prep_result = preprocessor.get()
+                if prep_result:
+                    preprocessing_frames.append(prep_result)
+
             processing_frames = []
+
+            # Process detectors
             self.detection_results = []
             debug_info["detectors"] = dict()
             for detector in self.detectors:
                 det_debug_info = debug_info["detectors"][detector.get_id()] = dict()
                 detector.get_debug_info(det_debug_info)
                 source_ids = detector.get_source_ids()
-                for capture_frame in self.captured_frames:
-                    if capture_frame.source_id in source_ids:
-                        if detector.put(capture_frame):
-                            processing_frames.append(capture_frame)
+                for preprocessed_frame in processing_frames:
+                    if preprocessed_frame.source_id in source_ids:
+                        if detector.put(preprocessed_frame):
+                            processing_frames.append(preprocessed_frame)
                 detection_result = detector.get()
                 if detection_result:
                     self.detection_results.append(detection_result)
@@ -133,10 +148,11 @@ class Controller:
             # print(f"Time: cap[{complete_capture_it-begin_it}], det[{complete_detection_it-complete_capture_it}], track[{complete_tracking_it-complete_detection_it}], read=[{complete_read_objects_it-complete_tracking_it}], vis[{end_it-complete_read_objects_it}] = {end_it-begin_it} secs, sleep {sleep_seconds} secs")
             time.sleep(sleep_seconds)
 
-
     def start(self):
         for source in self.sources:
             source.start()
+        for preprocessor in self.preprocessors:
+            preprocessor.start()
         for detector in self.detectors:
             detector.start()
         for tracker in self.trackers:
@@ -158,6 +174,8 @@ class Controller:
             tracker.stop()
         for detector in self.detectors:
             detector.stop()
+        for preprocessor in self.preprocessors:
+            preprocessor.stop()
         for source in self.sources:
             source.stop()
         print('Everything in controller stopped')
@@ -172,6 +190,7 @@ class Controller:
             pass
 
         self._init_captures(self.params['sources'])
+        self._init_preprocessors(self.params['preprocessors'])
         self._init_detectors(self.params['detectors'])
         self._init_trackers(self.params['trackers'])
         self._init_visualizer(self.params['visualizer'])
@@ -189,6 +208,8 @@ class Controller:
             tracker.release()
         for detector in self.detectors:
             detector.release()
+        for preprocessor in self.preprocessors:
+            preprocessor.release()
         for source in self.sources:
             source.release()
         print('Everything in controller released')
@@ -223,6 +244,17 @@ class Controller:
                 self.source_id_name_table[source_id] = source_name
                 self.source_video_duration[source_id] = camera.video_duration
                 self.source_last_processed_frame_id[source_id] = 0
+
+    def _init_preprocessors(self, params):
+        num_preps = len(params)
+        for i in range(num_preps):
+            prep_params = params[i]
+
+            preprocessor = preprocessing.PreprocessingVehicle()  # Todo: need module selection by config
+            preprocessor.set_params(**prep_params)
+            preprocessor.set_id(i)
+            preprocessor.init()
+            self.preprocessors.append(preprocessor)
 
     def _init_detectors(self, params):
         num_det = len(params)
