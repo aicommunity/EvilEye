@@ -2,7 +2,6 @@
   "sources": [
      {
       "source": "VideoFile",
-      "camera": "/home/user/Videos/12638-video.mp4",
       "apiPreference": "CAP_FFMPEG",
       "split": false,
       "num_split": 0,
@@ -15,7 +14,6 @@
   "detectors":[
     {
       "source_ids": [0],
-      "model": "yolov8n.pt",
       "show" : false,
       "inference_size": 1280,
       "device": null,
@@ -31,7 +29,6 @@
   "trackers":[
     {
       "source_ids": [0],
-      "fps": 5,
       "botsort_cfg": {
         "appearance_thresh": 0.25, 
         "gmc_method": "sparseOptFlow", 
@@ -52,19 +49,40 @@
     "visual_buffer_num_frames": 10,
     "source_ids": [0],
     "fps": [5, 5],
+    "gui_enabled": false,
     "show_debug_info": true
+  },
+  "events_detectors": {
+    "CamEventsDetector": {},
+    "PerimeterEventsDetector": {
+      "sources": {
+        "0": [["16:00:00", "18:30:40"], ["18:00:00", "20:00:00"]]
+      }
+    }
+  },
+  "events_processor": {
+
+  },
+  "database_adapters": {
+    "DatabaseAdapterObjects": {
+      "table_name": "objects"
+    },
+    "DatabaseAdapterCamEvents": {
+      "table_name": "camera_events",
+      "event_name": "CameraEvent"
+    },
+    "DatabaseAdapterPerimeterEvents": {
+      "table_name": "perimeter_events",
+      "event_name": "PerimeterEvent"
+    }
   },
   "database": {
     "user_name": "postgres",
-    "password": "",
     "database_name": "evil_eye_db",
     "host_name": "localhost",
-    "port": 5433,
     "default_database_name": "postgres",
-    "default_password": "",
     "default_user_name": "postgres",
     "default_host_name": "localhost",
-    "default_port": 5433,
     "preview_height": 150,
     "preview_width": 300,
     "tables": {
@@ -112,9 +130,32 @@
         "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE",
         "job_id": "integer REFERENCES jobs (job_id) ON DELETE CASCADE",
         "camera_full_address": "text REFERENCES camera_information (full_address) ON DELETE CASCADE"
+      },
+      "camera_events": {
+        "event_id": "integer UNIQUE NOT NULL",
+        "event_type": "text",
+        "camera_full_address": "text REFERENCES camera_information (full_address) ON DELETE CASCADE",
+        "time_stamp": "timestamp NOT NULL",
+        "status": "boolean NOT NULL",
+        "job_id": "integer REFERENCES jobs (job_id) ON DELETE CASCADE",
+        "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE",
+        "PRIMARY KEY": "(camera_full_address, time_stamp, event_type)"
+      },
+      "perimeter_events": {
+        "event_id": "integer UNIQUE NOT NULL",
+        "source_id": "integer",
+        "time_stamp": "timestamp",
+        "time_obj_detected": "timestamp",
+        "time_lost": "timestamp",
+        "preview_path": "text",
+        "lost_preview_path": "text",
+        "object_id": "integer",
+        "job_id": "integer",
+        "project_id": "integer",
+        "FOREIGN KEY": "(object_id, time_obj_detected, time_lost, job_id, project_id, preview_path, lost_preview_path) REFERENCES objects (object_id, time_stamp, time_lost, job_id, project_id, preview_path, lost_preview_path) ON DELETE CASCADE",
+        "PRIMARY KEY": "(source_id, object_id, time_stamp, job_id, project_id)"
       }
     },
-    "image_dir": "/home/user/EvilEyeData/",
     "create_new_project": true
   },
   "objects_handler": {
@@ -124,7 +165,6 @@
   },
   "controller": {
     "autoclose": false,
-    "fps": 5,
     "class_names": [ "person",
                      "bicycle",
                      "car",

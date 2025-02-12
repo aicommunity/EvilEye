@@ -1,18 +1,17 @@
 import datetime
 import os
-from psycopg2 import sql
-from utils import event
-from utils import utils
-from PyQt6.QtCore import QDate, Qt
+from utils import threading_events
+from PyQt6.QtCore import QDate
 from PyQt6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QTabWidget, QPushButton,
-    QSizePolicy, QDateTimeEdit, QHeaderView, QComboBox, QTableView, QStyledItemDelegate,
-    QTableWidget, QTableWidgetItem, QApplication, QAbstractItemView, QMessageBox
+    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton,
+    QDateTimeEdit, QHeaderView, QComboBox, QTableView, QStyledItemDelegate, QMessageBox
 )
 from PyQt6.QtGui import QPixmap, QPainter, QPen
-from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QPoint, QSize, QVariant, QModelIndex
+from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QModelIndex
 from PyQt6.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
-from visualizer.table_updater_view import TableUpdater
+from visualization_modules.table_updater_view import TableUpdater
+from visualization_modules.journal_adapters.jadapter_cam_events import JournalAdapterCamEvents
+from visualization_modules.journal_adapters.jadapter_perimeter_events import JournalAdapterPerimeterEvents
 
 
 class ImageDelegate(QStyledItemDelegate):
@@ -64,29 +63,22 @@ class ImageWindow(QLabel):
         self.hide()
         event.accept()
 
-# class CustomModel(QSqlQueryModel):
-#     def data(self, idx: QModelIndex, role: int):
-#         if not idx.isValid():
-#             return QVariant()
-#         if idx.column() == 2:
-#             preview_path = super().data(idx, Qt.ItemDataRole.DisplayRole)
-#             print(preview_path)
-#             pixmap = QPixmap()
-#             if preview_path:
-#                 pixmap.load(preview_path)
-#             return pixmap
-#         return super().data(idx, role)
 
-
-class HandlerJournal(QWidget):
+class EventsJournal(QWidget):
     retrieve_data_signal = pyqtSignal()
 
     preview_width = 300
     preview_height = 150
 
-    def __init__(self, db_controller, table_name, params, table_params, parent=None):
+    def __init__(self, journal_adapters: list, db_controller, table_name, params, table_params, parent=None):
         super().__init__()
         self.db_controller = db_controller
+        self.journal_adapters = journal_adapters
+        # Сопоставляет имена событий с соответствующими им адаптерами
+        self.events_adapters = {adapter.get_event_name(): adapter for adapter in self.journal_adapters}
+        # Сопоставляет имена событий с именами таблиц БД
+        self.events_tables = {adapter.get_event_name(): adapter.get_table_name() for adapter in self.journal_adapters}
+
         self.table_updater = TableUpdater(table_name, self._insert_rows, self._update_on_lost)
         self.update_timer = QTimer()
         self.update_timer.setSingleShot(True)
@@ -141,7 +133,7 @@ class HandlerJournal(QWidget):
         if not self.db.open():
             QMessageBox.critical(
                 None,
-                "QTableView Example - Error!",
+                "Events journal - Error!",
                 "Database Error: %s" % self.db.lastError().databaseText(),
             )
 
@@ -156,39 +148,39 @@ class HandlerJournal(QWidget):
         h_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         h_header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         h_header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        h_header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
-        header.setDefaultSectionSize(HandlerJournal.preview_height)
-        h_header.setDefaultSectionSize(HandlerJournal.preview_width)
+        # header.setDefaultSectionSize(EventsJournal.preview_height)
+        h_header.setDefaultSectionSize(EventsJournal.preview_width)
 
         self.image_delegate = ImageDelegate(None, image_dir=self.image_dir)
         self.date_delegate = DateTimeDelegate(None)
-        self.table.setItemDelegateForColumn(3, self.date_delegate)
-        self.table.setItemDelegateForColumn(4, self.date_delegate)
+        self.table.setItemDelegateForColumn(1, self.date_delegate)
+        self.table.setItemDelegateForColumn(2, self.date_delegate)
+        self.table.setItemDelegateForColumn(4, self.image_delegate)
         self.table.setItemDelegateForColumn(5, self.image_delegate)
-        self.table.setItemDelegateForColumn(6, self.image_delegate)
 
     def _setup_model(self):
         self.model = QSqlQueryModel()
 
+        query_string = ''
+        for adapter in self.journal_adapters:
+            adapter_query = adapter.select_query()
+            query_string += adapter_query + ' UNION '
+        query_string += query_string.removesuffix('UNION ') + ('WHERE time_stamp BETWEEN :start AND :finish'
+                                                               ' ORDER BY time_stamp DESC;')
+        print(query_string)
         query = QSqlQuery()
-        query.prepare('SELECT source_name, CAST(\'Event\' AS text) AS event_type, '
-                      '\'Object Id=\' || object_id || \'; class: \' || class_id || \'; conf: \' || confidence AS information,'
-                      'time_stamp, time_lost, preview_path, lost_preview_path FROM objects '
-                      'WHERE time_stamp BETWEEN :start AND :finish')
-        self.current_start_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.min)
-        self.current_end_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.max)
+        query.prepare(query_string)
         query.bindValue(":start", self.current_start_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
         query.bindValue(":finish", self.current_end_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
         query.exec()
 
         self.model.setQuery(query)
-        self.model.setHeaderData(0, Qt.Orientation.Horizontal, self.tr('Name'))
-        self.model.setHeaderData(1, Qt.Orientation.Horizontal, self.tr('Event'))
-        self.model.setHeaderData(2, Qt.Orientation.Horizontal, self.tr('Information'))
-        self.model.setHeaderData(3, Qt.Orientation.Horizontal, self.tr('Time'))
-        self.model.setHeaderData(4, Qt.Orientation.Horizontal, self.tr('Time lost'))
-        self.model.setHeaderData(5, Qt.Orientation.Horizontal, self.tr('Preview'))
-        self.model.setHeaderData(6, Qt.Orientation.Horizontal, self.tr('Lost preview'))
+        self.model.setHeaderData(0, Qt.Orientation.Horizontal, self.tr('Event'))
+        self.model.setHeaderData(1, Qt.Orientation.Horizontal, self.tr('Time'))
+        self.model.setHeaderData(2, Qt.Orientation.Horizontal, self.tr('Time lost'))
+        self.model.setHeaderData(3, Qt.Orientation.Horizontal, self.tr('Information'))
+        self.model.setHeaderData(4, Qt.Orientation.Horizontal, self.tr('Preview'))
+        self.model.setHeaderData(5, Qt.Orientation.Horizontal, self.tr('Lost preview'))
 
     def _setup_filter(self):
         self.filters = QComboBox()
@@ -250,7 +242,7 @@ class HandlerJournal(QWidget):
     @pyqtSlot(QModelIndex)
     def _display_image(self, index):
         col = index.column()
-        if col != 5 and col != 6:
+        if col != 4 and col != 5:
             return
 
         path = index.data()
@@ -292,7 +284,7 @@ class HandlerJournal(QWidget):
 
     @pyqtSlot()
     def _notify_db_update(self):
-        event.notify('handler new object')
+        threading_events.notify('handler new object')
 
     @pyqtSlot()
     def start_time_update(self):
@@ -361,12 +353,16 @@ class HandlerJournal(QWidget):
         self.current_end_time = finish_time
         fields = self.db_table_params.keys()
         query = QSqlQuery()
-        query.prepare('SELECT source_name, CAST(\'Event\' AS text) AS event_type, '
-                      '\'Object Id=\' || object_id || \'; class: \' || class_id || \'; conf: \' || confidence AS information,'
-                      'time_stamp, time_lost, preview_path, lost_preview_path FROM objects '
-                      'WHERE time_stamp BETWEEN :start AND :finish ORDER BY time_stamp DESC')
-        query.bindValue(":start", start_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
-        query.bindValue(":finish", finish_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
+        query_string = ''
+        for adapter in self.journal_adapters:
+            adapter_query = adapter.select_query()
+            query_string += adapter_query + ' UNION '
+        query_string = query_string.removesuffix(' UNION ')
+        query_string += ' WHERE time_stamp BETWEEN :start AND :finish ORDER BY time_stamp DESC;'
+        print(query_string)
+        query.prepare(query_string)
+        query.bindValue(":start", self.current_start_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
+        query.bindValue(":finish", self.current_end_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
         query.exec()
         self.model.setQuery(query)
 
@@ -375,10 +371,14 @@ class HandlerJournal(QWidget):
             return
         # fields = self.db_table_params.keys()
         query = QSqlQuery()
-        query.prepare('SELECT source_name, CAST(\'Event\' AS text) AS event_type, '
-                      '\'Object Id=\' || object_id || \'; class: \' || class_id || \'; conf: \' || confidence AS information,'
-                      'time_stamp, time_lost, preview_path, lost_preview_path FROM objects '
-                      'WHERE time_stamp BETWEEN :start AND :finish ORDER BY time_stamp DESC')
+        query_string = ''
+        for adapter in self.journal_adapters:
+            adapter_query = adapter.select_query()
+            query_string += adapter_query + ' UNION '
+        query_string = query_string.removesuffix(' UNION ')
+        query_string += ' WHERE time_stamp BETWEEN :start AND :finish ORDER BY time_stamp DESC;'
+        print(query_string)
+        query.prepare(query_string)
         self.current_start_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.min)
         self.current_end_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.max)
         query.bindValue(":start", self.current_start_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
@@ -400,7 +400,7 @@ class HandlerJournal(QWidget):
         print('Timer_started')
 
     def close(self):
-        self._update_job_first_last_records()
+        # self._update_job_first_last_records()
         self.db.removeDatabase(self.db_name)
 
     def _create_dict_source_name_address_id(self):
@@ -413,20 +413,25 @@ class HandlerJournal(QWidget):
                 camera_address_id_name[src_name] = (src_id, address)
         return camera_address_id_name
 
-    def _update_job_first_last_records(self):
-        job_id = self.db_controller.get_job_id()
-        update_query = ''
-        data = None
+    # def _update_job_first_last_records(self):
+    #     job_id = self.db_controller.get_job_id()
+    #     update_query = ''
+    #     data = None
+    #
+    #     # Получаем номер последней записи в данном запуске
+    #     last_obj_query = sql.SQL('''SELECT MAX(record_id) from objects WHERE job_id = %s''')
+    #     records = self.db_controller.query(last_obj_query, (job_id,))
+    #     last_record = records[0][0]
+    #     if not last_record:  # Обновляем информацию о последней записи, если записей не было, то -1
+    #         update_query = sql.SQL('UPDATE jobs SET first_record = -1, last_record = -1 WHERE job_id = %s;')
+    #         data = (job_id,)
+    #     else:
+    #         update_query = sql.SQL('UPDATE jobs SET last_record = %s WHERE job_id = %s;')
+    #         data = (last_record, job_id)
+    #
+    #     self.db_controller.query(update_query, data)
 
-        # Получаем номер последней записи в данном запуске
-        last_obj_query = sql.SQL('''SELECT MAX(record_id) from objects WHERE job_id = %s''')
-        records = self.db_controller.query(last_obj_query, (job_id,))
-        last_record = records[0][0]
-        if not last_record:  # Обновляем информацию о последней записи, если записей не было, то -1
-            update_query = sql.SQL('UPDATE jobs SET first_record = -1, last_record = -1 WHERE job_id = %s;')
-            data = (job_id,)
-        else:
-            update_query = sql.SQL('UPDATE jobs SET last_record = %s WHERE job_id = %s;')
-            data = (last_record, job_id)
 
-        self.db_controller.query(update_query, data)
+if __name__ == '__main__':
+    query = QSqlQuery("SELECT country FROM artist")
+    query2 = QSqlQuery()

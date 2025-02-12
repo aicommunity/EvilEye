@@ -1,9 +1,12 @@
+import copy
+import datetime
 from abc import ABC, abstractmethod
 import core
 import threading
 from queue import Queue
 from enum import Enum
 from urllib.parse import urlparse
+from threading import Lock
 
 class CaptureDeviceType(Enum):
     VideoFile = "VideoFile"
@@ -19,6 +22,7 @@ class CaptureImage:
         self.current_video_position = None
         self.time_stamp = None
         self.image = None
+        self.subscribers = []
 
 
 class VideoCaptureBase(core.EvilEyeBase):
@@ -44,11 +48,18 @@ class VideoCaptureBase(core.EvilEyeBase):
         self.video_length = None
         self.video_current_frame = None
         self.video_current_position = None
+        self.is_working = False
+        self.conn_mutex = Lock()
+        self.disconnects = []
+        self.reconnects = []
 
         self.capture_thread = None
 
     def is_opened(self) -> bool:
         return False
+
+    def is_working(self) -> bool:
+        return self.is_working
 
     def is_finished(self) -> bool:
         return self.finished
@@ -100,6 +111,18 @@ class VideoCaptureBase(core.EvilEyeBase):
             self.password = None
             self.pure_url = None
 
+    def get_disconnects_info(self) -> list[tuple[str, datetime.datetime, bool]]:
+        with self.conn_mutex:
+            disconnects = copy.deepcopy(self.disconnects)
+            self.disconnects = []
+            return disconnects
+
+    def get_reconnects_info(self) -> list[tuple[str, datetime.datetime, bool]]:
+        with self.conn_mutex:
+            reconnects = copy.deepcopy(self.reconnects)
+            self.reconnects = []
+            return reconnects
+
     @staticmethod
     def reconstruct_url(url_parsed_info, username, password):
         processed_username = username if (username and username != "") else None
@@ -114,6 +137,9 @@ class VideoCaptureBase(core.EvilEyeBase):
         reconstructed_url = url_parsed_info._replace(netloc=f"{processed_username}:{processed_password}@{url_parsed_info.hostname}")
         return reconstructed_url.geturl()
 
+    def subscribe(self, *subscribers):
+        self.subscribers = list(subscribers)
+
     @abstractmethod
     def _capture_frames(self):
         pass
@@ -121,3 +147,4 @@ class VideoCaptureBase(core.EvilEyeBase):
     @abstractmethod
     def get_frames_impl(self) -> list[CaptureImage]:
         pass
+

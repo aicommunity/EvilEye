@@ -8,8 +8,11 @@ import sys
 from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
 from pathlib import Path
 from database_controller import database_controller_pg
-from visualizer import handler_journal_view
-from visualizer import handler_journal
+from visualization_modules import handler_journal_view
+from visualization_modules import handler_journal
+from visualization_modules import events_journal
+from visualization_modules.journal_adapters.jadapter_perimeter_events import JournalAdapterPerimeterEvents
+from visualization_modules.journal_adapters.jadapter_cam_events import JournalAdapterCamEvents
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
@@ -18,19 +21,31 @@ class DatabaseJournalWindow(QWidget):
     def __init__(self, params):
         super().__init__()
         self.params = params
+        self.adapter_params = self.params['database_adapters']
         self.db_params = self.params['database']
+
         self.db_controller = database_controller_pg.DatabaseControllerPg(params, controller_type='Receiver')
         self.db_controller.set_params(**self.db_params)
         self.db_controller.init()
         self.db_controller.connect()
         self.tables = self.db_params['tables']
+
+        self.cam_events_adapter = JournalAdapterCamEvents()
+        self.cam_events_adapter.set_params(**self.adapter_params['DatabaseAdapterCamEvents'])
+        self.cam_events_adapter.init()
+        self.perimeter_events_adapter = JournalAdapterPerimeterEvents()
+        self.perimeter_events_adapter.set_params(**self.adapter_params['DatabaseAdapterPerimeterEvents'])
+        self.perimeter_events_adapter.init()
+
         self.setWindowTitle('DB Journal')
         self.resize(900, 600)
 
         self.tabs = QTabWidget()
         self.tabs.addTab(handler_journal_view.HandlerJournal(self.db_controller, 'objects', self.params,
                                                              self.tables['objects'], parent=self), 'Handler journal')
-        self.tabs.addTab(QWidget(), 'Alarms journal')
+        self.tabs.addTab(events_journal.EventsJournal([self.cam_events_adapter, self.perimeter_events_adapter],
+                                                      self.db_controller, 'objects', self.params,
+                                                      self.tables['objects'], parent=self), 'Alarms journal')
 
         self.layout = QVBoxLayout()
         self.layout.addWidget(self.tabs)

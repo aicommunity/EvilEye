@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import QApplication
 
-from visualizer.main_window import MainWindow
+from visualization_modules.main_window import MainWindow
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
@@ -16,7 +16,7 @@ if __name__ == "__main__":
                         type=str, default=None, nargs="?")
     args = parser.parse_args()
     if args.fullpath is None:
-        params_file = open('samples/visual_sample.json')
+        params_file = open('samples/video_file.json')
     else:
         params_file = open(args.fullpath)
     data = json.load(params_file)

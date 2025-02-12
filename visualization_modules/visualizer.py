@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
 
-from visualizer.video_thread import VideoThread
+from visualization_modules.video_thread import VideoThread
 import core
 import copy
 from capture.video_capture_base import CaptureImage

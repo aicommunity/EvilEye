@@ -1,14 +1,14 @@
 from abc import ABC, abstractmethod
 import datetime
-from visualizer.video_thread import VideoThread
+from visualization_modules.video_thread import VideoThread
 import core
 from psycopg2 import sql
 import copy
 from capture.video_capture_base import CaptureImage
 from objects_handler.objects_handler import ObjectResultList
 from timeit import default_timer as timer
-from visualizer.table_data_thread import TableDataThread
-from utils import event
+from visualization_modules.table_data_thread import TableDataThread
+from utils import threading_events
 
 
 class TableUpdater(core.EvilEyeBase):
@@ -47,8 +47,8 @@ class TableUpdater(core.EvilEyeBase):
         self.data_thread = TableDataThread(self.fps, self.db_controller)
         self.data_thread.append_record_signal.connect(self.qt_slot_insert)
         self.data_thread.update_record_signal.connect(self.qt_slot_update)
-        event.subscribe('handler new object', self.update)
-        event.subscribe('handler update object', self.update_on_lost)
+        threading_events.subscribe('handler new object', self.update)
+        threading_events.subscribe('handler update object', self.update_on_lost)
 
     def set_params_impl(self):
         pass

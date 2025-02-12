@@ -1,0 +1,99 @@
+import datetime
+import time
+
+from events_detectors.event_perimeter import PerimeterEvent
+from threading import Thread
+from queue import Queue
+from events_detectors.events_detector import EventsDetector
+from datetime import datetime
+
+
+class PerimeterEventsDetector(EventsDetector):
+    def __init__(self, objects_handler):
+        super().__init__()
+        self.sources = set()
+        self.sources_periods = dict()  # Айди источника: периоды времени
+        self.periods = None
+        self.obj_handler = objects_handler
+
+        self.active_obj_ids = dict()  # Словарь для хранения айди активных объектов
+
+    def process(self):
+        while self.run_flag:
+            time.sleep(0.01)
+            events = []
+            objects, lost_objects = self.queue_in.get()
+            if objects is None or lost_objects is None:
+                continue
+            for source_id, source_objects in objects:  # Проходим по объектам от каждого источника в отдельности
+                if source_id not in self.sources:
+                    continue
+                if not source_objects.objects:
+                    continue
+                time_periods = self.sources_periods[source_id]
+                for obj in source_objects.objects:  # Для каждого объекта
+                    timestamp = datetime.now()
+                    time_detected = obj.time_stamp
+                    for i in range(len(time_periods)):  # Проходим по периодам, в которые запрещено появляться
+                        start_time = time_periods[i][0]
+                        end_time = time_periods[i][1]
+                        if obj.object_id not in self.active_obj_ids[source_id]:  # Если объект ранее не появлялся в зоне
+                            if start_time <= time_detected.time() <= end_time or start_time <= timestamp.time() <= end_time:
+                                self.active_obj_ids[source_id].add(obj.object_id)
+                                event = PerimeterEvent(timestamp, 'Alarm', obj)
+                                print(f'New event: {obj.last_image.frame_id}, Event: {event}')
+                                events.append(event)
+
+            for source_id, source_objects in lost_objects:  # Определяем завершившиеся события
+                if source_id not in self.sources:
+                    continue
+                if not source_objects.objects:
+                    continue
+                for obj in source_objects.objects:  # Для каждого объекта
+                    if obj.object_id in self.active_obj_ids[source_id]:  # Если объект был активен в запрещенный период
+                        timestamp = datetime.now()
+                        self.active_obj_ids[source_id].remove(obj.object_id)
+                        event = PerimeterEvent(timestamp, 'Alarm', obj, is_finished=True)
+                        print(f'Finished event: {obj.last_image.frame_id}, Event: {event}')
+                        events.append(event)
+            if events:
+                self.queue_out.put(events)
+
+    def update(self):
+        active_objs = []
+        lost_objs = []
+        for source_id in self.sources:
+            active_objs.append((source_id, self.obj_handler.get('active', source_id)))
+            lost_objs.append((source_id, self.obj_handler.get('lost', source_id)))
+        self.queue_in.put((active_objs, lost_objs))
+
+    def set_params_impl(self):
+        self.sources = {int(key) for key in self.params['sources'].keys()}
+        self.active_obj_ids = {source: set() for source in self.sources}
+
+        sources_periods = {int(key): value for key, value in self.params['sources'].items()}
+        for source in sources_periods:  # Перевод периодов времени из строк к типу datetime
+            periods = []
+            for period in sources_periods[source]:
+                start_time = datetime.strptime(period[0], '%H:%M:%S').time()
+                end_time = datetime.strptime(period[1], '%H:%M:%S').time()
+                periods.append((start_time, end_time))
+            self.sources_periods[source] = periods
+
+    def reset_impl(self):
+        pass
+
+    def release_impl(self):
+        pass
+
+    def default(self):
+        pass
+
+    def init_impl(self):
+        pass
+
+    def stop(self):
+        self.run_flag = False
+        self.queue_in.put((None, None))
+        self.processing_thread.join()
+

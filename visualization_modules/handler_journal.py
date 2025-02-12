@@ -1,7 +1,7 @@
 import datetime
 import os
 from psycopg2 import sql
-from utils import event
+from utils import threading_events
 from utils import utils
 from PyQt6.QtCore import QDate, Qt
 from PyQt6.QtWidgets import (
@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QPixmap, QPainter, QPen
 from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QPoint, QSize
-from visualizer.table_updater import TableUpdater
+from visualization_modules.table_updater import TableUpdater
 
 
 class ImageWindow(QLabel):
@@ -242,7 +242,7 @@ class HandlerJournal(QWidget):
 
     @pyqtSlot()
     def _notify_db_update(self):
-        event.notify('handler new object')
+        threading_events.notify('handler new object')
 
     @pyqtSlot()
     def start_time_update(self):

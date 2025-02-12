@@ -5,7 +5,7 @@ import os
 import datetime
 import core
 from capture.video_capture_base import CaptureImage
-from utils import event
+from utils import threading_events
 from utils.utils import ObjectResultEncoder
 from queue import Queue
 from threading import Thread
@@ -14,6 +14,7 @@ from object_tracker.object_tracking_base import TrackingResult
 from object_tracker.object_tracking_base import TrackingResultList
 from timeit import default_timer as timer
 from .object_result import ObjectResultHistory, ObjectResult, ObjectResultList
+from database_controller.db_adapter_objects import DatabaseAdapterObjects
 
 '''
 Модуль работы с объектами ожидает данные от детектора в виде dict: {'cam_id': int, 'objects': list, 'actual': bool}, 
@@ -28,7 +29,7 @@ from .object_result import ObjectResultHistory, ObjectResult, ObjectResultList
 
 
 class ObjectsHandler(core.EvilEyeBase):
-    def __init__(self, db_controller):
+    def __init__(self, db_controller, db_adapter):
         super().__init__()
         # Очередь для потокобезопасного приема данных от каждой камеры
         self.objs_queue = Queue()
@@ -40,6 +41,7 @@ class ObjectsHandler(core.EvilEyeBase):
         self.lost_thresh = 5  # Порог перевода (в кадрах) в потерянные объекты
 
         self.db_controller = db_controller
+        self.db_adapter = db_adapter
         self.db_params = self.db_controller.get_params()
         self.cameras_params = self.db_controller.get_cameras_params()
         # Условие для блокировки других потоков
@@ -50,6 +52,8 @@ class ObjectsHandler(core.EvilEyeBase):
         self.object_id_counter = 1
         self.lost_store_time_secs = 10
         self.last_sources = dict()
+
+        self.subscribers = []
 
     def default(self):
         pass
@@ -101,6 +105,9 @@ class ObjectsHandler(core.EvilEyeBase):
 
         return result
 
+    def subscribe(self, *subscribers):
+        self.subscribers = list(subscribers)
+
     def _get_active(self, cam_id):
         source_objects = ObjectResultList()
         for obj in self.active_objs.objects:
@@ -145,6 +152,8 @@ class ObjectsHandler(core.EvilEyeBase):
                 self.condition.release()
                 self.condition.notify_all()
             self.objs_queue.task_done()
+            for subscriber in self.subscribers:
+                subscriber.update()
 
     def _handle_active(self, tracking_results: TrackingResultList, image):
         for active_obj in self.active_objs.objects:
@@ -180,14 +189,18 @@ class ObjectsHandler(core.EvilEyeBase):
                 self.object_id_counter += 1
                 obj.track = track
                 obj.history.append(obj.get_current_history_element())
-                height, width, _ = image.image.shape
-                start_prepare_it = timer()
-                fields, data, preview_path, frame_path = self._prepare_for_saving(obj, width, height)
-                end_prepare_it = timer()
+                # start_prepare_it = timer()
+                # width, height,_ = image.image.shape
+                # fields, data, preview_path, frame_path = self._prepare_for_saving(obj, width, height)
+                # end_prepare_it = timer()
+                # start_insert_it = timer()
+                # self.db_controller.insert('objects', fields, data, preview_path, frame_path, image)
+                # end_insert_it = timer()
                 start_insert_it = timer()
-                self.db_controller.insert('objects', fields, data, preview_path, frame_path, image)
+                self.db_adapter.insert(obj)
                 end_insert_it = timer()
-                # print(f'Insert time: {end_insert_it - start_insert_it}; Preparation time: {end_prepare_it-start_prepare_it}')
+                # print(f'Insert time: {end_insert_it - start_insert_it};')
+                # print(f'Insert time: {end_insert_it - start_insert_it}; Preparation time: {end_prepare_it - start_prepare_it}')
                 self.active_objs.objects.append(obj)
 
         filtered_active_objects = []
@@ -198,15 +211,19 @@ class ObjectsHandler(core.EvilEyeBase):
                 active_obj.lost_frames += 1
                 if active_obj.lost_frames >= self.lost_thresh:
                     active_obj.time_lost = datetime.datetime.now()
-                    height, width, _ = active_obj.last_image.image.shape
-                    start_prepare_it = timer()
-                    fields, data, preview_path, frame_path = self._prepare_for_updating(active_obj, width, height)
-                    end_prepare_it = timer()
+                    # width, height,_ = active_obj.last_image.image.shape
+                    # start_prepare_it = timer()
+                    # fields, data, preview_path, frame_path = self._prepare_for_updating(active_obj, width, height)
+                    # end_prepare_it = timer()
+                    # start_update_it = timer()
+                    # self.db_controller.update('objects', fields, data, active_obj.object_id,
+                                              # preview_path, frame_path, active_obj.last_image)
+                    # end_update_it = timer()
                     start_update_it = timer()
-                    self.db_controller.update('objects', fields, data, active_obj.object_id,
-                                              preview_path, frame_path, active_obj.last_image)
+                    self.db_adapter.update(active_obj)
                     end_update_it = timer()
-                    # print(f'Update time: {end_update_it - start_update_it}; Preparation time:{end_prepare_it-start_prepare_it}')
+                    # print(f'Update time: {end_update_it - start_update_it};')
+                    # print(f'Update time: {end_update_it - start_update_it}; Preparation time:{end_prepare_it - start_prepare_it}')
                     # updated_fields_data = self.db_controller.update('emerged', fields=['time_lost', "lost_preview_path",
                     #                                                                    'lost_frame_path', 'lost_bounding_box'],
                     #                                                 obj_id=active_obj.object_id,
