@@ -3,7 +3,7 @@ import os
 from psycopg2 import sql
 from utils import threading_events
 from utils import utils
-from PyQt6.QtCore import QDate, Qt
+from PyQt6.QtCore import QDate, Qt, QDateTime
 from PyQt6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout, QTabWidget, QPushButton,
     QSizePolicy, QDateTimeEdit, QHeaderView, QComboBox, QTableView, QStyledItemDelegate,
@@ -118,9 +118,6 @@ class HandlerJournal(QWidget):
         self._setup_filter()
         self._setup_table()
         self._setup_time_layout()
-        # print(self.search_button.mapToParent(self.search_button.pos()).x())
-        # self.filters_window = FiltersWindow(list(self.source_name_id.keys()),
-        #                                     self._filter_by_camera)
         self.filter_displayed = False
 
         self.layout = QVBoxLayout()
@@ -224,7 +221,7 @@ class HandlerJournal(QWidget):
         self.start_time.setMaximumDate(QDate.currentDate().addDays(365))
         self.start_time.setDisplayFormat("hh:mm:ss dd/MM/yyyy")
         self.start_time.setKeyboardTracking(False)
-        self.start_time.dateTimeChanged.connect(self.start_time_update)
+        self.start_time.editingFinished.connect(self.start_time_update)
 
         self.finish_time = QDateTimeEdit()
         self.finish_time.setMinimumWidth(200)
@@ -233,7 +230,7 @@ class HandlerJournal(QWidget):
         self.finish_time.setMaximumDate(QDate.currentDate().addDays(365))
         self.finish_time.setDisplayFormat("hh:mm:ss dd/MM/yyyy")
         self.finish_time.setKeyboardTracking(False)
-        self.finish_time.dateTimeChanged.connect(self.finish_time_update)
+        self.finish_time.editingFinished.connect(self.finish_time_update)
 
     def _setup_buttons(self):
         self.reset_button = QPushButton('Reset')
@@ -373,7 +370,7 @@ class HandlerJournal(QWidget):
     def _retrieve_data(self):
         if not self.isVisible():
             return
-        # fields = self.db_table_params.keys()
+
         query = QSqlQuery()
         query.prepare('SELECT source_name, CAST(\'Event\' AS text) AS event_type, '
                       '\'Object Id=\' || object_id || \'; class: \' || class_id || \'; conf: \' || confidence AS information,'
@@ -381,6 +378,12 @@ class HandlerJournal(QWidget):
                       'WHERE time_stamp BETWEEN :start AND :finish ORDER BY time_stamp DESC')
         self.current_start_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.min)
         self.current_end_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.max)
+        # Сбрасываем дату в фильтрах
+        self.start_time.setDateTime(
+            QDateTime.fromString(self.current_start_time.strftime("%H:%M:%S %d-%m-%Y"), "hh:mm:ss dd-MM-yyyy"))
+        self.finish_time.setDateTime(
+            QDateTime.fromString(self.current_end_time.strftime("%H:%M:%S %d-%m-%Y"), "hh:mm:ss dd-MM-yyyy"))
+
         query.bindValue(":start", self.current_start_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
         query.bindValue(":finish", self.current_end_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
         query.exec()

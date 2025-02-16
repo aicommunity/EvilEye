@@ -14,7 +14,7 @@ from utils import utils
 from psycopg2 import sql
 
 
-class DatabaseAdapterPerimeterEvents(DatabaseAdapterBase):
+class DatabaseAdapterFieldOfViewEvents(DatabaseAdapterBase):
     def __init__(self, db_controller):
         super().__init__(db_controller)
         self.image_dir = self.db_params['image_dir']

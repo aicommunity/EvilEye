@@ -1,14 +1,12 @@
 import datetime
 import time
 
-from events_detectors.event_perimeter import PerimeterEvent
-from threading import Thread
-from queue import Queue
+from events_detectors.event_fov import FieldOfViewEvent
 from events_detectors.events_detector import EventsDetector
 from datetime import datetime
 
 
-class PerimeterEventsDetector(EventsDetector):
+class FieldOfViewEventsDetector(EventsDetector):
     def __init__(self, objects_handler):
         super().__init__()
         self.sources = set()
@@ -40,7 +38,7 @@ class PerimeterEventsDetector(EventsDetector):
                         if obj.object_id not in self.active_obj_ids[source_id]:  # Если объект ранее не появлялся в зоне
                             if start_time <= time_detected.time() <= end_time or start_time <= timestamp.time() <= end_time:
                                 self.active_obj_ids[source_id].add(obj.object_id)
-                                event = PerimeterEvent(timestamp, 'Alarm', obj)
+                                event = FieldOfViewEvent(timestamp, 'Alarm', obj)
                                 print(f'New event: {obj.last_image.frame_id}, Event: {event}')
                                 events.append(event)
 
@@ -53,7 +51,7 @@ class PerimeterEventsDetector(EventsDetector):
                     if obj.object_id in self.active_obj_ids[source_id]:  # Если объект был активен в запрещенный период
                         timestamp = datetime.now()
                         self.active_obj_ids[source_id].remove(obj.object_id)
-                        event = PerimeterEvent(timestamp, 'Alarm', obj, is_finished=True)
+                        event = FieldOfViewEvent(timestamp, 'Alarm', obj, is_finished=True)
                         print(f'Finished event: {obj.last_image.frame_id}, Event: {event}')
                         events.append(event)
             if events:
@@ -96,4 +94,3 @@ class PerimeterEventsDetector(EventsDetector):
         self.run_flag = False
         self.queue_in.put((None, None))
         self.processing_thread.join()
-

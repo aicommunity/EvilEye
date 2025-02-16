@@ -1,7 +1,7 @@
 from events_detectors.event import Event
 
 
-class PerimeterEvent(Event):
+class FieldOfViewEvent(Event):
     def __init__(self, timestamp, alarm_type, obj, is_finished=False):
         super().__init__(timestamp, alarm_type, is_finished)
         self.source_id = obj.source_id

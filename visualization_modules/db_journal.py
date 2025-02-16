@@ -11,7 +11,7 @@ from database_controller import database_controller_pg
 from visualization_modules import handler_journal_view
 from visualization_modules import handler_journal
 from visualization_modules import events_journal
-from visualization_modules.journal_adapters.jadapter_perimeter_events import JournalAdapterPerimeterEvents
+from visualization_modules.journal_adapters.jadapter_fov_events import JournalAdapterFieldOfViewEvents
 from visualization_modules.journal_adapters.jadapter_cam_events import JournalAdapterCamEvents
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
@@ -33,8 +33,8 @@ class DatabaseJournalWindow(QWidget):
         self.cam_events_adapter = JournalAdapterCamEvents()
         self.cam_events_adapter.set_params(**self.adapter_params['DatabaseAdapterCamEvents'])
         self.cam_events_adapter.init()
-        self.perimeter_events_adapter = JournalAdapterPerimeterEvents()
-        self.perimeter_events_adapter.set_params(**self.adapter_params['DatabaseAdapterPerimeterEvents'])
+        self.perimeter_events_adapter = JournalAdapterFieldOfViewEvents()
+        self.perimeter_events_adapter.set_params(**self.adapter_params['DatabaseAdapterFieldOfViewEvents'])
         self.perimeter_events_adapter.init()
 
         self.setWindowTitle('DB Journal')

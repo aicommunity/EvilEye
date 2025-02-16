@@ -28,9 +28,10 @@ class EventsProcessor(EvilEyeBase):
         self.events_adapters = {adapter.get_event_name(): adapter for adapter in self.db_adapters}
         self.events_tables = {adapter.get_event_name(): adapter.get_table_name() for adapter in self.db_adapters}
 
-    def get_last_id(self):
+    def get_last_id(self):  # Функция для получения последнего id события из БД
         table_names = list(self.events_tables.values())
         subqueries = []
+        # Объединяем результаты из всех таблиц событий, выбираем максимальный id
         for i in range(len(table_names) - 1):
             subquery = sql.SQL('SELECT MAX(event_id) as event_id FROM {table} UNION').format(
                 table=sql.Identifier(table_names[i]))
@@ -38,10 +39,12 @@ class EventsProcessor(EvilEyeBase):
         subquery = sql.SQL('SELECT MAX(event_id) as event_id FROM {table}').format(
             table=sql.Identifier(table_names[-1]))
         subqueries.append(subquery)
+
         query = sql.SQL('SELECT MAX(event_id) FROM ({subqueries})').format(
             subqueries=sql.SQL(' ').join(subqueries))
         record = self.db_controller.query(query)
-        if not record:
+
+        if not record[0][0]:  # Если ни одного события в БД нет, возвращаем ноль
             return 0
         return record[0][0] + 1
 
@@ -55,7 +58,6 @@ class EventsProcessor(EvilEyeBase):
         pass
 
     def put(self, events):
-        print(events)
         self.queue.put(events)
 
     def start(self):

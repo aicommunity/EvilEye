@@ -185,6 +185,30 @@
       }
     }
   ],
+  "events_detectors": {
+    "CamEventsDetector": {},
+    "FieldOfViewEventsDetector": {
+      "sources": {
+        "0": [["13:00:00", "18:30:40"], ["18:00:00", "20:00:00"]]
+      }
+    }
+  },
+  "events_processor": {
+
+  },
+  "database_adapters": {
+    "DatabaseAdapterObjects": {
+      "table_name": "objects"
+    },
+    "DatabaseAdapterCamEvents": {
+      "table_name": "camera_events",
+      "event_name": "CameraEvent"
+    },
+    "DatabaseAdapterFieldOfViewEvents": {
+      "table_name": "fov_events",
+      "event_name": "FieldOfViewEvent"
+    }
+  },
   "visualizer" : {
     "num_width": 3,
     "num_height": 2,
@@ -205,6 +229,8 @@
     "default_user_name": "postgres",
     "default_host_name": "localhost",
     "default_port": 5433,
+    "preview_height": 150,
+    "preview_width": 300,
     "tables": {
       "projects": {
         "project_id": "SERIAL PRIMARY KEY",
@@ -250,6 +276,28 @@
         "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE",
         "job_id": "integer REFERENCES jobs (job_id) ON DELETE CASCADE",
         "camera_full_address": "text REFERENCES camera_information (full_address) ON DELETE CASCADE"
+      },
+      "camera_events": {
+        "event_id": "integer UNIQUE NOT NULL",
+        "camera_full_address": "text REFERENCES camera_information (full_address) ON DELETE CASCADE",
+        "time_stamp": "timestamp NOT NULL",
+        "connection_status": "boolean NOT NULL",
+        "job_id": "integer REFERENCES jobs (job_id) ON DELETE CASCADE",
+        "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE",
+        "PRIMARY KEY": "(camera_full_address, time_stamp, event_type)"
+      },
+      "fov_events": {
+        "event_id": "integer UNIQUE NOT NULL",
+        "source_id": "integer",
+        "time_stamp": "timestamp",
+        "time_obj_detected": "timestamp",
+        "time_lost": "timestamp",
+        "preview_path": "text",
+        "lost_preview_path": "text",
+        "object_id": "integer",
+        "job_id": "integer REFERENCES jobs (job_id) ON DELETE CASCADE",
+        "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE",
+        "PRIMARY KEY": "(source_id, object_id, time_stamp, job_id, project_id)"
       }
     },
     "image_dir": "/home/user/EvilEyeData/",

@@ -2,12 +2,11 @@ from events_detectors.event import Event
 
 
 class CameraEvent(Event):
-    def __init__(self, address, event_type, is_connected, timestamp, alarm_type, is_finished=True):
+    def __init__(self, address, is_connected, timestamp, alarm_type, is_finished=True):
         super().__init__(timestamp, alarm_type, is_finished)
         self.camera_address = address
         self.long_term = False
         self.con_status = is_connected
-        self.event_type = event_type
 
     def __str__(self):
         return f'Id: {self.event_id}, Source: {self.camera_address}'

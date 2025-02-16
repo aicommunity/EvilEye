@@ -3,6 +3,7 @@ from PyQt6.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
 from abc import abstractmethod, ABC
 
 
+# Базовый класс журнального адаптера, для того чтобы формировать SELECT запросы к соответствующим таблицам в БД
 class JournalAdapterBase(core.EvilEyeBase, ABC):
     def __init__(self):
         super().__init__()
@@ -32,8 +33,4 @@ class JournalAdapterBase(core.EvilEyeBase, ABC):
 
     @abstractmethod
     def select_query(self) -> str:
-        pass
-
-    @abstractmethod
-    def filter_by_camera_query(self, cam_id) -> QSqlQuery:
         pass

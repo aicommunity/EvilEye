@@ -1,17 +1,15 @@
 import datetime
 import os
 from utils import threading_events
-from PyQt6.QtCore import QDate
+from PyQt6.QtCore import QDate, QDateTime
 from PyQt6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton,
     QDateTimeEdit, QHeaderView, QComboBox, QTableView, QStyledItemDelegate, QMessageBox
 )
 from PyQt6.QtGui import QPixmap, QPainter, QPen
-from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QModelIndex
+from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QModelIndex, QSize
 from PyQt6.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
 from visualization_modules.table_updater_view import TableUpdater
-from visualization_modules.journal_adapters.jadapter_cam_events import JournalAdapterCamEvents
-from visualization_modules.journal_adapters.jadapter_perimeter_events import JournalAdapterPerimeterEvents
 
 
 class ImageDelegate(QStyledItemDelegate):
@@ -29,6 +27,13 @@ class ImageDelegate(QStyledItemDelegate):
                 painter.drawPixmap(option.rect, pixmap)
             else:
                 return
+
+    def sizeHint(self, option, index) -> QSize:
+        if index.isValid():
+            if index.data(Qt.ItemDataRole.DisplayRole):
+                return QSize(300, 150)
+            else:
+                return super().sizeHint(option, index)
 
 
 class DateTimeDelegate(QStyledItemDelegate):
@@ -74,6 +79,7 @@ class EventsJournal(QWidget):
         super().__init__()
         self.db_controller = db_controller
         self.journal_adapters = journal_adapters
+
         # Сопоставляет имена событий с соответствующими им адаптерами
         self.events_adapters = {adapter.get_event_name(): adapter for adapter in self.journal_adapters}
         # Сопоставляет имена событий с именами таблиц БД
@@ -110,9 +116,6 @@ class EventsJournal(QWidget):
         self._setup_filter()
         self._setup_table()
         self._setup_time_layout()
-        # print(self.search_button.mapToParent(self.search_button.pos()).x())
-        # self.filters_window = FiltersWindow(list(self.source_name_id.keys()),
-        #                                     self._filter_by_camera)
         self.filter_displayed = False
 
         self.layout = QVBoxLayout()
@@ -144,12 +147,13 @@ class EventsJournal(QWidget):
         self.table.setModel(self.model)
         header = self.table.verticalHeader()
         h_header = self.table.horizontalHeader()
+        v_header = self.table.verticalHeader()
         h_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         h_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         h_header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         h_header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        # header.setDefaultSectionSize(EventsJournal.preview_height)
         h_header.setDefaultSectionSize(EventsJournal.preview_width)
+        v_header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
 
         self.image_delegate = ImageDelegate(None, image_dir=self.image_dir)
         self.date_delegate = DateTimeDelegate(None)
@@ -161,12 +165,13 @@ class EventsJournal(QWidget):
     def _setup_model(self):
         self.model = QSqlQueryModel()
 
-        query_string = ''
+        query_string = 'SELECT * FROM ('
         for adapter in self.journal_adapters:
             adapter_query = adapter.select_query()
             query_string += adapter_query + ' UNION '
-        query_string += query_string.removesuffix('UNION ') + ('WHERE time_stamp BETWEEN :start AND :finish'
-                                                               ' ORDER BY time_stamp DESC;')
+            print(query_string)
+        query_string = query_string.removesuffix(' UNION ')
+        query_string += ') WHERE time_stamp BETWEEN :start AND :finish ORDER BY time_stamp DESC;'
         print(query_string)
         query = QSqlQuery()
         query.prepare(query_string)
@@ -216,7 +221,7 @@ class EventsJournal(QWidget):
         self.start_time.setMaximumDate(QDate.currentDate().addDays(365))
         self.start_time.setDisplayFormat("hh:mm:ss dd/MM/yyyy")
         self.start_time.setKeyboardTracking(False)
-        self.start_time.dateTimeChanged.connect(self.start_time_update)
+        self.start_time.editingFinished.connect(self.start_time_update)
 
         self.finish_time = QDateTimeEdit()
         self.finish_time.setMinimumWidth(200)
@@ -225,7 +230,7 @@ class EventsJournal(QWidget):
         self.finish_time.setMaximumDate(QDate.currentDate().addDays(365))
         self.finish_time.setDisplayFormat("hh:mm:ss dd/MM/yyyy")
         self.finish_time.setKeyboardTracking(False)
-        self.finish_time.dateTimeChanged.connect(self.finish_time_update)
+        self.finish_time.editingFinished.connect(self.finish_time_update)
 
     def _setup_buttons(self):
         self.reset_button = QPushButton('Reset')
@@ -237,6 +242,7 @@ class EventsJournal(QWidget):
 
     def showEvent(self, show_event):
         self.retrieve_data_signal.emit()
+        self.table.resizeRowsToContents()
         show_event.accept()
 
     @pyqtSlot(QModelIndex)
@@ -303,8 +309,6 @@ class EventsJournal(QWidget):
     @pyqtSlot()
     def _reset_filter(self):
         if self.block_updates:
-            # self.table.setRowCount(0)
-            # self.last_row_db = 0
             self._retrieve_data()
             self.block_updates = False
 
@@ -313,6 +317,9 @@ class EventsJournal(QWidget):
         if not self.start_time_updated or not self.finish_time_updated:
             return
         self._filter_records(self.start_time.dateTime().toPyDateTime(), self.finish_time.dateTime().toPyDateTime())
+        self.start_time_updated = False
+        self.finish_time_updated = False
+
 
     @pyqtSlot()
     def _update_table(self):
@@ -353,12 +360,12 @@ class EventsJournal(QWidget):
         self.current_end_time = finish_time
         fields = self.db_table_params.keys()
         query = QSqlQuery()
-        query_string = ''
+        query_string = 'SELECT * FROM ('
         for adapter in self.journal_adapters:
             adapter_query = adapter.select_query()
             query_string += adapter_query + ' UNION '
         query_string = query_string.removesuffix(' UNION ')
-        query_string += ' WHERE time_stamp BETWEEN :start AND :finish ORDER BY time_stamp DESC;'
+        query_string += ') WHERE time_stamp BETWEEN :start AND :finish ORDER BY time_stamp DESC;'
         print(query_string)
         query.prepare(query_string)
         query.bindValue(":start", self.current_start_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
@@ -369,18 +376,23 @@ class EventsJournal(QWidget):
     def _retrieve_data(self):
         if not self.isVisible():
             return
-        # fields = self.db_table_params.keys()
+
         query = QSqlQuery()
-        query_string = ''
+        query_string = 'SELECT * FROM ('
         for adapter in self.journal_adapters:
             adapter_query = adapter.select_query()
             query_string += adapter_query + ' UNION '
         query_string = query_string.removesuffix(' UNION ')
-        query_string += ' WHERE time_stamp BETWEEN :start AND :finish ORDER BY time_stamp DESC;'
-        print(query_string)
+        query_string += ') WHERE time_stamp BETWEEN :start AND :finish ORDER BY time_stamp DESC;'
         query.prepare(query_string)
         self.current_start_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.min)
         self.current_end_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.max)
+        # Сбрасываем дату в фильтрах
+        self.start_time.setDateTime(
+            QDateTime.fromString(self.current_start_time.strftime("%H:%M:%S %d-%m-%Y"), "hh:mm:ss dd-MM-yyyy"))
+        self.finish_time.setDateTime(
+            QDateTime.fromString(self.current_end_time.strftime("%H:%M:%S %d-%m-%Y"), "hh:mm:ss dd-MM-yyyy"))
+
         query.bindValue(":start", self.current_start_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
         query.bindValue(":finish", self.current_end_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
         query.exec()

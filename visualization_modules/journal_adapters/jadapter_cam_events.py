@@ -16,13 +16,9 @@ class JournalAdapterCamEvents(JournalAdapterBase):
     def init_impl(self):
         pass
 
-    def filter_by_camera_query(self, cam_id) -> QSqlQuery:
-        pass
-
     def select_query(self) -> str:
         query = ('SELECT CAST(\'Warning\' AS text) AS type, time_stamp, NULL as time_lost, '
-                 '(\'Camera=\' || camera_full_address || \' \' || event_type) AS information, '
+                 '(\'Camera=\' || camera_full_address || \' \' || '
+                 'CASE WHEN connection_status then \'reconnect\' ELSE \'disconnect\' END) AS information, '
                  'NULL AS preview_path, NULL AS lost_preview_path FROM camera_events')
-        # 'WHERE (time_stamp BETWEEN :start AND :finish) AND (source_id = :src_id) '
-        # 'AND (camera_full_address = :address) ORDER BY time_stamp DESC')
         return query
