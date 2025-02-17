@@ -216,7 +216,8 @@
     "source_ids": [0, 1, 2, 3, 4],
     "fps": [5, 5, 5, 5, 5],
     "gui_enabled": true,
-    "show_debug_info": true
+    "show_debug_info": true,
+    "objects_journal_enabled": true
   },
   "database": {
     "user_name": "postgres",

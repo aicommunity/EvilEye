@@ -53,7 +53,8 @@
     "source_ids": [0],
     "fps": [5, 5],
     "gui_enabled": true,
-    "show_debug_info": true
+    "show_debug_info": true,
+    "objects_journal_enabled": true
   },
   "events_detectors": {
     "CamEventsDetector": {},

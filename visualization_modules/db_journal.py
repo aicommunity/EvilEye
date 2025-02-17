@@ -23,6 +23,8 @@ class DatabaseJournalWindow(QWidget):
         self.params = params
         self.adapter_params = self.params['database_adapters']
         self.db_params = self.params['database']
+        self.vis_params = self.params['visualizer']
+        self.obj_journal_enabled = self.vis_params['objects_journal_enabled']
 
         self.db_controller = database_controller_pg.DatabaseControllerPg(params, controller_type='Receiver')
         self.db_controller.set_params(**self.db_params)
@@ -41,8 +43,11 @@ class DatabaseJournalWindow(QWidget):
         self.resize(900, 600)
 
         self.tabs = QTabWidget()
-        self.tabs.addTab(handler_journal_view.HandlerJournal(self.db_controller, 'objects', self.params,
-                                                             self.tables['objects'], parent=self), 'Handler journal')
+        self.tabs.setTabsClosable(True)
+        self.tabs.tabCloseRequested.connect(self._close_tab)
+        if self.obj_journal_enabled:
+            self.tabs.addTab(handler_journal_view.HandlerJournal(self.db_controller, 'objects', self.params,
+                                                                 self.tables['objects'], parent=self), 'Handler journal')
         self.tabs.addTab(events_journal.EventsJournal([self.cam_events_adapter, self.perimeter_events_adapter],
                                                       self.db_controller, 'objects', self.params,
                                                       self.tables['objects'], parent=self), 'Alarms journal')
@@ -57,3 +62,10 @@ class DatabaseJournalWindow(QWidget):
             tab.close()
         print('Database journal closed')
         self.db_controller.disconnect()
+
+    @pyqtSlot(int)
+    def _close_tab(self, idx):
+        tab = self.tabs.widget(idx)
+        self.tabs.setTabVisible(idx, False)
+        tab.close()
+
