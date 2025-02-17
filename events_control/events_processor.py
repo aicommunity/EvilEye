@@ -40,7 +40,7 @@ class EventsProcessor(EvilEyeBase):
             table=sql.Identifier(table_names[-1]))
         subqueries.append(subquery)
 
-        query = sql.SQL('SELECT MAX(event_id) FROM ({subqueries})').format(
+        query = sql.SQL('SELECT MAX(event_id) FROM ({subqueries}) AS temp').format(
             subqueries=sql.SQL(' ').join(subqueries))
         record = self.db_controller.query(query)
 

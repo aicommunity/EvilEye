@@ -129,17 +129,17 @@ class HandlerJournal(QWidget):
         self.table.doubleClicked.connect(self._display_image)
 
     def _connect_to_db(self):
-        self.db = QSqlDatabase.addDatabase("QPSQL")
-        self.db.setHostName(self.host)
-        self.db.setDatabaseName(self.db_name)
-        self.db.setUserName(self.username)
-        self.db.setPassword(self.password)
-        self.db.setPort(self.port)
-        if not self.db.open():
+        db = QSqlDatabase.addDatabase("QPSQL", 'obj_conn')
+        db.setHostName(self.host)
+        db.setDatabaseName(self.db_name)
+        db.setUserName(self.username)
+        db.setPassword(self.password)
+        db.setPort(self.port)
+        if not db.open():
             QMessageBox.critical(
                 None,
                 "Handler journal - Error!",
-                "Database Error: %s" % self.db.lastError().databaseText(),
+                "Database Error: %s" % db.lastError().databaseText(),
             )
 
     def _setup_table(self):
@@ -167,7 +167,7 @@ class HandlerJournal(QWidget):
     def _setup_model(self):
         self.model = QSqlQueryModel()
 
-        query = QSqlQuery()
+        query = QSqlQuery(QSqlDatabase.database('obj_conn'))
         query.prepare('SELECT source_name, CAST(\'Event\' AS text) AS event_type, '
                       '\'Object Id=\' || object_id || \'; class: \' || class_id || \'; conf: \' || confidence AS information,'
                       'time_stamp, time_lost, preview_path, lost_preview_path FROM objects '
@@ -254,7 +254,7 @@ class HandlerJournal(QWidget):
         if not path:
             return
 
-        query = QSqlQuery()  # Getting a bounding_box of the current image
+        query = QSqlQuery(QSqlDatabase.database('obj_conn'))  # Getting a bounding_box of the current image
         if 'detected' in path:
             query.prepare('SELECT bounding_box from objects WHERE preview_path = :path')
             query.bindValue(':path', path)
@@ -340,7 +340,7 @@ class HandlerJournal(QWidget):
 
         source_id, full_address = self.source_name_id_address[camera_name]
         # print(camera_name, source_id, full_address)
-        query = QSqlQuery()
+        query = QSqlQuery(QSqlDatabase.database('obj_conn'))
         query.prepare('SELECT source_name, CAST(\'Event\' AS text) AS event_type, '
                       '\'Object Id=\' || object_id || \'; class: \' || class_id || \'; conf: \' || confidence AS information,'
                       'time_stamp, time_lost, preview_path, lost_preview_path FROM objects '
@@ -357,7 +357,7 @@ class HandlerJournal(QWidget):
         self.current_start_time = start_time
         self.current_end_time = finish_time
         fields = self.db_table_params.keys()
-        query = QSqlQuery()
+        query = QSqlQuery(QSqlDatabase.database('obj_conn'))
         query.prepare('SELECT source_name, CAST(\'Event\' AS text) AS event_type, '
                       '\'Object Id=\' || object_id || \'; class: \' || class_id || \'; conf: \' || confidence AS information,'
                       'time_stamp, time_lost, preview_path, lost_preview_path FROM objects '
@@ -371,7 +371,7 @@ class HandlerJournal(QWidget):
         if not self.isVisible():
             return
 
-        query = QSqlQuery()
+        query = QSqlQuery(QSqlDatabase.database('obj_conn'))
         query.prepare('SELECT source_name, CAST(\'Event\' AS text) AS event_type, '
                       '\'Object Id=\' || object_id || \'; class: \' || class_id || \'; conf: \' || confidence AS information,'
                       'time_stamp, time_lost, preview_path, lost_preview_path FROM objects '
@@ -404,7 +404,7 @@ class HandlerJournal(QWidget):
 
     def close(self):
         self._update_job_first_last_records()
-        self.db.removeDatabase(self.db_name)
+        QSqlDatabase.removeDatabase('obj_conn')
 
     def _create_dict_source_name_address_id(self):
         camera_address_id_name = {}

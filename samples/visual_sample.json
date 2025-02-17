@@ -229,8 +229,6 @@
     "default_user_name": "postgres",
     "default_host_name": "localhost",
     "default_port": 5433,
-    "preview_height": 150,
-    "preview_width": 300,
     "tables": {
       "projects": {
         "project_id": "SERIAL PRIMARY KEY",
@@ -300,8 +298,10 @@
         "PRIMARY KEY": "(source_id, object_id, time_stamp, job_id, project_id)"
       }
     },
-    "image_dir": "/home/user/EvilEyeData/",
-    "create_new_project": false
+    "image_dir": "/media/user/Data/EvilEyeData/",
+    "create_new_project": false,
+    "preview_width": 300,
+    "preview_height": 150
   },
   "objects_handler": {
     "history_len": 30,
