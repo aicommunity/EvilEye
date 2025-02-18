@@ -105,8 +105,15 @@ class VideoCapture(capture.VideoCaptureBase):
             begin_it = timer()
             with self.mutex:
                 if not self.is_inited or self.capture is None:
-                    time.sleep(0.01)
-                    continue
+                    time.sleep(0.1)
+                    if self.init():
+                        timestamp = datetime.datetime.now()
+                        print(f"Reconnected to a sources: {self.source_names}")
+                        self.reconnects.append((self.params['camera'], timestamp, self.is_working))
+                        for sub in self.subscribers:
+                            sub.update()
+                    else:
+                        continue
 
                 if not self.is_opened():
                     time.sleep(0.1)
