@@ -94,10 +94,9 @@ class VideoCapture(capture.VideoCaptureBase):
         if self.get_init_flag() and self.is_opened():
             print(f"Reconnected to a sources: {self.source_names}")
             self.is_working = True
-            self.reconnects.append((self.source_address, timestamp, self.is_working))
+            self.reconnects.append((self.params['camera'], timestamp, self.is_working))
         else:
-            print(f"Could not connect to a sources: {self.source_names}")
-            self.reconnects.append((self.source_address, timestamp, self.is_working))
+            print(f"Could not connect to sources: {self.source_names}")
         for sub in self.subscribers:
             sub.update()
 
@@ -122,16 +121,17 @@ class VideoCapture(capture.VideoCaptureBase):
                     self.video_current_frame += 1
                     if self.source_fps and self.source_fps > 0.0:
                         self.video_current_position = (self.video_current_frame*1000.0) / self.source_fps
+                if self.source_type == CaptureDeviceType.IpCamera:
+                    self.last_frame_time = datetime.datetime.now()
                 self.frames_queue.put([is_read, src_image, self.frame_id_counter, self.video_current_frame, self.video_current_position])
                 self.frame_id_counter += 1
             else:
                 if self.source_type != CaptureDeviceType.VideoFile or self.loop_play:
                     self.is_working = False
-                    with self.conn_mutex:
-                        timestamp = datetime.datetime.now()
-                        self.disconnects.append((self.source_address, timestamp, self.is_working))
-                        for sub in self.subscribers:
-                            sub.update()
+                    timestamp = datetime.datetime.now()
+                    self.disconnects.append((self.params['camera'], timestamp, self.is_working))
+                    for sub in self.subscribers:
+                        sub.update()
                     self.reset()
                 else:
                     self.finished = True

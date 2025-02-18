@@ -8,6 +8,7 @@ from enum import Enum
 from urllib.parse import urlparse
 from threading import Lock
 
+
 class CaptureDeviceType(Enum):
     VideoFile = "VideoFile"
     IpCamera = "IpCamera"
@@ -112,16 +113,14 @@ class VideoCaptureBase(core.EvilEyeBase):
             self.pure_url = None
 
     def get_disconnects_info(self) -> list[tuple[str, datetime.datetime, bool]]:
-        with self.conn_mutex:
-            disconnects = copy.deepcopy(self.disconnects)
-            self.disconnects = []
-            return disconnects
+        disconnects = copy.deepcopy(self.disconnects)
+        self.disconnects = []
+        return disconnects
 
     def get_reconnects_info(self) -> list[tuple[str, datetime.datetime, bool]]:
-        with self.conn_mutex:
-            reconnects = copy.deepcopy(self.reconnects)
-            self.reconnects = []
-            return reconnects
+        reconnects = copy.deepcopy(self.reconnects)
+        self.reconnects = []
+        return reconnects
 
     @staticmethod
     def reconstruct_url(url_parsed_info, username, password):

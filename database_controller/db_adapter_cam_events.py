@@ -52,9 +52,8 @@ class DatabaseAdapterCamEvents(DatabaseAdapterBase):
     def _prepare_for_saving(self, event) -> tuple[list, list]:
         fields_for_saving = {'camera_full_address': event.camera_address,
                              'time_stamp': event.timestamp,
-                             'event_type': event.event_type,
                              'event_id': event.event_id,
-                             'status': event.con_status,
+                             'connection_status': event.con_status,
                              'project_id': self.db_controller.get_project_id(),
                              'job_id': self.db_controller.get_job_id()}
         return list(fields_for_saving.keys()), list(fields_for_saving.values())
