@@ -187,9 +187,14 @@
   ],
   "events_detectors": {
     "CamEventsDetector": {},
+    "ZoneEventsDetector": {
+      "sources": {
+        "0": []
+      }
+    },
     "FieldOfViewEventsDetector": {
       "sources": {
-        "0": [["13:00:00", "18:30:40"], ["18:00:00", "20:00:00"]]
+        "0": []
       }
     }
   },
@@ -207,6 +212,10 @@
     "DatabaseAdapterFieldOfViewEvents": {
       "table_name": "fov_events",
       "event_name": "FieldOfViewEvent"
+    },
+    "DatabaseAdapterZoneEvents": {
+      "table_name": "zone_events",
+      "event_name": "ZoneEvent"
     }
   },
   "visualizer" : {
@@ -217,7 +226,7 @@
     "fps": [5, 5, 5, 5, 5],
     "gui_enabled": true,
     "show_debug_info": true,
-    "objects_journal_enabled": true
+    "objects_journal_enabled": false
   },
   "database": {
     "user_name": "postgres",
@@ -277,16 +286,15 @@
         "camera_full_address": "text REFERENCES camera_information (full_address) ON DELETE CASCADE"
       },
       "camera_events": {
-        "event_id": "integer UNIQUE NOT NULL",
+        "event_id": "integer PRIMARY KEY",
         "camera_full_address": "text REFERENCES camera_information (full_address) ON DELETE CASCADE",
         "time_stamp": "timestamp NOT NULL",
         "connection_status": "boolean NOT NULL",
         "job_id": "integer REFERENCES jobs (job_id) ON DELETE CASCADE",
-        "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE",
-        "PRIMARY KEY": "(camera_full_address, time_stamp, event_type)"
+        "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE"
       },
       "fov_events": {
-        "event_id": "integer UNIQUE NOT NULL",
+        "event_id": "integer PRIMARY KEY",
         "source_id": "integer",
         "time_stamp": "timestamp",
         "time_obj_detected": "timestamp",
@@ -295,8 +303,23 @@
         "lost_preview_path": "text",
         "object_id": "integer",
         "job_id": "integer REFERENCES jobs (job_id) ON DELETE CASCADE",
-        "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE",
-        "PRIMARY KEY": "(source_id, object_id, time_stamp, job_id, project_id)"
+        "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE"
+      },
+      "zone_events": {
+        "event_id": "integer PRIMARY KEY",
+        "source_id": "integer",
+        "time_entered": "timestamp",
+        "time_left": "timestamp",
+        "zone_coords": "real[][]",
+        "frame_path_entered": "text",
+        "frame_path_left": "text DEFAULT NULL",
+        "preview_path_entered": "text",
+        "preview_path_left": "text",
+        "object_id": "integer",
+        "box_entered": "real ARRAY[4]",
+        "box_left": "real ARRAY[4]",
+        "job_id": "integer REFERENCES jobs (job_id) ON DELETE CASCADE",
+        "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE"
       }
     },
     "image_dir": "/media/user/Data/EvilEyeData/",

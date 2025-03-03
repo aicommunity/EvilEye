@@ -169,6 +169,7 @@ class ObjectsHandler(core.EvilEyeBase):
                 track_object.frame_id = tracking_results.frame_id
                 track_object.class_id = track.class_id
                 track_object.track = track
+                track_object.time_stamp = tracking_results.time_stamp
                 track_object.last_image = image
                 # print(f"object_id={track_object.object_id}, track_id={track_object.track.track_id}, len(history)={len(track_object.history)}")
                 track_object.history.append(track_object.get_current_history_element())

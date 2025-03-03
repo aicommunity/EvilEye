@@ -12,17 +12,19 @@ from visualization_modules.visualizer import Visualizer
 from database_controller.db_adapter_objects import DatabaseAdapterObjects
 from database_controller.db_adapter_cam_events import DatabaseAdapterCamEvents
 from database_controller.db_adapter_fov_events import DatabaseAdapterFieldOfViewEvents
+from database_controller.db_adapter_zone_events import DatabaseAdapterZoneEvents
 from events_control.events_processor import EventsProcessor
 from database_controller.database_controller_pg import DatabaseControllerPg
 from events_control.events_controller import EventsDetectorsController
 from events_detectors.cam_events_detector import CamEventsDetector
 from events_detectors.fov_events_detector import FieldOfViewEventsDetector
+from events_detectors.zone_events_detector import ZoneEventsDetector
 from PyQt6.QtWidgets import QMainWindow
 import json
 
 
 class Controller:
-    def __init__(self, main_window: QMainWindow, pyqt_slot):
+    def __init__(self, main_window: QMainWindow, pyqt_slots: dict, pyqt_signals: dict):
         self.main_window = main_window
         # self.application = application
         self.control_thread = threading.Thread(target=self.run)
@@ -36,18 +38,21 @@ class Controller:
         self.trackers = []
         self.obj_handler = None
         self.visualizer = None
-        self.qt_slot = pyqt_slot
+        self.pyqt_slots = pyqt_slots
+        self.pyqt_signals = pyqt_signals
         self.fps = 5
 
         self.events_detectors_controller = None
         self.events_processor = None
         self.cam_events_detector = None
         self.fov_events_detector = None
+        self.zone_events_detector = None
 
         self.db_controller = None
         self.db_adapter_obj = None
         self.db_adapter_cam_events = None
         self.db_adapter_fov_events = None
+        self.db_adapter_zone_events = None
         self.class_names = list()
 
         self.captured_frames: list[CaptureImage] = []
@@ -164,8 +169,10 @@ class Controller:
         self.visualizer.start()
         self.db_controller.connect()
         self.db_adapter_obj.start()
+        self.db_adapter_zone_events.start()
         self.db_adapter_fov_events.start()
         self.db_adapter_cam_events.start()
+        self.zone_events_detector.start()
         self.cam_events_detector.start()
         self.fov_events_detector.start()
         self.events_detectors_controller.start()
@@ -181,8 +188,10 @@ class Controller:
         self.events_detectors_controller.stop()
         self.cam_events_detector.stop()
         self.fov_events_detector.stop()
+        self.zone_events_detector.stop()
         self.db_adapter_cam_events.stop()
         self.db_adapter_fov_events.stop()
+        self.db_adapter_zone_events.stop()
         self.db_adapter_obj.stop()
         self.db_controller.disconnect()
         self.visualizer.stop()
@@ -257,6 +266,10 @@ class Controller:
         self.db_adapter_fov_events.set_params(**params['DatabaseAdapterFieldOfViewEvents'])
         self.db_adapter_fov_events.init()
 
+        self.db_adapter_zone_events = DatabaseAdapterZoneEvents(self.db_controller)
+        self.db_adapter_zone_events.set_params(**params['DatabaseAdapterZoneEvents'])
+        self.db_adapter_zone_events.init()
+
     def _init_captures(self, params):
         num_sources = len(params)
         for i in range(num_sources):
@@ -303,25 +316,29 @@ class Controller:
         self.fov_events_detector.set_params(**params['FieldOfViewEventsDetector'])
         self.fov_events_detector.init()
 
-        self.obj_handler.subscribe(self.fov_events_detector)
+        self.zone_events_detector = ZoneEventsDetector(self.obj_handler)
+        self.zone_events_detector.set_params(**params['ZoneEventsDetector'])
+        self.zone_events_detector.init()
+
+        self.obj_handler.subscribe(self.fov_events_detector, self.zone_events_detector)
         for source in self.sources:
             source.subscribe(self.cam_events_detector)
 
     def _init_events_detectors_controller(self, params):
-        detectors = [self.cam_events_detector, self.fov_events_detector]
+        detectors = [self.cam_events_detector, self.fov_events_detector, self.zone_events_detector]
         self.events_detectors_controller = EventsDetectorsController(detectors)
         self.events_detectors_controller.set_params(**params)
         self.events_detectors_controller.init()
 
     def _init_events_processor(self, params):
-        db_adapters = [self.db_adapter_fov_events, self.db_adapter_cam_events]
+        db_adapters = [self.db_adapter_fov_events, self.db_adapter_cam_events, self.db_adapter_zone_events]
         self.events_processor = EventsProcessor(db_adapters, self.db_controller)
         self.events_processor.set_params(**params)
         self.events_processor.init()
 
     def _init_visualizer(self, params):
         self.gui_enabled = params.get("gui_enabled", True)
-        self.visualizer = Visualizer(self.qt_slot)
+        self.visualizer = Visualizer(self.pyqt_slots, self.pyqt_signals)
         self.visualizer.set_params(**params)
         self.visualizer.source_id_name_table = self.source_id_name_table
         self.visualizer.source_video_duration = self.source_video_duration

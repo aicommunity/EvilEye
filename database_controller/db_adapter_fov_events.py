@@ -1,13 +1,8 @@
 import time
-
-from database_controller.database_controller_pg import DatabaseControllerPg
 from database_controller.db_adapter import DatabaseAdapterBase
-import json
-from utils.utils import ObjectResultEncoder
 import copy
 import datetime
 import os
-from timeit import default_timer as timer
 import cv2
 from utils import threading_events
 from utils import utils

@@ -1,5 +1,6 @@
 import copy
 
+
 class ObjectResultHistory:
     def __init__(self):
         self.object_id = 0
@@ -28,7 +29,6 @@ class ObjectResultHistory:
         copy_instance.lost_frames = copy.deepcopy(self.lost_frames,memodict)
         copy_instance.track = copy.deepcopy(self.track, memodict)
         return copy_instance
-
 
 
 class ObjectResult(ObjectResultHistory):

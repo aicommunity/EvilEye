@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
 )
 
 from PyQt6.QtCore import QTimer
-from PyQt6.QtGui import QPixmap, QIcon
+from PyQt6.QtGui import QPixmap, QIcon, QCursor
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt
 import sys
@@ -16,41 +16,69 @@ from pathlib import Path
 from visualization_modules.video_thread import VideoThread
 from controller import controller
 from visualization_modules.db_journal import DatabaseJournalWindow
+from visualization_modules.zone_window import ZoneWindow
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 
 # Собственный класс для label, чтобы переопределить двойной клик мышкой
-class MyLabel(QLabel):
+class DoubleClickLabel(QLabel):
     double_click_signal = pyqtSignal()
+    add_zone_signal = pyqtSignal()
+    is_add_zone_clicked = False
 
     def __init__(self):
-        super(MyLabel, self).__init__()
+        super(DoubleClickLabel, self).__init__()
         self.is_full = False
+        self.is_ready_to_display = False
 
     def mouseDoubleClickEvent(self, event):
         super().mouseDoubleClickEvent(event)
         self.double_click_signal.emit()
 
+    def mousePressEvent(self, event):
+        if DoubleClickLabel.is_add_zone_clicked:
+            self.add_zone_signal.emit()
+        event.accept()
+
+    def add_zone_clicked(self, flag):  # Для изменения курсора в момент выбора источника
+        DoubleClickLabel.is_add_zone_clicked = flag
+        if flag:
+            self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        else:
+            self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+
+    def ready_to_display(self, flag):
+        self.is_ready_to_display = flag
+
 
 class MainWindow(QMainWindow):
+    display_zones_signal = pyqtSignal(dict)
+    add_zone_signal = pyqtSignal(int)
+
     def __init__(self, params, win_width, win_height):
         super().__init__()
         self.setWindowTitle("EvilEye")
         self.setMinimumSize(win_width, win_height)
+        self.slots = {'update_image': self.update_image, 'open_zone_win': self.open_zone_win}
+        self.signals = {'display_zones_signal': self.display_zones_signal, 'add_zone_signal': self.add_zone_signal}
 
-        # self.handler = ObjectsHandler(self.num_labels, history_len=20)
-        self.controller = controller.Controller(self, self.update_image)
+        self.controller = controller.Controller(self, self.slots, self.signals)
 
         self.params = params
         self.rows = self.params['visualizer']['num_height']
         self.cols = self.params['visualizer']['num_width']
-        self.sources = self.params['sources']
-        self.num_sources = len(self.params['sources'])
-        self.num_labels = 0
+        self.cameras = self.params['sources']
+        self.num_cameras = len(self.params['sources'])
+        self.src_ids = []
+        for camera in self.cameras:
+            for src_id in camera['source_ids']:
+                self.src_ids.append(src_id)
+        self.num_sources = len(self.src_ids)
+
+        self.labels_sources_ids = {}  # Для сопоставления id источника с id label
         self.labels = []
         self.threads = []
         self.hlayouts = []
-        self.cameras = []
 
         self.setCentralWidget(QWidget())
         self._create_actions()
@@ -62,18 +90,16 @@ class MainWindow(QMainWindow):
         self._create_toolbar()
         self.db_journal_win = DatabaseJournalWindow(self.params)
         self.db_journal_win.setVisible(False)
+        self.zone_window = ZoneWindow(self.params)
+        self.zone_window.setVisible(False)
 
-        for i in range(self.num_sources):
-            if self.params['sources'][i]['split']:
-                self.num_labels += self.params['sources'][i]['num_split']
-            else:
-                self.num_labels += 1
         vertical_layout = QVBoxLayout()
         for i in range(self.rows):
             self.hlayouts.append(QHBoxLayout())
             vertical_layout.addLayout(self.hlayouts[-1])
         self.centralWidget().setLayout(vertical_layout)
         self.setup_layout()
+
         self.controller.init(self.params)
         self.controller.start()
 
@@ -86,11 +112,13 @@ class MainWindow(QMainWindow):
         self.centralWidget().layout().setContentsMargins(0, 0, 0, 0)
         grid_cols = 0
         grid_rows = 0
-        for i in range(self.num_labels):
-            self.labels.append(MyLabel())
+        for i in range(self.num_sources):
+            self.labels.append(DoubleClickLabel())
+            self.labels_sources_ids[i] = self.src_ids[i]
             # Изменяем размер изображения по двойному клику
             self.labels[-1].double_click_signal.connect(self.change_screen_size)
             self.labels[-1].setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
+            self.labels[-1].add_zone_signal.connect(self.emit_add_zone_signal)
 
             # Добавляем виджеты в layout в зависимости от начальных параметров (кол-во изображений по ширине и высоте)
             if grid_cols > self.cols - 1:
@@ -108,7 +136,12 @@ class MainWindow(QMainWindow):
         view_menu = QMenu('&View', self)
         menu.addMenu(view_menu)
         view_menu.addAction(self.db_journal)
+        view_menu.addAction(self.show_zones)
         self.menu_height = view_menu.frameGeometry().height()
+
+        edit_menu = QMenu('&Edit', self)
+        menu.addMenu(edit_menu)
+        edit_menu.addAction(self.add_zone)
 
     def _create_toolbar(self):
         view_toolbar = QToolBar('View', self)
@@ -116,12 +149,41 @@ class MainWindow(QMainWindow):
         view_toolbar.addAction(self.db_journal)
         self.toolbar_width = view_toolbar.frameGeometry().width()
 
-    def _create_actions(self):
+        edit_toolbar = QToolBar('Edit', self)
+        self.addToolBar(Qt.ToolBarArea.RightToolBarArea, edit_toolbar)
+        edit_toolbar.addAction(self.add_zone)
+        edit_toolbar.addAction(self.show_zones)
+        self.toolbar_width = edit_toolbar.frameGeometry().width()
+
+    def _create_actions(self):  # Создание кнопок-действий
         self.db_journal = QAction('&DB journal', self)
         self.db_journal.setIcon(QIcon('journal.svg'))
 
+        self.add_zone = QAction('&Add zone', self)
+        self.add_zone.setIcon(QIcon('add_zone.svg'))
+        self.show_zones = QAction('&Display zones', self)
+        self.show_zones.setIcon(QIcon('display_zones.svg'))
+        self.show_zones.setCheckable(True)
+
     def _connect_actions(self):
         self.db_journal.triggered.connect(self.open_journal)
+        self.add_zone.triggered.connect(self.select_source)
+        self.show_zones.toggled.connect(self.display_zones)
+
+    @pyqtSlot()
+    def display_zones(self):  # Включение отображения зон
+        if self.show_zones.isChecked():
+            zones = self.zone_window.get_zone_info()
+            self.display_zones_signal.emit(zones)
+        else:
+            self.display_zones_signal.emit({})
+
+    @pyqtSlot()
+    def select_source(self):  # Выбор источника для добавления зон
+        if self.show_zones.isChecked():
+            self.show_zones.setChecked(False)
+        for label in self.labels:
+            label.add_zone_clicked(True)
 
     @pyqtSlot()
     def open_journal(self):
@@ -131,10 +193,19 @@ class MainWindow(QMainWindow):
             self.db_journal_win.setVisible(True)
 
     @pyqtSlot(int, QPixmap)
-    def update_image(self, source_id: int, picture: QPixmap):
-        # qt_image = self.convert_cv_qt(thread_data[0])
+    def open_zone_win(self, label_id: int, pixmap: QPixmap):
+        if self.zone_window.isVisible():
+            self.zone_window.setVisible(False)
+        else:
+            self.zone_window.setVisible(True)
+            self.zone_window.set_pixmap(self.labels_sources_ids[label_id], pixmap)  # Перенос изображения от выбранного источника в окно выбора зон
+        for label in self.labels:
+            label.add_zone_clicked(False)
+
+    @pyqtSlot(int, QPixmap)
+    def update_image(self, label_id: int, picture: QPixmap):
         # Обновляет label, в котором находится изображение
-        self.labels[source_id].setPixmap(picture)
+        self.labels[label_id].setPixmap(picture)
 
     @pyqtSlot()
     def change_screen_size(self):
@@ -153,10 +224,18 @@ class MainWindow(QMainWindow):
                     label.hide()
             VideoThread.rows = 1
             VideoThread.cols = 1
-        self.controller.set_current_main_widget_size(self.geometry().width()-self.toolbar_width, self.geometry().height()-self.menu_height)
+        self.controller.set_current_main_widget_size(self.geometry().width() - self.toolbar_width,
+                                                     self.geometry().height() - self.menu_height)
+
+    @pyqtSlot()
+    def emit_add_zone_signal(self):
+        label = self.sender()
+        label_id = self.labels.index(label)
+        self.add_zone_signal.emit(label_id)
 
     def closeEvent(self, event):
         self.controller.release()
+        self.zone_window.close()
         self.db_journal_win.close()
         QApplication.closeAllWindows()
         event.accept()

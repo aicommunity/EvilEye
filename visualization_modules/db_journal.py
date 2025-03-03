@@ -13,6 +13,7 @@ from visualization_modules import handler_journal
 from visualization_modules import events_journal
 from visualization_modules.journal_adapters.jadapter_fov_events import JournalAdapterFieldOfViewEvents
 from visualization_modules.journal_adapters.jadapter_cam_events import JournalAdapterCamEvents
+from visualization_modules.journal_adapters.jadapter_zone_events import JournalAdapterZoneEvents
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
@@ -38,6 +39,9 @@ class DatabaseJournalWindow(QWidget):
         self.perimeter_events_adapter = JournalAdapterFieldOfViewEvents()
         self.perimeter_events_adapter.set_params(**self.adapter_params['DatabaseAdapterFieldOfViewEvents'])
         self.perimeter_events_adapter.init()
+        self.zone_events_adapter = JournalAdapterZoneEvents()
+        self.zone_events_adapter.set_params(**self.adapter_params['DatabaseAdapterZoneEvents'])
+        self.zone_events_adapter.init()
 
         self.setWindowTitle('DB Journal')
         self.resize(900, 600)
@@ -48,7 +52,8 @@ class DatabaseJournalWindow(QWidget):
         if self.obj_journal_enabled:
             self.tabs.addTab(handler_journal_view.HandlerJournal(self.db_controller, 'objects', self.params,
                                                                  self.tables['objects'], parent=self), 'Handler journal')
-        self.tabs.addTab(events_journal.EventsJournal([self.cam_events_adapter, self.perimeter_events_adapter],
+        self.tabs.addTab(events_journal.EventsJournal([self.cam_events_adapter,
+                                                       self.perimeter_events_adapter, self.zone_events_adapter],
                                                       self.db_controller, 'objects', self.params,
                                                       self.tables['objects'], parent=self), 'Alarms journal')
 
