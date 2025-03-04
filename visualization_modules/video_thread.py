@@ -92,7 +92,7 @@ class VideoThread(QThread):
         return QPixmap.fromImage(scaled_image)
 
     def draw_zones(self, image: QPixmap, zones: dict):
-        print(zones)
+        # print(zones)
         if not zones:
             return
 

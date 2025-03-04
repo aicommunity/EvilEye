@@ -16,3 +16,4 @@ class CameraEvent(Event):
 
     def is_connected(self):
         return self.con_status
+    

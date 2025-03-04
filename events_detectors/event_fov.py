@@ -19,3 +19,6 @@ class FieldOfViewEvent(Event):
 
     def update_on_finished(self, finished_event):
         self.time_lost = finished_event.time_lost
+
+    def get_time_finished(self):
+        return self.time_lost

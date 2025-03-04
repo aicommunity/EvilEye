@@ -3,6 +3,7 @@ from queue import Queue
 from threading import Thread
 from core.base_class import EvilEyeBase
 from psycopg2 import sql
+import datetime
 
 
 class EventsProcessor(EvilEyeBase):
@@ -17,6 +18,7 @@ class EventsProcessor(EvilEyeBase):
         self.db_controller = db_controller
         self.events_adapters = {}  # Сопоставляет имена событий с соответствующими им адаптерами
         self.events_tables = {}  # Сопоставляет имена событий с именами таблиц БД
+        self.lost_store_time_secs = 10
 
         self.long_term_events = {}
         self.finished_events = {}
@@ -27,6 +29,7 @@ class EventsProcessor(EvilEyeBase):
     def init_impl(self):
         self.events_adapters = {adapter.get_event_name(): adapter for adapter in self.db_adapters}
         self.events_tables = {adapter.get_event_name(): adapter.get_table_name() for adapter in self.db_adapters}
+        # print(self.events_adapters)
 
     def get_last_id(self):  # Функция для получения последнего id события из БД
         table_names = list(self.events_tables.values())
@@ -75,8 +78,9 @@ class EventsProcessor(EvilEyeBase):
         while self.run_flag:
             time.sleep(0.01)
             new_events = self.queue.get()
-            if new_events is None:
-                continue
+            # if new_events is None:
+            #     continue
+            # print(new_events)
 
             finished_idxs = set()
             for events in new_events:
@@ -118,3 +122,16 @@ class EventsProcessor(EvilEyeBase):
                     filtered_long_term[events] = [self.long_term_events[events][i] for i
                                                   in range(len(self.long_term_events[events])) if i not in finished_idxs]
                     self.long_term_events[events] = filtered_long_term[events]
+
+            for events in self.finished_events:
+                start_index_for_remove = None
+                for i in reversed(range(len(self.finished_events[events]))):
+                    if (datetime.datetime.now() - self.finished_events[events][i].get_time_finished()).total_seconds() > self.lost_store_time_secs:
+                        start_index_for_remove = i
+                        break
+                if start_index_for_remove is not None:
+                    if start_index_for_remove == 0:
+                        self.finished_events[events] = []
+                    else:
+                        self.finished_events[events] = self.finished_events[events][start_index_for_remove:]
+                print(self.finished_events[events])

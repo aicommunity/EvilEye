@@ -23,3 +23,6 @@ class Event:
 
     def is_finished(self):
         return self.finished
+
+    def get_time_finished(self):
+        return self.timestamp

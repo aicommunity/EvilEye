@@ -36,3 +36,6 @@ class ZoneEvent(Event):
         self.time_left = finished_event.time_left
         self.img_left = finished_event.img_left
         self.box_left = finished_event.box_left
+
+    def get_time_finished(self):
+        return self.time_left
