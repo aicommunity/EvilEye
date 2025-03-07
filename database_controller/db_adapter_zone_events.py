@@ -66,7 +66,6 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
             record = self.db_controller.query(query_string, data)
             box = record[0][0]
             zone_coords = record[0][1]
-            print(zone_coords)
             self._save_image(preview_path, frame_path, image, box, zone_coords)
 
             if query_type == 'insert':
@@ -76,9 +75,8 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
 
     def _save_image(self, preview_path, frame_path, image, box, zone_coords):
         preview_save_dir = os.path.join(self.image_dir, preview_path)
-        print(preview_save_dir)
         frame_save_dir = os.path.join(self.image_dir, frame_path)
-        preview = cv2.resize(image.image, self.preview_size, cv2.INTER_NEAREST)
+        preview = cv2.resize(copy.deepcopy(image.image), self.preview_size, cv2.INTER_NEAREST)
         preview_boxes = utils.draw_preview_boxes_zones(preview, self.preview_width, self.preview_height, box, zone_coords)
         preview_saved = cv2.imwrite(preview_save_dir, preview_boxes)
         frame_saved = cv2.imwrite(frame_save_dir, image.image)

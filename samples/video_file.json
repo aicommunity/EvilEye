@@ -61,7 +61,8 @@
     "ZoneEventsDetector": {
       "sources": {
         "0": []
-      }
+      },
+      "event_threshold": 5
     },
     "FieldOfViewEventsDetector": {
       "sources": {

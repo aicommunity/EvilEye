@@ -53,6 +53,7 @@ class VideoCaptureBase(core.EvilEyeBase):
         self.conn_mutex = Lock()
         self.disconnects = []
         self.reconnects = []
+        self.subscribers = []
 
         self.capture_thread = None
 

@@ -133,8 +133,8 @@ class Controller:
             events = dict()
             events = self.events_detectors_controller.get()
             # print(events)
-            # if events:
-            self.events_processor.put(events)
+            if events:
+                self.events_processor.put(events)
             complete_processing_it = timer()
 
             if self.gui_enabled:

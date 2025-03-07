@@ -9,7 +9,7 @@ class EventsDetector(EvilEyeBase):
     def __init__(self):
         super().__init__()
         self.processing_thread = Thread(target=self.process)
-        self.queue_in = Queue()
+        self.queue_in = Queue(maxsize=2)
         self.queue_out = Queue()
         self.run_flag = False
 

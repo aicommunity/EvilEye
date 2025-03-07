@@ -1,6 +1,6 @@
 import datetime
 import time
-
+from threading import Event
 from events_detectors.event_fov import FieldOfViewEvent
 from events_detectors.events_detector import EventsDetector
 from datetime import datetime
@@ -13,16 +13,25 @@ class FieldOfViewEventsDetector(EventsDetector):
         self.sources_periods = dict()  # Айди источника: периоды времени
         self.periods = None
         self.obj_handler = objects_handler
+        self.event = Event()
 
         self.active_obj_ids = dict()  # Словарь для хранения айди активных объектов
 
     def process(self):
         while self.run_flag:
             time.sleep(0.01)
+            self.event.wait()
+            if not self.run_flag:
+                break
             events = []
-            objects, lost_objects = self.queue_in.get()
-            if objects is None or lost_objects is None:
-                continue
+            objects = []
+            lost_objects = []
+            for source_id in self.sources:
+                objects.append((source_id, self.obj_handler.get('active', source_id)))
+                lost_objects.append((source_id, self.obj_handler.get('lost', source_id)))
+            # objects, lost_objects = self.queue_in.get()
+            # if objects is None or lost_objects is None:
+            #     continue
             for source_id, source_objects in objects:  # Проходим по объектам от каждого источника в отдельности
                 if source_id not in self.sources:
                     continue
@@ -56,14 +65,17 @@ class FieldOfViewEventsDetector(EventsDetector):
                         events.append(event)
             if events:
                 self.queue_out.put(events)
+            self.event.clear()
 
     def update(self):
-        active_objs = []
-        lost_objs = []
-        for source_id in self.sources:
-            active_objs.append((source_id, self.obj_handler.get('active', source_id)))
-            lost_objs.append((source_id, self.obj_handler.get('lost', source_id)))
-        self.queue_in.put((active_objs, lost_objs))
+        if not self.event.is_set():
+            self.event.set()
+        # active_objs = []
+        # lost_objs = []
+        # for source_id in self.sources:
+        #     active_objs.append((source_id, self.obj_handler.get('active', source_id)))
+        #     lost_objs.append((source_id, self.obj_handler.get('lost', source_id)))
+        # self.queue_in.put((active_objs, lost_objs))
 
     def set_params_impl(self):
         self.sources = {int(key) for key in self.params['sources'].keys()}
@@ -92,5 +104,6 @@ class FieldOfViewEventsDetector(EventsDetector):
 
     def stop(self):
         self.run_flag = False
+        self.event.set()
         self.queue_in.put((None, None))
         self.processing_thread.join()

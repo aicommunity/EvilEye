@@ -9,7 +9,7 @@ from utils import threading_events
 from utils.utils import ObjectResultEncoder
 from queue import Queue
 from threading import Thread
-from threading import Condition
+from threading import Condition, Lock
 from object_tracker.object_tracking_base import TrackingResult
 from object_tracker.object_tracking_base import TrackingResultList
 from timeit import default_timer as timer
@@ -46,6 +46,7 @@ class ObjectsHandler(core.EvilEyeBase):
         self.cameras_params = self.db_controller.get_cameras_params()
         # Условие для блокировки других потоков
         self.condition = Condition()
+        self.lock = Lock()
         # Поток, который отвечает за получение объектов из очереди и распределение их по спискам
         self.handler = Thread(target=self.handle_objs)
         self.run_flag = False
@@ -88,8 +89,8 @@ class ObjectsHandler(core.EvilEyeBase):
     def get(self, objs_type, cam_id):  # Получение списка объектов в зависимости от указанного типа
         # Блокируем остальные потоки на время получения объектов
         result = None
-        with self.condition:
-            self.condition.acquire()
+        with self.lock:
+            # self.condition.acquire()
             if objs_type == 'new':
                 result = copy.deepcopy(self.new_objs)
             elif objs_type == 'active':
@@ -100,8 +101,8 @@ class ObjectsHandler(core.EvilEyeBase):
                 result = self._get_all(cam_id)
             else:
                 raise Exception('Such type of objects does not exist')
-            self.condition.release()
-            self.condition.notify_all()
+            # self.condition.release()
+            # self.condition.notify_all()
 
         return result
 
@@ -143,13 +144,13 @@ class ObjectsHandler(core.EvilEyeBase):
                 continue
             tracks, image = tracking_results
             # Блокируем остальные потоки для предотвращения одновременного обращения к объектам
-            with self.condition:
-                self.condition.acquire()
+            with self.lock:
+                # self.condition.acquire()
                 self._handle_active(tracks, image)
                 # Оповещаем остальные потоки, снимаем блокировку
-                self.condition.release()
-                self.condition.notify_all()
-            self.objs_queue.task_done()
+                # self.condition.release()
+                # self.condition.notify_all()
+            # self.objs_queue.task_done()
             for subscriber in self.subscribers:
                 subscriber.update()
 

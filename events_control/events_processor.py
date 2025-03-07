@@ -78,8 +78,8 @@ class EventsProcessor(EvilEyeBase):
         while self.run_flag:
             time.sleep(0.01)
             new_events = self.queue.get()
-            # if new_events is None:
-            #     continue
+            if new_events is None:
+                continue
             # print(new_events)
 
             finished_idxs = set()
@@ -134,4 +134,4 @@ class EventsProcessor(EvilEyeBase):
                         self.finished_events[events] = []
                     else:
                         self.finished_events[events] = self.finished_events[events][start_index_for_remove:]
-                print(self.finished_events[events])
+                # print(self.finished_events[events])
