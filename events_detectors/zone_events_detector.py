@@ -18,6 +18,7 @@ class ZoneEventsDetector(EventsDetector):
         self.sources_zones = {}  # Айди источника: список зон
         self.zone_id_people = {}
         self.left_frame_id = {}  # Для отслеживания в истории айди кадров, на которых объект вышел из зоны
+        self.entered_frame_id = {}  # Для отслеживания в истории айди кадров, на которых объект зашел в зону
         self.zones = None
         self.new_zones = Queue()
         self.deleted_zones = Queue()
@@ -81,6 +82,7 @@ class ZoneEventsDetector(EventsDetector):
                             # Проверяем, находится ли объект в зоне дольше указанного времени
                             if not self._is_threshold_passed(idx, obj, cur_zone, img_width, img_height):
                                 continue
+                            self.entered_frame_id[source_id][obj.object_id] = hist_obj.frame_id
                             self.obj_ids_zone[hist_obj.object_id] = cur_zone
                             event = ZoneEvent(hist_obj.time_stamp, 'Alarm', hist_obj, cur_zone)
                             self.zone_id_people[cur_zone.get_zone_id()] += 1
@@ -97,6 +99,7 @@ class ZoneEventsDetector(EventsDetector):
                             event = ZoneEvent(hist_obj.time_stamp, 'Alarm', hist_obj, zone, is_finished=True)
                             self.left_frame_id[source_id][obj.object_id] = hist_obj.frame_id
                             self.zone_id_people[zone.get_zone_id()] -= 1
+                            del self.entered_frame_id[source_id][obj.object_id]
                             del self.obj_ids_zone[obj.object_id]
                             print(f'Finished event: {obj.last_image.frame_id}, Event: {event}')
                             events.append(event)
@@ -171,9 +174,12 @@ class ZoneEventsDetector(EventsDetector):
             history_obj = history[mid]
             box = history_obj.track.bounding_box  # Определяем присутствие в зоне по средней точке нижней границы рамки
             box_bottom_mid = ((box[0] + box[2]) / 2, box[3])
-            if not self._is_obj_in_zone(box_bottom_mid, zone, img_width, img_height):
-                idx = mid
-                end = mid - 1
+            if history_obj.frame_id > self.entered_frame_id[obj.source_id][obj.object_id]:
+                if not self._is_obj_in_zone(box_bottom_mid, zone, img_width, img_height):
+                    idx = mid
+                    end = mid - 1
+                else:
+                    beg = mid + 1
             else:
                 beg = mid + 1
         if not idx:
@@ -213,6 +219,7 @@ class ZoneEventsDetector(EventsDetector):
                 self.sources.add(src_id)
                 self.sources_zones[src_id] = []
                 self.left_frame_id[src_id] = {}
+                self.entered_frame_id[src_id] = {}
             self.sources_zones[src_id].append(zone)
 
         while not self.deleted_zones.empty():
@@ -235,6 +242,7 @@ class ZoneEventsDetector(EventsDetector):
     def set_params_impl(self):
         self.sources = {int(key) for key in self.params['sources'].keys()}
         self.left_frame_id = {source: {} for source in self.sources}
+        self.entered_frame_id = {source: {} for source in self.sources}
         self.event_threshold = self.params['event_threshold']
 
         sources_zones = {int(key): value for key, value in self.params['sources'].items()}
