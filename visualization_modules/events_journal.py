@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton,
     QDateTimeEdit, QHeaderView, QComboBox, QTableView, QStyledItemDelegate, QMessageBox
 )
-from PyQt6.QtGui import QPixmap, QPainter, QPen, QPolygonF, QColor, QBrush
+from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor, QBrush
 from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QModelIndex, QSize
 from PyQt6.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
 from visualization_modules.table_updater_view import TableUpdater
@@ -91,7 +91,10 @@ class EventsJournal(QWidget):
         # Сопоставляет имена событий с именами таблиц БД
         self.events_tables = {adapter.get_event_name(): adapter.get_table_name() for adapter in self.journal_adapters}
 
-        self.table_updater = TableUpdater(table_name, self._insert_rows, self._update_on_lost)
+        self.table_updater = TableUpdater()
+        self.table_updater.append_event_signal.connect(self._insert_rows)
+        self.table_updater.update_event_signal.connect(self._update_on_lost)
+
         self.update_timer = QTimer()
         self.update_timer.setSingleShot(True)
         self.update_timer.timeout.connect(self._update_table)
@@ -336,7 +339,6 @@ class EventsJournal(QWidget):
         self._filter_records(self.start_time.dateTime().toPyDateTime(), self.finish_time.dateTime().toPyDateTime())
         self.start_time_updated = False
         self.finish_time_updated = False
-
 
     @pyqtSlot()
     def _update_table(self):

@@ -7,9 +7,6 @@ class JournalAdapterZoneEvents(JournalAdapterBase):
         self.table_name = None
         self.event_name = None
 
-    def set_params_impl(self):
-        self.table_name = self.params['table_name']
-
     def init_impl(self):
         pass
 

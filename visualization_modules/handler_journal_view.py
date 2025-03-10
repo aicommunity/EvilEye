@@ -2,15 +2,14 @@ import datetime
 import os
 from psycopg2 import sql
 from utils import threading_events
-from utils import utils
-from PyQt6.QtCore import QDate, Qt, QDateTime
+from PyQt6.QtCore import QDate, QDateTime
 from PyQt6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QTabWidget, QPushButton,
-    QSizePolicy, QDateTimeEdit, QHeaderView, QComboBox, QTableView, QStyledItemDelegate,
-    QTableWidget, QTableWidgetItem, QApplication, QAbstractItemView, QMessageBox
+    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton,
+    QDateTimeEdit, QHeaderView, QComboBox, QTableView, QStyledItemDelegate,
+    QMessageBox
 )
 from PyQt6.QtGui import QPixmap, QPainter, QPen
-from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QPoint, QSize, QVariant, QModelIndex
+from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QModelIndex
 from PyQt6.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
 from visualization_modules.table_updater_view import TableUpdater
 
@@ -87,7 +86,10 @@ class HandlerJournal(QWidget):
     def __init__(self, db_controller, table_name, params, table_params, parent=None):
         super().__init__()
         self.db_controller = db_controller
-        self.table_updater = TableUpdater(table_name, self._insert_rows, self._update_on_lost)
+        self.table_updater = TableUpdater()
+        self.table_updater.append_object_signal.connect(self._insert_rows)
+        self.table_updater.update_object_signal.connect(self._update_on_lost)
+
         self.update_timer = QTimer()
         self.update_timer.setSingleShot(True)
         self.update_timer.timeout.connect(self._update_table)
@@ -400,7 +402,6 @@ class HandlerJournal(QWidget):
         if self.block_updates or not self.isVisible() or self.update_timer.isActive():
             return
         self.update_timer.start(10000)
-        print('Timer_started')
 
     def close(self):
         self._update_job_first_last_records()

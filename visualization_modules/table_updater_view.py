@@ -1,39 +1,28 @@
-from abc import ABC, abstractmethod
-import datetime
-import core
-from psycopg2 import sql
-import copy
-from capture.video_capture_base import CaptureImage
-from objects_handler.objects_handler import ObjectResultList
-from timeit import default_timer as timer
-from visualization_modules.table_data_thread import TableDataThread
 from utils import threading_events
-from PyQt6.QtCore import QObject, QThread, pyqtSignal, QEventLoop, QTimer
-from PyQt6 import QtGui
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtCore import QObject, pyqtSignal
 
 
 class TableUpdater(QObject):
-    append_record_signal = pyqtSignal()
-    update_record_signal = pyqtSignal()
+    append_object_signal = pyqtSignal()
+    update_object_signal = pyqtSignal()
+    append_event_signal = pyqtSignal()
+    update_event_signal = pyqtSignal()
 
-    def __init__(self, table_name, qt_slot_insert, qt_slot_update):
+    def __init__(self):
         super().__init__()
-        self.qt_slot_insert = qt_slot_insert
-        self.qt_slot_update = qt_slot_update
-        self.data_thread = None
-        self.fps = 5
-        self.table_name = table_name
-        self.append_record_signal.connect(self.qt_slot_insert)
-        self.update_record_signal.connect(self.qt_slot_update)
-        threading_events.subscribe('handler new object', self.update)
-        threading_events.subscribe('handler update object', self.update_on_lost)
-        threading_events.subscribe('new event', self.update)
-        threading_events.subscribe('update event', self.update_on_lost)
+        threading_events.subscribe('handler new object', self.update_objects)
+        threading_events.subscribe('handler update object', self.update_objects_on_lost)
+        threading_events.subscribe('new event', self.update_events)
+        threading_events.subscribe('update event', self.update_events_on_lost)
 
-    def update(self):
-        self.append_record_signal.emit()
+    def update_objects(self):
+        self.append_object_signal.emit()
 
-    def update_on_lost(self):
-        self.update_record_signal.emit()
+    def update_objects_on_lost(self):
+        self.update_object_signal.emit()
+
+    def update_events(self):
+        self.append_event_signal.emit()
+
+    def update_events_on_lost(self):
+        self.update_event_signal.emit()
