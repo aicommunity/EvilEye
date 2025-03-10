@@ -171,7 +171,8 @@ class HandlerJournal(QWidget):
 
         query = QSqlQuery(QSqlDatabase.database('obj_conn'))
         query.prepare('SELECT source_name, CAST(\'Event\' AS text) AS event_type, '
-                      '\'Object Id=\' || object_id || \'; class: \' || class_id || \'; conf: \' || confidence AS information,'
+                      '\'Object Id=\' || object_id || \'; class: \' || class_id || \'; conf: \' || ROUND(confidence::numeric, 2)'
+                      ' AS information,'
                       'time_stamp, time_lost, preview_path, lost_preview_path FROM objects '
                       'WHERE time_stamp BETWEEN :start AND :finish')
         self.current_start_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.min)
@@ -179,6 +180,7 @@ class HandlerJournal(QWidget):
         query.bindValue(":start", self.current_start_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
         query.bindValue(":finish", self.current_end_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
         query.exec()
+        print(query.lastError().text())
 
         self.model.setQuery(query)
         self.model.setHeaderData(0, Qt.Orientation.Horizontal, self.tr('Name'))
@@ -344,7 +346,8 @@ class HandlerJournal(QWidget):
         # print(camera_name, source_id, full_address)
         query = QSqlQuery(QSqlDatabase.database('obj_conn'))
         query.prepare('SELECT source_name, CAST(\'Event\' AS text) AS event_type, '
-                      '\'Object Id=\' || object_id || \'; class: \' || class_id || \'; conf: \' || confidence AS information,'
+                      '\'Object Id=\' || object_id || \'; class: \' || class_id || \'; conf: \' || ROUND(confidence::numeric, 2)'
+                      ' AS information,'
                       'time_stamp, time_lost, preview_path, lost_preview_path FROM objects '
                       'WHERE (time_stamp BETWEEN :start AND :finish) AND (source_id = :src_id) '
                       'AND (camera_full_address = :address) ORDER BY time_stamp DESC')
@@ -361,7 +364,8 @@ class HandlerJournal(QWidget):
         fields = self.db_table_params.keys()
         query = QSqlQuery(QSqlDatabase.database('obj_conn'))
         query.prepare('SELECT source_name, CAST(\'Event\' AS text) AS event_type, '
-                      '\'Object Id=\' || object_id || \'; class: \' || class_id || \'; conf: \' || confidence AS information,'
+                      '\'Object Id=\' || object_id || \'; class: \' || class_id || \'; conf: \' || ROUND(confidence::numeric, 2)'
+                      ' AS information,'
                       'time_stamp, time_lost, preview_path, lost_preview_path FROM objects '
                       'WHERE time_stamp BETWEEN :start AND :finish ORDER BY time_stamp DESC')
         query.bindValue(":start", start_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
@@ -375,7 +379,8 @@ class HandlerJournal(QWidget):
 
         query = QSqlQuery(QSqlDatabase.database('obj_conn'))
         query.prepare('SELECT source_name, CAST(\'Event\' AS text) AS event_type, '
-                      '\'Object Id=\' || object_id || \'; class: \' || class_id || \'; conf: \' || confidence AS information,'
+                      '\'Object Id=\' || object_id || \'; class: \' || class_id || \'; conf: \' || ROUND(confidence::numeric, 2)'
+                      ' AS information,'
                       'time_stamp, time_lost, preview_path, lost_preview_path FROM objects '
                       'WHERE time_stamp BETWEEN :start AND :finish ORDER BY time_stamp DESC')
         self.current_start_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.min)

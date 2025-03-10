@@ -94,9 +94,20 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
     def _prepare_for_updating(self, obj):
         fields_for_updating = {'lost_bounding_box': obj.track.bounding_box,
                                'time_lost': obj.time_lost,
-                               'lost_preview_path': self._get_img_path('preview', 'lost', obj),
-                               'lost_frame_path': self._get_img_path('frame', 'lost', obj),
+                               'lost_preview_path': '',
+                               'lost_frame_path': '',
                                'object_data': json.dumps(obj.__dict__, cls=ObjectResultEncoder)}
+
+        src_name = ''
+        for camera in self.cameras_params:
+            if obj.source_id in camera['source_ids']:
+                id_idx = camera['source_ids'].index(obj.source_id)
+                src_name = camera['source_names'][id_idx]
+                break
+        fields_for_updating['lost_preview_path'] = self._get_img_path('preview', 'lost',
+                                                                      src_name, obj)
+        fields_for_updating['lost_frame_path'] = self._get_img_path('frame', 'lost',
+                                                                    src_name, obj)
 
         image_height, image_width, _ = obj.last_image.image.shape
         fields_for_updating['lost_bounding_box'] = copy.deepcopy(fields_for_updating['lost_bounding_box'])
@@ -117,9 +128,9 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
                              'lost_bounding_box': None,
                              'confidence': obj.track.confidence,
                              'class_id': obj.class_id,
-                             'preview_path': self._get_img_path('preview', 'detected', obj),
+                             'preview_path': '',
                              'lost_preview_path': None,
-                             'frame_path': self._get_img_path('frame', 'detected', obj),
+                             'frame_path': '',
                              'lost_frame_path': None,
                              'object_data': json.dumps(obj.__dict__, cls=ObjectResultEncoder),
                              'project_id': self.db_controller.get_project_id(),
@@ -132,6 +143,10 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
                 fields_for_saving['source_name'] = camera['source_names'][id_idx]
                 fields_for_saving['camera_full_address'] = camera['camera']
                 break
+        fields_for_saving['preview_path'] = self._get_img_path('preview', 'detected',
+                                                               fields_for_saving['source_name'], obj)
+        fields_for_saving['frame_path'] = self._get_img_path('frame', 'detected',
+                                                             fields_for_saving['source_name'], obj)
 
         image_height, image_width, _ = obj.last_image.image.shape
         fields_for_saving['bounding_box'] = copy.deepcopy(fields_for_saving['bounding_box'])
@@ -142,7 +157,7 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
         return (list(fields_for_saving.keys()), list(fields_for_saving.values()),
                 fields_for_saving['preview_path'], fields_for_saving['frame_path'])
 
-    def _get_img_path(self, image_type, obj_event_type, obj):
+    def _get_img_path(self, image_type, obj_event_type, src_name, obj):
         save_dir = self.db_params['image_dir']
         img_dir = os.path.join(save_dir, 'images')
         cur_date = datetime.date.today()
@@ -162,8 +177,8 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
 
         if obj_event_type == 'detected':
             timestamp = obj.time_stamp.strftime('%Y_%m_%d_%H_%M_%S.%f')
-            img_path = os.path.join(obj_type_path, f'{timestamp}_{image_type}.jpeg')
+            img_path = os.path.join(obj_type_path, f'{timestamp}_{src_name}_{image_type}.jpeg')
         elif obj_event_type == 'lost':
             timestamp = obj.time_lost.strftime('%Y_%m_%d_%H_%M_%S_%f')
-            img_path = os.path.join(obj_type_path, f'{timestamp}_{image_type}.jpeg')
+            img_path = os.path.join(obj_type_path, f'{timestamp}_{src_name}_{image_type}.jpeg')
         return os.path.relpath(img_path, save_dir)
