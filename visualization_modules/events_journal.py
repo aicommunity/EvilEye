@@ -273,7 +273,7 @@ class EventsJournal(QWidget):
             if 'detected' in path:
                 query.prepare('SELECT bounding_box from objects WHERE preview_path = :path')
             else:
-                query.prepare('SELECT bounding_box from objects WHERE lost_preview_path = :path')
+                query.prepare('SELECT lost_bounding_box from objects WHERE lost_preview_path = :path')
 
         query.bindValue(':path', path)
         query.exec()

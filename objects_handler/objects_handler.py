@@ -183,6 +183,7 @@ class ObjectsHandler(core.EvilEyeBase):
                 obj.source_id = tracking_results.source_id
                 obj.class_id = track.class_id
                 obj.time_stamp = tracking_results.time_stamp
+                obj.time_detected = tracking_results.time_stamp
                 obj.frame_id = tracking_results.frame_id
                 obj.object_id = self.object_id_counter
                 obj.last_image = image

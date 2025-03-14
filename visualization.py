@@ -15,13 +15,15 @@ if __name__ == "__main__":
     parser.add_argument('fullpath', help='Full path to json file with cameras and modules params',
                         type=str, default=None, nargs="?")
     args = parser.parse_args()
+    file_path = 'samples/video_file.json'
     if args.fullpath is None:
-        params_file = open('samples/video_file.json')
+        with open(file_path, 'r+') as params_file:
+            data = json.load(params_file)
     else:
-        params_file = open(args.fullpath)
-    data = json.load(params_file)
+        with open(file_path, 'r+') as params_file:
+            data = json.load(params_file)
     app = QApplication(sys.argv)
-    a = MainWindow(data, 1280, 720)
+    a = MainWindow(file_path, data, 1280, 720)
     a.show()
     ret = app.exec()
     sys.exit(ret)

@@ -9,6 +9,7 @@ class ObjectResultHistory:
         self.class_id = None
         self.time_lost = None
         self.time_stamp = None
+        self.time_detected = None
         self.last_update = False
         self.last_image = None
         self.lost_frames = 0
@@ -24,6 +25,7 @@ class ObjectResultHistory:
         copy_instance.class_id = copy.deepcopy(self.class_id, memodict)
         copy_instance.time_lost = copy.deepcopy(self.time_lost, memodict)
         copy_instance.time_stamp = copy.deepcopy(self.time_stamp, memodict)
+        copy_instance.time_detected = copy.deepcopy(self.time_detected, memodict)
         copy_instance.last_update = copy.deepcopy(self.last_update, memodict)
         copy_instance.last_image = self.last_image
         copy_instance.lost_frames = copy.deepcopy(self.lost_frames,memodict)
@@ -47,6 +49,7 @@ class ObjectResult(ObjectResultHistory):
         copy_instance.class_id = copy.deepcopy(self.class_id, memodict)
         copy_instance.time_lost = copy.deepcopy(self.time_lost, memodict)
         copy_instance.time_stamp = copy.deepcopy(self.time_stamp, memodict)
+        copy_instance.time_detected = copy.deepcopy(self.time_detected, memodict)
         copy_instance.last_update = copy.deepcopy(self.last_update, memodict)
         copy_instance.last_image = self.last_image
         copy_instance.lost_frames = copy.deepcopy(self.lost_frames,memodict)
@@ -62,6 +65,7 @@ class ObjectResult(ObjectResultHistory):
         result.class_id = self.class_id
         result.time_lost = self.time_lost
         result.time_stamp = self.time_stamp
+        result.time_detected = self.time_detected
         result.last_update = self.last_update
         result.last_image = self.last_image
         result.lost_frames = self.lost_frames

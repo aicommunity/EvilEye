@@ -41,7 +41,7 @@ class CustomPixmapItem(QGraphicsPixmapItem):
 
 
 class GraphicsView(QGraphicsView):
-    def __init__(self, parent=None, sources_zones=None):
+    def __init__(self, parent=None, sources_zones=None, params=None):
         super().__init__(parent)
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
@@ -51,6 +51,7 @@ class GraphicsView(QGraphicsView):
         self.pix = None
         self.source_id = None
         self.sources_zones = sources_zones
+        self.params = params
 
         self.red_brush = QBrush(QColor(255, 0, 0, 128))
         self.red_pen = QPen(Qt.GlobalColor.red)
@@ -134,6 +135,10 @@ class GraphicsView(QGraphicsView):
             poly.append(img_point)
             self.polygon.setPolygon(poly)
             self.sources_zones[self.source_id].append(['poly', self.polygon_coords, self.polygon.boundingRect()])
+            if self.source_id not in self.params['events_detectors']['ZoneEventsDetector']['sources']:
+                self.params['events_detectors']['ZoneEventsDetector']['sources'][self.source_id] = [self.polygon_coords]
+            else:
+                self.params['events_detectors']['ZoneEventsDetector']['sources'][self.source_id].append(self.polygon_coords)
             # Оповещаем о добавлении зоны
             threading_events.notify('new zone', self.source_id, self.polygon_coords, 'poly')
             self.polygon_coords = []
@@ -204,6 +209,10 @@ class GraphicsView(QGraphicsView):
                                 bottom_left.y() / self.pix.pixmap().height())
             norm_zone_coords = [(norm_top_left[0], norm_top_left[1]), (norm_top_right[0], norm_top_right[1]),
                                 (norm_bottom_right[0], norm_bottom_right[1]), (norm_bottom_left[0], norm_bottom_left[1])]
+            if self.source_id not in self.params['events_detectors']['ZoneEventsDetector']['sources']:
+                self.params['events_detectors']['ZoneEventsDetector']['sources'][self.source_id] = [norm_zone_coords]
+            else:
+                self.params['events_detectors']['ZoneEventsDetector']['sources'][self.source_id].append(norm_zone_coords)
             self.sources_zones[self.source_id].append(['rect', norm_zone_coords, self.rectangle.boundingRect()])
             # Оповещаем о добавлении зоны
             threading_events.notify('new zone', self.source_id, norm_zone_coords, 'rect')
@@ -253,7 +262,7 @@ class ZoneWindow(QWidget):
             for zones_coords in self.zone_params[source_id]:
                 sources_zones[int(source_id)].append(['poly', zones_coords, None])
 
-        self.view = GraphicsView(self, sources_zones=sources_zones)
+        self.view = GraphicsView(self, sources_zones=sources_zones, params=self.params)
         self.pixmap = None
 
         self.is_rect_clicked = False

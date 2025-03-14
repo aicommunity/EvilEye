@@ -121,7 +121,7 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
     def _prepare_for_saving(self, obj) -> tuple[list, list, str, str]:
         fields_for_saving = {'source_id': obj.source_id,
                              'source_name': '',
-                             'time_stamp': obj.time_stamp,
+                             'time_stamp': obj.time_detected,
                              'time_lost': obj.time_lost,
                              'object_id': obj.object_id,
                              'bounding_box': obj.track.bounding_box,
@@ -176,7 +176,7 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
         #     os.mkdir(obj_event_path)
 
         if obj_event_type == 'detected':
-            timestamp = obj.time_stamp.strftime('%Y_%m_%d_%H_%M_%S.%f')
+            timestamp = obj.time_detected.strftime('%Y_%m_%d_%H_%M_%S.%f')
             img_path = os.path.join(obj_type_path, f'{timestamp}_{src_name}_{image_type}.jpeg')
         elif obj_event_type == 'lost':
             timestamp = obj.time_lost.strftime('%Y_%m_%d_%H_%M_%S_%f')

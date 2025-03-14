@@ -108,10 +108,16 @@ class EventsProcessor(EvilEyeBase):
                     for event in new_events[events]:
                         event.set_id(self.id_counter)
                         self.id_counter += 1
-                        if event.is_long_term():  # Если событие долгосрочное, делаем его активным
+                        if event.is_long_term():  # Если событие долгосрочное и не завершено, делаем его активным
                             if events not in self.long_term_events:
                                 self.long_term_events[events] = []
-                            self.long_term_events[events].append(event)
+                            if event.is_finished():  # Если новое долгосрочное событие уже пришло завершенным (на случай поиска в истории)
+                                if events not in self.finished_events:
+                                    self.finished_events[events] = []
+                                self.finished_events[events].append(event)
+                                self.events_adapters[event.get_name()].insert(event)
+                            else:
+                                self.long_term_events[events].append(event)
                         else:  # Иначе отправляем в завершенные
                             if events not in self.finished_events:
                                 self.finished_events[events] = []

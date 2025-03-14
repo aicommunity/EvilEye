@@ -6,7 +6,7 @@ class FieldOfViewEvent(Event):
         super().__init__(timestamp, alarm_type, is_finished)
         self.source_id = obj.source_id
         self.object_id = obj.object_id
-        self.time_obj_detected = obj.time_stamp
+        self.time_obj_detected = obj.time_detected
         self.time_lost = obj.time_lost
         self.long_term = True
 
@@ -14,8 +14,7 @@ class FieldOfViewEvent(Event):
         return f'Id: {self.event_id}, Source: {self.source_id}, Obj_id: {self.object_id}, Time: {self.time_obj_detected}'
 
     def __eq__(self, other):
-        return (self.source_id == other.source_id and self.object_id == other.object_id and
-                self.time_obj_detected == other.time_obj_detected)
+        return self.source_id == other.source_id and self.object_id == other.object_id
 
     def update_on_finished(self, finished_event):
         self.time_lost = finished_event.time_lost

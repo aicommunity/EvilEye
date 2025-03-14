@@ -1,3 +1,5 @@
+import json
+
 from PyQt6 import QtGui
 from PyQt6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout,
@@ -55,7 +57,7 @@ class MainWindow(QMainWindow):
     display_zones_signal = pyqtSignal(dict)
     add_zone_signal = pyqtSignal(int)
 
-    def __init__(self, params, win_width, win_height):
+    def __init__(self, params_file_path, params, win_width, win_height):
         super().__init__()
         self.setWindowTitle("EvilEye")
         self.setMinimumSize(win_width, win_height)
@@ -64,6 +66,7 @@ class MainWindow(QMainWindow):
 
         self.controller = controller.Controller(self, self.slots, self.signals)
 
+        self.params_path = params_file_path
         self.params = params
         self.rows = self.params['visualizer']['num_height']
         self.cols = self.params['visualizer']['num_width']
@@ -237,6 +240,9 @@ class MainWindow(QMainWindow):
         self.controller.release()
         self.zone_window.close()
         self.db_journal_win.close()
+        # with open(self.params_path, 'r+') as params_file:
+        #     params_file.seek(0)
+        #     json.dump(self.params, params_file)
         QApplication.closeAllWindows()
         event.accept()
 
