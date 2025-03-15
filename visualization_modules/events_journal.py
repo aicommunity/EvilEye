@@ -115,7 +115,7 @@ class EventsJournal(QWidget):
         self.data_for_update = []
         self.last_update_time = None
         self.update_rate = 10
-        self.current_start_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.min)
+        self.current_start_time = datetime.datetime.combine(datetime.datetime.now()-datetime.timedelta(days=1), datetime.time.min)
         self.current_end_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.max)
         self.start_time_updated = False
         self.finish_time_updated = False
@@ -148,6 +148,7 @@ class EventsJournal(QWidget):
                 "Events journal - Error!",
                 "Database Error: %s" % db.lastError().databaseText(),
             )
+        print(QSqlDatabase.connectionNames())
 
     def _setup_table(self):
         self._setup_model()
@@ -160,7 +161,7 @@ class EventsJournal(QWidget):
         h_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         h_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         h_header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        h_header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        h_header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
         h_header.setDefaultSectionSize(EventsJournal.preview_width)
         v_header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
 
@@ -186,6 +187,7 @@ class EventsJournal(QWidget):
         query.bindValue(":start", self.current_start_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
         query.bindValue(":finish", self.current_end_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
         query.exec()
+        print(query.lastError().text())
 
         self.model.setQuery(query)
         self.model.setHeaderData(0, Qt.Orientation.Horizontal, self.tr('Event'))
@@ -202,7 +204,7 @@ class EventsJournal(QWidget):
         filter_names.insert(0, 'All')
         self.filters.addItems(filter_names)
 
-        self.filters.currentTextChanged.connect(self._filter_by_camera)
+        # self.filters.currentTextChanged.connect(self._filter_by_camera)
         self.camera_label = QLabel('Display camera:')
 
         self.camera_filter_layout = QHBoxLayout()
@@ -225,6 +227,7 @@ class EventsJournal(QWidget):
         self.start_time = QDateTimeEdit()
         self.start_time.setMinimumWidth(200)
         self.start_time.setCalendarPopup(True)
+        self.start_time.setDateTime(self.current_start_time)
         self.start_time.setMinimumDate(QDate.currentDate().addDays(-365))
         self.start_time.setMaximumDate(QDate.currentDate().addDays(365))
         self.start_time.setDisplayFormat("hh:mm:ss dd/MM/yyyy")
@@ -236,6 +239,7 @@ class EventsJournal(QWidget):
         self.finish_time.setCalendarPopup(True)
         self.finish_time.setMinimumDate(QDate.currentDate().addDays(-365))
         self.finish_time.setMaximumDate(QDate.currentDate().addDays(365))
+        self.finish_time.setDateTime(self.current_end_time)
         self.finish_time.setDisplayFormat("hh:mm:ss dd/MM/yyyy")
         self.finish_time.setKeyboardTracking(False)
         self.finish_time.editingFinished.connect(self.finish_time_update)
@@ -252,6 +256,9 @@ class EventsJournal(QWidget):
         self.retrieve_data_signal.emit()
         self.table.resizeRowsToContents()
         show_event.accept()
+#        self.start_time_update()
+#        self.finish_time_update()
+#        self._filter_by_time()
 
     @pyqtSlot(QModelIndex)
     def _display_image(self, index):
@@ -404,13 +411,13 @@ class EventsJournal(QWidget):
         query_string = query_string.removesuffix(' UNION ')
         query_string += ') AS temp WHERE time_stamp BETWEEN :start AND :finish ORDER BY time_stamp DESC;'
         query.prepare(query_string)
-        self.current_start_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.min)
+        self.current_start_time = datetime.datetime.combine(datetime.datetime.now()-datetime.timedelta(days=1), datetime.time.min)
         self.current_end_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.max)
         # Сбрасываем дату в фильтрах
-        self.start_time.setDateTime(
-            QDateTime.fromString(self.current_start_time.strftime("%H:%M:%S %d-%m-%Y"), "hh:mm:ss dd-MM-yyyy"))
-        self.finish_time.setDateTime(
-            QDateTime.fromString(self.current_end_time.strftime("%H:%M:%S %d-%m-%Y"), "hh:mm:ss dd-MM-yyyy"))
+        #self.start_time.setDateTime(
+        #    QDateTime.fromString(self.current_start_time.strftime("%H:%M:%S %d-%m-%Y"), "hh:mm:ss dd-MM-yyyy"))
+        #self.finish_time.setDateTime(
+        #    QDateTime.fromString(self.current_end_time.strftime("%H:%M:%S %d-%m-%Y"), "hh:mm:ss dd-MM-yyyy"))
 
         query.bindValue(":start", self.current_start_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
         query.bindValue(":finish", self.current_end_time.strftime('%Y-%m-%d %H:%M:%S.%f'))

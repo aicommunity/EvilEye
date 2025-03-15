@@ -153,7 +153,7 @@ class HandlerJournal(QWidget):
         h_header = self.table.horizontalHeader()
         h_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         h_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        h_header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        h_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         h_header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         h_header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         header.setDefaultSectionSize(HandlerJournal.preview_height)

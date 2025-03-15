@@ -44,7 +44,7 @@ class DatabaseJournalWindow(QWidget):
         self.zone_events_adapter.init()
 
         self.setWindowTitle('DB Journal')
-        self.resize(900, 600)
+        self.resize(1600, 600)
 
         self.tabs = QTabWidget()
         self.tabs.setTabsClosable(True)

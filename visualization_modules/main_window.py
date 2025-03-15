@@ -60,7 +60,7 @@ class MainWindow(QMainWindow):
     def __init__(self, params_file_path, params, win_width, win_height):
         super().__init__()
         self.setWindowTitle("EvilEye")
-        self.setMinimumSize(win_width, win_height)
+        self.resize(win_width, win_height)
         self.slots = {'update_image': self.update_image, 'open_zone_win': self.open_zone_win}
         self.signals = {'display_zones_signal': self.display_zones_signal, 'add_zone_signal': self.add_zone_signal}
 

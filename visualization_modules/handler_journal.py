@@ -74,7 +74,7 @@ class ImageLabel(QLabel):
         return super().pixmap(), file_path, box
 
 
-class HandlerJournal(QWidget):
+class   HandlerJournal(QWidget):
     retrieve_data_signal = pyqtSignal()
 
     preview_width = 300
@@ -100,7 +100,7 @@ class HandlerJournal(QWidget):
         self.data_for_update = []
         self.last_update_time = None
         self.update_rate = 10
-        self.current_start_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.min)
+        self.current_start_time = datetime.datetime.combine(datetime.datetime.now()-datetime.timedelta(days=1), datetime.time.min)
         self.current_end_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.max)
         self.start_time_updated = False
         self.finish_time_updated = False
@@ -181,6 +181,7 @@ class HandlerJournal(QWidget):
         self.start_time.setCalendarPopup(True)
         self.start_time.setMinimumDate(QDate.currentDate().addDays(-365))
         self.start_time.setMaximumDate(QDate.currentDate().addDays(365))
+        self.start_time.setDateTime(self.current_start_time)
         self.start_time.setDisplayFormat("hh:mm:ss dd/MM/yyyy")
         self.start_time.setKeyboardTracking(False)
         self.start_time.dateTimeChanged.connect(self.start_time_update)
@@ -190,6 +191,7 @@ class HandlerJournal(QWidget):
         self.finish_time.setCalendarPopup(True)
         self.finish_time.setMinimumDate(QDate.currentDate().addDays(-365))
         self.finish_time.setMaximumDate(QDate.currentDate().addDays(365))
+        self.finish_time.setDateTime(self.current_end_time)
         self.finish_time.setDisplayFormat("hh:mm:ss dd/MM/yyyy")
         self.finish_time.setKeyboardTracking(False)
         self.finish_time.dateTimeChanged.connect(self.finish_time_update)
@@ -203,10 +205,9 @@ class HandlerJournal(QWidget):
         self.search_button.clicked.connect(self._filter_by_time)
 
     def showEvent(self, show_event):
-        # print('SHOW EVENT CALLED')
         self.last_update_time = datetime.datetime.now()
-        self.table.setRowCount(0)
-        self.last_row_db = 0
+       # self.table.setRowCount(0)
+       # self.last_row_db = 0
         self.retrieve_data_signal.emit()
         show_event.accept()
 
@@ -326,7 +327,7 @@ class HandlerJournal(QWidget):
             'SELECT {fields} FROM {table} WHERE time_stamp BETWEEN %s AND %s ORDER BY record_id;').format(
             fields=sql.SQL(",").join(map(sql.Identifier, fields)),
             table=sql.Identifier(self.table_name))
-        self.current_start_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.min)
+        self.current_start_time = datetime.datetime.combine(datetime.datetime.now()-datetime.timedelta(days=1), datetime.time.min)
         self.current_end_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.max)
         data = (self.current_start_time, self.current_end_time)
         records = self.db_controller.query(query, data)
