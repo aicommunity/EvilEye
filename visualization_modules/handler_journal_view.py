@@ -63,20 +63,6 @@ class ImageWindow(QLabel):
         self.hide()
         event.accept()
 
-# class CustomModel(QSqlQueryModel):
-#     def data(self, idx: QModelIndex, role: int):
-#         if not idx.isValid():
-#             return QVariant()
-#         if idx.column() == 2:
-#             preview_path = super().data(idx, Qt.ItemDataRole.DisplayRole)
-#             print(preview_path)
-#             pixmap = QPixmap()
-#             if preview_path:
-#                 pixmap.load(preview_path)
-#             return pixmap
-#         return super().data(idx, role)
-
-
 class HandlerJournal(QWidget):
     retrieve_data_signal = pyqtSignal()
 
@@ -110,7 +96,7 @@ class HandlerJournal(QWidget):
         self.data_for_update = []
         self.last_update_time = None
         self.update_rate = 10
-        self.current_start_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.min)
+        self.current_start_time = datetime.datetime.combine(datetime.datetime.now()-datetime.timedelta(days=1), datetime.time.min)
         self.current_end_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.max)
         self.start_time_updated = False
         self.finish_time_updated = False
@@ -175,7 +161,7 @@ class HandlerJournal(QWidget):
                       ' AS information,'
                       'time_stamp, time_lost, preview_path, lost_preview_path FROM objects '
                       'WHERE time_stamp BETWEEN :start AND :finish')
-        self.current_start_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.min)
+        self.current_start_time = datetime.datetime.combine(datetime.datetime.now()-datetime.timedelta(days=1), datetime.time.min)
         self.current_end_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.max)
         query.bindValue(":start", self.current_start_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
         query.bindValue(":finish", self.current_end_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
@@ -223,6 +209,7 @@ class HandlerJournal(QWidget):
         self.start_time.setCalendarPopup(True)
         self.start_time.setMinimumDate(QDate.currentDate().addDays(-365))
         self.start_time.setMaximumDate(QDate.currentDate().addDays(365))
+        self.start_time.setDateTime(self.current_start_time)
         self.start_time.setDisplayFormat("hh:mm:ss dd/MM/yyyy")
         self.start_time.setKeyboardTracking(False)
         self.start_time.editingFinished.connect(self.start_time_update)
@@ -232,6 +219,7 @@ class HandlerJournal(QWidget):
         self.finish_time.setCalendarPopup(True)
         self.finish_time.setMinimumDate(QDate.currentDate().addDays(-365))
         self.finish_time.setMaximumDate(QDate.currentDate().addDays(365))
+        self.finish_time.setDateTime(self.current_end_time)
         self.finish_time.setDisplayFormat("hh:mm:ss dd/MM/yyyy")
         self.finish_time.setKeyboardTracking(False)
         self.finish_time.editingFinished.connect(self.finish_time_update)
@@ -336,7 +324,7 @@ class HandlerJournal(QWidget):
 
         fields = self.db_table_params.keys()
         if camera_name == 'All':
-            if (self.current_start_time == datetime.datetime.combine(datetime.datetime.now(), datetime.time.min) and
+            if (self.current_start_time == datetime.datetime.combine(datetime.datetime.now()-datetime.timedelta(days=1), datetime.time.min) and
                     self.current_end_time == datetime.datetime.combine(datetime.datetime.now(), datetime.time.max)):
                 self.block_updates = False
             self._filter_records(self.current_start_time, self.current_end_time)
@@ -383,7 +371,7 @@ class HandlerJournal(QWidget):
                       ' AS information,'
                       'time_stamp, time_lost, preview_path, lost_preview_path FROM objects '
                       'WHERE time_stamp BETWEEN :start AND :finish ORDER BY time_stamp DESC')
-        self.current_start_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.min)
+        self.current_start_time = datetime.datetime.combine(datetime.datetime.now()-datetime.timedelta(days=1), datetime.time.min)
         self.current_end_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.max)
         # Сбрасываем дату в фильтрах
         self.start_time.setDateTime(

@@ -34,7 +34,7 @@ class DatabaseAdapterFieldOfViewEvents(DatabaseAdapterBase):
     def _update_impl(self, event):
         fields, data, preview_path = self._prepare_for_updating(event)
 
-        query_type = 'Update'
+        query_type = 'update'
         data.append(event.event_id)
         data = tuple(data)
         update_query = sql.SQL('UPDATE {table} SET {data} WHERE event_id=({selected})').format(

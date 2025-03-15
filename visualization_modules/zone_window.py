@@ -51,6 +51,9 @@ class GraphicsView(QGraphicsView):
         self.pix = None
         self.source_id = None
         self.sources_zones = sources_zones
+        for src_id in self.sources_zones:
+            for zone_coords in self.sources_zones[src_id]:
+                threading_events.notify('new zone', src_id, zone_coords, 'poly')
         self.params = params
 
         self.red_brush = QBrush(QColor(255, 0, 0, 128))
@@ -84,11 +87,12 @@ class GraphicsView(QGraphicsView):
         self.polygon.setBrush(self.red_brush)
 
         if self.source_id in self.sources_zones:
+            print(self.sources_zones[self.source_id])
             for i in range(len(self.sources_zones[self.source_id])):
                 # Отрисовка зон после каждого открытия окна
                 zone_type, zone_coords, item = self.sources_zones[self.source_id][i]
                 if not item:  # Для зон из json не нужен перевод из нормализованных координат
-                    coords = [QPointF(point[0], point[1]) for point in zone_coords]
+                    coords = [QPointF(point[0] * pixmap.width(), point[1] * pixmap.height()) for point in zone_coords]
                 else:
                     coords = [QPointF(point[0] * pixmap.width(), point[1] * pixmap.height()) for point in zone_coords]
                 if ZoneForm(zone_type) == ZoneForm.Rectangle:
@@ -106,6 +110,7 @@ class GraphicsView(QGraphicsView):
                     polygon.setPolygon(poly)
                     if not item:
                         self.sources_zones[self.source_id][i][2] = polygon.boundingRect()
+                        print(polygon.boundingRect())
 
     def mousePressEvent(self, event):
         pos = self.mapToScene(event.pos())
@@ -135,10 +140,10 @@ class GraphicsView(QGraphicsView):
             poly.append(img_point)
             self.polygon.setPolygon(poly)
             self.sources_zones[self.source_id].append(['poly', self.polygon_coords, self.polygon.boundingRect()])
-            if self.source_id not in self.params['events_detectors']['ZoneEventsDetector']['sources']:
-                self.params['events_detectors']['ZoneEventsDetector']['sources'][self.source_id] = [self.polygon_coords]
+            if str(self.source_id) not in self.params['events_detectors']['ZoneEventsDetector']['sources']:
+                self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.source_id)] = [self.polygon_coords]
             else:
-                self.params['events_detectors']['ZoneEventsDetector']['sources'][self.source_id].append(self.polygon_coords)
+                self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.source_id)].append(self.polygon_coords)
             # Оповещаем о добавлении зоны
             threading_events.notify('new zone', self.source_id, self.polygon_coords, 'poly')
             self.polygon_coords = []
@@ -152,8 +157,10 @@ class GraphicsView(QGraphicsView):
             rect = item.boundingRect()
             top_left = QPointF(rect.x(), rect.y()).toPoint()
             rect_size = QPointF(rect.width(), rect.height()).toPoint()
+            print(top_left, rect_size)
 
             filtered_zones = []
+            filtered_coords = []
             for zone_type, zone_coords, it in self.sources_zones[self.source_id]:
                 if ZoneForm(zone_type) == ZoneForm.Polygon:
                     # Если полигон, сравниваем ограничивающие прямоугольники для каждого элемента сцены
@@ -161,6 +168,7 @@ class GraphicsView(QGraphicsView):
                     rect_size_it = QPointF(it.width(), it.height()).toPoint()
                     if not (top_left == top_left_it and rect_size == rect_size_it):
                         filtered_zones.append([zone_type, zone_coords, it])
+                        filtered_coords.append(zone_coords)
                     else:
                         threading_events.notify('zone deleted', self.source_id, zone_coords)
                 elif ZoneForm(zone_type) == ZoneForm.Rectangle:
@@ -177,9 +185,11 @@ class GraphicsView(QGraphicsView):
                             item_size.x() - 2 <= zone_size.x() <= item_size.x() + 2 and
                             item_size.y() - 2 <= zone_size.y() <= item_size.y() + 2):
                         filtered_zones.append((zone_type, zone_coords, it))
+                        filtered_coords.append(zone_coords)
                     else:
                         threading_events.notify('zone deleted', self.source_id, zone_coords)
             self.sources_zones[self.source_id] = filtered_zones
+            self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.source_id)] = filtered_coords
         event.accept()
 
     def mouseReleaseEvent(self, event):
@@ -209,10 +219,11 @@ class GraphicsView(QGraphicsView):
                                 bottom_left.y() / self.pix.pixmap().height())
             norm_zone_coords = [(norm_top_left[0], norm_top_left[1]), (norm_top_right[0], norm_top_right[1]),
                                 (norm_bottom_right[0], norm_bottom_right[1]), (norm_bottom_left[0], norm_bottom_left[1])]
-            if self.source_id not in self.params['events_detectors']['ZoneEventsDetector']['sources']:
-                self.params['events_detectors']['ZoneEventsDetector']['sources'][self.source_id] = [norm_zone_coords]
+            if str(self.source_id) not in self.params['events_detectors']['ZoneEventsDetector']['sources']:
+                self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.source_id)] = [norm_zone_coords]
             else:
-                self.params['events_detectors']['ZoneEventsDetector']['sources'][self.source_id].append(norm_zone_coords)
+                self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.source_id)].append(norm_zone_coords)
+            print(self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.source_id)])
             self.sources_zones[self.source_id].append(['rect', norm_zone_coords, self.rectangle.boundingRect()])
             # Оповещаем о добавлении зоны
             threading_events.notify('new zone', self.source_id, norm_zone_coords, 'rect')

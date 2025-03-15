@@ -25,6 +25,7 @@ class ZoneEventsDetector(EventsDetector):
         self.obj_handler = objects_handler
         self.zone_counter = 0
         self.event_threshold = 0
+        self.zone_left_threshold = 0
 
         self.obj_ids_zone = dict()  # Словарь для хранения айди активных объектов
         threading_events.subscribe('new zone', self.add_zone)
@@ -51,11 +52,6 @@ class ZoneEventsDetector(EventsDetector):
             for source_id in self.sources:
                 objects.append((source_id, self.obj_handler.get('active', source_id)))
                 lost_objects.append((source_id, self.obj_handler.get('lost', source_id)))
-            # self.queue_in.put((active_objs, lost_objs))
-
-            # objects, lost_objects = self.queue_in.get()
-            # if objects is None or lost_objects is None:
-            #     continue
 
             self._update_zones()
 
@@ -96,6 +92,13 @@ class ZoneEventsDetector(EventsDetector):
                             if idx == -1:
                                 continue
                             hist_obj = obj.history[idx]
+                            is_returned, return_idx = self._get_zone_return_idx(idx, obj, zone, img_width, img_height)
+                            if is_returned:
+                                # Если объект вернулся, то изменяем кадр его попадания в зону на более поздний
+                                # для облегчения поиска дальнейшего выхода из зоны
+                                if return_idx != -1:
+                                    self.entered_frame_id[source_id][obj.object_id] = obj.history[return_idx].frame_id
+                                continue
                             event = ZoneEvent(hist_obj.time_stamp, 'Alarm', hist_obj, zone, is_finished=True)
                             self.left_frame_id[source_id][obj.object_id] = hist_obj.frame_id
                             self.zone_id_people[zone.get_zone_id()] -= 1
@@ -182,10 +185,40 @@ class ZoneEventsDetector(EventsDetector):
                     beg = mid + 1
             else:
                 beg = mid + 1
-        if not idx:
+        if idx is None:
             return -1
         else:
             return idx
+
+    def _get_zone_return_idx(self, beg_idx, obj, zone, img_width, img_height) -> tuple[bool, int]:
+        history = obj.history
+        beg_obj = history[beg_idx]
+        end = len(history) - 1
+        beg = beg_idx
+        idx = None
+        is_returned = True
+        while beg <= end:
+            mid = (beg + end) // 2
+            history_obj = history[mid]
+            box = history_obj.track.bounding_box  # Определяем присутствие в зоне по средней точке нижней границы рамки
+            box_bottom_mid = ((box[0] + box[2]) / 2, box[3])
+            if (history_obj.time_stamp - beg_obj.time_stamp).total_seconds() <= self.zone_left_threshold:
+                if self._is_obj_in_zone(box_bottom_mid, zone, img_width, img_height):
+                    idx = mid
+                    end = mid - 1
+                else:
+                    beg = mid + 1
+            else:
+                end = mid - 1
+        if idx is None:
+            last_hist_obj = history[-1]
+            # Если не нашли индекс возвращения в зону, но порог потери еще не превышен
+            if (last_hist_obj.time_stamp - beg_obj.time_stamp).total_seconds() <= self.zone_left_threshold:
+                return is_returned, -1
+            else:
+                is_returned = False
+                return is_returned, -1
+        return is_returned, idx
 
     def _is_obj_in_zone(self, box_bottom_mid, zone, img_width, img_height):
         zone_coords_norm = zone.get_coords()
@@ -244,6 +277,7 @@ class ZoneEventsDetector(EventsDetector):
         self.left_frame_id = {source: {} for source in self.sources}
         self.entered_frame_id = {source: {} for source in self.sources}
         self.event_threshold = self.params['event_threshold']
+        self.zone_left_threshold = self.params['zone_left_threshold']
 
         sources_zones = {int(key): value for key, value in self.params['sources'].items()}
         for source in sources_zones:  # Добавление зон из конфига

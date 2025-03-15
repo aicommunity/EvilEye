@@ -187,7 +187,7 @@ class EventsJournal(QWidget):
         query.bindValue(":start", self.current_start_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
         query.bindValue(":finish", self.current_end_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
         query.exec()
-        print(query.lastError().text())
+        # print(query.lastError().text())
 
         self.model.setQuery(query)
         self.model.setHeaderData(0, Qt.Orientation.Horizontal, self.tr('Event'))
@@ -360,7 +360,7 @@ class EventsJournal(QWidget):
 
         fields = self.db_table_params.keys()
         if camera_name == 'All':
-            if (self.current_start_time == datetime.datetime.combine(datetime.datetime.now(), datetime.time.min) and
+            if (self.current_start_time == datetime.datetime.combine(datetime.datetime.now()-datetime.timedelta(days=1), datetime.time.min) and
                     self.current_end_time == datetime.datetime.combine(datetime.datetime.now(), datetime.time.max)):
                 self.block_updates = False
             self._filter_records(self.current_start_time, self.current_end_time)
@@ -414,10 +414,10 @@ class EventsJournal(QWidget):
         self.current_start_time = datetime.datetime.combine(datetime.datetime.now()-datetime.timedelta(days=1), datetime.time.min)
         self.current_end_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.max)
         # Сбрасываем дату в фильтрах
-        #self.start_time.setDateTime(
-        #    QDateTime.fromString(self.current_start_time.strftime("%H:%M:%S %d-%m-%Y"), "hh:mm:ss dd-MM-yyyy"))
-        #self.finish_time.setDateTime(
-        #    QDateTime.fromString(self.current_end_time.strftime("%H:%M:%S %d-%m-%Y"), "hh:mm:ss dd-MM-yyyy"))
+        self.start_time.setDateTime(
+            QDateTime.fromString(self.current_start_time.strftime("%H:%M:%S %d-%m-%Y"), "hh:mm:ss dd-MM-yyyy"))
+        self.finish_time.setDateTime(
+            QDateTime.fromString(self.current_end_time.strftime("%H:%M:%S %d-%m-%Y"), "hh:mm:ss dd-MM-yyyy"))
 
         query.bindValue(":start", self.current_start_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
         query.bindValue(":finish", self.current_end_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
@@ -435,7 +435,6 @@ class EventsJournal(QWidget):
         if self.block_updates or not self.isVisible() or self.update_timer.isActive():
             return
         self.update_timer.start(10000)
-        print('Timer_started')
 
     def close(self):
         # self._update_job_first_last_records()

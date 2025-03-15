@@ -9,7 +9,6 @@ from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
 from pathlib import Path
 from database_controller import database_controller_pg
 from visualization_modules import handler_journal_view
-from visualization_modules import handler_journal
 from visualization_modules import events_journal
 from visualization_modules.journal_adapters.jadapter_fov_events import JournalAdapterFieldOfViewEvents
 from visualization_modules.journal_adapters.jadapter_cam_events import JournalAdapterCamEvents

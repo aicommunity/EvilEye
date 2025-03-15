@@ -12,6 +12,7 @@ class Zone:
         self.source_id = source
         self.norm_coords = coords
         self.is_active = is_active
+        self.zone_form = None
         if zone_form:
             self.zone_form = ZoneForm(zone_form)
         # TODO: add zone name?
