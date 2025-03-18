@@ -364,6 +364,7 @@ class HandlerJournal(QWidget):
     def _retrieve_data(self):
         if not self.isVisible():
             return
+        self.filters.setCurrentIndex(0)
 
         query = QSqlQuery(QSqlDatabase.database('obj_conn'))
         query.prepare('SELECT source_name, CAST(\'Event\' AS text) AS event_type, '

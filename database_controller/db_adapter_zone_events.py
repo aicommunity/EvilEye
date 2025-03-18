@@ -86,8 +86,8 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
     def _prepare_for_updating(self, event):
         fields_for_updating = {'time_left': event.time_left,
                                'box_left': event.box_left,
-                               'frame_path_left': self._get_img_path('frame', 'zone_left', time_lost=event.time_left),
-                               'preview_path_left': self._get_img_path('preview', 'zone_left', time_lost=event.time_left)}
+                               'frame_path_left': self._get_img_path('frame', 'zone_left', event, time_lost=event.time_left),
+                               'preview_path_left': self._get_img_path('preview', 'zone_left', event, time_lost=event.time_left)}
 
         image_height, image_width, _ = event.img_left.image.shape
         fields_for_updating['box_left'] = copy.deepcopy(fields_for_updating['box_left'])
@@ -107,9 +107,9 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
                              'box_entered': event.box_entered,
                              'box_left': None,
                              'zone_coords': None,
-                             'frame_path_entered': self._get_img_path('frame', 'zone_entered', event.time_entered),
+                             'frame_path_entered': self._get_img_path('frame', 'zone_entered', event, event.time_entered),
                              'frame_path_left': None,
-                             'preview_path_entered': self._get_img_path('preview', 'zone_entered', event.time_entered),
+                             'preview_path_entered': self._get_img_path('preview', 'zone_entered', event, event.time_entered),
                              'preview_path_left': None,
                              'project_id': self.db_controller.get_project_id(),
                              'job_id': self.db_controller.get_job_id()}
@@ -126,7 +126,7 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
         return (list(fields_for_saving.keys()), list(fields_for_saving.values()),
                 fields_for_saving['preview_path_entered'], fields_for_saving['frame_path_entered'])
 
-    def _get_img_path(self, image_type, obj_event_type, time_stamp=None, time_lost=None):
+    def _get_img_path(self, image_type, obj_event_type, event, time_stamp=None, time_lost=None):
         save_dir = self.db_params['image_dir']
         img_dir = os.path.join(save_dir, 'images')
         cur_date = datetime.date.today()
@@ -142,10 +142,11 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
         if not os.path.exists(obj_type_path):
             os.mkdir(obj_type_path)
 
+        zone_id = event.zone.get_zone_id()
         if obj_event_type == 'zone_entered':
             timestamp = time_stamp.strftime('%Y_%m_%d_%H_%M_%S.%f')
-            img_path = os.path.join(obj_type_path, f'{timestamp}_{image_type}.jpeg')
+            img_path = os.path.join(obj_type_path, f'{timestamp}_zone{zone_id}_{image_type}.jpeg')
         elif obj_event_type == 'zone_left':
             timestamp = time_lost.strftime('%Y_%m_%d_%H_%M_%S_%f')
-            img_path = os.path.join(obj_type_path, f'{timestamp}_{image_type}.jpeg')
+            img_path = os.path.join(obj_type_path, f'{timestamp}_zone{zone_id}_{image_type}.jpeg')
         return os.path.relpath(img_path, save_dir)

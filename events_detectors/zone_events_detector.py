@@ -65,28 +65,38 @@ class ZoneEventsDetector(EventsDetector):
                 for cur_zone in zones:
                     for obj in source_objects.objects:
                         timestamp = datetime.now()
-                        if obj.object_id not in self.obj_ids_zone:  # Если объект ранее не появлялся в зонах
+                        # Если объект ранее не появлялся в зоне
+                        if (obj.object_id not in self.obj_ids_zone or
+                                cur_zone.get_zone_id() not in self.obj_ids_zone[obj.object_id]):
                             # Находим в истории объекта момент попадания в зону
+                            zone_id = cur_zone.get_zone_id()
                             idx = self._check_event_in_history(obj, cur_zone, img_width, img_height)
                             if idx == -1:
                                 continue
                             hist_obj = obj.history[idx]
                             # Если айди кадра нового попадания в зону меньше айди выхода из этой зоны в первый раз, пропускаем
                             if (hist_obj.object_id in self.left_frame_id[source_id] and
-                                    hist_obj.frame_id <= self.left_frame_id[source_id][hist_obj.object_id]):
+                                    zone_id in self.left_frame_id[source_id][hist_obj.object_id] and
+                                    hist_obj.frame_id <= self.left_frame_id[source_id][hist_obj.object_id][zone_id]):
                                 continue
                             # Проверяем, находится ли объект в зоне дольше указанного времени
                             if not self._is_threshold_passed(idx, obj, cur_zone, img_width, img_height):
                                 continue
-                            self.entered_frame_id[source_id][obj.object_id] = hist_obj.frame_id
-                            self.obj_ids_zone[hist_obj.object_id] = cur_zone
+                            if obj.object_id not in self.entered_frame_id[source_id]:
+                                self.entered_frame_id[source_id][obj.object_id] = {}
+                            self.entered_frame_id[source_id][obj.object_id][zone_id] = hist_obj.frame_id
+                            if hist_obj.object_id not in self.obj_ids_zone:
+                                self.obj_ids_zone[hist_obj.object_id] = {}
+                            self.obj_ids_zone[hist_obj.object_id][zone_id] = cur_zone
+                            print(cur_zone.get_coords())
                             event = ZoneEvent(hist_obj.time_stamp, 'Alarm', hist_obj, cur_zone)
-                            self.zone_id_people[cur_zone.get_zone_id()] += 1
+                            self.zone_id_people[zone_id] += 1
                             print(f'New event: {obj.last_image.frame_id}, Event: {event}')
                             events.append(event)
-                        elif cur_zone == self.obj_ids_zone[obj.object_id]:
+                        else:
                             # Иначе проверяем, остался ли объект в зоне, завершаем события
-                            zone = self.obj_ids_zone[obj.object_id]
+                            zone = self.obj_ids_zone[obj.object_id][cur_zone.get_zone_id()]
+                            zone_id = zone.get_zone_id()
                             # Находим в истории момент выхода из зоны
                             idx = self._check_finished_event_in_history(obj, zone, img_width, img_height)
                             if idx == -1:
@@ -97,13 +107,15 @@ class ZoneEventsDetector(EventsDetector):
                                 # Если объект вернулся, то изменяем кадр его попадания в зону на более поздний
                                 # для облегчения поиска дальнейшего выхода из зоны
                                 if return_idx != -1:
-                                    self.entered_frame_id[source_id][obj.object_id] = obj.history[return_idx].frame_id
+                                    self.entered_frame_id[source_id][obj.object_id][zone_id] = obj.history[return_idx].frame_id
                                 continue
                             event = ZoneEvent(hist_obj.time_stamp, 'Alarm', hist_obj, zone, is_finished=True)
-                            self.left_frame_id[source_id][obj.object_id] = hist_obj.frame_id
-                            self.zone_id_people[zone.get_zone_id()] -= 1
-                            del self.entered_frame_id[source_id][obj.object_id]
-                            del self.obj_ids_zone[obj.object_id]
+                            if obj.object_id not in self.left_frame_id[source_id]:
+                                self.left_frame_id[source_id][obj.object_id] = {}
+                            self.left_frame_id[source_id][obj.object_id][zone_id] = hist_obj.frame_id
+                            self.zone_id_people[zone_id] -= 1
+                            del self.entered_frame_id[source_id][obj.object_id][zone_id]
+                            del self.obj_ids_zone[obj.object_id][zone_id]
                             print(f'Finished event: {obj.last_image.frame_id}, Event: {event}')
                             events.append(event)
 
@@ -113,12 +125,13 @@ class ZoneEventsDetector(EventsDetector):
                 for obj in source_objects.objects:
                     if obj.object_id in self.obj_ids_zone:  # Если объект был в запрещенной зоне
                         timestamp = datetime.now()
-                        zone = self.obj_ids_zone[obj.object_id]
-                        event = ZoneEvent(timestamp, 'Alarm', obj, zone, is_finished=True)
-                        self.zone_id_people[zone.get_zone_id()] -= 1
+                        for zone_id in self.obj_ids_zone[obj.object_id]:
+                            zone = self.obj_ids_zone[obj.object_id][zone_id]
+                            event = ZoneEvent(timestamp, 'Alarm', obj, zone, is_finished=True)
+                            self.zone_id_people[zone.get_zone_id()] -= 1
+                            print(f'Finished event: {obj.last_image.frame_id}, Event: {event}')
+                            events.append(event)
                         del self.obj_ids_zone[obj.object_id]
-                        print(f'Finished event: {obj.last_image.frame_id}, Event: {event}')
-                        events.append(event)
                     # После того как объект был потерян
                     if obj.object_id in self.left_frame_id[source_id]:
                         del self.left_frame_id[source_id][obj.object_id]
@@ -177,7 +190,7 @@ class ZoneEventsDetector(EventsDetector):
             history_obj = history[mid]
             box = history_obj.track.bounding_box  # Определяем присутствие в зоне по средней точке нижней границы рамки
             box_bottom_mid = ((box[0] + box[2]) / 2, box[3])
-            if history_obj.frame_id > self.entered_frame_id[obj.source_id][obj.object_id]:
+            if history_obj.frame_id > self.entered_frame_id[obj.source_id][obj.object_id][zone.get_zone_id()]:
                 if not self._is_obj_in_zone(box_bottom_mid, zone, img_width, img_height):
                     idx = mid
                     end = mid - 1
@@ -279,14 +292,14 @@ class ZoneEventsDetector(EventsDetector):
         self.event_threshold = self.params['event_threshold']
         self.zone_left_threshold = self.params['zone_left_threshold']
 
-        sources_zones = {int(key): value for key, value in self.params['sources'].items()}
-        for source in sources_zones:  # Добавление зон из конфига
-            zones = []
-            for zone_coords in sources_zones[source]:
-                zones.append(Zone(source, zone_coords, is_active=True, zone_id=self.zone_counter))
-                self.zone_id_people[self.zone_counter] = 0
-                self.zone_counter += 1
-            self.sources_zones[source] = zones
+        self.sources_zones = {int(key): [] for key in self.sources}
+        # for source in sources_zones:  # Добавление зон из конфига
+        #     zones = []
+        #     for zone_coords in sources_zones[source]:
+        #         zones.append(Zone(source, zone_coords, is_active=True, zone_id=self.zone_counter))
+        #         self.zone_id_people[self.zone_counter] = 0
+        #         self.zone_counter += 1
+        #     self.sources_zones[source] = zones
 
     def reset_impl(self):
         pass
@@ -298,7 +311,10 @@ class ZoneEventsDetector(EventsDetector):
         pass
 
     def init_impl(self):
-        pass
+        sources_zones = {int(key): value for key, value in self.params['sources'].items()}
+        for src_id in sources_zones:
+            for zone_coords in sources_zones[src_id]:
+                self.add_zone(src_id, zone_coords, 'poly')
 
     def stop(self):
         self.run_flag = False

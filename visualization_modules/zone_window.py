@@ -51,9 +51,6 @@ class GraphicsView(QGraphicsView):
         self.pix = None
         self.source_id = None
         self.sources_zones = sources_zones
-        for src_id in self.sources_zones:
-            for zone_coords in self.sources_zones[src_id]:
-                threading_events.notify('new zone', src_id, zone_coords, 'poly')
         self.params = params
 
         self.red_brush = QBrush(QColor(255, 0, 0, 128))
