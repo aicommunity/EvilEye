@@ -90,7 +90,7 @@ class ZoneEventsDetector(EventsDetector):
                             self.obj_ids_zone[hist_obj.object_id][zone_id] = cur_zone
                             event = ZoneEvent(hist_obj.time_stamp, 'Alarm', hist_obj, cur_zone)
                             self.zone_id_people[zone_id] += 1
-                            print(f'New event: {obj.last_image.frame_id}, Event: {event}')
+                            # print(f'New event: {obj.last_image.frame_id}, Event: {event}')
                             events.append(event)
                         else:
                             # Иначе проверяем, остался ли объект в зоне, завершаем события
@@ -115,7 +115,7 @@ class ZoneEventsDetector(EventsDetector):
                             self.zone_id_people[zone_id] -= 1
                             del self.entered_frame_id[source_id][obj.object_id][zone_id]
                             del self.obj_ids_zone[obj.object_id][zone_id]
-                            print(f'Finished event: {obj.last_image.frame_id}, Event: {event}')
+                            # print(f'Finished event: {obj.last_image.frame_id}, Event: {event}')
                             events.append(event)
 
             for source_id, source_objects in lost_objects:  # Определяем завершившиеся события среди потерянных объектов
@@ -128,7 +128,7 @@ class ZoneEventsDetector(EventsDetector):
                             zone = self.obj_ids_zone[obj.object_id][zone_id]
                             event = ZoneEvent(timestamp, 'Alarm', obj, zone, is_finished=True)
                             self.zone_id_people[zone.get_zone_id()] -= 1
-                            print(f'Finished event: {obj.last_image.frame_id}, Event: {event}')
+                            # print(f'Finished event: {obj.last_image.frame_id}, Event: {event}')
                             events.append(event)
                         del self.obj_ids_zone[obj.object_id]
                     # После того как объект был потерян

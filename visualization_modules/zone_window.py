@@ -87,7 +87,7 @@ class GraphicsView(QGraphicsView):
             for i in range(len(self.sources_zones[self.source_id])):
                 # Отрисовка зон после каждого открытия окна
                 zone_type, zone_coords, item = self.sources_zones[self.source_id][i]
-                if not item:  # Для зон из json не нужен перевод из нормализованных координат
+                if not item:  # Для зон из json
                     coords = [QPointF(point[0] * pixmap.width(), point[1] * pixmap.height()) for point in zone_coords]
                 else:
                     coords = [QPointF(point[0] * pixmap.width(), point[1] * pixmap.height()) for point in zone_coords]

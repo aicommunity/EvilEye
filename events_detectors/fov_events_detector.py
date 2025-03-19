@@ -48,7 +48,7 @@ class FieldOfViewEventsDetector(EventsDetector):
                         timestamp = datetime.now()
                         self.active_obj_ids[source_id].add(obj.object_id)
                         event = FieldOfViewEvent(timestamp, 'Alarm', hist_obj)
-                        print(f'New event: {obj.last_image.frame_id}, Event: {event}')
+                        # print(f'New event: {obj.last_image.frame_id}, Event: {event}')
                         events.append(event)
 
             for source_id, source_objects in lost_objects:  # Определяем завершившиеся события
@@ -63,7 +63,7 @@ class FieldOfViewEventsDetector(EventsDetector):
                         self.active_obj_ids[source_id].remove(obj.object_id)
                         lost_obj_ids.add(obj.object_id)
                         event = FieldOfViewEvent(timestamp, 'Alarm', obj, is_finished=True)
-                        print(f'Finished event: {obj.last_image.frame_id}, Event: {event}')
+                        # print(f'Finished event: {obj.last_image.frame_id}, Event: {event}')
                         events.append(event)
                     else:  # Проверяем по истории потерянных объектов, если потеряли объект, до того как он был
                         # обработан детектором
