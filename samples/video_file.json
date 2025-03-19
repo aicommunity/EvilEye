@@ -2,7 +2,7 @@
   "sources": [
      {
       "source": "VideoFile",
-      "camera": "/home/user/Videos/12638-video.mp4",
+       "camera": "12638-video.mp4",
       "apiPreference": "CAP_FFMPEG",
       "split": false,
       "num_split": 0,
@@ -33,15 +33,15 @@
       "source_ids": [0],
       "fps": 5,
       "botsort_cfg": {
-        "appearance_thresh": 0.25, 
-        "gmc_method": "sparseOptFlow", 
-        "match_thresh": 0.8, 
-        "new_track_thresh": 0.6, 
-        "proximity_thresh": 0.5, 
-        "track_buffer": 30, 
-        "track_high_thresh": 0.5, 
-        "track_low_thresh": 0.1, 
-        "tracker_type": "botsort", 
+        "appearance_thresh": 0.25,
+        "gmc_method": "sparseOptFlow",
+        "match_thresh": 0.8,
+        "new_track_thresh": 0.6,
+        "proximity_thresh": 0.5,
+        "track_buffer": 30,
+        "track_high_thresh": 0.5,
+        "track_low_thresh": 0.1,
+        "tracker_type": "botsort",
         "with_reid": false
       }
     }
@@ -52,7 +52,44 @@
     "visual_buffer_num_frames": 10,
     "source_ids": [0],
     "fps": [5, 5],
-    "show_debug_info": true
+    "gui_enabled": true,
+    "show_debug_info": true,
+    "objects_journal_enabled": true
+  },
+  "events_detectors": {
+    "CamEventsDetector": {},
+    "ZoneEventsDetector": {
+      "sources": {
+        "0": []
+      },
+      "event_threshold": 5,
+        "zone_left_threshold": 3
+    },
+    "FieldOfViewEventsDetector": {
+      "sources": {
+        "0": []
+      }
+    }
+  },
+  "events_processor": {
+
+  },
+  "database_adapters": {
+    "DatabaseAdapterObjects": {
+      "table_name": "objects"
+    },
+    "DatabaseAdapterCamEvents": {
+      "table_name": "camera_events",
+      "event_name": "CameraEvent"
+    },
+    "DatabaseAdapterFieldOfViewEvents": {
+      "table_name": "fov_events",
+      "event_name": "FieldOfViewEvent"
+    },
+    "DatabaseAdapterZoneEvents": {
+      "table_name": "zone_events",
+      "event_name": "ZoneEvent"
+    }
   },
   "database": {
     "user_name": "postgres",
@@ -61,8 +98,8 @@
     "host_name": "localhost",
     "port": 5433,
     "default_database_name": "postgres",
-    "default_password": "",
     "default_user_name": "postgres",
+    "default_password": "",
     "default_host_name": "localhost",
     "default_port": 5433,
     "preview_height": 150,
@@ -112,9 +149,45 @@
         "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE",
         "job_id": "integer REFERENCES jobs (job_id) ON DELETE CASCADE",
         "camera_full_address": "text REFERENCES camera_information (full_address) ON DELETE CASCADE"
+      },
+      "camera_events": {
+        "event_id": "integer PRIMARY KEY",
+        "camera_full_address": "text REFERENCES camera_information (full_address) ON DELETE CASCADE",
+        "time_stamp": "timestamp NOT NULL",
+        "connection_status": "boolean NOT NULL",
+        "job_id": "integer REFERENCES jobs (job_id) ON DELETE CASCADE",
+        "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE"
+      },
+      "fov_events": {
+        "event_id": "integer PRIMARY KEY",
+        "source_id": "integer",
+        "time_stamp": "timestamp",
+        "time_obj_detected": "timestamp",
+        "time_lost": "timestamp",
+        "preview_path": "text",
+        "lost_preview_path": "text",
+        "object_id": "integer",
+        "job_id": "integer REFERENCES jobs (job_id) ON DELETE CASCADE",
+        "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE"
+      },
+      "zone_events": {
+        "event_id": "integer PRIMARY KEY",
+        "source_id": "integer",
+        "time_entered": "timestamp",
+        "time_left": "timestamp",
+        "zone_coords": "real[][]",
+        "frame_path_entered": "text",
+        "frame_path_left": "text DEFAULT NULL",
+        "preview_path_entered": "text",
+        "preview_path_left": "text",
+        "object_id": "integer",
+        "box_entered": "real ARRAY[4]",
+        "box_left": "real ARRAY[4]",
+        "job_id": "integer REFERENCES jobs (job_id) ON DELETE CASCADE",
+        "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE"
       }
     },
-    "image_dir": "/home/user/EvilEyeData/",
+    "image_dir": "/media/user/Data/EvilEyeData/",
     "create_new_project": true
   },
   "objects_handler": {

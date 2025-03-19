@@ -1,17 +1,19 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
 
-from visualizer.video_thread import VideoThread
+from visualization_modules.video_thread import VideoThread
 import core
 import copy
 from capture.video_capture_base import CaptureImage
 from objects_handler.objects_handler import ObjectResultList
 from timeit import default_timer as timer
 
+
 class Visualizer(core.EvilEyeBase):
-    def __init__(self, pyqt_slot):
+    def __init__(self, pyqt_slots: dict, pyqt_signals: dict):
         super().__init__()
-        self.qt_slot = pyqt_slot
+        self.pyqt_slots = pyqt_slots
+        self.pyqt_signals = pyqt_signals
         self.visual_threads: list[VideoThread] = []
         self.source_ids = []
         self.source_id_name_table = dict()
@@ -33,14 +35,21 @@ class Visualizer(core.EvilEyeBase):
             self.visual_threads = []
         for i in range(len(self.source_ids)):
             self.visual_threads.append(VideoThread(self.source_ids[i], self.fps[i], self.num_height,
-                                                           self.num_width, self.show_debug_info))
+                                                   self.num_width, self.show_debug_info))
             self.visual_threads[-1].update_image_signal.connect(
-                        self.qt_slot)  # Сигнал из потока для обновления label на новое изображение
+                self.pyqt_slots['update_image'])  # Сигнал из потока для обновления label на новое изображение
+            self.visual_threads[-1].add_zone_signal.connect(self.pyqt_slots['open_zone_win'])
+            self.pyqt_signals['display_zones_signal'].connect(self.visual_threads[-1].display_zones_signal)
+            self.pyqt_signals['add_zone_signal'].connect(self.visual_threads[-1].add_zone_clicked)
 
     def release_impl(self):
-        for thr in self.video_threads:
+        for thr in self.visual_threads:
             thr.stop_thread()
-        self.video_threads = []
+        self.visual_threads = []
+
+    def connect_to_signal(self, pyqt_signal):
+        for i in range(len(self.source_ids)):  # Сигнал из потока для обновления label на новое изображение
+            pyqt_signal.connect(self.visual_threads[i].display_zones_signal)
 
     def reset_impl(self):
         pass
@@ -67,7 +76,8 @@ class Visualizer(core.EvilEyeBase):
         for j in range(len(self.visual_threads)):
             self.visual_threads[j].set_main_widget_size(width, height)
 
-    def update(self, processing_frames: list[CaptureImage], source_last_processed_frame_id: dict, objects: list[ObjectResultList], debug_info: dict):
+    def update(self, processing_frames: list[CaptureImage], source_last_processed_frame_id: dict,
+               objects: list[ObjectResultList], debug_info: dict):
         start_update = timer()
         self.processing_frames.extend(processing_frames)
         self.objects = objects
@@ -76,7 +86,7 @@ class Visualizer(core.EvilEyeBase):
 
         processed_sources = []
 
-        if len(self.processing_frames) < len(self.source_ids)*self.visual_buffer_num_frames:
+        if len(self.processing_frames) < len(self.source_ids) * self.visual_buffer_num_frames:
             return
 
         for i in range(len(self.processing_frames)):
@@ -96,18 +106,19 @@ class Visualizer(core.EvilEyeBase):
             start_find_objects = timer()
             source_index = self.source_ids.index(source_id)
             objs = objects[source_index].find_objects_by_frame_id(frame.frame_id, use_history=False)
-#            objs = objects[source_id].find_objects_by_frame_id(None)
-#            objs = objects[source_id].objects
-#            print(f"Found {len(objs)} objects for visualization for source_id={frame.source_id} frame_id={frame.frame_id}")
+            # objs = objects[source_id].find_objects_by_frame_id(None)
+            # objs = objects[source_id].objects
+            # print(f"Found {len(objs)} objects for visualization for source_id={frame.source_id} frame_id={frame.frame_id}")
 
             if len(objs) == 0 and objects[source_index].get_num_objects() > 0:
-                #remove_processed_idx.append(i)
+                # remove_processed_idx.append(i)
                 continue
 
             start_append_data = timer()
             for j in range(len(self.visual_threads)):
                 if self.visual_threads[j].source_id == source_id:
-                    data = (frame, objs, self.source_id_name_table[frame.source_id], self.source_video_duration.get(frame.source_id, None), debug_info)
+                    data = (frame, objs, self.source_id_name_table[frame.source_id],
+                            self.source_video_duration.get(frame.source_id, None), debug_info)
                     self.visual_threads[j].append_data(copy.deepcopy(data))
                     self.last_displayed_frame[source_id] = frame.frame_id
                     processed_sources.append(source_id)

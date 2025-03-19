@@ -1,7 +1,7 @@
-from PyQt6.QtCore import QThread, QMutex, pyqtSignal, QEventLoop, QTimer
+from PyQt6.QtCore import QThread, QMutex, pyqtSignal, QEventLoop, QTimer, pyqtSlot
 from PyQt6 import QtGui
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QPixmap
+from PyQt6.QtCore import Qt, QPointF, QRectF
+from PyQt6.QtGui import QPixmap, QPainter, QPen, QBrush, QColor, QPolygonF
 from timeit import default_timer as timer
 from utils import utils
 from queue import Queue
@@ -9,6 +9,7 @@ from queue import Empty
 import copy
 import time
 import cv2
+from events_detectors.zone import ZoneForm
 
 
 class VideoThread(QThread):
@@ -18,6 +19,8 @@ class VideoThread(QThread):
     cols = 0
     # Сигнал, отвечающий за обновление label, в котором отображается изображение из потока
     update_image_signal = pyqtSignal(int, QPixmap)
+    display_zones_signal = pyqtSignal(dict)
+    add_zone_signal = pyqtSignal(int, QPixmap)
 
     def __init__(self, source_id, fps, rows, cols, show_debug_info):
         super().__init__()
@@ -28,12 +31,13 @@ class VideoThread(QThread):
 
         self.thread_num = VideoThread.thread_counter
         self.source_id = source_id
+        self.zones = None
+        self.show_zones = False
+        self.is_add_zone_clicked = False
 
         self.run_flag = False
         self.show_debug_info = show_debug_info
-        #self.split = params['split']
         self.fps = fps
-        #self.source_params = params
         self.thread_num = VideoThread.thread_counter  # Номер потока для определения, какой label обновлять
         self.det_params = None
 
@@ -41,6 +45,7 @@ class VideoThread(QThread):
         self.timer = QTimer()
         self.timer.moveToThread(self)
         self.timer.timeout.connect(self.process_image)
+        self.display_zones_signal.connect(self.display_zones)
 
         self.widget_width = 1920
         self.widget_height = 1080
@@ -70,16 +75,44 @@ class VideoThread(QThread):
         self.widget_width = width
         self.widget_height = height
 
-    def convert_cv_qt(self, cv_img, widget_width, widget_height):
+    def convert_cv_qt(self, cv_img, widget_width, widget_height) -> QPixmap:
         # Переводим из opencv image в QPixmap
         rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
         h, w, ch = rgb_image.shape
         bytes_per_line = ch * w
         convert_to_qt = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format.Format_RGB888)
+        if self.is_add_zone_clicked:
+            zones_window_image = convert_to_qt.scaled(int(widget_width), int(widget_height),
+                                                      Qt.AspectRatioMode.KeepAspectRatio)
+            self.is_add_zone_clicked = False
+            self.add_zone_signal.emit(self.thread_num, QPixmap.fromImage(zones_window_image))
         # Подгоняем под указанный размер, но сохраняем пропорции
         scaled_image = convert_to_qt.scaled(int(widget_width / VideoThread.cols),
                                             int(widget_height / VideoThread.rows), Qt.AspectRatioMode.KeepAspectRatio)
         return QPixmap.fromImage(scaled_image)
+
+    def draw_zones(self, image: QPixmap, zones: dict):
+        # print(zones)
+        if not zones:
+            return
+
+        if self.source_id not in zones or not zones[self.source_id]:
+            return
+
+        src_zones = zones[self.source_id]
+        brush = QBrush(QColor(255, 0, 0, 128))
+        pen = QPen(Qt.GlobalColor.red)
+        painter = QPainter(image)
+        painter.setPen(pen)
+        painter.setBrush(brush)
+        width, height = image.width(), image.height()
+        for zone_type, zone_coords, _ in src_zones:
+            coords = [QPointF(point[0] * width, point[1] * height) for point in zone_coords]
+            if ZoneForm(zone_type) == ZoneForm.Rectangle:
+                rect = QRectF(coords[0], coords[2])
+                painter.drawRect(rect)
+            elif ZoneForm(zone_type) == ZoneForm.Polygon:
+                painter.drawPolygon(QPolygonF(coords))
 
     def process_image(self):
         try:
@@ -89,6 +122,8 @@ class VideoThread(QThread):
             if self.show_debug_info:
                 utils.draw_debug_info(frame, debug_info)
             qt_image = self.convert_cv_qt(frame.image, self.widget_width, self.widget_height)
+            if self.show_zones:
+                self.draw_zones(qt_image, self.zones)
             end_it = timer()
             elapsed_seconds = end_it - begin_it
             # Сигнал из потока для обновления label на новое изображение
@@ -102,3 +137,16 @@ class VideoThread(QThread):
     def stop_thread(self):
         self.run_flag = False
         print('Visualization stopped')
+
+    @pyqtSlot(dict)
+    def display_zones(self, zones):
+        if zones:
+            self.show_zones = True
+            self.zones = zones
+        else:
+            self.show_zones = False
+
+    @pyqtSlot(int)
+    def add_zone_clicked(self, thread_id):
+        if self.thread_num == thread_id:
+            self.is_add_zone_clicked = True

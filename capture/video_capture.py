@@ -1,3 +1,5 @@
+import datetime
+
 import cv2
 import capture
 from capture import VideoCaptureBase as Base
@@ -55,6 +57,7 @@ class VideoCapture(capture.VideoCaptureBase):
 
         self.source_fps = None
         if self.capture.isOpened():
+            self.is_working = True
             if self.source_type == CaptureDeviceType.VideoFile:
                 self.video_length = self.capture.get(cv2.CAP_PROP_FRAME_COUNT)
                 self.video_current_frame = 0
@@ -65,6 +68,7 @@ class VideoCapture(capture.VideoCaptureBase):
                 if self.source_fps == 0.0:
                     self.source_fps = None
                     self.video_duration = None
+                print(f'FPS: {self.source_fps}')
 
                 if self.source_fps is not None and self.source_type == CaptureDeviceType.VideoFile:
                     self.video_duration = self.video_length*1000.0/self.source_fps
@@ -86,18 +90,30 @@ class VideoCapture(capture.VideoCaptureBase):
     def reset_impl(self):
         self.release()
         self.init()
+        timestamp = datetime.datetime.now()
         if self.get_init_flag() and self.is_opened():
             print(f"Reconnected to a sources: {self.source_names}")
+            self.is_working = True
+            self.reconnects.append((self.params['camera'], timestamp, self.is_working))
         else:
-            print(f"Could not connect to a sources: {self.source_names}")
+            print(f"Could not connect to sources: {self.source_names}")
+        for sub in self.subscribers:
+            sub.update()
 
     def _capture_frames(self):
         while self.run_flag:
             begin_it = timer()
             with self.mutex:
                 if not self.is_inited or self.capture is None:
-                    time.sleep(0.01)
-                    continue
+                    time.sleep(0.1)
+                    if self.init():
+                        timestamp = datetime.datetime.now()
+                        print(f"Reconnected to a sources: {self.source_names}")
+                        self.reconnects.append((self.params['camera'], timestamp, self.is_working))
+                        for sub in self.subscribers:
+                            sub.update()
+                    else:
+                        continue
 
                 if not self.is_opened():
                     time.sleep(0.1)
@@ -112,10 +128,17 @@ class VideoCapture(capture.VideoCaptureBase):
                     self.video_current_frame += 1
                     if self.source_fps and self.source_fps > 0.0:
                         self.video_current_position = (self.video_current_frame*1000.0) / self.source_fps
+                if self.source_type == CaptureDeviceType.IpCamera:
+                    self.last_frame_time = datetime.datetime.now()
                 self.frames_queue.put([is_read, src_image, self.frame_id_counter, self.video_current_frame, self.video_current_position])
                 self.frame_id_counter += 1
             else:
                 if self.source_type != CaptureDeviceType.VideoFile or self.loop_play:
+                    self.is_working = False
+                    timestamp = datetime.datetime.now()
+                    self.disconnects.append((self.params['camera'], timestamp, self.is_working))
+                    for sub in self.subscribers:
+                        sub.update()
                     self.reset()
                 else:
                     self.finished = True
@@ -166,6 +189,20 @@ class VideoCapture(capture.VideoCaptureBase):
                 captured_images.append(capture_image)
         return captured_images
 
-
     def default(self):
         pass
+
+    def test_disconnect(self):
+        with self.conn_mutex:
+            timestamp = datetime.datetime.now()
+            print(f'Disconnect: {timestamp}')
+            is_working = False
+            self.disconnects.append((self.source_address, timestamp, is_working))
+
+    def test_reconnect(self):
+        with self.conn_mutex:
+            timestamp = datetime.datetime.now()
+            print(f'Reconnect: {timestamp}')
+            is_working = True
+            self.reconnects.append((self.source_address, timestamp, is_working))
+

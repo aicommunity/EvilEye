@@ -181,6 +181,14 @@ def draw_preview_boxes(image, width, height, box):
     return image
 
 
+def draw_preview_boxes_zones(image, width, height, box, zone_coords):
+    points = [(int(point[0] * width), int(point[1] * height)) for point in zone_coords]
+    image = cv2.rectangle(image, (int(box[0] * width), int(box[1] * height)),
+                          (int(box[2] * width), int(box[3] * height)), (0, 255, 0), thickness=1)
+    image = cv2.polylines(image, pts=np.int32([points]), isClosed=True, color=(0, 0, 255), thickness=1)
+    return image
+
+
 def draw_boxes_from_db(db_controller, table_name, load_folder, save_folder):
     query = sql.SQL(
         'SELECT object_id, confidence, bounding_box, lost_bounding_box, frame_path, lost_frame_path FROM {table};').format(
@@ -304,4 +312,3 @@ class ObjectResultEncoder(json.JSONEncoder):
             return None
 
         return super().default(obj)
-
