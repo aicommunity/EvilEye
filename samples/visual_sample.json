@@ -191,7 +191,8 @@
       "sources": {
         "0": []
       },
-      "event_threshold": 5
+      "event_threshold": 5,
+      "zone_left_threshold": 3
     },
     "FieldOfViewEventsDetector": {
       "sources": {
