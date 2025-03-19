@@ -84,7 +84,6 @@ class GraphicsView(QGraphicsView):
         self.polygon.setBrush(self.red_brush)
 
         if self.source_id in self.sources_zones:
-            print(self.sources_zones[self.source_id])
             for i in range(len(self.sources_zones[self.source_id])):
                 # Отрисовка зон после каждого открытия окна
                 zone_type, zone_coords, item = self.sources_zones[self.source_id][i]
@@ -107,7 +106,6 @@ class GraphicsView(QGraphicsView):
                     polygon.setPolygon(poly)
                     if not item:
                         self.sources_zones[self.source_id][i][2] = polygon.boundingRect()
-                        print(polygon.boundingRect())
 
     def mousePressEvent(self, event):
         pos = self.mapToScene(event.pos())
@@ -154,7 +152,6 @@ class GraphicsView(QGraphicsView):
             rect = item.boundingRect()
             top_left = QPointF(rect.x(), rect.y()).toPoint()
             rect_size = QPointF(rect.width(), rect.height()).toPoint()
-            print(top_left, rect_size)
 
             filtered_zones = []
             filtered_coords = []
@@ -220,7 +217,6 @@ class GraphicsView(QGraphicsView):
                 self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.source_id)] = [norm_zone_coords]
             else:
                 self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.source_id)].append(norm_zone_coords)
-            print(self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.source_id)])
             self.sources_zones[self.source_id].append(['rect', norm_zone_coords, self.rectangle.boundingRect()])
             # Оповещаем о добавлении зоны
             threading_events.notify('new zone', self.source_id, norm_zone_coords, 'rect')
@@ -293,7 +289,7 @@ class ZoneWindow(QWidget):
         self.view.set_source_id(src_id)
 
     def close(self):
-        print('Database journal closed')
+        print('Events journal closed')
 
     def _create_actions(self):  # Добавление кнопок
         self.rect_zone = QAction('&Draw a rectangle', self)

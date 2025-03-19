@@ -143,10 +143,11 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
             os.mkdir(obj_type_path)
 
         zone_id = event.zone.get_zone_id()
+        obj_id = event.object_id
         if obj_event_type == 'zone_entered':
             timestamp = time_stamp.strftime('%Y_%m_%d_%H_%M_%S.%f')
-            img_path = os.path.join(obj_type_path, f'{timestamp}_zone{zone_id}_{image_type}.jpeg')
+            img_path = os.path.join(obj_type_path, f'{timestamp}_zone{zone_id}_obj{obj_id}_{image_type}.jpeg')
         elif obj_event_type == 'zone_left':
             timestamp = time_lost.strftime('%Y_%m_%d_%H_%M_%S_%f')
-            img_path = os.path.join(obj_type_path, f'{timestamp}_zone{zone_id}_{image_type}.jpeg')
+            img_path = os.path.join(obj_type_path, f'{timestamp}_zone{zone_id}_obj{obj_id}_{image_type}.jpeg')
         return os.path.relpath(img_path, save_dir)

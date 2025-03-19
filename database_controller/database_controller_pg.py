@@ -126,7 +126,7 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
             connection = self.conn_pool.getconn()
             with connection:
                 with connection.cursor() as curs:
-                    print(query_string.as_string(curs))
+                    # print(query_string.as_string(curs))
                     curs.execute(query_string, data)
                     try:
                         result = curs.fetchall()
@@ -158,16 +158,13 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
             if query_string is None:
                 continue
 
-            # print(data)
             connection = None
             try:
                 connection = self.conn_pool.getconn()
                 with connection:
                     with connection.cursor() as curs:
-                        # print(query_string.as_string(curs))
                         curs.execute(query_string, data)
                         record = curs.fetchone()
-                        # print(record)
                         row_num = record[0]
                         box = record[1]
                         start_save_it = timer()

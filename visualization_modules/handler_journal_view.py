@@ -166,7 +166,6 @@ class HandlerJournal(QWidget):
         query.bindValue(":start", self.current_start_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
         query.bindValue(":finish", self.current_end_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
         query.exec()
-        print(query.lastError().text())
 
         self.model.setQuery(query)
         self.model.setHeaderData(0, Qt.Orientation.Horizontal, self.tr('Name'))

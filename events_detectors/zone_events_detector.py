@@ -88,7 +88,6 @@ class ZoneEventsDetector(EventsDetector):
                             if hist_obj.object_id not in self.obj_ids_zone:
                                 self.obj_ids_zone[hist_obj.object_id] = {}
                             self.obj_ids_zone[hist_obj.object_id][zone_id] = cur_zone
-                            print(cur_zone.get_coords())
                             event = ZoneEvent(hist_obj.time_stamp, 'Alarm', hist_obj, cur_zone)
                             self.zone_id_people[zone_id] += 1
                             print(f'New event: {obj.last_image.frame_id}, Event: {event}')
@@ -135,6 +134,8 @@ class ZoneEventsDetector(EventsDetector):
                     # После того как объект был потерян
                     if obj.object_id in self.left_frame_id[source_id]:
                         del self.left_frame_id[source_id][obj.object_id]
+                    if obj.object_id in self.entered_frame_id[source_id]:
+                        del self.entered_frame_id[source_id][obj.object_id]
             if events:
                 self.queue_out.put(events)
             self.event.clear()
@@ -293,13 +294,6 @@ class ZoneEventsDetector(EventsDetector):
         self.zone_left_threshold = self.params['zone_left_threshold']
 
         self.sources_zones = {int(key): [] for key in self.sources}
-        # for source in sources_zones:  # Добавление зон из конфига
-        #     zones = []
-        #     for zone_coords in sources_zones[source]:
-        #         zones.append(Zone(source, zone_coords, is_active=True, zone_id=self.zone_counter))
-        #         self.zone_id_people[self.zone_counter] = 0
-        #         self.zone_counter += 1
-        #     self.sources_zones[source] = zones
 
     def reset_impl(self):
         pass

@@ -181,7 +181,6 @@ class EventsJournal(QWidget):
             query_string += adapter_query + ' UNION '
         query_string = query_string.removesuffix(' UNION ')
         query_string += ') AS temp WHERE time_stamp BETWEEN :start AND :finish ORDER BY time_stamp DESC;'
-        print(query_string)
         query = QSqlQuery(QSqlDatabase.database('events_conn'))
         query.prepare(query_string)
         query.bindValue(":start", self.current_start_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
@@ -392,7 +391,6 @@ class EventsJournal(QWidget):
             query_string += adapter_query + ' UNION '
         query_string = query_string.removesuffix(' UNION ')
         query_string += ') AS temp WHERE time_stamp BETWEEN :start AND :finish ORDER BY time_stamp DESC;'
-        print(query_string)
         query.prepare(query_string)
         query.bindValue(":start", self.current_start_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
         query.bindValue(":finish", self.current_end_time.strftime('%Y-%m-%d %H:%M:%S.%f'))

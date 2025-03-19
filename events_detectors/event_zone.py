@@ -26,6 +26,8 @@ class ZoneEvent(Event):
         self.long_term = True
 
     def __str__(self):
+        if self.finished:
+            return f'Id: {self.event_id}, Source: {self.source_id}, Obj_id: {self.object_id}, Time: {self.time_left}'
         return f'Id: {self.event_id}, Source: {self.source_id}, Obj_id: {self.object_id}, Time: {self.time_entered}'
 
     def __eq__(self, other):
