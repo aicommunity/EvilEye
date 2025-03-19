@@ -11,7 +11,7 @@ import database_controller
 from psycopg2 import sql
 from psycopg2 import pool
 import copy
-from utils import event
+from utils import threading_events
 
 from timeit import default_timer as timer
 # see https://ru.hexlet.io/blog/posts/python-postgresql
@@ -126,7 +126,7 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
             connection = self.conn_pool.getconn()
             with connection:
                 with connection.cursor() as curs:
-                    print(query_string.as_string(curs))
+                    # print(query_string.as_string(curs))
                     curs.execute(query_string, data)
                     try:
                         result = curs.fetchall()
@@ -158,16 +158,13 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
             if query_string is None:
                 continue
 
-            # print(data)
             connection = None
             try:
                 connection = self.conn_pool.getconn()
                 with connection:
                     with connection.cursor() as curs:
-                        # print(query_string.as_string(curs))
                         curs.execute(query_string, data)
                         record = curs.fetchone()
-                        # print(record)
                         row_num = record[0]
                         box = record[1]
                         start_save_it = timer()
@@ -175,9 +172,9 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
                         end_save_it = timer()
                 start_notify_it = timer()
                 if query_type == 'Insert':
-                    event.notify('handler new object', row_num)
+                    threading_events.notify('handler new object', row_num)
                 elif query_type == 'Update':
-                    event.notify('handler update object', row_num)
+                    threading_events.notify('handler update object', row_num)
                 end_notify_it = timer()
                 # print(f'Notification:{end_notify_it-start_notify_it}; Saving:{end_save_it-start_save_it}')
             except psycopg2.OperationalError:
@@ -230,7 +227,13 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
 
         fields = []
         for key, value in self.tables[table_name].items():
-            fields.append(sql.SQL("{} {}").format(sql.Identifier(key), sql.SQL(value)))
+            if key in ['PRIMARY KEY', 'FOREIGN KEY']:
+                # pr_key_fields = value.strip('()').split(',')
+                # fields.append(sql.SQL("PRIMARY KEY ({fields})").format(
+                #     fields=sql.SQL(",").join(map(sql.Identifier, pr_key_fields))))
+                fields.append(sql.SQL("{} {}").format(sql.SQL(key), sql.SQL(value)))
+            else:
+                fields.append(sql.SQL("{} {}").format(sql.Identifier(key), sql.SQL(value)))
 
         create_table = sql.SQL("CREATE TABLE IF NOT EXISTS {table}({fields})").format(
             table=sql.Identifier(table_name),

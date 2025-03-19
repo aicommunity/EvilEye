@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 class EvilEyeBase(ABC):
     def __init__(self):
         self.is_inited = False
-        self.id : int = 0
+        self.id: int = 0
         self.params = {}
 
     def set_params(self, **params):

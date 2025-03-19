@@ -5,7 +5,7 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import QApplication
 
-from visualizer.main_window import MainWindow
+from visualization_modules.main_window import MainWindow
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
 

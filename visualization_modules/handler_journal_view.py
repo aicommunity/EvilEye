@@ -1,18 +1,17 @@
 import datetime
 import os
 from psycopg2 import sql
-from utils import event
-from utils import utils
-from PyQt6.QtCore import QDate, Qt
+from utils import threading_events
+from PyQt6.QtCore import QDate, QDateTime
 from PyQt6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QTabWidget, QPushButton,
-    QSizePolicy, QDateTimeEdit, QHeaderView, QComboBox, QTableView, QStyledItemDelegate,
-    QTableWidget, QTableWidgetItem, QApplication, QAbstractItemView, QMessageBox
+    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton,
+    QDateTimeEdit, QHeaderView, QComboBox, QTableView, QStyledItemDelegate,
+    QMessageBox
 )
 from PyQt6.QtGui import QPixmap, QPainter, QPen
-from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QPoint, QSize, QVariant, QModelIndex
+from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QModelIndex
 from PyQt6.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
-from visualizer.table_updater_view import TableUpdater
+from visualization_modules.table_updater_view import TableUpdater
 
 
 class ImageDelegate(QStyledItemDelegate):
@@ -64,20 +63,6 @@ class ImageWindow(QLabel):
         self.hide()
         event.accept()
 
-# class CustomModel(QSqlQueryModel):
-#     def data(self, idx: QModelIndex, role: int):
-#         if not idx.isValid():
-#             return QVariant()
-#         if idx.column() == 2:
-#             preview_path = super().data(idx, Qt.ItemDataRole.DisplayRole)
-#             print(preview_path)
-#             pixmap = QPixmap()
-#             if preview_path:
-#                 pixmap.load(preview_path)
-#             return pixmap
-#         return super().data(idx, role)
-
-
 class HandlerJournal(QWidget):
     retrieve_data_signal = pyqtSignal()
 
@@ -87,7 +72,10 @@ class HandlerJournal(QWidget):
     def __init__(self, db_controller, table_name, params, table_params, parent=None):
         super().__init__()
         self.db_controller = db_controller
-        self.table_updater = TableUpdater(table_name, self._insert_rows, self._update_on_lost)
+        self.table_updater = TableUpdater()
+        self.table_updater.append_object_signal.connect(self._insert_rows)
+        self.table_updater.update_object_signal.connect(self._update_on_lost)
+
         self.update_timer = QTimer()
         self.update_timer.setSingleShot(True)
         self.update_timer.timeout.connect(self._update_table)
@@ -108,7 +96,7 @@ class HandlerJournal(QWidget):
         self.data_for_update = []
         self.last_update_time = None
         self.update_rate = 10
-        self.current_start_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.min)
+        self.current_start_time = datetime.datetime.combine(datetime.datetime.now()-datetime.timedelta(days=1), datetime.time.min)
         self.current_end_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.max)
         self.start_time_updated = False
         self.finish_time_updated = False
@@ -118,9 +106,6 @@ class HandlerJournal(QWidget):
         self._setup_filter()
         self._setup_table()
         self._setup_time_layout()
-        # print(self.search_button.mapToParent(self.search_button.pos()).x())
-        # self.filters_window = FiltersWindow(list(self.source_name_id.keys()),
-        #                                     self._filter_by_camera)
         self.filter_displayed = False
 
         self.layout = QVBoxLayout()
@@ -132,17 +117,17 @@ class HandlerJournal(QWidget):
         self.table.doubleClicked.connect(self._display_image)
 
     def _connect_to_db(self):
-        self.db = QSqlDatabase.addDatabase("QPSQL")
-        self.db.setHostName(self.host)
-        self.db.setDatabaseName(self.db_name)
-        self.db.setUserName(self.username)
-        self.db.setPassword(self.password)
-        self.db.setPort(self.port)
-        if not self.db.open():
+        db = QSqlDatabase.addDatabase("QPSQL", 'obj_conn')
+        db.setHostName(self.host)
+        db.setDatabaseName(self.db_name)
+        db.setUserName(self.username)
+        db.setPassword(self.password)
+        db.setPort(self.port)
+        if not db.open():
             QMessageBox.critical(
                 None,
-                "QTableView Example - Error!",
-                "Database Error: %s" % self.db.lastError().databaseText(),
+                "Handler journal - Error!",
+                "Database Error: %s" % db.lastError().databaseText(),
             )
 
     def _setup_table(self):
@@ -154,7 +139,7 @@ class HandlerJournal(QWidget):
         h_header = self.table.horizontalHeader()
         h_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         h_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        h_header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        h_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         h_header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         h_header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         header.setDefaultSectionSize(HandlerJournal.preview_height)
@@ -170,12 +155,13 @@ class HandlerJournal(QWidget):
     def _setup_model(self):
         self.model = QSqlQueryModel()
 
-        query = QSqlQuery()
+        query = QSqlQuery(QSqlDatabase.database('obj_conn'))
         query.prepare('SELECT source_name, CAST(\'Event\' AS text) AS event_type, '
-                      '\'Object Id=\' || object_id || \'; class: \' || class_id || \'; conf: \' || confidence AS information,'
+                      '\'Object Id=\' || object_id || \'; class: \' || class_id || \'; conf: \' || ROUND(confidence::numeric, 2)'
+                      ' AS information,'
                       'time_stamp, time_lost, preview_path, lost_preview_path FROM objects '
                       'WHERE time_stamp BETWEEN :start AND :finish')
-        self.current_start_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.min)
+        self.current_start_time = datetime.datetime.combine(datetime.datetime.now()-datetime.timedelta(days=1), datetime.time.min)
         self.current_end_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.max)
         query.bindValue(":start", self.current_start_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
         query.bindValue(":finish", self.current_end_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
@@ -222,18 +208,20 @@ class HandlerJournal(QWidget):
         self.start_time.setCalendarPopup(True)
         self.start_time.setMinimumDate(QDate.currentDate().addDays(-365))
         self.start_time.setMaximumDate(QDate.currentDate().addDays(365))
+        self.start_time.setDateTime(self.current_start_time)
         self.start_time.setDisplayFormat("hh:mm:ss dd/MM/yyyy")
         self.start_time.setKeyboardTracking(False)
-        self.start_time.dateTimeChanged.connect(self.start_time_update)
+        self.start_time.editingFinished.connect(self.start_time_update)
 
         self.finish_time = QDateTimeEdit()
         self.finish_time.setMinimumWidth(200)
         self.finish_time.setCalendarPopup(True)
         self.finish_time.setMinimumDate(QDate.currentDate().addDays(-365))
         self.finish_time.setMaximumDate(QDate.currentDate().addDays(365))
+        self.finish_time.setDateTime(self.current_end_time)
         self.finish_time.setDisplayFormat("hh:mm:ss dd/MM/yyyy")
         self.finish_time.setKeyboardTracking(False)
-        self.finish_time.dateTimeChanged.connect(self.finish_time_update)
+        self.finish_time.editingFinished.connect(self.finish_time_update)
 
     def _setup_buttons(self):
         self.reset_button = QPushButton('Reset')
@@ -257,7 +245,7 @@ class HandlerJournal(QWidget):
         if not path:
             return
 
-        query = QSqlQuery()  # Getting a bounding_box of the current image
+        query = QSqlQuery(QSqlDatabase.database('obj_conn'))  # Getting a bounding_box of the current image
         if 'detected' in path:
             query.prepare('SELECT bounding_box from objects WHERE preview_path = :path')
             query.bindValue(':path', path)
@@ -292,7 +280,7 @@ class HandlerJournal(QWidget):
 
     @pyqtSlot()
     def _notify_db_update(self):
-        event.notify('handler new object')
+        threading_events.notify('handler new object')
 
     @pyqtSlot()
     def start_time_update(self):
@@ -335,7 +323,7 @@ class HandlerJournal(QWidget):
 
         fields = self.db_table_params.keys()
         if camera_name == 'All':
-            if (self.current_start_time == datetime.datetime.combine(datetime.datetime.now(), datetime.time.min) and
+            if (self.current_start_time == datetime.datetime.combine(datetime.datetime.now()-datetime.timedelta(days=1), datetime.time.min) and
                     self.current_end_time == datetime.datetime.combine(datetime.datetime.now(), datetime.time.max)):
                 self.block_updates = False
             self._filter_records(self.current_start_time, self.current_end_time)
@@ -343,9 +331,10 @@ class HandlerJournal(QWidget):
 
         source_id, full_address = self.source_name_id_address[camera_name]
         # print(camera_name, source_id, full_address)
-        query = QSqlQuery()
+        query = QSqlQuery(QSqlDatabase.database('obj_conn'))
         query.prepare('SELECT source_name, CAST(\'Event\' AS text) AS event_type, '
-                      '\'Object Id=\' || object_id || \'; class: \' || class_id || \'; conf: \' || confidence AS information,'
+                      '\'Object Id=\' || object_id || \'; class: \' || class_id || \'; conf: \' || ROUND(confidence::numeric, 2)'
+                      ' AS information,'
                       'time_stamp, time_lost, preview_path, lost_preview_path FROM objects '
                       'WHERE (time_stamp BETWEEN :start AND :finish) AND (source_id = :src_id) '
                       'AND (camera_full_address = :address) ORDER BY time_stamp DESC')
@@ -360,9 +349,10 @@ class HandlerJournal(QWidget):
         self.current_start_time = start_time
         self.current_end_time = finish_time
         fields = self.db_table_params.keys()
-        query = QSqlQuery()
+        query = QSqlQuery(QSqlDatabase.database('obj_conn'))
         query.prepare('SELECT source_name, CAST(\'Event\' AS text) AS event_type, '
-                      '\'Object Id=\' || object_id || \'; class: \' || class_id || \'; conf: \' || confidence AS information,'
+                      '\'Object Id=\' || object_id || \'; class: \' || class_id || \'; conf: \' || ROUND(confidence::numeric, 2)'
+                      ' AS information,'
                       'time_stamp, time_lost, preview_path, lost_preview_path FROM objects '
                       'WHERE time_stamp BETWEEN :start AND :finish ORDER BY time_stamp DESC')
         query.bindValue(":start", start_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
@@ -373,14 +363,22 @@ class HandlerJournal(QWidget):
     def _retrieve_data(self):
         if not self.isVisible():
             return
-        # fields = self.db_table_params.keys()
-        query = QSqlQuery()
+        self.filters.setCurrentIndex(0)
+
+        query = QSqlQuery(QSqlDatabase.database('obj_conn'))
         query.prepare('SELECT source_name, CAST(\'Event\' AS text) AS event_type, '
-                      '\'Object Id=\' || object_id || \'; class: \' || class_id || \'; conf: \' || confidence AS information,'
+                      '\'Object Id=\' || object_id || \'; class: \' || class_id || \'; conf: \' || ROUND(confidence::numeric, 2)'
+                      ' AS information,'
                       'time_stamp, time_lost, preview_path, lost_preview_path FROM objects '
                       'WHERE time_stamp BETWEEN :start AND :finish ORDER BY time_stamp DESC')
-        self.current_start_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.min)
+        self.current_start_time = datetime.datetime.combine(datetime.datetime.now()-datetime.timedelta(days=1), datetime.time.min)
         self.current_end_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.max)
+        # Сбрасываем дату в фильтрах
+        self.start_time.setDateTime(
+            QDateTime.fromString(self.current_start_time.strftime("%H:%M:%S %d-%m-%Y"), "hh:mm:ss dd-MM-yyyy"))
+        self.finish_time.setDateTime(
+            QDateTime.fromString(self.current_end_time.strftime("%H:%M:%S %d-%m-%Y"), "hh:mm:ss dd-MM-yyyy"))
+
         query.bindValue(":start", self.current_start_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
         query.bindValue(":finish", self.current_end_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
         query.exec()
@@ -397,11 +395,10 @@ class HandlerJournal(QWidget):
         if self.block_updates or not self.isVisible() or self.update_timer.isActive():
             return
         self.update_timer.start(10000)
-        print('Timer_started')
 
     def close(self):
         self._update_job_first_last_records()
-        self.db.removeDatabase(self.db_name)
+        QSqlDatabase.removeDatabase('obj_conn')
 
     def _create_dict_source_name_address_id(self):
         camera_address_id_name = {}

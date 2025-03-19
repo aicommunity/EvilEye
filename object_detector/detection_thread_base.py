@@ -7,6 +7,7 @@ from time import sleep
 from object_detector.object_detection_base import DetectionResultList
 from object_detector.object_detection_base import DetectionResult
 from capture.video_capture_base import CaptureImage
+from timeit import default_timer as timer
 
 
 class DetectionThreadBase:
@@ -50,6 +51,7 @@ class DetectionThreadBase:
 
     def _process_impl(self):
         while self.run_flag:
+            # start_it = timer()
             self.init_detection_implementation()
             try:
                 if not self.queue_in.empty():
@@ -72,6 +74,8 @@ class DetectionThreadBase:
             detection_result_list = self.process_stride(split_image)
             if detection_result_list:
                 self.queue_out.put([detection_result_list, image])
+            # finish_it = timer()
+            # print(f'TIME: {finish_it - start_it}')
 
     def process_stride(self, split_image):
         bboxes_coords = []
