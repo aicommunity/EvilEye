@@ -5,6 +5,7 @@ from object_detector import object_detection_yolo
 from object_detector.object_detection_base import DetectionResultList
 from object_tracker import object_tracking_botsort
 from object_tracker.object_tracking_base import TrackingResultList
+from object_tracker.trackers.bot_sort import Encoder
 from visualizer.video_thread import VideoThread
 from objects_handler import objects_handler
 from capture.video_capture_base import CaptureImage
@@ -237,9 +238,12 @@ class Controller:
 
     def _init_trackers(self, params):
         num_trackers = len(params)
+        # TODO: move path to some config
+        encoder = Encoder('osnet_ain_x1_0_M.onnx')
+        
         for i in range(num_trackers):
             tracker_params = params[i]
-            tracker = object_tracking_botsort.ObjectTrackingBotsort()
+            tracker = object_tracking_botsort.ObjectTrackingBotsort(encoder)
             tracker.set_params(**tracker_params)
             tracker.init()
             self.trackers.append(tracker)

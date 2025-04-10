@@ -1,7 +1,7 @@
 import numpy as np
 import datetime
 from object_tracker import object_tracking_base
-from object_tracker.trackers.bot_sort import BOTSORT
+from object_tracker.trackers.bot_sort import BOTSORT, Encoder
 from object_tracker.trackers.cfg.utils import read_cfg
 from time import sleep
 from object_detector.object_detection_base import DetectionResult
@@ -27,10 +27,11 @@ class BostSortCfg:
 class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
     #tracker: BOTSORT
 
-    def __init__(self):
+    def __init__(self, encoder: Encoder = None):
         super().__init__()
         self.botsort_cfg = BostSortCfg()
         self.tracker = None
+        self.encoder = encoder
         self.fps = 5
 
     def init_impl(self):
@@ -39,7 +40,7 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
             self.tracker = None
             return False
 
-        self.tracker = BOTSORT(args=self.botsort_cfg, frame_rate=self.fps)
+        self.tracker = BOTSORT(self.botsort_cfg, self.encoder, frame_rate=self.fps)
         return True
 
     def release_impl(self):
@@ -72,7 +73,7 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
                 break
             detection_result, image = detections
             cam_id, bboxes_xcycwh, confidences, class_ids = self._parse_det_info(detection_result)
-            tracks = self.tracker.update(class_ids, bboxes_xcycwh, confidences)
+            tracks = self.tracker.update(class_ids, bboxes_xcycwh, confidences, image.image)
             tracks_info = self._create_tracks_info(cam_id, detection_result.frame_id, None, tracks)
             self.queue_out.put((tracks_info, image))
 

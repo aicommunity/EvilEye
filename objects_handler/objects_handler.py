@@ -291,11 +291,11 @@ class ObjectsHandler(core.EvilEyeBase):
         obj_type_path = os.path.join(current_day_path, obj_event_type + '_' + image_type + 's')
         # obj_event_path = os.path.join(current_day_path, obj_event_type)
         if not os.path.exists(img_dir):
-            os.mkdir(img_dir)
+            os.makedirs(img_dir, exist_ok=True)
         if not os.path.exists(current_day_path):
-            os.mkdir(current_day_path)
+            os.makedirs(current_day_path, exist_ok=True)
         if not os.path.exists(obj_type_path):
-            os.mkdir(obj_type_path)
+            os.makedirs(obj_type_path, exist_ok=True)
         # if not os.path.exists(obj_event_path):
         #     os.mkdir(obj_event_path)
 
