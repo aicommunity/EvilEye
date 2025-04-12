@@ -4,11 +4,13 @@ import cv2
 import numpy as np
 from utils import utils
 from preprocessing import PreprocessingBase
+from preprocessing.steps import PreprocessInput
 
 
 class PreprocessingVehicle(PreprocessingBase):
     def __init__(self):
         super().__init__()
+        self.inputStep = PreprocessInput()
 
     def init_impl(self):
         return True
@@ -26,9 +28,8 @@ class PreprocessingVehicle(PreprocessingBase):
         self.params.clear()
 
     def _process_image(self, image):
-        processed_image = None
-
-        processed_image = copy.deepcopy(image)  # Todo: its trivial
-
+        processed_image = image
+        # processed_image = copy.deepcopy(image)  # Todo: its trivial
+        processed_image.image = self.inputStep.applySequence(image.image)
         return processed_image
 

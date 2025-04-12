@@ -7,6 +7,8 @@ from PyQt6.QtWidgets import QApplication
 
 from visualization_modules.main_window import MainWindow
 
+file_path = 'samples/vehicle_perpocessing.json'
+
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 def create_args_parser():
@@ -73,7 +75,7 @@ if __name__ == "__main__":
         config_data["autoclose"] = True
 
     app = QApplication(sys.argv)
-    a = MainWindow(config_data, 1280, 720)
+    a = MainWindow(file_path, config_data, 1280, 720)
 
     if args.gui:
         a.show()
