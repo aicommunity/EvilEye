@@ -16,6 +16,7 @@ from visualizer.visualizer import Visualizer
 from database_controller.database_controller_pg import DatabaseControllerPg
 from PyQt6.QtWidgets import QMainWindow
 import json
+from object_multi_camera_tracker.custom_object_tracking import ObjectMultiCameraTracking
 
 
 class Controller:
@@ -105,10 +106,26 @@ class Controller:
                 for det_result, image in self.detection_results:
                     if det_result.source_id in source_ids:
                         tracker.put((det_result, image))
-                track_info = tracker.get()
-                if track_info:
+
+            track_infos = []        
+            if not any(t.queue_out.empty() for t in self.trackers):
+                for tracker in self.trackers:
+                    track_info = tracker.get()
                     tracking_result, image = track_info
                     self.tracking_results = tracking_result
+                    
+                    track_infos.append((tracking_result, image))
+            
+            # Process multi camera tracking
+            # NOTE: This is a temporary solution which replaces
+            # single camera tracks with multi camera tracks
+            if track_infos:
+                self.mc_tracker.put(track_infos)
+            
+            mc_track_infos = self.mc_tracker.get()
+            if mc_track_infos:
+                for i, track_info in enumerate(mc_track_infos):
+                    tracking_result, image = track_info
                     self.obj_handler.put((tracking_result, image))
                     self.source_last_processed_frame_id[image.source_id] = image.frame_id
 
@@ -142,6 +159,7 @@ class Controller:
             detector.start()
         for tracker in self.trackers:
             tracker.start()
+        self.mc_tracker.start()
         self.obj_handler.start()
         self.visualizer.start()
         self.db_controller.connect()
@@ -161,6 +179,7 @@ class Controller:
             detector.stop()
         for source in self.sources:
             source.stop()
+        self.mc_tracker.stop()
         print('Everything in controller stopped')
 
     def init(self, params):
@@ -175,6 +194,7 @@ class Controller:
         self._init_captures(self.params['sources'])
         self._init_detectors(self.params['detectors'])
         self._init_trackers(self.params['trackers'])
+        self._init_mc_tracker()
         self._init_visualizer(self.params['visualizer'])
         self._init_db_controller(self.params['database'], system_params=self.params)
         self.__init_object_handler(self.db_controller, params['objects_handler'])
@@ -247,6 +267,10 @@ class Controller:
             tracker.set_params(**tracker_params)
             tracker.init()
             self.trackers.append(tracker)
+    
+    def _init_mc_tracker(self):
+        self.mc_tracker = ObjectMultiCameraTracking()
+        self.mc_tracker.init()
 
     def _init_visualizer(self, params):
         self.gui_enabled = params.get("gui_enabled", True)

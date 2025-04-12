@@ -1,7 +1,7 @@
 import numpy as np
 import datetime
 from object_tracker import object_tracking_base
-from object_tracker.trackers.bot_sort import BOTSORT, Encoder
+from object_tracker.trackers.bot_sort import BOTSORT, Encoder, BOTrack
 from object_tracker.trackers.cfg.utils import read_cfg
 from time import sleep
 from object_detector.object_detection_base import DetectionResult
@@ -107,18 +107,25 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
 
         return cam_id, bboxes_xcycwh, confidences, class_ids
 
-    def _create_tracks_info(self, cam_id: int, frame_id: int, detection: DetectionResult, tracks: np.ndarray):
+    def _create_tracks_info(
+            self, 
+            cam_id: int, 
+            frame_id: int, 
+            detection: DetectionResult, 
+            tracks: list[BOTrack]):
+        
         tracks_info = TrackingResultList()
         tracks_info.source_id = cam_id
         tracks_info.frame_id = frame_id
         tracks_info.time_stamp = datetime.datetime.now()
 
         # print(tracks)
-        for i in range(len(tracks)):
-            track_bbox = tracks[i, :4].tolist()
-            track_conf = tracks[i, 5]
-            track_cls = int(tracks[i, 6])
-            track_id = int(tracks[i, 4])
+        tracks_results = np.asarray([x.result for x in tracks], dtype=np.float32)
+        for i in range(len(tracks_results)):
+            track_bbox = tracks_results[i, :4].tolist()
+            track_conf = tracks_results[i, 5]
+            track_cls = int(tracks_results[i, 6])
+            track_id = int(tracks_results[i, 4])
             object_info = TrackingResult()
             object_info.class_id = track_cls
             object_info.bounding_box = track_bbox
@@ -126,6 +133,12 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
             object_info.track_id = track_id
             if detection:
                 object_info.detection_history.append(detection)
+            
+            # Add BOTrack object to tracking data
+            # in order to use it in multi-camera tracking during reidentification
+            object_info.tracking_data = {
+                "track_object": tracks[i],
+            }
 
             tracks_info.tracks.append(object_info)
 

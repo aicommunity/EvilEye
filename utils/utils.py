@@ -13,6 +13,7 @@ from sympy.multipledispatch.dispatcher import source
 from database_controller import database_controller_pg
 from psycopg2 import sql
 from capture.video_capture_base import CaptureImage
+from object_tracker.object_tracking_botsort import BOTrack
 
 
 def get_project_root() -> Path:
@@ -301,6 +302,8 @@ class ObjectResultEncoder(json.JSONEncoder):
         if isinstance(obj, ObjectResultHistory):
             return obj.__dict__
         if isinstance(obj, CaptureImage):
+            return None
+        if isinstance(obj, BOTrack):
             return None
 
         return super().default(obj)
