@@ -44,7 +44,6 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
 
     def _process_impl(self):
         while self.run_flag:
-            print('mct')
             sleep(0.01)
             sc_track_results: List[Tuple[TrackingResultList, np.ndarray]] = self.queue_in.get()
             if sc_track_results is None:
@@ -113,7 +112,7 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
                     continue
 
                 src_track = sc_track_results[cam_id].tracks[src_track_number]
-                src_track.track_id = global_id
+                src_track.tracking_data['global_id'] = global_id
                 sc_tracks_by_cam[cam_id].append(src_track)
         
         for i, results in enumerate(sc_track_results):
@@ -257,6 +256,7 @@ class MultiCameraTracker:
         else:
             dist_array = ssd.squareform(distances)
             clustering = linkage(dist_array, method='average')
+            clustering = np.clip(clustering, 0, None)
             cluster_labels = fcluster(clustering, t=self.clustering_threshold, criterion='distance')
         
         # Cгруппировать локальные треки по кластерам

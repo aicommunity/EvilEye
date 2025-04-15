@@ -117,8 +117,8 @@ class Controller:
                     track_infos.append((tracking_result, image))
             
             # Process multi camera tracking
-            # NOTE: This is a temporary solution which replaces
-            # single camera tracks with multi camera tracks
+            # NOTE: This is a temporary solution which adds
+            # multi camera track id to `tracking_data` dict
             if track_infos:
                 self.mc_tracker.put(track_infos)
             
@@ -126,6 +126,8 @@ class Controller:
             if mc_track_infos:
                 for i, track_info in enumerate(mc_track_infos):
                     tracking_result, image = track_info
+                    # print(f"Global ids in cam {i}: {[t.tracking_data['global_id'] for t in tracking_result.tracks]}")
+                    
                     self.obj_handler.put((tracking_result, image))
                     self.source_last_processed_frame_id[image.source_id] = image.frame_id
 
