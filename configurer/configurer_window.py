@@ -1,7 +1,7 @@
 import copy
 import json
 import os.path
-from multiprocessing import Process
+import multiprocessing
 from configurer.jobs_history_journal import JobsHistory
 from configurer.db_connection_window import DatabaseConnectionWindow
 from PyQt6 import QtGui
@@ -56,8 +56,9 @@ class ConfigurerMainWindow(QMainWindow):
         self.setWindowTitle("EvilEye Configurer")
         self.resize(win_width, win_height)
 
-        file_path = 'initial_config.json'
-        with open(file_path, 'r+') as params_file:
+        file_path = 'configurer/initial_config.json'
+        full_path = os.path.join(utils.get_project_root(), file_path)
+        with open(full_path, 'r+') as params_file:
             config_params = json.load(params_file)
 
         self.params = config_params
@@ -179,7 +180,8 @@ class ConfigurerMainWindow(QMainWindow):
         self._open_save_win()
 
     def _run_app(self):
-        self.new_process = Process(target=visualization.start_app, args=(self.result_filename,))
+        multiprocessing.set_start_method('spawn')
+        self.new_process = multiprocessing.Process(target=visualization.start_app, args=(self.result_filename,))
         self.new_process.start()
         self.new_process.join()
 
@@ -190,8 +192,8 @@ class ConfigurerMainWindow(QMainWindow):
     @pyqtSlot(str)
     def _save_params(self, file_name):
         self._process_params_strings()
-        self.result_filename = file_name
-        with open(file_name, 'w') as file:
+        self.result_filename = os.path.join(utils.get_project_root(), file_name)
+        with open(self.result_filename, 'w') as file:
             json.dump(self.config_result, file, indent=4)
 
         if self.run_flag:
