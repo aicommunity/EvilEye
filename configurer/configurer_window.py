@@ -112,6 +112,7 @@ class ConfigurerMainWindow(QMainWindow):
         self.vertical_layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         self.setCentralWidget(self.scroll_area)
         self.result_filename = None
+        multiprocessing.set_start_method('spawn')
 
     def _setup_tabs(self):
         self.tabs = QTabWidget()
@@ -180,7 +181,6 @@ class ConfigurerMainWindow(QMainWindow):
         self._open_save_win()
 
     def _run_app(self):
-        multiprocessing.set_start_method('spawn')
         self.new_process = multiprocessing.Process(target=visualization.start_app, args=(self.result_filename,))
         self.new_process.start()
         self.new_process.join()

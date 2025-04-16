@@ -71,7 +71,7 @@ class TrackerTab(QWidget):
     @pyqtSlot()
     def _add_tracker(self):
         new_tracker = TrackerWidget()
-        self.track_tabs.addTab(new_tracker, f'Detector{len(self.trackers) + 1}')
+        self.track_tabs.addTab(new_tracker, f'Tracker{len(self.trackers) + 1}')
         self.trackers.append(new_tracker)
 
     def get_forms(self) -> list[QFormLayout]:
