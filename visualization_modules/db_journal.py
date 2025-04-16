@@ -65,6 +65,7 @@ class DatabaseJournalWindow(QWidget):
             tab = self.tabs.widget(tab_idx)
             tab.close()
         print('Database journal closed')
+        self.db_controller.save_job_configuration_info(self.params)
         self.db_controller.disconnect()
 
     @pyqtSlot(int)

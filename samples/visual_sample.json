@@ -253,6 +253,7 @@
         "last_record": "integer DEFAULT -1",
         "is_terminated": "boolean NOT NULL",
         "creation_time": "timestamp",
+        "configuration_id": "integer DEFAULT NULL",
         "configuration_info": "json",
         "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE"
       },

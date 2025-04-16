@@ -1,20 +1,19 @@
 import json
-
+import os
 from PyQt6 import QtGui
 from PyQt6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout,
     QSizePolicy, QMenuBar, QToolBar,
     QMenu, QMainWindow, QApplication
 )
-
 from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QPixmap, QIcon, QCursor
 from PyQt6.QtGui import QAction
-from PyQt6.QtCore import Qt
 import sys
-import cv2
 from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
 from pathlib import Path
+import utils
+import utils.utils
 from visualization_modules.video_thread import VideoThread
 from controller import controller
 from visualization_modules.db_journal import DatabaseJournalWindow
@@ -160,12 +159,15 @@ class MainWindow(QMainWindow):
 
     def _create_actions(self):  # Создание кнопок-действий
         self.db_journal = QAction('&DB journal', self)
-        self.db_journal.setIcon(QIcon('journal.svg'))
+        icon_path = os.path.join(utils.utils.get_project_root(), 'journal.svg')
+        self.db_journal.setIcon(QIcon(icon_path))
 
         self.add_zone = QAction('&Add zone', self)
-        self.add_zone.setIcon(QIcon('add_zone.svg'))
+        icon_path = os.path.join(utils.utils.get_project_root(), 'add_zone.svg')
+        self.add_zone.setIcon(QIcon(icon_path))
         self.show_zones = QAction('&Display zones', self)
-        self.show_zones.setIcon(QIcon('display_zones.svg'))
+        icon_path = os.path.join(utils.utils.get_project_root(), 'display_zones.svg')
+        self.show_zones.setIcon(QIcon(icon_path))
         self.show_zones.setCheckable(True)
 
     def _connect_actions(self):
