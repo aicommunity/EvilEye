@@ -96,7 +96,10 @@ class MainWindow(QMainWindow):
             if grid_cols > self.cols - 1:
                 grid_cols = 0
                 grid_rows += 1
-                self.hlayouts[grid_rows].addWidget(self.labels[-1], alignment=Qt.AlignmentFlag.AlignCenter)
+                if len(self.hlayouts) <= grid_rows:
+                    print(f"grid_rows {grid_rows} > num horizontal layouts {len(self.hlayouts)}")
+                else:
+                    self.hlayouts[grid_rows].addWidget(self.labels[-1], alignment=Qt.AlignmentFlag.AlignCenter)
                 grid_cols += 1
             else:
                 self.hlayouts[grid_rows].addWidget(self.labels[-1], alignment=Qt.AlignmentFlag.AlignCenter)
