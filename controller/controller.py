@@ -261,10 +261,10 @@ class Controller:
     def _init_trackers(self, params):
         num_trackers = len(params)
         # TODO: move path to some config
-        encoder = Encoder('osnet_ain_x1_0_M.onnx')
-        
+
         for i in range(num_trackers):
             tracker_params = params[i]
+            encoder = Encoder(tracker_params.get("tracker_onnx", None))
             tracker = object_tracking_botsort.ObjectTrackingBotsort(encoder)
             tracker.set_params(**tracker_params)
             tracker.init()
