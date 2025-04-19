@@ -3,6 +3,7 @@ import copy
 class ObjectResultHistory:
     def __init__(self):
         self.object_id = 0
+        self.global_id = None
         self.source_id = None
         self.frame_id = None
         self.class_id = None
@@ -18,6 +19,7 @@ class ObjectResultHistory:
     def __deepcopy__(self, memodict={}):
         copy_instance = ObjectResultHistory()
         copy_instance.object_id = copy.deepcopy(self.object_id, memodict)
+        copy_instance.global_id = copy.deepcopy(self.global_id, memodict)
         copy_instance.source_id = copy.deepcopy(self.source_id, memodict)
         copy_instance.frame_id = copy.deepcopy(self.frame_id, memodict)
         copy_instance.class_id = copy.deepcopy(self.class_id, memodict)
@@ -42,6 +44,7 @@ class ObjectResult(ObjectResultHistory):
     def __deepcopy__(self, memodict={}):
         copy_instance = ObjectResult()
         copy_instance.object_id = copy.deepcopy(self.object_id, memodict)
+        copy_instance.global_id = copy.deepcopy(self.global_id, memodict)
         copy_instance.source_id = copy.deepcopy(self.source_id, memodict)
         copy_instance.frame_id = copy.deepcopy(self.frame_id, memodict)
         copy_instance.class_id = copy.deepcopy(self.class_id, memodict)
@@ -57,6 +60,7 @@ class ObjectResult(ObjectResultHistory):
     def get_current_history_element(self):
         result = ObjectResultHistory()
         result.object_id = self.object_id
+        result.global_id = self.global_id
         result.source_id = self.source_id
         result.frame_id = self.frame_id
         result.class_id = self.class_id

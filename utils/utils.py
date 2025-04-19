@@ -259,10 +259,10 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
 
         cv2.rectangle(image.image, (int(last_info.bounding_box[0]), int(last_info.bounding_box[1])),
                       (int(last_info.bounding_box[2]), int(last_info.bounding_box[3])), (0, 255, 0), thickness=8)
-        cv2.putText(image.image, str(last_info.track_id) + ' ' + str([last_info.class_id]) +
+        cv2.putText(image.image, str(last_info.track_id) + ':' + str(obj.global_id) + ' ' + str([last_info.class_id]) +
                     " " + "{:.2f}".format(last_info.confidence),
-                    (int(last_info.bounding_box[0]), int(last_info.bounding_box[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
-                    (0, 0, 255), 2)
+                    (int(last_info.bounding_box[0]), int(last_info.bounding_box[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 3,
+                    (0, 0, 255), 5)
 
         # print(len(obj['obj_info']))
         if len(obj.history) > 1:

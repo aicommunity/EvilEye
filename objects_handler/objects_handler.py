@@ -176,6 +176,7 @@ class ObjectsHandler(core.EvilEyeBase):
                 obj.time_stamp = tracking_results.time_stamp
                 obj.frame_id = tracking_results.frame_id
                 obj.object_id = self.object_id_counter
+                obj.global_id = track.tracking_data.get('global_id', None)
                 obj.last_image = image
                 self.object_id_counter += 1
                 obj.track = track
