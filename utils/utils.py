@@ -261,7 +261,7 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
 
         cv2.rectangle(image.image, (int(last_info.bounding_box[0]), int(last_info.bounding_box[1])),
                       (int(last_info.bounding_box[2]), int(last_info.bounding_box[3])), (0, 255, 0), thickness=font_thickness)
-        if obj.global_id:
+        if obj.global_id is not None:
             cv2.putText(image.image,
                         str(last_info.track_id) + ':' + str(obj.global_id) + ' ' + str([last_info.class_id]) +
                         " " + "{:.2f}".format(last_info.confidence),
