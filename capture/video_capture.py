@@ -68,6 +68,16 @@ class VideoCapture(capture.VideoCaptureBase):
 
                 if self.source_fps is not None and self.source_type == CaptureDeviceType.VideoFile:
                     self.video_duration = self.video_length*1000.0/self.source_fps
+
+                if self.source_fps is not None:
+                    print(f"Determined source fps={self.source_fps} for sources {self.source_names}")
+
+                if self.desired_fps is not None and self.desired_fps > 0.0 and self.source_type != CaptureDeviceType.VideoFile:
+                    self.capture.set(cv2.CAP_PROP_FPS, self.desired_fps)
+                    real_fps = self.capture.get(cv2.CAP_PROP_FPS)
+                    print(f"Trying to set desired fps={self.desired_fps} for sources {self.source_names}. Result fps: {real_fps}")
+                    if real_fps is not None and real_fps > 0.0:
+                        self.source_fps = real_fps
             except cv2.error as e:
                 print(f"Failed to read source_fps: {e} for sources {self.source_names}")
         else:

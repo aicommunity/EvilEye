@@ -33,6 +33,7 @@ class VideoCaptureBase(core.EvilEyeBase):
         self.frame_id_counter = 0
         self.source_type = None
         self.source_fps = None
+        self.desired_fps = None
         self.split_stream = False
         self.num_split = None
         self.src_coords = None
@@ -82,6 +83,7 @@ class VideoCaptureBase(core.EvilEyeBase):
         self.num_split = self.params.get('num_split', None)
         self.src_coords = self.params.get('src_coords', None)
         self.source_ids = self.params.get('source_ids', None)
+        self.desired_fps = self.params.get('desired_fps', None)
         self.source_names = self.params.get('source_names', self.source_ids)
         self.loop_play = self.params.get('loop_play', True)
         self.source_type = CaptureDeviceType[self.params.get('source', "")]
