@@ -47,7 +47,7 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
             sleep(0.01)
             sc_track_results: List[Tuple[TrackingResultList, np.ndarray]] = self.queue_in.get()
             if sc_track_results is None:
-                break
+                continue
 
             sc_tracks: List[List[BOTrack]] = []
             images = []
