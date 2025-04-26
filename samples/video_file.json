@@ -125,6 +125,7 @@
   "controller": {
     "autoclose": false,
     "fps": 5,
+    "multicam_reid" : true,
     "class_names": [ "person",
                      "bicycle",
                      "car",
