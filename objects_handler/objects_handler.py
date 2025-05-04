@@ -54,6 +54,7 @@ class ObjectsHandler(core.EvilEyeBase):
         self.lost_store_time_secs = 10
         self.last_sources = dict()
 
+        self.snapshot = None
         self.subscribers = []
 
     def default(self):
@@ -89,18 +90,17 @@ class ObjectsHandler(core.EvilEyeBase):
     def get(self, objs_type, cam_id):  # Получение списка объектов в зависимости от указанного типа
         # Блокируем остальные потоки на время получения объектов
         result = None
-        with self.lock:
-            # self.condition.acquire()
-            if objs_type == 'new':
+        if objs_type == 'new':
+            with self.lock:
                 result = copy.deepcopy(self.new_objs)
-            elif objs_type == 'active':
-                result = self._get_active(cam_id)
-            elif objs_type == 'lost':
-                result = self._get_lost(cam_id)
-            elif objs_type == 'all':
-                result = self._get_all(cam_id)
-            else:
-                raise Exception('Such type of objects does not exist')
+        elif objs_type == 'active':
+            result = self._get_active(cam_id)
+        elif objs_type == 'lost':
+            result = self._get_lost(cam_id)
+        elif objs_type == 'all':
+            result = self._get_all(cam_id)
+        else:
+            raise Exception('Such type of objects does not exist')
             # self.condition.release()
             # self.condition.notify_all()
 
@@ -111,26 +111,40 @@ class ObjectsHandler(core.EvilEyeBase):
 
     def _get_active(self, cam_id):
         source_objects = ObjectResultList()
-        for obj in self.active_objs.objects:
+        if self.snapshot is None:
+            return source_objects
+        for obj in self.snapshot:
             if obj.source_id == cam_id:
-                source_objects.objects.append(copy.deepcopy(obj))
+                source_objects.objects.append(obj)
         return source_objects
+        # ret = self.lock.acquire(blocking=False)
+        # if ret:
+        #     # active_objects = copy.deepcopy(self.active_objs.objects)
+        #     for obj in self.active_objs.objects:
+        #         if obj.source_id == cam_id:
+        #             source_objects.objects.append(copy.deepcopy(obj))
+        #     self.lock.release()
+        #     return source_objects
+        # else:
+        #     return source_objects
 
     def _get_lost(self, cam_id):
-        source_objects = ObjectResultList()
-        for obj in self.lost_objs.objects:
-            if obj.source_id == cam_id:
-                source_objects.objects.append(copy.deepcopy(obj))
+        with self.lock:
+            source_objects = ObjectResultList()
+            for obj in self.lost_objs.objects:
+                if obj.source_id == cam_id:
+                    source_objects.objects.append(copy.deepcopy(obj))
         return source_objects
 
     def _get_all(self, cam_id):
-        source_objects = ObjectResultList()
-        for obj in self.active_objs.objects:
-            if obj.source_id == cam_id:
-                source_objects.objects.append(copy.deepcopy(obj))
-        for obj in self.lost_objs.objects:
-            if obj.source_id == cam_id:
-                source_objects.objects.append(copy.deepcopy(obj))
+        with self.lock:
+            source_objects = ObjectResultList()
+            for obj in self.active_objs.objects:
+                if obj.source_id == cam_id:
+                    source_objects.objects.append(copy.deepcopy(obj))
+            for obj in self.lost_objs.objects:
+                if obj.source_id == cam_id:
+                    source_objects.objects.append(copy.deepcopy(obj))
         return source_objects
 
     def handle_objs(self):  # Функция, отвечающая за работу с объектами
@@ -147,6 +161,10 @@ class ObjectsHandler(core.EvilEyeBase):
             with self.lock:
                 # self.condition.acquire()
                 self._handle_active(tracks, image)
+                if self.active_objs.objects:
+                    self.snapshot = copy.deepcopy(self.active_objs.objects)
+                else:
+                    self.snapshot = None
                 # Оповещаем остальные потоки, снимаем блокировку
                 # self.condition.release()
                 # self.condition.notify_all()

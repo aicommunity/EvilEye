@@ -119,7 +119,7 @@ class Visualizer(core.EvilEyeBase):
                 if self.visual_threads[j].source_id == source_id:
                     data = (frame, objs, self.source_id_name_table[frame.source_id],
                             self.source_video_duration.get(frame.source_id, None), debug_info)
-                    self.visual_threads[j].append_data(copy.deepcopy(data))
+                    self.visual_threads[j].append_data(data)
                     self.last_displayed_frame[source_id] = frame.frame_id
                     processed_sources.append(source_id)
                     break
