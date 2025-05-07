@@ -1,7 +1,7 @@
 import cv2
 from .step_abstract import StepAbstarct
 
-class PreprocessInput(StepAbstarct):
+class Input(StepAbstarct):
     def __init__(self, aNextStep=None):
         super().__init__(aNextStep)
         
