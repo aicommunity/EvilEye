@@ -11,6 +11,7 @@ class ObjectResultHistory:
         self.time_stamp = None
         self.time_detected = None
         self.last_update = False
+        self.cur_video_position = None
         self.last_image = None
         self.lost_frames = 0
         self.track = None

@@ -39,6 +39,7 @@
       "inference_size": 640,
       "device": null,
       "conf" : 0.4,
+      "half": true,
       "save" : false,
       "stride_type": "frames",
       "vid_stride": 1,
@@ -53,6 +54,7 @@
       "inference_size": 1280,
       "device": null,
       "conf" : 0.4,
+      "half": true,
       "save" : false,
       "stride_type": "frames",
       "vid_stride": 1,
@@ -67,6 +69,7 @@
       "inference_size": 640,
       "device": null,
       "conf" : 0.4,
+      "half": true,
       "save" : false,
       "stride_type": "frames",
       "vid_stride": 1,
@@ -79,6 +82,7 @@
       "model": "yolov8n.pt",
       "show" : false,
       "conf" : 0.4,
+      "half": true,
       "inference_size": 640,
       "device": null,
       "save" : false,
@@ -95,6 +99,7 @@
       "inference_size": 1280,
       "device": null,
       "conf" : 0.4,
+      "half": true,
       "save" : false,
       "stride_type": "frames",
       "vid_stride": 1,
@@ -106,7 +111,7 @@
   "trackers":[
     {
       "source_ids": [0],
-      "fps": 5,
+      "fps": 10,
       "botsort_cfg": {
         "appearance_thresh": 0.25,
         "gmc_method": "sparseOptFlow",
@@ -122,7 +127,7 @@
     },
     {
       "source_ids": [1],
-      "fps": 5,
+      "fps": 10,
       "botsort_cfg": {
         "appearance_thresh": 0.25,
         "gmc_method": "sparseOptFlow",
@@ -138,7 +143,7 @@
     },
     {
       "source_ids": [2],
-      "fps": 5,
+      "fps": 10,
       "botsort_cfg": {
         "appearance_thresh": 0.25,
         "gmc_method": "sparseOptFlow",
@@ -154,7 +159,7 @@
     },
     {
       "source_ids": [3],
-      "fps": 5,
+      "fps": 10,
       "botsort_cfg": {
         "appearance_thresh": 0.25,
         "gmc_method": "sparseOptFlow",
@@ -170,7 +175,7 @@
     },
     {
       "source_ids": [4],
-      "fps": 5,
+      "fps": 10,
       "botsort_cfg": {
         "appearance_thresh": 0.25,
         "gmc_method": "sparseOptFlow",
@@ -225,7 +230,7 @@
     "num_height": 2,
     "visual_buffer_num_frames": 10,
     "source_ids": [0, 1, 2, 3, 4],
-    "fps": [5, 5, 5, 5, 5],
+    "fps": [10, 10, 10, 10, 10],
     "gui_enabled": true,
     "show_debug_info": true,
     "objects_journal_enabled": false
@@ -336,7 +341,7 @@
   },
   "controller": {
     "autoclose": false,
-    "fps": 5,
+    "fps": 15,
     "class_names": [ "person",
                      "bicycle",
                      "car",

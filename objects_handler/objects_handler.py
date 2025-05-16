@@ -56,6 +56,7 @@ class ObjectsHandler(core.EvilEyeBase):
 
         self.snapshot = None
         self.subscribers = []
+        # self.objects_file = open('roi_detector_exp_file3.txt', 'w')
 
     def default(self):
         pass
@@ -75,6 +76,7 @@ class ObjectsHandler(core.EvilEyeBase):
         self.lost_thresh = self.params.get('lost_thresh', 5)
 
     def stop(self):
+        # self.objects_file.close()
         self.run_flag = False
         self.objs_queue.put(None)
         self.handler.join()
@@ -190,6 +192,11 @@ class ObjectsHandler(core.EvilEyeBase):
                 track_object.track = track
                 track_object.time_stamp = tracking_results.time_stamp
                 track_object.last_image = image
+                track_object.cur_video_pos = image.current_video_position
+                # object_str = (f'Source: {track_object.source_id}, ID: {track_object.object_id}, '
+                #               f'Image shape: {track_object.track.img_shape}, ROI shape: {track_object.track.roi_shape}, '
+                #               f'Box: {track_object.track.bounding_box}, Conf: {track_object.track.confidence}\n')
+                # self.objects_file.write(object_str)
                 # print(f"object_id={track_object.object_id}, track_id={track_object.track.track_id}, len(history)={len(track_object.history)}")
                 track_object.history.append(track_object.get_current_history_element())
                 if len(track_object.history) > self.history_len:  # Если количество данных превышает размер истории, удаляем самые старые данные об объекте
@@ -205,10 +212,15 @@ class ObjectsHandler(core.EvilEyeBase):
                 obj.frame_id = tracking_results.frame_id
                 obj.object_id = self.object_id_counter
                 obj.last_image = image
+                obj.cur_video_pos = image.current_video_position
                 self.object_id_counter += 1
                 obj.track = track
                 obj.history.append(obj.get_current_history_element())
                 start_insert_it = timer()
+                # object_str = (f'\nSource: {obj.source_id}, Video position: {obj.cur_video_pos}, ID: {obj.object_id},\n'
+                #               f'Img shape: {obj.track.img_shape}, ROI shape: {obj.track.roi_shape},\n'
+                #               f'Box: {obj.track.bounding_box}, Conf: {obj.track.confidence}\n')
+                # self.objects_file.write(object_str)
                 self.db_adapter.insert(obj)
                 end_insert_it = timer()
                 # print(f'Insert time: {end_insert_it - start_insert_it};')
@@ -223,6 +235,11 @@ class ObjectsHandler(core.EvilEyeBase):
                 if active_obj.lost_frames >= self.lost_thresh:
                     active_obj.time_lost = datetime.datetime.now()
                     start_update_it = timer()
+                    # object_str = (
+                        # f'\nLOST: Source: {active_obj.source_id}, ID: {active_obj.object_id},\n'
+                        # f'Image shape: {active_obj.track.img_shape}, ROI shape: {active_obj.track.roi_shape},\n'
+                        # f'Box: {active_obj.track.bounding_box}, Conf: {active_obj.track.confidence}\n')
+                    # self.objects_file.write(object_str)
                     self.db_adapter.update(active_obj)
                     end_update_it = timer()
                     # print(f'Update time: {end_update_it - start_update_it};')

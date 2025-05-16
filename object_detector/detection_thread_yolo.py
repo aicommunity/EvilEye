@@ -16,6 +16,9 @@ class DetectionThreadYolo(DetectionThreadBase):
     def init_detection_implementation(self):
         if self.model is None:
             self.model = YOLO(self.model_name)
+            self.model.fuse()  # Fuse Conv+BN layers
+            if self.inf_params.get('half', True):
+                self.model.half()
 
     def predict(self, images: list):
         return self.model.predict(source=images, classes=self.classes, verbose=False, **self.inf_params)

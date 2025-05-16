@@ -116,7 +116,7 @@ class VideoThread(QThread):
 
     def process_image(self):
         try:
-            frame, track_info, source_name, source_duration_secs, debug_info = copy.deepcopy(self.queue.get())
+            frame, track_info, source_name, source_duration_secs, debug_info = self.queue.get()
             begin_it = timer()
             utils.draw_boxes_tracking(frame, track_info, source_name, source_duration_secs)
             if self.show_debug_info:
