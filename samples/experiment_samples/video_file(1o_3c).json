@@ -1,0 +1,474 @@
+{
+    "sources": [
+        {
+            "source": "VideoFile",
+            "camera": "145271-video.mp4",
+            "apiPreference": "CAP_FFMPEG",
+            "split": false,
+            "num_split": 0,
+            "src_coords": [
+                0
+            ],
+            "source_ids": [
+                0
+            ],
+            "source_names": [
+                "Cam1"
+            ],
+            "loop_play": true
+        },
+        {
+            "source": "VideoFile",
+            "camera": "145271-video2.mp4",
+            "apiPreference": "CAP_FFMPEG",
+            "split": false,
+            "num_split": 0,
+            "src_coords": [
+                0
+            ],
+            "source_ids": [
+                1
+            ],
+            "source_names": [
+                "Cam2"
+            ],
+            "loop_play": true
+        },
+        {
+            "source": "VideoFile",
+            "camera": "145271-video3.mp4",
+            "apiPreference": "CAP_FFMPEG",
+            "split": false,
+            "num_split": 0,
+            "src_coords": [
+                0
+            ],
+            "source_ids": [
+                2
+            ],
+            "source_names": [
+                "Cam3"
+            ],
+            "loop_play": true
+        }
+    ],
+    "detectors": [
+        {
+            "source_ids": [
+                0
+            ],
+            "model": "yolov8n.pt",
+            "show": false,
+            "inference_size": 1280,
+            "device": null,
+            "conf": 0.4,
+            "half": true,
+            "save": false,
+            "stride_type": "frames",
+            "vid_stride": 1,
+            "classes": [
+                0
+            ],
+            "num_detection_threads": 2,
+            "roi": [
+                [
+                    [
+                        1790,
+                        0,
+                        500,
+                        400
+                    ],
+                    [
+                        1700,
+                        0,
+                        1000,
+                        1045
+                    ],
+                    [
+                        1500,
+                        0,
+                        2340,
+                        2160
+                    ]
+                ]
+            ]
+        },
+        {
+            "source_ids": [
+                1
+            ],
+            "model": "yolov8n.pt",
+            "show": false,
+            "inference_size": 1280,
+            "device": null,
+            "conf": 0.4,
+            "half": true,
+            "save": false,
+            "stride_type": "frames",
+            "vid_stride": 1,
+            "classes": [
+                0
+            ],
+            "num_detection_threads": 2,
+            "roi": [
+                [
+                    [
+                        1790,
+                        0,
+                        500,
+                        400
+                    ],
+                    [
+                        1700,
+                        0,
+                        1000,
+                        1045
+                    ],
+                    [
+                        1500,
+                        0,
+                        2340,
+                        2160
+                    ]
+                ]
+            ]
+        },
+        {
+            "source_ids": [
+                2
+            ],
+            "model": "yolov8n.pt",
+            "show": false,
+            "inference_size": 1280,
+            "device": null,
+            "conf": 0.4,
+            "half": true,
+            "save": false,
+            "stride_type": "frames",
+            "vid_stride": 1,
+            "classes": [
+                0
+            ],
+            "num_detection_threads": 2,
+            "roi": [
+                [
+                    [
+                        1790,
+                        0,
+                        500,
+                        400
+                    ],
+                    [
+                        1700,
+                        0,
+                        1000,
+                        1045
+                    ],
+                    [
+                        1500,
+                        0,
+                        2340,
+                        2160
+                    ]
+                ]
+            ]
+        }
+    ],
+    "trackers": [
+        {
+            "source_ids": [
+                0
+            ],
+            "fps": 10,
+            "botsort_cfg": {
+                "appearance_thresh": 0.25,
+                "gmc_method": "sparseOptFlow",
+                "match_thresh": 0.8,
+                "new_track_thresh": 0.6,
+                "proximity_thresh": 0.5,
+                "track_buffer": 30,
+                "track_high_thresh": 0.5,
+                "track_low_thresh": 0.1,
+                "tracker_type": "botsort",
+                "with_reid": false
+            }
+        },
+        {
+            "source_ids": [
+                1
+            ],
+            "fps": 10,
+            "botsort_cfg": {
+                "appearance_thresh": 0.25,
+                "gmc_method": "sparseOptFlow",
+                "match_thresh": 0.8,
+                "new_track_thresh": 0.6,
+                "proximity_thresh": 0.5,
+                "track_buffer": 30,
+                "track_high_thresh": 0.5,
+                "track_low_thresh": 0.1,
+                "tracker_type": "botsort",
+                "with_reid": false
+            }
+        },
+        {
+            "source_ids": [
+                2
+            ],
+            "fps": 10,
+            "botsort_cfg": {
+                "appearance_thresh": 0.25,
+                "gmc_method": "sparseOptFlow",
+                "match_thresh": 0.8,
+                "new_track_thresh": 0.6,
+                "proximity_thresh": 0.5,
+                "track_buffer": 30,
+                "track_high_thresh": 0.5,
+                "track_low_thresh": 0.1,
+                "tracker_type": "botsort",
+                "with_reid": false
+            }
+        }
+    ],
+    "visualizer": {
+        "num_width": 2,
+        "num_height": 2,
+        "visual_buffer_num_frames": 10,
+        "source_ids": [
+            0,
+            1,
+            2
+        ],
+        "fps": [
+            10,
+            10,
+            10
+        ],
+        "gui_enabled": true,
+        "show_debug_info": true,
+        "objects_journal_enabled": true
+    },
+    "events_detectors": {
+        "CamEventsDetector": {},
+        "ZoneEventsDetector": {
+            "sources": {
+                "0": []
+            },
+            "event_threshold": 5,
+            "zone_left_threshold": 3
+        },
+        "FieldOfViewEventsDetector": {
+            "sources": {
+                "0": []
+            }
+        }
+    },
+    "events_processor": {},
+    "database_adapters": {
+        "DatabaseAdapterObjects": {
+            "table_name": "objects"
+        },
+        "DatabaseAdapterCamEvents": {
+            "table_name": "camera_events",
+            "event_name": "CameraEvent"
+        },
+        "DatabaseAdapterFieldOfViewEvents": {
+            "table_name": "fov_events",
+            "event_name": "FieldOfViewEvent"
+        },
+        "DatabaseAdapterZoneEvents": {
+            "table_name": "zone_events",
+            "event_name": "ZoneEvent"
+        }
+    },
+    "database": {
+        "user_name": "postgres",
+        "password": "",
+        "database_name": "evil_eye_db",
+        "host_name": "localhost",
+        "port": 5433,
+        "default_database_name": "postgres",
+        "default_user_name": "postgres",
+        "default_password": "",
+        "default_host_name": "localhost",
+        "default_port": 5433,
+        "preview_height": 150,
+        "preview_width": 300,
+        "tables": {
+            "projects": {
+                "project_id": "SERIAL PRIMARY KEY",
+                "creation_time": "timestamp"
+            },
+            "jobs": {
+                "job_id": "SERIAL PRIMARY KEY",
+                "finish_time": "timestamp",
+                "first_record": "integer",
+                "last_record": "integer DEFAULT -1",
+                "is_terminated": "boolean NOT NULL",
+                "creation_time": "timestamp",
+                "configuration_info": "json",
+                "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE"
+            },
+            "camera_information": {
+                "full_address": "text PRIMARY KEY",
+                "short_address": "text",
+                "sources": "integer[]",
+                "roi": "integer[][]",
+                "video_dur_frames": "integer",
+                "video_dur_ms": "integer",
+                "creation_time": "timestamp",
+                "calibration_info": "json DEFAULT NULL",
+                "additional_info": "json DEFAULT NULL"
+            },
+            "objects": {
+                "record_id": "SERIAL PRIMARY KEY",
+                "source_id": "integer",
+                "source_name": "text",
+                "time_stamp": "timestamp",
+                "time_lost": "timestamp DEFAULT NULL",
+                "object_id": "integer",
+                "bounding_box": "real ARRAY[4]",
+                "lost_bounding_box": "real ARRAY[4] DEFAULT NULL",
+                "confidence": "double precision",
+                "class_id": "integer",
+                "preview_path": "text",
+                "lost_preview_path": "text DEFAULT NULL",
+                "frame_path": "text",
+                "lost_frame_path": "text DEFAULT NULL",
+                "object_data": "json DEFAULT NULL",
+                "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE",
+                "job_id": "integer REFERENCES jobs (job_id) ON DELETE CASCADE",
+                "camera_full_address": "text REFERENCES camera_information (full_address) ON DELETE CASCADE"
+            },
+            "camera_events": {
+                "event_id": "integer PRIMARY KEY",
+                "camera_full_address": "text REFERENCES camera_information (full_address) ON DELETE CASCADE",
+                "time_stamp": "timestamp NOT NULL",
+                "connection_status": "boolean NOT NULL",
+                "job_id": "integer REFERENCES jobs (job_id) ON DELETE CASCADE",
+                "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE"
+            },
+            "fov_events": {
+                "event_id": "integer PRIMARY KEY",
+                "source_id": "integer",
+                "time_stamp": "timestamp",
+                "time_obj_detected": "timestamp",
+                "time_lost": "timestamp",
+                "preview_path": "text",
+                "lost_preview_path": "text",
+                "object_id": "integer",
+                "job_id": "integer REFERENCES jobs (job_id) ON DELETE CASCADE",
+                "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE"
+            },
+            "zone_events": {
+                "event_id": "integer PRIMARY KEY",
+                "source_id": "integer",
+                "time_entered": "timestamp",
+                "time_left": "timestamp",
+                "zone_coords": "real[][]",
+                "frame_path_entered": "text",
+                "frame_path_left": "text DEFAULT NULL",
+                "preview_path_entered": "text",
+                "preview_path_left": "text",
+                "object_id": "integer",
+                "box_entered": "real ARRAY[4]",
+                "box_left": "real ARRAY[4]",
+                "job_id": "integer REFERENCES jobs (job_id) ON DELETE CASCADE",
+                "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE"
+            }
+        },
+        "image_dir": "/media/user/Data/EvilEyeData/",
+        "create_new_project": true
+    },
+    "objects_handler": {
+        "history_len": 30,
+        "lost_store_time_secs": 60,
+        "lost_thresh": 5
+    },
+    "controller": {
+        "autoclose": false,
+        "fps": 15,
+        "class_names": [
+            "person",
+            "bicycle",
+            "car",
+            "motorcycle",
+            "airplane",
+            "bus",
+            "train",
+            "truck",
+            "boat",
+            "traffic light",
+            "fire hydrant",
+            "stop sign",
+            "parking meter",
+            "bench",
+            "bird",
+            "cat",
+            "dog",
+            "horse",
+            "sheep",
+            "cow",
+            "elephant",
+            "bear",
+            "zebra",
+            "giraffe",
+            "backpack",
+            "umbrella",
+            "handbag",
+            "tie",
+            "suitcase",
+            "frisbee",
+            "skis",
+            "snowboard",
+            "sports ball",
+            "kite",
+            "baseball bat",
+            "baseball glove",
+            "skateboard",
+            "surfboard",
+            "tennis racket",
+            "bottle",
+            "wine glass",
+            "cup",
+            "fork",
+            "knife",
+            "spoon",
+            "bowl",
+            "banana",
+            "apple",
+            "sandwich",
+            "orange",
+            "broccoli",
+            "carrot",
+            "hot dog",
+            "pizza",
+            "donut",
+            "cake",
+            "chair",
+            "couch",
+            "potted plant",
+            "bed",
+            "dining table",
+            "toilet",
+            "tv",
+            "laptop",
+            "mouse",
+            "remote",
+            "keyboard",
+            "cell phone",
+            "microwave",
+            "oven",
+            "toaster",
+            "sink",
+            "refrigerator",
+            "book",
+            "clock",
+            "vase",
+            "scissors",
+            "teddy bear",
+            "hair drier",
+            "toothbrush"
+        ]
+    }
+}

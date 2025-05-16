@@ -21,6 +21,11 @@ from events_detectors.fov_events_detector import FieldOfViewEventsDetector
 from events_detectors.zone_events_detector import ZoneEventsDetector
 from PyQt6.QtWidgets import QMainWindow
 import json
+import os
+from utils import utils
+import time
+from collections import defaultdict
+
 
 
 class Controller:
@@ -62,6 +67,19 @@ class Controller:
 
         self.gui_enabled = True
         self.autoclose = False
+        self.controller_fps = []
+
+        self.fps_counters = defaultdict(lambda: {'count': 0, 'start_time': time.time()})
+        self.detector_fps = {}
+        self.tracker_fps_counters = defaultdict(lambda: {'count': 0, 'start_time': time.time()})
+        self.tracker_fps = {}
+        self.capture_fps_counters = defaultdict(lambda: {'count': 0, 'start_time': time.time()})
+        self.capture_fps = {}
+        self.visualizer_fps_counters = defaultdict(lambda: {'count': 0, 'start_time': time.time()})
+        self.vis_fps = {}
+        self.objects_handler_fps_counters = defaultdict(lambda: {'count': 0, 'start_time': time.time()})
+        self.handler_fps = {}
+
 
         self.current_main_widget_size = [1920, 1080]
 
@@ -85,6 +103,20 @@ class Controller:
                 else:
                     all_sources_finished = False
                     self.captured_frames.extend(frames)
+                    for frame in frames:
+                        cam_id = frame.source_id
+                        counter = self.capture_fps_counters[cam_id]
+                        counter['count'] += 1
+                        now = time.time()
+                        elapsed = now - counter['start_time']
+                        if elapsed >= 10:  # every 10 seconds
+                            fps = counter['count'] / elapsed
+                            if cam_id not in self.capture_fps:
+                                self.capture_fps[cam_id] = []
+                            self.capture_fps[cam_id].append(fps)
+                            print(f"Capture FPS for camera {cam_id}: {fps:.2f}")
+                            counter['count'] = 0
+                            counter['start_time'] = now
 
             if self.autoclose and all_sources_finished:
                 self.run_flag = False
@@ -112,9 +144,20 @@ class Controller:
                 detection_result = detector.get()
                 if detection_result:
                     self.detection_results.append(detection_result)
+                    cam_id = detector.get_source_ids()[0]
+                    self.fps_counters[cam_id]['count'] += 1
+                    now = time.time()
+                    elapsed = now - self.fps_counters[cam_id]['start_time']
+                    if elapsed >= 10:
+                        fps = self.fps_counters[cam_id]['count'] / elapsed
+                        if cam_id not in self.detector_fps:
+                            self.detector_fps[cam_id] = []
+                        self.detector_fps[cam_id].append(fps)
+                        print(f"Detector FPS for camera {cam_id}: {fps:.2f}")
+                        self.fps_counters[cam_id]['count'] = 0
+                        self.fps_counters[cam_id]['start_time'] = now
 
             complete_detection_it = timer()
-
             # Process trackers
             self.tracking_results = []
             for tracker in self.trackers:
@@ -126,6 +169,18 @@ class Controller:
                 if track_info:
                     tracking_result, image = track_info
                     self.tracking_results = tracking_result
+                    cam_id = image.source_id
+                    self.tracker_fps_counters[cam_id]['count'] += 1
+                    now = time.time()
+                    elapsed = now - self.tracker_fps_counters[cam_id]['start_time']
+                    if elapsed >= 10:
+                        fps = self.tracker_fps_counters[cam_id]['count'] / elapsed
+                        if cam_id not in self.tracker_fps:
+                            self.tracker_fps[cam_id] = []
+                        self.tracker_fps[cam_id].append(fps)
+                        print(f"Tracker FPS for camera {cam_id}: {fps:.2f}")
+                        self.tracker_fps_counters[cam_id]['count'] = 0
+                        self.tracker_fps_counters[cam_id]['start_time'] = now
                     self.obj_handler.put((tracking_result, image))
                     self.source_last_processed_frame_id[image.source_id] = image.frame_id
             complete_tracking_it = timer()
@@ -141,8 +196,35 @@ class Controller:
                 objects = []
                 for i in range(len(self.visualizer.source_ids)):
                     objects.append(self.obj_handler.get('active', self.visualizer.source_ids[i]))
+                    cam_id = self.visualizer.source_ids[i]
+                    counter = self.objects_handler_fps_counters[self.visualizer.source_ids[i]]
+                    counter['count'] += 1
+                    now = time.time()
+                    elapsed = now - counter['start_time']
+                    if elapsed >= 10:
+                        fps = counter['count'] / elapsed
+                        if cam_id not in self.handler_fps:
+                            self.handler_fps[cam_id] = []
+                        self.handler_fps[cam_id].append(fps)
+                        # print(f"ObjectsHandler FPS for camera {self.visualizer.source_ids[i]}: {fps:.2f}")
+                        counter['count'] = 0
+                        counter['start_time'] = now
                 complete_read_objects_it = timer()
                 self.visualizer.update(processing_frames, self.source_last_processed_frame_id, objects, debug_info)
+                for cam_id in self.visualizer.source_ids:
+                    counter = self.visualizer_fps_counters[cam_id]
+                    counter['count'] += 1
+                    now = time.time()
+                    elapsed = now - counter['start_time']
+                    if elapsed >= 10:
+                        fps = counter['count'] / elapsed
+                        if cam_id not in self.vis_fps:
+                            self.vis_fps[cam_id] = []
+                        self.vis_fps[cam_id].append(fps)
+                        # print(f"Visualizer FPS for camera {cam_id}: {fps:.2f}")
+                        counter['count'] = 0
+                        counter['start_time'] = now
+
             else:
                 complete_read_objects_it = timer()
 
@@ -204,6 +286,14 @@ class Controller:
         for source in self.sources:
             source.stop()
         print('Everything in controller stopped')
+        filename = os.path.join(utils.get_project_root(), 'controller_fps10obj_2c.txt')
+        with open(filename, 'w') as file:
+            file.write(f'Capture fps: {self.capture_fps}\n')
+            file.write(f'Detector fps: {self.detector_fps}\n')
+            file.write(f'Tracker fps: {self.tracker_fps}\n')
+            file.write(f'Handler fps: {self.handler_fps}\n')
+            file.write(f'Visualizer fps: {self.vis_fps}\n')
+
 
     def init(self, params):
         self.params = params

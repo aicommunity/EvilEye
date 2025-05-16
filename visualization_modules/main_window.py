@@ -1,12 +1,12 @@
 import json
-
 from PyQt6 import QtGui
 from PyQt6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout,
     QSizePolicy, QMenuBar, QToolBar,
     QMenu, QMainWindow, QApplication
 )
-
+import time
+from collections import deque
 from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QPixmap, QIcon, QCursor
 from PyQt6.QtGui import QAction
@@ -82,7 +82,8 @@ class MainWindow(QMainWindow):
         self.labels = []
         self.threads = []
         self.hlayouts = []
-
+        self.frame_times = {i: deque(maxlen=10) for i in range(self.num_sources)}
+        self.gui_fps = {}
         self.setCentralWidget(QWidget())
         self._create_actions()
         self._connect_actions()
@@ -207,8 +208,18 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(int, QPixmap)
     def update_image(self, label_id: int, picture: QPixmap):
-        # Обновляет label, в котором находится изображение
         self.labels[label_id].setPixmap(picture)
+        now = time.time()
+        times = self.frame_times[label_id]
+        times.append(now)
+        if len(times) == times.maxlen:
+            elapsed = times[-1] - times[0]
+            if elapsed > 0:
+                fps = (len(times) - 1) / elapsed
+                # print(f"GUI FPS for label {label_id} (last 10 frames): {fps:.2f}")
+                if label_id not in self.gui_fps:
+                    self.gui_fps[label_id] = []
+                self.gui_fps[label_id].append(fps)
 
     @pyqtSlot()
     def change_screen_size(self):
@@ -242,6 +253,8 @@ class MainWindow(QMainWindow):
         self.db_journal_win.close()
         with open(self.params_path, 'w') as params_file:
             json.dump(self.params, params_file, indent=4)
+        with open('gui_fps_10o_2c.txt', 'w') as file:
+            file.write(f'GUI fps: {self.gui_fps}')
         QApplication.closeAllWindows()
         event.accept()
 
