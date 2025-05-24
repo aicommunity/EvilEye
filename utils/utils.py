@@ -69,17 +69,17 @@ def roi_to_image(roi_box_coords, x0, y0):
 
 def create_roi(capture_image: CaptureImage, coords):
     rois = []
-    for count in range(len(coords)):
-        roi_image = copy.deepcopy(capture_image)
-        roi_image.image = capture_image.image[coords[count][1]:coords[count][1] + coords[count][3],
-                          coords[count][0]:coords[count][0] + coords[count][2]]
-        # rois_path = pathlib.Path(get_project_root(), 'images', 'rois')
-        # if not rois_path.exists():
-        #     pathlib.Path.mkdir(rois_path)
-        # if det_id == 2:
-        #     roi_path = pathlib.Path(rois_path, str(det_id) + str(count) + '.jpg')
-        #     cv2.imwrite(roi_path.as_posix(), roi_image.image)
-        rois.append([roi_image, [coords[count][0], coords[count][1]]])
+    img = capture_image.image
+    for x, y, w, h in coords:
+        roi_img = img[y:y+h, x:x+w]
+        roi_capture = CaptureImage()
+        roi_capture.source_id = capture_image.source_id
+        roi_capture.frame_id = capture_image.frame_id
+        roi_capture.current_video_frame = capture_image.current_video_frame
+        roi_capture.current_video_position = capture_image.current_video_position
+        roi_capture.time_stamp = capture_image.time_stamp
+        roi_capture.image = roi_img
+        rois.append([roi_capture, [x, y]])
     return rois
 
 

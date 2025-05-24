@@ -20,6 +20,7 @@
       "inference_size": 1280,
       "device": null,
       "conf" : 0.4,
+      "half": true,
       "save" : false,
       "stride_type": "frames",
       "vid_stride": 1,
@@ -31,7 +32,7 @@
   "trackers":[
     {
       "source_ids": [0],
-      "fps": 5,
+      "fps": 10,
       "botsort_cfg": {
         "appearance_thresh": 0.25,
         "gmc_method": "sparseOptFlow",
@@ -197,7 +198,7 @@
   },
   "controller": {
     "autoclose": false,
-    "fps": 5,
+    "fps": 15,
     "class_names": [ "person",
                      "bicycle",
                      "car",
