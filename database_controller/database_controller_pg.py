@@ -59,8 +59,8 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
         self.image_dir = self.params['image_dir']
         self.create_new_project = self.params['create_new_project']
         self.tables = copy.deepcopy(self.params['tables'])
-        self.preview_width = self.params['preview_width']
-        self.preview_height = self.params['preview_height']
+        self.preview_width = self.params.get('preview_width', 150)
+        self.preview_height = self.params.get('preview_height', 100)
         self.preview_size = (self.preview_width, self.preview_height)
 
     def get_cameras_params(self):

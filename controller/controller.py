@@ -4,6 +4,8 @@ from object_detector import object_detection_yolo
 from object_detector.object_detection_base import DetectionResultList
 from object_tracker import object_tracking_botsort
 from object_tracker.object_tracking_base import TrackingResultList
+from object_tracker.trackers.bot_sort import Encoder
+from visualizer.video_thread import VideoThread
 from objects_handler import objects_handler
 from capture.video_capture_base import CaptureImage
 import time
@@ -21,6 +23,7 @@ from events_detectors.fov_events_detector import FieldOfViewEventsDetector
 from events_detectors.zone_events_detector import ZoneEventsDetector
 from PyQt6.QtWidgets import QMainWindow
 import json
+from object_multi_camera_tracker.custom_object_tracking import ObjectMultiCameraTracking
 
 
 class Controller:
@@ -62,6 +65,7 @@ class Controller:
 
         self.gui_enabled = True
         self.autoclose = False
+        self.multicam_reid_enabled = False
 
         self.current_main_widget_size = [1920, 1080]
 
@@ -122,12 +126,39 @@ class Controller:
                 for det_result, image in self.detection_results:
                     if det_result.source_id in source_ids:
                         tracker.put((det_result, image))
-                track_info = tracker.get()
-                if track_info:
-                    tracking_result, image = track_info
-                    self.tracking_results = tracking_result
-                    self.obj_handler.put((tracking_result, image))
-                    self.source_last_processed_frame_id[image.source_id] = image.frame_id
+
+            if self.multicam_reid_enabled:
+                track_infos = []
+                if not any(t.queue_out.empty() for t in self.trackers):
+                    for tracker in self.trackers:
+                        track_info = tracker.get()
+                        tracking_result, image = track_info
+                        self.tracking_results = tracking_result
+                        track_infos.append((tracking_result, image))
+
+                # Process multi camera tracking
+                # NOTE: This is a temporary solution which adds
+                # multi camera track id to `tracking_data` dict
+                if track_infos:
+                    self.mc_tracker.put(track_infos)
+
+                mc_track_infos = self.mc_tracker.get()
+                if mc_track_infos:
+                    for i, track_info in enumerate(mc_track_infos):
+                        tracking_result, image = track_info
+                        # print(f"Global ids in cam {i}: {[t.tracking_data['global_id'] for t in tracking_result.tracks]}")
+
+                        self.obj_handler.put((tracking_result, image))
+                        self.source_last_processed_frame_id[image.source_id] = image.frame_id
+            else:
+                for tracker in self.trackers:
+                    track_info = tracker.get()
+                    if track_info:
+                        tracking_result, image = track_info
+                        self.tracking_results = tracking_result
+                        self.obj_handler.put((tracking_result, image))
+                        self.source_last_processed_frame_id[image.source_id] = image.frame_id
+
             complete_tracking_it = timer()
 
             events = dict()
@@ -166,6 +197,9 @@ class Controller:
             detector.start()
         for tracker in self.trackers:
             tracker.start()
+
+        if self.multicam_reid_enabled:
+            self.mc_tracker.start()
         self.obj_handler.start()
         self.visualizer.start()
         self.db_controller.connect()
@@ -203,6 +237,8 @@ class Controller:
             detector.stop()
         for source in self.sources:
             source.stop()
+        if self.multicam_reid_enabled:
+            self.mc_tracker.stop()
         print('Everything in controller stopped')
 
     def init(self, params):
@@ -217,6 +253,17 @@ class Controller:
         self._init_captures(self.params['sources'])
         self._init_detectors(self.params['detectors'])
         self._init_trackers(self.params['trackers'])
+        self._init_mc_tracker()
+
+        multicam_reid = self.params['controller'].get("multicam_reid", False)
+        if multicam_reid:
+            for tracker_params in self.params['trackers']:
+                botsort_cfg = tracker_params.get("botsort_cfg", None)
+                if not botsort_cfg or botsort_cfg.get("with_reid", False) == False:
+                    multicam_reid = False
+                    break
+        self.multicam_reid_enabled = multicam_reid
+
         self._init_visualizer(self.params['visualizer'])
         self._init_db_controller(self.params['database'], system_params=self.params)
         self._init_db_adapters(self.params['database_adapters'])
@@ -301,12 +348,19 @@ class Controller:
 
     def _init_trackers(self, params):
         num_trackers = len(params)
+        # TODO: move path to some config
+
         for i in range(num_trackers):
             tracker_params = params[i]
-            tracker = object_tracking_botsort.ObjectTrackingBotsort()
+            encoder = Encoder(tracker_params.get("tracker_onnx", "osnet_ain_x1_0_M.onnx"))
+            tracker = object_tracking_botsort.ObjectTrackingBotsort(encoder)
             tracker.set_params(**tracker_params)
             tracker.init()
             self.trackers.append(tracker)
+    
+    def _init_mc_tracker(self):
+        self.mc_tracker = ObjectMultiCameraTracking()
+        self.mc_tracker.init()
 
     def _init_events_detectors(self, params):
         self.cam_events_detector = CamEventsDetector(self.sources)

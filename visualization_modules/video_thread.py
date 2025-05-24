@@ -22,7 +22,7 @@ class VideoThread(QThread):
     display_zones_signal = pyqtSignal(dict)
     add_zone_signal = pyqtSignal(int, QPixmap)
 
-    def __init__(self, source_id, fps, rows, cols, show_debug_info):
+    def __init__(self, source_id, fps, rows, cols, show_debug_info, font_params):
         super().__init__()
 
         VideoThread.rows = rows  # Количество строк и столбцов для правильного перевода изображения в полный экран
@@ -49,6 +49,15 @@ class VideoThread(QThread):
 
         self.widget_width = 1920
         self.widget_height = 1080
+
+        if font_params:
+            self.font_scale = font_params.get('scale', 3)
+            self.font_thickness = font_params.get('thickness', 5)
+            self.font_color = font_params.get('color', (0, 0, 255))
+        else:
+            self.font_scale = 3
+            self.font_thickness = 5
+            self.font_color = (0, 0, 255)
 
         # Определяем количество потоков в зависимости от параметра split
         VideoThread.thread_counter += 1
@@ -118,7 +127,8 @@ class VideoThread(QThread):
         try:
             frame, track_info, source_name, source_duration_secs, debug_info = self.queue.get()
             begin_it = timer()
-            utils.draw_boxes_tracking(frame, track_info, source_name, source_duration_secs)
+            utils.draw_boxes_tracking(frame, track_info, source_name, source_duration_secs,
+                                      self.font_scale, self.font_thickness, self.font_color)
             if self.show_debug_info:
                 utils.draw_debug_info(frame, debug_info)
             qt_image = self.convert_cv_qt(frame.image, self.widget_width, self.widget_height)

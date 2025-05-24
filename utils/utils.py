@@ -13,6 +13,7 @@ from sympy.multipledispatch.dispatcher import source
 from database_controller import database_controller_pg
 from psycopg2 import sql
 from capture.video_capture_base import CaptureImage
+from object_tracker.object_tracking_botsort import BOTrack
 
 
 def get_project_root() -> Path:
@@ -236,18 +237,20 @@ def draw_boxes_from_db(db_controller, table_name, load_folder, save_folder):
             print('Error saving image with boxes')
 
 
-def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_duration_msecs):
+def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_duration_msecs, font_scale, font_thickness, font_color):
     height, width, channels = image.image.shape
     if source_name is int:
-        cv2.putText(image.image, "Source Id: " + str(source_name), (100, height - 100), cv2.FONT_HERSHEY_SIMPLEX, 3,
-                    (0, 0, 255), 8)
+        cv2.putText(image.image, "Source Id: " + str(source_name), (100, height - 100), cv2.FONT_HERSHEY_SIMPLEX,
+                    font_scale, font_color, font_thickness)
     else:
-        cv2.putText(image.image, str(source_name), (100, height - 100), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 0, 255), 8)
+        cv2.putText(image.image, str(source_name), (100, height - 100), cv2.FONT_HERSHEY_SIMPLEX,
+                    font_scale, font_color, font_thickness)
 
     if image.current_video_position and source_duration_msecs is not None:
         time_position_secs = image.current_video_position / 1000.0
         pos_string = "{:.1f}".format(time_position_secs) + " [" + "{:.1f}".format(source_duration_msecs / 1000.0) + "]"
-        cv2.putText(image.image, pos_string, (width - 900, height - 100), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 0, 255), 8)
+        cv2.putText(image.image, pos_string, (width - 900, height - 100), cv2.FONT_HERSHEY_SIMPLEX,
+                    font_scale, font_color, font_thickness)
 
     # Для трекинга отображаем только последние данные об объекте из истории
     # print(cameras_objs)
@@ -265,11 +268,18 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
                     break
 
         cv2.rectangle(image.image, (int(last_info.bounding_box[0]), int(last_info.bounding_box[1])),
-                      (int(last_info.bounding_box[2]), int(last_info.bounding_box[3])), (0, 255, 0), thickness=8)
-        cv2.putText(image.image, str(last_info.track_id) + ' ' + str([last_info.class_id]) +
-                    " " + "{:.2f}".format(last_info.confidence),
-                    (int(last_info.bounding_box[0]), int(last_info.bounding_box[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
-                    (0, 0, 255), 2)
+                      (int(last_info.bounding_box[2]), int(last_info.bounding_box[3])), (0, 255, 0), thickness=font_thickness)
+        if obj.global_id is not None:
+            cv2.putText(image.image,
+                        str(last_info.track_id) + ':' + str(obj.global_id) + ' ' + str([last_info.class_id]) +
+                        " " + "{:.2f}".format(last_info.confidence),
+                        (int(last_info.bounding_box[0]), int(last_info.bounding_box[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX,
+                        font_scale, font_color, font_thickness)
+        else:
+            cv2.putText(image.image, str(last_info.track_id) + ' ' + str([last_info.class_id]) +
+                        " " + "{:.2f}".format(last_info.confidence),
+                        (int(last_info.bounding_box[0]), int(last_info.bounding_box[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX,
+                        font_scale, font_color, font_thickness)
 
         # print(len(obj['obj_info']))
         if len(obj.history) > 1:
@@ -281,7 +291,7 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
                 second_cm_x = int((second_info.bounding_box[0] + second_info.bounding_box[2]) / 2)
                 second_cm_y = int(second_info.bounding_box[3])
                 cv2.line(image.image, (first_cm_x, first_cm_y),
-                         (second_cm_x, second_cm_y), (0, 0, 255), thickness=8)
+                         (second_cm_x, second_cm_y), (0, 0, 255), thickness=font_thickness)
 
 
 def draw_debug_info(image: CaptureImage, debug_info: dict):
@@ -309,6 +319,8 @@ class ObjectResultEncoder(json.JSONEncoder):
         if isinstance(obj, ObjectResultHistory):
             return obj.__dict__
         if isinstance(obj, CaptureImage):
+            return None
+        if isinstance(obj, BOTrack):
             return None
 
         return super().default(obj)

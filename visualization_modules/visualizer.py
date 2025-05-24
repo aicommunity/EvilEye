@@ -19,6 +19,7 @@ class Visualizer(core.EvilEyeBase):
         self.source_id_name_table = dict()
         self.source_video_duration = dict()
         self.fps = []
+        self.font_params = []
         self.num_height = 1
         self.num_width = 1
         self.show_debug_info = False
@@ -35,7 +36,8 @@ class Visualizer(core.EvilEyeBase):
             self.visual_threads = []
         for i in range(len(self.source_ids)):
             self.visual_threads.append(VideoThread(self.source_ids[i], self.fps[i], self.num_height,
-                                                   self.num_width, self.show_debug_info))
+                                                           self.num_width, self.show_debug_info,
+                                                   self.font_params[i] if self.font_params is not None else None))
             self.visual_threads[-1].update_image_signal.connect(
                 self.pyqt_slots['update_image'])  # Сигнал из потока для обновления label на новое изображение
             self.visual_threads[-1].add_zone_signal.connect(self.pyqt_slots['open_zone_win'])
@@ -58,6 +60,7 @@ class Visualizer(core.EvilEyeBase):
         self.source_ids = self.params['source_ids']
         self.show_debug_info = self.params.get('show_debug_info', False)
         self.fps = self.params['fps']
+        self.font_params = self.params.get('font_params', None)
         self.num_height = self.params['num_height']
         self.num_width = self.params['num_width']
         self.visual_buffer_num_frames = self.params.get('visual_buffer_num_frames', 10)

@@ -211,6 +211,7 @@ class ObjectsHandler(core.EvilEyeBase):
                 obj.time_detected = tracking_results.time_stamp
                 obj.frame_id = tracking_results.frame_id
                 obj.object_id = self.object_id_counter
+                obj.global_id = track.tracking_data.get('global_id', None)
                 obj.last_image = image
                 obj.cur_video_pos = image.current_video_position
                 self.object_id_counter += 1
@@ -243,6 +244,16 @@ class ObjectsHandler(core.EvilEyeBase):
                     self.db_adapter.update(active_obj)
                     end_update_it = timer()
                     # print(f'Update time: {end_update_it - start_update_it};')
+
+                    # updated_fields_data = self.db_controller.update('emerged', fields=['time_lost', "lost_preview_path",
+                    #                                                                    'lost_frame_path', 'lost_bounding_box'],
+                    #                                                 obj_id=active_obj.object_id,
+                    #                                                 data=(active_obj.time_lost, lost_preview_path,
+                    #                                                       lost_img_path, active_obj.tracks[-1].bounding_box))
+                    # # print(updated_fields_data)
+                    # event.notify('handler fields updated', ['time_lost', 'lost_preview_path', 'lost_frame_path'],
+                    #              updated_fields_data)
+                    # data = self._prepare_for_saving('lost', copy.deepcopy(active_obj))
                     self.lost_objs.objects.append(active_obj)
                 else:
                     filtered_active_objects.append(active_obj)
@@ -257,3 +268,78 @@ class ObjectsHandler(core.EvilEyeBase):
                 break
         if start_index_for_remove:
             self.lost_objs.objects = self.lost_objs.objects[start_index_for_remove:]
+
+    def _prepare_for_saving(self, obj: ObjectResult, image_width, image_height) -> tuple[list, list, str, str]:
+        fields_for_saving = {'source_id': obj.source_id,
+                             'source_name': '',
+                             'time_stamp': obj.time_stamp,
+                             'time_lost': obj.time_lost,
+                             'object_id': obj.object_id,
+                             'bounding_box': obj.track.bounding_box,
+                             'lost_bounding_box': None,
+                             'confidence': obj.track.confidence,
+                             'class_id': obj.class_id,
+                             'preview_path': self._get_img_path('preview', 'detected', obj),
+                             'lost_preview_path': None,
+                             'frame_path': self._get_img_path('frame', 'detected', obj),
+                             'lost_frame_path': None,
+                             'object_data': json.dumps(obj.__dict__, cls=ObjectResultEncoder),
+                             'project_id': self.db_controller.get_project_id(),
+                             'job_id': self.db_controller.get_job_id(),
+                             'camera_full_address': ''}
+
+        for camera in self.cameras_params:
+            if obj.source_id in camera['source_ids']:
+                id_idx = camera['source_ids'].index(obj.source_id)
+                fields_for_saving['source_name'] = camera['source_names'][id_idx]
+                fields_for_saving['camera_full_address'] = camera['camera']
+                break
+
+        fields_for_saving['bounding_box'] = copy.deepcopy(fields_for_saving['bounding_box'])
+        fields_for_saving['bounding_box'][0] /= image_width
+        fields_for_saving['bounding_box'][1] /= image_height
+        fields_for_saving['bounding_box'][2] /= image_width
+        fields_for_saving['bounding_box'][3] /= image_height
+        return (list(fields_for_saving.keys()), list(fields_for_saving.values()),
+                fields_for_saving['preview_path'], fields_for_saving['frame_path'])
+
+    def _prepare_for_updating(self, obj: ObjectResult, image_width, image_height):
+        fields_for_updating = {'lost_bounding_box': obj.track.bounding_box,
+                               'time_lost': obj.time_lost,
+                               'lost_preview_path': self._get_img_path('preview', 'lost', obj),
+                               'lost_frame_path': self._get_img_path('frame', 'lost', obj),
+                               'object_data': json.dumps(obj.__dict__, cls=ObjectResultEncoder)}
+
+        fields_for_updating['lost_bounding_box'] = copy.deepcopy(fields_for_updating['lost_bounding_box'])
+        fields_for_updating['lost_bounding_box'][0] /= image_width
+        fields_for_updating['lost_bounding_box'][1] /= image_height
+        fields_for_updating['lost_bounding_box'][2] /= image_width
+        fields_for_updating['lost_bounding_box'][3] /= image_height
+        return (list(fields_for_updating.keys()), list(fields_for_updating.values()),
+                fields_for_updating['lost_preview_path'], fields_for_updating['lost_frame_path'])
+
+    def _get_img_path(self, image_type, obj_event_type, obj):
+        save_dir = self.db_params['image_dir']
+        img_dir = os.path.join(save_dir, 'images')
+        cur_date = datetime.date.today()
+        cur_date_str = cur_date.strftime('%Y_%m_%d')
+
+        current_day_path = os.path.join(img_dir, cur_date_str)
+        obj_type_path = os.path.join(current_day_path, obj_event_type + '_' + image_type + 's')
+        # obj_event_path = os.path.join(current_day_path, obj_event_type)
+        if not os.path.exists(img_dir):
+            os.makedirs(img_dir, exist_ok=True)
+        if not os.path.exists(current_day_path):
+            os.makedirs(current_day_path, exist_ok=True)
+        if not os.path.exists(obj_type_path):
+            os.makedirs(obj_type_path, exist_ok=True)
+        # if not os.path.exists(obj_event_path):
+        #     os.mkdir(obj_event_path)
+
+        if obj_event_type == 'detected':
+            timestamp = obj.time_stamp.strftime('%Y_%m_%d_%H_%M_%S.%f')
+            img_path = os.path.join(obj_type_path, f'{timestamp}_{image_type}.jpeg')
+        elif obj_event_type == 'lost':
+            timestamp = obj.time_lost.strftime('%Y_%m_%d_%H_%M_%S_%f')
+            img_path = os.path.join(obj_type_path, f'{timestamp}_{image_type}.jpeg')
+        return os.path.relpath(img_path, save_dir)
