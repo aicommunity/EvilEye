@@ -5,7 +5,7 @@ from object_detector.object_detection_base import DetectionResultList
 from object_tracker import object_tracking_botsort
 from object_tracker.object_tracking_base import TrackingResultList
 from object_tracker.trackers.bot_sort import Encoder
-from visualizer.video_thread import VideoThread
+#from visualizer.video_thread import VideoThread
 from objects_handler import objects_handler
 from capture.video_capture_base import CaptureImage
 import time
