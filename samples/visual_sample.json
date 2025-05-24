@@ -286,7 +286,7 @@
             "source_ids": [
                 0
             ],
-            "fps": 10,
+            "fps": 5,
             "botsort_cfg": {
                 "appearance_thresh": 0.25,
                 "gmc_method": "sparseOptFlow",
@@ -297,14 +297,14 @@
                 "track_high_thresh": 0.5,
                 "track_low_thresh": 0.1,
                 "tracker_type": "botsort",
-                "with_reid": true
+                "with_reid": false
             }
         },
         {
             "source_ids": [
                 1
             ],
-            "fps": 10,
+            "fps": 5,
             "botsort_cfg": {
                 "appearance_thresh": 0.25,
                 "gmc_method": "sparseOptFlow",
@@ -315,14 +315,14 @@
                 "track_high_thresh": 0.5,
                 "track_low_thresh": 0.1,
                 "tracker_type": "botsort",
-                "with_reid": true
+                "with_reid": false
             }
         },
         {
             "source_ids": [
                 2
             ],
-            "fps": 10,
+            "fps": 5,
             "botsort_cfg": {
                 "appearance_thresh": 0.25,
                 "gmc_method": "sparseOptFlow",
@@ -333,14 +333,14 @@
                 "track_high_thresh": 0.5,
                 "track_low_thresh": 0.1,
                 "tracker_type": "botsort",
-                "with_reid": true
+                "with_reid": false
             }
         },
         {
             "source_ids": [
                 3
             ],
-            "fps": 10,
+            "fps": 5,
             "botsort_cfg": {
                 "appearance_thresh": 0.25,
                 "gmc_method": "sparseOptFlow",
@@ -351,14 +351,14 @@
                 "track_high_thresh": 0.5,
                 "track_low_thresh": 0.1,
                 "tracker_type": "botsort",
-                "with_reid": true
+                "with_reid": false
             }
         },
         {
             "source_ids": [
                 4
             ],
-            "fps": 10,
+            "fps": 5,
             "botsort_cfg": {
                 "appearance_thresh": 0.25,
                 "gmc_method": "sparseOptFlow",
@@ -369,7 +369,7 @@
                 "track_high_thresh": 0.5,
                 "track_low_thresh": 0.1,
                 "tracker_type": "botsort",
-                "with_reid": true
+                "with_reid": false
             }
         }
     ],
@@ -442,11 +442,11 @@
             4
         ],
         "fps": [
-            10,
-            10,
-            10,
-            10,
-            10
+            5,
+            5,
+            5,
+            5,
+            5
         ],
         "gui_enabled": true,
         "show_debug_info": true,

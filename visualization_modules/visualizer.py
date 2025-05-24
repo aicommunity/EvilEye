@@ -80,9 +80,23 @@ class Visualizer(core.EvilEyeBase):
             self.visual_threads[j].set_main_widget_size(width, height)
 
     def update(self, processing_frames: list[CaptureImage], source_last_processed_frame_id: dict,
-               objects: list[ObjectResultList], debug_info: dict):
+               objects: list[ObjectResultList], dropped_frames: list,  debug_info: dict):
         start_update = timer()
         self.processing_frames.extend(processing_frames)
+
+        # Remove all dropped images
+        #filtered_processing_frame_indexes = []
+        #for i in range(len(self.processing_frames)-1, -1, -1):
+        #    for data in dropped_frames:
+        #        frame = self.processing_frames[i]
+        #        if frame.source_id == data[0] and frame.frame_id == data[1]:
+        #            filtered_processing_frame_indexes.append(i)
+        #            break
+
+        #for index in filtered_processing_frame_indexes:
+        #    del self.processing_frames[index]
+        # print(f"Dropped {len(filtered_processing_frame_indexes)} frames")
+
         self.objects = objects
         # Process visualization
         remove_processed_idx = []
@@ -102,6 +116,11 @@ class Visualizer(core.EvilEyeBase):
             if self.last_displayed_frame.get(source_id, 0) >= frame.frame_id:
                 remove_processed_idx.append(i)
                 continue
+
+            for data in dropped_frames:
+                if source_id == data[0] and frame.frame_id == data[1]:
+                    remove_processed_idx.append(i)
+                    break
 
             if frame.frame_id > source_last_processed_frame_id[frame.source_id]:
                 continue

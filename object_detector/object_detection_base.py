@@ -35,6 +35,7 @@ class ObjectDetectorBase(core.EvilEyeBase, ABC):
         self.classes = []
         self.stride = 1  # Параметр скважности
         self.roi = [[]]
+        self.queue_dropped_id = Queue()
 
         self.num_detection_threads = 3
         self.detection_threads = []
@@ -53,6 +54,12 @@ class ObjectDetectorBase(core.EvilEyeBase, ABC):
         if self.queue_out.empty():
             return None
         return self.queue_out.get()
+
+    def get_dropped_ids(self) -> list:
+        res = []
+        while not self.queue_dropped_id.empty():
+            res.append(self.queue_dropped_id.get())
+        return res
 
     def get_queue_out_size(self) -> int:
         return self.queue_out.qsize()
@@ -107,9 +114,9 @@ class ObjectDetectorBase(core.EvilEyeBase, ABC):
             if not image:
                 continue
 
-            if not self.detection_threads[self.thread_counter].put(image, force=True):
-                print(
-                    f"Failed to put image {image.source_id}:{image.frame_id} to detection thread {self.thread_counter}")
+            res, dropped_id = self.detection_threads[self.thread_counter].put(image, force=True)
+            if dropped_id:
+                self.queue_dropped_id.put(dropped_id)
             self.thread_counter += 1
             if self.thread_counter >= self.num_detection_threads:
                 self.thread_counter = 0

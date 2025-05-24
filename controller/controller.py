@@ -103,6 +103,8 @@ class Controller:
 
             # Process detectors
             processing_frames = []
+            dropped_frames = []
+
             self.detection_results = []
             debug_info["detectors"] = dict()
             for detector in self.detectors:
@@ -126,6 +128,10 @@ class Controller:
                 for det_result, image in self.detection_results:
                     if det_result.source_id in source_ids:
                         tracker.put((det_result, image))
+
+                dropped_ids = tracker.get_dropped_ids()
+                if len(dropped_ids) > 0:
+                    dropped_frames.extend(dropped_ids)
 
             if self.multicam_reid_enabled:
                 track_infos = []
@@ -168,12 +174,37 @@ class Controller:
                 self.events_processor.put(events)
             complete_processing_it = timer()
 
+
+            # Get all dropped images
+            for detector in self.detectors:
+                dropped_ids = detector.get_dropped_ids()
+                if len(dropped_ids) > 0:
+                    dropped_frames.extend(dropped_ids)
+
+            for tracker in self.trackers:
+                dropped_ids = tracker.get_dropped_ids()
+                if len(dropped_ids) > 0:
+                    dropped_frames.extend(dropped_ids)
+
+#            filtered_processing_frame_indexes = []
+#            for i in range(len(processing_frames)-1, -1, -1):
+#                for data in dropped_frames:
+#                    frame = processing_frames[i]
+#                    if frame.source_id == data[0] and frame.frame_id == data[1]:
+#                        filtered_processing_frame_indexes.append(i)
+#                        break
+
+#            for index in filtered_processing_frame_indexes:
+#                del processing_frames[index]
+#            print(f"Dropped {len(filtered_processing_frame_indexes)} frames")
+
+
             if self.gui_enabled:
                 objects = []
                 for i in range(len(self.visualizer.source_ids)):
                     objects.append(self.obj_handler.get('active', self.visualizer.source_ids[i]))
                 complete_read_objects_it = timer()
-                self.visualizer.update(processing_frames, self.source_last_processed_frame_id, objects, debug_info)
+                self.visualizer.update(processing_frames, self.source_last_processed_frame_id, objects, dropped_frames, debug_info)
             else:
                 complete_read_objects_it = timer()
 
