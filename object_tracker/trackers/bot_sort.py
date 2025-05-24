@@ -205,7 +205,7 @@ class BOTSORT(BYTETracker):
 
 class Encoder:
     def __init__(self, model_path: str):
-        self.session = ort.InferenceSession(model_path)
+        self.session = ort.InferenceSession(model_path, providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
         self.input_name = self.session.get_inputs()[0].name
         self.output_name = self.session.get_outputs()[0].name
         self.image_augmentation = A.Compose(

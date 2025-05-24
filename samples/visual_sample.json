@@ -558,7 +558,7 @@
     },
     "controller": {
         "autoclose": false,
-        "fps": 15,
+        "fps": 5,
         "multicam_reid": false,
         "class_names": [
             "person",
