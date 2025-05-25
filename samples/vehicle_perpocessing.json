@@ -55,6 +55,41 @@
         {
             "source_ids": [
                 0
+            ],
+            "pipeline": [
+                {
+                    "name": "Input",
+                    "params": {}
+                },
+                {
+                    "name": "Normalize",
+                    "params": {
+                        "alpha": 0,
+                        "beta": 255
+                    }
+                },
+                {
+                    "name": "Inpaint",
+                    "params": {
+                        "thresholdMin": 220,
+                        "thresholdMax": 255,
+                        "inpaintRadius": 0.1
+                    }
+                },
+                {
+                    "name": "Clahe",
+                    "params": {
+                        "clipLimit": 2.0,
+                        "tileGridSize": [
+                            8,
+                            8
+                        ]
+                    }
+                },
+                {
+                    "name": "Output",
+                    "params": {}
+                }
             ]
         }
     ],
@@ -203,7 +238,7 @@
                 "camera_full_address": "text REFERENCES camera_information (full_address) ON DELETE CASCADE"
             }
         },
-        "image_dir": "/media/user/Data/EvilEyeCarData",
+        "image_dir": "/home/eddyswens/Pictures/Data/EvilEyeCarData",
         "create_new_project": true
     },
     "objects_handler": {

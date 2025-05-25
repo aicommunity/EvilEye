@@ -3,15 +3,18 @@ import copy
 import cv2
 import numpy as np
 from utils import utils
-from preprocessing import PreprocessingBase
-from preprocessing.steps import Input, Normalize, Output, Inpaint, Clahe
+from preprocessing import PreprocessingBase, PreprocessingFactory
+# from preprocessing.steps import Input, Normalize, Output, Inpaint, Clahe
 
 
 class PreprocessingVehicle(PreprocessingBase):
     def __init__(self):
         super().__init__()
+        json_path = 'samples/vehicle_perpocessing.json'
+        factory = PreprocessingFactory(json_path)
+        self.preprocessSequence = factory.build_pipeline()
     
-        self.preprocessSequence = Input(Normalize(Inpaint(Clahe(Output()))))
+        # self.preprocessSequence = Input(Normalize(Inpaint(Clahe(Output()))))
         
 
     def init_impl(self):
