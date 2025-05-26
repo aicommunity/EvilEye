@@ -119,7 +119,7 @@ class Visualizer(core.EvilEyeBase):
 
             for data in dropped_frames:
                 if source_id == data[0] and frame.frame_id == data[1]:
-                    remove_processed_idx.append(i)
+#                    remove_processed_idx.append(i)
                     break
 
             if frame.frame_id > source_last_processed_frame_id[frame.source_id]:
