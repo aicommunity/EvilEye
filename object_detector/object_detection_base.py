@@ -50,7 +50,7 @@ class ObjectDetectorBase(core.EvilEyeBase, ABC):
         print(f"Failed to put image {image.source_id}:{image.frame_id} to ObjectDetection queue. Queue is Full.")
         return False
 
-    def get(self) -> DetectionResultList | None:
+    def get(self):
         if self.queue_out.empty():
             return None
         return self.queue_out.get()
