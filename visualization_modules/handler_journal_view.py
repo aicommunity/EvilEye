@@ -2,15 +2,29 @@ import datetime
 import os
 from psycopg2 import sql
 from utils import threading_events
-from PyQt6.QtCore import QDate, QDateTime
-from PyQt6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton,
-    QDateTimeEdit, QHeaderView, QComboBox, QTableView, QStyledItemDelegate,
-    QMessageBox
-)
-from PyQt6.QtGui import QPixmap, QPainter, QPen
-from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QModelIndex
-from PyQt6.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
+try:
+    from PyQt6.QtCore import QDate, QDateTime
+    from PyQt6.QtWidgets import (
+        QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton,
+        QDateTimeEdit, QHeaderView, QComboBox, QTableView, QStyledItemDelegate,
+        QMessageBox
+    )
+    from PyQt6.QtGui import QPixmap, QPainter, QPen
+    from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QModelIndex
+    from PyQt6.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
+    pyqt_version = 6
+except ImportError:
+    from PyQt5.QtCore import QDate, QDateTime
+    from PyQt5.QtWidgets import (
+        QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton,
+        QDateTimeEdit, QHeaderView, QComboBox, QTableView, QStyledItemDelegate,
+        QMessageBox
+    )
+    from PyQt5.QtGui import QPixmap, QPainter, QPen
+    from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QModelIndex
+    from PyQt5.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
+    pyqt_version = 5
+
 from visualization_modules.table_updater_view import TableUpdater
 
 

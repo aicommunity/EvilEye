@@ -1,5 +1,12 @@
 import core
-from PyQt6.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
+
+try:
+    from PyQt6.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
+    pyqt_version = 6
+except ImportError:
+    from PyQt5.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
+    pyqt_version = 5
+
 from abc import abstractmethod, ABC
 
 
