@@ -1,7 +1,16 @@
-from PyQt6.QtCore import QThread, QMutex, pyqtSignal, QEventLoop, QTimer, pyqtSlot
-from PyQt6 import QtGui
-from PyQt6.QtCore import Qt, QPointF, QRectF
-from PyQt6.QtGui import QPixmap, QPainter, QPen, QBrush, QColor, QPolygonF
+try:
+    from PyQt6.QtCore import QThread, QMutex, pyqtSignal, QEventLoop, QTimer, pyqtSlot
+    from PyQt6 import QtGui
+    from PyQt6.QtCore import Qt, QPointF, QRectF
+    from PyQt6.QtGui import QPixmap, QPainter, QPen, QBrush, QColor, QPolygonF
+    pyqt_version = 6
+except ImportError:
+    from PyQt5.QtCore import QThread, QMutex, pyqtSignal, QEventLoop, QTimer, pyqtSlot
+    from PyQt5 import QtGui
+    from PyQt5.QtCore import Qt, QPointF, QRectF
+    from PyQt5.QtGui import QPixmap, QPainter, QPen, QBrush, QColor, QPolygonF
+    pyqt_version = 5
+
 from timeit import default_timer as timer
 from utils import utils
 from queue import Queue

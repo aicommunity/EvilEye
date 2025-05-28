@@ -3,7 +3,13 @@ import json
 import sys
 from pathlib import Path
 
-from PyQt6.QtWidgets import QApplication
+try:
+    from PyQt6.QtWidgets import QApplication
+    pyqt_version = 6
+except ImportError:
+    from PyQt5.QtWidgets import QApplication
+    pyqt_version = 5
+
 
 from visualization_modules.main_window import MainWindow
 

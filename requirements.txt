@@ -2,9 +2,9 @@ opencv-python-headless
 opencv-contrib-python-headless
 ultralytics
 psycopg2-binary
-PyQt6
 lapx
 albumentations
 shapely
 scikit-learn
+onnxruntime
 
