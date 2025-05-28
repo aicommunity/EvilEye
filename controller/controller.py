@@ -21,9 +21,15 @@ from events_control.events_controller import EventsDetectorsController
 from events_detectors.cam_events_detector import CamEventsDetector
 from events_detectors.fov_events_detector import FieldOfViewEventsDetector
 from events_detectors.zone_events_detector import ZoneEventsDetector
-from PyQt6.QtWidgets import QMainWindow
 import json
 from object_multi_camera_tracker.custom_object_tracking import ObjectMultiCameraTracking
+
+try:
+    from PyQt6.QtWidgets import QMainWindow
+    pyqt_version = 6
+except ImportError:
+    from PyQt5.QtWidgets import QMainWindow
+    pyqt_version = 5
 
 
 class Controller:

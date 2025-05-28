@@ -5,7 +5,7 @@ from pathlib import Path
 
 import torch
 
-from ultralytics.utils import IterableSimpleNamespace, yaml_load
+from ultralytics.utils import IterableSimpleNamespace
 from ultralytics.utils.checks import check_yaml
 from .bot_sort import BOTSORT
 from .byte_tracker import BYTETracker
