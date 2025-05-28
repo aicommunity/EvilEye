@@ -112,14 +112,22 @@ class Controller:
 
             preprocessing_frames = []
 
-            for preprocessor in self.preprocessors:
-                source_ids = preprocessor.get_source_ids()
-                for capture_frame in self.captured_frames:
+            for capture_frame in self.captured_frames:
+                is_preprocessor_found = False
+                for preprocessor in self.preprocessors:
+                    source_ids = preprocessor.get_source_ids()
                     if capture_frame.source_id in source_ids:
                         preprocessor.put(capture_frame)
-                prep_result = preprocessor.get()
-                if prep_result:
-                    preprocessing_frames.append(prep_result)
+                        is_preprocessor_found = True
+
+                    prep_result = preprocessor.get()
+                    if prep_result:
+                        preprocessing_frames.append(prep_result)
+                    if is_preprocessor_found:
+                        break
+
+                if not is_preprocessor_found:
+                    preprocessing_frames.append(capture_frame)
 
             processing_frames = []
             dropped_frames = []
