@@ -154,7 +154,11 @@ class Visualizer(core.EvilEyeBase):
         for index in remove_processed_idx:
             del self.processing_frames[index]
 
+        if len(self.processing_frames) > 3*len(self.source_ids) * self.visual_buffer_num_frames:
+            num_erased_elems = len(self.processing_frames)-2*len(self.source_ids) * self.visual_buffer_num_frames
+            del self.processing_frames[:num_erased_elems]
+
         end_update = timer()
         # print(f"Time: update=[{end_update-start_update}] secs")
 
-        # print(f"{datetime.now()}: Visual Queue size: {len(self.processing_frames)}. Processed sources: {processed_sources}")
+        print(f"{datetime.now()}: Visual Queue size: {len(self.processing_frames)}. Processed sources: {processed_sources}")
