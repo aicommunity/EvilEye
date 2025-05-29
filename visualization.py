@@ -22,12 +22,11 @@ if __name__ == "__main__":
                         type=str, default=None, nargs="?")
     args = parser.parse_args()
     file_path = 'samples/visual_sample.json'
-    if args.fullpath is None:
-        with open(file_path, 'r+') as params_file:
-            data = json.load(params_file)
-    else:
-        with open(file_path, 'r+') as params_file:
-            data = json.load(params_file)
+    if args.fullpath is not None:
+        file_path = args.fullpath
+
+    with open(file_path, 'r+') as params_file:
+        data = json.load(params_file)
     app = QApplication(sys.argv)
     a = MainWindow(file_path, data, 1600, 720)
     a.show()
