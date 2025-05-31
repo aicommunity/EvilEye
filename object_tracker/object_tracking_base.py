@@ -25,6 +25,17 @@ class TrackingResultList:
         self.time_stamp = None
         self.tracks: list[TrackingResult] = []  # list of DetectionResult
 
+    def generate_from(self, detections: DetectionResultList):
+        for detection in detections.detections:
+            track = TrackingResult()
+            track.track_id = len(self.tracks)
+            track.bounding_box = detection.bounding_box
+            track.confidence = 1.0
+            track.life_time = 0.0
+            track.frame_count = 0
+            track.class_id = detection.class_id
+            track.detection_history.append(detection)
+
 
 class ObjectTrackingBase(core.EvilEyeBase):
 

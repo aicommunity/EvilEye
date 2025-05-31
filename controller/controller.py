@@ -157,21 +157,38 @@ class Controller:
                     det_res.source_id = frame.source_id
                     det_res.frame_id = frame.frame_id
                     det_res.time_stamp = frame.time_stamp
-                    self.detection_results.append(det_res)
+
+                    self.detection_results.append([det_res, frame])
                     processing_frames.append(frame)
             complete_detection_it = timer()
 
             # Process trackers
             self.tracking_results = []
-            for tracker in self.trackers:
-                source_ids = tracker.get_source_ids()
-                for det_result, image in self.detection_results:
-                    if det_result.source_id in source_ids:
+            for det_result, image in self.detection_results:
+                is_tracker_found = False
+                for tracker in self.trackers:
+                    source_ids = tracker.get_source_ids()
+                    if image.frame_id in source_ids:
+                        is_tracker_found = True
                         tracker.put((det_result, image))
 
-                dropped_ids = tracker.get_dropped_ids()
-                if len(dropped_ids) > 0:
-                    dropped_frames.extend(dropped_ids)
+                        dropped_ids = tracker.get_dropped_ids()
+                        if len(dropped_ids) > 0:
+                            dropped_frames.extend(dropped_ids)
+                        break
+                    if is_tracker_found:
+                        break
+
+                if not is_tracker_found:
+                    tracking_result = TrackingResultList()
+                    tracking_result.frame_id = image.frame_id
+                    tracking_result.source_id = image.source_id
+                    tracking_result.time_stamp = image.time_stamp
+                    tracking_result.generate_from(det_result)
+
+                    self.tracking_results = tracking_result
+                    self.obj_handler.put((tracking_result, image))
+                    self.source_last_processed_frame_id[image.source_id] = image.frame_id
 
             if self.multicam_reid_enabled:
                 track_infos = []
