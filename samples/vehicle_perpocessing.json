@@ -35,7 +35,7 @@
     "sources": [
         {
             "source": "VideoFile",
-            "camera": "/home/eddyswens/Study/VKR/Video/GlareExample1.mp4",
+            "camera": "/home/user/Videos/FILE20240722-113027-000349.MP4",
             "apiPreference": "CAP_FFMPEG",
             "split": false,
             "num_split": 0,
@@ -238,7 +238,7 @@
                 "camera_full_address": "text REFERENCES camera_information (full_address) ON DELETE CASCADE"
             }
         },
-        "image_dir": "/home/eddyswens/Pictures/Data/EvilEyeCarData",
+        "image_dir": "/media/user/Data/EvilEyeData/",
         "create_new_project": true
     },
     "objects_handler": {

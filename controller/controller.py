@@ -6,7 +6,6 @@ from object_detector.object_detection_base import DetectionResultList
 from object_tracker import object_tracking_botsort
 from object_tracker.object_tracking_base import TrackingResultList
 from object_tracker.trackers.bot_sort import Encoder
-#from visualizer.video_thread import VideoThread
 from objects_handler import objects_handler
 from capture.video_capture_base import CaptureImage
 import time
@@ -24,6 +23,7 @@ from events_detectors.fov_events_detector import FieldOfViewEventsDetector
 from events_detectors.zone_events_detector import ZoneEventsDetector
 import json
 from object_multi_camera_tracker.custom_object_tracking import ObjectMultiCameraTracking
+import datetime
 
 try:
     from PyQt6.QtWidgets import QMainWindow
@@ -168,7 +168,7 @@ class Controller:
                 is_tracker_found = False
                 for tracker in self.trackers:
                     source_ids = tracker.get_source_ids()
-                    if image.frame_id in source_ids:
+                    if image.source_id in source_ids:
                         is_tracker_found = True
                         tracker.put((det_result, image))
 
@@ -183,7 +183,7 @@ class Controller:
                     tracking_result = TrackingResultList()
                     tracking_result.frame_id = image.frame_id
                     tracking_result.source_id = image.source_id
-                    tracking_result.time_stamp = image.time_stamp
+                    tracking_result.time_stamp = datetime.datetime.now()
                     tracking_result.generate_from(det_result)
 
                     self.tracking_results = tracking_result
@@ -329,15 +329,15 @@ class Controller:
         except FileNotFoundError as ex:
             pass
 
-        self._init_captures(self.params['sources'])
-        self._init_preprocessors(self.params.get('preprocessors', dict()))
-        self._init_detectors(self.params['detectors'])
-        self._init_trackers(self.params['trackers'])
+        self._init_captures(self.params.get('sources',list()))
+        self._init_preprocessors(self.params.get('preprocessors', list()))
+        self._init_detectors(self.params.get('detectors',list()))
+        self._init_trackers(self.params.get('trackers', list()))
         self._init_mc_tracker()
 
         multicam_reid = self.params['controller'].get("multicam_reid", False)
         if multicam_reid:
-            for tracker_params in self.params['trackers']:
+            for tracker_params in self.params.get('trackers', list()):
                 botsort_cfg = tracker_params.get("botsort_cfg", None)
                 if not botsort_cfg or botsort_cfg.get("with_reid", False) == False:
                     multicam_reid = False

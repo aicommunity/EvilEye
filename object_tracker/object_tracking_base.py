@@ -19,6 +19,7 @@ class TrackingResult:
 
 
 class TrackingResultList:
+    generator_counter = 0
     def __init__(self):
         self.source_id = None
         self.frame_id = None
@@ -28,13 +29,14 @@ class TrackingResultList:
     def generate_from(self, detections: DetectionResultList):
         for detection in detections.detections:
             track = TrackingResult()
-            track.track_id = len(self.tracks)
+            track.track_id = TrackingResultList.generator_counter
+            TrackingResultList.generator_counter += 1
             track.bounding_box = detection.bounding_box
             track.confidence = 1.0
             track.life_time = 0.0
             track.frame_count = 0
             track.class_id = detection.class_id
-            track.detection_history.append(detection)
+            self.tracks.append(track)
 
 
 class ObjectTrackingBase(core.EvilEyeBase):
