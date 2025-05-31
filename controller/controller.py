@@ -134,18 +134,31 @@ class Controller:
 
             self.detection_results = []
             debug_info["detectors"] = dict()
-            for detector in self.detectors:
-                det_debug_info = debug_info["detectors"][detector.get_id()] = dict()
-                detector.get_debug_info(det_debug_info)
-                source_ids = detector.get_source_ids()
-                for preprocessed_frame in preprocessing_frames:
-                    if preprocessed_frame.source_id in source_ids:
-                        if detector.put(preprocessed_frame):
-                            processing_frames.append(preprocessed_frame)
-                detection_result = detector.get()
-                if detection_result:
-                    self.detection_results.append(detection_result)
 
+            for frame in preprocessing_frames:
+                is_detector_found = False
+                for detector in self.detectors:
+                    det_debug_info = debug_info["detectors"][detector.get_id()] = dict()
+                    detector.get_debug_info(det_debug_info)
+                    source_ids = detector.get_source_ids()
+                    if frame.source_id in source_ids:
+                        detector.put(frame)
+                        processing_frames.append(frame)
+                        is_detector_found = True
+                        det_result = detector.get()
+                        if det_result:
+                            self.detection_results.append(det_result)
+                            
+                    if is_detector_found:
+                        break
+
+                if not is_detector_found:
+                    det_res = DetectionResultList()
+                    det_res.source_id = frame.source_id
+                    det_res.frame_id = frame.frame_id
+                    det_res.time_stamp = frame.time_stamp
+                    self.detection_results.append(det_res)
+                    processing_frames.append(frame)
             complete_detection_it = timer()
 
             # Process trackers
@@ -212,19 +225,6 @@ class Controller:
                 dropped_ids = tracker.get_dropped_ids()
                 if len(dropped_ids) > 0:
                     dropped_frames.extend(dropped_ids)
-
-#            filtered_processing_frame_indexes = []
-#            for i in range(len(processing_frames)-1, -1, -1):
-#                for data in dropped_frames:
-#                    frame = processing_frames[i]
-#                    if frame.source_id == data[0] and frame.frame_id == data[1]:
-#                        filtered_processing_frame_indexes.append(i)
-#                        break
-
-#            for index in filtered_processing_frame_indexes:
-#                del processing_frames[index]
-#            print(f"Dropped {len(filtered_processing_frame_indexes)} frames")
-
 
             if self.gui_enabled:
                 objects = []
