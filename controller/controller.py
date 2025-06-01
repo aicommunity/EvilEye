@@ -301,13 +301,13 @@ class Controller:
         self.cam_events_detector.stop()
         self.fov_events_detector.stop()
         self.zone_events_detector.stop()
+        self.visualizer.stop()
+        self.obj_handler.stop()
         self.db_adapter_cam_events.stop()
         self.db_adapter_fov_events.stop()
         self.db_adapter_zone_events.stop()
         self.db_adapter_obj.stop()
         self.db_controller.disconnect()
-        self.visualizer.stop()
-        self.obj_handler.stop()
         for tracker in self.trackers:
             tracker.stop()
         for detector in self.detectors:
