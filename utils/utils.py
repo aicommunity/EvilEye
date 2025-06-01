@@ -49,6 +49,8 @@ def non_max_sup(boxes_coords, confidences, class_ids):
         suppress_idxs = [last]  # Индекс рамки с наибольшей вероятностью
         keep_idxs.append(sorted_idxs[last])
         for i in range(len(sorted_idxs) - 1):
+            if class_ids[i] != class_ids[last]:
+                continue
             idx = sorted_idxs[i]
             iou, max_box = boxes_iou(boxes_coords[sorted_idxs[last]], boxes_coords[idx])
             if iou > iou_thresh:  # Если iou превышает порог, то добавляем данную рамку на удаление
@@ -93,6 +95,7 @@ def merge_roi_boxes(all_roi, bboxes_coords, confidences, class_ids):
         if i in merged_idxs:
             continue
         for j in range(i + 1, len(bboxes_coords)):
+            # print(class_ids[i], class_ids[j])
             # Если рамки пересекаются, но находятся в разных регионах, то добавляем их в список пересекающихся
             if ((len(all_roi) != 0) and is_intersected(bboxes_coords[i], bboxes_coords[j])
                     and not is_same_roi(all_roi, bboxes_coords[i], bboxes_coords[j])):
@@ -105,6 +108,7 @@ def merge_roi_boxes(all_roi, bboxes_coords, confidences, class_ids):
                 iou.append(boxes_iou(bboxes_coords[i], bboxes_coords[intersected_idxs[k]]))
             max_idx = iou.index(max(iou))
             # Объединяем с этой рамкой
+            print(class_ids[i], class_ids[intersected_idxs[max_idx]])
             bboxes_coords[i] = [min(bboxes_coords[i][0], bboxes_coords[intersected_idxs[max_idx]][0]),
                                 min(bboxes_coords[i][1], bboxes_coords[intersected_idxs[max_idx]][1]),
                                 max(bboxes_coords[i][2], bboxes_coords[intersected_idxs[max_idx]][2]),
@@ -266,22 +270,23 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
 
         cv2.rectangle(image.image, (int(last_info.bounding_box[0]), int(last_info.bounding_box[1])),
                       (int(last_info.bounding_box[2]), int(last_info.bounding_box[3])), (0, 255, 0), thickness=8)
-        cv2.putText(image.image, str(last_info.track_id) + ' ' + str([last_info.class_id]) +
-                    " " + "{:.2f}".format(last_info.confidence),
-                    (int(last_info.bounding_box[0]), int(last_info.bounding_box[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
-                    (0, 0, 255), 2)
+        if last_info.class_id == 0:
+            cv2.putText(image.image, str(last_info.track_id) + ' ' + str([last_info.class_id]) +
+                        " " + "{:.2f}".format(last_info.confidence),
+                        (int(last_info.bounding_box[0]), int(last_info.bounding_box[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
+                        (0, 0, 255), 2)
 
         # print(len(obj['obj_info']))
-        if len(obj.history) > 1:
-            for i in range(0, last_hist_index):
-                first_info = obj.history[i].track
-                second_info = obj.history[i + 1].track
-                first_cm_x = int((first_info.bounding_box[0] + first_info.bounding_box[2]) / 2)
-                first_cm_y = int(first_info.bounding_box[3])
-                second_cm_x = int((second_info.bounding_box[0] + second_info.bounding_box[2]) / 2)
-                second_cm_y = int(second_info.bounding_box[3])
-                cv2.line(image.image, (first_cm_x, first_cm_y),
-                         (second_cm_x, second_cm_y), (0, 0, 255), thickness=8)
+        # if len(obj.history) > 1:
+        #     for i in range(0, last_hist_index):
+        #         first_info = obj.history[i].track
+        #         second_info = obj.history[i + 1].track
+        #         first_cm_x = int((first_info.bounding_box[0] + first_info.bounding_box[2]) / 2)
+        #         first_cm_y = int(first_info.bounding_box[3])
+        #         second_cm_x = int((second_info.bounding_box[0] + second_info.bounding_box[2]) / 2)
+        #         second_cm_y = int(second_info.bounding_box[3])
+        #         cv2.line(image.image, (first_cm_x, first_cm_y),
+        #                  (second_cm_x, second_cm_y), (0, 0, 255), thickness=8)
 
 
 def draw_debug_info(image: CaptureImage, debug_info: dict):

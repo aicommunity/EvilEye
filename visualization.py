@@ -15,7 +15,7 @@ if __name__ == "__main__":
     parser.add_argument('fullpath', help='Full path to json file with cameras and modules params',
                         type=str, default=None, nargs="?")
     args = parser.parse_args()
-    file_path = 'samples/visual_sample.json'
+    file_path = 'samples/video_file(1o_1c).json'
     if args.fullpath is None:
         with open(file_path, 'r+') as params_file:
             data = json.load(params_file)
