@@ -26,7 +26,7 @@ class Visualizer(core.EvilEyeBase):
         self.processing_frames: list[CaptureImage] = []
         self.objects: list[ObjectResultList] = []
         self.last_displayed_frame = dict()
-        self.visual_buffer_num_frames = 10
+        self.visual_buffer_num_frames = 50
 
     def default(self):
         pass
@@ -63,7 +63,7 @@ class Visualizer(core.EvilEyeBase):
         self.font_params = self.params.get('font_params', None)
         self.num_height = self.params['num_height']
         self.num_width = self.params['num_width']
-        self.visual_buffer_num_frames = self.params.get('visual_buffer_num_frames', 10)
+        self.visual_buffer_num_frames = self.params.get('visual_buffer_num_frames', 50)
 
     def start(self):
         for thr in self.visual_threads:
@@ -154,9 +154,9 @@ class Visualizer(core.EvilEyeBase):
         for index in remove_processed_idx:
             del self.processing_frames[index]
 
-        if len(self.processing_frames) > 3*len(self.source_ids) * self.visual_buffer_num_frames:
-            num_erased_elems = len(self.processing_frames)-2*len(self.source_ids) * self.visual_buffer_num_frames
-            del self.processing_frames[:num_erased_elems]
+        exceed_frames_num = len(self.processing_frames) - 3*len(self.source_ids) * self.visual_buffer_num_frames
+        if exceed_frames_num > 0:
+            del self.processing_frames[exceed_frames_num:]
 
         end_update = timer()
         # print(f"Time: update=[{end_update-start_update}] secs")

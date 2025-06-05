@@ -32,7 +32,6 @@ except ImportError:
     from PyQt5.QtWidgets import QMainWindow
     pyqt_version = 5
 
-
 class Controller:
     def __init__(self, main_window: QMainWindow, pyqt_slots: dict, pyqt_signals: dict):
         self.main_window = main_window
@@ -66,10 +65,10 @@ class Controller:
         self.db_adapter_zone_events = None
         self.class_names = list()
 
-        self.captured_frames: list[CaptureImage] = []
-        self.preprocessed_frames: list[CaptureImage] = []
-        self.detection_results: list[DetectionResultList] = []
-        self.tracking_results: list[TrackingResultList] = []
+        #self.captured_frames: list[CaptureImage] = []
+        #self.preprocessed_frames: list[CaptureImage] = []
+        #self.detection_results: list[DetectionResultList] = []
+        #self.tracking_results: list[TrackingResultList] = []
         self.run_flag = False
 
         self.gui_enabled = True
@@ -85,7 +84,7 @@ class Controller:
         while self.run_flag:
             begin_it = timer()
             # Get new frames from all sources
-            self.captured_frames = []
+            captured_frames = []
             all_sources_finished = True
             debug_info = dict()
 
@@ -97,7 +96,7 @@ class Controller:
                         all_sources_finished = False
                 else:
                     all_sources_finished = False
-                    self.captured_frames.extend(frames)
+                    captured_frames.extend(frames)
 
             if self.autoclose and all_sources_finished:
                 self.run_flag = False
@@ -112,7 +111,7 @@ class Controller:
 
             preprocessing_frames = []
 
-            for capture_frame in self.captured_frames:
+            for capture_frame in captured_frames:
                 is_preprocessor_found = False
                 for preprocessor in self.preprocessors:
                     source_ids = preprocessor.get_source_ids()
@@ -120,35 +119,32 @@ class Controller:
                         preprocessor.put(capture_frame)
                         is_preprocessor_found = True
 
-                    prep_result = preprocessor.get()
-                    if prep_result:
-                        preprocessing_frames.append(prep_result)
                     if is_preprocessor_found:
                         break
 
                 if not is_preprocessor_found:
                     preprocessing_frames.append(capture_frame)
 
+            for preprocessor in self.preprocessors:
+                prep_result = preprocessor.get()
+                if prep_result:
+                    preprocessing_frames.append(prep_result)
+
             processing_frames = []
             dropped_frames = []
 
-            self.detection_results = []
+            detection_results = []
             debug_info["detectors"] = dict()
 
             for frame in preprocessing_frames:
                 is_detector_found = False
                 for detector in self.detectors:
-                    det_debug_info = debug_info["detectors"][detector.get_id()] = dict()
-                    detector.get_debug_info(det_debug_info)
                     source_ids = detector.get_source_ids()
                     if frame.source_id in source_ids:
                         detector.put(frame)
                         processing_frames.append(frame)
                         is_detector_found = True
-                        det_result = detector.get()
-                        if det_result:
-                            self.detection_results.append(det_result)
-                            
+
                     if is_detector_found:
                         break
 
@@ -158,13 +154,20 @@ class Controller:
                     det_res.frame_id = frame.frame_id
                     det_res.time_stamp = frame.time_stamp
 
-                    self.detection_results.append([det_res, frame])
+                    detection_results.append([det_res, frame])
                     processing_frames.append(frame)
+
+            for detector in self.detectors:
+                det_debug_info = debug_info["detectors"][detector.get_id()] = dict()
+                detector.get_debug_info(det_debug_info)
+                det_result = detector.get()
+                if det_result:
+                    detection_results.append(det_result)
             complete_detection_it = timer()
 
             # Process trackers
-            self.tracking_results = []
-            for det_result, image in self.detection_results:
+            tracking_results = []
+            for det_result, image in detection_results:
                 is_tracker_found = False
                 for tracker in self.trackers:
                     source_ids = tracker.get_source_ids()
@@ -186,7 +189,7 @@ class Controller:
                     tracking_result.time_stamp = datetime.datetime.now()
                     tracking_result.generate_from(det_result)
 
-                    self.tracking_results = tracking_result
+                    tracking_results = tracking_result
                     self.obj_handler.put((tracking_result, image))
                     self.source_last_processed_frame_id[image.source_id] = image.frame_id
 
@@ -196,7 +199,7 @@ class Controller:
                     for tracker in self.trackers:
                         track_info = tracker.get()
                         tracking_result, image = track_info
-                        self.tracking_results = tracking_result
+                        tracking_results = tracking_result
                         track_infos.append((tracking_result, image))
 
                 # Process multi camera tracking
@@ -218,7 +221,7 @@ class Controller:
                     track_info = tracker.get()
                     if track_info:
                         tracking_result, image = track_info
-                        self.tracking_results = tracking_result
+                        tracking_results = tracking_result
                         self.obj_handler.put((tracking_result, image))
                         self.source_last_processed_frame_id[image.source_id] = image.frame_id
 
@@ -261,7 +264,7 @@ class Controller:
                     sleep_seconds = 0.001
             else:
                 sleep_seconds = 0.03
-            # print(f"Time: cap[{complete_capture_it-begin_it}], det[{complete_detection_it-complete_capture_it}], track[{complete_tracking_it-complete_detection_it}], events[{complete_processing_it-complete_tracking_it}]], "
+            #print(f"Time: cap[{complete_capture_it-begin_it}], det[{complete_detection_it-complete_capture_it}], track[{complete_tracking_it-complete_detection_it}], events[{complete_processing_it-complete_tracking_it}]], "
             #       f"read=[{complete_read_objects_it-complete_processing_it}], vis[{end_it-complete_read_objects_it}] = {end_it-begin_it} secs, sleep {sleep_seconds} secs")
             time.sleep(sleep_seconds)
 
