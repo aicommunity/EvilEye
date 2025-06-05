@@ -25,6 +25,7 @@ class VideoCapture(capture.VideoCaptureBase):
         self.grab_repeat_num = 1
         self.average_grab_sleep = 0.001
         self.enable_grab_repeat = False
+        self.grab_fail_time = None
 
     def is_opened(self):
         return self.capture.isOpened()
@@ -61,6 +62,7 @@ class VideoCapture(capture.VideoCaptureBase):
         self.source_fps = None
         if self.capture.isOpened():
             self.is_working = True
+            self.grab_fail_time = None
             if self.source_type == CaptureDeviceType.VideoFile:
                 self.video_length = self.capture.get(cv2.CAP_PROP_FRAME_COUNT)
                 self.video_current_frame = 0
@@ -134,8 +136,10 @@ class VideoCapture(capture.VideoCaptureBase):
                 for i in range(0,self.grab_repeat_num):
                     is_grabbed = is_grabbed or self.capture.grab()
             if not is_grabbed:
+                if not self.grab_fail_time:
+                    self.grab_fail_time = timer()
                 if self.source_type != CaptureDeviceType.VideoFile or self.loop_play:
-                    if self.source_type == CaptureDeviceType.IpCamera and self.capture.isOpened():
+                    if self.source_type == CaptureDeviceType.IpCamera and self.capture.isOpened() and (timer() - self.grab_fail_time) < 10.0:
                         pass
                     else:
                         self.is_working = False
