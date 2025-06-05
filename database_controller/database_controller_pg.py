@@ -116,6 +116,7 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
         self.stop()
         if self.conn_pool:
             self.conn_pool.closeall()
+            self.conn_pool = None
 
     def query_impl(self, query_string, data=None):
         if self.conn_pool is None:

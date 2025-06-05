@@ -6,7 +6,6 @@ from object_detector.object_detection_base import DetectionResultList
 from object_tracker import object_tracking_botsort
 from object_tracker.object_tracking_base import TrackingResultList
 from object_tracker.trackers.bot_sort import Encoder
-#from visualizer.video_thread import VideoThread
 from objects_handler import objects_handler
 from capture.video_capture_base import CaptureImage
 import time
@@ -24,6 +23,7 @@ from events_detectors.fov_events_detector import FieldOfViewEventsDetector
 from events_detectors.zone_events_detector import ZoneEventsDetector
 import json
 from object_multi_camera_tracker.custom_object_tracking import ObjectMultiCameraTracking
+import datetime
 
 try:
     from PyQt6.QtWidgets import QMainWindow
@@ -134,31 +134,61 @@ class Controller:
 
             self.detection_results = []
             debug_info["detectors"] = dict()
-            for detector in self.detectors:
-                det_debug_info = debug_info["detectors"][detector.get_id()] = dict()
-                detector.get_debug_info(det_debug_info)
-                source_ids = detector.get_source_ids()
-                for preprocessed_frame in preprocessing_frames:
-                    if preprocessed_frame.source_id in source_ids:
-                        if detector.put(preprocessed_frame):
-                            processing_frames.append(preprocessed_frame)
-                detection_result = detector.get()
-                if detection_result:
-                    self.detection_results.append(detection_result)
 
+            for frame in preprocessing_frames:
+                is_detector_found = False
+                for detector in self.detectors:
+                    det_debug_info = debug_info["detectors"][detector.get_id()] = dict()
+                    detector.get_debug_info(det_debug_info)
+                    source_ids = detector.get_source_ids()
+                    if frame.source_id in source_ids:
+                        detector.put(frame)
+                        processing_frames.append(frame)
+                        is_detector_found = True
+                        det_result = detector.get()
+                        if det_result:
+                            self.detection_results.append(det_result)
+                            
+                    if is_detector_found:
+                        break
+
+                if not is_detector_found:
+                    det_res = DetectionResultList()
+                    det_res.source_id = frame.source_id
+                    det_res.frame_id = frame.frame_id
+                    det_res.time_stamp = frame.time_stamp
+
+                    self.detection_results.append([det_res, frame])
+                    processing_frames.append(frame)
             complete_detection_it = timer()
 
             # Process trackers
             self.tracking_results = []
-            for tracker in self.trackers:
-                source_ids = tracker.get_source_ids()
-                for det_result, image in self.detection_results:
-                    if det_result.source_id in source_ids:
+            for det_result, image in self.detection_results:
+                is_tracker_found = False
+                for tracker in self.trackers:
+                    source_ids = tracker.get_source_ids()
+                    if image.source_id in source_ids:
+                        is_tracker_found = True
                         tracker.put((det_result, image))
 
-                dropped_ids = tracker.get_dropped_ids()
-                if len(dropped_ids) > 0:
-                    dropped_frames.extend(dropped_ids)
+                        dropped_ids = tracker.get_dropped_ids()
+                        if len(dropped_ids) > 0:
+                            dropped_frames.extend(dropped_ids)
+                        break
+                    if is_tracker_found:
+                        break
+
+                if not is_tracker_found:
+                    tracking_result = TrackingResultList()
+                    tracking_result.frame_id = image.frame_id
+                    tracking_result.source_id = image.source_id
+                    tracking_result.time_stamp = datetime.datetime.now()
+                    tracking_result.generate_from(det_result)
+
+                    self.tracking_results = tracking_result
+                    self.obj_handler.put((tracking_result, image))
+                    self.source_last_processed_frame_id[image.source_id] = image.frame_id
 
             if self.multicam_reid_enabled:
                 track_infos = []
@@ -212,19 +242,6 @@ class Controller:
                 dropped_ids = tracker.get_dropped_ids()
                 if len(dropped_ids) > 0:
                     dropped_frames.extend(dropped_ids)
-
-#            filtered_processing_frame_indexes = []
-#            for i in range(len(processing_frames)-1, -1, -1):
-#                for data in dropped_frames:
-#                    frame = processing_frames[i]
-#                    if frame.source_id == data[0] and frame.frame_id == data[1]:
-#                        filtered_processing_frame_indexes.append(i)
-#                        break
-
-#            for index in filtered_processing_frame_indexes:
-#                del processing_frames[index]
-#            print(f"Dropped {len(filtered_processing_frame_indexes)} frames")
-
 
             if self.gui_enabled:
                 objects = []
@@ -284,13 +301,13 @@ class Controller:
         self.cam_events_detector.stop()
         self.fov_events_detector.stop()
         self.zone_events_detector.stop()
+        self.visualizer.stop()
+        self.obj_handler.stop()
         self.db_adapter_cam_events.stop()
         self.db_adapter_fov_events.stop()
         self.db_adapter_zone_events.stop()
         self.db_adapter_obj.stop()
         self.db_controller.disconnect()
-        self.visualizer.stop()
-        self.obj_handler.stop()
         for tracker in self.trackers:
             tracker.stop()
         for detector in self.detectors:
@@ -312,15 +329,15 @@ class Controller:
         except FileNotFoundError as ex:
             pass
 
-        self._init_captures(self.params['sources'])
-        self._init_preprocessors(self.params.get('preprocessors', dict()))
-        self._init_detectors(self.params['detectors'])
-        self._init_trackers(self.params['trackers'])
+        self._init_captures(self.params.get('sources',list()))
+        self._init_preprocessors(self.params.get('preprocessors', list()))
+        self._init_detectors(self.params.get('detectors',list()))
+        self._init_trackers(self.params.get('trackers', list()))
         self._init_mc_tracker()
 
         multicam_reid = self.params['controller'].get("multicam_reid", False)
         if multicam_reid:
-            for tracker_params in self.params['trackers']:
+            for tracker_params in self.params.get('trackers', list()):
                 botsort_cfg = tracker_params.get("botsort_cfg", None)
                 if not botsort_cfg or botsort_cfg.get("with_reid", False) == False:
                     multicam_reid = False

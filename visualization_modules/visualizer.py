@@ -161,4 +161,4 @@ class Visualizer(core.EvilEyeBase):
         end_update = timer()
         # print(f"Time: update=[{end_update-start_update}] secs")
 
-        print(f"{datetime.now()}: Visual Queue size: {len(self.processing_frames)}. Processed sources: {processed_sources}")
+        #print(f"{datetime.now()}: Visual Queue size: {len(self.processing_frames)}. Processed sources: {processed_sources}")
