@@ -163,13 +163,12 @@ class VideoCapture(capture.VideoCaptureBase):
 
             end_it = timer()
             elapsed_seconds = end_it - begin_it
-            if self.source_fps:
-                fps_multiplier = 1.5 if self.source_type == CaptureDeviceType.IpCamera else 1.0
-                sleep_seconds = 1. / (fps_multiplier * self.source_fps) - elapsed_seconds
-                if sleep_seconds <= 0.0:
-                    sleep_seconds = 0.001
-            else:
-                sleep_seconds = 0.03
+
+            retrieve_fps = self.desired_fps if self.desired_fps else self.source_fps if self.source_fps else 15
+            sleep_seconds = 1. / retrieve_fps - elapsed_seconds
+            if sleep_seconds <= 0.0:
+                sleep_seconds = 0.001
+
             time.sleep(sleep_seconds)
 
         if not self.run_flag:
