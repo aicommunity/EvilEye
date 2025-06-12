@@ -9,5 +9,5 @@ scikit-learn
 onnxruntime
 tqdm
 shapely
-sklearn
+pympler
 
