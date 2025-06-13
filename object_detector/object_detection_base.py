@@ -41,7 +41,7 @@ class ObjectDetectorBase(core.EvilEyeBase, ABC):
         self.detection_threads = []
         self.thread_counter = 0
 
-        self.processing_thread = threading.Thread(target=self._process_impl)
+        self.processing_thread = None
 
     def put(self, image: CaptureImage) -> bool:
         if not self.queue_in.full():
@@ -84,7 +84,8 @@ class ObjectDetectorBase(core.EvilEyeBase, ABC):
 
     def start(self):
         self.run_flag = True
-        self.processing_thread.start()
+        if self.processing_thread:
+            self.processing_thread.start()
 
     def stop(self):
         self.run_flag = False
@@ -93,10 +94,16 @@ class ObjectDetectorBase(core.EvilEyeBase, ABC):
         self.processing_thread.join()
         print('Detection stopped')
 
+    def init_impl(self):
+        self.processing_thread = threading.Thread(target=self._process_impl)
+
     def release_impl(self):
         for i in range(self.num_detection_threads):
             self.detection_threads[i].stop()
+
         self.detection_threads = []
+        del self.processing_thread
+        self.processing_thread = None
 
     def default(self):
         self.stride = 1
