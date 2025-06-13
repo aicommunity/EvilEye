@@ -54,7 +54,9 @@ class Controller:
         self.pyqt_signals = pyqt_signals
         self.fps = 5
         self.memory_periodic_check_sec = 60*15
-        self.max_memory_usage_mb = 1024*4# 1024*16
+        self.max_memory_usage_mb = 1024*16
+        self.auto_restart = True
+
 
         self.events_detectors_controller = None
         self.events_processor = None
@@ -74,6 +76,7 @@ class Controller:
         #self.detection_results: list[DetectionResultList] = []
         #self.tracking_results: list[TrackingResultList] = []
         self.run_flag = False
+        self.restart_flag = False
 
         self.gui_enabled = True
         self.autoclose = False
@@ -254,21 +257,16 @@ class Controller:
 
             if not self.debug_info.get("controller", None) or not self.debug_info["controller"].get("timestamp", None) or ((datetime.datetime.now() - self.debug_info["controller"]["timestamp"]).total_seconds() > self.memory_periodic_check_sec):
                 self.collect_memory_consumption()
-                pprint.pprint(self.debug_info)
-                
+
                 if self.debug_info.get("controller", None):
                     total_memory_usage_mb = self.debug_info["controller"].get("total_memory_usage_mb", None)
+                    print(f"total_memory_usage={total_memory_usage_mb:.2f} Mb max_memory_usage_mb={self.max_memory_usage_mb:.2f} Mb")
                     if total_memory_usage_mb and total_memory_usage_mb >= self.max_memory_usage_mb:
-                        print(f"Total memory usage {total_memory_usage_mb} Mb > Max memory {self.max_memory_usage_mb} Mb. Reinitialize all...")
+                        pprint.pprint(self.debug_info)
                         params = copy.deepcopy(self.params)
-                        self.stop()
-                        print(f"Stop all")
-                        self.release()
-                        print(f"Release all")
-                        self.init(params)
-                        print(f"Reinit all")
-                        self.start()
-                        print(f"Start all")
+                        if self.auto_restart:
+                            self.restart_flag = True
+                        self.run_flag = False
                         continue
 
 
@@ -385,6 +383,9 @@ class Controller:
         self.autoclose = self.params['controller'].get("autoclose", False)
         self.fps = self.params['controller'].get("fps", 5)
         self.class_names = self.params['controller'].get("class_names", list())
+        self.memory_periodic_check_sec = self.params['controller'].get("memory_periodic_check_sec", self.memory_periodic_check_sec)
+        self.max_memory_usage_mb = self.params['controller'].get("max_memory_usage_mb", self.max_memory_usage_mb)
+        self.auto_restart = self.params['controller'].get("max_memory_usage_mb", self.auto_restart)
 
     def release(self):
         self.stop()
