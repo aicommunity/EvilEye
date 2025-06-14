@@ -260,8 +260,8 @@ class Controller:
 
                 if self.debug_info.get("controller", None):
                     total_memory_usage_mb = self.debug_info["controller"].get("total_memory_usage_mb", None)
-                    print(f"total_memory_usage={total_memory_usage_mb:.2f} Mb max_memory_usage_mb={self.max_memory_usage_mb:.2f} Mb")
                     if total_memory_usage_mb and total_memory_usage_mb >= self.max_memory_usage_mb:
+                        print(f"total_memory_usage={total_memory_usage_mb:.2f} Mb max_memory_usage_mb={self.max_memory_usage_mb:.2f} Mb")
                         pprint.pprint(self.debug_info)
                         params = copy.deepcopy(self.params)
                         if self.auto_restart:
