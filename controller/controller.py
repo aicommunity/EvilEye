@@ -24,6 +24,8 @@ from events_detectors.zone_events_detector import ZoneEventsDetector
 import json
 from object_multi_camera_tracker.custom_object_tracking import ObjectMultiCameraTracking
 import datetime
+import pprint
+import copy
 
 try:
     from PyQt6.QtWidgets import QMainWindow
@@ -51,6 +53,10 @@ class Controller:
         self.pyqt_slots = pyqt_slots
         self.pyqt_signals = pyqt_signals
         self.fps = 5
+        self.memory_periodic_check_sec = 60*15
+        self.max_memory_usage_mb = 1024*16
+        self.auto_restart = True
+
 
         self.events_detectors_controller = None
         self.events_processor = None
@@ -70,12 +76,15 @@ class Controller:
         #self.detection_results: list[DetectionResultList] = []
         #self.tracking_results: list[TrackingResultList] = []
         self.run_flag = False
+        self.restart_flag = False
 
         self.gui_enabled = True
         self.autoclose = False
         self.multicam_reid_enabled = False
 
         self.current_main_widget_size = [1920, 1080]
+
+        self.debug_info = dict()
 
     def is_running(self):
         return self.run_flag
@@ -86,10 +95,10 @@ class Controller:
             # Get new frames from all sources
             captured_frames = []
             all_sources_finished = True
-            debug_info = dict()
 
             for source in self.sources:
                 frames = source.get_frames()
+                source.insert_debug_info_by_id(self.debug_info.setdefault("sources", {}))
 
                 if len(frames) == 0:
                     if not source.is_finished():
@@ -110,7 +119,6 @@ class Controller:
             complete_capture_it = timer()
 
             preprocessing_frames = []
-
             for capture_frame in captured_frames:
                 is_preprocessor_found = False
                 for preprocessor in self.preprocessors:
@@ -129,13 +137,12 @@ class Controller:
                 prep_result = preprocessor.get()
                 if prep_result:
                     preprocessing_frames.append(prep_result)
+                preprocessor.insert_debug_info_by_id(self.debug_info.setdefault("preprocessors", {}))
 
             processing_frames = []
             dropped_frames = []
 
             detection_results = []
-            debug_info["detectors"] = dict()
-
             for frame in preprocessing_frames:
                 is_detector_found = False
                 for detector in self.detectors:
@@ -158,11 +165,10 @@ class Controller:
                     processing_frames.append(frame)
 
             for detector in self.detectors:
-                det_debug_info = debug_info["detectors"][detector.get_id()] = dict()
-                detector.get_debug_info(det_debug_info)
                 det_result = detector.get()
                 if det_result:
                     detection_results.append(det_result)
+                detector.insert_debug_info_by_id(self.debug_info.setdefault("detectors", {}))
             complete_detection_it = timer()
 
             # Process trackers
@@ -225,6 +231,9 @@ class Controller:
                         self.obj_handler.put((tracking_result, image))
                         self.source_last_processed_frame_id[image.source_id] = image.frame_id
 
+            for tracker in self.trackers:
+                tracker.insert_debug_info_by_id(self.debug_info.setdefault("trackers", {}))
+
             complete_tracking_it = timer()
 
             events = dict()
@@ -246,12 +255,27 @@ class Controller:
                 if len(dropped_ids) > 0:
                     dropped_frames.extend(dropped_ids)
 
+            if not self.debug_info.get("controller", None) or not self.debug_info["controller"].get("timestamp", None) or ((datetime.datetime.now() - self.debug_info["controller"]["timestamp"]).total_seconds() > self.memory_periodic_check_sec):
+                self.collect_memory_consumption()
+
+                if self.debug_info.get("controller", None):
+                    total_memory_usage_mb = self.debug_info["controller"].get("total_memory_usage_mb", None)
+                    if total_memory_usage_mb and total_memory_usage_mb >= self.max_memory_usage_mb:
+                        print(f"total_memory_usage={total_memory_usage_mb:.2f} Mb max_memory_usage_mb={self.max_memory_usage_mb:.2f} Mb")
+                        pprint.pprint(self.debug_info)
+                        params = copy.deepcopy(self.params)
+                        if self.auto_restart:
+                            self.restart_flag = True
+                        self.run_flag = False
+                        continue
+
+
             if self.gui_enabled:
                 objects = []
                 for i in range(len(self.visualizer.source_ids)):
                     objects.append(self.obj_handler.get('active', self.visualizer.source_ids[i]))
                 complete_read_objects_it = timer()
-                self.visualizer.update(processing_frames, self.source_last_processed_frame_id, objects, dropped_frames, debug_info)
+                self.visualizer.update(processing_frames, self.source_last_processed_frame_id, objects, dropped_frames, self.debug_info)
             else:
                 complete_read_objects_it = timer()
 
@@ -264,6 +288,7 @@ class Controller:
                     sleep_seconds = 0.001
             else:
                 sleep_seconds = 0.03
+
             #print(f"Time: cap[{complete_capture_it-begin_it}], det[{complete_detection_it-complete_capture_it}], track[{complete_tracking_it-complete_detection_it}], events[{complete_processing_it-complete_tracking_it}]], "
             #       f"read=[{complete_read_objects_it-complete_processing_it}], vis[{end_it-complete_read_objects_it}] = {end_it-begin_it} secs, sleep {sleep_seconds} secs")
             time.sleep(sleep_seconds)
@@ -358,6 +383,9 @@ class Controller:
         self.autoclose = self.params['controller'].get("autoclose", False)
         self.fps = self.params['controller'].get("fps", 5)
         self.class_names = self.params['controller'].get("class_names", list())
+        self.memory_periodic_check_sec = self.params['controller'].get("memory_periodic_check_sec", self.memory_periodic_check_sec)
+        self.max_memory_usage_mb = self.params['controller'].get("max_memory_usage_mb", self.max_memory_usage_mb)
+        self.auto_restart = self.params['controller'].get("max_memory_usage_mb", self.auto_restart)
 
     def release(self):
         self.stop()
@@ -494,6 +522,49 @@ class Controller:
         self.visualizer.source_id_name_table = self.source_id_name_table
         self.visualizer.source_video_duration = self.source_video_duration
         self.visualizer.init()
+
+    def collect_memory_consumption(self):
+        total_memory_usage = 0
+        for source in self.sources:
+            source.calc_memory_consumption()
+            comp_debug_info = source.insert_debug_info_by_id(self.debug_info.setdefault("sources", {}))
+            total_memory_usage += comp_debug_info["memory_measure_results"]
+
+        for preprocessor in self.preprocessors:
+            preprocessor.calc_memory_consumption()
+            comp_debug_info = preprocessor.insert_debug_info_by_id(self.debug_info.setdefault("preprocessors", {}))
+            total_memory_usage += comp_debug_info["memory_measure_results"]
+
+        for detector in self.detectors:
+            detector.calc_memory_consumption()
+            comp_debug_info = detector.insert_debug_info_by_id(self.debug_info.setdefault("detectors", {}))
+            total_memory_usage += comp_debug_info["memory_measure_results"]
+
+        for tracker in self.trackers:
+            tracker.calc_memory_consumption()
+            comp_debug_info = tracker.insert_debug_info_by_id(self.debug_info.setdefault("trackers", {}))
+            total_memory_usage += comp_debug_info["memory_measure_results"]
+
+        self.mc_tracker.calc_memory_consumption()
+        comp_debug_info = self.mc_tracker.insert_debug_info_by_id(self.debug_info.setdefault("mc_tracker", {}))
+        total_memory_usage += comp_debug_info["memory_measure_results"]
+
+        self.obj_handler.calc_memory_consumption()
+        comp_debug_info = self.obj_handler.insert_debug_info_by_id(self.debug_info.setdefault("obj_handler", {}))
+        total_memory_usage += comp_debug_info["memory_measure_results"]
+
+        self.events_processor.calc_memory_consumption()
+        comp_debug_info = self.events_processor.insert_debug_info_by_id(self.debug_info.setdefault("events_processor", {}))
+        total_memory_usage += comp_debug_info["memory_measure_results"]
+
+        self.visualizer.calc_memory_consumption()
+        comp_debug_info = self.visualizer.insert_debug_info_by_id(self.debug_info.setdefault("visualizer", {}))
+        total_memory_usage += comp_debug_info["memory_measure_results"]
+
+        self.debug_info["controller"] = dict()
+        self.debug_info["controller"]["timestamp"] = datetime.datetime.now()
+        self.debug_info["controller"]["total_memory_usage_mb"] = total_memory_usage/(1024.0*1024.0)
+
 
     # def _save_video_duration(self):
     #     self.db_controller.update_video_dur(self.source_video_duration)

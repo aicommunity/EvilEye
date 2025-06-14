@@ -36,15 +36,16 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
         self.fps = 5
 
     def init_impl(self):
+        super().init_impl()
         if not self.botsort_cfg:
             print(f"BOTSORT parameters not found!")
             self.tracker = None
             return False
 
         self.tracker = BOTSORT(self.botsort_cfg, self.encoder, frame_rate=self.fps)
-        return True
 
     def release_impl(self):
+        super().init_impl()
         self.tracker = None
 
     def reset_impl(self):
@@ -71,6 +72,8 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
             sleep(0.01)
             detections = self.queue_in.get()
             if detections is None:
+                continue
+            if self.tracker is None:
                 continue
             detection_result, image = detections
             cam_id, bboxes_xcycwh, confidences, class_ids = self._parse_det_info(detection_result)

@@ -49,7 +49,7 @@ class ObjectTrackingBase(core.EvilEyeBase):
         self.queue_out = Queue()
         self.queue_dropped_id = Queue()
         self.source_ids = []
-        self.processing_thread = threading.Thread(target=self._process_impl)
+        self.processing_thread = None
 
     def put(self, det_info, force=False):
         dropped_id = []
@@ -98,6 +98,13 @@ class ObjectTrackingBase(core.EvilEyeBase):
         self.queue_in.put(None)
         self.processing_thread.join()
         print('Tracker stopped')
+
+    def init_impl(self):
+        self.processing_thread = threading.Thread(target=self._process_impl)
+
+    def release_impl(self):
+        del self.processing_thread
+        self.processing_thread = None
 
     @abstractmethod
     def _process_impl(self):
