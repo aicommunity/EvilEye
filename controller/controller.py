@@ -149,7 +149,6 @@ class Controller:
                     source_ids = detector.get_source_ids()
                     if frame.source_id in source_ids:
                         detector.put(frame)
-                        processing_frames.append(frame)
                         is_detector_found = True
 
                     if is_detector_found:
@@ -168,6 +167,7 @@ class Controller:
                 det_result = detector.get()
                 if det_result:
                     detection_results.append(det_result)
+
                 detector.insert_debug_info_by_id(self.debug_info.setdefault("detectors", {}))
             complete_detection_it = timer()
 
@@ -199,6 +199,8 @@ class Controller:
                     self.obj_handler.put((tracking_result, image))
                     self.source_last_processed_frame_id[image.source_id] = image.frame_id
 
+                    processing_frames.append(image)
+
             if self.multicam_reid_enabled:
                 track_infos = []
                 if not any(t.queue_out.empty() for t in self.trackers):
@@ -207,6 +209,7 @@ class Controller:
                         tracking_result, image = track_info
                         tracking_results = tracking_result
                         track_infos.append((tracking_result, image))
+                        processing_frames.append(image)
 
                 # Process multi camera tracking
                 # NOTE: This is a temporary solution which adds
@@ -230,6 +233,7 @@ class Controller:
                         tracking_results = tracking_result
                         self.obj_handler.put((tracking_result, image))
                         self.source_last_processed_frame_id[image.source_id] = image.frame_id
+                        processing_frames.append(image)
 
             for tracker in self.trackers:
                 tracker.insert_debug_info_by_id(self.debug_info.setdefault("trackers", {}))

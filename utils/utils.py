@@ -301,7 +301,7 @@ def draw_debug_info(image: CaptureImage, debug_info: dict):
         return
 
     for det_id, det_debug_info in debug_info['detectors'].items():
-        if image.source_id in det_debug_info['source_ids']:
+        if 'source_ids' in det_debug_info.keys() and image.source_id in det_debug_info['source_ids']:
             source_id_index = det_debug_info['source_ids'].index(image.source_id)
             rois = det_debug_info['roi']
             if type(rois) is list and source_id_index in range(len(rois)):
