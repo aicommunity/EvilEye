@@ -77,7 +77,8 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
                 continue
             detection_result, image = detections
             cam_id, bboxes_xcycwh, confidences, class_ids = self._parse_det_info(detection_result)
-            tracks = copy.deepcopy(self.tracker.update(class_ids, bboxes_xcycwh, confidences, image.image))
+#            tracks = copy.deepcopy(self.tracker.update(class_ids, bboxes_xcycwh, confidences, image.image))
+            tracks = self.tracker.update(class_ids, bboxes_xcycwh, confidences, image.image)
             tracks_info = self._create_tracks_info(cam_id, detection_result.frame_id, None, tracks)
             self.queue_out.put((tracks_info, image))
 
