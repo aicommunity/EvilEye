@@ -13,6 +13,7 @@ from sympy.multipledispatch.dispatcher import source
 from database_controller import database_controller_pg
 from psycopg2 import sql
 from capture.video_capture_base import CaptureImage
+from object_tracker.object_tracking_botsort import BOTrack
 
 
 def get_project_root() -> Path:
@@ -69,17 +70,17 @@ def roi_to_image(roi_box_coords, x0, y0):
 
 def create_roi(capture_image: CaptureImage, coords):
     rois = []
-    for count in range(len(coords)):
-        roi_image = copy.deepcopy(capture_image)
-        roi_image.image = capture_image.image[coords[count][1]:coords[count][1] + coords[count][3],
-                          coords[count][0]:coords[count][0] + coords[count][2]]
-        # rois_path = pathlib.Path(get_project_root(), 'images', 'rois')
-        # if not rois_path.exists():
-        #     pathlib.Path.mkdir(rois_path)
-        # if det_id == 2:
-        #     roi_path = pathlib.Path(rois_path, str(det_id) + str(count) + '.jpg')
-        #     cv2.imwrite(roi_path.as_posix(), roi_image.image)
-        rois.append([roi_image, [coords[count][0], coords[count][1]]])
+    img = capture_image.image
+    for x, y, w, h in coords:
+        roi_img = img[y:y+h, x:x+w]
+        roi_capture = CaptureImage()
+        roi_capture.source_id = capture_image.source_id
+        roi_capture.frame_id = capture_image.frame_id
+        roi_capture.current_video_frame = capture_image.current_video_frame
+        roi_capture.current_video_position = capture_image.current_video_position
+        roi_capture.time_stamp = capture_image.time_stamp
+        roi_capture.image = roi_img
+        rois.append([roi_capture, [x, y]])
     return rois
 
 
@@ -236,18 +237,20 @@ def draw_boxes_from_db(db_controller, table_name, load_folder, save_folder):
             print('Error saving image with boxes')
 
 
-def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_duration_msecs):
+def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_duration_msecs, font_scale, font_thickness, font_color):
     height, width, channels = image.image.shape
     if source_name is int:
-        cv2.putText(image.image, "Source Id: " + str(source_name), (100, height - 100), cv2.FONT_HERSHEY_SIMPLEX, 3,
-                    (0, 0, 255), 8)
+        cv2.putText(image.image, "Source Id: " + str(source_name), (100, height - 100), cv2.FONT_HERSHEY_SIMPLEX,
+                    font_scale, font_color, font_thickness)
     else:
-        cv2.putText(image.image, str(source_name), (100, height - 100), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 0, 255), 8)
+        cv2.putText(image.image, str(source_name), (100, height - 100), cv2.FONT_HERSHEY_SIMPLEX,
+                    font_scale, font_color, font_thickness)
 
     if image.current_video_position and source_duration_msecs is not None:
         time_position_secs = image.current_video_position / 1000.0
         pos_string = "{:.1f}".format(time_position_secs) + " [" + "{:.1f}".format(source_duration_msecs / 1000.0) + "]"
-        cv2.putText(image.image, pos_string, (width - 900, height - 100), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 0, 255), 8)
+        cv2.putText(image.image, pos_string, (width - 900, height - 100), cv2.FONT_HERSHEY_SIMPLEX,
+                    font_scale, font_color, font_thickness)
 
     # Для трекинга отображаем только последние данные об объекте из истории
     # print(cameras_objs)
@@ -265,11 +268,18 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
                     break
 
         cv2.rectangle(image.image, (int(last_info.bounding_box[0]), int(last_info.bounding_box[1])),
-                      (int(last_info.bounding_box[2]), int(last_info.bounding_box[3])), (0, 255, 0), thickness=8)
-        cv2.putText(image.image, str(last_info.track_id) + ' ' + str([last_info.class_id]) +
-                    " " + "{:.2f}".format(last_info.confidence),
-                    (int(last_info.bounding_box[0]), int(last_info.bounding_box[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
-                    (0, 0, 255), 2)
+                      (int(last_info.bounding_box[2]), int(last_info.bounding_box[3])), (0, 255, 0), thickness=font_thickness)
+        if obj.global_id is not None:
+            cv2.putText(image.image,
+                        str(last_info.track_id) + ':' + str(obj.global_id) + ' ' + str([last_info.class_id]) +
+                        " " + "{:.2f}".format(last_info.confidence),
+                        (int(last_info.bounding_box[0]), int(last_info.bounding_box[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX,
+                        font_scale, font_color, font_thickness)
+        else:
+            cv2.putText(image.image, str(last_info.track_id) + ' ' + str([last_info.class_id]) +
+                        " " + "{:.2f}".format(last_info.confidence),
+                        (int(last_info.bounding_box[0]), int(last_info.bounding_box[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX,
+                        font_scale, font_color, font_thickness)
 
         # print(len(obj['obj_info']))
         if len(obj.history) > 1:
@@ -281,7 +291,7 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
                 second_cm_x = int((second_info.bounding_box[0] + second_info.bounding_box[2]) / 2)
                 second_cm_y = int(second_info.bounding_box[3])
                 cv2.line(image.image, (first_cm_x, first_cm_y),
-                         (second_cm_x, second_cm_y), (0, 0, 255), thickness=8)
+                         (second_cm_x, second_cm_y), (0, 0, 255), thickness=font_thickness)
 
 
 def draw_debug_info(image: CaptureImage, debug_info: dict):
@@ -291,7 +301,7 @@ def draw_debug_info(image: CaptureImage, debug_info: dict):
         return
 
     for det_id, det_debug_info in debug_info['detectors'].items():
-        if image.source_id in det_debug_info['source_ids']:
+        if 'source_ids' in det_debug_info.keys() and image.source_id in det_debug_info['source_ids']:
             source_id_index = det_debug_info['source_ids'].index(image.source_id)
             rois = det_debug_info['roi']
             if type(rois) is list and source_id_index in range(len(rois)):
@@ -309,6 +319,8 @@ class ObjectResultEncoder(json.JSONEncoder):
         if isinstance(obj, ObjectResultHistory):
             return obj.__dict__
         if isinstance(obj, CaptureImage):
+            return None
+        if isinstance(obj, BOTrack):
             return None
 
         return super().default(obj)

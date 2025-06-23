@@ -1,5 +1,11 @@
 from utils import threading_events
-from PyQt6.QtCore import QObject, pyqtSignal
+
+try:
+    from PyQt6.QtCore import QObject, pyqtSignal
+    pyqt_version = 6
+except ImportError:
+    from PyQt5.QtCore import QObject, pyqtSignal
+    pyqt_version = 5
 
 
 class TableUpdater(QObject):

@@ -2,15 +2,29 @@ import datetime
 import os
 from psycopg2 import sql
 from utils import threading_events
-from PyQt6.QtCore import QDate, QDateTime
-from PyQt6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton,
-    QDateTimeEdit, QHeaderView, QComboBox, QTableView, QStyledItemDelegate,
-    QMessageBox
-)
-from PyQt6.QtGui import QPixmap, QPainter, QPen
-from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QModelIndex
-from PyQt6.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
+try:
+    from PyQt6.QtCore import QDate, QDateTime
+    from PyQt6.QtWidgets import (
+        QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton,
+        QDateTimeEdit, QHeaderView, QComboBox, QTableView, QStyledItemDelegate,
+        QMessageBox
+    )
+    from PyQt6.QtGui import QPixmap, QPainter, QPen
+    from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QModelIndex
+    from PyQt6.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
+    pyqt_version = 6
+except ImportError:
+    from PyQt5.QtCore import QDate, QDateTime
+    from PyQt5.QtWidgets import (
+        QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton,
+        QDateTimeEdit, QHeaderView, QComboBox, QTableView, QStyledItemDelegate,
+        QMessageBox
+    )
+    from PyQt5.QtGui import QPixmap, QPainter, QPen
+    from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QModelIndex
+    from PyQt5.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
+    pyqt_version = 5
+
 from visualization_modules.table_updater_view import TableUpdater
 
 
@@ -418,12 +432,15 @@ class HandlerJournal(QWidget):
         # Получаем номер последней записи в данном запуске
         last_obj_query = sql.SQL('''SELECT MAX(record_id) from objects WHERE job_id = %s''')
         records = self.db_controller.query(last_obj_query, (job_id,))
-        last_record = records[0][0]
-        if not last_record:  # Обновляем информацию о последней записи, если записей не было, то -1
-            update_query = sql.SQL('UPDATE jobs SET first_record = -1, last_record = -1 WHERE job_id = %s;')
-            data = (job_id,)
+        if records:
+            last_record = records[0][0]
+            if not last_record:  # Обновляем информацию о последней записи, если записей не было, то -1
+                update_query = sql.SQL('UPDATE jobs SET first_record = -1, last_record = -1 WHERE job_id = %s;')
+                data = (job_id,)
+            else:
+                update_query = sql.SQL('UPDATE jobs SET last_record = %s WHERE job_id = %s;')
+                data = (last_record, job_id)
         else:
-            update_query = sql.SQL('UPDATE jobs SET last_record = %s WHERE job_id = %s;')
-            data = (last_record, job_id)
+            print(f"HandlerJournal._update_job_first_last_records: Db controller returns no data. Possible db alreaady closed.")
 
         self.db_controller.query(update_query, data)

@@ -1,11 +1,23 @@
-from PyQt6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QTabWidget, QPushButton,
-    QSizePolicy, QMenuBar, QToolBar, QDateTimeEdit, QHeaderView,
-    QMenu, QMainWindow, QMessageBox, QTableView, QTableWidget, QTableWidgetItem
-)
-from PyQt6.QtGui import QPixmap, QIcon
+try:
+    from PyQt6.QtWidgets import (
+        QWidget, QLabel, QVBoxLayout, QHBoxLayout, QTabWidget, QPushButton,
+        QSizePolicy, QMenuBar, QToolBar, QDateTimeEdit, QHeaderView,
+        QMenu, QMainWindow, QMessageBox, QTableView, QTableWidget, QTableWidgetItem
+    )
+    from PyQt6.QtGui import QPixmap, QIcon
+    from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
+    pyqt_version = 6
+except ImportError:
+    from PyQt5.QtWidgets import (
+        QWidget, QLabel, QVBoxLayout, QHBoxLayout, QTabWidget, QPushButton,
+        QSizePolicy, QMenuBar, QToolBar, QDateTimeEdit, QHeaderView,
+        QMenu, QMainWindow, QMessageBox, QTableView, QTableWidget, QTableWidgetItem
+    )
+    from PyQt5.QtGui import QPixmap, QIcon
+    from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt
+    pyqt_version = 5
+
 import sys
-from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
 from pathlib import Path
 from database_controller import database_controller_pg
 from visualization_modules import handler_journal_view

@@ -1,14 +1,32 @@
-import os
+try:
+    from PyQt6.QtWidgets import (
+        QWidget, QLabel, QVBoxLayout, QHBoxLayout, QTabWidget, QPushButton, QGraphicsPixmapItem, QGraphicsTransform,
+        QSizePolicy, QMenuBar, QToolBar, QDateTimeEdit, QHeaderView, QGraphicsView, QGraphicsScene,
+        QMenu, QMainWindow, QMessageBox, QTableView, QTableWidget, QTableWidgetItem, QGraphicsRectItem,
+        QGraphicsPolygonItem
+    )
+    from PyQt6.QtGui import QPixmap, QIcon, QAction, QPainter, QBrush, QPen, QColor, QPolygonF
+    from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QPointF, QPoint, QSize, QRectF, QSizeF
+    from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QPointF, QPoint, QSize, QRectF, QSizeF
 
-from PyQt6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QTabWidget, QPushButton, QGraphicsPixmapItem, QGraphicsTransform,
-    QSizePolicy, QMenuBar, QToolBar, QDateTimeEdit, QHeaderView, QGraphicsView, QGraphicsScene,
-    QMenu, QMainWindow, QMessageBox, QTableView, QTableWidget, QTableWidgetItem, QGraphicsRectItem, QGraphicsPolygonItem
-)
-from PyQt6.QtGui import QPixmap, QIcon, QAction, QPainter, QBrush, QPen, QColor, QPolygonF
+
+    pyqt_version = 6
+except ImportError:
+    from PyQt5.QtWidgets import (
+        QWidget, QLabel, QVBoxLayout, QHBoxLayout, QTabWidget, QPushButton, QGraphicsPixmapItem, QGraphicsTransform,
+        QSizePolicy, QMenuBar, QToolBar, QDateTimeEdit, QHeaderView, QGraphicsView, QGraphicsScene,
+        QMenu, QMainWindow, QMessageBox, QTableView, QTableWidget, QTableWidgetItem, QGraphicsRectItem,
+        QGraphicsPolygonItem
+    )
+    from PyQt5.QtGui import QPixmap, QIcon, QPainter, QBrush, QPen, QColor, QPolygonF
+    from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt, QPointF, QPoint, QSize, QRectF, QSizeF
+    from PyQt5.QtWidgets import QAction
+    from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt, QPointF, QPoint, QSize, QRectF, QSizeF
+
+    pyqt_version = 5
+
 import sys
-from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QPointF, QPoint, QSize, QRectF, QSizeF
-
+import os
 import utils.utils
 from utils import threading_events
 from events_detectors.zone import ZoneForm

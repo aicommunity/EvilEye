@@ -3,6 +3,10 @@
 from collections import deque
 
 import numpy as np
+import cv2
+import onnxruntime as ort
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
 
 from .basetrack import TrackState
 from .byte_tracker import BYTETracker, STrack
@@ -148,7 +152,7 @@ class BOTSORT(BYTETracker):
         The class is designed to work with the YOLOv8 object detection model and supports ReID only if enabled via args.
     """
 
-    def __init__(self, args, frame_rate=30):
+    def __init__(self, args, encoder: 'Encoder' = None, frame_rate=30):
         """Initialize YOLOv8 object with ReID module and GMC algorithm."""
         super().__init__(args, frame_rate)
         # ReID module
@@ -156,8 +160,7 @@ class BOTSORT(BYTETracker):
         self.appearance_thresh = args.appearance_thresh
 
         if args.with_reid:
-            # Haven't supported BoT-SORT(reid) yet
-            self.encoder = None
+            self.encoder = encoder
         self.gmc = GMC(method=args.gmc_method)
 
     def get_kalmanfilter(self):
@@ -198,3 +201,47 @@ class BOTSORT(BYTETracker):
         """Reset tracker."""
         super().reset()
         self.gmc.reset_params()
+
+
+class Encoder:
+    def __init__(self, model_path: str):
+        self.session = ort.InferenceSession(model_path, providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+        self.input_name = self.session.get_inputs()[0].name
+        self.output_name = self.session.get_outputs()[0].name
+        self.image_augmentation = A.Compose(
+            [A.Resize(256, 128), A.Normalize(), ToTensorV2()]
+        )
+
+    def inference(self, img: np.ndarray, dets: np.ndarray) -> np.ndarray:
+        """inference encoder and get features for each object
+
+        :param img: a current frame
+        :param dets: detections (Nx4) that have format [x_center. y_center, w, h]
+        :return: features (NxF)
+        """
+        features = []
+
+        for det in dets:
+            xc, yc, w, h = det[:4]
+            x = xc - w / 2
+            y = yc - h / 2
+            x, y, w, h = map(int, [x, y, w, h])
+
+            crop = img[y: y + h, x: x + w]
+            input_array = self._preprocess(crop)
+            output_array = self.session.run(
+                [self.output_name], 
+                {self.input_name: input_array}
+            )
+            f = output_array[0][0]
+            features.append(f)
+        
+        features = np.array(features)
+        return features
+    
+    def _preprocess(self, image: np.ndarray) -> np.ndarray:
+        # Assuming the model expects a 224x224 RGB image
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        image = self.image_augmentation(image=np.array(image))["image"]
+        image = np.expand_dims(image, axis=0)
+        return image    

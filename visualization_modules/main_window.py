@@ -1,16 +1,37 @@
 import json
-import os
-from PyQt6 import QtGui
-from PyQt6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QHBoxLayout,
-    QSizePolicy, QMenuBar, QToolBar,
-    QMenu, QMainWindow, QApplication
-)
-from PyQt6.QtCore import QTimer
-from PyQt6.QtGui import QPixmap, QIcon, QCursor
-from PyQt6.QtGui import QAction
+
+try:
+    from PyQt6 import QtGui
+    from PyQt6.QtWidgets import (
+        QWidget, QLabel, QVBoxLayout, QHBoxLayout,
+        QSizePolicy, QMenuBar, QToolBar,
+        QMenu, QMainWindow, QApplication
+    )
+
+    from PyQt6.QtCore import QTimer
+    from PyQt6.QtGui import QPixmap, QIcon, QCursor
+    from PyQt6.QtGui import QAction
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
+    pyqt_version = 6
+except ImportError:
+    from PyQt5 import QtGui
+    from PyQt5.QtWidgets import (
+        QWidget, QLabel, QVBoxLayout, QHBoxLayout,
+        QSizePolicy, QMenuBar, QToolBar,
+        QMenu, QMainWindow, QApplication
+    )
+
+    from PyQt5.QtCore import QTimer
+    from PyQt5.QtGui import QPixmap, QIcon, QCursor
+    from PyQt5.QtWidgets import QAction
+    from PyQt5.QtCore import Qt
+    from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt
+    pyqt_version = 5
+
 import sys
-from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
+import cv2
+import os
 from pathlib import Path
 import utils
 import utils.utils
