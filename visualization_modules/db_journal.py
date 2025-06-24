@@ -30,11 +30,12 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 
 
 class DatabaseJournalWindow(QWidget):
-    def __init__(self, params):
+    def __init__(self, params, database_params):
         super().__init__()
         self.params = params
-        self.adapter_params = self.params['database_adapters']
-        self.db_params = self.params['database']
+        self.database_params = database_params
+        self.adapter_params = self.database_params['database_adapters']
+        self.db_params = self.database_params['database']
         self.vis_params = self.params['visualizer']
         self.obj_journal_enabled = self.vis_params['objects_journal_enabled']
 
@@ -65,7 +66,7 @@ class DatabaseJournalWindow(QWidget):
                                                                  self.tables['objects'], parent=self), 'Handler journal')
         self.tabs.addTab(events_journal.EventsJournal([self.cam_events_adapter,
                                                        self.perimeter_events_adapter, self.zone_events_adapter],
-                                                      self.db_controller, 'objects', self.params,
+                                                      self.db_controller, 'objects', self.params, self.database_params,
                                                       self.tables['objects'], parent=self), 'Alarms journal')
 
         self.layout = QVBoxLayout()

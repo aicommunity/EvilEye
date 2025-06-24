@@ -51,12 +51,13 @@ class ConfigurerMainWindow(QMainWindow):
     display_zones_signal = pyqtSignal(dict)
     add_zone_signal = pyqtSignal(int)
 
-    def __init__(self, win_width, win_height):
+    def __init__(self, config_file_name, win_width, win_height):
         super().__init__()
+        self.config_file_name = config_file_name
         self.setWindowTitle("EvilEye Configurer")
         self.resize(win_width, win_height)
 
-        file_path = 'configurer/initial_config.json'
+        file_path = self.config_file_name #'configurer/initial_config.json'
         full_path = os.path.join(utils.get_project_root(), file_path)
         with open(full_path, 'r+') as params_file:
             config_params = json.load(params_file)
@@ -307,11 +308,3 @@ class ConfigurerMainWindow(QMainWindow):
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         super().resizeEvent(event)
-
-
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    a = ConfigurerMainWindow(1280, 720)
-    a.show()
-    ret = app.exec()
-    sys.exit(ret)

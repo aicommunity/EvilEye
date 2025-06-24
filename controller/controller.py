@@ -42,6 +42,7 @@ class Controller:
         self.params = None
         self.sources = []
         self.credentials = dict()
+        self.database_config = dict()
         self.source_id_name_table = dict()
         self.source_video_duration = dict()
         self.source_last_processed_frame_id = dict()
@@ -361,6 +362,12 @@ class Controller:
         except FileNotFoundError as ex:
             pass
 
+        try:
+            with open("database_config.json") as data_config_file:
+                self.database_config = json.load(data_config_file)
+        except FileNotFoundError as ex:
+            pass
+
         self._init_captures(self.params.get('sources',list()))
         self._init_preprocessors(self.params.get('preprocessors', list()))
         self._init_detectors(self.params.get('detectors',list()))
@@ -377,8 +384,36 @@ class Controller:
         self.multicam_reid_enabled = multicam_reid
 
         self._init_visualizer(self.params['visualizer'])
-        self._init_db_controller(self.params['database'], system_params=self.params)
-        self._init_db_adapters(self.params['database_adapters'])
+
+        database_creds = self.credentials.get("database", None)
+        if not database_creds:
+            database_creds = dict()
+
+        database_creds["user_name"] = database_creds.get("user_name", "postgres")
+        database_creds["password"] = database_creds.get("password", "")
+        database_creds["database_name"] = database_creds.get("database_name", "evil_eye_db")
+        database_creds["host_name"] = database_creds.get("host_name", "localhost")
+        database_creds["port"] = database_creds.get("port", 5432)
+        database_creds["default_database_name"] = database_creds.get("default_database_name", "postgres")
+        database_creds["default_password"] = database_creds.get("default_password", "")
+        database_creds["default_user_name"] = database_creds.get("default_user_name", "postgres")
+        database_creds["default_host_name"] = database_creds.get("default_host_name", "localhost")
+        database_creds["default_port"] = database_creds.get("default_port", 5432)
+
+        self.database_config["database"]["user_name"] = self.database_config["database"].get("user_name", database_creds["user_name"])
+        self.database_config["database"]["password"] = self.database_config["database"].get("password", database_creds["password"])
+        self.database_config["database"]["database_name"] = self.database_config["database"].get("database_name", database_creds["database_name"])
+        self.database_config["database"]["host_name"] = self.database_config["database"].get("host_name", database_creds["host_name"])
+        self.database_config["database"]["port"] = self.database_config["database"].get("port", database_creds["port"])
+        self.database_config["database"]["default_database_name"] = self.database_config["database"].get("default_database_name", database_creds["default_database_name"])
+        self.database_config["database"]["default_password"] = self.database_config["database"].get("default_password", database_creds["default_password"])
+        self.database_config["database"]["default_user_name"] = self.database_config["database"].get("default_user_name", database_creds["default_user_name"])
+        self.database_config["database"]["default_host_name"] = self.database_config["database"].get("default_host_name", database_creds["default_host_name"])
+        self.database_config["database"]["default_port"] = self.database_config["database"].get("default_port", database_creds["default_port"])
+
+        self._init_db_controller(self.database_config['database'], system_params=self.params)
+        self._init_db_adapters(self.database_config['database_adapters'])
+
         self.__init_object_handler(self.db_controller, params['objects_handler'])
         self._init_events_detectors(self.params['events_detectors'])
         self._init_events_detectors_controller(self.params['events_detectors'])
@@ -439,7 +474,7 @@ class Controller:
         num_sources = len(params)
         for i in range(num_sources):
             src_params = params[i]
-            camera_creds = self.credentials.get(src_params["camera"], None)
+            camera_creds = self.credentials["sources"].get(src_params["camera"], None)
             if camera_creds and (not src_params.get("username", None) or not src_params.get("password", None)):
                 src_params["username"] = camera_creds["username"]
                 src_params["password"] = camera_creds["password"]

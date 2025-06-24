@@ -24,9 +24,9 @@ def restart():
 
 def start_app(file_path: str):
     with open(file_path, 'r+') as params_file:
-        data = json.load(params_file)
+        params = json.load(params_file)
     app = QApplication(sys.argv)
-    a = MainWindow(file_path, data, 1600, 720)
+    a = MainWindow(file_path, params, 1600, 720)
     a.show()
     ret = app.exec()
     sys.exit(ret)

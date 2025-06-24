@@ -88,6 +88,9 @@ class MainWindow(QMainWindow):
 
         self.params_path = params_file_path
         self.params = params
+
+        self.controller.init(self.params)
+
         self.rows = self.params['visualizer']['num_height']
         self.cols = self.params['visualizer']['num_width']
         self.cameras = self.params['sources']
@@ -111,7 +114,7 @@ class MainWindow(QMainWindow):
 
         self.toolbar_width = 0
         self._create_toolbar()
-        self.db_journal_win = DatabaseJournalWindow(self.params)
+        self.db_journal_win = DatabaseJournalWindow(self.params, self.controller.database_config)
         self.db_journal_win.setVisible(False)
         self.zone_window = ZoneWindow(self.params)
         self.zone_window.setVisible(False)
@@ -123,7 +126,6 @@ class MainWindow(QMainWindow):
         self.centralWidget().setLayout(vertical_layout)
         self.setup_layout()
 
-        self.controller.init(self.params)
         self.controller.start()
 
         self.timer = QTimer()
