@@ -9,11 +9,12 @@ from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
 
 
 class HandlerTab(QWidget):
-    def __init__(self, config_params):
+    def __init__(self, config_params, database_params):
         super().__init__()
 
         self.params = config_params
-        self.default_src_params = self.params['database']
+        self.database_params = database_params
+        self.default_src_params = self.database_params['database']
         self.config_result = copy.deepcopy(config_params)
 
         self.proj_root = utils.get_project_root()

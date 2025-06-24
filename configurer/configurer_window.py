@@ -62,12 +62,16 @@ class ConfigurerMainWindow(QMainWindow):
         with open(full_path, 'r+') as params_file:
             config_params = json.load(params_file)
 
+        with open("database_config.json", 'r+') as database_config_file:
+            database_params = json.load(database_config_file)
+
         self.params = config_params
+        self.database_params = database_params
         self.default_src_params = self.params['sources'][0]
         self.default_det_params = self.params['detectors'][0]
         self.default_track_params = self.params['trackers'][0]
         self.default_vis_params = self.params['visualizer']
-        self.default_db_params = self.params['database']
+        self.default_db_params = self.database_params['database']
         self.default_events_params = self.params['events_detectors']
         self.default_handler_params = self.params['objects_handler']
         self.config_result = copy.deepcopy(config_params)
@@ -120,8 +124,8 @@ class ConfigurerMainWindow(QMainWindow):
         self.tabs.addTab(src_tab.SourcesTab(self.params, parent=self), 'Sources')
         self.tabs.addTab(detector_tab.DetectorTab(self.params), 'Detectors')
         self.tabs.addTab(tracker_tab.TrackerTab(self.params), 'Trackers')
-        self.tabs.addTab(handler_tab.HandlerTab(self.params), 'Objects handler')
-        self.tabs.addTab(database_tab.DatabaseTab(self.params), 'Database')
+        self.tabs.addTab(handler_tab.HandlerTab(self.params, self.database_params), 'Objects handler')
+        self.tabs.addTab(database_tab.DatabaseTab(self.params, self.database_params), 'Database')
         self.tabs.addTab(visualizer_tab.VisualizerTab(self.params), 'Visualizer')
         self.tabs.addTab(events_tab.EventsTab(self.params), 'Events')
         self.sections = ['sources', 'detectors', 'trackers', 'objects_handler',
