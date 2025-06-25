@@ -65,13 +65,52 @@ class ConfigurerMainWindow(QMainWindow):
         with open("database_config.json", 'r+') as database_config_file:
             database_params = json.load(database_config_file)
 
+        try:
+            with open("credentials.json") as creds_file:
+                self.credentials = json.load(creds_file)
+        except FileNotFoundError as ex:
+            pass
+
+        database_creds = self.credentials.get("database", None)
+        if not database_creds:
+            database_creds = dict()
+
+        try:
+            with open("database_config.json") as data_config_file:
+                self.database_config = json.load(data_config_file)
+        except FileNotFoundError as ex:
+            self.database_config = dict()
+            self.database_config["database"] = dict()
+
+        database_creds["user_name"] = database_creds.get("user_name", "postgres")
+        database_creds["password"] = database_creds.get("password", "")
+        database_creds["database_name"] = database_creds.get("database_name", "evil_eye_db")
+        database_creds["host_name"] = database_creds.get("host_name", "localhost")
+        database_creds["port"] = database_creds.get("port", 5432)
+        database_creds["default_database_name"] = database_creds.get("default_database_name", "postgres")
+        database_creds["default_password"] = database_creds.get("default_password", "")
+        database_creds["default_user_name"] = database_creds.get("default_user_name", "postgres")
+        database_creds["default_host_name"] = database_creds.get("default_host_name", "localhost")
+        database_creds["default_port"] = database_creds.get("default_port", 5432)
+
+        self.database_config["database"]["user_name"] = self.database_config["database"].get("user_name", database_creds["user_name"])
+        self.database_config["database"]["password"] = self.database_config["database"].get("password", database_creds["password"])
+        self.database_config["database"]["database_name"] = self.database_config["database"].get("database_name", database_creds["database_name"])
+        self.database_config["database"]["host_name"] = self.database_config["database"].get("host_name", database_creds["host_name"])
+        self.database_config["database"]["port"] = self.database_config["database"].get("port", database_creds["port"])
+        self.database_config["database"]["default_database_name"] = self.database_config["database"].get("default_database_name", database_creds["default_database_name"])
+        self.database_config["database"]["default_password"] = self.database_config["database"].get("default_password", database_creds["default_password"])
+        self.database_config["database"]["default_user_name"] = self.database_config["database"].get("default_user_name", database_creds["default_user_name"])
+        self.database_config["database"]["default_host_name"] = self.database_config["database"].get("default_host_name", database_creds["default_host_name"])
+        self.database_config["database"]["default_port"] = self.database_config["database"].get("default_port", database_creds["default_port"])
+
+
         self.params = config_params
-        self.database_params = database_params
         self.default_src_params = self.params['sources'][0]
         self.default_det_params = self.params['detectors'][0]
         self.default_track_params = self.params['trackers'][0]
         self.default_vis_params = self.params['visualizer']
-        self.default_db_params = self.database_params['database']
+        self.default_db_params = self.database_config['database']
         self.default_events_params = self.params['events_detectors']
         self.default_handler_params = self.params['objects_handler']
         self.config_result = copy.deepcopy(config_params)
@@ -88,7 +127,7 @@ class ConfigurerMainWindow(QMainWindow):
         self.coords_edits = []
         self.src_counter = 0
         self.jobs_history = None
-        self.db_window = DatabaseConnectionWindow()
+        self.db_window = DatabaseConnectionWindow(self.database_config)
         self.db_window.database_connection_signal.connect(self._open_history)
         self.db_window.setVisible(False)
 
@@ -121,11 +160,11 @@ class ConfigurerMainWindow(QMainWindow):
 
     def _setup_tabs(self):
         self.tabs = QTabWidget()
-        self.tabs.addTab(src_tab.SourcesTab(self.params, parent=self), 'Sources')
-        self.tabs.addTab(detector_tab.DetectorTab(self.params), 'Detectors')
-        self.tabs.addTab(tracker_tab.TrackerTab(self.params), 'Trackers')
-        self.tabs.addTab(handler_tab.HandlerTab(self.params, self.database_params), 'Objects handler')
-        self.tabs.addTab(database_tab.DatabaseTab(self.params, self.database_params), 'Database')
+        self.tabs.addTab(src_tab.SourcesTab(self.params['sources'], parent=self), 'Sources')
+        self.tabs.addTab(detector_tab.DetectorTab(self.params['detectors']), 'Detectors')
+        self.tabs.addTab(tracker_tab.TrackerTab(self.params['trackers']), 'Trackers')
+        self.tabs.addTab(handler_tab.HandlerTab(self.params, self.database_config), 'Objects handler')
+        self.tabs.addTab(database_tab.DatabaseTab(self.params, self.database_config), 'Database')
         self.tabs.addTab(visualizer_tab.VisualizerTab(self.params), 'Visualizer')
         self.tabs.addTab(events_tab.EventsTab(self.params), 'Events')
         self.sections = ['sources', 'detectors', 'trackers', 'objects_handler',

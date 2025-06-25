@@ -25,8 +25,7 @@ class DetectorTab(QWidget):
         super().__init__()
 
         self.params = config_params
-        self.default_src_params = self.params['detectors'][0]
-        self.default_track_params = self.params['trackers'][0]
+        self.default_src_params = self.params[0]
         self.config_result = copy.deepcopy(config_params)
 
         self.proj_root = utils.get_project_root()
@@ -36,6 +35,11 @@ class DetectorTab(QWidget):
         self.det_tabs = QTabWidget()
         self.det_tabs.setTabsClosable(True)
         self.det_tabs.tabCloseRequested.connect(self._remove_tab)
+
+        for params in self.params:
+            new_detector = DetectorWidget(params=params)
+            self.detectors.append(new_detector)
+            self.det_tabs.addTab(new_detector, f'Detector{len(self.detectors) - 1}')
 
         self.vertical_layout = QVBoxLayout()
         self.vertical_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -51,6 +55,9 @@ class DetectorTab(QWidget):
         self.vertical_layout.addLayout(self.button_layout)
         self.setLayout(self.vertical_layout)
 
+        if len(self.detectors) > 0:
+            self.tracker_enabled_signal.emit()
+
     @pyqtSlot(int)
     def _remove_tab(self, idx):
         self.det_tabs.removeTab(idx)
@@ -58,11 +65,11 @@ class DetectorTab(QWidget):
 
     @pyqtSlot()
     def _add_detector(self):
-        new_detector = DetectorWidget()
-        self.det_tabs.addTab(new_detector, f'Detector{len(self.detectors) + 1}')
-        if not self.detectors:
-            self.tracker_enabled_signal.emit()
+        new_detector = DetectorWidget(self.default_src_params)
         self.detectors.append(new_detector)
+        self.det_tabs.addTab(new_detector, f'Detector{len(self.detectors) - 1}')
+        if len(self.detectors) == 1:
+            self.tracker_enabled_signal.emit()
 
     def get_forms(self) -> list[QFormLayout]:
         forms = []

@@ -56,15 +56,21 @@ class SourcesTab(QWidget):
         super().__init__(parent)
 
         self.params = config_params
-        self.default_src_params = self.params['sources'][0]
+        self.default_src_params = self.params[0]
         self.config_result = copy.deepcopy(config_params)
 
-        self.sources = [SourceWidget(parent=self)]
-        self.sources[0].conn_win_signal.connect(self.connection_win_signal)
         self.sources_tabs = QTabWidget()
         self.sources_tabs.setTabsClosable(True)
         self.sources_tabs.tabCloseRequested.connect(self._remove_tab)
-        self.sources_tabs.addTab(self.sources[0], 'Source1')
+
+        self.sources = []
+        for params in self.params:
+            widget = SourceWidget(params=params, parent=self)
+            self.sources.append(widget)
+            widget.conn_win_signal.connect(self.connection_win_signal)
+            name = str(params["source_names"])
+            self.sources_tabs.addTab(widget, name)
+
         self.src_history = None
 
         self.vertical_layout = QVBoxLayout()

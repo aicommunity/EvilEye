@@ -23,7 +23,7 @@ class TrackerTab(QWidget):
         super().__init__()
 
         self.params = config_params
-        self.default_track_params = self.params['trackers'][0]
+        self.default_track_params = self.params[0]
         self.config_result = copy.deepcopy(config_params)
 
         self.proj_root = utils.get_project_root()
@@ -39,6 +39,11 @@ class TrackerTab(QWidget):
         self.track_tabs = QTabWidget()
         self.track_tabs.setTabsClosable(True)
         self.track_tabs.tabCloseRequested.connect(self._remove_tab)
+
+        for params in self.params:
+            new_tracker = TrackerWidget(params=params)
+            self.trackers.append(new_tracker)
+            self.track_tabs.addTab(new_tracker, f'Tracker{len(self.trackers) - 1}')
 
         self.vertical_layout = QVBoxLayout()
         self.vertical_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -56,6 +61,9 @@ class TrackerTab(QWidget):
         self.vertical_layout.addLayout(self.button_layout)
         self.setLayout(self.vertical_layout)
 
+        if len(self.trackers) > 0:
+            self.enable_add_tracker_button()
+
     @pyqtSlot(int)
     def _remove_tab(self, idx):
         self.track_tabs.removeTab(idx)
@@ -70,9 +78,9 @@ class TrackerTab(QWidget):
 
     @pyqtSlot()
     def _add_tracker(self):
-        new_tracker = TrackerWidget()
-        self.track_tabs.addTab(new_tracker, f'Tracker{len(self.trackers) + 1}')
+        new_tracker = TrackerWidget(self.default_track_params)
         self.trackers.append(new_tracker)
+        self.track_tabs.addTab(new_tracker, f'Tracker{len(self.trackers) - 1}')
 
     def get_forms(self) -> list[QFormLayout]:
         forms = []

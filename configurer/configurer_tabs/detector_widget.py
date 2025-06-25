@@ -18,9 +18,10 @@ from configurer import parameters_processing
 
 
 class DetectorWidget(QWidget):
-    def __init__(self):
+    def __init__(self, params):
         super().__init__()
 
+        self.params = params
         self.proj_root = utils.get_project_root()
         self.hor_layouts = []
         self.split_check_boxes = []

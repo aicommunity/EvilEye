@@ -362,12 +362,6 @@ class Controller:
         except FileNotFoundError as ex:
             pass
 
-        try:
-            with open("database_config.json") as data_config_file:
-                self.database_config = json.load(data_config_file)
-        except FileNotFoundError as ex:
-            pass
-
         self._init_captures(self.params.get('sources',list()))
         self._init_preprocessors(self.params.get('preprocessors', list()))
         self._init_detectors(self.params.get('detectors',list()))
@@ -388,6 +382,12 @@ class Controller:
         database_creds = self.credentials.get("database", None)
         if not database_creds:
             database_creds = dict()
+
+        try:
+            with open("database_config.json") as data_config_file:
+                self.database_config = json.load(data_config_file)
+        except FileNotFoundError as ex:
+            pass
 
         database_creds["user_name"] = database_creds.get("user_name", "postgres")
         database_creds["password"] = database_creds.get("password", "")

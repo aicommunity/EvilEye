@@ -11,15 +11,18 @@ from PyQt6.QtSql import QSqlDatabase
 class DatabaseConnectionWindow(QWidget):
     database_connection_signal = pyqtSignal()
 
-    def __init__(self, parent=None):
+    def __init__(self, database_access_params, parent=None):
         super().__init__(parent)
         self.setWindowTitle('Database configurer')
         self.setMinimumSize(300, 150)
         self.main_layout = QVBoxLayout()
         self.db_layout = QFormLayout()
         self.connect_button = QPushButton('Connect')
-        self.db_params = {}
-        self.line_edit_param = {}
+        self.db_params = database_access_params['database']
+        self.line_edit_param = {'Username': self.db_params['user_name'], 'Password': self.db_params['password'],
+                                'DB name': self.db_params['database_name'], 'Host name': self.db_params['host_name'],
+                                'Port': self.db_params['port']}
+
         self.is_conn = False
 
         self._setup_db_form()
@@ -36,22 +39,27 @@ class DatabaseConnectionWindow(QWidget):
         user_name = QLineEdit()
         self.db_layout.addRow('Username', user_name)
         self.line_edit_param['Username'] = 'user_name'
+        user_name.setText(self.db_params['user_name'])
 
         password = QLineEdit()
         self.db_layout.addRow('Password', password)
         self.line_edit_param['Password'] = 'password'
+        password.setText(self.db_params['password'])
 
         db_name = QLineEdit()
         self.db_layout.addRow('DB name', db_name)
         self.line_edit_param['DB name'] = 'database_name'
+        db_name.setText(self.db_params['database_name'])
 
         host_name = QLineEdit()
         self.db_layout.addRow('Host name', host_name)
         self.line_edit_param['Host name'] = 'host_name'
+        host_name.setText(self.db_params['host_name'])
 
         port = QLineEdit()
         self.db_layout.addRow('Port', port)
         self.line_edit_param['Port'] = 'port'
+        port.setText(str(self.db_params['port']))
 
         widgets = (self.db_layout.itemAt(i).widget() for i in range(self.db_layout.count()))
         for widget in widgets:
@@ -84,7 +92,7 @@ class DatabaseConnectionWindow(QWidget):
             self.is_conn = True
 
     def closeEvent(self, event) -> None:
-        print('DB removed')
+        print('DB jobs_conn removed')
         QSqlDatabase.removeDatabase('jobs_conn')
         event.accept()
 

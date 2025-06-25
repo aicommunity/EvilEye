@@ -18,9 +18,10 @@ from configurer import parameters_processing
 
 
 class TrackerWidget(QWidget):
-    def __init__(self):
+    def __init__(self, params):
         super().__init__()
 
+        self.params = params
         self.proj_root = utils.get_project_root()
 
         self.line_edit_param = {}  # Словарь для сопоставления полей интерфейса с полями json-файла

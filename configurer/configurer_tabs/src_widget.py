@@ -22,9 +22,10 @@ class SourceWidget(QWidget):
     update_image_signal = pyqtSignal()
     conn_win_signal = pyqtSignal()
 
-    def __init__(self, parent=None):
+    def __init__(self, params, parent=None):
         super().__init__(parent)
 
+        self.params = params
         self.proj_root = utils.get_project_root()
         self.hor_layouts = []
         self.split_check_boxes = []
