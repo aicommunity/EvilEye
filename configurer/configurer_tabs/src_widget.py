@@ -43,7 +43,7 @@ class SourceWidget(QWidget):
         self.src_history_added = False
 
         self.horizontal_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self._setup_layout()
+        self._setup_layout(self.params)
         self.setLayout(self.horizontal_layout)
 
     def show_src_history(self, src_list: QWidget):
@@ -54,7 +54,7 @@ class SourceWidget(QWidget):
         self.history_btn.setEnabled(False)
         self.v_layout.insertWidget(2, src_list)
 
-    def _setup_layout(self):
+    def _setup_layout(self, params):
         self.horizontal_layout.setContentsMargins(10, 10, 10, 10)
         self.v_layout = QVBoxLayout()
         self.v_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
@@ -66,7 +66,7 @@ class SourceWidget(QWidget):
         self.capture_v_layout.addWidget(capture_label)
         self.horizontal_layout.addLayout(self.capture_v_layout)
 
-        self.source_layout = self._setup_src_form()
+        self.source_layout = self._setup_src_form(params)
         self.v_layout.addLayout(self.source_layout)
 
         button_layout = QHBoxLayout()
@@ -127,7 +127,7 @@ class SourceWidget(QWidget):
     def _update_label(self, idx, image):
         self.capture_labels[idx].setPixmap(image)
 
-    def _setup_src_form(self) -> QFormLayout:
+    def _setup_src_form(self, params) -> QFormLayout:
         source_layout = QFormLayout()
         source_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
@@ -137,45 +137,60 @@ class SourceWidget(QWidget):
 
         src_type = QComboBox()
         src_type.addItems([capture_type.name for capture_type in CaptureDeviceType])
+        index = src_type.findText(params['source'])
+        if index != -1:
+            src_type.setCurrentIndex(index)
         source_layout.addRow('Source type', src_type)
         self.line_edit_param['sources']['Source type'] = 'source'
 
         self.src_link = QLineEdit()
+        self.src_link.setText(params['camera'])
         source_layout.addRow('RTSP-link or file path', self.src_link)
         self.line_edit_param['sources']['RTSP-link or file path'] = 'camera'
 
         api = QComboBox()
         api.addItems([api.name for api in VideoCapture.VideoCaptureAPIs])
-        api.setCurrentIndex(2)
+        index = api.findText(params['apiPreference'])
+        if index != -1:
+            api.setCurrentIndex(index)
         source_layout.addRow('OpenCV API', api)
         self.line_edit_param['sources']['OpenCV API'] = 'apiPreference'
 
         split_box = QCheckBox()
         source_layout.addRow('Split', split_box)
+        split_box.setText('Split source')
+        split_box.setChecked(params['split'])
         split_box.checkStateChanged.connect(self._set_coords_line_active)
         self.split_check_boxes.append(split_box)
         self.line_edit_param['sources']['Split'] = 'split'
 
         num_split = QLineEdit()
-        num_split.setText('0')
-        num_split.setEnabled(False)
+        num_split.setText(str(params['num_split']))
+        if params['split']:
+            num_split.setEnabled(True)
+        else:
+            num_split.setEnabled(False)
         source_layout.addRow('Split number', num_split)
         self.line_edit_param['sources']['Split number'] = 'num_split'
 
         split_coords = QLineEdit()
-        split_coords.setText('[[0, 0, 0, 0], [0, 0, 0, 0]]')
-        split_coords.setEnabled(False)
+        split_coords.setText(str(params['src_coords']))
+        if params['split']:
+            split_coords.setEnabled(True)
+            split_coords.setEnabled(True)
+        else:
+            split_coords.setEnabled(False)
         source_layout.addRow('Frame split', split_coords)
         self.coords_edits.append((split_coords, num_split))
         self.line_edit_param['sources']['Frame split'] = 'src_coords'
 
         src_ids = QLineEdit()
-        src_ids.setText('[ids]')
+        src_ids.setText(str(params['source_ids']))
         source_layout.addRow('Sources ids', src_ids)
         self.line_edit_param['sources']['Sources ids'] = 'source_ids'
 
         src_names = QLineEdit()
-        src_names.setText('[names]')
+        src_names.setText(str(params['source_names']))
         source_layout.addRow('Sources names', src_names)
         self.line_edit_param['sources']['Sources names'] = 'source_names'
 

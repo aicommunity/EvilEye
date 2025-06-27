@@ -5,6 +5,8 @@ from PyQt6.QtWidgets import (
     QSizePolicy, QToolBar, QComboBox, QFormLayout, QSpacerItem,
     QMenu, QMainWindow, QApplication, QCheckBox, QPushButton
 )
+from capture.video_capture_base import CaptureDeviceType
+from capture.video_capture import VideoCapture
 
 
 def process_src_params(form_layouts, widgets_params_dict) -> list[dict]:
@@ -28,9 +30,11 @@ def process_src_params(form_layouts, widgets_params_dict) -> list[dict]:
                     case 'camera':
                         src_params[param_name] = widget.text()
                     case 'source':
-                        src_params[param_name] = widget.currentText()
+                        text = widget.currentText()
+                        src_params[param_name] = CaptureDeviceType[text].value
                     case 'apiPreference':
-                        src_params[param_name] = widget.currentText()
+                        text = widget.currentText()
+                        src_params[param_name] = VideoCapture.VideoCaptureAPIs[text].name
                     case 'split':
                         src_params[param_name] = True if widget.isChecked() else False
                     case 'num_split':

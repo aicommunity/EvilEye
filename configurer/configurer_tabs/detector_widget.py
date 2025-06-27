@@ -25,8 +25,8 @@ class DetectorWidget(QWidget):
         self.proj_root = utils.get_project_root()
         self.hor_layouts = []
         self.split_check_boxes = []
-        self.botsort_check_boxes = []
-        self.coords_edits = []
+        #self.botsort_check_boxes = []
+        #self.coords_edits = []
         self.buttons_layouts_number = {}
         self.widgets_counter = 0
         self.layouts_counter = 0
@@ -35,14 +35,14 @@ class DetectorWidget(QWidget):
 
         self.horizontal_layout = QHBoxLayout()
         self.horizontal_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self._setup_detector_layout()
+        self._setup_detector_layout(self.params)
         self.setLayout(self.horizontal_layout)
 
-    def _setup_detector_layout(self):
-        self.det_layout = self._setup_detector_form()
+    def _setup_detector_layout(self, params):
+        self.det_layout = self._setup_detector_form(params)
         self.horizontal_layout.addLayout(self.det_layout)
 
-    def _setup_detector_form(self) -> QFormLayout:
+    def _setup_detector_form(self, params) -> QFormLayout:
         layout = QFormLayout()
 
         name = QLabel('Detector Parameters')
@@ -50,33 +50,37 @@ class DetectorWidget(QWidget):
         self.line_edit_param['detectors'] = {}
 
         src_ids = QLineEdit()
-        src_ids.setText('[ids]')
+        src_ids.setText(str(params['source_ids']))
         layout.addRow('Sources ids', src_ids)
         self.line_edit_param['detectors']['Sources ids'] = 'source_ids'
 
         model = QLineEdit()
         layout.addRow('Model', model)
+        model.setText(params['model'])
         self.line_edit_param['detectors']['Model'] = 'model'
 
         inf_size = QLineEdit()
+        inf_size.setText(str(params['inference_size']))
         layout.addRow('Inference size', inf_size)
         self.line_edit_param['detectors']['Inference size'] = 'inference_size'
 
         conf = QLineEdit()
         layout.addRow('Confidence', conf)
+        conf.setText(str(params['conf']))
         self.line_edit_param['detectors']['Confidence'] = 'conf'
 
         classes = QLineEdit()
-        classes.setText('[classes(int)]')
+        classes.setText(str(params['classes']))
         layout.addRow('Classes', classes)
         self.line_edit_param['detectors']['Classes'] = 'classes'
 
         num_det_threads = QLineEdit()
+        num_det_threads.setText(str(params['num_detection_threads']))
         layout.addRow('Number of threads', num_det_threads)
         self.line_edit_param['detectors']['Number of threads'] = 'num_detection_threads'
 
         roi = QLineEdit()
-        roi.setText('[[[roi1_coords], [roi2_coords]]]')
+        roi.setText(str(params['roi']))
         layout.addRow('ROI', roi)
         self.line_edit_param['detectors']['ROI'] = 'roi'
 
