@@ -4,17 +4,33 @@ import os.path
 import multiprocessing
 from configurer.jobs_history_journal import JobsHistory
 from configurer.db_connection_window import DatabaseConnectionWindow
-from PyQt6 import QtGui
-from PyQt6.QtWidgets import (
+
+try:
+    from PyQt6 import QtGui
+    from PyQt6.QtGui import QIcon
+    from PyQt6.QtGui import QAction
+    from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
+    from PyQt6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout, QLineEdit, QScrollArea,
     QSizePolicy, QToolBar, QComboBox, QFormLayout, QSpacerItem, QTextEdit,
     QMenu, QMainWindow, QApplication, QCheckBox, QPushButton, QTabWidget
-)
+    )
+    pyqt_version = 6
+except ImportError:
+    from PyQt5 import QtGui
+    from PyQt5.QtGui import QIcon
+    from PyQt5.QtGui import QAction
+    from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt
+    from PyQt5.QtWidgets import (
+    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QLineEdit, QScrollArea,
+    QSizePolicy, QToolBar, QComboBox, QFormLayout, QSpacerItem, QTextEdit,
+    QMenu, QMainWindow, QApplication, QCheckBox, QPushButton, QTabWidget
+    )
+    pyqt_version = 5
+
+
 from utils import utils
-from PyQt6.QtGui import QIcon
-from PyQt6.QtGui import QAction
 import sys
-from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
 from capture.video_capture_base import CaptureDeviceType
 from capture import VideoCapture
 import configurer.parameters_processing

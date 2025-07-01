@@ -13,7 +13,7 @@ except ImportError:
 
 
 from visualization_modules.main_window import MainWindow
-import configurer.configurer_window as config
+# import configurer.configurer_window as config
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
@@ -32,12 +32,12 @@ def start_app(file_path: str):
     sys.exit(ret)
 
 
-def start_configurer():
-    app = QApplication(sys.argv)
-    a = config.ConfigurerMainWindow(1280, 720)
-    a.show()
-    ret = app.exec()
-    sys.exit(ret)
+#def start_configurer():
+#    app = QApplication(sys.argv)
+#    a = config.ConfigurerMainWindow(1280, 720)
+#    a.show()
+#    ret = app.exec()
+#    sys.exit(ret)
 
 
 if __name__ == "__main__":
@@ -49,7 +49,7 @@ if __name__ == "__main__":
     if args.fullpath is None:
         if config_path:
             start_app(config_path)
-        else:
-            start_configurer()
+        #else:
+        #    start_configurer()
     else:
         start_app(args.fullpath)
