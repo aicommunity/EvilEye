@@ -5,6 +5,7 @@ from PyQt6.QtWidgets import (
 )
 from utils import utils
 from PyQt6.QtCore import pyqtSlot, Qt
+from configurer import parameters_processing
 
 
 class EventsTab(QWidget):
@@ -126,7 +127,49 @@ class EventsTab(QWidget):
         return form_layouts
 
     def get_params(self):
-        if self.line_edit_param:
-            return self.line_edit_param
-        else:
-            return None
+        form_layouts = self.get_forms()
+        events_params = self._get_events_params(form_layouts)
+        return events_params
+
+    def _get_events_params(self, form_layouts):
+        ev_params = {}
+        param_name = ''
+        for form_layout in form_layouts:
+            widgets = [form_layout.itemAt(i).widget() for i in range(1, form_layout.count())]
+            detector_name = form_layout.itemAt(0).widget().text()
+            ev_params[detector_name] = {}
+            for i, widget in enumerate(widgets):
+                if isinstance(widget, QLabel):
+                    if widget.text() in self.line_edit_param[detector_name]:
+                        param_name = self.line_edit_param[detector_name][widget.text()]
+                    else:
+                        param_name = ''
+                else:
+                    if not param_name:
+                        continue
+                    match param_name:
+                        case 'event_threshold':
+                            ev_params[detector_name][param_name] = parameters_processing.process_numeric_types(widget.text())
+                        case 'zone_left_threshold':
+                            ev_params[detector_name][param_name] = parameters_processing.process_numeric_types(widget.text())
+                        case 'sources':
+                            ev_params[detector_name][param_name] = self._get_events_src_params(widgets[i - 1:])
+                            break
+        return ev_params
+
+    def _get_events_src_params(self, widgets: list) -> dict:
+        src_params = {}
+        param_name = ''
+        last_src_id = ''
+        for widget in widgets:
+            if isinstance(widget, QLabel):
+                param_name = widget.text()
+            else:
+                match param_name:
+                    case 'Source id':
+                        last_src_id = widget.text()
+                    case 'Zones':
+                        src_params[last_src_id] = parameters_processing.process_numeric_lists(widget.text())
+                    case 'Time':
+                        src_params[last_src_id] = parameters_processing.process_str_list(widget.text())
+        return src_params

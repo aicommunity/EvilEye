@@ -51,41 +51,40 @@ class VisualizerTab(QWidget):
 
         name = QLabel('Visualizer Parameters')
         layout.addWidget(name)
-        self.line_edit_param['visualizer'] = {}
 
         num_width = QLineEdit()
         layout.addRow('Number of cameras in width', num_width)
-        self.line_edit_param['visualizer']['Number of cameras in width'] = 'num_width'
+        self.line_edit_param['num_width'] = num_width
 
         num_height = QLineEdit()
         layout.addRow('Number of cameras in height', num_height)
-        self.line_edit_param['visualizer']['Number of cameras in height'] = 'num_height'
+        self.line_edit_param['num_height'] = num_height
 
         visual_buffer = QLineEdit()
         layout.addRow('Visual buffer size', visual_buffer)
-        self.line_edit_param['visualizer']['Visual buffer size'] = 'visual_buffer_num_frames'
+        self.line_edit_param['visual_buffer_num_frames'] = visual_buffer
 
         source_ids = QLineEdit()
         source_ids.setText('[Sources]')
         layout.addRow('Visualized sources', source_ids)
-        self.line_edit_param['visualizer']['Visualized sources'] = 'source_ids'
+        self.line_edit_param['source_ids'] = source_ids
 
         fps_sources = QLineEdit()
         fps_sources.setText('[Sources fps]')
         layout.addRow('Sources fps', fps_sources)
-        self.line_edit_param['visualizer']['Sources fps'] = 'fps'
+        self.line_edit_param['fps'] = fps_sources
 
         gui_enabled = QCheckBox()
         layout.addRow('GUI Enabled', gui_enabled)
-        self.line_edit_param['visualizer']['GUI Enabled'] = 'gui_enabled'
+        self.line_edit_param['gui_enabled'] = gui_enabled
 
         show_debug_info = QCheckBox()
         layout.addRow('Show debug information', show_debug_info)
-        self.line_edit_param['visualizer']['Show debug information'] = 'show_debug_info'
+        self.line_edit_param['show_debug_info'] = show_debug_info
 
         objects_journal_enabled = QCheckBox()
         layout.addRow('Objects journal enabled', objects_journal_enabled)
-        self.line_edit_param['visualizer']['Objects journal enabled'] = 'objects_journal_enabled'
+        self.line_edit_param['objects_journal_enabled'] = objects_journal_enabled
 
         widgets = (layout.itemAt(i).widget() for i in range(layout.count()))
         for widget in widgets:
@@ -100,4 +99,34 @@ class VisualizerTab(QWidget):
         return form_layouts
 
     def get_params(self):
-        return self.line_edit_param['visualizer']
+        res_dict = self._create_dict()
+        return res_dict
+
+    def _create_dict(self):
+        vis_params = {}
+
+        widget = self.line_edit_param['num_width']
+        vis_params['num_width'] = parameters_processing.process_numeric_types(widget.text())
+
+        widget = self.line_edit_param['num_height']
+        vis_params['num_height'] = parameters_processing.process_numeric_types(widget.text())
+
+        widget = self.line_edit_param['visual_buffer_num_frames']
+        vis_params['visual_buffer_num_frames'] = parameters_processing.process_numeric_types(widget.text())
+
+        widget = self.line_edit_param['source_ids']
+        vis_params['source_ids'] = parameters_processing.process_numeric_lists(widget.text())
+
+        widget = self.line_edit_param['fps']
+        vis_params['fps'] = parameters_processing.process_numeric_lists(widget.text())
+
+        widget = self.line_edit_param['gui_enabled']
+        vis_params['gui_enabled'] = True if widget.isChecked() else False
+
+        widget = self.line_edit_param['show_debug_info']
+        vis_params['show_debug_info'] = True if widget.isChecked() else False
+
+        widget = self.line_edit_param['objects_journal_enabled']
+        vis_params['objects_journal_enabled'] = True if widget.isChecked() else False
+
+        return vis_params

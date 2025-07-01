@@ -47,42 +47,42 @@ class DetectorWidget(QWidget):
 
         name = QLabel('Detector Parameters')
         layout.addWidget(name)
-        self.line_edit_param['detectors'] = {}
+        self.line_edit_param = {}
 
         src_ids = QLineEdit()
         src_ids.setText(str(params['source_ids']))
         layout.addRow('Sources ids', src_ids)
-        self.line_edit_param['detectors']['Sources ids'] = 'source_ids'
+        self.line_edit_param['source_ids'] = src_ids
 
         model = QLineEdit()
         layout.addRow('Model', model)
         model.setText(params['model'])
-        self.line_edit_param['detectors']['Model'] = 'model'
+        self.line_edit_param['model'] = model
 
         inf_size = QLineEdit()
         inf_size.setText(str(params['inference_size']))
         layout.addRow('Inference size', inf_size)
-        self.line_edit_param['detectors']['Inference size'] = 'inference_size'
+        self.line_edit_param['inference_size'] = inf_size
 
         conf = QLineEdit()
         layout.addRow('Confidence', conf)
         conf.setText(str(params['conf']))
-        self.line_edit_param['detectors']['Confidence'] = 'conf'
+        self.line_edit_param['conf'] = conf
 
         classes = QLineEdit()
         classes.setText(str(params['classes']))
         layout.addRow('Classes', classes)
-        self.line_edit_param['detectors']['Classes'] = 'classes'
+        self.line_edit_param['classes'] = classes
 
         num_det_threads = QLineEdit()
         num_det_threads.setText(str(params['num_detection_threads']))
         layout.addRow('Number of threads', num_det_threads)
-        self.line_edit_param['detectors']['Number of threads'] = 'num_detection_threads'
+        self.line_edit_param['num_detection_threads'] = num_det_threads
 
         roi = QLineEdit()
         roi.setText(str(params['roi']))
         layout.addRow('ROI', roi)
-        self.line_edit_param['detectors']['ROI'] = 'roi'
+        self.line_edit_param['roi'] = roi
 
         widgets = (layout.itemAt(i).widget() for i in range(layout.count()))
         for widget in widgets:
@@ -96,3 +96,32 @@ class DetectorWidget(QWidget):
 
     def get_params(self):
         return self.line_edit_param.get('detectors', None)
+
+    def get_dict(self):
+        res_dict = self._create_dict()
+        return res_dict
+
+    def _create_dict(self):
+        src_params = {}
+
+        widget = self.line_edit_param['source_ids']
+        src_params['source_ids'] = parameters_processing.process_numeric_lists(widget.text())
+
+        widget = self.line_edit_param['model']
+        src_params['model'] = widget.text()
+
+        widget = self.line_edit_param['inference_size']
+        src_params['inference_size'] = parameters_processing.process_numeric_types(widget.text())
+
+        widget = self.line_edit_param['conf']
+        src_params['conf'] = parameters_processing.process_numeric_types(widget.text())
+
+        widget = self.line_edit_param['classes']
+        src_params['classes'] = parameters_processing.process_numeric_lists(widget.text())
+
+        widget = self.line_edit_param['num_detection_threads']
+        src_params['num_detection_threads'] = parameters_processing.process_numeric_types(widget.text())
+
+        widget = self.line_edit_param['roi']
+        src_params['roi'] = parameters_processing.process_numeric_lists(widget.text())
+        return src_params

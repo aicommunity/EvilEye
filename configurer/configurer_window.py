@@ -10,8 +10,9 @@ try:
     from PyQt6.QtGui import QIcon
     from PyQt6.QtGui import QAction
     from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
+    from PyQt6.QtSql import QSqlDatabase
     from PyQt6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QLineEdit, QScrollArea,
+    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QLineEdit, QScrollArea, QMessageBox,
     QSizePolicy, QToolBar, QComboBox, QFormLayout, QSpacerItem, QTextEdit,
     QMenu, QMainWindow, QApplication, QCheckBox, QPushButton, QTabWidget
     )
@@ -21,8 +22,9 @@ except ImportError:
     from PyQt5.QtGui import QIcon
     from PyQt5.QtGui import QAction
     from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt
+    from PyQt5.QtSql import QSqlDatabase
     from PyQt5.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QLineEdit, QScrollArea,
+    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QLineEdit, QScrollArea, QMessageBox,
     QSizePolicy, QToolBar, QComboBox, QFormLayout, QSpacerItem, QTextEdit,
     QMenu, QMainWindow, QApplication, QCheckBox, QPushButton, QTabWidget
     )
@@ -73,7 +75,9 @@ class ConfigurerMainWindow(QMainWindow):
         self.setWindowTitle("EvilEye Configurer")
         self.resize(win_width, win_height)
 
-        file_path = self.config_file_name #'configurer/initial_config.json'
+        self.is_db_connected = False
+
+        file_path = self.config_file_name  # 'configurer/initial_config.json'
         full_path = os.path.join(utils.get_project_root(), file_path)
         with open(full_path, 'r+') as params_file:
             config_params = json.load(params_file)
@@ -120,7 +124,6 @@ class ConfigurerMainWindow(QMainWindow):
         self.database_config["database"]["default_host_name"] = self.database_config["database"].get("default_host_name", database_creds["default_host_name"])
         self.database_config["database"]["default_port"] = self.database_config["database"].get("default_port", database_creds["default_port"])
 
-
         self.params = config_params
         self.default_src_params = self.params['sources'][0]
         self.default_det_params = self.params['detectors'][0]
@@ -143,9 +146,9 @@ class ConfigurerMainWindow(QMainWindow):
         self.coords_edits = []
         self.src_counter = 0
         self.jobs_history = None
-        self.db_window = DatabaseConnectionWindow(self.database_config)
-        self.db_window.database_connection_signal.connect(self._open_history)
-        self.db_window.setVisible(False)
+        # self.db_window = DatabaseConnectionWindow(self.database_config)
+        # self.db_window.database_connection_signal.connect(self._open_history)
+        # self.db_window.setVisible(False)
 
         self.save_win = SaveWindow()
         self.save_win.save_params_signal.connect(self._save_params)
@@ -167,6 +170,7 @@ class ConfigurerMainWindow(QMainWindow):
 
         self.toolbar_width = 0
         self._create_toolbar()
+        self._connect_to_db()
 
         self.vertical_layout = QVBoxLayout()
         self.vertical_layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
@@ -176,7 +180,7 @@ class ConfigurerMainWindow(QMainWindow):
 
     def _setup_tabs(self):
         self.tabs = QTabWidget()
-        self.tabs.addTab(src_tab.SourcesTab(self.params['sources'], parent=self), 'Sources')
+        self.tabs.addTab(src_tab.SourcesTab(self.params['sources'], self.credentials, parent=self), 'Sources')
         self.tabs.addTab(detector_tab.DetectorTab(self.params['detectors']), 'Detectors')
         self.tabs.addTab(tracker_tab.TrackerTab(self.params['trackers']), 'Trackers')
         self.tabs.addTab(handler_tab.HandlerTab(self.params, self.database_config), 'Objects handler')
@@ -187,7 +191,7 @@ class ConfigurerMainWindow(QMainWindow):
                          'database', 'visualizer', 'events_detectors']
 
         source_tab = self.tabs.widget(0)
-        source_tab.connection_win_signal.connect(self._connect_to_db)
+        source_tab.connection_win_signal.connect(self._check_db_connection)
         det_tab = self.tabs.widget(1)
         track_tab = self.tabs.widget(2)
         det_tab.tracker_enabled_signal.connect(track_tab.enable_add_tracker_button)
@@ -232,7 +236,7 @@ class ConfigurerMainWindow(QMainWindow):
 
     def _connect_actions(self):
         self.save_params.triggered.connect(self._open_save_win)
-        self.open_jobs_history.triggered.connect(self._connect_to_db)
+        self.open_jobs_history.triggered.connect(self._check_db_connection)
         self.start_app.triggered.connect(self._prepare_running)
 
     @pyqtSlot()
@@ -261,28 +265,30 @@ class ConfigurerMainWindow(QMainWindow):
             self._run_app()
 
     @pyqtSlot()
-    def _connect_to_db(self):
+    def _check_db_connection(self):
         sender = self.sender()
         if isinstance(sender, QAction):
             self.jobs_hist_clicked = True
             self.src_hist_clicked = False
-            if self.db_window.is_connected():
+            if self.is_db_connected:
                 self._open_history()
             else:
-                if self.db_window.isVisible():
-                    self.db_window.setVisible(False)
-                else:
-                    self.db_window.setVisible(True)
+                self._connect_to_db()
+                # if self.db_window.isVisible():
+                #     self.db_window.setVisible(False)
+                # else:
+                #     self.db_window.setVisible(True)
         else:
             self.src_hist_clicked = True
             self.jobs_hist_clicked = False
-            if self.db_window.is_connected():
+            if self.is_db_connected:
                 self.tabs.widget(0).open_src_list()
             else:
-                if self.db_window.isVisible():
-                    self.db_window.setVisible(False)
-                else:
-                    self.db_window.setVisible(True)
+                self._connect_to_db()
+                # if self.db_window.isVisible():
+                #     self.db_window.setVisible(False)
+                # else:
+                #     self.db_window.setVisible(True)
 
     @pyqtSlot()
     def _open_history(self):
@@ -300,68 +306,52 @@ class ConfigurerMainWindow(QMainWindow):
             self.tabs.widget(0).open_src_list()
 
     def _process_params_strings(self):
-        for section in self.sections:
-            match section:
-                case 'sources':
-                    src_config = configurer.parameters_processing.process_src_params(
-                        self.tab_params['sources'].get_forms(), self.tab_params['sources'].get_params())
-                    self._rewrite_config('sources', self.default_src_params, src_config)
-                case 'detectors':
-                    det_config = configurer.parameters_processing.process_detector_params(
-                        self.tab_params['detectors'].get_forms(), self.tab_params['detectors'].get_params())
-                    self._rewrite_config('detectors', self.default_det_params, det_config)
-                case 'trackers':
-                    track_config = configurer.parameters_processing.process_tracker_params(
-                        self.tab_params['trackers'].get_forms(), self.tab_params['trackers'].get_params())
-                    self._rewrite_config('trackers', self.default_track_params, track_config)
-                case 'visualizer':
-                    handler_config = configurer.parameters_processing.process_visualizer_params(
-                        self.tab_params['visualizer'].get_forms(), self.tab_params['visualizer'].get_params())
-                    self._rewrite_config('visualizer', self.default_vis_params, handler_config)
-                case 'database':
-                    db_config = configurer.parameters_processing.process_database_params(
-                        self.tab_params['database'].get_forms(), self.tab_params['database'].get_params())
-                    self._rewrite_config('database', self.default_db_params, db_config)
-                case 'objects_handler':
-                    handler_config = configurer.parameters_processing.process_handler_params(
-                        self.tab_params['objects_handler'].get_forms(), self.tab_params['objects_handler'].get_params())
-                    self._rewrite_config('objects_handler', self.default_handler_params, handler_config)
-                case 'events_detectors':
-                    events_config = configurer.parameters_processing.process_events_params(
-                        self.tab_params['events_detectors'].get_forms(), self.tab_params['events_detectors'].get_params())
-                    self._rewrite_config('events_detectors', self.default_events_params, events_config)
+        configs = []
+        src_config = self.tab_params['sources'].get_params()
+        configs.append(('sources', src_config))
+        det_config = self.tab_params['detectors'].get_params()
+        configs.append(('detectors', det_config))
+        track_config = self.tab_params['trackers'].get_params()
+        configs.append(('trackers', track_config))
+        vis_config = self.tab_params['visualizer'].get_params()
+        configs.append(('visualizer', vis_config))
+        handler_config = self.tab_params['objects_handler'].get_params()
+        configs.append(('objects_handler', handler_config))
+        events_config = self.tab_params['events_detectors'].get_params()
+        configs.append(('events_detectors', events_config))
+        self._create_resulting_config(configs, self.params)
 
-    def _rewrite_config(self, section_name, default_params, new_params):
-        if not default_params:
-            self.config_result[section_name] = new_params
+    def _create_resulting_config(self, configs, default_config):
+        for section_config in configs:
+            section_name = section_config[0]
+            section_params = section_config[1]
+            self.config_result[section_name] = section_params
+
+    def _connect_to_db(self):
+        db_params = self.database_config['database']
+        db = QSqlDatabase.addDatabase("QPSQL", 'jobs_conn')
+        db.setHostName(db_params['host_name'])
+        db.setDatabaseName(db_params['database_name'])
+        db.setUserName(db_params['user_name'])
+        db.setPassword(db_params['password'])
+        db.setPort(db_params['port'])
+        if not db.open():
+            QMessageBox.critical(
+                None,
+                "Connection error",
+                str(db.lastError().text()),
+            )
+            self.is_db_connected = False
         else:
-            if isinstance(new_params, list):
-                if not new_params:
-                    new_params = []
-                else:
-                    for instance_params in new_params:
-                        for key in default_params:
-                            if key not in instance_params:
-                                instance_params[key] = default_params[key]
-            elif isinstance(new_params, dict):
-                if not new_params:
-                    new_params = {}
-                else:
-                    for key in default_params:
-                        if key not in new_params or not new_params[key]:
-                            new_params[key] = default_params[key]
-                        if isinstance(new_params[key], dict):
-                            print(default_params[key])
-                            for inner_key in default_params[key]:
-                                if inner_key not in new_params[key] or not new_params[key][inner_key]:
-                                    new_params[key][inner_key] = default_params[key][inner_key]
-            self.config_result[section_name] = new_params
+            self.is_db_connected = True
 
     def closeEvent(self, event):
         for tab_idx in range(self.tabs.count()):
             tab = self.tabs.widget(tab_idx)
             tab.close()
-        self.db_window.close()
+        # self.db_window.close()
+        print('DB jobs_conn removed')
+        QSqlDatabase.removeDatabase('jobs_conn')
         QApplication.closeAllWindows()
         event.accept()
 
