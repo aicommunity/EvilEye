@@ -25,7 +25,7 @@ class DetectorTab(QWidget):
         super().__init__()
 
         self.params = config_params
-        self.default_src_params = self.params[0]
+        self.default_det_params = self.params[0]
         self.config_result = copy.deepcopy(config_params)
 
         self.proj_root = utils.get_project_root()
@@ -50,13 +50,36 @@ class DetectorTab(QWidget):
         self.add_det_btn = QPushButton('Add detector')
         self.add_det_btn.setMinimumWidth(200)
         self.add_det_btn.clicked.connect(self._add_detector)
+        self.duplicate_det_btn = QPushButton('Duplicate detector')
+        self.duplicate_det_btn.setMinimumWidth(200)
+        self.duplicate_det_btn.clicked.connect(self._duplicate_det)
+        self.delete_det_btn = QPushButton('Delete detector')
+        self.delete_det_btn.setMinimumWidth(200)
+        self.delete_det_btn.clicked.connect(self._delete_det)
         self.button_layout.addWidget(self.add_det_btn)
+        self.button_layout.addWidget(self.duplicate_det_btn)
+        self.button_layout.addWidget(self.delete_det_btn)
 
         self.vertical_layout.addLayout(self.button_layout)
         self.setLayout(self.vertical_layout)
 
         if len(self.detectors) > 0:
             self.tracker_enabled_signal.emit()
+
+    @pyqtSlot()
+    def _duplicate_det(self):
+        cur_tab = self.det_tabs.currentWidget()
+        new_params = copy.deepcopy(cur_tab.get_dict())
+        new_detector = DetectorWidget(new_params)
+        self.detectors.append(new_detector)
+        self.det_tabs.addTab(new_detector, f'Detector{len(self.detectors) - 1}')
+        if len(self.detectors) == 1:
+            self.tracker_enabled_signal.emit()
+
+    @pyqtSlot()
+    def _delete_det(self):
+        tab_idx = self.det_tabs.currentIndex()
+        self.det_tabs.tabCloseRequested.emit(tab_idx)
 
     @pyqtSlot(int)
     def _remove_tab(self, idx):
@@ -65,7 +88,8 @@ class DetectorTab(QWidget):
 
     @pyqtSlot()
     def _add_detector(self):
-        new_detector = DetectorWidget(self.default_src_params)
+        new_params = {key: '' for key in self.default_det_params.keys()}
+        new_detector = DetectorWidget(new_params)
         self.detectors.append(new_detector)
         self.det_tabs.addTab(new_detector, f'Detector{len(self.detectors) - 1}')
         if len(self.detectors) == 1:
@@ -80,6 +104,8 @@ class DetectorTab(QWidget):
         return forms
 
     def get_params(self):
-        if self.detectors:
-            return self.detectors[0].get_params()
-        return None
+        det_params = []
+        for tab_idx in range(self.det_tabs.count()):
+            tab = self.det_tabs.widget(tab_idx)
+            det_params.append(tab.get_dict())
+        return det_params

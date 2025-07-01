@@ -56,13 +56,34 @@ class TrackerTab(QWidget):
         self.add_track_btn.setMinimumWidth(200)
         self.add_track_btn.setEnabled(False)
         self.add_track_btn.clicked.connect(self._add_tracker)
+        self.duplicate_track_btn = QPushButton('Duplicate tracker')
+        self.duplicate_track_btn.setMinimumWidth(200)
+        self.duplicate_track_btn.clicked.connect(self._duplicate_tracker)
+        self.delete_track_btn = QPushButton('Delete tracker')
+        self.delete_track_btn.setMinimumWidth(200)
+        self.delete_track_btn.clicked.connect(self._delete_tracker)
         self.button_layout.addWidget(self.add_track_btn)
+        self.button_layout.addWidget(self.duplicate_track_btn)
+        self.button_layout.addWidget(self.delete_track_btn)
 
         self.vertical_layout.addLayout(self.button_layout)
         self.setLayout(self.vertical_layout)
 
         if len(self.trackers) > 0:
             self.enable_add_tracker_button()
+
+    @pyqtSlot()
+    def _duplicate_tracker(self):
+        cur_tab = self.track_tabs.currentWidget()
+        new_params = copy.deepcopy(cur_tab.get_dict())
+        new_tracker = TrackerWidget(new_params)
+        self.trackers.append(new_tracker)
+        self.track_tabs.addTab(new_tracker, f'Tracker{len(self.trackers) - 1}')
+
+    @pyqtSlot()
+    def _delete_tracker(self):
+        tab_idx = self.track_tabs.currentIndex()
+        self.track_tabs.tabCloseRequested.emit(tab_idx)
 
     @pyqtSlot(int)
     def _remove_tab(self, idx):
@@ -78,7 +99,10 @@ class TrackerTab(QWidget):
 
     @pyqtSlot()
     def _add_tracker(self):
-        new_tracker = TrackerWidget(self.default_track_params)
+        new_params = {key: '' for key in self.default_track_params.keys()}
+        new_params['botsort_cfg'] = {key: '' for key in self.default_track_params['botsort_cfg'].keys()}
+        print(new_params)
+        new_tracker = TrackerWidget(new_params)
         self.trackers.append(new_tracker)
         self.track_tabs.addTab(new_tracker, f'Tracker{len(self.trackers) - 1}')
 
@@ -91,6 +115,8 @@ class TrackerTab(QWidget):
         return forms
 
     def get_params(self):
-        if self.trackers:
-            return self.trackers[0].get_params()
-        return None
+        tracker_params = []
+        for tab_idx in range(self.track_tabs.count()):
+            tab = self.track_tabs.widget(tab_idx)
+            tracker_params.append(tab.get_dict())
+        return tracker_params

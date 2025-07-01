@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (
 )
 from utils import utils
 from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
+from configurer import parameters_processing
 
 
 class HandlerTab(QWidget):
@@ -41,22 +42,21 @@ class HandlerTab(QWidget):
 
         name = QLabel('Handler Parameters')
         layout.addWidget(name)
-        self.line_edit_param['objects_handler'] = {}
 
         history_len = QLineEdit()
         history_len.setText('30')
         layout.addRow('History length', history_len)
-        self.line_edit_param['objects_handler']['History length'] = 'history_len'
+        self.line_edit_param['history_len'] = history_len
 
         lost_store_time_secs = QLineEdit()
         lost_store_time_secs.setText('60')
         layout.addRow('Lost objects store time', lost_store_time_secs)
-        self.line_edit_param['objects_handler']['Lost objects store time'] = 'lost_store_time_secs'
+        self.line_edit_param['lost_store_time_secs'] = lost_store_time_secs
 
         lost_thresh = QLineEdit()
         lost_thresh.setText('5')
         layout.addRow('Lost threshold', lost_thresh)
-        self.line_edit_param['objects_handler']['Lost threshold'] = 'lost_thresh'
+        self.line_edit_param['lost_thresh'] = lost_thresh
 
         widgets = (layout.itemAt(i).widget() for i in range(layout.count()))
         for widget in widgets:
@@ -71,4 +71,19 @@ class HandlerTab(QWidget):
         return form_layouts
 
     def get_params(self):
-        return self.line_edit_param['objects_handler']
+        res_dict = self._create_dict()
+        return res_dict
+
+    def _create_dict(self):
+        hand_params = {}
+
+        widget = self.line_edit_param['history_len']
+        hand_params['history_len'] = parameters_processing.process_numeric_types(widget.text())
+
+        widget = self.line_edit_param['lost_store_time_secs']
+        hand_params['lost_store_time_secs'] = parameters_processing.process_numeric_types(widget.text())
+
+        widget = self.line_edit_param['lost_thresh']
+        hand_params['lost_thresh'] = parameters_processing.process_numeric_types(widget.text())
+
+        return hand_params
