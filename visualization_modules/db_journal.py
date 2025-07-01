@@ -30,8 +30,9 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 
 
 class DatabaseJournalWindow(QWidget):
-    def __init__(self, params, database_params):
+    def __init__(self, main_window, params, database_params, close_app: bool):
         super().__init__()
+        self.main_window = main_window
         self.params = params
         self.database_params = database_params
         self.adapter_params = self.database_params['database_adapters']
@@ -73,6 +74,8 @@ class DatabaseJournalWindow(QWidget):
         self.layout.addWidget(self.tabs)
         self.setLayout(self.layout)
 
+        self.close_app = close_app
+
     def close(self):
         for tab_idx in range(self.tabs.count()):
             tab = self.tabs.widget(tab_idx)
@@ -80,6 +83,10 @@ class DatabaseJournalWindow(QWidget):
         print('Database journal closed')
         self.db_controller.save_job_configuration_info(self.params)
         self.db_controller.disconnect()
+
+    def closeEvent(self, event):
+        if self.main_window and self.close_app:
+            self.main_window.close()
 
     @pyqtSlot(int)
     def _close_tab(self, idx):

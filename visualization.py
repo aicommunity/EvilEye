@@ -11,7 +11,7 @@ except ImportError:
     from PyQt5.QtWidgets import QApplication
     pyqt_version = 5
 
-
+from controller import controller
 from visualization_modules.main_window import MainWindow
 # import configurer.configurer_window as config
 
@@ -26,8 +26,20 @@ def start_app(file_path: str):
     with open(file_path, 'r+') as params_file:
         params = json.load(params_file)
     app = QApplication(sys.argv)
-    a = MainWindow(file_path, params, 1600, 720)
-    a.show()
+
+    controller_instance = controller.Controller()
+    controller_instance.init(params)
+
+    a = MainWindow(controller_instance, file_path, params, 1600, 720)
+    controller_instance.init_main_window(a, a.slots, a.signals)
+    if controller_instance.show_main_gui:
+        a.show()
+
+    if controller_instance.show_journal:
+        a.open_journal()
+    controller_instance.start()
+
+
     ret = app.exec()
     sys.exit(ret)
 

@@ -383,6 +383,8 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
         if not records:
             select_query = sql.SQL('SELECT max(configuration_id) FROM jobs;')
             record = self.query(select_query)
+            if not record:
+                return False, None, 0
             config_id = record[0][0] + 1 if record[0][0] else 1
             return False, job_id, config_id
         job_id, config_id = records[0]

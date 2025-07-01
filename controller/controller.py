@@ -35,8 +35,8 @@ except ImportError:
     pyqt_version = 5
 
 class Controller:
-    def __init__(self, main_window: QMainWindow, pyqt_slots: dict, pyqt_signals: dict):
-        self.main_window = main_window
+    def __init__(self):
+        self.main_window = None
         # self.application = application
         self.control_thread = threading.Thread(target=self.run)
         self.params = None
@@ -51,9 +51,12 @@ class Controller:
         self.trackers = []
         self.obj_handler = None
         self.visualizer = None
-        self.pyqt_slots = pyqt_slots
-        self.pyqt_signals = pyqt_signals
+        self.pyqt_slots = None
+        self.pyqt_signals = None
         self.fps = 5
+        self.show_main_gui = True
+        self.show_journal = False
+        self.enable_close_from_gui = True
         self.memory_periodic_check_sec = 60*15
         self.max_memory_usage_mb = 1024*16
         self.auto_restart = True
@@ -110,7 +113,6 @@ class Controller:
 
             if self.autoclose and all_sources_finished:
                 self.run_flag = False
-                #break
 
             if self.run_flag:
                 for source in self.sources:
@@ -275,7 +277,7 @@ class Controller:
                         continue
 
 
-            if self.gui_enabled:
+            if self.show_main_gui and self.gui_enabled:
                 objects = []
                 for i in range(len(self.visualizer.source_ids)):
                     objects.append(self.obj_handler.get('active', self.visualizer.source_ids[i]))
@@ -311,7 +313,8 @@ class Controller:
         if self.multicam_reid_enabled:
             self.mc_tracker.start()
         self.obj_handler.start()
-        self.visualizer.start()
+        if self.visualizer:
+            self.visualizer.start()
         self.db_controller.connect()
         self.db_adapter_obj.start()
         self.db_adapter_zone_events.start()
@@ -377,8 +380,6 @@ class Controller:
                     break
         self.multicam_reid_enabled = multicam_reid
 
-        self._init_visualizer(self.params['visualizer'])
-
         database_creds = self.credentials.get("database", None)
         if not database_creds:
             database_creds = dict()
@@ -419,12 +420,23 @@ class Controller:
         self._init_events_detectors_controller(self.params['events_detectors'])
         self._init_events_processor(self.params['events_processor'])
 
-        self.autoclose = self.params['controller'].get("autoclose", False)
-        self.fps = self.params['controller'].get("fps", 5)
+        self.autoclose = self.params['controller'].get("autoclose", self.autoclose)
+        self.fps = self.params['controller'].get("fps", self.fps)
+        self.show_main_gui = self.params['controller'].get("show_main_gui", self.show_main_gui)
+        self.show_journal = self.params['controller'].get("show_journal", self.show_journal)
+        self.enable_close_from_gui = self.params['controller'].get("enable_close_from_gui", self.enable_close_from_gui)
         self.class_names = self.params['controller'].get("class_names", list())
         self.memory_periodic_check_sec = self.params['controller'].get("memory_periodic_check_sec", self.memory_periodic_check_sec)
         self.max_memory_usage_mb = self.params['controller'].get("max_memory_usage_mb", self.max_memory_usage_mb)
         self.auto_restart = self.params['controller'].get("max_memory_usage_mb", self.auto_restart)
+
+    def init_main_window(self, main_window: QMainWindow, pyqt_slots: dict, pyqt_signals: dict):
+        self.main_window = main_window
+        self.pyqt_slots = pyqt_slots
+        self.pyqt_signals = pyqt_signals
+        self._init_visualizer(self.params['visualizer'])
+
+
 
     def release(self):
         self.stop()
