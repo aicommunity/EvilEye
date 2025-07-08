@@ -1,129 +1,23 @@
-# Ultralytics YOLO 🚀, AGPL-3.0 license
 
 from collections import deque
-
+from typing import Any, List
+import onnxruntime as ort
 import numpy as np
 import cv2
-import onnxruntime as ort
 import albumentations as A
-from albumentations.pytorch import ToTensorV2
+from scipy.spatial.distance import cdist
 
-from .basetrack import TrackState
-from .byte_tracker import BYTETracker, STrack
-from .utils import matching
-from .utils.gmc import GMC
-from .utils.kalman_filter import KalmanFilterXYWH
+import numpy as np
 
+from ultralytics.trackers.basetrack import TrackState
+from ultralytics.trackers.byte_tracker import BYTETracker, STrack
+from ultralytics.trackers.bot_sort import BOTrack
+from ultralytics.trackers.utils import matching
+from ultralytics.trackers.utils.gmc import GMC
+from ultralytics.trackers.utils.kalman_filter import KalmanFilterXYWH
 
-class BOTrack(STrack):
-    """
-    An extended version of the STrack class for YOLOv8, adding object tracking features.
-
-    Attributes:
-        shared_kalman (KalmanFilterXYWH): A shared Kalman filter for all instances of BOTrack.
-        smooth_feat (np.ndarray): Smoothed feature vector.
-        curr_feat (np.ndarray): Current feature vector.
-        features (deque): A deque to store feature vectors with a maximum length defined by `feat_history`.
-        alpha (float): Smoothing factor for the exponential moving average of features.
-        mean (np.ndarray): The mean state of the Kalman filter.
-        covariance (np.ndarray): The covariance matrix of the Kalman filter.
-
-    Methods:
-        update_features(feat): Update features vector and smooth it using exponential moving average.
-        predict(): Predicts the mean and covariance using Kalman filter.
-        re_activate(new_track, frame_id, new_id): Reactivates a track with updated features and optionally new ID.
-        update(new_track, frame_id): Update the YOLOv8 instance with new track and frame ID.
-        tlwh: Property that gets the current position in tlwh format `(top left x, top left y, width, height)`.
-        multi_predict(stracks): Predicts the mean and covariance of multiple object tracks using shared Kalman filter.
-        convert_coords(tlwh): Converts tlwh bounding box coordinates to xywh format.
-        tlwh_to_xywh(tlwh): Convert bounding box to xywh format `(center x, center y, width, height)`.
-
-    Usage:
-        bo_track = BOTrack(tlwh, score, cls, feat)
-        bo_track.predict()
-        bo_track.update(new_track, frame_id)
-    """
-
-    shared_kalman = KalmanFilterXYWH()
-
-    def __init__(self, tlwh, score, cls, feat=None, feat_history=50):
-        """Initialize YOLOv8 object with temporal parameters, such as feature history, alpha and current features."""
-        super().__init__(tlwh, score, cls)
-
-        self.smooth_feat = None
-        self.curr_feat = None
-        if feat is not None:
-            self.update_features(feat)
-        self.features = deque([], maxlen=feat_history)
-        self.alpha = 0.9
-
-    def update_features(self, feat):
-        """Update features vector and smooth it using exponential moving average."""
-        feat /= np.linalg.norm(feat)
-        self.curr_feat = feat
-        if self.smooth_feat is None:
-            self.smooth_feat = feat
-        else:
-            self.smooth_feat = self.alpha * self.smooth_feat + (1 - self.alpha) * feat
-        self.features.append(feat)
-        self.smooth_feat /= np.linalg.norm(self.smooth_feat)
-
-    def predict(self):
-        """Predicts the mean and covariance using Kalman filter."""
-        mean_state = self.mean.copy()
-        if self.state != TrackState.Tracked:
-            mean_state[6] = 0
-            mean_state[7] = 0
-
-        self.mean, self.covariance = self.kalman_filter.predict(mean_state, self.covariance)
-
-    def re_activate(self, new_track, frame_id, new_id=False):
-        """Reactivates a track with updated features and optionally assigns a new ID."""
-        if new_track.curr_feat is not None:
-            self.update_features(new_track.curr_feat)
-        super().re_activate(new_track, frame_id, new_id)
-
-    def update(self, new_track, frame_id):
-        """Update the YOLOv8 instance with new track and frame ID."""
-        if new_track.curr_feat is not None:
-            self.update_features(new_track.curr_feat)
-        super().update(new_track, frame_id)
-
-    @property
-    def tlwh(self):
-        """Get current position in bounding box format `(top left x, top left y, width, height)`."""
-        if self.mean is None:
-            return self._tlwh.copy()
-        ret = self.mean[:4].copy()
-        ret[:2] -= ret[2:] / 2
-        return ret
-
-    @staticmethod
-    def multi_predict(stracks):
-        """Predicts the mean and covariance of multiple object tracks using shared Kalman filter."""
-        if len(stracks) <= 0:
-            return
-        multi_mean = np.asarray([st.mean.copy() for st in stracks])
-        multi_covariance = np.asarray([st.covariance for st in stracks])
-        for i, st in enumerate(stracks):
-            if st.state != TrackState.Tracked:
-                multi_mean[i][6] = 0
-                multi_mean[i][7] = 0
-        multi_mean, multi_covariance = BOTrack.shared_kalman.multi_predict(multi_mean, multi_covariance)
-        for i, (mean, cov) in enumerate(zip(multi_mean, multi_covariance)):
-            stracks[i].mean = mean
-            stracks[i].covariance = cov
-
-    def convert_coords(self, tlwh):
-        """Converts Top-Left-Width-Height bounding box coordinates to X-Y-Width-Height format."""
-        return self.tlwh_to_xywh(tlwh)
-
-    @staticmethod
-    def tlwh_to_xywh(tlwh):
-        """Convert bounding box to format `(center x, center y, width, height)`."""
-        ret = np.asarray(tlwh).copy()
-        ret[:2] += ret[2:] / 2
-        return ret
+from object_tracker.trackers.track_encoder import TrackEncoder
+from object_tracker.trackers.sctrack import SCTrack
 
 
 class BOTSORT(BYTETracker):
@@ -133,9 +27,9 @@ class BOTSORT(BYTETracker):
     Attributes:
         proximity_thresh (float): Threshold for spatial proximity (IoU) between tracks and detections.
         appearance_thresh (float): Threshold for appearance similarity (ReID embeddings) between tracks and detections.
-        encoder (object): Object to handle ReID embeddings, set to None if ReID is not enabled.
+        encoder (Any): Object to handle ReID embeddings, set to None if ReID is not enabled.
         gmc (GMC): An instance of the GMC algorithm for data association.
-        args (object): Parsed command-line arguments containing tracking parameters.
+        args (Any): Parsed command-line arguments containing tracking parameters.
 
     Methods:
         get_kalmanfilter(): Returns an instance of KalmanFilterXYWH for object tracking.
@@ -143,105 +37,232 @@ class BOTSORT(BYTETracker):
         get_dists(tracks, detections): Get distances between tracks and detections using IoU and (optionally) ReID.
         multi_predict(tracks): Predict and track multiple objects with YOLOv8 model.
 
-    Usage:
-        bot_sort = BOTSORT(args, frame_rate)
-        bot_sort.init_track(dets, scores, cls, img)
-        bot_sort.multi_predict(tracks)
+    Examples:
+        Initialize BOTSORT and process detections
+        >>> bot_sort = BOTSORT(args, frame_rate=30)
+        >>> bot_sort.init_track(dets, scores, cls, img)
+        >>> bot_sort.multi_predict(tracks)
 
     Note:
         The class is designed to work with the YOLOv8 object detection model and supports ReID only if enabled via args.
     """
 
-    def __init__(self, args, encoder: 'Encoder' = None, frame_rate=30):
-        """Initialize YOLOv8 object with ReID module and GMC algorithm."""
+    def __init__(self, args, encoders: List[TrackEncoder] = None, frame_rate=30):
+        """
+        Initialize YOLOv8 object with ReID module and GMC algorithm.
+
+        Args:
+            args (object): Parsed command-line arguments containing tracking parameters.
+            frame_rate (int): Frame rate of the video being processed.
+
+        Examples:
+            Initialize BOTSORT with command-line arguments and a specified frame rate:
+            >>> args = parse_args()
+            >>> bot_sort = BOTSORT(args, frame_rate=30)
+        """
         super().__init__(args, frame_rate)
         # ReID module
         self.proximity_thresh = args.proximity_thresh
         self.appearance_thresh = args.appearance_thresh
 
         if args.with_reid:
-            self.encoder = encoder
+            self.encoders = encoders
         self.gmc = GMC(method=args.gmc_method)
+    
+    def update(self, results, img=None) -> List[SCTrack]:
+        """Updates the tracker with new detections and returns the current list of tracked objects."""
+        self.frame_id += 1
+        activated_stracks = []
+        refind_stracks = []
+        lost_stracks = []
+        removed_stracks = []
+
+        scores = results.conf
+        bboxes = results.xywhr if hasattr(results, "xywhr") else results.xywh
+        # Add index
+        bboxes = np.concatenate([bboxes, np.arange(len(bboxes)).reshape(-1, 1)], axis=-1)
+        cls = results.cls
+
+        remain_inds = scores >= self.args.track_high_thresh
+        inds_low = scores > self.args.track_low_thresh
+        inds_high = scores < self.args.track_high_thresh
+
+        inds_second = inds_low & inds_high
+        dets_second = bboxes[inds_second]
+        # print(bboxes, remain_inds)
+        dets = bboxes[remain_inds]
+        scores_keep = scores[remain_inds]
+        scores_second = scores[inds_second]
+        cls_keep = cls[remain_inds]
+        cls_second = cls[inds_second]
+
+        detections = self.init_track(dets, scores_keep, cls_keep, img)
+        # Add newly detected tracklets to tracked_stracks
+        unconfirmed = []
+        tracked_stracks = []  # type: list[STrack]
+        for track in self.tracked_stracks:
+            if not track.is_activated:
+                unconfirmed.append(track)
+            else:
+                tracked_stracks.append(track)
+        # Step 2: First association, with high score detection boxes
+        strack_pool = self.joint_stracks(tracked_stracks, self.lost_stracks)
+        # Predict the current location with KF
+        self.multi_predict(strack_pool)
+        if hasattr(self, "gmc") and img is not None:
+            warp = self.gmc.apply(img, dets)
+            STrack.multi_gmc(strack_pool, warp)
+            STrack.multi_gmc(unconfirmed, warp)
+
+        dists = self.get_dists(strack_pool, detections)
+        matches, u_track, u_detection = matching.linear_assignment(dists, thresh=self.args.match_thresh)
+
+        for itracked, idet in matches:
+            track = strack_pool[itracked]
+            det = detections[idet]
+            if track.state == TrackState.Tracked:
+                track.update(det, self.frame_id)
+                activated_stracks.append(track)
+            else:
+                track.re_activate(det, self.frame_id, new_id=False)
+                refind_stracks.append(track)
+        # Step 3: Second association, with low score detection boxes association the untrack to the low score detections
+        detections_second = self.init_track(dets_second, scores_second, cls_second, img)
+        r_tracked_stracks = [strack_pool[i] for i in u_track if strack_pool[i].state == TrackState.Tracked]
+        # TODO
+        dists = matching.iou_distance(r_tracked_stracks, detections_second)
+        matches, u_track, u_detection_second = matching.linear_assignment(dists, thresh=0.5)
+        for itracked, idet in matches:
+            track = r_tracked_stracks[itracked]
+            det = detections_second[idet]
+            if track.state == TrackState.Tracked:
+                track.update(det, self.frame_id)
+                activated_stracks.append(track)
+            else:
+                track.re_activate(det, self.frame_id, new_id=False)
+                refind_stracks.append(track)
+
+        for it in u_track:
+            track = r_tracked_stracks[it]
+            if track.state != TrackState.Lost:
+                track.mark_lost()
+                lost_stracks.append(track)
+        # Deal with unconfirmed tracks, usually tracks with only one beginning frame
+        detections = [detections[i] for i in u_detection]
+        dists = self.get_dists(unconfirmed, detections)
+        matches, u_unconfirmed, u_detection = matching.linear_assignment(dists, thresh=0.7)
+        for itracked, idet in matches:
+            unconfirmed[itracked].update(detections[idet], self.frame_id)
+            activated_stracks.append(unconfirmed[itracked])
+        for it in u_unconfirmed:
+            track = unconfirmed[it]
+            track.mark_removed()
+            removed_stracks.append(track)
+        # Step 4: Init new stracks
+        for inew in u_detection:
+            track = detections[inew]
+            if track.score < self.args.new_track_thresh:
+                continue
+            track.activate(self.kalman_filter, self.frame_id)
+            activated_stracks.append(track)
+        # Step 5: Update state
+        for track in self.lost_stracks:
+            if self.frame_id - track.end_frame > self.max_time_lost:
+                track.mark_removed()
+                removed_stracks.append(track)
+
+        self.tracked_stracks = [t for t in self.tracked_stracks if t.state == TrackState.Tracked]
+        self.tracked_stracks = self.joint_stracks(self.tracked_stracks, activated_stracks)
+        self.tracked_stracks = self.joint_stracks(self.tracked_stracks, refind_stracks)
+        self.lost_stracks = self.sub_stracks(self.lost_stracks, self.tracked_stracks)
+        self.lost_stracks.extend(lost_stracks)
+        self.lost_stracks = self.sub_stracks(self.lost_stracks, self.removed_stracks)
+        self.tracked_stracks, self.lost_stracks = self.remove_duplicate_stracks(self.tracked_stracks, self.lost_stracks)
+        self.removed_stracks.extend(removed_stracks)
+        if len(self.removed_stracks) > 1000:
+            self.removed_stracks = self.removed_stracks[-999:]  # clip remove stracks to 1000 maximum
+        
+        return [x for x in self.tracked_stracks if x.is_activated]
+        # return np.asarray([x.result for x in self.tracked_stracks if x.is_activated], dtype=np.float32)
+
 
     def get_kalmanfilter(self):
-        """Returns an instance of KalmanFilterXYWH for object tracking."""
+        """Returns an instance of KalmanFilterXYWH for predicting and updating object states in the tracking process."""
         return KalmanFilterXYWH()
 
     def init_track(self, dets, scores, cls, img=None):
-        """Initialize track with detections, scores, and classes."""
+        """Initialize object tracks using detection bounding boxes, scores, class labels, and optional ReID features."""
         if len(dets) == 0:
             return []
-        if self.args.with_reid and self.encoder is not None:
-            features_keep = self.encoder.inference(img, dets)
-            return [BOTrack(xyxy, s, c, f) for (xyxy, s, c, f) in zip(dets, scores, cls, features_keep)]  # detections
+        if self.args.with_reid and self.encoders is not None:
+            features_keep = [encoder.inference(img, dets) for encoder in self.encoders]
+            features_keep = [[f[i] for f in features_keep] for i in range(len(features_keep[0]))]
+            return [SCTrack(xyxy, s, c, f) for (xyxy, s, c, f) in zip(dets, scores, cls, features_keep)]  # detections
         else:
-            return [BOTrack(xyxy, s, c) for (xyxy, s, c) in zip(dets, scores, cls)]  # detections
+            return [SCTrack(xyxy, s, c) for (xyxy, s, c) in zip(dets, scores, cls)]  # detections
 
     def get_dists(self, tracks, detections):
-        """Get distances between tracks and detections using IoU and (optionally) ReID embeddings."""
+        """Calculates distances between tracks and detections using IoU and optionally ReID embeddings."""
         dists = matching.iou_distance(tracks, detections)
         dists_mask = dists > self.proximity_thresh
 
-        # TODO: mot20
-        # if not self.args.mot20:
-        dists = matching.fuse_score(dists, detections)
+        if self.args.fuse_score:
+            dists = matching.fuse_score(dists, detections)
 
-        if self.args.with_reid and self.encoder is not None:
-            emb_dists = matching.embedding_distance(tracks, detections) / 2.0
+        if self.args.with_reid and self.encoders is not None:
+            emb_dists = embedding_distance(tracks, detections) / 2.0
             emb_dists[emb_dists > self.appearance_thresh] = 1.0
             emb_dists[dists_mask] = 1.0
             dists = np.minimum(dists, emb_dists)
         return dists
 
     def multi_predict(self, tracks):
-        """Predict and track multiple objects with YOLOv8 model."""
-        BOTrack.multi_predict(tracks)
+        """Predicts the mean and covariance of multiple object tracks using a shared Kalman filter."""
+        SCTrack.multi_predict(tracks)
 
     def reset(self):
-        """Reset tracker."""
+        """Resets the BOTSORT tracker to its initial state, clearing all tracked objects and internal states."""
         super().reset()
         self.gmc.reset_params()
 
 
-class Encoder:
-    def __init__(self, model_path: str):
-        self.session = ort.InferenceSession(model_path, providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
-        self.input_name = self.session.get_inputs()[0].name
-        self.output_name = self.session.get_outputs()[0].name
-        self.image_augmentation = A.Compose(
-            [A.Resize(256, 128), A.Normalize(), ToTensorV2()]
-        )
+def embedding_distance(tracks: list[SCTrack], detections: list[SCTrack], metric: str = "cosine") -> np.ndarray:
+    """
+    Compute distance between tracks and detections based on embeddings.
 
-    def inference(self, img: np.ndarray, dets: np.ndarray) -> np.ndarray:
-        """inference encoder and get features for each object
+    Args:
+        tracks (List[STrack]): List of tracks, where each track contains embedding features.
+        detections (List[BaseTrack]): List of detections, where each detection contains embedding features.
+        metric (str): Metric for distance computation. Supported metrics include 'cosine', 'euclidean', etc.
 
-        :param img: a current frame
-        :param dets: detections (Nx4) that have format [x_center. y_center, w, h]
-        :return: features (NxF)
-        """
-        features = []
+    Returns:
+        (np.ndarray): Cost matrix computed based on embeddings with shape (N, M), where N is the number of tracks
+            and M is the number of detections.
 
-        for det in dets:
-            xc, yc, w, h = det[:4]
-            x = xc - w / 2
-            y = yc - h / 2
-            x, y, w, h = map(int, [x, y, w, h])
-
-            crop = img[y: y + h, x: x + w]
-            input_array = self._preprocess(crop)
-            output_array = self.session.run(
-                [self.output_name], 
-                {self.input_name: input_array}
-            )
-            f = output_array[0][0]
-            features.append(f)
-        
-        features = np.array(features)
-        return features
+    Examples:
+        Compute the embedding distance between tracks and detections using cosine metric
+        >>> tracks = [STrack(...), STrack(...)]  # List of track objects with embedding features
+        >>> detections = [BaseTrack(...), BaseTrack(...)]  # List of detection objects with embedding features
+        >>> cost_matrix = embedding_distance(tracks, detections, metric="cosine")
+    """
+    cost_matrix = np.zeros((len(tracks), len(detections)), dtype=np.float32)
+    if cost_matrix.size == 0:
+        return cost_matrix
     
-    def _preprocess(self, image: np.ndarray) -> np.ndarray:
-        # Assuming the model expects a 224x224 RGB image
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        image = self.image_augmentation(image=np.array(image))["image"]
-        image = np.expand_dims(image, axis=0)
-        return image    
+    if len(detections) > 0:
+        num_of_encoders = len(detections[0].curr_feat)
+    else:
+        num_of_encoders = len(tracks[0].curr_feat)
+    
+    cost_matrices = []
+    for i in range(num_of_encoders):
+        det_features = np.asarray([track.curr_feat[i] for track in detections], dtype=np.float32)
+        # for i, track in enumerate(tracks):
+        # cost_matrix[i, :] = np.maximum(0.0, cdist(track.smooth_feat.reshape(1,-1), det_features, metric))
+        track_features = np.asarray([track.smooth_feat[i] for track in tracks], dtype=np.float32)
+        cost_matrix = np.maximum(0.0, cdist(track_features, det_features, metric))  # Normalized features
+        cost_matrices.append(cost_matrix)
+    
+    final_cost_matrix = np.mean(cost_matrices, axis=0)
+    return final_cost_matrix
+

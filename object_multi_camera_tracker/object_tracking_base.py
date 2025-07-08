@@ -43,7 +43,7 @@ class ObjectMultiCameraTrackingBase(core.EvilEyeBase):
             self.queue_in.put(track_info)
             return True
         
-        designator = '; '.join(f"{t.source_id}:{t.frame_id}" for t in track_info)
+        designator = '; '.join(f"{t[0].source_id}:{t[0].frame_id}" for t in track_info)
         print(f"Failed to put tracking info {designator} to ObjectTracking queue. Queue is Full.")
         return False
 

@@ -5,7 +5,9 @@ from object_detector import object_detection_yolo
 from object_detector.object_detection_base import DetectionResultList
 from object_tracker import object_tracking_botsort
 from object_tracker.object_tracking_base import TrackingResultList
-from object_tracker.trackers.bot_sort import Encoder
+# from object_tracker.trackers.bot_sort import Encoder
+from object_tracker.trackers.track_encoder import TrackEncoder
+from object_tracker.trackers.onnx_encoder import OnnxEncoder
 from objects_handler import objects_handler
 from capture.video_capture_base import CaptureImage
 import time
@@ -368,6 +370,7 @@ class Controller:
         self._init_captures(self.params.get('sources',list()))
         self._init_preprocessors(self.params.get('preprocessors', list()))
         self._init_detectors(self.params.get('detectors',list()))
+        self._init_encoders(self.params.get('trackers', list()))
         self._init_trackers(self.params.get('trackers', list()))
         self._init_mc_tracker()
 
@@ -523,18 +526,33 @@ class Controller:
 
     def _init_trackers(self, params):
         num_trackers = len(params)
-        # TODO: move path to some config
 
         for i in range(num_trackers):
             tracker_params = params[i]
-            encoder = Encoder(tracker_params.get("tracker_onnx", "osnet_ain_x1_0_M.onnx"))
-            tracker = object_tracking_botsort.ObjectTrackingBotsort(encoder)
+            encoder = self.encoders[tracker_params.get("tracker_onnx", "osnet_ain_x1_0_M.onnx")]
+            tracker = object_tracking_botsort.ObjectTrackingBotsort([encoder])
             tracker.set_params(**tracker_params)
             tracker.init()
             self.trackers.append(tracker)
     
+    def _init_encoders(self, params):
+        num_trackers = len(params)
+        self.encoders = {}
+
+        for i in range(num_trackers):
+            tracker_params = params[i]
+            path = tracker_params.get("tracker_onnx", "osnet_ain_x1_0_M.onnx")
+            
+            if path not in self.encoders:
+                encoder = OnnxEncoder(path)
+                self.encoders[path] = encoder
+    
     def _init_mc_tracker(self):
-        self.mc_tracker = ObjectMultiCameraTracking()
+        num_of_cameras = len(self.params.get('sources', list()))
+        self.mc_tracker = ObjectMultiCameraTracking(
+            num_of_cameras, 
+            list(self.encoders.values())
+        )
         self.mc_tracker.init()
 
     def _init_events_detectors(self, params):

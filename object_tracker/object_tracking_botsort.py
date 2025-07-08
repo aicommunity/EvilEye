@@ -1,7 +1,10 @@
 import numpy as np
 import datetime
+from typing import List
+from ultralytics.engine.results import Boxes
 from object_tracker import object_tracking_base
-from object_tracker.trackers.bot_sort import BOTSORT, Encoder, BOTrack
+from object_tracker.trackers.bot_sort import BOTSORT, BOTrack
+from object_tracker.trackers.track_encoder import TrackEncoder
 from object_tracker.trackers.cfg.utils import read_cfg
 from time import sleep
 from object_detector.object_detection_base import DetectionResult
@@ -22,17 +25,18 @@ class BostSortCfg:
     track_high_thresh: float = 0.5
     track_low_thresh: float = 0.1
     tracker_type: str = "botsort"
+    fuse_score: bool = True
     with_reid: bool = False
 
 
 class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
     #tracker: BOTSORT
 
-    def __init__(self, encoder: Encoder = None):
+    def __init__(self, encoders: List[TrackEncoder] = None):
         super().__init__()
         self.botsort_cfg = BostSortCfg()
         self.tracker = None
-        self.encoder = encoder
+        self.encoders = encoders
         self.fps = 5
 
     def init_impl(self):
@@ -42,7 +46,7 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
             self.tracker = None
             return False
 
-        self.tracker = BOTSORT(self.botsort_cfg, self.encoder, frame_rate=self.fps)
+        self.tracker = BOTSORT(self.botsort_cfg, self.encoders, frame_rate=self.fps)
 
     def release_impl(self):
         super().init_impl()
@@ -76,13 +80,14 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
             if self.tracker is None:
                 continue
             detection_result, image = detections
-            cam_id, bboxes_xcycwh, confidences, class_ids = self._parse_det_info(detection_result)
-#            tracks = copy.deepcopy(self.tracker.update(class_ids, bboxes_xcycwh, confidences, image.image))
-            tracks = self.tracker.update(class_ids, bboxes_xcycwh, confidences, image.image)
+            cam_id, boxes = self._parse_det_info(detection_result, image.image)
+            tracks = copy.deepcopy(self.tracker.update(boxes, image.image))
+            if len(tracks) > 0:
+                pass
             tracks_info = self._create_tracks_info(cam_id, detection_result.frame_id, None, tracks)
             self.queue_out.put((tracks_info, image))
 
-    def _parse_det_info(self, det_info: DetectionResultList) -> tuple:
+    def _parse_det_info(self, det_info: DetectionResultList, image: np.ndarray) -> tuple:
         cam_id = det_info.source_id
         objects = det_info.detections
 
@@ -96,21 +101,17 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
             class_ids.append(obj.class_id)
 
         bboxes_xyxy = np.array(bboxes_xyxy).reshape(-1, 4)
-        confidences = np.array(confidences)
-        class_ids = np.array(class_ids)
+        confidences = np.array(confidences).reshape(-1, 1)
+        class_ids = np.array(class_ids).reshape(-1, 1)
 
         bboxes_xyxy = np.array(bboxes_xyxy)
         confidences = np.array(confidences)
         class_ids = np.array(class_ids)
-
-        # Convert XYXY input coordinates to XcYcWH
-        bboxes_xcycwh = bboxes_xyxy.astype('float64')
-        bboxes_xcycwh[:, 2] -= bboxes_xcycwh[:, 0]
-        bboxes_xcycwh[:, 3] -= bboxes_xcycwh[:, 1]
-        bboxes_xcycwh[:, 0] += bboxes_xcycwh[:, 2] / 2
-        bboxes_xcycwh[:, 1] += bboxes_xcycwh[:, 3] / 2
-
-        return cam_id, bboxes_xcycwh, confidences, class_ids
+        
+        boxes_array = np.concatenate([bboxes_xyxy, confidences, class_ids], axis=1)
+        orig_shape = (image.shape[1], image.shape[0])
+        boxes = Boxes(boxes_array, orig_shape)
+        return cam_id, boxes
 
     def _create_tracks_info(
             self, 
