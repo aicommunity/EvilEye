@@ -230,6 +230,7 @@ class MultiCameraTracker:
         else:
             dist_array = ssd.squareform(distances)
             clustering = linkage(dist_array, method='average')
+            clustering = np.clip(clustering, 0, None)
             cluster_labels = fcluster(clustering, t=self.clustering_threshold, criterion='distance')
         
         # Cгруппировать локальные треки по кластерам

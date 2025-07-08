@@ -12,7 +12,7 @@ class MCTrack:
             self, 
             sc_tracks: Dict[int, BOTrack],
             confident_age: int = 5,
-            maxlen: int = 200):
+            maxlen: int = 50):
         
         self.global_track_id = None
         self.sc_tracks = sc_tracks
