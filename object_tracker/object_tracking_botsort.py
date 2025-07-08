@@ -81,7 +81,7 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
                 continue
             detection_result, image = detections
             cam_id, boxes = self._parse_det_info(detection_result, image.image)
-            tracks = copy.deepcopy(self.tracker.update(boxes, image.image))
+            tracks = self.tracker.update(boxes, image.image)
             if len(tracks) > 0:
                 pass
             tracks_info = self._create_tracks_info(cam_id, detection_result.frame_id, None, tracks)

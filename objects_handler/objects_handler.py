@@ -164,7 +164,7 @@ class ObjectsHandler(core.EvilEyeBase):
                 # self.condition.acquire()
                 self._handle_active(tracks, image)
                 if self.active_objs.objects:
-                    self.snapshot = copy.deepcopy(self.active_objs.objects)
+                    self.snapshot = self.active_objs.objects
                 else:
                     self.snapshot = None
                 # Оповещаем остальные потоки, снимаем блокировку
