@@ -135,7 +135,7 @@ class ObjectsHandler(core.EvilEyeBase):
             source_objects = ObjectResultList()
             for obj in self.lost_objs.objects:
                 if obj.source_id == cam_id:
-                    source_objects.objects.append(copy.deepcopy(obj))
+                    source_objects.objects.append(obj)
         return source_objects
 
     def _get_all(self, cam_id):
@@ -143,10 +143,10 @@ class ObjectsHandler(core.EvilEyeBase):
             source_objects = ObjectResultList()
             for obj in self.active_objs.objects:
                 if obj.source_id == cam_id:
-                    source_objects.objects.append(copy.deepcopy(obj))
+                    source_objects.objects.append(obj)
             for obj in self.lost_objs.objects:
                 if obj.source_id == cam_id:
-                    source_objects.objects.append(copy.deepcopy(obj))
+                    source_objects.objects.append(obj)
         return source_objects
 
     def handle_objs(self):  # Функция, отвечающая за работу с объектами
