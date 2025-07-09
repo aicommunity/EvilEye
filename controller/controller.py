@@ -266,6 +266,7 @@ class Controller:
 
             if not self.debug_info.get("controller", None) or not self.debug_info["controller"].get("timestamp", None) or ((datetime.datetime.now() - self.debug_info["controller"]["timestamp"]).total_seconds() > self.memory_periodic_check_sec):
                 self.collect_memory_consumption()
+                pprint.pprint(self.debug_info)
 
                 if self.debug_info.get("controller", None):
                     total_memory_usage_mb = self.debug_info["controller"].get("total_memory_usage_mb", None)
@@ -626,8 +627,44 @@ class Controller:
         comp_debug_info = self.events_processor.insert_debug_info_by_id(self.debug_info.setdefault("events_processor", {}))
         total_memory_usage += comp_debug_info["memory_measure_results"]
 
+        self.events_detectors_controller.calc_memory_consumption()
+        comp_debug_info = self.events_detectors_controller.insert_debug_info_by_id(self.debug_info.setdefault("events_detectors_controller", {}))
+        total_memory_usage += comp_debug_info["memory_measure_results"]
+
+        self.cam_events_detector.calc_memory_consumption()
+        comp_debug_info = self.cam_events_detector.insert_debug_info_by_id(self.debug_info.setdefault("cam_events_detector", {}))
+        total_memory_usage += comp_debug_info["memory_measure_results"]
+
+        self.fov_events_detector.calc_memory_consumption()
+        comp_debug_info = self.fov_events_detector.insert_debug_info_by_id(self.debug_info.setdefault("fov_events_detector", {}))
+        total_memory_usage += comp_debug_info["memory_measure_results"]
+
+        self.zone_events_detector.calc_memory_consumption()
+        comp_debug_info = self.zone_events_detector.insert_debug_info_by_id(self.debug_info.setdefault("zone_events_detector", {}))
+        total_memory_usage += comp_debug_info["memory_measure_results"]
+
         self.visualizer.calc_memory_consumption()
         comp_debug_info = self.visualizer.insert_debug_info_by_id(self.debug_info.setdefault("visualizer", {}))
+        total_memory_usage += comp_debug_info["memory_measure_results"]
+
+        self.db_controller.calc_memory_consumption()
+        comp_debug_info = self.db_controller.insert_debug_info_by_id(self.debug_info.setdefault("db_controller", {}))
+        total_memory_usage += comp_debug_info["memory_measure_results"]
+
+        self.db_adapter_obj.calc_memory_consumption()
+        comp_debug_info = self.db_adapter_obj.insert_debug_info_by_id(self.debug_info.setdefault("db_adapter_obj", {}))
+        total_memory_usage += comp_debug_info["memory_measure_results"]
+
+        self.db_adapter_cam_events.calc_memory_consumption()
+        comp_debug_info = self.db_adapter_cam_events.insert_debug_info_by_id(self.debug_info.setdefault("db_adapter_cam_events", {}))
+        total_memory_usage += comp_debug_info["memory_measure_results"]
+
+        self.db_adapter_fov_events.calc_memory_consumption()
+        comp_debug_info = self.db_adapter_fov_events.insert_debug_info_by_id(self.debug_info.setdefault("db_adapter_fov_events", {}))
+        total_memory_usage += comp_debug_info["memory_measure_results"]
+
+        self.db_adapter_zone_events.calc_memory_consumption()
+        comp_debug_info = self.db_adapter_zone_events.insert_debug_info_by_id(self.debug_info.setdefault("db_adapter_zone_events", {}))
         total_memory_usage += comp_debug_info["memory_measure_results"]
 
         self.debug_info["controller"] = dict()
