@@ -94,7 +94,7 @@ class ObjectsHandler(core.EvilEyeBase):
         result = None
         if objs_type == 'new':
             with self.lock:
-                result = copy.deepcopy(self.new_objs)
+                result = self.new_objs
         elif objs_type == 'active':
             result = self._get_active(cam_id)
         elif objs_type == 'lost':
@@ -266,7 +266,7 @@ class ObjectsHandler(core.EvilEyeBase):
             if (datetime.datetime.now() - self.lost_objs.objects[i].time_lost).total_seconds() > self.lost_store_time_secs:
                 start_index_for_remove = i
                 break
-        if start_index_for_remove:
+        if start_index_for_remove is not None:
             self.lost_objs.objects = self.lost_objs.objects[start_index_for_remove:]
 
     def _prepare_for_saving(self, obj: ObjectResult, image_width, image_height) -> tuple[list, list, str, str]:
