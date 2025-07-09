@@ -63,7 +63,7 @@ if __name__ == "__main__":
     with open(config_file_name) as config_file:
         config_data = json.load(config_file)
 
-    if use_default_config and args.video is not None:
+    if args.video is not None:
         video_file = args.video
         config_data["sources"][0]["camera"] = video_file
         print(f"Using video source file from cli: {video_file}")
