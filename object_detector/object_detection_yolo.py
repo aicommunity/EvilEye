@@ -25,6 +25,10 @@ class ObjectDetectorYolo(object_detector.ObjectDetectorBase):
 
     def reset_impl(self):
         super().reset_impl()
+        for t in self.detection_threads:
+            t.stop()
+            del t.model
+        self.detection_threads.clear()
 
     def set_params_impl(self):
         super().set_params_impl()

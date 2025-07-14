@@ -1,8 +1,10 @@
 from queue import Queue
 import threading
 from ultralytics import YOLO
+from ultralytics.utils import ThreadingLocked
 from object_detector.detection_thread_base import DetectionThreadBase
 from utils import utils
+import torch
 
 
 class DetectionThreadYolo(DetectionThreadBase):
@@ -21,7 +23,11 @@ class DetectionThreadYolo(DetectionThreadBase):
                 self.model.half()
 
     def predict(self, images: list):
-        return self.model.predict(source=images, classes=self.classes, verbose=False, **self.inf_params)
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        with torch.no_grad():
+            result = self.model.predict(source=images, classes=self.classes, verbose=False, **self.inf_params)
+        return result
 
     def get_bboxes(self, result, roi):
         bboxes_coords = []
@@ -36,6 +42,10 @@ class DetectionThreadYolo(DetectionThreadBase):
                 continue
             abs_coords = utils.roi_to_image(coord, roi[1][0], roi[1][1])  # Получаем координаты рамки в СК всего изображения
             bboxes_coords.append(abs_coords)
-            confidences.append(conf)
-            ids.append(class_id)
+            confidences.append(float(conf))
+            ids.append(int(class_id))
+        del result
+        del boxes
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         return bboxes_coords, confidences, ids

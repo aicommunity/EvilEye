@@ -55,8 +55,8 @@ class DetectionThreadBase:
         return True, dropped_id
 
     def _process_impl(self):
+        self.init_detection_implementation()
         while self.run_flag:
-            self.init_detection_implementation()
             try:
                 if not self.queue_in.empty():
                     image = self.queue_in.get()
@@ -97,6 +97,7 @@ class DetectionThreadBase:
             confidences.extend(roi_confs)
             class_ids.extend(roi_ids)
             bboxes_coords.extend(roi_bboxes)
+        del predict_results
 
         bboxes_coords, confidences, class_ids = utils.merge_roi_boxes(self.roi[0], bboxes_coords, confidences, class_ids)  # Объединение рамок из разных ROI
         bboxes_coords, confidences, class_ids = utils.non_max_sup(bboxes_coords, confidences, class_ids)
