@@ -91,6 +91,8 @@ class DetectionThreadBase:
         for img in split_image:
             images.append(img[0].image)
         predict_results = self.predict(images)
+        if not predict_results:
+            return detection_result_list
 
         for i in range(len(split_image)):
             roi_bboxes, roi_confs, roi_ids = self.get_bboxes(predict_results[i], split_image[i])
