@@ -2,6 +2,7 @@ import threading
 import capture
 import preprocessing
 from object_detector import object_detection_yolo
+from object_detector import object_detection_yolo_mp
 from object_detector.object_detection_base import DetectionResultList
 from object_tracker import object_tracking_botsort
 from object_tracker.object_tracking_base import TrackingResultList
