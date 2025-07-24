@@ -11,23 +11,28 @@ import scipy.spatial.distance as ssd
 from scipy.cluster.hierarchy import linkage, fcluster
 from sklearn.metrics.pairwise import cosine_similarity
 from ultralytics.trackers.bot_sort import BOTrack, TrackState
-from object_tracker.trackers.bot_sort import BOTSORT, Encoder
+from object_tracker.trackers.track_encoder import TrackEncoder
 from object_tracker.trackers.cfg.utils import read_cfg
 from object_detector.object_detection_base import DetectionResult
 from object_detector.object_detection_base import DetectionResultList
 from object_multi_camera_tracker.object_tracking_base import TrackingResult
 from object_multi_camera_tracker.object_tracking_base import TrackingResultList
 from object_multi_camera_tracker.object_tracking_base import ObjectMultiCameraTrackingBase
+from object_multi_camera_tracker.mctrack import MCTrack
+from object_tracker.trackers.sctrack import SCTrack
 from dataclasses import dataclass
+from pympler import asizeof
 
 
 class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
 
-    def __init__(self):
+    def __init__(self, num_cameras: int, encoders: List[TrackEncoder]):
         super().__init__()
+        self.num_cameras = num_cameras
+        self.encoders = encoders
 
     def init_impl(self):
-        self.tracker = MultiCameraTracker()
+        self.tracker = MultiCameraTracker(self.num_cameras, self.encoders)
         return True
 
     def release_impl(self):
@@ -60,7 +65,7 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
                 for t in track_info.tracks:
                     tracks.append(t.tracking_data["track_object"])
                 sc_tracks.append(tracks)
-            
+
             mc_tracks = self.tracker.update(sc_tracks)
             tracks_infos = self._create_tracks_info(track_infos, mc_tracks)
             self.queue_out.put(list(zip(tracks_infos, images)))
@@ -121,72 +126,36 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
         return sc_track_results
     
 
-class MCTrack:
-    _count = 0
-    
-    def __init__(
-            self, 
-            sc_tracks: Dict[int, BOTrack]):
-        
-        self.global_track_id = None
-        self.sc_tracks = sc_tracks
-        self.features = deque([], maxlen=200)
-
-    def update(self, new_track: 'MCTrack'):
-        for cam_id, sct in new_track.sc_tracks.items():
-            self.sc_tracks[cam_id] = sct
-
-    def update_features(self, overlaps: Dict[int, List[int]] = None):
-        overlaps = overlaps or {}
-
-        for cam_id, t in self.sc_tracks.items():
-            if t.curr_feat is None:
-                continue
-
-            if t.track_id in overlaps.get(cam_id, []) and len(self.features) > 0:
-                continue
-            
-            self.features.append(t.curr_feat)
-
-    def activate(self):
-        self.global_track_id = self.next_id()
-
-    @property
-    def is_activated(self):
-        return self.global_track_id is not None
-    
-    @property
-    def is_removed(self):
-        sc_track_list = list(self.sc_tracks.values())
-        _is_removed = all(t.state == TrackState.Removed for t in sc_track_list)
-        return _is_removed
-
-    @property
-    def smooth_feat(self) -> np.ndarray:
-        smooth_feat = np.mean(self.features, axis=0)
-        return smooth_feat
-
-    def next_id(self):
-        cnt = MCTrack._count
-        MCTrack._count += 1
-        return cnt
-
-
 class MultiCameraTracker:
     def __init__(
             self, 
-            clustering_threshold: float = 0.5):
+            num_cameras: int,
+            encoders: List[TrackEncoder],
+            clustering_threshold: float = 0.5, 
+            confident_age: int = 0,
+            exclude_overlap: bool = False,
+            include_lost_tracks: bool = False,
+            overlap_threshold: float = 0.5,
+            max_track_len: int = 50):
         
         """
         :param num_cameras: Количество камер.
+        :param encoder: Экстрактор признаков.
         :param clustering_threshold: Порог для иерархической кластеризации (0.7 по умолчанию).
         """
+        self.num_cameras = num_cameras
+        self.encoders = encoders
+        self.exclude_overlap = exclude_overlap
+        self.overlap_threshold = overlap_threshold
+        self.confident_age = confident_age
+        self.max_track_length = max_track_len
         self.clustering_threshold = clustering_threshold
-        
-        self.global_mc_tracks: List[MCTrack] = []
+        self.include_lost_tracks = include_lost_tracks
+
+        self.mct_tracks: List[MCTrack] = []
         self.next_global_id = 0
 
-    def update(self, sct_tracks: List[BOTrack]) -> List[MCTrack]:
+    def update(self, sct_tracks: List[List[SCTrack]]) -> List[MCTrack]:
         """
         Обновляет трекинг по всем камерам и возвращает треки с глобальными идентификаторами.
         
@@ -198,30 +167,33 @@ class MultiCameraTracker:
         # Если ни одна камера не обнаружила объекты, возвращаем пустой список
         if all(len(x) == 0 for x in sct_tracks):
             return []
-        
-        # Обновляем признаки глобальных треков
-        for t in self.global_mc_tracks:
-            t.update_features()
 
+        # Обновляем признаки глобальных треков
+        for t in self.mct_tracks:
+            t.update_features()
         
         #Выполняем иерархическую кластеризацию
         mct_tracks = self._hierarchical_clustering(sct_tracks)
 
-        overlaps = self._find_overlaps(sct_tracks)
+        # Обновляем признаки глобальных треков
+        overlaps = None
+        if self.exclude_overlap:
+            overlaps = self._find_overlaps(sct_tracks)
         for t in mct_tracks:
             t.update_features(overlaps)
 
-        # Шаг 3: Обновляем глобальные треки
+        # Обновляем глобальные треки
         self._update_global_tracks(mct_tracks)
 
-        activated_global_tracks = [x for x in self.global_mc_tracks if x.is_activated]
+        activated_global_tracks = [x for x in self.mct_tracks if x.is_activated]
+        
         return activated_global_tracks
-    
+        
     def _find_overlaps(self, sct_tracks: List[List[BOTrack]]) -> List[List[bool]]:
         """Находит пересечения между треками на разных камерах."""
         overlaps = {} # cam_id -> track_id
         for cam_id, tracks in enumerate(sct_tracks):
-            local_overlaps = check_overlaps(tracks)
+            local_overlaps = check_overlaps(tracks, self.overlap_threshold)
             overlaps[cam_id] = []
             for i, track in enumerate(tracks):
                 if not local_overlaps[i]:
@@ -233,12 +205,13 @@ class MultiCameraTracker:
     
     def _hierarchical_clustering(self, sct_tracks: List[List[BOTrack]]) -> List[MCTrack]:
         # Извлеекаем признаки из треков
-        features = []
+        features = [[] for encoder in self.encoders]
         tracks = []
         cam_ids = []
         for cam_id, ts in enumerate(sct_tracks):
             for track in ts:
-                features.append(track.smooth_feat)
+                for i in range(len(self.encoders)):
+                    features[i].append(track.smooth_feat[i])
                 tracks.append(track)
                 cam_ids.append(cam_id)
         
@@ -246,10 +219,15 @@ class MultiCameraTracker:
             return []
         
         # Составляем матрицу расстояний
-        features = np.array(features)
-        appearance_distances = self._create_appearance_distance_matrix(features)
-        distances = self._fix_distance_matrix(appearance_distances, cam_ids)
-        
+        dists = []
+        for feats in features:
+            dist = self._create_distance_matrix(np.array(feats))
+            dists.append(dist)
+
+        distances = np.mean(dists, axis=0)
+        distances = self._fix_distance_matrix(distances, cam_ids)
+        # LOGGER.debug(f"Hierchical clustering. Distance matrix:\n{distances}")
+
         # Иерархическая кластеризация
         if len(distances) == 1:
             cluster_labels = [0]
@@ -267,24 +245,58 @@ class MultiCameraTracker:
             track_clusters[label][cam_ids[i]] = tracks[i]
         
         # Создать MCTrack объекты
-        mct_tracks = [MCTrack(track_clusters[label]) for label in track_clusters]
-   
-        return mct_tracks
+        mct_tracks = [
+            MCTrack(track_clusters[label], confident_age=self.confident_age, maxlen=self.max_track_length)
+            for label in track_clusters
+        ]
+        # LOGGER.debug(f"Found clusters:\n{[t.sc_tracks for t in mct_tracks]}")
 
+        return mct_tracks
+    
     def _update_global_tracks(self, mct_tracks: List[MCTrack]):
-        # self._exclude_removed_global_tracks()
         mct_tracks, global_matches = self._assign_by_track_id(mct_tracks)
-        mct_tracks = self._assign_by_features(mct_tracks, global_matches)
+        mct_tracks, global_matches = self._assign_by_features(mct_tracks, global_matches)
+
+        self._clean_global_tracks(global_matches)
         self._init_new_global_tracks(mct_tracks)
+
+
+    def _clean_global_tracks(self, global_matches: List[int]):
+        matched_sc_track_ids = []
+        for i, global_track in enumerate(self.mct_tracks):
+            if i not in global_matches:
+                continue
+
+            matched_sc_track_ids += [
+                t.track_id for i, t in self.mct_tracks[i].sc_tracks.items()
+                if t.state == TrackState.Tracked
+            ]
+
+        for i, global_track in enumerate(self.mct_tracks):
+            
+            if i in global_matches:
+                continue
+            
+            if not self.include_lost_tracks:
+                global_track.sc_tracks = {}
+                continue
+
+            for j in list(global_track.sc_tracks.keys()):
+                track = global_track.sc_tracks[j]
+                if track.state != TrackState.Tracked:
+                    continue
+                if track.track_id in matched_sc_track_ids:
+                    global_track.sc_tracks.pop(j)
+
 
     def _exclude_removed_global_tracks(self):
         filtered_mct_tracks = []
-        for t in self.global_mc_tracks:
+        for t in self.mct_tracks:
             if t.is_removed:
                 continue
             filtered_mct_tracks.append(t)
         
-        self.global_mc_tracks = filtered_mct_tracks
+        self.mct_tracks = filtered_mct_tracks
 
     def _assign_by_track_id(
             self, 
@@ -295,7 +307,7 @@ class MultiCameraTracker:
         mct_matches = []
 
         # Go through all tracks and find matches
-        for i, global_track in enumerate(self.global_mc_tracks):                    
+        for i, global_track in enumerate(self.mct_tracks):                    
             global_track_ids = set((c, t.track_id) for c, t in global_track.sc_tracks.items())
             
             for j, mct_track in enumerate(mct_tracks):
@@ -308,44 +320,69 @@ class MultiCameraTracker:
                 
                 # Update global track
                 global_track.update(mct_track)
-        
+                # LOGGER.debug(
+                #     f"Global track {global_track.global_track_id} "
+                #     f"was updated by track is with values:\n{mct_track.sc_tracks}"
+                # )
+
                 mct_matches.append(j)
                 global_matches.append(i)
                 break
-        
-        for i, global_track in enumerate(self.global_mc_tracks):
-            if i not in global_matches:
-                global_track.sc_tracks = {}
 
         unmatched_mct_tracks = [mct_tracks[i] for i in range(len(mct_tracks)) if i not in mct_matches]
+        # LOGGER.debug(f"Assignment by id, unmatched tracks:\n{[t.sc_tracks for t in unmatched_mct_tracks]}")
+        # LOGGER.debug(f"Assignment by id, global matches:\n{global_matches}")
         return unmatched_mct_tracks, global_matches
     
     def _assign_by_features(self, mct_tracks: List[MCTrack], global_matches: List[int]) -> List[MCTrack]:
         
-        unmatched_global_ids = [i for i in range(len(self.global_mc_tracks)) if i not in global_matches]
+        unmatched_global_ids = [i for i in range(len(self.mct_tracks)) if i not in global_matches]
+        # LOGGER.debug(f"Assigning by features, unmatched_global_ids:\n{unmatched_global_ids}")
         if len(unmatched_global_ids) == 0 or len(mct_tracks) == 0:
-            return mct_tracks
+            return mct_tracks, global_matches
         
         # Составляем матрицу расстояний между глобальными треками и новыми локальными треками
-        global_features = np.array([self.global_mc_tracks[i].smooth_feat for i in unmatched_global_ids])
-        new_features = np.array([t.smooth_feat for t in mct_tracks])
-        distances = 1 - cosine_similarity(global_features, new_features)
+        global_features_list = [
+            np.array([self.mct_tracks[i].smooth_feat[j] for i in unmatched_global_ids])
+            for j in range(len(self.encoders))
+        ]
+        new_features_list = [
+            np.array([t.smooth_feat[j] for t in mct_tracks])
+            for j in range(len(self.encoders))
+        ]
+
+        dists = []
+        for i in range(len(self.encoders)):
+            global_features = global_features_list[i]
+            new_features = new_features_list[i]
+            dist = 1 - cosine_similarity(global_features, new_features)
+            dists.append(dist)
+
+        distances = np.mean(dists, axis=0)
+        # LOGGER.debug(f"Assigning by features. Distance matrix:\n{distances}")
 
         # Применяем венгерский алгоритм
         row_ind, col_ind = linear_sum_assignment(distances)
-        pass
+        
         for i, j in zip(row_ind, col_ind):
             if distances[i, j] > self.clustering_threshold:
                 continue
+            
             global_id = unmatched_global_ids[i]
-            self.global_mc_tracks[global_id].update(mct_tracks[j])
+            self.mct_tracks[global_id].update(mct_tracks[j], self.include_lost_tracks)
+            
+            global_matches.append(global_id)
+            # LOGGER.debug(
+            #     f"Global track {global_id} "
+            #     f"was updated by features is with values:\n{mct_tracks[j].sc_tracks}"
+            # )
         
         unmatched_mct_tracks = [mct_tracks[j] for j in range(len(mct_tracks)) if j not in col_ind]
-        return unmatched_mct_tracks
+        return unmatched_mct_tracks, global_matches
                 
     def _init_new_global_tracks(self, mct_tracks: List[MCTrack]):
         used_sc_tracks = {}
-        for global_track in self.global_mc_tracks:
+        for global_track in self.mct_tracks:
             for c, t in global_track.sc_tracks.items():
                 if c not in used_sc_tracks:
                     used_sc_tracks[c] = []
@@ -362,10 +399,11 @@ class MultiCameraTracker:
                 continue
 
             mct_track.activate()
-            self.global_mc_tracks.append(mct_track)
+            # LOGGER.debug(f"Global track {mct_track.global_track_id} was activated with values:\n{mct_track.sc_tracks}")
+            self.mct_tracks.append(mct_track)
             pass
 
-    def _create_appearance_distance_matrix(self, appearance_features: np.ndarray) -> np.ndarray:
+    def _create_distance_matrix(self, appearance_features: np.ndarray) -> np.ndarray:
         distances = 1 - cosine_similarity(appearance_features)
         return distances
     

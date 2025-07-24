@@ -2,10 +2,13 @@ import threading
 import capture
 import preprocessing
 from object_detector import object_detection_yolo
+from object_detector import object_detection_yolo_mp
 from object_detector.object_detection_base import DetectionResultList
 from object_tracker import object_tracking_botsort
-from object_tracker.object_tracking_base import TrackingResultList
-from object_tracker.trackers.bot_sort import Encoder
+from object_tracker.tracking_results import TrackingResultList
+# from object_tracker.trackers.bot_sort import Encoder
+from object_tracker.trackers.track_encoder import TrackEncoder
+from object_tracker.trackers.onnx_encoder import OnnxEncoder
 from objects_handler import objects_handler
 from capture.video_capture_base import CaptureImage
 import time
@@ -35,13 +38,14 @@ except ImportError:
     pyqt_version = 5
 
 class Controller:
-    def __init__(self, main_window: QMainWindow, pyqt_slots: dict, pyqt_signals: dict):
-        self.main_window = main_window
+    def __init__(self):
+        self.main_window = None
         # self.application = application
         self.control_thread = threading.Thread(target=self.run)
         self.params = None
         self.sources = []
         self.credentials = dict()
+        self.database_config = dict()
         self.source_id_name_table = dict()
         self.source_video_duration = dict()
         self.source_last_processed_frame_id = dict()
@@ -50,9 +54,12 @@ class Controller:
         self.trackers = []
         self.obj_handler = None
         self.visualizer = None
-        self.pyqt_slots = pyqt_slots
-        self.pyqt_signals = pyqt_signals
+        self.pyqt_slots = None
+        self.pyqt_signals = None
         self.fps = 5
+        self.show_main_gui = True
+        self.show_journal = False
+        self.enable_close_from_gui = True
         self.memory_periodic_check_sec = 60*15
         self.max_memory_usage_mb = 1024*16
         self.auto_restart = True
@@ -109,7 +116,6 @@ class Controller:
 
             if self.autoclose and all_sources_finished:
                 self.run_flag = False
-                #break
 
             if self.run_flag:
                 for source in self.sources:
@@ -203,9 +209,10 @@ class Controller:
 
             if self.multicam_reid_enabled:
                 track_infos = []
-                if not any(t.queue_out.empty() for t in self.trackers):
-                    for tracker in self.trackers:
-                        track_info = tracker.get()
+                #if not any(t.queue_out.empty() for t in self.trackers):
+                for tracker in self.trackers:
+                    track_info = tracker.get()
+                    if track_info:
                         tracking_result, image = track_info
                         tracking_results = tracking_result
                         track_infos.append((tracking_result, image))
@@ -261,6 +268,7 @@ class Controller:
 
             if not self.debug_info.get("controller", None) or not self.debug_info["controller"].get("timestamp", None) or ((datetime.datetime.now() - self.debug_info["controller"]["timestamp"]).total_seconds() > self.memory_periodic_check_sec):
                 self.collect_memory_consumption()
+                pprint.pprint(self.debug_info)
 
                 if self.debug_info.get("controller", None):
                     total_memory_usage_mb = self.debug_info["controller"].get("total_memory_usage_mb", None)
@@ -274,7 +282,7 @@ class Controller:
                         continue
 
 
-            if self.gui_enabled:
+            if self.show_main_gui and self.gui_enabled:
                 objects = []
                 for i in range(len(self.visualizer.source_ids)):
                     objects.append(self.obj_handler.get('active', self.visualizer.source_ids[i]))
@@ -310,7 +318,8 @@ class Controller:
         if self.multicam_reid_enabled:
             self.mc_tracker.start()
         self.obj_handler.start()
-        self.visualizer.start()
+        if self.visualizer:
+            self.visualizer.start()
         self.db_controller.connect()
         self.db_adapter_obj.start()
         self.db_adapter_zone_events.start()
@@ -364,6 +373,7 @@ class Controller:
         self._init_captures(self.params.get('sources',list()))
         self._init_preprocessors(self.params.get('preprocessors', list()))
         self._init_detectors(self.params.get('detectors',list()))
+        self._init_encoders(self.params.get('trackers', list()))
         self._init_trackers(self.params.get('trackers', list()))
         self._init_mc_tracker()
 
@@ -376,20 +386,63 @@ class Controller:
                     break
         self.multicam_reid_enabled = multicam_reid
 
-        self._init_visualizer(self.params['visualizer'])
-        self._init_db_controller(self.params['database'], system_params=self.params)
-        self._init_db_adapters(self.params['database_adapters'])
+        database_creds = self.credentials.get("database", None)
+        if not database_creds:
+            database_creds = dict()
+
+        try:
+            with open("database_config.json") as data_config_file:
+                self.database_config = json.load(data_config_file)
+        except FileNotFoundError as ex:
+            pass
+
+        database_creds["user_name"] = database_creds.get("user_name", "postgres")
+        database_creds["password"] = database_creds.get("password", "")
+        database_creds["database_name"] = database_creds.get("database_name", "evil_eye_db")
+        database_creds["host_name"] = database_creds.get("host_name", "localhost")
+        database_creds["port"] = database_creds.get("port", 5432)
+        database_creds["default_database_name"] = database_creds.get("default_database_name", "postgres")
+        database_creds["default_password"] = database_creds.get("default_password", "")
+        database_creds["default_user_name"] = database_creds.get("default_user_name", "postgres")
+        database_creds["default_host_name"] = database_creds.get("default_host_name", "localhost")
+        database_creds["default_port"] = database_creds.get("default_port", 5432)
+
+        self.database_config["database"]["user_name"] = self.database_config["database"].get("user_name", database_creds["user_name"])
+        self.database_config["database"]["password"] = self.database_config["database"].get("password", database_creds["password"])
+        self.database_config["database"]["database_name"] = self.database_config["database"].get("database_name", database_creds["database_name"])
+        self.database_config["database"]["host_name"] = self.database_config["database"].get("host_name", database_creds["host_name"])
+        self.database_config["database"]["port"] = self.database_config["database"].get("port", database_creds["port"])
+        self.database_config["database"]["default_database_name"] = self.database_config["database"].get("default_database_name", database_creds["default_database_name"])
+        self.database_config["database"]["default_password"] = self.database_config["database"].get("default_password", database_creds["default_password"])
+        self.database_config["database"]["default_user_name"] = self.database_config["database"].get("default_user_name", database_creds["default_user_name"])
+        self.database_config["database"]["default_host_name"] = self.database_config["database"].get("default_host_name", database_creds["default_host_name"])
+        self.database_config["database"]["default_port"] = self.database_config["database"].get("default_port", database_creds["default_port"])
+
+        self._init_db_controller(self.database_config['database'], system_params=self.params)
+        self._init_db_adapters(self.database_config['database_adapters'])
+
         self.__init_object_handler(self.db_controller, params['objects_handler'])
         self._init_events_detectors(self.params['events_detectors'])
         self._init_events_detectors_controller(self.params['events_detectors'])
         self._init_events_processor(self.params['events_processor'])
 
-        self.autoclose = self.params['controller'].get("autoclose", False)
-        self.fps = self.params['controller'].get("fps", 5)
+        self.autoclose = self.params['controller'].get("autoclose", self.autoclose)
+        self.fps = self.params['controller'].get("fps", self.fps)
+        self.show_main_gui = self.params['controller'].get("show_main_gui", self.show_main_gui)
+        self.show_journal = self.params['controller'].get("show_journal", self.show_journal)
+        self.enable_close_from_gui = self.params['controller'].get("enable_close_from_gui", self.enable_close_from_gui)
         self.class_names = self.params['controller'].get("class_names", list())
         self.memory_periodic_check_sec = self.params['controller'].get("memory_periodic_check_sec", self.memory_periodic_check_sec)
         self.max_memory_usage_mb = self.params['controller'].get("max_memory_usage_mb", self.max_memory_usage_mb)
         self.auto_restart = self.params['controller'].get("max_memory_usage_mb", self.auto_restart)
+
+    def init_main_window(self, main_window: QMainWindow, pyqt_slots: dict, pyqt_signals: dict):
+        self.main_window = main_window
+        self.pyqt_slots = pyqt_slots
+        self.pyqt_signals = pyqt_signals
+        self._init_visualizer(self.params['visualizer'])
+
+
 
     def release(self):
         self.stop()
@@ -439,7 +492,7 @@ class Controller:
         num_sources = len(params)
         for i in range(num_sources):
             src_params = params[i]
-            camera_creds = self.credentials.get(src_params["camera"], None)
+            camera_creds = self.credentials["sources"].get(src_params["camera"], None)
             if camera_creds and (not src_params.get("username", None) or not src_params.get("password", None)):
                 src_params["username"] = camera_creds["username"]
                 src_params["password"] = camera_creds["password"]
@@ -476,18 +529,33 @@ class Controller:
 
     def _init_trackers(self, params):
         num_trackers = len(params)
-        # TODO: move path to some config
 
         for i in range(num_trackers):
             tracker_params = params[i]
-            encoder = Encoder(tracker_params.get("tracker_onnx", "osnet_ain_x1_0_M.onnx"))
-            tracker = object_tracking_botsort.ObjectTrackingBotsort(encoder)
+            encoder = self.encoders[tracker_params.get("tracker_onnx", "osnet_ain_x1_0_M.onnx")]
+            tracker = object_tracking_botsort.ObjectTrackingBotsort([encoder])
             tracker.set_params(**tracker_params)
             tracker.init()
             self.trackers.append(tracker)
     
+    def _init_encoders(self, params):
+        num_trackers = len(params)
+        self.encoders = {}
+
+        for i in range(num_trackers):
+            tracker_params = params[i]
+            path = tracker_params.get("tracker_onnx", "osnet_ain_x1_0_M.onnx")
+            
+            if path not in self.encoders:
+                encoder = OnnxEncoder(path)
+                self.encoders[path] = encoder
+    
     def _init_mc_tracker(self):
-        self.mc_tracker = ObjectMultiCameraTracking()
+        num_of_cameras = len(self.params.get('sources', list()))
+        self.mc_tracker = ObjectMultiCameraTracking(
+            num_of_cameras, 
+            list(self.encoders.values())
+        )
         self.mc_tracker.init()
 
     def _init_events_detectors(self, params):
@@ -561,8 +629,44 @@ class Controller:
         comp_debug_info = self.events_processor.insert_debug_info_by_id(self.debug_info.setdefault("events_processor", {}))
         total_memory_usage += comp_debug_info["memory_measure_results"]
 
+        self.events_detectors_controller.calc_memory_consumption()
+        comp_debug_info = self.events_detectors_controller.insert_debug_info_by_id(self.debug_info.setdefault("events_detectors_controller", {}))
+        total_memory_usage += comp_debug_info["memory_measure_results"]
+
+        self.cam_events_detector.calc_memory_consumption()
+        comp_debug_info = self.cam_events_detector.insert_debug_info_by_id(self.debug_info.setdefault("cam_events_detector", {}))
+        total_memory_usage += comp_debug_info["memory_measure_results"]
+
+        self.fov_events_detector.calc_memory_consumption()
+        comp_debug_info = self.fov_events_detector.insert_debug_info_by_id(self.debug_info.setdefault("fov_events_detector", {}))
+        total_memory_usage += comp_debug_info["memory_measure_results"]
+
+        self.zone_events_detector.calc_memory_consumption()
+        comp_debug_info = self.zone_events_detector.insert_debug_info_by_id(self.debug_info.setdefault("zone_events_detector", {}))
+        total_memory_usage += comp_debug_info["memory_measure_results"]
+
         self.visualizer.calc_memory_consumption()
         comp_debug_info = self.visualizer.insert_debug_info_by_id(self.debug_info.setdefault("visualizer", {}))
+        total_memory_usage += comp_debug_info["memory_measure_results"]
+
+        self.db_controller.calc_memory_consumption()
+        comp_debug_info = self.db_controller.insert_debug_info_by_id(self.debug_info.setdefault("db_controller", {}))
+        total_memory_usage += comp_debug_info["memory_measure_results"]
+
+        self.db_adapter_obj.calc_memory_consumption()
+        comp_debug_info = self.db_adapter_obj.insert_debug_info_by_id(self.debug_info.setdefault("db_adapter_obj", {}))
+        total_memory_usage += comp_debug_info["memory_measure_results"]
+
+        self.db_adapter_cam_events.calc_memory_consumption()
+        comp_debug_info = self.db_adapter_cam_events.insert_debug_info_by_id(self.debug_info.setdefault("db_adapter_cam_events", {}))
+        total_memory_usage += comp_debug_info["memory_measure_results"]
+
+        self.db_adapter_fov_events.calc_memory_consumption()
+        comp_debug_info = self.db_adapter_fov_events.insert_debug_info_by_id(self.debug_info.setdefault("db_adapter_fov_events", {}))
+        total_memory_usage += comp_debug_info["memory_measure_results"]
+
+        self.db_adapter_zone_events.calc_memory_consumption()
+        comp_debug_info = self.db_adapter_zone_events.insert_debug_info_by_id(self.debug_info.setdefault("db_adapter_zone_events", {}))
         total_memory_usage += comp_debug_info["memory_measure_results"]
 
         self.debug_info["controller"] = dict()

@@ -325,9 +325,12 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
         last_row = self.query(select_query)[0][0] if self.query(select_query)[0][0] else 0
         first_record = last_row + 1
         config = json.dumps(self.configuration_info)
-        query = sql.SQL('INSERT INTO jobs (creation_time, project_id, first_record, is_terminated, configuration_info) '
-                        'VALUES (%s, %s, %s, %s, %s) RETURNING job_id')
-        job_id = self.query(query, (cur_time, project_id, first_record, False, config))[0][0]
+        exists, last_job_id, config_id = self._check_if_config_exist(config)
+        if exists:
+            config = None
+        query = sql.SQL('INSERT INTO jobs (creation_time, project_id, first_record, is_terminated,'
+                        ' configuration_info, configuration_id) VALUES (%s, %s, %s, %s, %s, %s) RETURNING job_id')
+        job_id = self.query(query, (cur_time, project_id, first_record, False, config, config_id))[0][0]
         return job_id
 
     def _insert_cam_info(self, params):
@@ -358,6 +361,34 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
             full_address = self.cameras_params[source]['camera']
             query = sql.SQL('UPDATE camera_information SET video_dur_ms = %s WHERE full_address = %s')
             self.query(query, (source_video_dur[source], full_address))
+
+    def save_job_configuration_info(self, config_info):
+        job_id = self.get_job_id()
+        config = json.dumps(config_info)
+        exists, last_job_id, config_id = self._check_if_config_exist(config)
+        if exists and last_job_id != job_id:
+            config = None
+        # Получаем номер последней записи в данном запуске
+        update_query = sql.SQL('UPDATE jobs SET configuration_info = %s, configuration_id = %s WHERE job_id = %s;')
+        data = (config, config_id, job_id)
+        self.query(update_query, data)
+
+    def _check_if_config_exist(self, config) -> tuple[bool, int | None, int]:
+        binary_config = config
+        query = sql.SQL('SELECT job_id, configuration_id FROM jobs WHERE configuration_info::jsonb = %s::jsonb'
+                        ' AND configuration_id IS NOT NULL')
+        data = (binary_config,)
+        records = self.query(query, data)
+        job_id = None
+        if not records:
+            select_query = sql.SQL('SELECT max(configuration_id) FROM jobs;')
+            record = self.query(select_query)
+            if not record:
+                return False, None, 0
+            config_id = record[0][0] + 1 if record[0][0] else 1
+            return False, job_id, config_id
+        job_id, config_id = records[0]
+        return True, job_id, config_id
 
     @staticmethod
     def get_project_id():

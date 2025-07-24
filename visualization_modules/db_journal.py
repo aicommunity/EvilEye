@@ -30,11 +30,13 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 
 
 class DatabaseJournalWindow(QWidget):
-    def __init__(self, params):
+    def __init__(self, main_window, params, database_params, close_app: bool):
         super().__init__()
+        self.main_window = main_window
         self.params = params
-        self.adapter_params = self.params['database_adapters']
-        self.db_params = self.params['database']
+        self.database_params = database_params
+        self.adapter_params = self.database_params['database_adapters']
+        self.db_params = self.database_params['database']
         self.vis_params = self.params['visualizer']
         self.obj_journal_enabled = self.vis_params['objects_journal_enabled']
 
@@ -61,23 +63,30 @@ class DatabaseJournalWindow(QWidget):
         self.tabs.setTabsClosable(True)
         self.tabs.tabCloseRequested.connect(self._close_tab)
         if self.obj_journal_enabled:
-            self.tabs.addTab(handler_journal_view.HandlerJournal(self.db_controller, 'objects', self.params,
+            self.tabs.addTab(handler_journal_view.HandlerJournal(self.db_controller, 'objects', self.params, self.database_params,
                                                                  self.tables['objects'], parent=self), 'Handler journal')
         self.tabs.addTab(events_journal.EventsJournal([self.cam_events_adapter,
                                                        self.perimeter_events_adapter, self.zone_events_adapter],
-                                                      self.db_controller, 'objects', self.params,
+                                                      self.db_controller, 'objects', self.params, self.database_params,
                                                       self.tables['objects'], parent=self), 'Alarms journal')
 
         self.layout = QVBoxLayout()
         self.layout.addWidget(self.tabs)
         self.setLayout(self.layout)
 
+        self.close_app = close_app
+
     def close(self):
         for tab_idx in range(self.tabs.count()):
             tab = self.tabs.widget(tab_idx)
             tab.close()
         print('Database journal closed')
+        self.db_controller.save_job_configuration_info(self.params)
         self.db_controller.disconnect()
+
+    def closeEvent(self, event):
+        if self.main_window and self.close_app:
+            self.main_window.close()
 
     @pyqtSlot(int)
     def _close_tab(self, idx):

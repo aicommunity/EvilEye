@@ -3,8 +3,16 @@ import json
 import sys
 from pathlib import Path
 
-from PyQt6.QtWidgets import QApplication
+try:
+    from PyQt6 import QtCore
+    from PyQt6.QtWidgets import QApplication
+    pyqt_version = 6
+except ImportError:
+    from PyQt5 import QtCore
+    from PyQt5.QtWidgets import QApplication
+    pyqt_version = 5
 
+from controller import controller
 from visualization_modules.main_window import MainWindow
 
 file_path = 'samples/vehicle_perpocessing.json'
@@ -55,7 +63,7 @@ if __name__ == "__main__":
     with open(config_file_name) as config_file:
         config_data = json.load(config_file)
 
-    if use_default_config and args.video is not None:
+    if args.video is not None:
         video_file = args.video
         config_data["sources"][0]["camera"] = video_file
         print(f"Using video source file from cli: {video_file}")
@@ -75,9 +83,18 @@ if __name__ == "__main__":
         config_data["autoclose"] = True
 
     app = QApplication(sys.argv)
-    a = MainWindow(file_path, config_data, 1280, 720)
 
-    if args.gui:
+    controller_instance = controller.Controller()
+    controller_instance.init(config_data)
+
+    a = MainWindow(controller_instance, file_path, config_data, 1600, 720)
+    controller_instance.init_main_window(a, a.slots, a.signals)
+    if controller_instance.show_main_gui:
         a.show()
+
+    if controller_instance.show_journal:
+        a.open_journal()
+    controller_instance.start()
+
     ret = app.exec()
     sys.exit(ret)

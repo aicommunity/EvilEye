@@ -10,11 +10,12 @@ from utils.utils import ObjectResultEncoder
 from queue import Queue
 from threading import Thread
 from threading import Condition, Lock
-from object_tracker.object_tracking_base import TrackingResult
-from object_tracker.object_tracking_base import TrackingResultList
+from object_tracker.tracking_results import TrackingResult
+from object_tracker.tracking_results import TrackingResultList
 from timeit import default_timer as timer
 from .object_result import ObjectResultHistory, ObjectResult, ObjectResultList
 from database_controller.db_adapter_objects import DatabaseAdapterObjects
+from pympler import asizeof
 
 '''
 Модуль работы с объектами ожидает данные от детектора в виде dict: {'cam_id': int, 'objects': list, 'actual': bool}, 
@@ -39,6 +40,8 @@ class ObjectsHandler(core.EvilEyeBase):
         self.lost_objs: ObjectResultList = ObjectResultList()
         self.history_len = 1
         self.lost_thresh = 5  # Порог перевода (в кадрах) в потерянные объекты
+        self.max_active_objects = 100
+        self.max_lost_objects = 100
 
         self.db_controller = db_controller
         self.db_adapter = db_adapter
@@ -74,6 +77,8 @@ class ObjectsHandler(core.EvilEyeBase):
         self.lost_store_time_secs = self.params.get('lost_store_time_secs', 60)
         self.history_len = self.params.get('history_len', 1)
         self.lost_thresh = self.params.get('lost_thresh', 5)
+        self.max_active_objects = self.params.get('max_active_objects', 100)
+        self.max_lost_objects = self.params.get('max_lost_objects', 100)
 
     def stop(self):
         # self.objects_file.close()
@@ -94,7 +99,7 @@ class ObjectsHandler(core.EvilEyeBase):
         result = None
         if objs_type == 'new':
             with self.lock:
-                result = copy.deepcopy(self.new_objs)
+                result = self.new_objs
         elif objs_type == 'active':
             result = self._get_active(cam_id)
         elif objs_type == 'lost':
@@ -119,23 +124,13 @@ class ObjectsHandler(core.EvilEyeBase):
             if obj.source_id == cam_id:
                 source_objects.objects.append(obj)
         return source_objects
-        # ret = self.lock.acquire(blocking=False)
-        # if ret:
-        #     # active_objects = copy.deepcopy(self.active_objs.objects)
-        #     for obj in self.active_objs.objects:
-        #         if obj.source_id == cam_id:
-        #             source_objects.objects.append(copy.deepcopy(obj))
-        #     self.lock.release()
-        #     return source_objects
-        # else:
-        #     return source_objects
 
     def _get_lost(self, cam_id):
         with self.lock:
             source_objects = ObjectResultList()
             for obj in self.lost_objs.objects:
                 if obj.source_id == cam_id:
-                    source_objects.objects.append(copy.deepcopy(obj))
+                    source_objects.objects.append(obj)
         return source_objects
 
     def _get_all(self, cam_id):
@@ -143,10 +138,10 @@ class ObjectsHandler(core.EvilEyeBase):
             source_objects = ObjectResultList()
             for obj in self.active_objs.objects:
                 if obj.source_id == cam_id:
-                    source_objects.objects.append(copy.deepcopy(obj))
+                    source_objects.objects.append(obj)
             for obj in self.lost_objs.objects:
                 if obj.source_id == cam_id:
-                    source_objects.objects.append(copy.deepcopy(obj))
+                    source_objects.objects.append(obj)
         return source_objects
 
     def handle_objs(self):  # Функция, отвечающая за работу с объектами
@@ -164,13 +159,10 @@ class ObjectsHandler(core.EvilEyeBase):
                 # self.condition.acquire()
                 self._handle_active(tracks, image)
                 if self.active_objs.objects:
-                    self.snapshot = copy.deepcopy(self.active_objs.objects)
+                    self.snapshot = self.active_objs.objects
                 else:
                     self.snapshot = None
-                # Оповещаем остальные потоки, снимаем блокировку
-                # self.condition.release()
-                # self.condition.notify_all()
-            # self.objs_queue.task_done()
+
             for subscriber in self.subscribers:
                 subscriber.update()
 
@@ -193,11 +185,6 @@ class ObjectsHandler(core.EvilEyeBase):
                 track_object.time_stamp = tracking_results.time_stamp
                 track_object.last_image = image
                 track_object.cur_video_pos = image.current_video_position
-                # object_str = (f'Source: {track_object.source_id}, ID: {track_object.object_id}, '
-                #               f'Image shape: {track_object.track.img_shape}, ROI shape: {track_object.track.roi_shape}, '
-                #               f'Box: {track_object.track.bounding_box}, Conf: {track_object.track.confidence}\n')
-                # self.objects_file.write(object_str)
-                # print(f"object_id={track_object.object_id}, track_id={track_object.track.track_id}, len(history)={len(track_object.history)}")
                 track_object.history.append(track_object.get_current_history_element())
                 if len(track_object.history) > self.history_len:  # Если количество данных превышает размер истории, удаляем самые старые данные об объекте
                     del track_object.history[0]
@@ -218,42 +205,21 @@ class ObjectsHandler(core.EvilEyeBase):
                 obj.track = track
                 obj.history.append(obj.get_current_history_element())
                 start_insert_it = timer()
-                # object_str = (f'\nSource: {obj.source_id}, Video position: {obj.cur_video_pos}, ID: {obj.object_id},\n'
-                #               f'Img shape: {obj.track.img_shape}, ROI shape: {obj.track.roi_shape},\n'
-                #               f'Box: {obj.track.bounding_box}, Conf: {obj.track.confidence}\n')
-                # self.objects_file.write(object_str)
                 self.db_adapter.insert(obj)
                 end_insert_it = timer()
-                # print(f'Insert time: {end_insert_it - start_insert_it};')
                 self.active_objs.objects.append(obj)
+               # print(f"active_objs len={len(self.active_objs.objects)} size={asizeof.asizeof(self.active_objs.objects)/(1024.0*1024.0)}")
+               # print(f"lost_objs len={len(self.lost_objs.objects)} size={asizeof.asizeof(self.lost_objs.objects)/(1024.0*1024.0)}")
 
         filtered_active_objects = []
         for active_obj in self.active_objs.objects:
-            # print(active_obj)
-            # print(f'{active_obj.source_id} == {tracking_results.source_id}')
             if not active_obj.last_update and active_obj.source_id == tracking_results.source_id:
                 active_obj.lost_frames += 1
                 if active_obj.lost_frames >= self.lost_thresh:
                     active_obj.time_lost = datetime.datetime.now()
                     start_update_it = timer()
-                    # object_str = (
-                        # f'\nLOST: Source: {active_obj.source_id}, ID: {active_obj.object_id},\n'
-                        # f'Image shape: {active_obj.track.img_shape}, ROI shape: {active_obj.track.roi_shape},\n'
-                        # f'Box: {active_obj.track.bounding_box}, Conf: {active_obj.track.confidence}\n')
-                    # self.objects_file.write(object_str)
                     self.db_adapter.update(active_obj)
                     end_update_it = timer()
-                    # print(f'Update time: {end_update_it - start_update_it};')
-
-                    # updated_fields_data = self.db_controller.update('emerged', fields=['time_lost', "lost_preview_path",
-                    #                                                                    'lost_frame_path', 'lost_bounding_box'],
-                    #                                                 obj_id=active_obj.object_id,
-                    #                                                 data=(active_obj.time_lost, lost_preview_path,
-                    #                                                       lost_img_path, active_obj.tracks[-1].bounding_box))
-                    # # print(updated_fields_data)
-                    # event.notify('handler fields updated', ['time_lost', 'lost_preview_path', 'lost_frame_path'],
-                    #              updated_fields_data)
-                    # data = self._prepare_for_saving('lost', copy.deepcopy(active_obj))
                     self.lost_objs.objects.append(active_obj)
                 else:
                     filtered_active_objects.append(active_obj)
@@ -266,8 +232,13 @@ class ObjectsHandler(core.EvilEyeBase):
             if (datetime.datetime.now() - self.lost_objs.objects[i].time_lost).total_seconds() > self.lost_store_time_secs:
                 start_index_for_remove = i
                 break
-        if start_index_for_remove:
+        if start_index_for_remove is not None:
             self.lost_objs.objects = self.lost_objs.objects[start_index_for_remove:]
+
+        if len(self.active_objs.objects) > self.max_active_objects:
+            self.active_objs.objects = self.active_objs.objects[-self.max_active_objects:]
+        if len(self.lost_objs.objects) > self.max_lost_objects:
+            self.lost_objs.objects = self.lost_objs.objects[-self.max_lost_objects:]
 
     def _prepare_for_saving(self, obj: ObjectResult, image_width, image_height) -> tuple[list, list, str, str]:
         fields_for_saving = {'source_id': obj.source_id,

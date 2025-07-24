@@ -7,6 +7,8 @@ try:
     )
     from PyQt6.QtGui import QPixmap, QIcon, QAction, QPainter, QBrush, QPen, QColor, QPolygonF
     from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QPointF, QPoint, QSize, QRectF, QSizeF
+    from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QPointF, QPoint, QSize, QRectF, QSizeF
+
 
     pyqt_version = 6
 except ImportError:
@@ -19,10 +21,13 @@ except ImportError:
     from PyQt5.QtGui import QPixmap, QIcon, QPainter, QBrush, QPen, QColor, QPolygonF
     from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt, QPointF, QPoint, QSize, QRectF, QSizeF
     from PyQt5.QtWidgets import QAction
+    from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt, QPointF, QPoint, QSize, QRectF, QSizeF
 
     pyqt_version = 5
 
 import sys
+import os
+import utils.utils
 from utils import threading_events
 from events_detectors.zone import ZoneForm
 
@@ -310,13 +315,16 @@ class ZoneWindow(QWidget):
 
     def _create_actions(self):  # Добавление кнопок
         self.rect_zone = QAction('&Draw a rectangle', self)
-        self.rect_zone.setIcon(QIcon('zone_rect.svg'))
+        icon_path = os.path.join(utils.utils.get_project_root(), 'zone_rect.svg')
+        self.rect_zone.setIcon(QIcon(icon_path))
         self.rect_zone.triggered.connect(self.draw_rect)
         self.polygon_zone = QAction('&Draw a polygon', self)
-        self.polygon_zone.setIcon(QIcon('zone_polygon.svg'))
+        icon_path = os.path.join(utils.utils.get_project_root(), 'zone_polygon.svg')
+        self.polygon_zone.setIcon(QIcon(icon_path))
         self.polygon_zone.triggered.connect(self.draw_polygon)
         self.delete_zone = QAction('&Delete a zone', self)
-        self.delete_zone.setIcon(QIcon('delete_zone.svg'))
+        icon_path = os.path.join(utils.utils.get_project_root(), 'delete_zone.svg')
+        self.delete_zone.setIcon(QIcon(icon_path))
         self.delete_zone.triggered.connect(self.remove_zone)
 
     def _create_toolbar(self):

@@ -95,7 +95,7 @@ class EventsJournal(QWidget):
     preview_width = 300
     preview_height = 150
 
-    def __init__(self, journal_adapters: list, db_controller, table_name, params, table_params, parent=None):
+    def __init__(self, journal_adapters: list, db_controller, table_name, params, database_params, table_params, parent=None):
         super().__init__()
         self.db_controller = db_controller
         self.journal_adapters = journal_adapters
@@ -114,9 +114,10 @@ class EventsJournal(QWidget):
         self.update_timer.timeout.connect(self._update_table)
 
         self.params = params
-        self.db_params = (self.params['database']['user_name'], self.params['database']['password'],
-                          self.params['database']['database_name'], self.params['database']['host_name'],
-                          self.params['database']['port'], self.params['database']['image_dir'])
+        self.database_params = database_params
+        self.db_params = (self.database_params['database']['user_name'], self.database_params['database']['password'],
+                          self.database_params['database']['database_name'], self.database_params['database']['host_name'],
+                          self.database_params['database']['port'], self.database_params['database']['image_dir'])
         self.username, self.password, self.db_name, self.host, self.port, self.image_dir = self.db_params
         self.db_table_params = table_params
         self.table_name = table_name

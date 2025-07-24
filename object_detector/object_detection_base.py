@@ -91,14 +91,15 @@ class ObjectDetectorBase(core.EvilEyeBase, ABC):
         self.run_flag = False
         self.queue_in.put(None)
         # self.queue_in.put('STOP')
-        self.processing_thread.join()
+        if self.processing_thread and self.processing_thread.is_alive():
+            self.processing_thread.join()
         print('Detection stopped')
 
     def init_impl(self):
         self.processing_thread = threading.Thread(target=self._process_impl)
 
     def release_impl(self):
-        for i in range(self.num_detection_threads):
+        for i in range(len(self.detection_threads)):
             self.detection_threads[i].stop()
 
         self.detection_threads = []

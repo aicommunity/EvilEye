@@ -3,7 +3,7 @@ import json
 import datetime
 import numpy as np
 import cv2
-from object_tracker.object_tracking_base import TrackingResult
+from object_tracker.tracking_results import TrackingResult
 from objects_handler.object_result import ObjectResultHistory
 import copy
 from pathlib import Path
@@ -14,6 +14,7 @@ from database_controller import database_controller_pg
 from psycopg2 import sql
 from capture.video_capture_base import CaptureImage
 from object_tracker.object_tracking_botsort import BOTrack
+from object_tracker.trackers.sctrack import SCTrack
 
 
 def get_project_root() -> Path:
@@ -271,7 +272,7 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
                       (int(last_info.bounding_box[2]), int(last_info.bounding_box[3])), (0, 255, 0), thickness=font_thickness)
         if obj.global_id is not None:
             cv2.putText(image.image,
-                        str(last_info.track_id) + ':' + str(obj.global_id) + ' ' + str([last_info.class_id]) +
+                        'g' + str(obj.global_id) + ' ' + str([last_info.class_id]) +
                         " " + "{:.2f}".format(last_info.confidence),
                         (int(last_info.bounding_box[0]), int(last_info.bounding_box[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX,
                         font_scale, font_color, font_thickness)
@@ -321,6 +322,8 @@ class ObjectResultEncoder(json.JSONEncoder):
         if isinstance(obj, CaptureImage):
             return None
         if isinstance(obj, BOTrack):
+            return None
+        if isinstance(obj, SCTrack):
             return None
 
         return super().default(obj)
