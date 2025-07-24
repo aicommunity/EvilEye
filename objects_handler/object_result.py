@@ -13,28 +13,10 @@ class ObjectResultHistory:
         self.time_detected = None
         self.last_update = False
         self.cur_video_position = None
-        #self.last_image = None
         self.lost_frames = 0
         self.track = None
         self.properties = dict()  # some object features in scene (i.e. is_moving, is_immovable, immovable_time, zone_visited, zone_time_spent etc)
         self.object_data = dict()  # internal object data
-
-    def __deepcopy__(self, memodict={}):
-        copy_instance = ObjectResultHistory()
-        copy_instance.object_id = copy.deepcopy(self.object_id, memodict)
-        copy_instance.global_id = copy.deepcopy(self.global_id, memodict)
-        copy_instance.source_id = copy.deepcopy(self.source_id, memodict)
-        copy_instance.frame_id = copy.deepcopy(self.frame_id, memodict)
-        copy_instance.class_id = copy.deepcopy(self.class_id, memodict)
-        copy_instance.time_lost = copy.deepcopy(self.time_lost, memodict)
-        copy_instance.time_stamp = copy.deepcopy(self.time_stamp, memodict)
-        copy_instance.time_detected = copy.deepcopy(self.time_detected, memodict)
-        copy_instance.last_update = copy.deepcopy(self.last_update, memodict)
-        #copy_instance.last_image = self.last_image
-        copy_instance.lost_frames = copy.deepcopy(self.lost_frames,memodict)
-        copy_instance.track = copy.deepcopy(self.track, memodict)
-        return copy_instance
-
 
 class ObjectResult(ObjectResultHistory):
     def __init__(self):
@@ -43,23 +25,6 @@ class ObjectResult(ObjectResultHistory):
 
     def __str__(self):
         return f'ID: {self.object_id}, Source: {self.source_id}, Updated: {self.last_update}, Lost: {self.lost_frames}'
-
-    def __deepcopy__(self, memodict={}):
-        copy_instance = ObjectResult()
-        copy_instance.object_id = copy.deepcopy(self.object_id, memodict)
-        copy_instance.global_id = copy.deepcopy(self.global_id, memodict)
-        copy_instance.source_id = copy.deepcopy(self.source_id, memodict)
-        copy_instance.frame_id = copy.deepcopy(self.frame_id, memodict)
-        copy_instance.class_id = copy.deepcopy(self.class_id, memodict)
-        copy_instance.time_lost = copy.deepcopy(self.time_lost, memodict)
-        copy_instance.time_stamp = copy.deepcopy(self.time_stamp, memodict)
-        copy_instance.time_detected = copy.deepcopy(self.time_detected, memodict)
-        copy_instance.last_update = copy.deepcopy(self.last_update, memodict)
-        #copy_instance.last_image = self.last_image
-        copy_instance.lost_frames = copy.deepcopy(self.lost_frames,memodict)
-        copy_instance.track = copy.deepcopy(self.track, memodict)
-        copy_instance.history = copy.deepcopy(self.history)
-        return copy_instance
 
     def get_current_history_element(self):
         result = ObjectResultHistory()

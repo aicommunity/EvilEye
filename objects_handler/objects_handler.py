@@ -10,8 +10,8 @@ from utils.utils import ObjectResultEncoder
 from queue import Queue
 from threading import Thread
 from threading import Condition, Lock
-from object_tracker.object_tracking_base import TrackingResult
-from object_tracker.object_tracking_base import TrackingResultList
+from object_tracker.tracking_results import TrackingResult
+from object_tracker.tracking_results import TrackingResultList
 from timeit import default_timer as timer
 from .object_result import ObjectResultHistory, ObjectResult, ObjectResultList
 from database_controller.db_adapter_objects import DatabaseAdapterObjects

@@ -5,7 +5,7 @@ from object_detector import object_detection_yolo
 from object_detector import object_detection_yolo_mp
 from object_detector.object_detection_base import DetectionResultList
 from object_tracker import object_tracking_botsort
-from object_tracker.object_tracking_base import TrackingResultList
+from object_tracker.tracking_results import TrackingResultList
 # from object_tracker.trackers.bot_sort import Encoder
 from object_tracker.trackers.track_encoder import TrackEncoder
 from object_tracker.trackers.onnx_encoder import OnnxEncoder
@@ -209,9 +209,10 @@ class Controller:
 
             if self.multicam_reid_enabled:
                 track_infos = []
-                if not any(t.queue_out.empty() for t in self.trackers):
-                    for tracker in self.trackers:
-                        track_info = tracker.get()
+                #if not any(t.queue_out.empty() for t in self.trackers):
+                for tracker in self.trackers:
+                    track_info = tracker.get()
+                    if track_info:
                         tracking_result, image = track_info
                         tracking_results = tracking_result
                         track_infos.append((tracking_result, image))

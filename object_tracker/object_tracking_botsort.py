@@ -9,8 +9,8 @@ from object_tracker.trackers.cfg.utils import read_cfg
 from time import sleep
 from object_detector.object_detection_base import DetectionResult
 from object_detector.object_detection_base import DetectionResultList
-from object_tracker.object_tracking_base import TrackingResult
-from object_tracker.object_tracking_base import TrackingResultList
+from object_tracker.tracking_results import TrackingResult
+from object_tracker.tracking_results import TrackingResultList
 from dataclasses import dataclass
 import copy
 

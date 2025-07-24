@@ -3,7 +3,7 @@ import json
 import datetime
 import numpy as np
 import cv2
-from object_tracker.object_tracking_base import TrackingResult
+from object_tracker.tracking_results import TrackingResult
 from objects_handler.object_result import ObjectResultHistory
 import copy
 from pathlib import Path

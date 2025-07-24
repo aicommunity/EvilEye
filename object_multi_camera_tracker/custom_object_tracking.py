@@ -21,6 +21,7 @@ from object_multi_camera_tracker.object_tracking_base import ObjectMultiCameraTr
 from object_multi_camera_tracker.mctrack import MCTrack
 from object_tracker.trackers.sctrack import SCTrack
 from dataclasses import dataclass
+from pympler import asizeof
 
 
 class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
@@ -64,7 +65,7 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
                 for t in track_info.tracks:
                     tracks.append(t.tracking_data["track_object"])
                 sc_tracks.append(tracks)
-            
+
             mc_tracks = self.tracker.update(sc_tracks)
             tracks_infos = self._create_tracks_info(track_infos, mc_tracks)
             self.queue_out.put(list(zip(tracks_infos, images)))
@@ -133,7 +134,9 @@ class MultiCameraTracker:
             clustering_threshold: float = 0.5, 
             confident_age: int = 0,
             exclude_overlap: bool = False,
-            include_lost_tracks: bool = False):
+            include_lost_tracks: bool = False,
+            overlap_threshold: float = 0.5,
+            max_track_len: int = 50):
         
         """
         :param num_cameras: Количество камер.
@@ -143,8 +146,9 @@ class MultiCameraTracker:
         self.num_cameras = num_cameras
         self.encoders = encoders
         self.exclude_overlap = exclude_overlap
-        self.overlap_threshold = 0.5
+        self.overlap_threshold = overlap_threshold
         self.confident_age = confident_age
+        self.max_track_length = max_track_len
         self.clustering_threshold = clustering_threshold
         self.include_lost_tracks = include_lost_tracks
 
@@ -242,7 +246,7 @@ class MultiCameraTracker:
         
         # Создать MCTrack объекты
         mct_tracks = [
-            MCTrack(track_clusters[label], confident_age=self.confident_age) 
+            MCTrack(track_clusters[label], confident_age=self.confident_age, maxlen=self.max_track_length)
             for label in track_clusters
         ]
         # LOGGER.debug(f"Found clusters:\n{[t.sc_tracks for t in mct_tracks]}")
