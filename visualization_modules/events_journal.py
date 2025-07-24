@@ -1,14 +1,28 @@
 import datetime
 import os
 from utils import threading_events
-from PyQt6.QtCore import QDate, QDateTime, QPointF
-from PyQt6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton,
-    QDateTimeEdit, QHeaderView, QComboBox, QTableView, QStyledItemDelegate, QMessageBox
-)
-from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor, QBrush
-from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QModelIndex, QSize
-from PyQt6.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
+
+try:
+    from PyQt6.QtCore import QDate, QDateTime, QPointF
+    from PyQt6.QtWidgets import (
+        QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton,
+        QDateTimeEdit, QHeaderView, QComboBox, QTableView, QStyledItemDelegate, QMessageBox
+    )
+    from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor, QBrush
+    from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QModelIndex, QSize
+    from PyQt6.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
+    pyqt_version = 6
+except ImportError:
+    from PyQt5.QtCore import QDate, QDateTime, QPointF
+    from PyQt5.QtWidgets import (
+        QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton,
+        QDateTimeEdit, QHeaderView, QComboBox, QTableView, QStyledItemDelegate, QMessageBox
+    )
+    from PyQt5.QtGui import QPixmap, QPainter, QPen, QColor, QBrush
+    from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QModelIndex, QSize
+    from PyQt5.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
+    pyqt_version = 5
+
 from visualization_modules.table_updater_view import TableUpdater
 
 
@@ -81,7 +95,7 @@ class EventsJournal(QWidget):
     preview_width = 300
     preview_height = 150
 
-    def __init__(self, journal_adapters: list, db_controller, table_name, params, table_params, parent=None):
+    def __init__(self, journal_adapters: list, db_controller, table_name, params, database_params, table_params, parent=None):
         super().__init__()
         self.db_controller = db_controller
         self.journal_adapters = journal_adapters
@@ -100,9 +114,10 @@ class EventsJournal(QWidget):
         self.update_timer.timeout.connect(self._update_table)
 
         self.params = params
-        self.db_params = (self.params['database']['user_name'], self.params['database']['password'],
-                          self.params['database']['database_name'], self.params['database']['host_name'],
-                          self.params['database']['port'], self.params['database']['image_dir'])
+        self.database_params = database_params
+        self.db_params = (self.database_params['database']['user_name'], self.database_params['database']['password'],
+                          self.database_params['database']['database_name'], self.database_params['database']['host_name'],
+                          self.database_params['database']['port'], self.database_params['database']['image_dir'])
         self.username, self.password, self.db_name, self.host, self.port, self.image_dir = self.db_params
         self.db_table_params = table_params
         self.table_name = table_name

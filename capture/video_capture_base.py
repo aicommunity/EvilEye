@@ -7,6 +7,7 @@ from queue import Queue
 from enum import Enum
 from urllib.parse import urlparse
 from threading import Lock
+from collections import deque
 
 
 class CaptureDeviceType(Enum):
@@ -38,6 +39,7 @@ class VideoCaptureBase(core.EvilEyeBase):
         self.frame_id_counter = 0
         self.source_type = None
         self.source_fps = None
+        self.desired_fps = None
         self.split_stream = False
         self.num_split = None
         self.src_coords = None
@@ -56,6 +58,8 @@ class VideoCaptureBase(core.EvilEyeBase):
         self.subscribers = []
 
         self.capture_thread = None
+        self.grab_thread = None
+        self.retrieve_thread = None
 
     def is_opened(self) -> bool:
         return False
@@ -79,15 +83,25 @@ class VideoCaptureBase(core.EvilEyeBase):
         if not self.is_inited:
             return
         self.run_flag = True
-        self.capture_thread = threading.Thread(target=self._capture_frames)
-        self.capture_thread.start()
+        # self.capture_thread = threading.Thread(target=self._capture_frames)
+        # self.capture_thread.start()
+        self.grab_thread = threading.Thread(target=self._grab_frames)
+        self.retrieve_thread = threading.Thread(target=self._retrieve_frames)
+        self.grab_thread.start()
+        self.retrieve_thread.start()
 
     def stop(self):
         self.run_flag = False
-        if self.capture_thread:
-            self.capture_thread.join()
-            self.capture_thread = None
-            print('Capture stopped')
+        # if self.capture_thread:
+        #     self.capture_thread.join()
+        #     self.capture_thread = None
+        #     print('Capture stopped')
+        if self.grab_thread:
+            self.grab_thread.join()
+            self.grab_thread = None
+        if self.retrieve_thread:
+            self.retrieve_thread.join()
+            self.retrieve_thread = None
 
     def set_params_impl(self):
         self.release()
@@ -95,6 +109,7 @@ class VideoCaptureBase(core.EvilEyeBase):
         self.num_split = self.params.get('num_split', None)
         self.src_coords = self.params.get('src_coords', None)
         self.source_ids = self.params.get('source_ids', None)
+        self.desired_fps = self.params.get('desired_fps', None)
         self.source_names = self.params.get('source_names', self.source_ids)
         self.loop_play = self.params.get('loop_play', True)
         self.source_type = CaptureDeviceType[self.params.get('source', "")]
@@ -140,11 +155,18 @@ class VideoCaptureBase(core.EvilEyeBase):
     def subscribe(self, *subscribers):
         self.subscribers = list(subscribers)
 
-    @abstractmethod
-    def _capture_frames(self):
-        pass
+    # @abstractmethod
+    # def _capture_frames(self):
+    #     pass
 
     @abstractmethod
     def get_frames_impl(self) -> list[CaptureImage]:
         pass
 
+    @abstractmethod
+    def _grab_frames(self):
+        pass
+
+    @abstractmethod
+    def _retrieve_frames(self):
+        pass

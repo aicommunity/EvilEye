@@ -35,12 +35,13 @@ class ObjectDetectorBase(core.EvilEyeBase, ABC):
         self.classes = []
         self.stride = 1  # Параметр скважности
         self.roi = [[]]
+        self.queue_dropped_id = Queue()
 
         self.num_detection_threads = 3
         self.detection_threads = []
         self.thread_counter = 0
 
-        self.processing_thread = threading.Thread(target=self._process_impl)
+        self.processing_thread = None
 
     def put(self, image: CaptureImage) -> bool:
         if not self.queue_in.full():
@@ -49,10 +50,16 @@ class ObjectDetectorBase(core.EvilEyeBase, ABC):
         print(f"Failed to put image {image.source_id}:{image.frame_id} to ObjectDetection queue. Queue is Full.")
         return False
 
-    def get(self) -> DetectionResultList | None:
+    def get(self):
         if self.queue_out.empty():
             return None
         return self.queue_out.get()
+
+    def get_dropped_ids(self) -> list:
+        res = []
+        while not self.queue_dropped_id.empty():
+            res.append(self.queue_dropped_id.get())
+        return res
 
     def get_queue_out_size(self) -> int:
         return self.queue_out.qsize()
@@ -77,19 +84,27 @@ class ObjectDetectorBase(core.EvilEyeBase, ABC):
 
     def start(self):
         self.run_flag = True
-        self.processing_thread.start()
+        if self.processing_thread:
+            self.processing_thread.start()
 
     def stop(self):
         self.run_flag = False
         self.queue_in.put(None)
         # self.queue_in.put('STOP')
-        self.processing_thread.join()
+        if self.processing_thread and self.processing_thread.is_alive():
+            self.processing_thread.join()
         print('Detection stopped')
 
+    def init_impl(self):
+        self.processing_thread = threading.Thread(target=self._process_impl)
+
     def release_impl(self):
-        for i in range(self.num_detection_threads):
+        for i in range(len(self.detection_threads)):
             self.detection_threads[i].stop()
+
         self.detection_threads = []
+        del self.processing_thread
+        self.processing_thread = None
 
     def default(self):
         self.stride = 1
@@ -107,9 +122,9 @@ class ObjectDetectorBase(core.EvilEyeBase, ABC):
             if not image:
                 continue
 
-            if not self.detection_threads[self.thread_counter].put(image, force=True):
-                print(
-                    f"Failed to put image {image.source_id}:{image.frame_id} to detection thread {self.thread_counter}")
+            res, dropped_id = self.detection_threads[self.thread_counter].put(image, force=True)
+            if dropped_id:
+                self.queue_dropped_id.put(dropped_id)
             self.thread_counter += 1
             if self.thread_counter >= self.num_detection_threads:
                 self.thread_counter = 0

@@ -27,6 +27,7 @@ class DetectionThreadBase:
         self.queue_out = queue_out
         self.source_ids = source_ids
         self.processing_thread = threading.Thread(target=self._process_impl)
+        self.roi_coords_per_camera = {source_id: roi_coords for source_id, roi_coords in zip(self.source_ids, self.roi)}
 
     def start(self):
         self.run_flag = True
@@ -38,20 +39,23 @@ class DetectionThreadBase:
         print('Detection thread stopped')
 
     def put(self, image: CaptureImage, force=False):
+        dropped_id = []
         if not self.run_flag:
             print(f"Detection thread doesn't started. Put ignored for {image.source_id}:{image.frame_id}")
-
         if self.queue_in.full():
             if force:
-                self.queue_in.get()
+                dropped_image = self.queue_in.get()
+                dropped_id.append(dropped_image.source_id)
+                dropped_id.append(dropped_image.frame_id)
             else:
-                return False
+                dropped_id.append(image.source_id)
+                dropped_id.append(image.frame_id)
+                return False, dropped_id
         self.queue_in.put(image)
-        return True
+        return True, dropped_id
 
     def _process_impl(self):
         while self.run_flag:
-            # start_it = timer()
             self.init_detection_implementation()
             try:
                 if not self.queue_in.empty():
@@ -69,8 +73,8 @@ class DetectionThreadBase:
             if not self.roi[0]:
                 split_image = [[image, [0, 0]]]
             else:
-                roi_idx = self.source_ids.index(image.source_id)
-                split_image = utils.create_roi(image, self.roi[roi_idx])
+                coords = self.roi_coords_per_camera[image.source_id]
+                split_image = utils.create_roi(image, coords)
             detection_result_list = self.process_stride(split_image)
             if detection_result_list:
                 self.queue_out.put([detection_result_list, image])

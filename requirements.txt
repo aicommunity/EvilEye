@@ -1,6 +1,13 @@
-opencv-python-headless
-opencv-contrib-python-headless
+#opencv-python-headless
+#opencv-contrib-python-headless
 ultralytics
 psycopg2-binary
-PyQt6
 lapx
+albumentations
+shapely
+scikit-learn
+onnxruntime
+tqdm
+shapely
+pympler
+

@@ -2,15 +2,29 @@ import datetime
 import os
 from psycopg2 import sql
 from utils import threading_events
-from PyQt6.QtCore import QDate, QDateTime
-from PyQt6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton,
-    QDateTimeEdit, QHeaderView, QComboBox, QTableView, QStyledItemDelegate,
-    QMessageBox
-)
-from PyQt6.QtGui import QPixmap, QPainter, QPen
-from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QModelIndex
-from PyQt6.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
+try:
+    from PyQt6.QtCore import QDate, QDateTime
+    from PyQt6.QtWidgets import (
+        QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton,
+        QDateTimeEdit, QHeaderView, QComboBox, QTableView, QStyledItemDelegate,
+        QMessageBox
+    )
+    from PyQt6.QtGui import QPixmap, QPainter, QPen
+    from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QModelIndex
+    from PyQt6.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
+    pyqt_version = 6
+except ImportError:
+    from PyQt5.QtCore import QDate, QDateTime
+    from PyQt5.QtWidgets import (
+        QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton,
+        QDateTimeEdit, QHeaderView, QComboBox, QTableView, QStyledItemDelegate,
+        QMessageBox
+    )
+    from PyQt5.QtGui import QPixmap, QPainter, QPen
+    from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QModelIndex
+    from PyQt5.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
+    pyqt_version = 5
+
 from visualization_modules.table_updater_view import TableUpdater
 
 
@@ -69,7 +83,7 @@ class HandlerJournal(QWidget):
     preview_width = 300
     preview_height = 150
 
-    def __init__(self, db_controller, table_name, params, table_params, parent=None):
+    def __init__(self, db_controller, table_name, params, database_params, table_params, parent=None):
         super().__init__()
         self.db_controller = db_controller
         self.table_updater = TableUpdater()
@@ -81,9 +95,10 @@ class HandlerJournal(QWidget):
         self.update_timer.timeout.connect(self._update_table)
 
         self.params = params
-        self.db_params = (self.params['database']['user_name'], self.params['database']['password'],
-                          self.params['database']['database_name'], self.params['database']['host_name'],
-                          self.params['database']['port'], self.params['database']['image_dir'])
+        self.database_params = database_params
+        self.db_params = (self.database_params['database']['user_name'], self.database_params['database']['password'],
+                          self.database_params['database']['database_name'], self.database_params['database']['host_name'],
+                          self.database_params['database']['port'], self.database_params['database']['image_dir'])
         self.username, self.password, self.db_name, self.host, self.port, self.image_dir = self.db_params
         self.db_table_params = table_params
         self.table_name = table_name
@@ -418,12 +433,15 @@ class HandlerJournal(QWidget):
         # Получаем номер последней записи в данном запуске
         last_obj_query = sql.SQL('''SELECT MAX(record_id) from objects WHERE job_id = %s''')
         records = self.db_controller.query(last_obj_query, (job_id,))
-        last_record = records[0][0]
-        if not last_record:  # Обновляем информацию о последней записи, если записей не было, то -1
-            update_query = sql.SQL('UPDATE jobs SET first_record = -1, last_record = -1 WHERE job_id = %s;')
-            data = (job_id,)
+        if records:
+            last_record = records[0][0]
+            if not last_record:  # Обновляем информацию о последней записи, если записей не было, то -1
+                update_query = sql.SQL('UPDATE jobs SET first_record = -1, last_record = -1 WHERE job_id = %s;')
+                data = (job_id,)
+            else:
+                update_query = sql.SQL('UPDATE jobs SET last_record = %s WHERE job_id = %s;')
+                data = (last_record, job_id)
         else:
-            update_query = sql.SQL('UPDATE jobs SET last_record = %s WHERE job_id = %s;')
-            data = (last_record, job_id)
+            print(f"HandlerJournal._update_job_first_last_records: Db controller returns no data. Possible db alreaady closed.")
 
         self.db_controller.query(update_query, data)

@@ -250,7 +250,12 @@ class BYTETracker:
         self.kalman_filter = self.get_kalmanfilter()
         self.reset_id()
 
-    def update(self, cls: np.ndarray, bboxes_xywh: np.ndarray, scores: np.ndarray, img=None):
+    def update(
+            self, 
+            cls: np.ndarray, 
+            bboxes_xywh: np.ndarray, 
+            scores: np.ndarray, 
+            img=None) -> list[STrack]:
         """Updates object tracker with new detections and returns tracked object bounding boxes.
 
         Args:
@@ -373,7 +378,8 @@ class BYTETracker:
         if len(self.removed_stracks) > 1000:
             self.removed_stracks = self.removed_stracks[-999:]  # clip remove stracks to 1000 maximum
 
-        return np.asarray([x.result for x in self.tracked_stracks if x.is_activated], dtype=np.float32)
+        # return np.asarray([x.result for x in self.tracked_stracks if x.is_activated], dtype=np.float32)
+        return [x for x in self.tracked_stracks if x.is_activated]
 
     def get_kalmanfilter(self):
         """Returns a Kalman filter object for tracking bounding boxes."""

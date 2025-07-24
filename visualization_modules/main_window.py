@@ -1,22 +1,41 @@
 import json
 
-from PyQt6 import QtGui
-from PyQt6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QHBoxLayout,
-    QSizePolicy, QMenuBar, QToolBar,
-    QMenu, QMainWindow, QApplication
-)
+try:
+    from PyQt6 import QtGui
+    from PyQt6.QtWidgets import (
+        QWidget, QLabel, QVBoxLayout, QHBoxLayout,
+        QSizePolicy, QMenuBar, QToolBar,
+        QMenu, QMainWindow, QApplication
+    )
 
-from PyQt6.QtCore import QTimer
-from PyQt6.QtGui import QPixmap, QIcon, QCursor
-from PyQt6.QtGui import QAction
-from PyQt6.QtCore import Qt
+    from PyQt6.QtCore import QTimer
+    from PyQt6.QtGui import QPixmap, QIcon, QCursor
+    from PyQt6.QtGui import QAction
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
+    pyqt_version = 6
+except ImportError:
+    from PyQt5 import QtGui
+    from PyQt5.QtWidgets import (
+        QWidget, QLabel, QVBoxLayout, QHBoxLayout,
+        QSizePolicy, QMenuBar, QToolBar,
+        QMenu, QMainWindow, QApplication
+    )
+
+    from PyQt5.QtCore import QTimer
+    from PyQt5.QtGui import QPixmap, QIcon, QCursor
+    from PyQt5.QtWidgets import QAction
+    from PyQt5.QtCore import Qt
+    from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt
+    pyqt_version = 5
+
 import sys
 import cv2
-from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
+import os
 from pathlib import Path
+import utils
+import utils.utils
 from visualization_modules.video_thread import VideoThread
-from controller import controller
 from visualization_modules.db_journal import DatabaseJournalWindow
 from visualization_modules.zone_window import ZoneWindow
 sys.path.append(str(Path(__file__).parent.parent.parent))
@@ -57,17 +76,18 @@ class MainWindow(QMainWindow):
     display_zones_signal = pyqtSignal(dict)
     add_zone_signal = pyqtSignal(int)
 
-    def __init__(self, params_file_path, params, win_width, win_height):
+    def __init__(self, controller, params_file_path, params, win_width, win_height):
         super().__init__()
         self.setWindowTitle("EvilEye")
         self.resize(win_width, win_height)
         self.slots = {'update_image': self.update_image, 'open_zone_win': self.open_zone_win}
         self.signals = {'display_zones_signal': self.display_zones_signal, 'add_zone_signal': self.add_zone_signal}
 
-        self.controller = controller.Controller(self, self.slots, self.signals)
+        self.controller = controller
 
         self.params_path = params_file_path
         self.params = params
+
         self.rows = self.params['visualizer']['num_height']
         self.cols = self.params['visualizer']['num_width']
         self.cameras = self.params['sources']
@@ -91,7 +111,12 @@ class MainWindow(QMainWindow):
 
         self.toolbar_width = 0
         self._create_toolbar()
-        self.db_journal_win = DatabaseJournalWindow(self.params)
+
+        close_app = False
+        if self.controller.enable_close_from_gui and not self.controller.show_main_gui and self.controller.show_journal:
+            close_app = True
+
+        self.db_journal_win = DatabaseJournalWindow(self, self.params, self.controller.database_config, close_app)
         self.db_journal_win.setVisible(False)
         self.zone_window = ZoneWindow(self.params)
         self.zone_window.setVisible(False)
@@ -102,9 +127,6 @@ class MainWindow(QMainWindow):
             vertical_layout.addLayout(self.hlayouts[-1])
         self.centralWidget().setLayout(vertical_layout)
         self.setup_layout()
-
-        self.controller.init(self.params)
-        self.controller.start()
 
         self.timer = QTimer()
         self.timer.timeout.connect(self.check_controller_status)
@@ -160,12 +182,15 @@ class MainWindow(QMainWindow):
 
     def _create_actions(self):  # Создание кнопок-действий
         self.db_journal = QAction('&DB journal', self)
-        self.db_journal.setIcon(QIcon('journal.svg'))
+        icon_path = os.path.join(utils.utils.get_project_root(), 'journal.svg')
+        self.db_journal.setIcon(QIcon(icon_path))
 
         self.add_zone = QAction('&Add zone', self)
-        self.add_zone.setIcon(QIcon('add_zone.svg'))
+        icon_path = os.path.join(utils.utils.get_project_root(), 'add_zone.svg')
+        self.add_zone.setIcon(QIcon(icon_path))
         self.show_zones = QAction('&Display zones', self)
-        self.show_zones.setIcon(QIcon('display_zones.svg'))
+        icon_path = os.path.join(utils.utils.get_project_root(), 'display_zones.svg')
+        self.show_zones.setIcon(QIcon(icon_path))
         self.show_zones.setCheckable(True)
 
     def _connect_actions(self):
@@ -237,13 +262,17 @@ class MainWindow(QMainWindow):
         self.add_zone_signal.emit(label_id)
 
     def closeEvent(self, event):
-        self.controller.release()
-        self.zone_window.close()
-        self.db_journal_win.close()
-        with open(self.params_path, 'w') as params_file:
-            json.dump(self.params, params_file, indent=4)
-        QApplication.closeAllWindows()
-        event.accept()
+        if self.controller.enable_close_from_gui:
+            self.controller.release()
+            self.zone_window.close()
+            self.db_journal_win.close()
+            with open(self.params_path, 'w') as params_file:
+                json.dump(self.params, params_file, indent=4)
+            QApplication.closeAllWindows()
+            event.accept()
+        else:
+            self.setVisible(False)
+            event.ignore()
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         super().resizeEvent(event)

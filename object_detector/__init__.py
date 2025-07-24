@@ -2,5 +2,7 @@ from .background_subtraction_base import BackgroundSubtractorBase
 from .background_subtraction_gmm import BackgroundSubtractorMOG2
 from .object_detection_base import ObjectDetectorBase
 from .object_detection_yolo import ObjectDetectorYolo
+from .object_detection_yolo_mp import ObjectDetectorYoloMp
 from .detection_thread_yolo import DetectionThreadBase
 from .detection_thread_yolo import DetectionThreadYolo
+from .detection_thread_yolo_mp import DetectionThreadYoloMp
