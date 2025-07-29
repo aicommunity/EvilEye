@@ -315,15 +315,15 @@ class ZoneWindow(QWidget):
 
     def _create_actions(self):  # Добавление кнопок
         self.rect_zone = QAction('&Draw a rectangle', self)
-        icon_path = os.path.join(utils.utils.get_project_root(), 'zone_rect.svg')
+        icon_path = os.path.join(utils.utils.get_project_root(), 'icons', 'zone_rect.svg')
         self.rect_zone.setIcon(QIcon(icon_path))
         self.rect_zone.triggered.connect(self.draw_rect)
         self.polygon_zone = QAction('&Draw a polygon', self)
-        icon_path = os.path.join(utils.utils.get_project_root(), 'zone_polygon.svg')
+        icon_path = os.path.join(utils.utils.get_project_root(), 'icons', 'zone_polygon.svg')
         self.polygon_zone.setIcon(QIcon(icon_path))
         self.polygon_zone.triggered.connect(self.draw_polygon)
         self.delete_zone = QAction('&Delete a zone', self)
-        icon_path = os.path.join(utils.utils.get_project_root(), 'delete_zone.svg')
+        icon_path = os.path.join(utils.utils.get_project_root(), 'icons', 'delete_zone.svg')
         self.delete_zone.setIcon(QIcon(icon_path))
         self.delete_zone.triggered.connect(self.remove_zone)
 

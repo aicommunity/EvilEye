@@ -227,11 +227,11 @@ class ConfigurerMainWindow(QMainWindow):
 
     def _create_actions(self):  # Создание кнопок-действий
         self.save_params = QAction('&Save parameters', self)
-        self.save_params.setIcon(QIcon('save_icon.svg'))
+        self.save_params.setIcon(QIcon(os.path.join(utils.get_project_root(), 'icons', 'save_icon.svg')))
         self.open_jobs_history = QAction('&Open history', self)
         self.start_app = QAction('&Run app', self)
-        self.start_app.setIcon(QIcon('run_app.svg'))
-        icon_path = os.path.join(utils.get_project_root(), 'journal.svg')
+        self.start_app.setIcon(QIcon(os.path.join(utils.get_project_root(), 'icons', 'run_app.svg')))
+        icon_path = os.path.join(utils.get_project_root(), 'icons', 'journal.svg')
         self.open_jobs_history.setIcon(QIcon(icon_path))
 
     def _connect_actions(self):

@@ -182,14 +182,14 @@ class MainWindow(QMainWindow):
 
     def _create_actions(self):  # Создание кнопок-действий
         self.db_journal = QAction('&DB journal', self)
-        icon_path = os.path.join(utils.utils.get_project_root(), 'journal.svg')
+        icon_path = os.path.join(utils.utils.get_project_root(), 'icons', 'journal.svg')
         self.db_journal.setIcon(QIcon(icon_path))
 
         self.add_zone = QAction('&Add zone', self)
-        icon_path = os.path.join(utils.utils.get_project_root(), 'add_zone.svg')
+        icon_path = os.path.join(utils.utils.get_project_root(), 'icons', 'add_zone.svg')
         self.add_zone.setIcon(QIcon(icon_path))
         self.show_zones = QAction('&Display zones', self)
-        icon_path = os.path.join(utils.utils.get_project_root(), 'display_zones.svg')
+        icon_path = os.path.join(utils.utils.get_project_root(), 'icons', 'display_zones.svg')
         self.show_zones.setIcon(QIcon(icon_path))
         self.show_zones.setCheckable(True)
 

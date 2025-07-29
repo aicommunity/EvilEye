@@ -27,6 +27,7 @@ except ImportError:
 from utils import utils
 from timeit import default_timer as timer
 import cv2
+import os
 from visualization_modules.configurer.db_connection_window import DatabaseConnectionWindow
 from capture.video_capture_base import CaptureDeviceType
 from visualization_modules.configurer import parameters_processing
@@ -230,7 +231,7 @@ class SourceWidget(QWidget):
             widget.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
             widget.setMinimumWidth(200)
 
-        self.history_btn = QPushButton(icon=QIcon('cam_history.svg'))
+        self.history_btn = QPushButton(icon=QIcon(os.path.join(utils.get_project_root(), 'icons', 'cam_history.svg')))
         self.history_btn.setIconSize(QtCore.QSize(30, 30))
         self.history_btn.setFixedSize(30, 30)
         self.history_btn.clicked.connect(self._open_sources_history)
