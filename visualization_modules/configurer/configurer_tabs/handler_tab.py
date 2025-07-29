@@ -1,12 +1,22 @@
 import copy
-from PyQt6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QLineEdit, QScrollArea,
-    QSizePolicy, QToolBar, QComboBox, QFormLayout, QSpacerItem,
-    QMenu, QMainWindow, QApplication, QCheckBox, QPushButton, QTabWidget
-)
+try:
+    from PyQt6.QtWidgets import (
+        QWidget, QLabel, QVBoxLayout, QHBoxLayout, QLineEdit, QScrollArea,
+        QSizePolicy, QToolBar, QComboBox, QFormLayout, QSpacerItem,
+        QMenu, QMainWindow, QApplication, QCheckBox, QPushButton, QTabWidget
+    )
+    from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
+    pyqt_version = 6
+except ImportError:
+    from PyQt5.QtWidgets import (
+        QWidget, QLabel, QVBoxLayout, QHBoxLayout, QLineEdit, QScrollArea,
+        QSizePolicy, QToolBar, QComboBox, QFormLayout, QSpacerItem,
+        QMenu, QMainWindow, QApplication, QCheckBox, QPushButton, QTabWidget
+    )
+    from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt
+    pyqt_version = 5
 from utils import utils
-from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
-from configurer import parameters_processing
+from visualization_modules.configurer import parameters_processing
 
 
 class HandlerTab(QWidget):

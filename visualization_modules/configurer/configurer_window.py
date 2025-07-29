@@ -2,8 +2,8 @@ import copy
 import json
 import os.path
 import multiprocessing
-from configurer.jobs_history_journal import JobsHistory
-from configurer.db_connection_window import DatabaseConnectionWindow
+from visualization_modules.configurer.jobs_history_journal import JobsHistory
+from visualization_modules.configurer.db_connection_window import DatabaseConnectionWindow
 
 try:
     from PyQt6 import QtGui
@@ -35,8 +35,8 @@ from utils import utils
 import sys
 from capture.video_capture_base import CaptureDeviceType
 from capture import VideoCapture
-import configurer.parameters_processing
-from configurer.configurer_tabs import src_tab, detector_tab, handler_tab, visualizer_tab, database_tab, tracker_tab, events_tab
+import visualization_modules.configurer.parameters_processing
+from visualization_modules.configurer.configurer_tabs import src_tab, detector_tab, handler_tab, visualizer_tab, database_tab, tracker_tab, events_tab
 import visualization
 
 

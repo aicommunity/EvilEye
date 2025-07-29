@@ -1,21 +1,34 @@
 import copy
 import json
 import os.path
-from PyQt6 import QtGui
-from PyQt6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QLineEdit, QScrollArea,
-    QSizePolicy, QToolBar, QComboBox, QFormLayout, QSpacerItem,
-    QMenu, QMainWindow, QApplication, QCheckBox, QPushButton, QTabWidget
-)
+try:
+    from PyQt6 import QtGui
+    from PyQt6.QtWidgets import (
+        QWidget, QLabel, QVBoxLayout, QHBoxLayout, QLineEdit, QScrollArea,
+        QSizePolicy, QToolBar, QComboBox, QFormLayout, QSpacerItem,
+        QMenu, QMainWindow, QApplication, QCheckBox, QPushButton, QTabWidget
+    )
+    from PyQt6.QtGui import QIcon
+    from PyQt6.QtGui import QAction
+    from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
+    pyqt_version = 6
+except ImportError:
+    from PyQt5 import QtGui
+    from PyQt5.QtWidgets import (
+        QWidget, QLabel, QVBoxLayout, QHBoxLayout, QLineEdit, QScrollArea,
+        QSizePolicy, QToolBar, QComboBox, QFormLayout, QSpacerItem,
+        QMenu, QMainWindow, QApplication, QCheckBox, QPushButton, QTabWidget
+    )
+    from PyQt5.QtGui import QIcon
+    from PyQt5.QtGui import QAction
+    from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt
+    pyqt_version = 5
 from utils import utils
-from PyQt6.QtGui import QIcon
-from PyQt6.QtGui import QAction
 import sys
-from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
 from capture.video_capture_base import CaptureDeviceType
 from capture import VideoCapture
-from configurer import parameters_processing
-from configurer.configurer_tabs.tracker_widget import TrackerWidget
+from visualization_modules.configurer import parameters_processing
+from visualization_modules.configurer.configurer_tabs.tracker_widget import TrackerWidget
 
 
 class TrackerTab(QWidget):

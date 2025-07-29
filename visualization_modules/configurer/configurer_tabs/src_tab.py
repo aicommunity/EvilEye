@@ -1,24 +1,38 @@
 import copy
 import json
 import os.path
-from configurer.jobs_history_journal import JobsHistory
-from configurer.db_connection_window import DatabaseConnectionWindow
-from PyQt6 import QtGui
-from PyQt6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QLineEdit, QScrollArea,
-    QSizePolicy, QToolBar, QComboBox, QFormLayout, QSpacerItem, QListView,
-    QMenu, QMainWindow, QApplication, QCheckBox, QPushButton, QTabWidget
-)
-from utils import utils
-from PyQt6.QtGui import QIcon
-from PyQt6.QtGui import QAction
-import sys
-from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
+from visualization_modules.configurer.jobs_history_journal import JobsHistory
+from visualization_modules.configurer.db_connection_window import DatabaseConnectionWindow
+try:
+    from PyQt6 import QtGui
+    from PyQt6.QtWidgets import (
+        QWidget, QLabel, QVBoxLayout, QHBoxLayout, QLineEdit, QScrollArea,
+        QSizePolicy, QToolBar, QComboBox, QFormLayout, QSpacerItem, QListView,
+        QMenu, QMainWindow, QApplication, QCheckBox, QPushButton, QTabWidget
+    )
+    from PyQt6.QtGui import QIcon
+    from PyQt6.QtGui import QAction
+    from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
+    from PyQt6.QtSql import QSqlQueryModel, QSqlQuery, QSqlDatabase
+    pyqt_version = 6
+except ImportError:
+    from PyQt5 import QtGui
+    from PyQt5.QtWidgets import (
+        QWidget, QLabel, QVBoxLayout, QHBoxLayout, QLineEdit, QScrollArea,
+        QSizePolicy, QToolBar, QComboBox, QFormLayout, QSpacerItem, QListView,
+        QMenu, QMainWindow, QApplication, QCheckBox, QPushButton, QTabWidget
+    )
+    from PyQt5.QtGui import QIcon
+    from PyQt5.QtGui import QAction
+    from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt
+    from PyQt5.QtSql import QSqlQueryModel, QSqlQuery, QSqlDatabase
+    pyqt_version = 5
 from capture.video_capture_base import CaptureDeviceType
 from capture import VideoCapture
-from configurer import parameters_processing
-from configurer.configurer_tabs.src_widget import SourceWidget
-from PyQt6.QtSql import QSqlQueryModel, QSqlQuery, QSqlDatabase
+from visualization_modules.configurer import parameters_processing
+from visualization_modules.configurer.configurer_tabs.src_widget import SourceWidget
+import sys
+from utils import utils
 
 
 class SourcesHistory(QWidget):

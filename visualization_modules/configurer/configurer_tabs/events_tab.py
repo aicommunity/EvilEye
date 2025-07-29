@@ -1,11 +1,20 @@
 import copy
-from PyQt6.QtWidgets import (
-    QWidget, QLabel, QHBoxLayout, QLineEdit,
-    QSizePolicy, QFormLayout, QPushButton, QSpacerItem
-)
+try:
+    from PyQt6.QtWidgets import (
+        QWidget, QLabel, QHBoxLayout, QLineEdit,
+        QSizePolicy, QFormLayout, QPushButton, QSpacerItem
+    )
+    from PyQt6.QtCore import pyqtSlot, Qt
+    pyqt_version = 6
+except ImportError:
+    from PyQt5.QtWidgets import (
+        QWidget, QLabel, QHBoxLayout, QLineEdit,
+        QSizePolicy, QFormLayout, QPushButton, QSpacerItem
+    )
+    from PyQt5.QtCore import pyqtSlot, Qt
+    pyqt_version = 5
 from utils import utils
-from PyQt6.QtCore import pyqtSlot, Qt
-from configurer import parameters_processing
+from visualization_modules.configurer import parameters_processing
 
 
 class EventsTab(QWidget):

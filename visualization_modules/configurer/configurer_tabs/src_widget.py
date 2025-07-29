@@ -1,23 +1,38 @@
 import time
-from PyQt6 import QtGui
-from PyQt6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QLineEdit, QSizePolicy,
-    QComboBox, QFormLayout, QSpacerItem, QListView, QCheckBox, QPushButton
-)
+try:
+    from PyQt6 import QtGui
+    from PyQt6.QtWidgets import (
+        QWidget, QLabel, QVBoxLayout, QHBoxLayout, QLineEdit, QSizePolicy,
+        QComboBox, QFormLayout, QSpacerItem, QListView, QCheckBox, QPushButton
+    )
+    from PyQt6.QtGui import QIcon
+    from PyQt6 import QtCore
+    from PyQt6.QtGui import QPixmap
+    from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QThread
+    from PyQt6.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
+    pyqt_version = 6
+except ImportError:
+    from PyQt5 import QtGui
+    from PyQt5.QtWidgets import (
+        QWidget, QLabel, QVBoxLayout, QHBoxLayout, QLineEdit, QSizePolicy,
+        QComboBox, QFormLayout, QSpacerItem, QListView, QCheckBox, QPushButton
+    )
+    from PyQt5.QtGui import QIcon
+    from PyQt5 import QtCore
+    from PyQt5.QtGui import QPixmap
+    from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt, QThread
+    from PyQt5.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
+    pyqt_version = 5
+
 from utils import utils
-from PyQt6.QtGui import QIcon
-from PyQt6 import QtCore
 from timeit import default_timer as timer
 import cv2
-from PyQt6.QtGui import QPixmap
-from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QThread
-from PyQt6.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
-from configurer.db_connection_window import DatabaseConnectionWindow
+from visualization_modules.configurer.db_connection_window import DatabaseConnectionWindow
 from capture.video_capture_base import CaptureDeviceType
-from configurer import parameters_processing
+from visualization_modules.configurer import parameters_processing
 from capture.video_capture import VideoCapture
 from urllib.parse import urlparse
-from configurer import parameters_processing
+from visualization_modules.configurer import parameters_processing
 
 
 class SourceWidget(QWidget):

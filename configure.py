@@ -11,7 +11,7 @@ except ImportError:
     from PyQt5.QtWidgets import QApplication
     pyqt_version = 5
 
-import configurer.configurer_window as config
+import visualization_modules.configurer.configurer_window as config
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
 

@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import (
     QMessageBox, QTextEdit, QFormLayout, QSizePolicy
 )
 from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QModelIndex
-import configurer.parameters_processing
+import visualization_modules.configurer.parameters_processing
 from PyQt6.QtSql import QSqlDatabase
 
 
