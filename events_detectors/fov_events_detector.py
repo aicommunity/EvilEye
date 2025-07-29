@@ -120,11 +120,12 @@ class FieldOfViewEventsDetector(EventsDetector):
         # self.queue_in.put((active_objs, lost_objs))
 
     def set_params_impl(self):
-        self.sources = {int(key) for key in self.params['sources'].keys()}
+        sources = self.params.get('sources', dict())
+        self.sources = {int(key) for key in sources.keys()}
         self.active_obj_ids = {source: set() for source in self.sources}
         self.lost_obj_ids = {source: set() for source in self.sources}
 
-        sources_periods = {int(key): value for key, value in self.params['sources'].items()}
+        sources_periods = {int(key): value for key, value in sources.items()}
         for source in sources_periods:  # Перевод периодов времени из строк к типу datetime
             periods = []
             for period in sources_periods[source]:

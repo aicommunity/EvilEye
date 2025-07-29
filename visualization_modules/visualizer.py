@@ -60,12 +60,12 @@ class Visualizer(core.EvilEyeBase):
         pass
 
     def set_params_impl(self):
-        self.source_ids = self.params['source_ids']
+        self.source_ids = self.params.get('source_ids', self.source_ids)
         self.show_debug_info = self.params.get('show_debug_info', False)
-        self.fps = self.params['fps']
+        self.fps = self.params.get('fps', self.fps)
         self.font_params = self.params.get('font_params', None)
-        self.num_height = self.params['num_height']
-        self.num_width = self.params['num_width']
+        self.num_height = self.params.get('num_height', self.num_height)
+        self.num_width = self.params.get('num_width', self.num_width)
         self.visual_buffer_num_frames = self.params.get('visual_buffer_num_frames', 50)
 
     def start(self):

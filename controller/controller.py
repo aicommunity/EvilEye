@@ -377,7 +377,7 @@ class Controller:
         self._init_trackers(self.params.get('trackers', list()))
         self._init_mc_tracker()
 
-        multicam_reid = self.params['controller'].get("multicam_reid", False)
+        multicam_reid = self.params.get('controller', dict()).get("multicam_reid", False)
         if multicam_reid:
             for tracker_params in self.params.get('trackers', list()):
                 botsort_cfg = tracker_params.get("botsort_cfg", None)
@@ -421,28 +421,27 @@ class Controller:
         self._init_db_controller(self.database_config['database'], system_params=self.params)
         self._init_db_adapters(self.database_config['database_adapters'])
 
-        self.__init_object_handler(self.db_controller, params['objects_handler'])
-        self._init_events_detectors(self.params['events_detectors'])
-        self._init_events_detectors_controller(self.params['events_detectors'])
-        self._init_events_processor(self.params['events_processor'])
+        self.__init_object_handler(self.db_controller, params.get('objects_handler', dict()))
+        self._init_events_detectors(self.params.get('events_detectors', dict()))
+        self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
+        self._init_events_processor(self.params.get('events_processor', dict()))
 
-        self.autoclose = self.params['controller'].get("autoclose", self.autoclose)
-        self.fps = self.params['controller'].get("fps", self.fps)
-        self.show_main_gui = self.params['controller'].get("show_main_gui", self.show_main_gui)
-        self.show_journal = self.params['controller'].get("show_journal", self.show_journal)
-        self.enable_close_from_gui = self.params['controller'].get("enable_close_from_gui", self.enable_close_from_gui)
-        self.class_names = self.params['controller'].get("class_names", list())
-        self.memory_periodic_check_sec = self.params['controller'].get("memory_periodic_check_sec", self.memory_periodic_check_sec)
-        self.max_memory_usage_mb = self.params['controller'].get("max_memory_usage_mb", self.max_memory_usage_mb)
-        self.auto_restart = self.params['controller'].get("max_memory_usage_mb", self.auto_restart)
+        if 'controller' in self.params.keys():
+            self.autoclose = self.params['controller'].get("autoclose", self.autoclose)
+            self.fps = self.params['controller'].get("fps", self.fps)
+            self.show_main_gui = self.params['controller'].get("show_main_gui", self.show_main_gui)
+            self.show_journal = self.params['controller'].get("show_journal", self.show_journal)
+            self.enable_close_from_gui = self.params['controller'].get("enable_close_from_gui", self.enable_close_from_gui)
+            self.class_names = self.params['controller'].get("class_names", list())
+            self.memory_periodic_check_sec = self.params['controller'].get("memory_periodic_check_sec", self.memory_periodic_check_sec)
+            self.max_memory_usage_mb = self.params['controller'].get("max_memory_usage_mb", self.max_memory_usage_mb)
+            self.auto_restart = self.params['controller'].get("auto_restart", self.auto_restart)
 
     def init_main_window(self, main_window: QMainWindow, pyqt_slots: dict, pyqt_signals: dict):
         self.main_window = main_window
         self.pyqt_slots = pyqt_slots
         self.pyqt_signals = pyqt_signals
         self._init_visualizer(self.params['visualizer'])
-
-
 
     def release(self):
         self.stop()
@@ -456,6 +455,46 @@ class Controller:
         for source in self.sources:
             source.release()
         print('Everything in controller released')
+
+    def save_params(self, params: dict):
+        self.params['controller'] = dict()
+        self.params['controller']["autoclose"] = self.autoclose
+        self.params['controller']["fps"] = self.fps
+        self.params['controller']["show_main_gui"] = self.show_main_gui
+        self.params['controller']["show_journal"] = self.show_journal
+        self.params['controller']["enable_close_from_gui"] = self.enable_close_from_gui
+        self.params['controller']["class_names"] = self.class_names
+        self.params['controller']["memory_periodic_check_sec"] = self.memory_periodic_check_sec
+        self.params['controller']["max_memory_usage_mb"] = self.max_memory_usage_mb
+        self.params['controller']["auto_restart"] = self.auto_restart
+
+        self.params['sources'] = list()
+        for obj in self.sources:
+            self.params['sources'].append(obj.get_params())
+
+        self.params['preprocessors'] = list()
+        for obj in self.preprocessors:
+            self.params['preprocessors'].append(obj.get_params())
+        self.params['detectors'] = list()
+        for obj in self.detectors:
+            self.params['detectors'].append(obj.get_params())
+        self.params['trackers'] = list()
+        for obj in self.detectors:
+            self.params['trackers'].append(obj.get_params())
+
+        self.params['objects_handler'] = self.obj_handler.get_params()
+
+        self.params['events_detectors'] = dict()
+        self.params['events_detectors']['CamEventsDetector'] = self.cam_events_detector.get_params()
+        self.params['events_detectors']['FieldOfViewEventsDetector'] = self.fov_events_detector.get_params()
+        self.params['events_detectors']['ZoneEventsDetector'] = self.zone_events_detector.get_params()
+
+        self.params['events_processor'] = self.events_processor.get_params()
+        # self.params['database'] = self.db_controller.get_params()
+        if self.visualizer:
+            self.params['visualizer'] = self.visualizer.get_params()
+        else:
+            self.params['visualizer'] = dict()
 
     def set_current_main_widget_size(self, width, height):
         self.current_main_widget_size = [width, height]
@@ -560,15 +599,15 @@ class Controller:
 
     def _init_events_detectors(self, params):
         self.cam_events_detector = CamEventsDetector(self.sources)
-        self.cam_events_detector.set_params(**params['CamEventsDetector'])
+        self.cam_events_detector.set_params(**params.get('CamEventsDetector', dict()))
         self.cam_events_detector.init()
 
         self.fov_events_detector = FieldOfViewEventsDetector(self.obj_handler)
-        self.fov_events_detector.set_params(**params['FieldOfViewEventsDetector'])
+        self.fov_events_detector.set_params(**params.get('FieldOfViewEventsDetector', dict()))
         self.fov_events_detector.init()
 
         self.zone_events_detector = ZoneEventsDetector(self.obj_handler)
-        self.zone_events_detector.set_params(**params['ZoneEventsDetector'])
+        self.zone_events_detector.set_params(**params.get('ZoneEventsDetector', dict()))
         self.zone_events_detector.init()
 
         self.obj_handler.subscribe(self.fov_events_detector, self.zone_events_detector)

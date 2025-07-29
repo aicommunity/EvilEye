@@ -38,7 +38,7 @@ class DatabaseJournalWindow(QWidget):
         self.adapter_params = self.database_params['database_adapters']
         self.db_params = self.database_params['database']
         self.vis_params = self.params['visualizer']
-        self.obj_journal_enabled = self.vis_params['objects_journal_enabled']
+        self.obj_journal_enabled = self.vis_params.get('objects_journal_enabled', True)
 
         self.db_controller = database_controller_pg.DatabaseControllerPg(params, controller_type='Receiver')
         self.db_controller.set_params(**self.db_params)

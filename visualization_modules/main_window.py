@@ -88,10 +88,11 @@ class MainWindow(QMainWindow):
         self.params_path = params_file_path
         self.params = params
 
-        self.rows = self.params['visualizer']['num_height']
-        self.cols = self.params['visualizer']['num_width']
-        self.cameras = self.params['sources']
-        self.num_cameras = len(self.params['sources'])
+        self.rows = self.params['visualizer'].get('num_height', 1)
+        self.cols = self.params['visualizer'].get('num_width', 1)
+        self.cameras = self.params.get('sources', list())
+
+        self.num_cameras = len(self.cameras)
         self.src_ids = []
         for camera in self.cameras:
             for src_id in camera['source_ids']:

@@ -280,7 +280,7 @@ class ZoneWindow(QWidget):
     def __init__(self, params):
         super().__init__()
         self.params = params
-        self.zone_params = self.params['events_detectors']['ZoneEventsDetector']['sources']
+        self.zone_params = self.params['events_detectors'].get('ZoneEventsDetector', dict()).get('sources', list())
         self.vis_params = self.params['visualizer']
         sources_zones = {}
         for source_id in self.zone_params:  # Приводим зоны, заданные координатами в json, к необходимому виду

@@ -287,11 +287,12 @@ class ZoneEventsDetector(EventsDetector):
         # self.queue_in.put((active_objs, lost_objs))
 
     def set_params_impl(self):
-        self.sources = {int(key) for key in self.params['sources'].keys()}
+        sources = self.params.get('sources', dict())
+        self.sources = {int(key) for key in sources.keys()}
         self.left_frame_id = {source: {} for source in self.sources}
         self.entered_frame_id = {source: {} for source in self.sources}
-        self.event_threshold = self.params['event_threshold']
-        self.zone_left_threshold = self.params['zone_left_threshold']
+        self.event_threshold = self.params.get('event_threshold', self.event_threshold)
+        self.zone_left_threshold = self.params.get('zone_left_threshold', self.zone_left_threshold)
 
         self.sources_zones = {int(key): [] for key in self.sources}
 
@@ -305,7 +306,7 @@ class ZoneEventsDetector(EventsDetector):
         pass
 
     def init_impl(self):
-        sources_zones = {int(key): value for key, value in self.params['sources'].items()}
+        sources_zones = {int(key): value for key, value in self.params.get('sources', dict()).items()}
         for src_id in sources_zones:
             for zone_coords in sources_zones[src_id]:
                 self.add_zone(src_id, zone_coords, 'poly')

@@ -17,6 +17,9 @@ class EvilEyeBase(ABC):
         self.params = params
         self.set_params_impl()
 
+    def get_params(self):
+        return self.params
+
     def get_init_flag(self):
         return self.is_inited
 
