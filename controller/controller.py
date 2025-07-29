@@ -479,7 +479,7 @@ class Controller:
         for obj in self.detectors:
             self.params['detectors'].append(obj.get_params())
         self.params['trackers'] = list()
-        for obj in self.detectors:
+        for obj in self.trackers:
             self.params['trackers'].append(obj.get_params())
 
         self.params['objects_handler'] = self.obj_handler.get_params()

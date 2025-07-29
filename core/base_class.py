@@ -18,6 +18,7 @@ class EvilEyeBase(ABC):
         self.set_params_impl()
 
     def get_params(self):
+        self.params = self.get_params_impl()
         return self.params
 
     def get_init_flag(self):
@@ -40,9 +41,6 @@ class EvilEyeBase(ABC):
     def release(self):
         self.release_impl()
         self.is_inited = False
-
-    def get_params(self):
-        return self.params
 
     def get_debug_info(self, debug_info: dict | None):
         if debug_info is None:
@@ -82,4 +80,8 @@ class EvilEyeBase(ABC):
 
     @abstractmethod
     def set_params_impl(self):
+        pass
+
+    @abstractmethod
+    def get_params_impl(self):
         pass

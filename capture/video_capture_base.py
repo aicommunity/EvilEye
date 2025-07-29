@@ -128,6 +128,19 @@ class VideoCaptureBase(core.EvilEyeBase):
             self.password = None
             self.pure_url = None
 
+    def get_params_impl(self):
+        params = dict()
+        params['split'] = self.split_stream
+        params['num_split'] = self.num_split
+        params['src_coords'] = self.src_coords
+        params['source_ids'] = self.source_ids
+        params['desired_fps'] = self.desired_fps
+        params['source_names'] = self.source_names
+        params['loop_play'] = self.loop_play
+        params['source_type'] = self.source_type.name
+        params['camera'] = self.source_address
+        return params
+
     def get_disconnects_info(self) -> list[tuple[str, datetime.datetime, bool]]:
         disconnects = copy.deepcopy(self.disconnects)
         self.disconnects = []
