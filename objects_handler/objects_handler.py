@@ -80,6 +80,14 @@ class ObjectsHandler(core.EvilEyeBase):
         self.max_active_objects = self.params.get('max_active_objects', 100)
         self.max_lost_objects = self.params.get('max_lost_objects', 100)
 
+    def get_params_impl(self):
+        params = dict()
+        params['lost_store_time_secs'] = self.lost_store_time_secs
+        params['history_len'] = self.history_len
+        params['lost_thresh'] = self.lost_thresh
+        params['max_active_objects'] = self.max_active_objects
+        params['max_lost_objects'] = self.max_lost_objects
+
     def stop(self):
         # self.objects_file.close()
         self.run_flag = False

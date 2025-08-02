@@ -63,6 +63,25 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
         self.preview_height = self.params.get('preview_height', 100)
         self.preview_size = (self.preview_width, self.preview_height)
 
+    def get_params_impl(self):
+        params = dict()
+        params['user_name'] = self.user_name
+        params['default_user_name'] = self.default_user_name
+        params['password'] = self.password
+        params['default_password'] = self.default_password
+        params['database_name'] = self.database_name
+        params['default_database_name'] = self.default_database_name
+        params['host_name'] = self.host_name
+        params['default_host_name'] = self.default_host_name
+        params['port'] = self.port
+        params['default_port'] = self.default_port
+        params['image_dir'] = self.image_dir
+        params['create_new_project'] = self.create_new_project
+        params['tables'] = copy.deepcopy(self.tables)
+        params['preview_width'] = self.preview_width
+        params['preview_height'] = self.preview_height
+        return params
+
     def get_cameras_params(self):
         return self.cameras_params
 

@@ -30,6 +30,11 @@ class ObjectDetectorYolo(object_detector.ObjectDetectorBase):
         super().set_params_impl()
         self.model_name = self.params['model']
 
+    def get_params_impl(self):
+        params = super().get_params_impl()
+        params['model'] = self.model_name
+        return params
+
     def get_debug_info(self, debug_info: dict):
         super().get_debug_info(debug_info)
         debug_info['model_name'] = self.model_name

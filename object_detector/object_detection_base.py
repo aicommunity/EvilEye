@@ -75,6 +75,15 @@ class ObjectDetectorBase(core.EvilEyeBase, ABC):
         self.source_ids = self.params.get('source_ids', [])
         self.num_detection_threads = self.params.get('num_detection_threads', 3)
 
+    def get_params_impl(self):
+        params = dict()
+        params['roi'] = self.roi
+        params['classes'] = self.classes
+        params['vid_stride'] = self.stride
+        params['source_ids'] = self.source_ids
+        params['num_detection_threads'] = self.num_detection_threads
+        return params
+
     def get_debug_info(self, debug_info: dict):
         super().get_debug_info(debug_info)
         debug_info['run_flag'] = self.run_flag

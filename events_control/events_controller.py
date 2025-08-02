@@ -22,6 +22,9 @@ class EventsDetectorsController(EvilEyeBase):
     def set_params_impl(self):
         pass
 
+    def get_params_impl(self):
+        return dict()
+
     def init_impl(self):
         self.events_detectors = {detector.get_name(): [] for detector in self.detectors}
 

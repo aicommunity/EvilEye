@@ -26,6 +26,9 @@ class EventsProcessor(EvilEyeBase):
     def set_params_impl(self):
         pass
 
+    def get_params_impl(self):
+        return dict()
+
     def init_impl(self):
         self.events_adapters = {adapter.get_event_name(): adapter for adapter in self.db_adapters}
         self.events_tables = {adapter.get_event_name(): adapter.get_table_name() for adapter in self.db_adapters}

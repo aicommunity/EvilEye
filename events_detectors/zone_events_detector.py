@@ -15,6 +15,7 @@ class ZoneEventsDetector(EventsDetector):
     def __init__(self, objects_handler):
         super().__init__()
         self.sources = set()
+        self.sources_list = dict()
         self.sources_zones = {}  # Айди источника: список зон
         self.zone_id_people = {}
         self.left_frame_id = {}  # Для отслеживания в истории айди кадров, на которых объект вышел из зоны
@@ -287,14 +288,21 @@ class ZoneEventsDetector(EventsDetector):
         # self.queue_in.put((active_objs, lost_objs))
 
     def set_params_impl(self):
-        sources = self.params.get('sources', dict())
-        self.sources = {int(key) for key in sources.keys()}
+        self.sources_list = self.params.get('sources', dict())
+        self.sources = {int(key) for key in self.sources_list.keys()}
         self.left_frame_id = {source: {} for source in self.sources}
         self.entered_frame_id = {source: {} for source in self.sources}
         self.event_threshold = self.params.get('event_threshold', self.event_threshold)
         self.zone_left_threshold = self.params.get('zone_left_threshold', self.zone_left_threshold)
 
         self.sources_zones = {int(key): [] for key in self.sources}
+
+    def get_params_impl(self):
+        params = dict()
+        params['sources'] = self.sources_list
+        params['event_threshold'] = self.event_threshold
+        params['zone_left_threshold'] = self.zone_left_threshold
+        return params
 
     def reset_impl(self):
         pass

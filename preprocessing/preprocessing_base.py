@@ -19,6 +19,11 @@ class PreprocessingBase(core.EvilEyeBase):
     def set_params_impl(self):
         self.source_ids = self.params.get('source_ids', [])
 
+    def get_params_impl(self):
+        params = dict()
+        params['source_ids'] = self.source_ids
+        return params
+
     def put(self, det_info):
         if not self.queue_in.full():
             self.queue_in.put(det_info)

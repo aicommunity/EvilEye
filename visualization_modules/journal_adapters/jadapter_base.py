@@ -20,6 +20,11 @@ class JournalAdapterBase(core.EvilEyeBase, ABC):
     def set_params_impl(self):
         self.table_name = self.params['table_name']
 
+    def get_params_impl(self):
+        params = dict()
+        params['table_name'] = self.table_name
+        return params
+
     def init_impl(self):
         pass
 

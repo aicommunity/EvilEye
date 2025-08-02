@@ -46,6 +46,9 @@ class CamEventsDetector(EventsDetector):
     def set_params_impl(self):
         pass
 
+    def get_params_impl(self):
+        return dict()
+
     def reset_impl(self):
         pass
 

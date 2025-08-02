@@ -39,6 +39,18 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
         self.encoders = encoders
         self.fps = 5
 
+        self.cfg_dict = dict()
+        self.cfg_dict["appearance_thresh"] = 0.25
+        self.cfg_dict["gmc_method"] = "sparseOptFlow"
+        self.cfg_dict["match_thresh"] = 0.8
+        self.cfg_dict["new_track_thresh"] = 0.6
+        self.cfg_dict["proximity_thresh"] = 0.5
+        self.cfg_dict["track_buffer"] = 30
+        self.cfg_dict["track_high_thresh"] = 0.5
+        self.cfg_dict["track_low_thresh"] = 0.1
+        self.cfg_dict["tracker_type"] = "botsort"
+        self.cfg_dict["with_reid"] = False
+
     def init_impl(self):
         super().init_impl()
         if not self.botsort_cfg:
@@ -59,7 +71,8 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
         self.source_ids = self.params.get('source_ids', [])
         self.fps = self.params.get('fps', 5)
 
-        cfg_dict = self.params.get('botsort_cfg', None)
+        self.cfg_dict = self.params.get('botsort_cfg', self.cfg_dict)
+        cfg_dict = self.cfg_dict
 
         if cfg_dict:
             self.botsort_cfg = BostSortCfg(appearance_thresh=cfg_dict["appearance_thresh"], gmc_method=cfg_dict["gmc_method"],
@@ -67,6 +80,13 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
                                            proximity_thresh=cfg_dict["proximity_thresh"], track_buffer=cfg_dict["track_buffer"],
                                            track_high_thresh=cfg_dict["track_high_thresh"], track_low_thresh=cfg_dict["track_low_thresh"],
                                            tracker_type=cfg_dict["tracker_type"], with_reid=cfg_dict["with_reid"])
+
+    def get_params_impl(self):
+        params = dict()
+        params['source_ids'] = self.source_ids
+        params['fps'] = self.fps
+        params['botsort_cfg'] = self.cfg_dict
+        return params
 
     def default(self):
         self.params.clear()

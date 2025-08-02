@@ -10,6 +10,7 @@ class FieldOfViewEventsDetector(EventsDetector):
     def __init__(self, objects_handler):
         super().__init__()
         self.sources = set()
+        self.sources_list = dict()
         self.sources_periods = dict()  # Айди источника: периоды времени
         self.periods = None
         self.obj_handler = objects_handler
@@ -120,12 +121,12 @@ class FieldOfViewEventsDetector(EventsDetector):
         # self.queue_in.put((active_objs, lost_objs))
 
     def set_params_impl(self):
-        sources = self.params.get('sources', dict())
-        self.sources = {int(key) for key in sources.keys()}
+        self.sources_list = self.params.get('sources', dict())
+        self.sources = {int(key) for key in self.sources_list.keys()}
         self.active_obj_ids = {source: set() for source in self.sources}
         self.lost_obj_ids = {source: set() for source in self.sources}
 
-        sources_periods = {int(key): value for key, value in sources.items()}
+        sources_periods = {int(key): value for key, value in self.sources_list.items()}
         for source in sources_periods:  # Перевод периодов времени из строк к типу datetime
             periods = []
             for period in sources_periods[source]:
@@ -133,6 +134,11 @@ class FieldOfViewEventsDetector(EventsDetector):
                 end_time = datetime.strptime(period[1], '%H:%M:%S').time()
                 periods.append((start_time, end_time))
             self.sources_periods[source] = periods
+
+    def get_params_impl(self):
+        params = dict()
+        params['sources'] = self.sources_list
+        return params
 
     def reset_impl(self):
         pass

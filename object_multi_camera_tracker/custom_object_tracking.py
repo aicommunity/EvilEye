@@ -44,6 +44,10 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
     def set_params_impl(self):
         pass
 
+    def get_params_impl(self):
+        params = dict()
+        return params
+
     def default(self):
         self.params.clear()
 
