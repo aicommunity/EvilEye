@@ -93,6 +93,85 @@ class Controller:
 
         self.debug_info = dict()
 
+    def add_channel(self):
+        self.add_module("source", None)
+        self.add_module("detector", None)
+        self.add_module("tracker", None)
+
+    def add_module(self, module_type: str, params: dict):
+        if module_type == "source":
+            camera = capture.VideoCapture()
+            if params:
+                camera.set_params(params)
+            camera.init()
+            self.sources.append(camera)
+            if camera.source_ids is not None and camera.source_names is not None:
+                for source_id, source_name in zip(camera.source_ids, camera.source_names):
+                    self.source_id_name_table[source_id] = source_name
+                    self.source_video_duration[source_id] = camera.video_duration
+                    self.source_last_processed_frame_id[source_id] = 0
+            self._init_events_detectors(self.params.get('events_detectors', dict()))
+            self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
+            self.params['sources'].append(camera.get_params())
+
+        elif module_type == "detector":
+            detector = object_detection_yolo.ObjectDetectorYolo()
+            if params:
+                detector.set_params(params)
+            obj_max_id = 0
+            for obj in self.detectors:
+                if obj.get_id() > obj_max_id:
+                    obj_max_id = obj.get_id()
+            obj_max_id += 1
+            detector.set_id(obj_max_id)
+            detector.init()
+            self.detectors.append(detector)
+            self.params['detectors'].append(detector.get_params())
+        elif module_type == "tracker":
+            if params:
+                tracker_params = params
+            else:
+                tracker_params = dict()
+            path = tracker_params.get("tracker_onnx", "osnet_ain_x1_0_M.onnx")
+            if path not in self.encoders:
+                encoder = OnnxEncoder(path)
+                self.encoders[path] = encoder
+            encoder = self.encoders[tracker_params.get("tracker_onnx", "osnet_ain_x1_0_M.onnx")]
+            tracker = object_tracking_botsort.ObjectTrackingBotsort([encoder])
+            if params:
+                tracker.set_params(**tracker_params)
+            tracker.init()
+            self.trackers.append(tracker)
+            self.params['trackers'].append(tracker.get_params())
+
+            is_mc_started = self.mc_tracker.run_flag
+            self._init_mc_tracker()
+            if is_mc_started:
+                self.mc_tracker.start()
+
+    def del_module(self, module_type: str, id: int):
+        if module_type == "source":
+            for obj in self.sources:
+                if obj.get_id() == id:
+                    self.sources.remove(obj)
+                    self._init_events_detectors(self.params.get('events_detectors', dict()))
+                    self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
+                    break
+        elif module_type == "detector":
+            for obj in self.detectors:
+                if obj.get_id() == id:
+                    self.detectors.remove(obj)
+                    break
+        elif module_type == "tracker":
+            for obj in self.trackers:
+                if obj.get_id() == id:
+                    self.trackers.remove(obj)
+                    is_mc_started = self.mc_tracker.run_flag
+                    self._init_mc_tracker()
+                    if is_mc_started:
+                        self.mc_tracker.start()
+                    break
+
     def is_running(self):
         return self.run_flag
 
@@ -574,6 +653,7 @@ class Controller:
             encoder = self.encoders[tracker_params.get("tracker_onnx", "osnet_ain_x1_0_M.onnx")]
             tracker = object_tracking_botsort.ObjectTrackingBotsort([encoder])
             tracker.set_params(**tracker_params)
+            tracker.set_id(i)
             tracker.init()
             self.trackers.append(tracker)
     

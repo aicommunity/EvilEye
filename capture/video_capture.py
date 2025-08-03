@@ -30,7 +30,8 @@ class VideoCapture(capture.VideoCaptureBase):
         super().set_params_impl()
 
     def init_impl(self):
-        if self.source_type == CaptureDeviceType.IpCamera and self.params['apiPreference'] == "CAP_GSTREAMER":  # Приведение rtsp ссылки к формату gstreamer
+        api_pref = self.params.get('apiPreference','CAP_FFMPEG')
+        if self.source_type == CaptureDeviceType.IpCamera and api_pref == "CAP_GSTREAMER":  # Приведение rtsp ссылки к формату gstreamer
             if '!' not in self.source_address:
                 str_h265 = (' ! rtph265depay ! h265parse ! avdec_h265 ! decodebin ! videoconvert ! '  # Указание кодеков и форматов
                             'video/x-raw, format=(string)BGR ! appsink')
@@ -46,14 +47,14 @@ class VideoCapture(capture.VideoCaptureBase):
 
                 pos = self.source_address.find('rtsp')
                 source = str1 + self.source_address[pos:] + str_h265
-                self.capture.open(source, VideoCapture.VideoCaptureAPIs[self.params['apiPreference']])
+                self.capture.open(source, VideoCapture.VideoCaptureAPIs[api_pref])
                 if not self.is_opened():  # Если h265 не подойдет, используем h264
                     source = str1 + self.source_address + str_h264
-                    self.capture.open(source, VideoCapture.VideoCaptureAPIs[self.params['apiPreference']])
+                    self.capture.open(source, VideoCapture.VideoCaptureAPIs[api_pref])
             else:
-                self.capture.open(self.source_address, VideoCapture.VideoCaptureAPIs[self.params['apiPreference']])
+                self.capture.open(self.source_address, VideoCapture.VideoCaptureAPIs[api_pref])
         else:
-            self.capture.open(self.source_address, VideoCapture.VideoCaptureAPIs[self.params['apiPreference']])
+            self.capture.open(self.source_address, VideoCapture.VideoCaptureAPIs[api_pref])
 
         self.source_fps = None
         if self.capture.isOpened():

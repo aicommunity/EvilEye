@@ -14,6 +14,7 @@ class CaptureDeviceType(Enum):
     VideoFile = "VideoFile"
     IpCamera = "IpCamera"
     Device = "Device"
+    NotSet = "NotSet"
 
 
 class CaptureImage:
@@ -37,7 +38,7 @@ class VideoCaptureBase(core.EvilEyeBase):
         self.run_flag = False
         self.frames_queue = Queue(maxsize=2)
         self.frame_id_counter = 0
-        self.source_type = None
+        self.source_type = CaptureDeviceType.NotSet
         self.source_fps = None
         self.desired_fps = None
         self.split_stream = False

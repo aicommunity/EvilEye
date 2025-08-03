@@ -38,6 +38,7 @@ import utils.utils
 from visualization_modules.video_thread import VideoThread
 from visualization_modules.db_journal import DatabaseJournalWindow
 from visualization_modules.zone_window import ZoneWindow
+from visualization_modules.configurer.configurer_tabs.src_widget import SourceWidget
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 
@@ -169,6 +170,11 @@ class MainWindow(QMainWindow):
         menu.addMenu(edit_menu)
         edit_menu.addAction(self.add_zone)
 
+        configure_menu = QMenu('&Configure', self)
+        menu.addMenu(configure_menu)
+        configure_menu.addAction(self.add_channel)
+        configure_menu.addAction(self.del_channel)
+
     def _create_toolbar(self):
         view_toolbar = QToolBar('View', self)
         self.addToolBar(Qt.ToolBarArea.RightToolBarArea, view_toolbar)
@@ -194,10 +200,15 @@ class MainWindow(QMainWindow):
         self.show_zones.setIcon(QIcon(icon_path))
         self.show_zones.setCheckable(True)
 
+        self.add_channel = QAction('&Add Channel', self)
+        self.del_channel = QAction('&Del Channel', self)
+
     def _connect_actions(self):
         self.db_journal.triggered.connect(self.open_journal)
         self.add_zone.triggered.connect(self.select_source)
         self.show_zones.toggled.connect(self.display_zones)
+        self.add_channel.triggered.connect(self.add_channel_slot)
+        self.del_channel.triggered.connect(self.del_channel_slot)
 
     @pyqtSlot()
     def display_zones(self):  # Включение отображения зон
@@ -282,3 +293,13 @@ class MainWindow(QMainWindow):
     def check_controller_status(self):
         if not self.controller.is_running():
             self.close()
+
+    @pyqtSlot()
+    def add_channel_slot(self):  # Выбор источника для добавления зон
+        #src_widget = SourceWidget(params=None, creds=None, parent=self)
+        #src_widget.show()
+        self.controller.add_channel()
+
+    @pyqtSlot()
+    def del_channel_slot(self):  # Выбор источника для добавления зон
+        pass
