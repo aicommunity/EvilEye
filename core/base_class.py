@@ -4,11 +4,29 @@ import datetime
 
 
 class EvilEyeBase(ABC):
-    id_counter = 0
+    _id_counter = 0
+    _registry = dict()
+
+    ResultType = None
+
+    @classmethod
+    def register(cls, class_name):
+        def inner_wrapper(wrapped_class):
+            cls._registry[class_name] = wrapped_class
+            print(f"Register class: {class_name}")
+            return wrapped_class
+        return inner_wrapper
+
+    @classmethod
+    def create_instance(cls, class_name, *args, **kwargs):
+        if class_name not in cls._registry:
+            raise ValueError(f"Class not found: {class_name}")
+        return cls._registry[class_name](*args, **kwargs)
+
     def __init__(self):
         self.is_inited = False
-        self.id: int = EvilEyeBase.id_counter
-        EvilEyeBase.id_counter += 1
+        self.id: int = EvilEyeBase._id_counter
+        EvilEyeBase._id_counter += 1
         self.params = {}
         self.memory_measure_results = None
         self.memory_measure_time = None
@@ -34,9 +52,9 @@ class EvilEyeBase(ABC):
         if self.get_init_flag():
             self.reset_impl()
 
-    def init(self):
+    def init(self, **kwargs):
         if not self.get_init_flag():
-            self.is_inited = self.init_impl()
+            self.is_inited = self.init_impl(**kwargs)
 
     def release(self):
         self.release_impl()
@@ -61,13 +79,12 @@ class EvilEyeBase(ABC):
         self.memory_measure_results = asizeof.asizeof(self)
         self.memory_measure_time = datetime.datetime.now()
 
-
     @abstractmethod
     def default(self):
         pass
 
     @abstractmethod
-    def init_impl(self):
+    def init_impl(self, **kwargs):
         pass
 
     @abstractmethod

@@ -22,8 +22,10 @@ from object_multi_camera_tracker.mctrack import MCTrack
 from object_tracker.trackers.sctrack import SCTrack
 from dataclasses import dataclass
 from pympler import asizeof
+from core import EvilEyeBase
 
 
+@EvilEyeBase.register("ObjectMultiCameraTracking")
 class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
 
     def __init__(self, num_cameras: int, encoders: List[TrackEncoder]):

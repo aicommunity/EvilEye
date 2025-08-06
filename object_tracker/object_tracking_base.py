@@ -2,9 +2,11 @@ from abc import ABC, abstractmethod
 import core
 from queue import Queue
 import threading
+from .tracking_results import TrackingResultList
 
 
 class ObjectTrackingBase(core.EvilEyeBase):
+    ResultType = TrackingResultList
 
     def __init__(self):
         super().__init__()
@@ -65,7 +67,7 @@ class ObjectTrackingBase(core.EvilEyeBase):
             self.processing_thread.join()
         print('Tracker stopped')
 
-    def init_impl(self):
+    def init_impl(self, **kwargs):
         self.processing_thread = threading.Thread(target=self._process_impl)
 
     def release_impl(self):

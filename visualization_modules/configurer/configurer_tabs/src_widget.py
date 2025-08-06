@@ -359,7 +359,7 @@ class SrcThread(QThread):
 
     def process_image(self):
         begin_it = timer()
-        frames = self.capture.get_frames()
+        frames = self.capture.get()
         for i, frame in enumerate(frames):
             qt_frame = self._convert_cv_qt(frame.image, self.widget_width, self.widget_height)
             self.update_image_signal.emit(i, qt_frame)

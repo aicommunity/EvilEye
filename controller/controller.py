@@ -29,6 +29,8 @@ from object_multi_camera_tracker.custom_object_tracking import ObjectMultiCamera
 import datetime
 import pprint
 import copy
+from core import ProcessorBase, ProcessorSource, ProcessorStep, ProcessorFrame
+
 
 try:
     from PyQt6.QtWidgets import QMainWindow
@@ -43,15 +45,18 @@ class Controller:
         # self.application = application
         self.control_thread = threading.Thread(target=self.run)
         self.params = None
-        self.sources = []
         self.credentials = dict()
         self.database_config = dict()
         self.source_id_name_table = dict()
         self.source_video_duration = dict()
         self.source_last_processed_frame_id = dict()
-        self.preprocessors = []
-        self.detectors = []
-        self.trackers = []
+
+        self.pipeline = [[{}]]
+
+        self.sources_proc = None
+        self.preprocessors_proc = None
+        self.detector_proc = None
+        self.tracker_proc = None
         self.obj_handler = None
         self.visualizer = None
         self.pyqt_slots = None
@@ -180,128 +185,42 @@ class Controller:
             begin_it = timer()
             # Get new frames from all sources
             captured_frames = []
+            processing_frames = []
             all_sources_finished = True
 
-            for source in self.sources:
-                frames = source.get_frames()
-                source.insert_debug_info_by_id(self.debug_info.setdefault("sources", {}))
-
-                if len(frames) == 0:
-                    if not source.is_finished():
-                        all_sources_finished = False
-                else:
-                    all_sources_finished = False
-                    captured_frames.extend(frames)
+            captured_frames, all_sources_finished = self.sources_proc.process()
+            self.sources_proc.insert_debug_info_by_id("sources", self.debug_info)
 
             if self.autoclose and all_sources_finished:
                 self.run_flag = False
 
             if self.run_flag:
-                for source in self.sources:
-                    if not source.is_running():
-                        source.start()
+                self.sources_proc.run_sources()
 
             complete_capture_it = timer()
 
             preprocessing_frames = []
-            for capture_frame in captured_frames:
-                is_preprocessor_found = False
-                for preprocessor in self.preprocessors:
-                    source_ids = preprocessor.get_source_ids()
-                    if capture_frame.source_id in source_ids:
-                        preprocessor.put(capture_frame)
-                        is_preprocessor_found = True
-
-                    if is_preprocessor_found:
-                        break
-
-                if not is_preprocessor_found:
-                    preprocessing_frames.append(capture_frame)
-
-            for preprocessor in self.preprocessors:
-                prep_result = preprocessor.get()
-                if prep_result:
-                    preprocessing_frames.append(prep_result)
-                preprocessor.insert_debug_info_by_id(self.debug_info.setdefault("preprocessors", {}))
-
-            processing_frames = []
+            preprocessing_frames = self.preprocessors_proc.process(captured_frames)
+            self.preprocessors_proc.insert_debug_info_by_id("preprocessors", self.debug_info)
             dropped_frames = []
 
-            detection_results = []
-            for frame in preprocessing_frames:
-                is_detector_found = False
-                for detector in self.detectors:
-                    source_ids = detector.get_source_ids()
-                    if frame.source_id in source_ids:
-                        detector.put(frame)
-                        is_detector_found = True
-
-                    if is_detector_found:
-                        break
-
-                if not is_detector_found:
-                    det_res = DetectionResultList()
-                    det_res.source_id = frame.source_id
-                    det_res.frame_id = frame.frame_id
-                    det_res.time_stamp = frame.time_stamp
-
-                    detection_results.append([det_res, frame])
-                    processing_frames.append(frame)
-
-            for detector in self.detectors:
-                det_result = detector.get()
-                if det_result:
-                    detection_results.append(det_result)
-
-                detector.insert_debug_info_by_id(self.debug_info.setdefault("detectors", {}))
+            #detection_results = []
+            detection_results = self.detector_proc.process(preprocessing_frames)
+            self.detector_proc.insert_debug_info_by_id("detectors", self.debug_info)
             complete_detection_it = timer()
 
             # Process trackers
             tracking_results = []
-            for det_result, image in detection_results:
-                is_tracker_found = False
-                for tracker in self.trackers:
-                    source_ids = tracker.get_source_ids()
-                    if image.source_id in source_ids:
-                        is_tracker_found = True
-                        tracker.put((det_result, image))
 
-                        dropped_ids = tracker.get_dropped_ids()
-                        if len(dropped_ids) > 0:
-                            dropped_frames.extend(dropped_ids)
-                        break
-                    if is_tracker_found:
-                        break
-
-                if not is_tracker_found:
-                    tracking_result = TrackingResultList()
-                    tracking_result.frame_id = image.frame_id
-                    tracking_result.source_id = image.source_id
-                    tracking_result.time_stamp = datetime.datetime.now()
-                    tracking_result.generate_from(det_result)
-
-                    tracking_results = tracking_result
-                    self.obj_handler.put((tracking_result, image))
-                    self.source_last_processed_frame_id[image.source_id] = image.frame_id
-
-                    processing_frames.append(image)
+            tracking_results = self.tracker_proc.process(detection_results)
+            self.detector_proc.insert_debug_info_by_id("trackers", self.debug_info)
 
             if self.multicam_reid_enabled:
-                track_infos = []
-                #if not any(t.queue_out.empty() for t in self.trackers):
-                for tracker in self.trackers:
-                    track_info = tracker.get()
-                    if track_info:
-                        tracking_result, image = track_info
-                        tracking_results = tracking_result
-                        track_infos.append((tracking_result, image))
-                        processing_frames.append(image)
-
                 # Process multi camera tracking
                 # NOTE: This is a temporary solution which adds
                 # multi camera track id to `tracking_data` dict
-                if track_infos:
-                    self.mc_tracker.put(track_infos)
+                if tracking_results:
+                    self.mc_tracker.put(tracking_results)
 
                 mc_track_infos = self.mc_tracker.get()
                 if mc_track_infos:
@@ -309,20 +228,15 @@ class Controller:
                         tracking_result, image = track_info
                         # print(f"Global ids in cam {i}: {[t.tracking_data['global_id'] for t in tracking_result.tracks]}")
 
-                        self.obj_handler.put((tracking_result, image))
-                        self.source_last_processed_frame_id[image.source_id] = image.frame_id
-            else:
-                for tracker in self.trackers:
-                    track_info = tracker.get()
-                    if track_info:
-                        tracking_result, image = track_info
-                        tracking_results = tracking_result
-                        self.obj_handler.put((tracking_result, image))
+                        self.obj_handler.put(track_info)
                         self.source_last_processed_frame_id[image.source_id] = image.frame_id
                         processing_frames.append(image)
-
-            for tracker in self.trackers:
-                tracker.insert_debug_info_by_id(self.debug_info.setdefault("trackers", {}))
+            else:
+                for track_info in tracking_results:
+                    tracking_result, image = track_info
+                    self.obj_handler.put(track_info)
+                    processing_frames.append(image)
+                    self.source_last_processed_frame_id[image.source_id] = image.frame_id
 
             complete_tracking_it = timer()
 
@@ -335,15 +249,8 @@ class Controller:
 
 
             # Get all dropped images
-            for detector in self.detectors:
-                dropped_ids = detector.get_dropped_ids()
-                if len(dropped_ids) > 0:
-                    dropped_frames.extend(dropped_ids)
-
-            for tracker in self.trackers:
-                dropped_ids = tracker.get_dropped_ids()
-                if len(dropped_ids) > 0:
-                    dropped_frames.extend(dropped_ids)
+            dropped_frames.extend(self.detector_proc.get_dropped_ids())
+            dropped_frames.extend(self.tracker_proc.get_dropped_ids())
 
             if not self.debug_info.get("controller", None) or not self.debug_info["controller"].get("timestamp", None) or ((datetime.datetime.now() - self.debug_info["controller"]["timestamp"]).total_seconds() > self.memory_periodic_check_sec):
                 self.collect_memory_consumption()
@@ -385,15 +292,10 @@ class Controller:
             time.sleep(sleep_seconds)
 
     def start(self):
-        for source in self.sources:
-            source.start()
-        for preprocessor in self.preprocessors:
-            preprocessor.start()
-        for detector in self.detectors:
-            detector.start()
-        for tracker in self.trackers:
-            tracker.start()
-
+        self.sources_proc.start()
+        self.preprocessors_proc.start()
+        self.detector_proc.start()
+        self.tracker_proc.start()
         if self.multicam_reid_enabled:
             self.mc_tracker.start()
         self.obj_handler.start()
@@ -428,14 +330,10 @@ class Controller:
         self.db_adapter_zone_events.stop()
         self.db_adapter_obj.stop()
         self.db_controller.disconnect()
-        for tracker in self.trackers:
-            tracker.stop()
-        for detector in self.detectors:
-            detector.stop()
-        for preprocessor in self.preprocessors:
-            preprocessor.stop()
-        for source in self.sources:
-            source.stop()
+        self.tracker_proc.stop()
+        self.detector_proc.stop()
+        self.preprocessors_proc.stop()
+        self.sources_proc.stop()
         if self.multicam_reid_enabled:
             self.mc_tracker.stop()
         print('Everything in controller stopped')
@@ -449,7 +347,7 @@ class Controller:
         except FileNotFoundError as ex:
             pass
 
-        self._init_captures(self.params.get('sources',list()))
+        self._init_sources(self.params.get('sources', list()))
         self._init_preprocessors(self.params.get('preprocessors', list()))
         self._init_detectors(self.params.get('detectors',list()))
         self._init_encoders(self.params.get('trackers', list()))
@@ -525,14 +423,18 @@ class Controller:
     def release(self):
         self.stop()
 
-        for tracker in self.trackers:
-            tracker.release()
-        for detector in self.detectors:
-            detector.release()
-        for preprocessor in self.preprocessors:
-            preprocessor.release()
-        for source in self.sources:
-            source.release()
+        #for tracker in self.trackers:
+        #    tracker.release()
+        self.tracker_proc.release()
+        self.detector_proc.release()
+        #for detector in self.detectors:
+        #    detector.release()
+        self.preprocessors_proc.release()
+        #for preprocessor in self.preprocessors:
+        #    preprocessor.release()
+        self.sources_proc.release()
+        #for source in self.sources:
+        #    source.release()
         print('Everything in controller released')
 
     def save_params(self, params: dict):
@@ -548,18 +450,16 @@ class Controller:
         self.params['controller']["auto_restart"] = self.auto_restart
 
         self.params['sources'] = list()
-        for obj in self.sources:
-            self.params['sources'].append(obj.get_params())
+        self.sources_proc.get_params(self.params['sources'])
 
         self.params['preprocessors'] = list()
-        for obj in self.preprocessors:
-            self.params['preprocessors'].append(obj.get_params())
+        self.preprocessors_proc.get_params(self.params['preprocessors'])
+
         self.params['detectors'] = list()
-        for obj in self.detectors:
-            self.params['detectors'].append(obj.get_params())
+        self.detector_proc.get_params(self.params['detectors'])
+
         self.params['trackers'] = list()
-        for obj in self.trackers:
-            self.params['trackers'].append(obj.get_params())
+        self.tracker_proc.get_params(self.params['trackers'])
 
         self.params['objects_handler'] = self.obj_handler.get_params()
 
@@ -606,56 +506,42 @@ class Controller:
         self.db_adapter_zone_events.set_params(**params['DatabaseAdapterZoneEvents'])
         self.db_adapter_zone_events.init()
 
-    def _init_captures(self, params):
+    def _init_sources(self, params):
         num_sources = len(params)
+        self.sources_proc = ProcessorSource(class_name="VideoCapture", num_processors=num_sources, order=0)
         for i in range(num_sources):
             src_params = params[i]
             camera_creds = self.credentials["sources"].get(src_params["camera"], None)
             if camera_creds and (not src_params.get("username", None) or not src_params.get("password", None)):
                 src_params["username"] = camera_creds["username"]
                 src_params["password"] = camera_creds["password"]
-            camera = capture.VideoCapture()
-            camera.set_params(**src_params)
-            camera.init()
-            self.sources.append(camera)
-            for source_id, source_name in zip(camera.source_ids, camera.source_names):
+
+        self.sources_proc.set_params(params)
+        self.sources_proc.init()
+        for j in range(num_sources):
+            source = self.sources_proc.get_processors()[j]
+            for source_id, source_name in zip(source.source_ids, source.source_names):
                 self.source_id_name_table[source_id] = source_name
-                self.source_video_duration[source_id] = camera.video_duration
+                self.source_video_duration[source_id] = source.video_duration
                 self.source_last_processed_frame_id[source_id] = 0
 
     def _init_preprocessors(self, params):
         num_preps = len(params)
-        for i in range(num_preps):
-            prep_params = params[i]
-
-            preprocessor = preprocessing.PreprocessingVehicle()  # Todo: need module selection by config
-            preprocessor.set_params(**prep_params)
-            preprocessor.set_id(i)
-            preprocessor.init()
-            self.preprocessors.append(preprocessor)
+        self.preprocessors_proc = ProcessorFrame(class_name="PreprocessingVehicle", num_processors=num_preps, order=1)
+        self.preprocessors_proc.set_params(params)
+        self.preprocessors_proc.init()
 
     def _init_detectors(self, params):
         num_det = len(params)
-        for i in range(num_det):
-            det_params = params[i]
-
-            detector = object_detection_yolo.ObjectDetectorYolo()
-            detector.set_params(**det_params)
-            detector.set_id(i)
-            detector.init()
-            self.detectors.append(detector)
+        self.detector_proc = ProcessorStep(class_name="ObjectDetectorYolo", num_processors=num_det, order=2)
+        self.detector_proc.set_params(params)
+        self.detector_proc.init()
 
     def _init_trackers(self, params):
         num_trackers = len(params)
-
-        for i in range(num_trackers):
-            tracker_params = params[i]
-            encoder = self.encoders[tracker_params.get("tracker_onnx", "osnet_ain_x1_0_M.onnx")]
-            tracker = object_tracking_botsort.ObjectTrackingBotsort([encoder])
-            tracker.set_params(**tracker_params)
-            tracker.set_id(i)
-            tracker.init()
-            self.trackers.append(tracker)
+        self.tracker_proc = ProcessorStep(class_name="ObjectTrackingBotsort", num_processors=num_trackers, order=3)
+        self.tracker_proc.set_params(params)
+        self.tracker_proc.init(encoders=self.encoders)
     
     def _init_encoders(self, params):
         num_trackers = len(params)
@@ -678,7 +564,7 @@ class Controller:
         self.mc_tracker.init()
 
     def _init_events_detectors(self, params):
-        self.cam_events_detector = CamEventsDetector(self.sources)
+        self.cam_events_detector = CamEventsDetector(self.sources_proc.get_processors())
         self.cam_events_detector.set_params(**params.get('CamEventsDetector', dict()))
         self.cam_events_detector.init()
 
@@ -691,7 +577,7 @@ class Controller:
         self.zone_events_detector.init()
 
         self.obj_handler.subscribe(self.fov_events_detector, self.zone_events_detector)
-        for source in self.sources:
+        for source in self.sources_proc.get_processors():
             source.subscribe(self.cam_events_detector)
 
     def _init_events_detectors_controller(self, params):
@@ -716,25 +602,17 @@ class Controller:
 
     def collect_memory_consumption(self):
         total_memory_usage = 0
-        for source in self.sources:
-            source.calc_memory_consumption()
-            comp_debug_info = source.insert_debug_info_by_id(self.debug_info.setdefault("sources", {}))
-            total_memory_usage += comp_debug_info["memory_measure_results"]
+        self.sources_proc.calc_memory_consumption()
+        total_memory_usage += self.sources_proc.get_memory_usage()
 
-        for preprocessor in self.preprocessors:
-            preprocessor.calc_memory_consumption()
-            comp_debug_info = preprocessor.insert_debug_info_by_id(self.debug_info.setdefault("preprocessors", {}))
-            total_memory_usage += comp_debug_info["memory_measure_results"]
+        self.preprocessors_proc.calc_memory_consumption()
+        total_memory_usage += self.preprocessors_proc.get_memory_usage()
 
-        for detector in self.detectors:
-            detector.calc_memory_consumption()
-            comp_debug_info = detector.insert_debug_info_by_id(self.debug_info.setdefault("detectors", {}))
-            total_memory_usage += comp_debug_info["memory_measure_results"]
+        self.detector_proc.calc_memory_consumption()
+        total_memory_usage += self.detector_proc.get_memory_usage()
 
-        for tracker in self.trackers:
-            tracker.calc_memory_consumption()
-            comp_debug_info = tracker.insert_debug_info_by_id(self.debug_info.setdefault("trackers", {}))
-            total_memory_usage += comp_debug_info["memory_measure_results"]
+        self.tracker_proc.calc_memory_consumption()
+        total_memory_usage += self.tracker_proc.get_memory_usage()
 
         self.mc_tracker.calc_memory_consumption()
         comp_debug_info = self.mc_tracker.insert_debug_info_by_id(self.debug_info.setdefault("mc_tracker", {}))

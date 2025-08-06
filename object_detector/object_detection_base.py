@@ -1,6 +1,6 @@
 from abc import ABC
 
-from capture.video_capture_base import CaptureImage
+from core.frame import CaptureImage
 
 import core
 from queue import Queue
@@ -25,6 +25,8 @@ class DetectionResultList:
 
 
 class ObjectDetectorBase(core.EvilEyeBase, ABC):
+    ResultType = DetectionResultList
+
     def __init__(self):
         super().__init__()
 

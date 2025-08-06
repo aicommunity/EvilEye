@@ -13,6 +13,7 @@ from object_tracker.tracking_results import TrackingResult
 from object_tracker.tracking_results import TrackingResultList
 from dataclasses import dataclass
 import copy
+from core import EvilEyeBase
 
 @dataclass
 class BostSortCfg:
@@ -29,14 +30,16 @@ class BostSortCfg:
     with_reid: bool = False
 
 
+
+@EvilEyeBase.register("ObjectTrackingBotsort")
 class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
     #tracker: BOTSORT
 
-    def __init__(self, encoders: List[TrackEncoder] = None):
+    def __init__(self):
         super().__init__()
         self.botsort_cfg = BostSortCfg()
         self.tracker = None
-        self.encoders = encoders
+        self.encoders = None
         self.fps = 5
 
         self.cfg_dict = dict()
@@ -51,8 +54,12 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
         self.cfg_dict["tracker_type"] = "botsort"
         self.cfg_dict["with_reid"] = False
 
-    def init_impl(self):
-        super().init_impl()
+    def init_impl(self, **kwargs):
+        encoders = kwargs.get('encoders', None)
+        if encoders is not None:
+            encoder = encoders[self.params.get("tracker_onnx", "osnet_ain_x1_0_M.onnx")]
+            self.encoders = [encoder]
+        super().init_impl(**kwargs)
         if not self.botsort_cfg:
             print(f"BOTSORT parameters not found!")
             self.tracker = None

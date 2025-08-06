@@ -170,10 +170,10 @@ class MainWindow(QMainWindow):
         menu.addMenu(edit_menu)
         edit_menu.addAction(self.add_zone)
 
-        configure_menu = QMenu('&Configure', self)
-        menu.addMenu(configure_menu)
-        configure_menu.addAction(self.add_channel)
-        configure_menu.addAction(self.del_channel)
+        #configure_menu = QMenu('&Configure', self)
+        #menu.addMenu(configure_menu)
+        #configure_menu.addAction(self.add_channel)
+        #configure_menu.addAction(self.del_channel)
 
     def _create_toolbar(self):
         view_toolbar = QToolBar('View', self)

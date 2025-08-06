@@ -1,7 +1,9 @@
 import object_detector
 from object_detector.detection_thread_yolo_mp import DetectionThreadYoloMp
+from core import EvilEyeBase
 
 
+@EvilEyeBase.register("ObjectDetectorYoloMp")
 class ObjectDetectorYoloMp(object_detector.ObjectDetectorBase):
     id_cnt = 0  # Переменная для присвоения каждому детектору своего идентификатора
 

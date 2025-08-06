@@ -9,7 +9,10 @@ from timeit import default_timer as timer
 from capture.video_capture_base import CaptureImage, CaptureDeviceType
 from enum import IntEnum
 
+from core import EvilEyeBase
 
+
+@EvilEyeBase.register("VideoCapture")
 class VideoCapture(capture.VideoCaptureBase):
     class VideoCaptureAPIs(IntEnum):
         CAP_ANY = 0
@@ -176,63 +179,6 @@ class VideoCapture(capture.VideoCaptureBase):
             print('Not run flag')
             while not self.frames_queue.empty:
                 self.frames_queue.get()
-
-    # def _capture_frames(self):
-    #     while self.run_flag:
-    #         begin_it = timer()
-    #         with self.mutex:
-    #             if not self.is_inited or self.capture is None:
-    #                 time.sleep(0.1)
-    #                 if self.init():
-    #                     timestamp = datetime.datetime.now()
-    #                     print(f"Reconnected to a sources: {self.source_names}")
-    #                     self.reconnects.append((self.params['camera'], timestamp, self.is_working))
-    #                     for sub in self.subscribers:
-    #                         sub.update()
-    #                 else:
-    #                     continue
-    #
-    #             if not self.is_opened():
-    #                 time.sleep(0.1)
-    #                 self.reset()
-    #
-    #         is_read, src_image = self.capture.read()
-    #         if is_read:
-    #             with self.mutex:
-    #                 if self.frames_queue.full():
-    #                     self.frames_queue.get()
-    #             if self.source_type == CaptureDeviceType.VideoFile:
-    #                 self.video_current_frame += 1
-    #                 if self.source_fps and self.source_fps > 0.0:
-    #                     self.video_current_position = (self.video_current_frame * 1000.0) / self.source_fps
-    #             if self.source_type == CaptureDeviceType.IpCamera:
-    #                 self.last_frame_time = datetime.datetime.now()
-    #             self.frames_queue.put(
-    #                 [is_read, src_image, self.frame_id_counter, self.video_current_frame, self.video_current_position])
-    #             self.frame_id_counter += 1
-    #         else:
-    #             if self.source_type != CaptureDeviceType.VideoFile or self.loop_play:
-    #                 self.is_working = False
-    #                 timestamp = datetime.datetime.now()
-    #                 self.disconnects.append((self.params['camera'], timestamp, self.is_working))
-    #                 for sub in self.subscribers:
-    #                     sub.update()
-    #                 self.reset()
-    #             else:
-    #                 self.finished = True
-    #
-    #         end_it = timer()
-    #         elapsed_seconds = end_it - begin_it
-    #
-    #         if self.source_fps:
-    #             # Todo: reduce sleep time for prevent fail in rtsp stream (remove it and implement separate thread for grub later)
-    #             fps_multiplier = 1.5 if self.source_type == CaptureDeviceType.IpCamera else 1.0
-    #             sleep_seconds = 1. / (fps_multiplier * self.source_fps) - elapsed_seconds
-    #             if sleep_seconds <= 0.0:
-    #                 sleep_seconds = 0.001
-    #         else:
-    #             sleep_seconds = 0.03
-    #         time.sleep(sleep_seconds)
 
         if not self.run_flag:
             print('Not run flag')

@@ -4,17 +4,21 @@ import cv2
 import numpy as np
 from utils import utils
 from preprocessing import PreprocessingBase, PreprocessingFactory
+from core import EvilEyeBase
 # from preprocessing.steps import Input, Normalize, Output, Inpaint, Clahe
 
 
+@EvilEyeBase.register("PreprocessingVehicle")
 class PreprocessingVehicle(PreprocessingBase):
     def __init__(self):
         super().__init__()
+        self.json_path = None
+        self.preprocessSequence = None
+
+    def init_impl(self):
         self.json_path = 'samples/vehicle_perpocessing.json'
         factory = PreprocessingFactory(self.json_path)
         self.preprocessSequence = factory.build_pipeline()
-
-    def init_impl(self):
         return True
 
     def release_impl(self):

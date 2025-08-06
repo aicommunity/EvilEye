@@ -6,6 +6,7 @@ import threading
 from object_tracker.tracking_results import TrackingResult, TrackingResultList
 
 class ObjectMultiCameraTrackingBase(core.EvilEyeBase):
+    ResultType = TrackingResultList
 
     def __init__(self):
         super().__init__()

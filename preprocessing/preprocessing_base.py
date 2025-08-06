@@ -3,10 +3,11 @@ import core
 from queue import Queue
 import threading
 from time import sleep
+from core import Frame
 
 
 class PreprocessingBase(core.EvilEyeBase):
-
+    ResultType = Frame
     def __init__(self):
         super().__init__()
 

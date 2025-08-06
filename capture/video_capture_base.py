@@ -8,6 +8,7 @@ from enum import Enum
 from urllib.parse import urlparse
 from threading import Lock
 from collections import deque
+from core import CaptureImage, Frame
 
 
 class CaptureDeviceType(Enum):
@@ -15,18 +16,6 @@ class CaptureDeviceType(Enum):
     IpCamera = "IpCamera"
     Device = "Device"
     NotSet = "NotSet"
-
-
-class CaptureImage:
-    def __init__(self):
-        self.source_id = None
-        self.frame_id = None
-        self.current_video_frame = None
-        self.current_video_position = None
-        self.time_stamp = None
-        self.image = None
-        self.subscribers = []
-
 
 class VideoCaptureBase(core.EvilEyeBase):
     def __init__(self):
@@ -74,7 +63,7 @@ class VideoCaptureBase(core.EvilEyeBase):
     def is_running(self):
         return self.run_flag
 
-    def get_frames(self) -> list[CaptureImage]:
+    def get(self) -> list[CaptureImage]:
         captured_images: list[CaptureImage] = []
         if self.get_init_flag():
             captured_images = self.get_frames_impl()
