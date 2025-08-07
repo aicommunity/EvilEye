@@ -10,7 +10,7 @@ class ProcessorStep(ProcessorBase):
         if input_list is not None:
             for input in input_list:
                 is_processor_found = False
-                if type(input) == list and len(input) >= 2:
+                if (type(input) == list or type(input) == tuple) and len(input) >= 2:
                     data = input[0]
                     frame = input[1]
                 elif type(input) == Frame:

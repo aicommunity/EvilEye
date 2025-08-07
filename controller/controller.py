@@ -55,20 +55,20 @@ class Controller:
 
         self.sources_proc = None
         self.preprocessors_proc = None
-        self.detector_proc = None
-        self.tracker_proc = None
+        self.detectors_proc = None
+        self.trackers_proc = None
+        self.mc_trackers_proc = None
         self.obj_handler = None
         self.visualizer = None
         self.pyqt_slots = None
         self.pyqt_signals = None
-        self.fps = 5
+        self.fps = 30
         self.show_main_gui = True
         self.show_journal = False
         self.enable_close_from_gui = True
         self.memory_periodic_check_sec = 60*15
         self.max_memory_usage_mb = 1024*16
         self.auto_restart = True
-
 
         self.events_detectors_controller = None
         self.events_processor = None
@@ -92,7 +92,7 @@ class Controller:
 
         self.gui_enabled = True
         self.autoclose = False
-        self.multicam_reid_enabled = False
+        #self.multicam_reid_enabled = False
 
         self.current_main_widget_size = [1920, 1080]
 
@@ -150,7 +150,7 @@ class Controller:
             self.params['trackers'].append(tracker.get_params())
 
             is_mc_started = self.mc_tracker.run_flag
-            self._init_mc_tracker()
+            self._init_mc_trackers()
             if is_mc_started:
                 self.mc_tracker.start()
 
@@ -172,7 +172,7 @@ class Controller:
                 if obj.get_id() == id:
                     self.trackers.remove(obj)
                     is_mc_started = self.mc_tracker.run_flag
-                    self._init_mc_tracker()
+                    self._init_mc_trackers()
                     if is_mc_started:
                         self.mc_tracker.start()
                     break
@@ -185,6 +185,7 @@ class Controller:
             begin_it = timer()
             # Get new frames from all sources
             captured_frames = []
+            dropped_frames = []
             processing_frames = []
             all_sources_finished = True
 
@@ -196,47 +197,48 @@ class Controller:
 
             if self.run_flag:
                 self.sources_proc.run_sources()
-
             complete_capture_it = timer()
 
-            preprocessing_frames = []
             preprocessing_frames = self.preprocessors_proc.process(captured_frames)
             self.preprocessors_proc.insert_debug_info_by_id("preprocessors", self.debug_info)
-            dropped_frames = []
 
-            #detection_results = []
-            detection_results = self.detector_proc.process(preprocessing_frames)
-            self.detector_proc.insert_debug_info_by_id("detectors", self.debug_info)
+            detection_results = self.detectors_proc.process(preprocessing_frames)
+            self.detectors_proc.insert_debug_info_by_id("detectors", self.debug_info)
             complete_detection_it = timer()
 
-            # Process trackers
-            tracking_results = []
+            tracking_results = self.trackers_proc.process(detection_results)
+            self.trackers_proc.insert_debug_info_by_id("trackers", self.debug_info)
 
-            tracking_results = self.tracker_proc.process(detection_results)
-            self.detector_proc.insert_debug_info_by_id("trackers", self.debug_info)
+            mc_tracking_results = self.mc_trackers_proc.process(tracking_results)
+            self.mc_trackers_proc.insert_debug_info_by_id("mc_trackers", self.debug_info)
+            for track_info in mc_tracking_results:
+                tracking_result, image = track_info
+                self.obj_handler.put(track_info)
+                processing_frames.append(image)
+                self.source_last_processed_frame_id[image.source_id] = image.frame_id
 
-            if self.multicam_reid_enabled:
+#            if self.multicam_reid_enabled:
                 # Process multi camera tracking
                 # NOTE: This is a temporary solution which adds
                 # multi camera track id to `tracking_data` dict
-                if tracking_results:
-                    self.mc_tracker.put(tracking_results)
+#                if tracking_results:
+#                    self.mc_tracker.put(tracking_results)
 
-                mc_track_infos = self.mc_tracker.get()
-                if mc_track_infos:
-                    for i, track_info in enumerate(mc_track_infos):
-                        tracking_result, image = track_info
+#                mc_track_infos = self.mc_tracker.get()
+#                if mc_track_infos:
+#                    for i, track_info in enumerate(mc_track_infos):
+#                        tracking_result, image = track_info
                         # print(f"Global ids in cam {i}: {[t.tracking_data['global_id'] for t in tracking_result.tracks]}")
 
-                        self.obj_handler.put(track_info)
-                        self.source_last_processed_frame_id[image.source_id] = image.frame_id
-                        processing_frames.append(image)
-            else:
-                for track_info in tracking_results:
-                    tracking_result, image = track_info
-                    self.obj_handler.put(track_info)
-                    processing_frames.append(image)
-                    self.source_last_processed_frame_id[image.source_id] = image.frame_id
+#                        self.obj_handler.put(track_info)
+#                        self.source_last_processed_frame_id[image.source_id] = image.frame_id
+#                        processing_frames.append(image)
+#            else:
+#                for track_info in tracking_results:
+#                    tracking_result, image = track_info
+#                    self.obj_handler.put(track_info)
+#                    processing_frames.append(image)
+#                    self.source_last_processed_frame_id[image.source_id] = image.frame_id
 
             complete_tracking_it = timer()
 
@@ -247,10 +249,9 @@ class Controller:
                 self.events_processor.put(events)
             complete_processing_it = timer()
 
-
             # Get all dropped images
-            dropped_frames.extend(self.detector_proc.get_dropped_ids())
-            dropped_frames.extend(self.tracker_proc.get_dropped_ids())
+            dropped_frames.extend(self.detectors_proc.get_dropped_ids())
+            dropped_frames.extend(self.trackers_proc.get_dropped_ids())
 
             if not self.debug_info.get("controller", None) or not self.debug_info["controller"].get("timestamp", None) or ((datetime.datetime.now() - self.debug_info["controller"]["timestamp"]).total_seconds() > self.memory_periodic_check_sec):
                 self.collect_memory_consumption()
@@ -266,7 +267,6 @@ class Controller:
                             self.restart_flag = True
                         self.run_flag = False
                         continue
-
 
             if self.show_main_gui and self.gui_enabled:
                 objects = []
@@ -294,10 +294,10 @@ class Controller:
     def start(self):
         self.sources_proc.start()
         self.preprocessors_proc.start()
-        self.detector_proc.start()
-        self.tracker_proc.start()
-        if self.multicam_reid_enabled:
-            self.mc_tracker.start()
+        self.detectors_proc.start()
+        self.trackers_proc.start()
+#        if self.multicam_reid_enabled:
+        self.mc_trackers_proc.start()
         self.obj_handler.start()
         if self.visualizer:
             self.visualizer.start()
@@ -330,12 +330,13 @@ class Controller:
         self.db_adapter_zone_events.stop()
         self.db_adapter_obj.stop()
         self.db_controller.disconnect()
-        self.tracker_proc.stop()
-        self.detector_proc.stop()
+        self.mc_trackers_proc.stop()
+        self.trackers_proc.stop()
+        self.detectors_proc.stop()
         self.preprocessors_proc.stop()
         self.sources_proc.stop()
-        if self.multicam_reid_enabled:
-            self.mc_tracker.stop()
+        #if self.multicam_reid_enabled:
+        #    self.mc_tracker.stop()
         print('Everything in controller stopped')
 
     def init(self, params):
@@ -352,16 +353,16 @@ class Controller:
         self._init_detectors(self.params.get('detectors',list()))
         self._init_encoders(self.params.get('trackers', list()))
         self._init_trackers(self.params.get('trackers', list()))
-        self._init_mc_tracker()
+        self._init_mc_trackers(self.params.get('mc_trackers', list()))
 
-        multicam_reid = self.params.get('controller', dict()).get("multicam_reid", False)
-        if multicam_reid:
-            for tracker_params in self.params.get('trackers', list()):
-                botsort_cfg = tracker_params.get("botsort_cfg", None)
-                if not botsort_cfg or botsort_cfg.get("with_reid", False) == False:
-                    multicam_reid = False
-                    break
-        self.multicam_reid_enabled = multicam_reid
+#        multicam_reid = self.params.get('controller', dict()).get("multicam_reid", False)
+#        if multicam_reid:
+#            for tracker_params in self.params.get('trackers', list()):
+#                botsort_cfg = tracker_params.get("botsort_cfg", None)
+#                if not botsort_cfg or botsort_cfg.get("with_reid", False) == False:
+#                    multicam_reid = False
+#                    break
+#        self.multicam_reid_enabled = multicam_reid
 
         database_creds = self.credentials.get("database", None)
         if not database_creds:
@@ -422,19 +423,11 @@ class Controller:
 
     def release(self):
         self.stop()
-
-        #for tracker in self.trackers:
-        #    tracker.release()
-        self.tracker_proc.release()
-        self.detector_proc.release()
-        #for detector in self.detectors:
-        #    detector.release()
+        self.mc_trackers_proc.release()
+        self.trackers_proc.release()
+        self.detectors_proc.release()
         self.preprocessors_proc.release()
-        #for preprocessor in self.preprocessors:
-        #    preprocessor.release()
         self.sources_proc.release()
-        #for source in self.sources:
-        #    source.release()
         print('Everything in controller released')
 
     def save_params(self, params: dict):
@@ -456,10 +449,13 @@ class Controller:
         self.preprocessors_proc.get_params(self.params['preprocessors'])
 
         self.params['detectors'] = list()
-        self.detector_proc.get_params(self.params['detectors'])
+        self.detectors_proc.get_params(self.params['detectors'])
 
         self.params['trackers'] = list()
-        self.tracker_proc.get_params(self.params['trackers'])
+        self.trackers_proc.get_params(self.params['trackers'])
+
+        self.params['mc_trackers'] = list()
+        self.trackers_proc.get_params(self.params['mc_trackers'])
 
         self.params['objects_handler'] = self.obj_handler.get_params()
 
@@ -533,15 +529,15 @@ class Controller:
 
     def _init_detectors(self, params):
         num_det = len(params)
-        self.detector_proc = ProcessorStep(class_name="ObjectDetectorYolo", num_processors=num_det, order=2)
-        self.detector_proc.set_params(params)
-        self.detector_proc.init()
+        self.detectors_proc = ProcessorStep(class_name="ObjectDetectorYolo", num_processors=num_det, order=2)
+        self.detectors_proc.set_params(params)
+        self.detectors_proc.init()
 
     def _init_trackers(self, params):
         num_trackers = len(params)
-        self.tracker_proc = ProcessorStep(class_name="ObjectTrackingBotsort", num_processors=num_trackers, order=3)
-        self.tracker_proc.set_params(params)
-        self.tracker_proc.init(encoders=self.encoders)
+        self.trackers_proc = ProcessorStep(class_name="ObjectTrackingBotsort", num_processors=num_trackers, order=3)
+        self.trackers_proc.set_params(params)
+        self.trackers_proc.init(encoders=self.encoders)
     
     def _init_encoders(self, params):
         num_trackers = len(params)
@@ -555,13 +551,17 @@ class Controller:
                 encoder = OnnxEncoder(path)
                 self.encoders[path] = encoder
     
-    def _init_mc_tracker(self):
-        num_of_cameras = len(self.params.get('sources', list()))
-        self.mc_tracker = ObjectMultiCameraTracking(
-            num_of_cameras, 
-            list(self.encoders.values())
-        )
-        self.mc_tracker.init()
+    def _init_mc_trackers(self, params):
+        #num_of_cameras = len(self.params.get('sources', list()))
+        self.mc_trackers_proc = ProcessorStep(class_name="ObjectMultiCameraTracking", num_processors=1, order=4)
+        self.mc_trackers_proc.set_params(params)
+        self.mc_trackers_proc.init(encoders=self.encoders)
+
+        #self.mc_tracker = ObjectMultiCameraTracking(
+        #    num_of_cameras,
+        #    list(self.encoders.values())
+        #)
+        #self.mc_tracker.init()
 
     def _init_events_detectors(self, params):
         self.cam_events_detector = CamEventsDetector(self.sources_proc.get_processors())
@@ -608,15 +608,14 @@ class Controller:
         self.preprocessors_proc.calc_memory_consumption()
         total_memory_usage += self.preprocessors_proc.get_memory_usage()
 
-        self.detector_proc.calc_memory_consumption()
-        total_memory_usage += self.detector_proc.get_memory_usage()
+        self.detectors_proc.calc_memory_consumption()
+        total_memory_usage += self.detectors_proc.get_memory_usage()
 
-        self.tracker_proc.calc_memory_consumption()
-        total_memory_usage += self.tracker_proc.get_memory_usage()
+        self.trackers_proc.calc_memory_consumption()
+        total_memory_usage += self.trackers_proc.get_memory_usage()
 
-        self.mc_tracker.calc_memory_consumption()
-        comp_debug_info = self.mc_tracker.insert_debug_info_by_id(self.debug_info.setdefault("mc_tracker", {}))
-        total_memory_usage += comp_debug_info["memory_measure_results"]
+        self.mc_trackers_proc.calc_memory_consumption()
+        total_memory_usage += self.mc_trackers_proc.get_memory_usage()
 
         self.obj_handler.calc_memory_consumption()
         comp_debug_info = self.obj_handler.insert_debug_info_by_id(self.debug_info.setdefault("obj_handler", {}))

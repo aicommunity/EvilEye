@@ -28,13 +28,16 @@ from core import EvilEyeBase
 @EvilEyeBase.register("ObjectMultiCameraTracking")
 class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
 
-    def __init__(self, num_cameras: int, encoders: List[TrackEncoder]):
+    def __init__(self):
         super().__init__()
-        self.num_cameras = num_cameras
-        self.encoders = encoders
+        self.num_cameras = 0
+        self.encoders = None
+        self.tracker = None
 
-    def init_impl(self):
-        self.tracker = MultiCameraTracker(self.num_cameras, self.encoders)
+    def init_impl(self, **kwargs):
+        sources_ids = self.params["source_ids"]
+        encoders = kwargs.get('encoders', None)
+        self.tracker = MultiCameraTracker(len(sources_ids), encoders)
         return True
 
     def release_impl(self):
@@ -44,10 +47,10 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
         self.tracker.reset()
 
     def set_params_impl(self):
-        pass
+        super().set_params_impl()
 
     def get_params_impl(self):
-        params = dict()
+        params = super().get_params_impl()
         return params
 
     def default(self):
@@ -56,8 +59,18 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
     def _process_impl(self):
         while self.run_flag:
             sleep(0.01)
-            sc_track_results: List[Tuple[TrackingResultList, np.ndarray]] = self.queue_in.get()
+            if self.queue_in.qsize() <= len(self.source_ids):
+                continue
+
+            sc_track_results = []
+            for i in range(0,len(self.source_ids)):
+                sc_track_results.append(self.queue_in.get())
             if sc_track_results is None:
+                continue
+
+            if self.enable == False:
+                for track_info in sc_track_results:
+                    self.queue_out.put(track_info)
                 continue
 
             sc_tracks: List[List[BOTrack]] = []
@@ -74,7 +87,8 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
 
             mc_tracks = self.tracker.update(sc_tracks)
             tracks_infos = self._create_tracks_info(track_infos, mc_tracks)
-            self.queue_out.put(list(zip(tracks_infos, images)))
+            for track_info in zip(tracks_infos, images):
+                self.queue_out.put(track_info)
 
     def _parse_det_info(self, det_info: DetectionResultList) -> tuple:
         cam_id = det_info.source_id
