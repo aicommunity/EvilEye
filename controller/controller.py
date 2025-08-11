@@ -195,16 +195,7 @@ class Controller:
             ) = self.pipeline.process()
 
             # Insert debug info from pipeline components
-            if self.sources_proc:
-                self.sources_proc.insert_debug_info_by_id("sources", self.debug_info)
-            if self.preprocessors_proc:
-                self.preprocessors_proc.insert_debug_info_by_id("preprocessors", self.debug_info)
-            if self.detectors_proc:
-                self.detectors_proc.insert_debug_info_by_id("detectors", self.debug_info)
-            if self.trackers_proc:
-                self.trackers_proc.insert_debug_info_by_id("trackers", self.debug_info)
-            if self.mc_trackers_proc:
-                self.mc_trackers_proc.insert_debug_info_by_id("mc_trackers", self.debug_info)
+            self.pipeline.insert_debug_info_by_id(self.debug_info)
 
             if self.autoclose and all_sources_finished:
                 self.run_flag = False

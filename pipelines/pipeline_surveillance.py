@@ -168,6 +168,25 @@ class PipelineSurveillance(Pipeline):
     def get_sources_processors(self):
         return self.sources_proc.get_processors() if self.sources_proc else []
 
+    def insert_debug_info_by_id(self, debug_info: dict):
+        """
+        Insert debug information from all pipeline components into debug_info dict.
+        Collects debug data from sources, preprocessors, detectors, trackers, and mc_trackers.
+        
+        Args:
+            debug_info: Dictionary to store debug information
+        """
+        if self.sources_proc:
+            self.sources_proc.insert_debug_info_by_id("sources", debug_info)
+        if self.preprocessors_proc:
+            self.preprocessors_proc.insert_debug_info_by_id("preprocessors", debug_info)
+        if self.detectors_proc:
+            self.detectors_proc.insert_debug_info_by_id("detectors", debug_info)
+        if self.trackers_proc:
+            self.trackers_proc.insert_debug_info_by_id("trackers", debug_info)
+        if self.mc_trackers_proc:
+            self.mc_trackers_proc.insert_debug_info_by_id("mc_trackers", debug_info)
+
     # Internal initialization copied from Controller
     def _init_sources(self, params: list[dict], credentials: dict):
         num_sources = len(params)

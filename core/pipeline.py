@@ -59,3 +59,13 @@ class Pipeline(EvilEyeBase):
     def get_dropped_ids(self):
         """Get dropped frame IDs - override in subclasses"""
         pass
+
+    def insert_debug_info_by_id(self, debug_info: dict):
+        """
+        Insert debug information from pipeline components into debug_info dict.
+        This method should be called after processing to collect debug data.
+        
+        Args:
+            debug_info: Dictionary to store debug information
+        """
+        pass
