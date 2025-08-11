@@ -30,6 +30,7 @@ import datetime
 import pprint
 import copy
 from core import ProcessorBase, ProcessorSource, ProcessorStep, ProcessorFrame, Pipeline
+from pipelines import PipelineSurveillance
 
 
 try:
@@ -319,7 +320,7 @@ class Controller:
             pass
 
         # Initialize processing pipeline (sources, preprocessors, detectors, trackers)
-        self.pipeline = Pipeline()
+        self.pipeline = PipelineSurveillance()
         pipeline_params = {
             'sources': self.params.get('sources', list()),
             'preprocessors': self.params.get('preprocessors', list()),
