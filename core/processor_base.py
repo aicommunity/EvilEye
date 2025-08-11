@@ -1,7 +1,7 @@
 from core import EvilEyeBase
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 
-class ProcessorBase:
+class ProcessorBase(ABC):
     def __init__(self, class_name, num_processors: int, order: int):
         self.class_name = class_name
         self.params = None

@@ -29,7 +29,7 @@ from object_multi_camera_tracker.custom_object_tracking import ObjectMultiCamera
 import datetime
 import pprint
 import copy
-from core import ProcessorBase, ProcessorSource, ProcessorStep, ProcessorFrame
+from core import ProcessorBase, ProcessorSource, ProcessorStep, ProcessorFrame, Pipeline
 
 
 try:
@@ -51,7 +51,7 @@ class Controller:
         self.source_video_duration = dict()
         self.source_last_processed_frame_id = dict()
 
-        self.pipeline = [[{}]]
+        self.pipeline = None
 
         self.sources_proc = None
         self.preprocessors_proc = None
@@ -183,64 +183,42 @@ class Controller:
     def run(self):
         while self.run_flag:
             begin_it = timer()
-            # Get new frames from all sources
-            captured_frames = []
-            dropped_frames = []
-            processing_frames = []
-            all_sources_finished = True
+            # Process pipeline: sources -> preprocessors -> detectors -> trackers -> mc_trackers
+            (
+                captured_frames,
+                preprocessing_frames,
+                detection_results,
+                tracking_results,
+                mc_tracking_results,
+                all_sources_finished,
+            ) = self.pipeline.process()
 
-            captured_frames, all_sources_finished = self.sources_proc.process()
-            self.sources_proc.insert_debug_info_by_id("sources", self.debug_info)
+            # Insert debug info from pipeline components
+            if self.sources_proc:
+                self.sources_proc.insert_debug_info_by_id("sources", self.debug_info)
+            if self.preprocessors_proc:
+                self.preprocessors_proc.insert_debug_info_by_id("preprocessors", self.debug_info)
+            if self.detectors_proc:
+                self.detectors_proc.insert_debug_info_by_id("detectors", self.debug_info)
+            if self.trackers_proc:
+                self.trackers_proc.insert_debug_info_by_id("trackers", self.debug_info)
+            if self.mc_trackers_proc:
+                self.mc_trackers_proc.insert_debug_info_by_id("mc_trackers", self.debug_info)
 
             if self.autoclose and all_sources_finished:
                 self.run_flag = False
 
-            if self.run_flag:
-                self.sources_proc.run_sources()
             complete_capture_it = timer()
-
-            preprocessing_frames = self.preprocessors_proc.process(captured_frames)
-            self.preprocessors_proc.insert_debug_info_by_id("preprocessors", self.debug_info)
-
-            detection_results = self.detectors_proc.process(preprocessing_frames)
-            self.detectors_proc.insert_debug_info_by_id("detectors", self.debug_info)
             complete_detection_it = timer()
+            complete_tracking_it = timer()
 
-            tracking_results = self.trackers_proc.process(detection_results)
-            self.trackers_proc.insert_debug_info_by_id("trackers", self.debug_info)
-
-            mc_tracking_results = self.mc_trackers_proc.process(tracking_results)
-            self.mc_trackers_proc.insert_debug_info_by_id("mc_trackers", self.debug_info)
+            # Process tracking results
+            processing_frames = []
             for track_info in mc_tracking_results:
                 tracking_result, image = track_info
                 self.obj_handler.put(track_info)
                 processing_frames.append(image)
                 self.source_last_processed_frame_id[image.source_id] = image.frame_id
-
-#            if self.multicam_reid_enabled:
-                # Process multi camera tracking
-                # NOTE: This is a temporary solution which adds
-                # multi camera track id to `tracking_data` dict
-#                if tracking_results:
-#                    self.mc_tracker.put(tracking_results)
-
-#                mc_track_infos = self.mc_tracker.get()
-#                if mc_track_infos:
-#                    for i, track_info in enumerate(mc_track_infos):
-#                        tracking_result, image = track_info
-                        # print(f"Global ids in cam {i}: {[t.tracking_data['global_id'] for t in tracking_result.tracks]}")
-
-#                        self.obj_handler.put(track_info)
-#                        self.source_last_processed_frame_id[image.source_id] = image.frame_id
-#                        processing_frames.append(image)
-#            else:
-#                for track_info in tracking_results:
-#                    tracking_result, image = track_info
-#                    self.obj_handler.put(track_info)
-#                    processing_frames.append(image)
-#                    self.source_last_processed_frame_id[image.source_id] = image.frame_id
-
-            complete_tracking_it = timer()
 
             events = dict()
             events = self.events_detectors_controller.get()
@@ -249,9 +227,8 @@ class Controller:
                 self.events_processor.put(events)
             complete_processing_it = timer()
 
-            # Get all dropped images
-            dropped_frames.extend(self.detectors_proc.get_dropped_ids())
-            dropped_frames.extend(self.trackers_proc.get_dropped_ids())
+            # Get all dropped images from pipeline
+            dropped_frames = self.pipeline.get_dropped_ids()
 
             if not self.debug_info.get("controller", None) or not self.debug_info["controller"].get("timestamp", None) or ((datetime.datetime.now() - self.debug_info["controller"]["timestamp"]).total_seconds() > self.memory_periodic_check_sec):
                 self.collect_memory_consumption()
@@ -292,12 +269,10 @@ class Controller:
             time.sleep(sleep_seconds)
 
     def start(self):
-        self.sources_proc.start()
-        self.preprocessors_proc.start()
-        self.detectors_proc.start()
-        self.trackers_proc.start()
-#        if self.multicam_reid_enabled:
-        self.mc_trackers_proc.start()
+        # Start pipeline components
+        self.pipeline.start()
+        
+        # Start other components
         self.obj_handler.start()
         if self.visualizer:
             self.visualizer.start()
@@ -330,13 +305,8 @@ class Controller:
         self.db_adapter_zone_events.stop()
         self.db_adapter_obj.stop()
         self.db_controller.disconnect()
-        self.mc_trackers_proc.stop()
-        self.trackers_proc.stop()
-        self.detectors_proc.stop()
-        self.preprocessors_proc.stop()
-        self.sources_proc.stop()
-        #if self.multicam_reid_enabled:
-        #    self.mc_tracker.stop()
+        # Stop pipeline components
+        self.pipeline.stop()
         print('Everything in controller stopped')
 
     def init(self, params):
@@ -348,12 +318,34 @@ class Controller:
         except FileNotFoundError as ex:
             pass
 
-        self._init_sources(self.params.get('sources', list()))
-        self._init_preprocessors(self.params.get('preprocessors', list()))
-        self._init_detectors(self.params.get('detectors',list()))
-        self._init_encoders(self.params.get('trackers', list()))
-        self._init_trackers(self.params.get('trackers', list()))
-        self._init_mc_trackers(self.params.get('mc_trackers', list()))
+        # Initialize processing pipeline (sources, preprocessors, detectors, trackers)
+        self.pipeline = Pipeline()
+        pipeline_params = {
+            'sources': self.params.get('sources', list()),
+            'preprocessors': self.params.get('preprocessors', list()),
+            'detectors': self.params.get('detectors', list()),
+            'trackers': self.params.get('trackers', list()),
+            'mc_trackers': self.params.get('mc_trackers', list()),
+            'credentials': self.credentials
+        }
+        self.pipeline.set_params(**pipeline_params)
+        self.pipeline.init()
+
+        # Backward-compatible references
+        self.sources_proc = self.pipeline.sources_proc
+        self.preprocessors_proc = self.pipeline.preprocessors_proc
+        self.detectors_proc = self.pipeline.detectors_proc
+        self.trackers_proc = self.pipeline.trackers_proc
+        self.mc_trackers_proc = self.pipeline.mc_trackers_proc
+        self.encoders = self.pipeline.encoders
+
+        # Fill source maps for visualizer and bookkeeping
+        if self.sources_proc:
+            for source in self.sources_proc.get_processors():
+                for source_id, source_name in zip(source.source_ids, source.source_names):
+                    self.source_id_name_table[source_id] = source_name
+                    self.source_video_duration[source_id] = source.video_duration
+                    self.source_last_processed_frame_id[source_id] = 0
 
 #        multicam_reid = self.params.get('controller', dict()).get("multicam_reid", False)
 #        if multicam_reid:
@@ -423,11 +415,8 @@ class Controller:
 
     def release(self):
         self.stop()
-        self.mc_trackers_proc.release()
-        self.trackers_proc.release()
-        self.detectors_proc.release()
-        self.preprocessors_proc.release()
-        self.sources_proc.release()
+        # Release pipeline components
+        self.pipeline.release()
         print('Everything in controller released')
 
     def save_params(self, params: dict):
@@ -442,20 +431,13 @@ class Controller:
         self.params['controller']["max_memory_usage_mb"] = self.max_memory_usage_mb
         self.params['controller']["auto_restart"] = self.auto_restart
 
-        self.params['sources'] = list()
-        self.sources_proc.get_params(self.params['sources'])
-
-        self.params['preprocessors'] = list()
-        self.preprocessors_proc.get_params(self.params['preprocessors'])
-
-        self.params['detectors'] = list()
-        self.detectors_proc.get_params(self.params['detectors'])
-
-        self.params['trackers'] = list()
-        self.trackers_proc.get_params(self.params['trackers'])
-
-        self.params['mc_trackers'] = list()
-        self.trackers_proc.get_params(self.params['mc_trackers'])
+        # Get pipeline parameters
+        pipeline_params = self.pipeline.get_params()
+        self.params['sources'] = pipeline_params.get('sources', [])
+        self.params['preprocessors'] = pipeline_params.get('preprocessors', [])
+        self.params['detectors'] = pipeline_params.get('detectors', [])
+        self.params['trackers'] = pipeline_params.get('trackers', [])
+        self.params['mc_trackers'] = pipeline_params.get('mc_trackers', [])
 
         self.params['objects_handler'] = self.obj_handler.get_params()
 
@@ -564,7 +546,7 @@ class Controller:
         #self.mc_tracker.init()
 
     def _init_events_detectors(self, params):
-        self.cam_events_detector = CamEventsDetector(self.sources_proc.get_processors())
+        self.cam_events_detector = CamEventsDetector(self.pipeline.get_sources_processors())
         self.cam_events_detector.set_params(**params.get('CamEventsDetector', dict()))
         self.cam_events_detector.init()
 
@@ -577,7 +559,7 @@ class Controller:
         self.zone_events_detector.init()
 
         self.obj_handler.subscribe(self.fov_events_detector, self.zone_events_detector)
-        for source in self.sources_proc.get_processors():
+        for source in self.pipeline.get_sources_processors():
             source.subscribe(self.cam_events_detector)
 
     def _init_events_detectors_controller(self, params):
@@ -602,20 +584,9 @@ class Controller:
 
     def collect_memory_consumption(self):
         total_memory_usage = 0
-        self.sources_proc.calc_memory_consumption()
-        total_memory_usage += self.sources_proc.get_memory_usage()
-
-        self.preprocessors_proc.calc_memory_consumption()
-        total_memory_usage += self.preprocessors_proc.get_memory_usage()
-
-        self.detectors_proc.calc_memory_consumption()
-        total_memory_usage += self.detectors_proc.get_memory_usage()
-
-        self.trackers_proc.calc_memory_consumption()
-        total_memory_usage += self.trackers_proc.get_memory_usage()
-
-        self.mc_trackers_proc.calc_memory_consumption()
-        total_memory_usage += self.mc_trackers_proc.get_memory_usage()
+        # Calculate memory consumption for pipeline components
+        self.pipeline.calc_memory_consumption()
+        total_memory_usage += self.pipeline.memory_measure_results
 
         self.obj_handler.calc_memory_consumption()
         comp_debug_info = self.obj_handler.insert_debug_info_by_id(self.debug_info.setdefault("obj_handler", {}))

@@ -6,4 +6,5 @@ from .processor_step import ProcessorStep
 from .processor_frame import ProcessorFrame
 from .mp_worker import MpWorker
 from .mp_control import MpControl
+from .pipeline import Pipeline
 
