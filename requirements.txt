@@ -10,4 +10,7 @@ onnxruntime
 tqdm
 shapely
 pympler
+asyncio-mqtt
+aiofiles
+dataclasses-json
 

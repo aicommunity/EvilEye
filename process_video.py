@@ -1,18 +1,17 @@
 import argparse
 import json
 import sys
+import asyncio
 from pathlib import Path
 
 try:
-    from PyQt6 import QtCore
     from PyQt6.QtWidgets import QApplication
     pyqt_version = 6
 except ImportError:
-    from PyQt5 import QtCore
     from PyQt5.QtWidgets import QApplication
     pyqt_version = 5
 
-from controller import controller
+from controller.async_controller import AsyncController
 from visualization_modules.main_window import MainWindow
 
 file_path = 'samples/vehicle_perpocessing.json'
@@ -31,14 +30,11 @@ def create_args_parser():
                       help="Automatic close application when video ends")
     pars.add_argument('--sources_preset', nargs='?', const="", type=str,
                       help="Use preset for multiple video sources")
-
     result = pars.parse_args()
     return result
 
-
-if __name__ == "__main__":
+async def main_async():
     args = create_args_parser()
-
     print(f"Launch system with CLI arguments: {args}")
 
     if args.config is None and args.video is None:
@@ -82,19 +78,29 @@ if __name__ == "__main__":
             source["loop_play"] = False
         config_data["autoclose"] = True
 
-    app = QApplication(sys.argv)
+    # --- Новый асинхронный контроллер ---
+    controller_instance = AsyncController()
+    await controller_instance.initialize(config_data)
+    await controller_instance.start()
 
-    controller_instance = controller.Controller()
-    controller_instance.init(config_data)
+    if config_data["visualizer"].get("gui_enabled", True):
+        app = QApplication(sys.argv)
+        a = MainWindow(controller_instance, file_path, config_data, 1600, 720)
+        controller_instance.pipeline = getattr(controller_instance, 'pipeline', None)
+        controller_instance.init_main_window(a, a.slots, a.signals)
+        if getattr(controller_instance, 'show_main_gui', True):
+            a.show()
+        if getattr(controller_instance, 'show_journal', False):
+            a.open_journal()
+        # Запуск Qt event loop
+        ret = app.exec()
+        await controller_instance.stop()
+        sys.exit(ret)
+    else:
+        print("GUI disabled. Running in headless mode.")
+        # Пример headless обработки (можно расширить)
+        await asyncio.sleep(1)
+        await controller_instance.stop()
 
-    a = MainWindow(controller_instance, file_path, config_data, 1600, 720)
-    controller_instance.init_main_window(a, a.slots, a.signals)
-    if controller_instance.show_main_gui:
-        a.show()
-
-    if controller_instance.show_journal:
-        a.open_journal()
-    controller_instance.start()
-
-    ret = app.exec()
-    sys.exit(ret)
+if __name__ == "__main__":
+    asyncio.run(main_async())
