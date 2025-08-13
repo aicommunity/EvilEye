@@ -1,0 +1,331 @@
+{
+    "system": {
+        "fps": 30,
+        "max_memory_usage_mb": 16384,
+        "memory_check_interval_sec": 900,
+        "auto_restart": true,
+        "debug_mode": false,
+        "log_level": "INFO"
+    },
+    "processors": {
+        "video_capture": {
+            "name": "video_capture",
+            "type": "VideoCapture",
+            "enabled": true,
+            "max_queue_size": 10,
+            "timeout": 0.1,
+            "batch_size": 1,
+            "params": {
+                "sources": [
+                    {
+                        "source": "VideoFile",
+                        "camera": "/home/user/Videos/Test3Cam/1/139932-video_trim.mp4",
+                        "apiPreference": "CAP_FFMPEG",
+                        "split": false,
+                        "num_split": 0,
+                        "src_coords": [0],
+                        "source_ids": [0],
+                        "source_names": ["Cam1"]
+                    },
+                    {
+                        "source": "VideoFile",
+                        "camera": "/home/user/Videos/Test3Cam/2/139931-video_trim.mp4",
+                        "apiPreference": "CAP_FFMPEG",
+                        "split": true,
+                        "num_split": 2,
+                        "src_coords": [
+                            [0, 0, 2304, 1300],
+                            [0, 1300, 2304, 1292]
+                        ],
+                        "source_ids": [1, 2],
+                        "source_names": ["Cam2", "Cam3"]
+                    },
+                    {
+                        "source": "VideoFile",
+                        "camera": "/home/user/Videos/Test3Cam/3/139930-video_trim.mp4",
+                        "apiPreference": "CAP_FFMPEG",
+                        "split": true,
+                        "num_split": 2,
+                        "src_coords": [
+                            [0, 0, 2304, 1300],
+                            [0, 1300, 2304, 1292]
+                        ],
+                        "source_ids": [3, 4],
+                        "source_names": ["Cam4", "Cam5"]
+                    }
+                ]
+            }
+        },
+        "object_detector": {
+            "name": "object_detector",
+            "type": "ObjectDetectorYolo",
+            "enabled": true,
+            "max_queue_size": 5,
+            "timeout": 0.2,
+            "batch_size": 4,
+            "params": {
+                "detectors": [
+                    {
+                        "source_ids": [0],
+                        "model": "yolo11n.pt",
+                        "show": false,
+                        "inference_size": 640,
+                        "device": null,
+                        "conf": 0.4,
+                        "save": false,
+                        "stride_type": "frames",
+                        "vid_stride": 1,
+                        "classes": [0, 1, 24, 25, 63, 66, 67],
+                        "num_detection_threads": 3,
+                        "roi": [
+                            [
+                                [1790, 0, 500, 400],
+                                [1700, 0, 1000, 1045],
+                                [1500, 0, 2340, 2160]
+                            ]
+                        ]
+                    },
+                    {
+                        "source_ids": [1],
+                        "model": "yolo11n.pt",
+                        "show": false,
+                        "inference_size": 1280,
+                        "device": null,
+                        "conf": 0.4,
+                        "save": false,
+                        "stride_type": "frames",
+                        "vid_stride": 1,
+                        "classes": [0, 1, 24, 25, 63, 66, 67],
+                        "num_detection_threads": 3,
+                        "roi": [[]]
+                    },
+                    {
+                        "source_ids": [2],
+                        "model": "yolo11n.pt",
+                        "show": false,
+                        "inference_size": 640,
+                        "device": null,
+                        "conf": 0.4,
+                        "save": false,
+                        "stride_type": "frames",
+                        "vid_stride": 1,
+                        "classes": [0, 1, 24, 25, 63, 66, 67],
+                        "num_detection_threads": 3,
+                        "roi": [
+                            [
+                                [0, 0, 250, 200],
+                                [0, 0, 500, 400],
+                                [0, 0, 1000, 800],
+                                [0, 0, 2304, 1292]
+                            ]
+                        ]
+                    },
+                    {
+                        "source_ids": [3],
+                        "model": "yolo11n.pt",
+                        "show": false,
+                        "conf": 0.4,
+                        "inference_size": 640,
+                        "device": null,
+                        "save": false,
+                        "stride_type": "frames",
+                        "vid_stride": 1,
+                        "classes": [0, 1, 24, 25, 63, 66, 67],
+                        "num_detection_threads": 3,
+                        "roi": [
+                            [
+                                [0, 0, 2304, 1300],
+                                [736, 0, 640, 670],
+                                [905, 0, 310, 265]
+                            ]
+                        ]
+                    },
+                    {
+                        "source_ids": [4],
+                        "model": "yolo11n.pt",
+                        "show": false,
+                        "inference_size": 1280,
+                        "device": null,
+                        "conf": 0.4,
+                        "save": false,
+                        "stride_type": "frames",
+                        "vid_stride": 1,
+                        "classes": [0, 1, 24, 25, 63, 66, 67],
+                        "num_detection_threads": 3,
+                        "roi": [[]]
+                    }
+                ]
+            }
+        },
+        "object_tracker": {
+            "name": "object_tracker",
+            "type": "ObjectTrackingBotsort",
+            "enabled": true,
+            "max_queue_size": 5,
+            "timeout": 0.1,
+            "batch_size": 1,
+            "params": {
+                "trackers": [
+                    {
+                        "source_ids": [0],
+                        "fps": 5,
+                        "botsort_cfg": {
+                            "appearance_thresh": 0.25,
+                            "gmc_method": "sparseOptFlow",
+                            "match_thresh": 0.8,
+                            "new_track_thresh": 0.6,
+                            "proximity_thresh": 0.5,
+                            "track_buffer": 30,
+                            "track_high_thresh": 0.5,
+                            "track_low_thresh": 0.1,
+                            "tracker_type": "botsort",
+                            "with_reid": true
+                        }
+                    },
+                    {
+                        "source_ids": [1],
+                        "fps": 5,
+                        "botsort_cfg": {
+                            "appearance_thresh": 0.25,
+                            "gmc_method": "sparseOptFlow",
+                            "match_thresh": 0.8,
+                            "new_track_thresh": 0.6,
+                            "proximity_thresh": 0.5,
+                            "track_buffer": 30,
+                            "track_high_thresh": 0.5,
+                            "track_low_thresh": 0.1,
+                            "tracker_type": "botsort",
+                            "with_reid": true
+                        }
+                    },
+                    {
+                        "source_ids": [2],
+                        "fps": 5,
+                        "botsort_cfg": {
+                            "appearance_thresh": 0.25,
+                            "gmc_method": "sparseOptFlow",
+                            "match_thresh": 0.8,
+                            "new_track_thresh": 0.6,
+                            "proximity_thresh": 0.5,
+                            "track_buffer": 30,
+                            "track_high_thresh": 0.5,
+                            "track_low_thresh": 0.1,
+                            "tracker_type": "botsort",
+                            "with_reid": true
+                        }
+                    },
+                    {
+                        "source_ids": [3],
+                        "fps": 5,
+                        "botsort_cfg": {
+                            "appearance_thresh": 0.25,
+                            "gmc_method": "sparseOptFlow",
+                            "match_thresh": 0.8,
+                            "new_track_thresh": 0.6,
+                            "proximity_thresh": 0.5,
+                            "track_buffer": 30,
+                            "track_high_thresh": 0.5,
+                            "track_low_thresh": 0.1,
+                            "tracker_type": "botsort",
+                            "with_reid": true
+                        }
+                    },
+                    {
+                        "source_ids": [4],
+                        "fps": 5,
+                        "botsort_cfg": {
+                            "appearance_thresh": 0.25,
+                            "gmc_method": "sparseOptFlow",
+                            "match_thresh": 0.8,
+                            "new_track_thresh": 0.6,
+                            "proximity_thresh": 0.5,
+                            "track_buffer": 30,
+                            "track_high_thresh": 0.5,
+                            "track_low_thresh": 0.1,
+                            "tracker_type": "botsort",
+                            "with_reid": true
+                        }
+                    }
+                ]
+            }
+        },
+        "mc_tracker": {
+            "name": "mc_tracker",
+            "type": "ObjectMultiCameraTracking",
+            "enabled": true,
+            "max_queue_size": 3,
+            "timeout": 0.1,
+            "batch_size": 1,
+            "params": {
+                "mc_trackers": [
+                    {
+                        "source_ids": [0, 1, 2, 3, 4],
+                        "fps": [5, 5, 5, 5, 5],
+                        "gui_enabled": true,
+                        "show_debug_info": true,
+                        "objects_journal_enabled": true
+                    }
+                ]
+            }
+        }
+    },
+    "pipelines": {
+        "surveillance": {
+            "name": "surveillance",
+            "enabled": true,
+            "max_concurrent_tasks": 4,
+            "buffer_size": 100,
+            "processors": ["video_capture", "object_detector", "object_tracker", "mc_tracker"]
+        }
+    },
+    "visualizer": {
+        "source_ids": [0, 1, 2, 3, 4],
+        "fps": [5, 5, 5, 5, 5],
+        "gui_enabled": true,
+        "show_debug_info": true,
+        "objects_journal_enabled": true,
+        "num_height": 1,
+        "num_width": 5,
+        "visual_buffer_num_frames": 50
+    },
+    "objects_handler": {
+        "history_len": 10,
+        "lost_store_time_secs": 10,
+        "lost_thresh": 5
+    },
+    "events_detectors": {
+        "CamEventsDetector": {
+            "enabled": true
+        },
+        "FieldOfViewEventsDetector": {
+            "enabled": true
+        },
+        "ZoneEventsDetector": {
+            "enabled": true
+        }
+    },
+    "events_processor": {
+        "enabled": true
+    },
+    "controller": {
+        "autoclose": false,
+        "fps": 30,
+        "show_main_gui": true,
+        "show_journal": false,
+        "enable_close_from_gui": true,
+        "multicam_reid": true,
+        "memory_periodic_check_sec": 600,
+        "class_names": [
+            "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat",
+            "traffic light", "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat",
+            "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe", "backpack",
+            "umbrella", "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard", "sports ball",
+            "kite", "baseball bat", "baseball glove", "skateboard", "surfboard", "tennis racket",
+            "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple",
+            "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair",
+            "couch", "potted plant", "bed", "dining table", "toilet", "tv", "laptop", "mouse",
+            "remote", "keyboard", "cell phone", "microwave", "oven", "toaster", "sink",
+            "refrigerator", "book", "clock", "vase", "scissors", "teddy bear", "hair drier", "toothbrush"
+        ]
+    }
+}
