@@ -12,6 +12,20 @@ from core.async_components import (
 from pipelines.async_pipelines import AsyncPipelineSurveillance
 from core import EvilEyeBase
 
+# Импорты для совместимости с оригинальным Controller
+from database_controller.database_controller_pg import DatabaseControllerPg
+from database_controller.db_adapter_objects import DatabaseAdapterObjects
+from database_controller.db_adapter_cam_events import DatabaseAdapterCamEvents
+from database_controller.db_adapter_fov_events import DatabaseAdapterFieldOfViewEvents
+from database_controller.db_adapter_zone_events import DatabaseAdapterZoneEvents
+from events_control.events_processor import EventsProcessor
+from events_control.events_controller import EventsDetectorsController
+from events_detectors.cam_events_detector import CamEventsDetector
+from events_detectors.fov_events_detector import FieldOfViewEventsDetector
+from events_detectors.zone_events_detector import ZoneEventsDetector
+from objects_handler import objects_handler
+from visualization_modules.visualizer import Visualizer
+
 
 class AsyncController(EvilEyeBase):
     """
@@ -21,7 +35,7 @@ class AsyncController(EvilEyeBase):
     
     def __init__(self, config_path: Optional[str] = None):
         super().__init__()
-
+        
         # Основные компоненты
         self.service_container = ServiceContainer()
         self.event_bus = EventBus()
@@ -43,8 +57,209 @@ class AsyncController(EvilEyeBase):
             'uptime_seconds': 0
         }
         
+        # Атрибуты для совместимости с оригинальным Controller
+        self.main_window = None
+        self.params = None
+        self.credentials = dict()
+        self.database_config = dict()
+        self.source_id_name_table = dict()
+        self.source_video_duration = dict()
+        self.source_last_processed_frame_id = dict()
+        
+        # Компоненты pipeline (для совместимости)
+        self.sources_proc = None
+        self.preprocessors_proc = None
+        self.detectors_proc = None
+        self.trackers_proc = None
+        self.mc_trackers_proc = None
+        
+        # Дополнительные компоненты
+        self.obj_handler = None
+        self.visualizer = None
+        self.pyqt_slots = None
+        self.pyqt_signals = None
+        
+        # Настройки контроллера
+        self.fps = 30
+        self._show_main_gui = True
+        self._show_journal = False
+        self._enable_close_from_gui = True
+        self.memory_periodic_check_sec = 60*15
+        self.max_memory_usage_mb = 1024*16
+        self.auto_restart = True
+        self.class_names = list()
+        
+        # Компоненты событий
+        self.events_detectors_controller = None
+        self.events_processor = None
+        self.cam_events_detector = None
+        self.fov_events_detector = None
+        self.zone_events_detector = None
+        
+        # Компоненты базы данных
+        self.db_controller = None
+        self.db_adapter_obj = None
+        self.db_adapter_cam_events = None
+        self.db_adapter_fov_events = None
+        self.db_adapter_zone_events = None
+        
+        # Флаги состояния
+        self.run_flag = False
+        self.restart_flag = False
+        self.gui_enabled = True
+        self.autoclose = False
+        
+        # Размеры GUI
+        self.current_main_widget_size = [1920, 1080]
+        
+        # Отладочная информация
+        self.debug_info = dict()
+        
+        # Загрузка конфигурации БД
+        self._load_database_config()
+        
         # Регистрация сервисов
         self._register_services()
+
+    def _load_database_config(self):
+        """Загрузка конфигурации базы данных для совместимости"""
+        try:
+            with open("database_config.json", 'r') as data_config_file:
+                self.database_config = json.load(data_config_file)
+        except FileNotFoundError:
+            # Создаем базовую конфигурацию если файл не найден
+            self.database_config = {
+                "database": {
+                    "tables": {},
+                    "image_dir": "/home/user/EvilEyeData",
+                    "create_new_project": False,
+                    "preview_width": 300,
+                    "preview_height": 150,
+                    "user_name": "postgres",
+                    "password": "",
+                    "database_name": "evil_eye_db",
+                    "host_name": "localhost",
+                    "port": 5432,
+                    "default_database_name": "postgres",
+                    "default_password": "",
+                    "default_user_name": "postgres",
+                    "default_host_name": "localhost",
+                    "default_port": 5432
+                },
+                "database_adapters": {
+                    "DatabaseAdapterObjects": {"table_name": "objects"},
+                    "DatabaseAdapterCamEvents": {"table_name": "camera_events", "event_name": "CameraEvent"},
+                    "DatabaseAdapterFieldOfViewEvents": {"table_name": "fov_events"},
+                    "DatabaseAdapterZoneEvents": {"table_name": "zone_events"}
+                }
+            }
+            print("Warning: database_config.json not found, using default configuration")
+
+    def _init_db_controller(self, params, system_params):
+        """Инициализация контроллера базы данных"""
+        # Добавляем недостающие поля с значениями по умолчанию
+        default_params = {
+            "user_name": "postgres",
+            "password": "",
+            "database_name": "evil_eye_db",
+            "host_name": "localhost",
+            "port": 5432,
+            "default_database_name": "postgres",
+            "default_password": "",
+            "default_user_name": "postgres",
+            "default_host_name": "localhost",
+            "default_port": 5432
+        }
+        
+        # Объединяем с переданными параметрами
+        db_params = {**default_params, **params}
+        
+        self.db_controller = DatabaseControllerPg(system_params)
+        self.db_controller.set_params(**db_params)
+        self.db_controller.init()
+
+    def _init_db_adapters(self, params):
+        """Инициализация адаптеров базы данных"""
+        # Добавляем недостающие адаптеры с значениями по умолчанию
+        default_adapters = {
+            "DatabaseAdapterObjects": {"table_name": "objects"},
+            "DatabaseAdapterCamEvents": {"table_name": "camera_events", "event_name": "CameraEvent"},
+            "DatabaseAdapterFieldOfViewEvents": {"table_name": "fov_events"},
+            "DatabaseAdapterZoneEvents": {"table_name": "zone_events"}
+        }
+        
+        # Объединяем с переданными параметрами
+        adapter_params = {**default_adapters, **params}
+        
+        self.db_adapter_obj = DatabaseAdapterObjects(self.db_controller)
+        self.db_adapter_obj.set_params(**adapter_params['DatabaseAdapterObjects'])
+        self.db_adapter_obj.init()
+
+        self.db_adapter_cam_events = DatabaseAdapterCamEvents(self.db_controller)
+        self.db_adapter_cam_events.set_params(**adapter_params['DatabaseAdapterCamEvents'])
+        self.db_adapter_cam_events.init()
+
+        self.db_adapter_fov_events = DatabaseAdapterFieldOfViewEvents(self.db_controller)
+        self.db_adapter_fov_events.set_params(**adapter_params['DatabaseAdapterFieldOfViewEvents'])
+        self.db_adapter_fov_events.init()
+
+        self.db_adapter_zone_events = DatabaseAdapterZoneEvents(self.db_controller)
+        self.db_adapter_zone_events.set_params(**adapter_params['DatabaseAdapterZoneEvents'])
+        self.db_adapter_zone_events.init()
+
+    def _init_events_detectors(self, params):
+        """Инициализация детекторов событий"""
+        if self.pipeline and hasattr(self.pipeline, 'get_sources_processors'):
+            sources_processors = self.pipeline.get_sources_processors()
+        else:
+            sources_processors = []
+            
+        self.cam_events_detector = CamEventsDetector(sources_processors)
+        self.cam_events_detector.set_params(**params.get('CamEventsDetector', dict()))
+        self.cam_events_detector.init()
+
+        if self.obj_handler:
+            self.fov_events_detector = FieldOfViewEventsDetector(self.obj_handler)
+            self.fov_events_detector.set_params(**params.get('FieldOfViewEventsDetector', dict()))
+            self.fov_events_detector.init()
+
+            self.zone_events_detector = ZoneEventsDetector(self.obj_handler)
+            self.zone_events_detector.set_params(**params.get('ZoneEventsDetector', dict()))
+            self.zone_events_detector.init()
+
+            self.obj_handler.subscribe(self.fov_events_detector, self.zone_events_detector)
+            
+        for source in sources_processors:
+            source.subscribe(self.cam_events_detector)
+
+    def _init_events_detectors_controller(self, params):
+        """Инициализация контроллера детекторов событий"""
+        detectors = [self.cam_events_detector, self.fov_events_detector, self.zone_events_detector]
+        self.events_detectors_controller = EventsDetectorsController(detectors)
+        self.events_detectors_controller.set_params(**params)
+        self.events_detectors_controller.init()
+
+    def _init_events_processor(self, params):
+        """Инициализация процессора событий"""
+        db_adapters = [self.db_adapter_fov_events, self.db_adapter_cam_events, self.db_adapter_zone_events]
+        self.events_processor = EventsProcessor(db_adapters, self.db_controller)
+        self.events_processor.set_params(**params)
+        self.events_processor.init()
+
+    def __init_object_handler(self, db_controller, params):
+        """Инициализация обработчика объектов"""
+        self.obj_handler = objects_handler.ObjectsHandler(db_controller=db_controller, db_adapter=self.db_adapter_obj)
+        self.obj_handler.set_params(**params)
+        self.obj_handler.init()
+
+    def _init_visualizer(self, params):
+        """Инициализация визуализатора"""
+        self.gui_enabled = params.get("gui_enabled", True)
+        self.visualizer = Visualizer(self.pyqt_slots, self.pyqt_signals)
+        self.visualizer.set_params(**params)
+        self.visualizer.source_id_name_table = self.source_id_name_table
+        self.visualizer.source_video_duration = self.source_video_duration
+        self.visualizer.init()
     
     def _register_services(self):
         """Регистрация сервисов в контейнере"""
@@ -61,6 +276,9 @@ class AsyncController(EvilEyeBase):
             return
         
         try:
+            # Сохраняем конфигурацию
+            self.params = pipeline_config or {}
+            
             # Валидация конфигурации
             config_errors = self.config_manager.validate_config()
             if config_errors:
@@ -72,6 +290,30 @@ class AsyncController(EvilEyeBase):
             # Регистрация pipeline в сервисном контейнере
             if self.pipeline:
                 self.service_container.register('pipeline', self.pipeline)
+            
+            # Инициализация компонентов базы данных
+            self._init_db_controller(self.database_config['database'], system_params=self.params)
+            self._init_db_adapters(self.database_config['database_adapters'])
+            
+            # Инициализация обработчика объектов (после адаптеров БД)
+            self.__init_object_handler(self.db_controller, self.params.get('objects_handler', dict()))
+            
+            # Инициализация детекторов событий
+            self._init_events_detectors(self.params.get('events_detectors', dict()))
+            self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
+            self._init_events_processor(self.params.get('events_processor', dict()))
+            
+            # Настройка параметров контроллера
+            if 'controller' in self.params.keys():
+                self.autoclose = self.params['controller'].get("autoclose", self.autoclose)
+                self.fps = self.params['controller'].get("fps", self.fps)
+                self.show_main_gui = self.params['controller'].get("show_main_gui", self.show_main_gui)
+                self.show_journal = self.params['controller'].get("show_journal", self.show_journal)
+                self.enable_close_from_gui = self.params['controller'].get("enable_close_from_gui", self.enable_close_from_gui)
+                self.class_names = self.params['controller'].get("class_names", list())
+                self.memory_periodic_check_sec = self.params['controller'].get("memory_periodic_check_sec", self.memory_periodic_check_sec)
+                self.max_memory_usage_mb = self.params['controller'].get("max_memory_usage_mb", self.max_memory_usage_mb)
+                self.auto_restart = self.params['controller'].get("auto_restart", self.auto_restart)
             
             # Подписка на события
             await self._setup_event_handlers()
@@ -428,3 +670,115 @@ class AsyncController(EvilEyeBase):
 
     def get_params_impl(self):
         return {}
+
+    # --- Методы для совместимости с MainWindow ---
+    def init_main_window(self, main_window, slots, signals):
+        """Инициализация главного окна для совместимости"""
+        self.main_window = main_window
+        self.pyqt_slots = slots
+        self.pyqt_signals = signals
+        
+        # Инициализация визуализатора после получения slots и signals
+        if 'visualizer' in self.params:
+            self._init_visualizer(self.params['visualizer'])
+        
+        print("MainWindow initialized with AsyncController")
+
+    def set_current_main_widget_size(self, width: int, height: int):
+        """Установка размера главного виджета"""
+        self.current_main_widget_size = [width, height]
+
+    def is_running(self) -> bool:
+        """Проверка, работает ли контроллер"""
+        return self.running
+
+    def add_channel(self):
+        """Добавление канала (заглушка для совместимости)"""
+        print("Add channel method called (not implemented in AsyncController)")
+
+    def release(self):
+        """Освобождение ресурсов"""
+        asyncio.create_task(self.stop())
+        if self.pipeline:
+            self.pipeline.release()
+        print('Everything in AsyncController released')
+
+    def save_params(self, params: dict):
+        """Сохранение параметров (для совместимости)"""
+        # Обновляем параметры в config_manager
+        self.config_manager.config_data = params
+        
+        # Сохраняем параметры контроллера
+        if 'controller' not in params:
+            params['controller'] = dict()
+        
+        params['controller']["autoclose"] = self.autoclose
+        params['controller']["fps"] = self.fps
+        params['controller']["show_main_gui"] = self.show_main_gui
+        params['controller']["show_journal"] = self.show_journal
+        params['controller']["enable_close_from_gui"] = self.enable_close_from_gui
+        params['controller']["class_names"] = self.class_names
+        params['controller']["memory_periodic_check_sec"] = self.memory_periodic_check_sec
+        params['controller']["max_memory_usage_mb"] = self.max_memory_usage_mb
+        params['controller']["auto_restart"] = self.auto_restart
+
+        # Получаем параметры pipeline
+        if self.pipeline:
+            pipeline_params = self.pipeline.get_params()
+            params['sources'] = pipeline_params.get('sources', [])
+            params['preprocessors'] = pipeline_params.get('preprocessors', [])
+            params['detectors'] = pipeline_params.get('detectors', [])
+            params['trackers'] = pipeline_params.get('trackers', [])
+            params['mc_trackers'] = pipeline_params.get('mc_trackers', [])
+
+        # Параметры обработчика объектов
+        if self.obj_handler:
+            params['objects_handler'] = self.obj_handler.get_params()
+
+        # Параметры детекторов событий
+        params['events_detectors'] = dict()
+        if self.cam_events_detector:
+            params['events_detectors']['CamEventsDetector'] = self.cam_events_detector.get_params()
+        if self.fov_events_detector:
+            params['events_detectors']['FieldOfViewEventsDetector'] = self.fov_events_detector.get_params()
+        if self.zone_events_detector:
+            params['events_detectors']['ZoneEventsDetector'] = self.zone_events_detector.get_params()
+
+        # Параметры процессора событий
+        if self.events_processor:
+            params['events_processor'] = self.events_processor.get_params()
+        
+        # Параметры визуализатора
+        if self.visualizer:
+            params['visualizer'] = self.visualizer.get_params()
+        else:
+            params['visualizer'] = dict()
+        
+        print("Parameters saved in AsyncController")
+
+    @property
+    def show_main_gui(self) -> bool:
+        """Показывать ли главное GUI"""
+        return self._show_main_gui
+
+    @show_main_gui.setter
+    def show_main_gui(self, value: bool):
+        self._show_main_gui = value
+
+    @property
+    def show_journal(self) -> bool:
+        """Показывать ли журнал"""
+        return self._show_journal
+
+    @show_journal.setter
+    def show_journal(self, value: bool):
+        self._show_journal = value
+
+    @property
+    def enable_close_from_gui(self) -> bool:
+        """Разрешить закрытие из GUI"""
+        return self._enable_close_from_gui
+
+    @enable_close_from_gui.setter
+    def enable_close_from_gui(self, value: bool):
+        self._enable_close_from_gui = value

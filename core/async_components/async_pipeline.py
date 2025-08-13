@@ -249,3 +249,22 @@ class AsyncPipeline(EvilEyeBase):
                 health['overall_health'] = 'unhealthy'
         
         return health
+
+    # --- Реализация абстрактных методов EvilEyeBase ---
+    def default(self):
+        pass
+
+    def init_impl(self, **kwargs):
+        return True
+
+    def release_impl(self):
+        pass
+
+    def reset_impl(self):
+        pass
+
+    def set_params_impl(self):
+        pass
+
+    def get_params_impl(self):
+        return {}

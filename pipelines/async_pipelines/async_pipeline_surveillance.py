@@ -367,27 +367,3 @@ class AsyncPipelineSurveillance(AsyncPipeline):
                 recommendations.append("High error rate. Check system resources and model stability")
         
         return recommendations
-
-    def default(self):
-        """Default implementation - override in subclasses"""
-        pass
-
-    def init_impl(self, **kwargs):
-        """Initialize pipeline implementation - override in subclasses"""
-        return True
-
-    def release_impl(self):
-        """Release pipeline resources - override in subclasses"""
-        pass
-
-    def reset_impl(self):
-        """Reset pipeline state - override in subclasses"""
-        pass
-
-    def set_params_impl(self):
-        """Set pipeline parameters - override in subclasses"""
-        pass
-
-    def get_params_impl(self):
-        """Get pipeline parameters - override in subclasses"""
-        return {}

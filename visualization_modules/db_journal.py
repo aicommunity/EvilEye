@@ -35,9 +35,44 @@ class DatabaseJournalWindow(QWidget):
         self.main_window = main_window
         self.params = params
         self.database_params = database_params
+        
+        # Добавляем значения по умолчанию для недостающих полей
+        if 'database_adapters' not in self.database_params:
+            self.database_params['database_adapters'] = {
+                "DatabaseAdapterObjects": {"table_name": "objects"},
+                "DatabaseAdapterCamEvents": {"table_name": "camera_events", "event_name": "CameraEvent"},
+                "DatabaseAdapterFieldOfViewEvents": {"table_name": "fov_events"},
+                "DatabaseAdapterZoneEvents": {"table_name": "zone_events"}
+            }
+        
+        if 'database' not in self.database_params:
+            self.database_params['database'] = {}
+        
+        # Добавляем значения по умолчанию для базы данных
+        default_db_params = {
+            "user_name": "postgres",
+            "password": "",
+            "database_name": "evil_eye_db",
+            "host_name": "localhost",
+            "port": 5432,
+            "default_database_name": "postgres",
+            "default_password": "",
+            "default_user_name": "postgres",
+            "default_host_name": "localhost",
+            "default_port": 5432,
+            "tables": {},
+            "image_dir": "/home/user/EvilEyeData",
+            "create_new_project": False,
+            "preview_width": 300,
+            "preview_height": 150
+        }
+        
+        # Объединяем с переданными параметрами
+        self.database_params['database'] = {**default_db_params, **self.database_params['database']}
+        
         self.adapter_params = self.database_params['database_adapters']
         self.db_params = self.database_params['database']
-        self.vis_params = self.params['visualizer']
+        self.vis_params = self.params.get('visualizer', {})
         self.obj_journal_enabled = self.vis_params.get('objects_journal_enabled', True)
 
         self.db_controller = database_controller_pg.DatabaseControllerPg(params, controller_type='Receiver')
