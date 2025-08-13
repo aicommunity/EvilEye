@@ -26,6 +26,13 @@ from events_detectors.zone_events_detector import ZoneEventsDetector
 from objects_handler import objects_handler
 from visualization_modules.visualizer import Visualizer
 
+# Импорты для процессоров
+import capture
+import object_detector
+import object_tracker
+import preprocessing
+import object_multi_camera_tracker
+
 
 class AsyncController(EvilEyeBase):
     """
@@ -377,24 +384,43 @@ class AsyncController(EvilEyeBase):
         processor_type = config.get('type', '')
         
         try:
-            # Здесь должна быть логика создания конкретных процессоров
-            # Пока возвращаем заглушку
             print(f"Creating processor: {name} of type {processor_type}")
             
-            # Создание заглушки процессора
-            class DummyProcessor(AsyncProcessorBase):
-                async def process_data(self, data):
-                    return data
+            # Словарь соответствия типов процессоров и их классов
+            processor_classes = {
+                'VideoCapture': capture.VideoCapture,
+                'ObjectDetectorYolo': object_detector.ObjectDetectorYolo,
+                'ObjectDetectorYoloMp': object_detector.ObjectDetectorYoloMp,
+                'ObjectTrackingBotsort': object_tracker.ObjectTrackingBotsort,
+                'PreprocessingVehicle': preprocessing.PreprocessingVehicle,
+                'ObjectMultiCameraTracking': object_multi_camera_tracker.ObjectMultiCameraTracking
+            }
             
-            processor = DummyProcessor(
-                max_queue_size=config.get('max_queue_size', 10),
-                timeout=config.get('timeout', 0.1)
-            )
+            # Получение класса процессора
+            processor_class = processor_classes.get(processor_type)
+            if not processor_class:
+                print(f"Unknown processor type: {processor_type}")
+                return None
             
+            # Создание процессора с параметрами
+            processor_params = config.get('params', {})
+            processor = processor_class()
+            
+            # Установка параметров
+            if hasattr(processor, 'set_params'):
+                processor.set_params(**processor_params)
+            
+            # Инициализация процессора
+            if hasattr(processor, 'init'):
+                processor.init()
+            
+            print(f"Successfully created processor: {name} of type {processor_type}")
             return processor
             
         except Exception as e:
             print(f"Error creating processor {name}: {e}")
+            import traceback
+            traceback.print_exc()
             return None
     
     async def _setup_event_handlers(self):

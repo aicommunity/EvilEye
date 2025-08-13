@@ -455,7 +455,7 @@ class EventsJournal(QWidget):
 
     def _create_dict_source_name_address_id(self):
         camera_address_id_name = {}
-        sources_params = self.params['sources']
+        sources_params = self.params["processors"]["video_capture"]["params"]['sources']
 
         for source in sources_params:
             address = source['camera']

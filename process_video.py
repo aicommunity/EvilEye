@@ -64,7 +64,7 @@ async def main_async():
         config_data["sources"][0]["camera"] = video_file
         print(f"Using video source file from cli: {video_file}")
     else:
-        video_file = config_data["sources"][0]["camera"]
+        video_file = config_data["processors"]["video_capture"]["params"]["sources"][0]["camera"]
         print(f"Using video source file from config: {video_file}")
 
     if not args.gui:
