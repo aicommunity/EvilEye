@@ -312,14 +312,17 @@ class Controller:
 
         # Initialize processing pipeline (sources, preprocessors, detectors, trackers)
         self.pipeline = PipelineSurveillance()
-        pipeline_params = {
-            'sources': self.params.get('sources', list()),
-            'preprocessors': self.params.get('preprocessors', list()),
-            'detectors': self.params.get('detectors', list()),
-            'trackers': self.params.get('trackers', list()),
-            'mc_trackers': self.params.get('mc_trackers', list()),
-            'credentials': self.credentials
-        }
+        pipeline_params = self.params.get("pipeline", {})
+        credentials = self.params.get("credentials", {}) or {}
+        #pipeline_params = {
+        #    'sources': self.params.get('sources', list()),
+        #    'preprocessors': self.params.get('preprocessors', list()),
+        #    'detectors': self.params.get('detectors', list()),
+        #    'trackers': self.params.get('trackers', list()),
+        #    'mc_trackers': self.params.get('mc_trackers', list()),
+        #    'credentials': self.credentials
+        #}
+        self.pipeline.set_credentials(credentials)
         self.pipeline.set_params(**pipeline_params)
         self.pipeline.init()
 
@@ -425,11 +428,12 @@ class Controller:
 
         # Get pipeline parameters
         pipeline_params = self.pipeline.get_params()
-        self.params['sources'] = pipeline_params.get('sources', [])
-        self.params['preprocessors'] = pipeline_params.get('preprocessors', [])
-        self.params['detectors'] = pipeline_params.get('detectors', [])
-        self.params['trackers'] = pipeline_params.get('trackers', [])
-        self.params['mc_trackers'] = pipeline_params.get('mc_trackers', [])
+        self.params['pipeline'] = pipeline_params
+        #self.params['sources'] = pipeline_params.get('sources', [])
+        #self.params['preprocessors'] = pipeline_params.get('preprocessors', [])
+        #self.params['detectors'] = pipeline_params.get('detectors', [])
+        #self.params['trackers'] = pipeline_params.get('trackers', [])
+        #self.params['mc_trackers'] = pipeline_params.get('mc_trackers', [])
 
         self.params['objects_handler'] = self.obj_handler.get_params()
 

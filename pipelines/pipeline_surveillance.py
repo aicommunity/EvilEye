@@ -63,16 +63,16 @@ class PipelineSurveillance(Pipeline):
         self._detectors_params = self.params.get("detectors", []) or []
         self._trackers_params = self.params.get("trackers", []) or []
         self._mc_trackers_params = self.params.get("mc_trackers", []) or []
-        self._credentials = self.params.get("credentials", {}) or {}
+        #self._credentials = self.params.get("credentials", {}) or {}
 
     def get_params_impl(self):
-        return {
-            "sources": self._sources_params,
-            "preprocessors": self._preprocessors_params,
-            "detectors": self._detectors_params,
-            "trackers": self._trackers_params,
-            "mc_trackers": self._mc_trackers_params,
-        }
+        params = dict()
+        self.sources_proc.get_params(params["sources"])
+        self.preprocessors_proc.get_params(params["preprocessors"])
+        self.detectors_proc.get_params(params["detectors"])
+        self.trackers_proc.get_params(params["trackers"])
+        self.mc_trackers_proc.get_params(params["mc_trackers"])
+        return params
 
     # Public helpers
     def start(self):

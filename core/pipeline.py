@@ -10,10 +10,14 @@ class Pipeline(EvilEyeBase):
     
     def __init__(self):
         super().__init__()
+        self._credentials = None
 
     def default(self):
         """Default implementation - override in subclasses"""
         pass
+
+    def set_credentials(self, credentials):
+        self._credentials = credentials
 
     def init_impl(self, **kwargs):
         """Initialize pipeline implementation - override in subclasses"""

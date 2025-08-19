@@ -91,7 +91,7 @@ class MainWindow(QMainWindow):
 
         self.rows = self.params['visualizer'].get('num_height', 1)
         self.cols = self.params['visualizer'].get('num_width', 1)
-        self.cameras = self.params.get('sources', list())
+        self.cameras = self.params.get('pipeline', {}).get('sources', list())
 
         self.num_cameras = len(self.cameras)
         self.src_ids = []

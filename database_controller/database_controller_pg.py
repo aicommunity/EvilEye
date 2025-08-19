@@ -26,7 +26,7 @@ class DatabaseControllerPg(database_controller.DatabaseControllerBase):
     def __init__(self, system_params, controller_type='Writer'):
         super().__init__(controller_type)
         self.configuration_info = system_params
-        self.cameras_params = system_params.get('sources', dict())
+        self.cameras_params = system_params.get('pipeline', {}).get('sources', dict())
         self.conn_pool = None
         self.user_name = ""
         self.default_user_name = ""
