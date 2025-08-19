@@ -54,11 +54,6 @@ class Controller:
 
         self.pipeline = None
 
-        self.sources_proc = None
-        self.preprocessors_proc = None
-        self.detectors_proc = None
-        self.trackers_proc = None
-        self.mc_trackers_proc = None
         self.obj_handler = None
         self.visualizer = None
         self.pyqt_slots = None
@@ -84,10 +79,6 @@ class Controller:
         self.db_adapter_zone_events = None
         self.class_names = list()
 
-        #self.captured_frames: list[CaptureImage] = []
-        #self.preprocessed_frames: list[CaptureImage] = []
-        #self.detection_results: list[DetectionResultList] = []
-        #self.tracking_results: list[TrackingResultList] = []
         self.run_flag = False
         self.restart_flag = False
 
@@ -314,33 +305,19 @@ class Controller:
         self.pipeline = PipelineSurveillance()
         pipeline_params = self.params.get("pipeline", {})
         credentials = self.params.get("credentials", {}) or {}
-        #pipeline_params = {
-        #    'sources': self.params.get('sources', list()),
-        #    'preprocessors': self.params.get('preprocessors', list()),
-        #    'detectors': self.params.get('detectors', list()),
-        #    'trackers': self.params.get('trackers', list()),
-        #    'mc_trackers': self.params.get('mc_trackers', list()),
-        #    'credentials': self.credentials
-        #}
         self.pipeline.set_credentials(credentials)
         self.pipeline.set_params(**pipeline_params)
         self.pipeline.init()
 
-        # Backward-compatible references
-        self.sources_proc = self.pipeline.sources_proc
-        self.preprocessors_proc = self.pipeline.preprocessors_proc
-        self.detectors_proc = self.pipeline.detectors_proc
-        self.trackers_proc = self.pipeline.trackers_proc
-        self.mc_trackers_proc = self.pipeline.mc_trackers_proc
-        self.encoders = self.pipeline.encoders
-
         # Fill source maps for visualizer and bookkeeping
-        if self.sources_proc:
-            for source in self.sources_proc.get_processors():
-                for source_id, source_name in zip(source.source_ids, source.source_names):
-                    self.source_id_name_table[source_id] = source_name
-                    self.source_video_duration[source_id] = source.video_duration
-                    self.source_last_processed_frame_id[source_id] = 0
+        if hasattr(self.pipeline, "get_sources_processors"):
+            sources = self.pipeline.get_sources_processors()
+            if sources:
+                for source in sources:
+                    for source_id, source_name in zip(source.source_ids, source.source_names):
+                        self.source_id_name_table[source_id] = source_name
+                        self.source_video_duration[source_id] = source.video_duration
+                        self.source_last_processed_frame_id[source_id] = 0
 
 #        multicam_reid = self.params.get('controller', dict()).get("multicam_reid", False)
 #        if multicam_reid:
