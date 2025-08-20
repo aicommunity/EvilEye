@@ -2,7 +2,8 @@ from core import EvilEyeBase
 from abc import ABC, abstractmethod
 
 class ProcessorBase(ABC):
-    def __init__(self, class_name, num_processors: int, order: int):
+    def __init__(self, processor_name, class_name, num_processors: int, order: int):
+        self.processor_name = processor_name
         self.class_name = class_name
         self.params = None
         self.num_processors = num_processors
@@ -16,6 +17,9 @@ class ProcessorBase(ABC):
 
     def get_processors(self):
         return self.processors
+
+    def get_name(self):
+        return self.processor_name
 
     def set_params(self, params):
         self.params = params
@@ -65,6 +69,8 @@ class ProcessorBase(ABC):
     def get_dropped_ids(self):
         dropped_ids = []
         for processor in self.processors:
+            if not hasattr(processor, 'get_dropped_ids'):
+                continue
             dropped_id = processor.get_dropped_ids()
             if len(dropped_id) > 0:
                 dropped_ids.extend(dropped_id)

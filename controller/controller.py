@@ -176,14 +176,10 @@ class Controller:
         while self.run_flag:
             begin_it = timer()
             # Process pipeline: sources -> preprocessors -> detectors -> trackers -> mc_trackers
-            (
-                captured_frames,
-                preprocessing_frames,
-                detection_results,
-                tracking_results,
-                mc_tracking_results,
-                all_sources_finished,
-            ) = self.pipeline.process()
+            pipeline_results = self.pipeline.process()
+            all_sources_finished = self.pipeline.check_all_sources_finished()
+
+            mc_tracking_results = pipeline_results.get("mc_trackers", [])
 
             # Insert debug info from pipeline components
             self.pipeline.insert_debug_info_by_id(self.debug_info)

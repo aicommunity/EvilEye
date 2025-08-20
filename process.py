@@ -69,7 +69,7 @@ if __name__ == "__main__":
         print(f"Using video source from cli: {video_file}")
     else:
         video_file = config_data["pipeline"]["sources"][0]["camera"]
-        print(f"Using video source from config: {video_file}")
+        print(f"Using video source from config")
 
     if not args.gui:
         config_data["visualizer"]["gui_enabled"] = False
