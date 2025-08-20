@@ -230,12 +230,13 @@ class MultiCameraTracker:
         cam_ids = []
         for cam_id, ts in enumerate(sct_tracks):
             for track in ts:
-                for i in range(len(self.encoders)):
-                    features[i].append(track.smooth_feat[i])
+                if track.smooth_feat is not None:
+                    for i in range(len(self.encoders)):
+                        features[i].append(track.smooth_feat[i])
                 tracks.append(track)
                 cam_ids.append(cam_id)
         
-        if len(features) == 0:
+        if len(features) == 0 or len(features[0]) == 0:
             return []
         
         # Составляем матрицу расстояний
