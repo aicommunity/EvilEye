@@ -81,7 +81,7 @@
                 "source_ids": [
                     0
                 ],
-                "model": "yolov8n.pt",
+                "model": "models/yolov8n.pt",
                 "show": false,
                 "inference_size": 640,
                 "device": null,
@@ -126,7 +126,7 @@
                 "source_ids": [
                     1
                 ],
-                "model": "yolov8n.pt",
+                "model": "models/yolov8n.pt",
                 "show": false,
                 "inference_size": 1280,
                 "device": null,
@@ -152,7 +152,7 @@
                 "source_ids": [
                     2
                 ],
-                "model": "yolov8n.pt",
+                "model": "models/yolov8n.pt",
                 "show": false,
                 "inference_size": 640,
                 "device": null,
@@ -203,7 +203,7 @@
                 "source_ids": [
                     3
                 ],
-                "model": "yolov8n.pt",
+                "model": "models/yolov8n.pt",
                 "show": false,
                 "conf": 0.4,
                 "inference_size": 640,
@@ -248,7 +248,7 @@
                 "source_ids": [
                     4
                 ],
-                "model": "yolov8n.pt",
+                "model": "models/yolov8n.pt",
                 "show": false,
                 "inference_size": 1280,
                 "device": null,

@@ -1,16 +1,9 @@
 import threading
 import capture
-import preprocessing
 from object_detector import object_detection_yolo
-from object_detector import object_detection_yolo_mp
-from object_detector.object_detection_base import DetectionResultList
 from object_tracker import object_tracking_botsort
-from object_tracker.tracking_results import TrackingResultList
-# from object_tracker.trackers.bot_sort import Encoder
-from object_tracker.trackers.track_encoder import TrackEncoder
 from object_tracker.trackers.onnx_encoder import OnnxEncoder
 from objects_handler import objects_handler
-from capture.video_capture_base import CaptureImage
 import time
 from timeit import default_timer as timer
 from visualization_modules.visualizer import Visualizer
@@ -25,11 +18,10 @@ from events_detectors.cam_events_detector import CamEventsDetector
 from events_detectors.fov_events_detector import FieldOfViewEventsDetector
 from events_detectors.zone_events_detector import ZoneEventsDetector
 import json
-from object_multi_camera_tracker.custom_object_tracking import ObjectMultiCameraTracking
 import datetime
 import pprint
 import copy
-from core import ProcessorBase, ProcessorSource, ProcessorStep, ProcessorFrame, Pipeline
+from core import ProcessorSource, ProcessorStep, ProcessorFrame
 from pipelines import PipelineSurveillance
 
 
@@ -90,84 +82,17 @@ class Controller:
 
         self.debug_info = dict()
 
-    def add_channel(self):
-        self.add_module("source", None)
-        self.add_module("detector", None)
-        self.add_module("tracker", None)
+    def add_pipeline(self, pipeline_type):
+        pass
 
-    def add_module(self, module_type: str, params: dict):
-        if module_type == "source":
-            camera = capture.VideoCapture()
-            if params:
-                camera.set_params(params)
-            camera.init()
-            self.sources.append(camera)
-            if camera.source_ids is not None and camera.source_names is not None:
-                for source_id, source_name in zip(camera.source_ids, camera.source_names):
-                    self.source_id_name_table[source_id] = source_name
-                    self.source_video_duration[source_id] = camera.video_duration
-                    self.source_last_processed_frame_id[source_id] = 0
-            self._init_events_detectors(self.params.get('events_detectors', dict()))
-            self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
-            self.params['sources'].append(camera.get_params())
+    def del_pipeline(self, pipeline_type):
+        pass
 
-        elif module_type == "detector":
-            detector = object_detection_yolo.ObjectDetectorYolo()
-            if params:
-                detector.set_params(params)
-            obj_max_id = 0
-            for obj in self.detectors:
-                if obj.get_id() > obj_max_id:
-                    obj_max_id = obj.get_id()
-            obj_max_id += 1
-            detector.set_id(obj_max_id)
-            detector.init()
-            self.detectors.append(detector)
-            self.params['detectors'].append(detector.get_params())
-        elif module_type == "tracker":
-            if params:
-                tracker_params = params
-            else:
-                tracker_params = dict()
-            path = tracker_params.get("tracker_onnx", "osnet_ain_x1_0_M.onnx")
-            if path not in self.encoders:
-                encoder = OnnxEncoder(path)
-                self.encoders[path] = encoder
-            encoder = self.encoders[tracker_params.get("tracker_onnx", "osnet_ain_x1_0_M.onnx")]
-            tracker = object_tracking_botsort.ObjectTrackingBotsort([encoder])
-            if params:
-                tracker.set_params(**tracker_params)
-            tracker.init()
-            self.trackers.append(tracker)
-            self.params['trackers'].append(tracker.get_params())
+    def add_processor(self, processor_name: str, processor_class: str, params: dict):
+        pass
 
-            is_mc_started = self.mc_tracker.run_flag
-            self._init_mc_trackers()
-            if is_mc_started:
-                self.mc_tracker.start()
-
-    def del_module(self, module_type: str, id: int):
-        if module_type == "source":
-            for obj in self.sources:
-                if obj.get_id() == id:
-                    self.sources.remove(obj)
-                    self._init_events_detectors(self.params.get('events_detectors', dict()))
-                    self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
-                    break
-        elif module_type == "detector":
-            for obj in self.detectors:
-                if obj.get_id() == id:
-                    self.detectors.remove(obj)
-                    break
-        elif module_type == "tracker":
-            for obj in self.trackers:
-                if obj.get_id() == id:
-                    self.trackers.remove(obj)
-                    is_mc_started = self.mc_tracker.run_flag
-                    self._init_mc_trackers()
-                    if is_mc_started:
-                        self.mc_tracker.start()
-                    break
+    def del_processor(self, processor_name: str, id: int):
+        pass
 
     def is_running(self):
         return self.run_flag
@@ -314,15 +239,6 @@ class Controller:
                         self.source_video_duration[source_id] = source.video_duration
                         self.source_last_processed_frame_id[source_id] = 0
 
-#        multicam_reid = self.params.get('controller', dict()).get("multicam_reid", False)
-#        if multicam_reid:
-#            for tracker_params in self.params.get('trackers', list()):
-#                botsort_cfg = tracker_params.get("botsort_cfg", None)
-#                if not botsort_cfg or botsort_cfg.get("with_reid", False) == False:
-#                    multicam_reid = False
-#                    break
-#        self.multicam_reid_enabled = multicam_reid
-
         database_creds = self.credentials.get("database", None)
         if not database_creds:
             database_creds = dict()
@@ -401,11 +317,6 @@ class Controller:
         # Get pipeline parameters
         pipeline_params = self.pipeline.get_params()
         self.params['pipeline'] = pipeline_params
-        #self.params['sources'] = pipeline_params.get('sources', [])
-        #self.params['preprocessors'] = pipeline_params.get('preprocessors', [])
-        #self.params['detectors'] = pipeline_params.get('detectors', [])
-        #self.params['trackers'] = pipeline_params.get('trackers', [])
-        #self.params['mc_trackers'] = pipeline_params.get('mc_trackers', [])
 
         self.params['objects_handler'] = self.obj_handler.get_params()
 
@@ -495,7 +406,7 @@ class Controller:
 
         for i in range(num_trackers):
             tracker_params = params[i]
-            path = tracker_params.get("tracker_onnx", "osnet_ain_x1_0_M.onnx")
+            path = tracker_params.get("tracker_onnx", "models/osnet_ain_x1_0_M.onnx")
             
             if path not in self.encoders:
                 encoder = OnnxEncoder(path)

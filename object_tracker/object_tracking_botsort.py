@@ -57,7 +57,7 @@ class ObjectTrackingBotsort(object_tracking_base.ObjectTrackingBase):
     def init_impl(self, **kwargs):
         encoders = kwargs.get('encoders', None)
         if encoders is not None:
-            encoder = encoders[self.params.get("tracker_onnx", "osnet_ain_x1_0_M.onnx")]
+            encoder = encoders[self.params.get("tracker_onnx", "models/osnet_ain_x1_0_M.onnx")]
             self.encoders = [encoder]
         super().init_impl(**kwargs)
         if not self.botsort_cfg:

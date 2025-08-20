@@ -5,11 +5,33 @@ import cv2
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 from object_tracker.trackers.track_encoder import TrackEncoder
+import os
+import requests
+from tqdm import tqdm
 
+url = "https://github.com/aicommunity/EvilEye/releases/download/dev/osnet_ain_x1_0_M.onnx"
 
 class OnnxEncoder(TrackEncoder):
     def __init__(self, model_path: str, batch_size: int = 1):
         self.batch_size = batch_size
+
+        if not os.path.exists(model_path):
+            os.makedirs(os.path.dirname(model_path), exist_ok=True)
+            print(f"File not found. Downloading to {model_path}...")
+            response = requests.get(url, stream=True)
+            response.raise_for_status()
+            total_size = int(response.headers.get('content-length', 0))
+            block_size = 8192
+
+            with open(model_path, "wb") as f, tqdm(
+                    total=total_size, unit='B', unit_scale=True, desc="Загрузка", ncols=80
+            ) as pbar:
+                for chunk in response.iter_content(chunk_size=block_size):
+                    if chunk:
+                        f.write(chunk)
+                        pbar.update(len(chunk))
+            print("Download successful")
+
         self.session = ort.InferenceSession(model_path)
         self.input_name = self.session.get_inputs()[0].name
         self.output_name = self.session.get_outputs()[0].name

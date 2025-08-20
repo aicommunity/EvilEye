@@ -10,4 +10,5 @@ onnxruntime
 tqdm
 shapely
 pympler
+tdqm
 
