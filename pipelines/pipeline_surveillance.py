@@ -67,10 +67,15 @@ class PipelineSurveillance(Pipeline):
 
     def get_params_impl(self):
         params = dict()
+        params["sources"] = {}
         self.sources_proc.get_params(params["sources"])
+        params["preprocessors"] = {}
         self.preprocessors_proc.get_params(params["preprocessors"])
+        params["detectors"] = {}
         self.detectors_proc.get_params(params["detectors"])
+        params["trackers"] = {}
         self.trackers_proc.get_params(params["trackers"])
+        params["mc_trackers"] = {}
         self.mc_trackers_proc.get_params(params["mc_trackers"])
         return params
 
@@ -233,6 +238,7 @@ class PipelineSurveillance(Pipeline):
                 self.encoders[path] = OnnxEncoder(path)
 
     def _init_mc_trackers(self, params: list[dict]):
-        self.mc_trackers_proc = ProcessorStep(class_name="ObjectMultiCameraTracking", num_processors=1, order=4)
+        num_trackers = len(params)
+        self.mc_trackers_proc = ProcessorStep(class_name="ObjectMultiCameraTracking", num_processors=num_trackers, order=4)
         self.mc_trackers_proc.set_params(params)
         self.mc_trackers_proc.init(encoders=self.encoders)

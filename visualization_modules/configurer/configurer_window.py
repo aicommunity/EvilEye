@@ -32,12 +32,8 @@ except ImportError:
 
 
 from utils import utils
-import sys
-from capture.video_capture_base import CaptureDeviceType
-from capture import VideoCapture
-import visualization_modules.configurer.parameters_processing
 from visualization_modules.configurer.configurer_tabs import src_tab, detector_tab, handler_tab, visualizer_tab, database_tab, tracker_tab, events_tab
-import visualization
+import process
 
 
 class SaveWindow(QWidget):
@@ -245,7 +241,7 @@ class ConfigurerMainWindow(QMainWindow):
         self._open_save_win()
 
     def _run_app(self):
-        self.new_process = multiprocessing.Process(target=visualization.start_app, args=(self.result_filename,))
+        self.new_process = multiprocessing.Process(target=process.start_app, args=(self.result_filename,))
         self.new_process.start()
         self.new_process.join()
 

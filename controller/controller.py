@@ -304,8 +304,7 @@ class Controller:
         # Initialize processing pipeline (sources, preprocessors, detectors, trackers)
         self.pipeline = PipelineSurveillance()
         pipeline_params = self.params.get("pipeline", {})
-        credentials = self.params.get("credentials", {}) or {}
-        self.pipeline.set_credentials(credentials)
+        self.pipeline.set_credentials(self.credentials)
         self.pipeline.set_params(**pipeline_params)
         self.pipeline.init()
 

@@ -1,53 +1,63 @@
 {
-    "sources": [
-        {
-            "source": "VideoFile",
-            "camera": "./139932-video_trim.mp4",
-            "apiPreference": "CAP_FFMPEG",
-            "split": false,
-            "num_split": 0,
-            "src_coords": [0],
-            "source_ids": [0],
-            "source_names": ["Cam1"],
-            "loop_play": true
-        }
-    ],
-    "detectors": [
-        {
-            "source_ids": [0],
-            "model": "yolov8n.pt",
-            "show": false,
-            "inference_size": 1280,
-            "device": null,
-            "conf": 0.4,
-            "save": false,
-            "stride_type": "frames",
-            "vid_stride": 1,
-            "classes": [0],
-            "num_detection_threads": 3,
-            "roi": [[[1790, 0, 500, 400], [1700, 0, 1000, 1045], [1500, 0, 2340, 2160]]]
-        }
-    ],
-    "trackers": [
-        {
-            "source_ids": [
-                0
-            ],
-            "fps": 5,
-            "botsort_cfg": {
-                "appearance_thresh": 0.25,
-                "gmc_method": "sparseOptFlow",
-                "match_thresh": 0.8,
-                "new_track_thresh": 0.6,
-                "proximity_thresh": 0.5,
-                "track_buffer": 30,
-                "track_high_thresh": 0.5,
-                "track_low_thresh": 0.1,
-                "tracker_type": "botsort",
-                "with_reid": true
+    "pipeline": {
+        "sources": [
+            {
+                "source": "VideoFile",
+                "camera": "./139932-video_trim.mp4",
+                "apiPreference": "CAP_FFMPEG",
+                "split": false,
+                "num_split": 0,
+                "src_coords": [0],
+                "source_ids": [0],
+                "source_names": ["Cam1"],
+                "loop_play": true
             }
-        }
-    ],
+        ],
+        "detectors": [
+            {
+                "source_ids": [0],
+                "model": "yolov8n.pt",
+                "show": false,
+                "inference_size": 1280,
+                "device": null,
+                "conf": 0.4,
+                "save": false,
+                "stride_type": "frames",
+                "vid_stride": 1,
+                "classes": [0],
+                "num_detection_threads": 3,
+                "roi": [[[1790, 0, 500, 400], [1700, 0, 1000, 1045], [1500, 0, 2340, 2160]]]
+            }
+        ],
+        "trackers": [
+            {
+                "source_ids": [
+                    0
+                ],
+                "fps": 5,
+                "botsort_cfg": {
+                    "appearance_thresh": 0.25,
+                    "gmc_method": "sparseOptFlow",
+                    "match_thresh": 0.8,
+                    "new_track_thresh": 0.6,
+                    "proximity_thresh": 0.5,
+                    "track_buffer": 30,
+                    "track_high_thresh": 0.5,
+                    "track_low_thresh": 0.1,
+                    "tracker_type": "botsort",
+                    "with_reid": true
+                }
+            }
+        ],
+        "mc_trackers": [
+            {
+                "source_ids": [
+                    0
+                ],
+                "enable": true
+            }
+        ]
+    },
     "visualizer": {
         "num_width": 1,
         "num_height": 1,
@@ -81,7 +91,7 @@
     },
     "controller": {
         "autoclose": false,
-        "fps": 5,
+        "fps": 30,
         "show_main_gui": true,
         "show_journal": false,
         "enable_close_from_gui": true,
