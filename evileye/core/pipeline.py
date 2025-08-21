@@ -48,7 +48,7 @@ class Pipeline(EvilEyeBase):
     def release_impl(self):
         """Release all pipeline processors in reverse order"""
         for processor in reversed(self.processors):
-            if processor:
+            if processor is not None:
                 processor.release()
 
     def reset_impl(self):
@@ -68,7 +68,7 @@ class Pipeline(EvilEyeBase):
         
         # Get parameters from each processor type
         for processor in self.processors:
-            if processor:
+            if processor is not None:
                 section_name = processor.get_name()
                 params[section_name] = {}
                 processor.get_params(params[section_name])
@@ -78,13 +78,13 @@ class Pipeline(EvilEyeBase):
     def start(self):
         """Start all processors in order"""
         for processor in self.processors:
-            if processor:
+            if processor is not None:
                 processor.start()
 
     def stop(self):
         """Stop all processors in reverse order"""
         for processor in reversed(self.processors):
-            if processor:
+            if processor is not None:
                 processor.stop()
 
     def check_all_sources_finished(self):
@@ -97,12 +97,13 @@ class Pipeline(EvilEyeBase):
         step_result = None
 
         for processor in self.processors:
+            if processor is None:
+                continue
+                
             if isinstance(processor, ProcessorSource):
                 self.run_sources()
             step_result = processor.process(step_result)
             pipeline_results[processor.get_name()] = step_result
-            
-
 
         return pipeline_results
 
@@ -110,7 +111,7 @@ class Pipeline(EvilEyeBase):
         """Calculate memory consumption for all processors"""
         total = 0
         for processor in self.processors:
-            if processor:
+            if processor is not None:
                 processor.calc_memory_consumption()
                 total += processor.get_memory_usage()
         self.memory_measure_results = total
@@ -119,7 +120,7 @@ class Pipeline(EvilEyeBase):
         """Get dropped frame IDs from all processors"""
         dropped = []
         for processor in self.processors:
-            if processor:
+            if processor is not None:
                 dropped.extend(processor.get_dropped_ids())
         return dropped
 
@@ -131,7 +132,7 @@ class Pipeline(EvilEyeBase):
             debug_info: Dictionary to store debug information
         """
         for processor in self.processors:
-            if processor:
+            if processor is not None:
                 processor.insert_debug_info_by_id(processor.get_name(), debug_info)
 
     def get_sources_processors(self):

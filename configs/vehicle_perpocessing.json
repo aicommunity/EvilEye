@@ -293,7 +293,7 @@
                     "track_high_thresh": 0.5,
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
-                    "with_reid": false
+                    "with_reid": true
                 }
             },
             {
@@ -311,7 +311,7 @@
                     "track_high_thresh": 0.5,
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
-                    "with_reid": false
+                    "with_reid": true
                 }
             },
             {
@@ -329,7 +329,7 @@
                     "track_high_thresh": 0.5,
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
-                    "with_reid": false
+                    "with_reid": true
                 }
             },
             {
@@ -347,7 +347,7 @@
                     "track_high_thresh": 0.5,
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
-                    "with_reid": false
+                    "with_reid": true
                 }
             },
             {
@@ -365,7 +365,7 @@
                     "track_high_thresh": 0.5,
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
-                    "with_reid": false
+                    "with_reid": true
                 }
             }
         ],

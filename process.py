@@ -15,7 +15,7 @@ except ImportError:
 from controller import controller
 from evileye.visualization_modules.main_window import MainWindow
 
-file_path = 'samples/vehicle_perpocessing.json'
+file_path = 'configs/vehicle_perpocessing.json'
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
 

@@ -21,7 +21,7 @@ class PipelineSurveillance(Pipeline):
         """Initialize surveillance pipeline with specific processor sequence"""
         
         # Get pipeline parameters
-        pipeline_params = self.params.get("pipeline", {})
+        pipeline_params = self.params
         
         # Initialize encoders first
         self._init_encoders(pipeline_params.get("trackers", []))

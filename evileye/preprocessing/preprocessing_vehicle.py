@@ -16,7 +16,7 @@ class PreprocessingVehicle(PreprocessingBase):
         self.preprocessSequence = None
 
     def init_impl(self):
-        self.json_path = 'samples/vehicle_perpocessing.json'
+        self.json_path = 'configs/vehicle_perpocessing.json'
         factory = PreprocessingFactory(self.json_path)
         self.preprocessSequence = factory.build_pipeline()
         return True
