@@ -20,6 +20,11 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from .pipelines import PipelineSurveillance
 from .core import Pipeline
 
+# Import controller for database functionality
+import sys
+sys.path.append(str(Path(__file__).parent.parent))
+from controller import controller
+
 # Create CLI app
 app = typer.Typer(
     name="evileye",
@@ -81,56 +86,49 @@ def run(
             console.print("[green]Configuration is valid![/green]")
             return
         
-        # Create and initialize pipeline
+        # Create and initialize controller (same as process.py but without GUI)
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
             console=console,
         ) as progress:
-            task = progress.add_task("Initializing pipeline...", total=None)
+            task = progress.add_task("Initializing controller...", total=None)
             
-            pipeline = PipelineSurveillance()
-            pipeline.params = pipeline_config
+            controller_instance = controller.Controller()
             
             try:
-                init_result = pipeline.init()
-                if not init_result:
-                    console.print("[red]Failed to initialize pipeline[/red]")
-                    raise typer.Exit(1)
+                # Disable GUI for CLI mode
+                if 'visualizer' in pipeline_config:
+                    pipeline_config['visualizer']['gui_enabled'] = False
+                if 'controller' not in pipeline_config:
+                    pipeline_config['controller'] = {}
+                pipeline_config['controller']['show_main_gui'] = False
+                pipeline_config['controller']['show_journal'] = False
+                
+                controller_instance.init(pipeline_config)
+                progress.update(task, description="Controller initialized successfully")
             except Exception as e:
-                console.print(f"[red]Pipeline initialization error: {e}[/red]")
+                console.print(f"[red]Controller initialization error: {e}[/red]")
                 if verbose:
                     console.print_exception()
                 raise typer.Exit(1)
-            
-            progress.update(task, description="Pipeline initialized successfully")
         
         console.print("[green]Starting surveillance system...[/green]")
         
-        # Start pipeline
-        pipeline.start()
+        # Start controller
+        controller_instance.start()
         
         try:
-            # Main processing loop
-            iteration = 0
-            while True:
-                iteration += 1
-                results = pipeline.process()
-                
-                # Check if all sources are finished
-                if pipeline.check_all_sources_finished():
-                    console.print(f"[yellow]All sources finished after {iteration} iterations[/yellow]")
-                    break
-                
-                # Add some delay to prevent busy waiting
+            # Wait for controller to finish
+            while controller_instance.is_running():
                 import time
-                time.sleep(0.01)
+                time.sleep(0.1)
                 
         except KeyboardInterrupt:
             console.print("\n[yellow]Stopping surveillance system...[/yellow]")
         finally:
-            pipeline.stop()
-            pipeline.release()
+            controller_instance.stop()
+            controller_instance.release()
             console.print("[green]Surveillance system stopped[/green]")
             
     except Exception as e:
@@ -201,6 +199,32 @@ def list_configs() -> None:
         )
     
     console.print(table)
+
+
+@app.command()
+def run_with_db(
+    config: Path = typer.Argument(
+        ...,
+        help="Path to configuration JSON file",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+    ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Enable verbose logging"
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Validate configuration without running"
+    ),
+) -> None:
+    """
+    Run EvilEye surveillance system with database support using simplified controller.
+    
+    Example:
+        evileye run-with-db configs/single_cam.json
+    """
+    from .cli_controller_simple import run_simple_controller
+    run_simple_controller(config, verbose, dry_run)
 
 
 @app.command()
