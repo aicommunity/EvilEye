@@ -401,5 +401,32 @@ def main():
     sys.exit(app.exec())
 
 
+def launch_main_app():
+    """Launch the main EvilEye application with GUI"""
+    import subprocess
+    import sys
+    from pathlib import Path
+    
+    # Get the project root directory
+    project_root = Path(__file__).parent.parent
+    
+    # Launch the main process.py
+    process_script = project_root / "process.py"
+    
+    if not process_script.exists():
+        print(f"Error: process.py not found at {process_script}")
+        sys.exit(1)
+    
+    try:
+        # Launch with GUI enabled
+        subprocess.run([sys.executable, str(process_script), "--gui"], check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"Error launching main application: {e}")
+        sys.exit(1)
+    except KeyboardInterrupt:
+        print("Application interrupted by user")
+        sys.exit(0)
+
+
 if __name__ == "__main__":
     main()

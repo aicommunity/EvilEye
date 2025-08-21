@@ -1,16 +1,16 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
 
-from visualization_modules.video_thread import VideoThread
-import core
+from .video_thread import VideoThread
+from ..core.base_class import EvilEyeBase
 import copy
-from capture.video_capture_base import CaptureImage
-from objects_handler.objects_handler import ObjectResultList
+from ..capture.video_capture_base import CaptureImage
+from ..objects_handler.objects_handler import ObjectResultList
 from timeit import default_timer as timer
 from pympler import asizeof
 
 
-class Visualizer(core.EvilEyeBase):
+class Visualizer(EvilEyeBase):
     def __init__(self, pyqt_slots: dict, pyqt_signals: dict):
         super().__init__()
         self.pyqt_slots = pyqt_slots

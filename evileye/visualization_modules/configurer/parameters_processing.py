@@ -5,8 +5,8 @@ from PyQt6.QtWidgets import (
     QSizePolicy, QToolBar, QComboBox, QFormLayout, QSpacerItem,
     QMenu, QMainWindow, QApplication, QCheckBox, QPushButton
 )
-from capture.video_capture_base import CaptureDeviceType
-from capture.video_capture import VideoCapture
+from ...capture.video_capture_base import CaptureDeviceType
+from ...capture.video_capture import VideoCapture
 
 
 def process_numeric_types(string: str):

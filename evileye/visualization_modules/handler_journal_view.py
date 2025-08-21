@@ -1,7 +1,7 @@
 import datetime
 import os
 from psycopg2 import sql
-from utils import threading_events
+from ..utils import threading_events
 try:
     from PyQt6.QtCore import QDate, QDateTime
     from PyQt6.QtWidgets import (
@@ -25,7 +25,7 @@ except ImportError:
     from PyQt5.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
     pyqt_version = 5
 
-from visualization_modules.table_updater_view import TableUpdater
+from .table_updater_view import TableUpdater
 
 
 class ImageDelegate(QStyledItemDelegate):

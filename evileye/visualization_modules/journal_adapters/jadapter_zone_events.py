@@ -1,4 +1,4 @@
-from visualization_modules.journal_adapters.jadapter_base import JournalAdapterBase
+from .jadapter_base import JournalAdapterBase
 
 
 class JournalAdapterZoneEvents(JournalAdapterBase):

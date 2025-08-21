@@ -204,6 +204,54 @@ def list_configs() -> None:
 
 
 @app.command()
+def gui(
+    config: Optional[Path] = typer.Argument(None, help="Configuration file path"),
+    video: Optional[str] = typer.Option(None, "--video", help="Video file to process"),
+) -> None:
+    """
+    Launch EvilEye with GUI interface.
+    
+    Example:
+        evileye gui configs/test_sources_detectors_trackers_mc.json
+        evileye gui --video /path/to/video.mp4
+    """
+    import subprocess
+    import os
+    
+    # Build command arguments
+    cmd = [sys.executable, "process.py", "--gui"]
+    
+    if config:
+        if not config.exists():
+            console.print(f"[red]Configuration file not found: {config}[/red]")
+            raise typer.Exit(1)
+        cmd.extend(["--config", str(config)])
+    elif video:
+        cmd.extend(["--video", video])
+    else:
+        # Use default config
+        default_config = Path("configs/test_sources_detectors_trackers_mc.json")
+        if default_config.exists():
+            cmd.extend(["--config", str(default_config)])
+        else:
+            console.print("[red]No configuration file specified and default not found[/red]")
+            console.print("Please specify a config file: [yellow]evileye gui <config_file>[/yellow]")
+            raise typer.Exit(1)
+    
+    try:
+        console.print(f"[green]Launching GUI with command:[/green] {' '.join(cmd)}")
+        # Change to project root directory before running
+        os.chdir(Path(__file__).parent.parent)
+        subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError as e:
+        console.print(f"[red]Error launching GUI: {e}[/red]")
+        raise typer.Exit(1)
+    except KeyboardInterrupt:
+        console.print("[yellow]GUI interrupted by user[/yellow]")
+        raise typer.Exit(0)
+
+
+@app.command()
 def info() -> None:
     """
     Display EvilEye system information.

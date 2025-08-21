@@ -1,4 +1,4 @@
-import core
+from ...core.base_class import EvilEyeBase
 
 try:
     from PyQt6.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
@@ -11,7 +11,7 @@ from abc import abstractmethod, ABC
 
 
 # Базовый класс журнального адаптера, для того чтобы формировать SELECT запросы к соответствующим таблицам в БД
-class JournalAdapterBase(core.EvilEyeBase, ABC):
+class JournalAdapterBase(EvilEyeBase, ABC):
     def __init__(self):
         super().__init__()
         self.table_name = None

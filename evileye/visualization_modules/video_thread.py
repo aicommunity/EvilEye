@@ -12,13 +12,13 @@ except ImportError:
     pyqt_version = 5
 
 from timeit import default_timer as timer
-from utils import utils
+from ..utils import utils
 from queue import Queue
 from queue import Empty
 import copy
 import time
 import cv2
-from events_detectors.zone import ZoneForm
+from ..events_detectors.zone import ZoneForm
 
 
 class VideoThread(QThread):

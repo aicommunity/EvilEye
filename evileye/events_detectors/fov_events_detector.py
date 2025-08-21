@@ -1,8 +1,8 @@
 import datetime
 import time
 from threading import Event
-from events_detectors.event_fov import FieldOfViewEvent
-from events_detectors.events_detector import EventsDetector
+from .event_fov import FieldOfViewEvent
+from .events_detector import EventsDetector
 from datetime import datetime
 
 

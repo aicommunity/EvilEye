@@ -1,13 +1,13 @@
 import datetime
 import time
 from threading import Lock, Event
-from events_detectors.event_fov import FieldOfViewEvent
-from events_detectors.events_detector import EventsDetector
+from .event_fov import FieldOfViewEvent
+from .events_detector import EventsDetector
 from datetime import datetime
-from events_detectors.zone import Zone, ZoneForm
-from utils import threading_events
+from .zone import Zone, ZoneForm
+from ..utils import threading_events
 from queue import Queue
-from events_detectors.event_zone import ZoneEvent
+from .event_zone import ZoneEvent
 import math
 
 

@@ -19,12 +19,12 @@ except ImportError:
 
 import sys
 from pathlib import Path
-from database_controller import database_controller_pg
-from visualization_modules import handler_journal_view
-from visualization_modules import events_journal
-from visualization_modules.journal_adapters.jadapter_fov_events import JournalAdapterFieldOfViewEvents
-from visualization_modules.journal_adapters.jadapter_cam_events import JournalAdapterCamEvents
-from visualization_modules.journal_adapters.jadapter_zone_events import JournalAdapterZoneEvents
+from ..database_controller import database_controller_pg
+from . import handler_journal_view
+from . import events_journal
+from .journal_adapters.jadapter_fov_events import JournalAdapterFieldOfViewEvents
+from .journal_adapters.jadapter_cam_events import JournalAdapterCamEvents
+from .journal_adapters.jadapter_zone_events import JournalAdapterZoneEvents
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
 

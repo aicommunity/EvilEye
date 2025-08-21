@@ -24,16 +24,16 @@ except ImportError:
     from PyQt5.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
     pyqt_version = 5
 
-from utils import utils
+from ....utils import utils
 from timeit import default_timer as timer
 import cv2
 import os
-from visualization_modules.configurer.db_connection_window import DatabaseConnectionWindow
-from capture.video_capture_base import CaptureDeviceType
-from visualization_modules.configurer import parameters_processing
-from capture.video_capture import VideoCapture
+from ..db_connection_window import DatabaseConnectionWindow
+from ....capture.video_capture_base import CaptureDeviceType
+from .. import parameters_processing
+from ....capture.video_capture import VideoCapture
 from urllib.parse import urlparse
-from visualization_modules.configurer import parameters_processing
+from .. import parameters_processing
 
 
 class SourceWidget(QWidget):

@@ -1,7 +1,7 @@
 import time
 from queue import Queue
 from threading import Thread
-from core.base_class import EvilEyeBase
+from ..core.base_class import EvilEyeBase
 from psycopg2 import sql
 import datetime
 

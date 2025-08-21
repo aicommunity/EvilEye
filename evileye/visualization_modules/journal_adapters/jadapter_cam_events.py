@@ -1,4 +1,4 @@
-import core
+from ...core.base_class import EvilEyeBase
 
 try:
     from PyQt6.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
@@ -8,7 +8,7 @@ except ImportError:
     pyqt_version = 5
 
 from abc import abstractmethod, ABC
-from visualization_modules.journal_adapters.jadapter_base import JournalAdapterBase
+from .jadapter_base import JournalAdapterBase
 
 
 class JournalAdapterCamEvents(JournalAdapterBase):

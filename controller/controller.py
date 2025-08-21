@@ -1,28 +1,28 @@
 import threading
-import capture
-from object_detector import object_detection_yolo
-from object_tracker import object_tracking_botsort
-from object_tracker.trackers.onnx_encoder import OnnxEncoder
-from objects_handler import objects_handler
+from evileye.capture import video_capture
+from evileye.object_detector import object_detection_yolo
+from evileye.object_tracker import object_tracking_botsort
+from evileye.object_tracker.trackers.onnx_encoder import OnnxEncoder
+from evileye.objects_handler import objects_handler
 import time
 from timeit import default_timer as timer
-from visualization_modules.visualizer import Visualizer
-from database_controller.db_adapter_objects import DatabaseAdapterObjects
-from database_controller.db_adapter_cam_events import DatabaseAdapterCamEvents
-from database_controller.db_adapter_fov_events import DatabaseAdapterFieldOfViewEvents
-from database_controller.db_adapter_zone_events import DatabaseAdapterZoneEvents
-from events_control.events_processor import EventsProcessor
-from database_controller.database_controller_pg import DatabaseControllerPg
-from events_control.events_controller import EventsDetectorsController
-from events_detectors.cam_events_detector import CamEventsDetector
-from events_detectors.fov_events_detector import FieldOfViewEventsDetector
-from events_detectors.zone_events_detector import ZoneEventsDetector
+from evileye.visualization_modules.visualizer import Visualizer
+from evileye.database_controller.db_adapter_objects import DatabaseAdapterObjects
+from evileye.database_controller.db_adapter_cam_events import DatabaseAdapterCamEvents
+from evileye.database_controller.db_adapter_fov_events import DatabaseAdapterFieldOfViewEvents
+from evileye.database_controller.db_adapter_zone_events import DatabaseAdapterZoneEvents
+from evileye.events_control.events_processor import EventsProcessor
+from evileye.database_controller.database_controller_pg import DatabaseControllerPg
+from evileye.events_control.events_controller import EventsDetectorsController
+from evileye.events_detectors.cam_events_detector import CamEventsDetector
+from evileye.events_detectors.fov_events_detector import FieldOfViewEventsDetector
+from evileye.events_detectors.zone_events_detector import ZoneEventsDetector
 import json
 import datetime
 import pprint
 import copy
-from core import ProcessorSource, ProcessorStep, ProcessorFrame
-from pipelines import PipelineSurveillance
+from evileye.core import ProcessorSource, ProcessorStep, ProcessorFrame
+from evileye.pipelines import PipelineSurveillance
 
 
 try:

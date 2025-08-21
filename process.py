@@ -13,7 +13,7 @@ except ImportError:
     pyqt_version = 5
 
 from controller import controller
-from visualization_modules.main_window import MainWindow
+from evileye.visualization_modules.main_window import MainWindow
 
 file_path = 'samples/vehicle_perpocessing.json'
 
@@ -36,14 +36,15 @@ def create_args_parser():
     return result
 
 
-if __name__ == "__main__":
+def main():
+    """Main entry point for the EvilEye process application"""
     args = create_args_parser()
 
     print(f"Launch system with CLI arguments: {args}")
 
     if args.config is None and args.video is None:
         print("Video file doesn't set")
-        exit(1)
+        sys.exit(1)
 
     use_default_config = True
     video_file = None
@@ -54,10 +55,10 @@ if __name__ == "__main__":
     else:
         if args.sources_preset is not None:
             print(f"Sources presets doesn't supports now")
-            config_file_name = 'samples/video_file.json'
+            config_file_name = 'configs/video_file.json'
             print(f"Using default configuration from {config_file_name}")
         else:
-            config_file_name = 'samples/video_file.json'
+            config_file_name = 'configs/video_file.json'
             print(f"Using default configuration from {config_file_name}")
 
     with open(config_file_name) as config_file:
@@ -98,3 +99,7 @@ if __name__ == "__main__":
 
     ret = app.exec()
     sys.exit(ret)
+
+
+if __name__ == "__main__":
+    main()

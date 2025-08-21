@@ -3,7 +3,7 @@ from queue import Queue
 from timeit import default_timer as timer
 import time
 import copy
-from core.base_class import EvilEyeBase
+from ..core.base_class import EvilEyeBase
 
 
 class EventsDetectorsController(EvilEyeBase):

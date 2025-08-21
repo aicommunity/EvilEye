@@ -101,6 +101,8 @@ Repository = "https://github.com/evileye/evileye.git"
 [project.scripts]
 evileye = "evileye.cli:main"
 evileye-gui = "evileye.gui:main"
+evileye-process = "process:main"
+evileye-main = "evileye.gui:launch_main_app"
 
 [tool.setuptools.packages.find]
 where = ["."]

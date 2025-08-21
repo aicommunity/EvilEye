@@ -33,12 +33,12 @@ import sys
 import cv2
 import os
 from pathlib import Path
-import utils
-import utils.utils
-from visualization_modules.video_thread import VideoThread
-from visualization_modules.db_journal import DatabaseJournalWindow
-from visualization_modules.zone_window import ZoneWindow
-from visualization_modules.configurer.configurer_tabs.src_widget import SourceWidget
+from ..utils import utils
+from ..utils import utils as utils_utils
+from .video_thread import VideoThread
+from .db_journal import DatabaseJournalWindow
+from .zone_window import ZoneWindow
+from .configurer.configurer_tabs.src_widget import SourceWidget
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 
@@ -189,14 +189,14 @@ class MainWindow(QMainWindow):
 
     def _create_actions(self):  # Создание кнопок-действий
         self.db_journal = QAction('&DB journal', self)
-        icon_path = os.path.join(utils.utils.get_project_root(), 'icons', 'journal.svg')
+        icon_path = os.path.join(utils_utils.get_project_root(), 'icons', 'journal.svg')
         self.db_journal.setIcon(QIcon(icon_path))
 
         self.add_zone = QAction('&Add zone', self)
-        icon_path = os.path.join(utils.utils.get_project_root(), 'icons', 'add_zone.svg')
+        icon_path = os.path.join(utils_utils.get_project_root(), 'icons', 'add_zone.svg')
         self.add_zone.setIcon(QIcon(icon_path))
         self.show_zones = QAction('&Display zones', self)
-        icon_path = os.path.join(utils.utils.get_project_root(), 'icons', 'display_zones.svg')
+        icon_path = os.path.join(utils_utils.get_project_root(), 'icons', 'display_zones.svg')
         self.show_zones.setIcon(QIcon(icon_path))
         self.show_zones.setCheckable(True)
 

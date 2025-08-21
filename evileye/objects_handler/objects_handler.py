@@ -3,18 +3,18 @@ import json
 import time
 import os
 import datetime
-import core
-from capture.video_capture_base import CaptureImage
-from utils import threading_events
-from utils.utils import ObjectResultEncoder
+from ..core.base_class import EvilEyeBase
+from ..capture.video_capture_base import CaptureImage
+from ..utils import threading_events
+from ..utils.utils import ObjectResultEncoder
 from queue import Queue
 from threading import Thread
 from threading import Condition, Lock
-from object_tracker.tracking_results import TrackingResult
-from object_tracker.tracking_results import TrackingResultList
+from ..object_tracker.tracking_results import TrackingResult
+from ..object_tracker.tracking_results import TrackingResultList
 from timeit import default_timer as timer
 from .object_result import ObjectResultHistory, ObjectResult, ObjectResultList
-from database_controller.db_adapter_objects import DatabaseAdapterObjects
+from ..database_controller.db_adapter_objects import DatabaseAdapterObjects
 from pympler import asizeof
 
 '''
@@ -29,7 +29,7 @@ from pympler import asizeof
 '''
 
 
-class ObjectsHandler(core.EvilEyeBase):
+class ObjectsHandler(EvilEyeBase):
     def __init__(self, db_controller, db_adapter):
         super().__init__()
         # Очередь для потокобезопасного приема данных от каждой камеры

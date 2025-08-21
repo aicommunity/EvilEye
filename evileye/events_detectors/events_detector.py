@@ -1,8 +1,8 @@
-from events_detectors.event import Event
+from .event import Event
 from threading import Thread
 from queue import Queue
 from abc import ABC, abstractmethod
-from core.base_class import EvilEyeBase
+from ..core.base_class import EvilEyeBase
 
 
 class EventsDetector(EvilEyeBase):

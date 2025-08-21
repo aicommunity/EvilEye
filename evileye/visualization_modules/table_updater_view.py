@@ -1,4 +1,4 @@
-from utils import threading_events
+from ..utils import threading_events
 
 try:
     from PyQt6.QtCore import QObject, pyqtSignal

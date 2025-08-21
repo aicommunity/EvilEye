@@ -1,4 +1,4 @@
-from events_detectors.event import Event
+from .event import Event
 
 
 class CameraEvent(Event):
