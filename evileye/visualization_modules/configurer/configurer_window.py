@@ -2,8 +2,8 @@ import copy
 import json
 import os.path
 import multiprocessing
-from visualization_modules.configurer.jobs_history_journal import JobsHistory
-from visualization_modules.configurer.db_connection_window import DatabaseConnectionWindow
+from .jobs_history_journal import JobsHistory
+from .db_connection_window import DatabaseConnectionWindow
 
 try:
     from PyQt6 import QtGui
@@ -31,9 +31,9 @@ except ImportError:
     pyqt_version = 5
 
 
-from utils import utils
-from visualization_modules.configurer.configurer_tabs import src_tab, detector_tab, handler_tab, visualizer_tab, database_tab, tracker_tab, events_tab
-import process
+from ...utils import utils
+from .configurer_tabs import src_tab, detector_tab, handler_tab, visualizer_tab, database_tab, tracker_tab, events_tab
+from ... import process
 
 
 class SaveWindow(QWidget):

@@ -21,9 +21,7 @@ from .pipelines import PipelineSurveillance
 from .core import Pipeline
 
 # Import controller for database functionality
-import sys
-sys.path.append(str(Path(__file__).parent.parent))
-from controller import controller
+from .controller import controller
 
 # Create CLI app
 app = typer.Typer(

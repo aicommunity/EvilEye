@@ -12,12 +12,13 @@ except ImportError:
     from PyQt5.QtWidgets import QApplication
     pyqt_version = 5
 
-from controller import controller
+# Add project root to path for imports when running as script
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from evileye.controller import controller
 from evileye.visualization_modules.main_window import MainWindow
 
 file_path = 'configs/vehicle_perpocessing.json'
-
-sys.path.append(str(Path(__file__).parent.parent.parent))
 
 def create_args_parser():
     pars = argparse.ArgumentParser()

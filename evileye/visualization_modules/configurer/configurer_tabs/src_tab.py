@@ -1,8 +1,8 @@
 import copy
 import json
 import os.path
-from visualization_modules.configurer.jobs_history_journal import JobsHistory
-from visualization_modules.configurer.db_connection_window import DatabaseConnectionWindow
+from ..jobs_history_journal import JobsHistory
+from ..db_connection_window import DatabaseConnectionWindow
 try:
     from PyQt6 import QtGui
     from PyQt6.QtWidgets import (
@@ -27,12 +27,12 @@ except ImportError:
     from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt
     from PyQt5.QtSql import QSqlQueryModel, QSqlQuery, QSqlDatabase
     pyqt_version = 5
-from capture.video_capture_base import CaptureDeviceType
-from capture import VideoCapture
-from visualization_modules.configurer import parameters_processing
-from visualization_modules.configurer.configurer_tabs.src_widget import SourceWidget
+from evileye.capture.video_capture_base import CaptureDeviceType
+from evileye.capture import VideoCapture
+from .. import parameters_processing
+from .src_widget import SourceWidget
 import sys
-from utils import utils
+from evileye.utils import utils
 
 
 class SourcesHistory(QWidget):

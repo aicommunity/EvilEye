@@ -18,6 +18,11 @@ from .object_detector import object_detection_yolo
 from .object_tracker import object_tracking_botsort
 from .object_multi_camera_tracker import ObjectMultiCameraTracking
 
+# Import main application modules
+# from . import process
+# from . import configure
+# from . import controller
+
 __all__ = [
     "Pipeline",
     "ProcessorBase", 
@@ -25,4 +30,7 @@ __all__ = [
     "ProcessorFrame",
     "ProcessorStep",
     "PipelineSurveillance",
+    # "process",
+    # "configure", 
+    # "controller",
 ]

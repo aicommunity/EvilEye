@@ -11,9 +11,10 @@ except ImportError:
     from PyQt5.QtWidgets import QApplication
     pyqt_version = 5
 
-import visualization_modules.configurer.configurer_window as config
+# Add project root to path for imports when running as script
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-sys.path.append(str(Path(__file__).parent.parent.parent))
+from evileye.visualization_modules.configurer import configurer_window as config
 
 def start_configurer(config_file_name):
     app = QApplication(sys.argv)

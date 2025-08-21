@@ -22,7 +22,7 @@ except ImportError:
     from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QModelIndex
     from PyQt5.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
     pyqt_version = 5
-import visualization_modules.configurer.parameters_processing
+from . import parameters_processing
 
 
 class DateTimeDelegate(QStyledItemDelegate):
