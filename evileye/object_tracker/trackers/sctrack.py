@@ -1,6 +1,7 @@
 import numpy as np
 from collections import deque
 from typing import List
+from ultralytics.trackers.bot_sort import BOTrack
 from .basetrack import TrackState
 from .byte_tracker import STrack
 
@@ -96,7 +97,7 @@ class SCTrack(STrack):
             if st.state != TrackState.Tracked:
                 multi_mean[i][6] = 0
                 multi_mean[i][7] = 0
-        multi_mean, multi_covariance = SCTrack.shared_kalman.multi_predict(multi_mean, multi_covariance)
+        multi_mean, multi_covariance = BOTrack.shared_kalman.multi_predict(multi_mean, multi_covariance)
         for i, (mean, cov) in enumerate(zip(multi_mean, multi_covariance)):
             stracks[i].mean = mean
             stracks[i].covariance = cov

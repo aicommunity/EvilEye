@@ -2,6 +2,7 @@ import numpy as np
 import datetime
 from typing import List
 from ultralytics.engine.results import Boxes
+from ultralytics.trackers.bot_sort import BOTrack
 from .object_tracking_base import ObjectTrackingBase
 from .trackers.bot_sort import BOTSORT
 from .trackers.track_encoder import TrackEncoder
@@ -57,7 +58,7 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
     def init_impl(self, **kwargs):
         encoders = kwargs.get('encoders', None)
         if encoders is not None:
-            onnx_path = self.params.get("tracker_onnx", "./osnet_ain_x1_0_M.onnx")
+            onnx_path = self.params.get("tracker_onnx", "models/osnet_ain_x1_0_M.onnx")
             if onnx_path in encoders:
                 encoder = encoders[onnx_path]
                 self.encoders = [encoder]
@@ -148,7 +149,7 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
             cam_id: int, 
             frame_id: int, 
             detection: DetectionResult, 
-            tracks: list):
+            tracks: list[BOTrack]):
         
         tracks_info = TrackingResultList()
         tracks_info.source_id = cam_id

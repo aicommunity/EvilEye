@@ -11,6 +11,7 @@ import scipy.spatial.distance as ssd
 from scipy.cluster.hierarchy import linkage, fcluster
 from sklearn.metrics.pairwise import cosine_similarity
 from ..object_tracker.trackers.basetrack import TrackState
+from ultralytics.trackers.bot_sort import BOTrack
 from ..object_tracker.trackers.track_encoder import TrackEncoder
 from ..object_tracker.trackers.cfg.utils import read_cfg
 from ..object_detector.object_detection_base import DetectionResult
@@ -73,7 +74,7 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
                     self.queue_out.put(track_info)
                 continue
 
-            sc_tracks: List[List[object]] = []
+            sc_tracks: List[List[BOTrack]] = []
             images = []
             track_infos = []
             for results in sc_track_results:
@@ -209,7 +210,7 @@ class MultiCameraTracker:
         
         return activated_global_tracks
         
-    def _find_overlaps(self, sct_tracks: List[List[object]]) -> List[List[bool]]:
+    def _find_overlaps(self, sct_tracks: List[List[BOTrack]]) -> List[List[bool]]:
         """Находит пересечения между треками на разных камерах."""
         overlaps = {} # cam_id -> track_id
         for cam_id, tracks in enumerate(sct_tracks):
@@ -223,7 +224,7 @@ class MultiCameraTracker:
             
         return overlaps
     
-    def _hierarchical_clustering(self, sct_tracks: List[List[object]]) -> List[MCTrack]:
+    def _hierarchical_clustering(self, sct_tracks: List[List[BOTrack]]) -> List[MCTrack]:
         # Извлеекаем признаки из треков
         features = [[] for encoder in self.encoders]
         tracks = []
@@ -443,7 +444,7 @@ class MultiCameraTracker:
         return distances
 
 
-def check_overlaps(tracks: List[object], overlap_threshold: float = 0.5) -> List[bool]:
+def check_overlaps(tracks: List[BOTrack], overlap_threshold: float = 0.5) -> List[bool]:
     boxes = [box(*track.xyxy) for track in tracks]
     results = []
 

@@ -109,7 +109,7 @@ class PipelineSurveillance(Pipeline):
         """Initialize encoders for tracking in surveillance pipeline"""
         self.encoders = {}
         for tracker_params in tracker_params_list:
-            path = tracker_params.get("tracker_onnx", "osnet_ain_x1_0_M.onnx")
+            path = tracker_params.get("tracker_onnx", "models/osnet_ain_x1_0_M.onnx")
             if path not in self.encoders:
                 # Lazy import to avoid circular imports during module load time
                 try:

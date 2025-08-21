@@ -2,15 +2,16 @@ from typing import Dict, List
 import numpy as np
 from collections import deque
 from ..object_tracker.trackers.basetrack import TrackState
+from ultralytics.trackers.bot_sort import BOTrack
 
 
 class MCTrack:
     _count = 0
-    sc_tracks: Dict[int, object]
+    sc_tracks: Dict[int, BOTrack]
     
     def __init__(
             self, 
-            sc_tracks: Dict[int, object],
+            sc_tracks: Dict[int, BOTrack],
             confident_age: int = 5,
             maxlen: int = 50):
         
