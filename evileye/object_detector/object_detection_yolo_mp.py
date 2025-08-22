@@ -9,7 +9,7 @@ class ObjectDetectorYoloMp(ObjectDetectorBase):
 
     def __init__(self):
         super().__init__()
-        self.model_name = None
+        self.model_name = "models/yolo11n.pt"
 
     def init_impl(self):
         super().init_impl()

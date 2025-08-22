@@ -31,7 +31,7 @@ class VideoCaptureBase(EvilEyeBase):
         self.source_fps = None
         self.desired_fps = None
         self.split_stream = False
-        self.num_split = None
+        self.num_split = 0
         self.src_coords = None
         self.source_ids = None
         self.source_names = None

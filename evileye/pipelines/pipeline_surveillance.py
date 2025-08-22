@@ -134,17 +134,24 @@ class PipelineSurveillance(Pipeline):
                     "camera": "rtsp://url",
                     "width": 1920,
                     "height": 1080,
-                    "fps": 30
+                    "fps": 30,
+                    "source_ids": [i],
+                    "source_names": [f"Cam{i}"]
                 }
-            ] * num_sources,
+                for i in range(num_sources)
+            ],
             "detectors": [
                 {
+                    "source_ids": [i]
                 }
-            ] * num_sources,
+                for i in range(num_sources)
+            ],
             "trackers": [
                 {
+                    "source_ids": [i]
                 }
-            ] * num_sources,    
+                for i in range(num_sources)
+            ],    
             "mc_trackers": [
                 {
                     "source_ids": list(range(num_sources)),
