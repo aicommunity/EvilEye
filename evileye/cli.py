@@ -11,17 +11,11 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-import click
 import typer
 from rich.console import Console
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
-from .pipelines import PipelineSurveillance
-from .core import Pipeline
-
-# Import controller for database functionality
-from .controller import controller
 
 # Create CLI app
 app = typer.Typer(
@@ -54,7 +48,7 @@ def run(
         autoclose: Optional[bool] = typer.Option(True, "--autoclose", help="Automatic close application when video ends"),
 ) -> None:
     """
-    Launch EvilEye without interface.
+    Launch EvilEye 
 
     Example:
         evileye run configs/test_sources_detectors_trackers_mc.json
@@ -160,80 +154,6 @@ def list_configs() -> None:
         )
     
     console.print(table)
-
-
-@app.command()
-def run_with_db(
-    config: Path = typer.Argument(
-        ...,
-        help="Path to configuration JSON file",
-        exists=True,
-        file_okay=True,
-        dir_okay=False,
-    ),
-    verbose: bool = typer.Option(
-        False, "--verbose", "-v", help="Enable verbose logging"
-    ),
-    dry_run: bool = typer.Option(
-        False, "--dry-run", help="Validate configuration without running"
-    ),
-) -> None:
-    """
-    Run EvilEye surveillance system with database support using simplified controller.
-    
-    Example:
-        evileye run-with-db configs/single_cam.json
-    """
-    from .cli_controller_simple import run_simple_controller
-    run_simple_controller(config, verbose, dry_run)
-
-
-@app.command()
-def gui(
-    config: Optional[Path] = typer.Argument(None, help="Configuration file path"),
-    video: Optional[str] = typer.Option(None, "--video", help="Video file to process"),
-) -> None:
-    """
-    Launch EvilEye with GUI interface.
-    
-    Example:
-        evileye gui configs/test_sources_detectors_trackers_mc.json
-        evileye gui --video /path/to/video.mp4
-    """
-    import subprocess
-    import os
-    
-    # Build command arguments
-    cmd = [sys.executable, "process.py", "--gui"]
-    
-    if config:
-        if not config.exists():
-            console.print(f"[red]Configuration file not found: {config}[/red]")
-            raise typer.Exit(1)
-        cmd.extend(["--config", str(config)])
-    elif video:
-        cmd.extend(["--video", video])
-    else:
-        # Use default config
-        default_config = Path("configs/test_sources_detectors_trackers_mc.json")
-        if default_config.exists():
-            cmd.extend(["--config", str(default_config)])
-        else:
-            console.print("[red]No configuration file specified and default not found[/red]")
-            console.print("Please specify a config file: [yellow]evileye gui <config_file>[/yellow]")
-            raise typer.Exit(1)
-    
-    try:
-        console.print(f"[green]Launching GUI with command:[/green] {' '.join(cmd)}")
-        # Change to project root directory before running
-        os.chdir(Path(__file__).parent.parent)
-        subprocess.run(cmd, check=True)
-    except subprocess.CalledProcessError as e:
-        console.print(f"[red]Error launching GUI: {e}[/red]")
-        raise typer.Exit(1)
-    except KeyboardInterrupt:
-        console.print("[yellow]GUI interrupted by user[/yellow]")
-        raise typer.Exit(0)
 
 
 @app.command()

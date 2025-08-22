@@ -101,9 +101,6 @@ evileye = "evileye.cli_wrapper:main"
 evileye-gui = "evileye.gui_wrapper:main"
 evileye-process = "evileye.process_wrapper:main"
 evileye-configure = "evileye.configure_wrapper:start_configurer"
-evileye-main = "evileye.gui:launch_main_app"
-evileye-post-install = "setup_hooks:post_install"
-evileye-auto-fix = "install:auto_fix_entry_points"
 
 [tool.setuptools.packages.find]
 where = ["."]
