@@ -101,6 +101,7 @@ evileye = "evileye.cli_wrapper:main"
 evileye-gui = "evileye.gui_wrapper:main"
 evileye-process = "evileye.process_wrapper:main"
 evileye-configure = "evileye.configure_wrapper:start_configurer"
+evileye-create = "evileye.create_wrapper:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

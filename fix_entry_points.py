@@ -34,7 +34,7 @@ if project_root.exists():
 
 # Try to import and run the wrapper directly
 try:
-    from evileye.{wrapper_script} import main
+    from evileye.{wrapper_script.replace('.py', '')} import main
     sys.exit(main())
 except ImportError:
     # If import fails, try to execute wrapper script directly
@@ -67,7 +67,8 @@ def fix_entry_points():
         "evileye": "cli_wrapper.py",
         "evileye-process": "process_wrapper.py", 
         "evileye-configure": "configure_wrapper.py",
-        "evileye-gui": "gui_wrapper.py"
+        "evileye-gui": "gui_wrapper.py",
+        "evileye-create": "create_wrapper.py"
     }
     
     success_count = 0
