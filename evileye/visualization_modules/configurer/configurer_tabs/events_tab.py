@@ -13,8 +13,8 @@ except ImportError:
     )
     from PyQt5.QtCore import pyqtSlot, Qt
     pyqt_version = 5
-from utils import utils
-from visualization_modules.configurer import parameters_processing
+from evileye.utils import utils
+from evileye.visualization_modules.configurer import parameters_processing
 
 
 class EventsTab(QWidget):

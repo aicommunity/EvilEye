@@ -23,12 +23,12 @@ except ImportError:
     from PyQt5.QtGui import QAction
     from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt
     pyqt_version = 5
-from utils import utils
+from evileye.utils import utils
 import sys
-from capture.video_capture_base import CaptureDeviceType
-from capture import VideoCapture
-from visualization_modules.configurer import parameters_processing
-from visualization_modules.configurer.configurer_tabs.tracker_widget import TrackerWidget
+from evileye.capture.video_capture_base import CaptureDeviceType
+from evileye.capture import VideoCapture
+from evileye.visualization_modules.configurer import parameters_processing
+from evileye.visualization_modules.configurer.configurer_tabs.tracker_widget import TrackerWidget
 
 
 class TrackerTab(QWidget):

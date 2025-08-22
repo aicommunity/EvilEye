@@ -48,92 +48,55 @@ def setup_logging(verbose: bool = False) -> None:
 
 @app.command()
 def run(
-    config: Path = typer.Argument(
-        ...,
-        help="Path to configuration JSON file",
-        exists=True,
-        file_okay=True,
-        dir_okay=False,
-    ),
-    verbose: bool = typer.Option(
-        False, "--verbose", "-v", help="Enable verbose logging"
-    ),
-    dry_run: bool = typer.Option(
-        False, "--dry-run", help="Validate configuration without running"
-    ),
+        config: Optional[Path] = typer.Argument(None, help="Configuration file path"),
+        video: Optional[str] = typer.Option(None, "--video", help="Video file to process"),
+        gui: Optional[bool] = typer.Option(True, "--gui", help="Launch with gui interface"),
+        autoclose: Optional[bool] = typer.Option(True, "--autoclose", help="Automatic close application when video ends"),
 ) -> None:
     """
-    Run EvilEye surveillance system with the specified configuration.
-    
+    Launch EvilEye without interface.
+
     Example:
-        evileye run configs/single_cam.json
+        evileye run configs/test_sources_detectors_trackers_mc.json
+        evileye run --video /path/to/video.mp4
     """
-    setup_logging(verbose)
-    
+    import subprocess
+    import os
+
+    # Build command arguments
+    cmd = [sys.executable, "process.py", "--gui"]
+
+    if config:
+        if not config.exists():
+            console.print(f"[red]Configuration file not found: {config}[/red]")
+            raise typer.Exit(1)
+        cmd.extend(["--config", str(config)])
+    elif video:
+        cmd.extend(["--video", video])
+    else:
+        # Use default config
+        default_config = Path("configs/test_sources_detectors_trackers_mc.json")
+        if default_config.exists():
+            cmd.extend(["--config", str(default_config)])
+        else:
+            console.print("[red]No configuration file specified and default not found[/red]")
+            console.print("Please specify a config file: [yellow]evileye gui <config_file>[/yellow]")
+            raise typer.Exit(1)
+
+    cmd.extend(["--gui", gui])
+    cmd.extend(["--autoclose", autoclose])
+
     try:
-        # Load configuration
-        with open(config, 'r') as f:
-            pipeline_config = json.load(f)
-        
-        console.print(f"[green]Loaded configuration from {config}[/green]")
-        
-        if dry_run:
-            console.print("[yellow]Dry run mode - validating configuration...[/yellow]")
-            # Validate configuration
-            validate_config(pipeline_config)
-            console.print("[green]Configuration is valid![/green]")
-            return
-        
-        # Create and initialize controller (same as process.py but without GUI)
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            console=console,
-        ) as progress:
-            task = progress.add_task("Initializing controller...", total=None)
-            
-            controller_instance = controller.Controller()
-            
-            try:
-                # Disable GUI for CLI mode
-                if 'visualizer' in pipeline_config:
-                    pipeline_config['visualizer']['gui_enabled'] = False
-                if 'controller' not in pipeline_config:
-                    pipeline_config['controller'] = {}
-                pipeline_config['controller']['show_main_gui'] = False
-                pipeline_config['controller']['show_journal'] = False
-                
-                controller_instance.init(pipeline_config)
-                progress.update(task, description="Controller initialized successfully")
-            except Exception as e:
-                console.print(f"[red]Controller initialization error: {e}[/red]")
-                if verbose:
-                    console.print_exception()
-                raise typer.Exit(1)
-        
-        console.print("[green]Starting surveillance system...[/green]")
-        
-        # Start controller
-        controller_instance.start()
-        
-        try:
-            # Wait for controller to finish
-            while controller_instance.is_running():
-                import time
-                time.sleep(0.1)
-                
-        except KeyboardInterrupt:
-            console.print("\n[yellow]Stopping surveillance system...[/yellow]")
-        finally:
-            controller_instance.stop()
-            controller_instance.release()
-            console.print("[green]Surveillance system stopped[/green]")
-            
-    except Exception as e:
-        console.print(f"[red]Error: {e}[/red]")
-        if verbose:
-            console.print_exception()
+        console.print(f"[green]Launching with command:[/green] {' '.join(cmd)}")
+        # Change to project root directory before running
+        os.chdir(Path(__file__).parent.parent)
+        subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError as e:
+        console.print(f"[red]Error launching: {e}[/red]")
         raise typer.Exit(1)
+    except KeyboardInterrupt:
+        console.print("[yellow]Launch interrupted by user[/yellow]")
+        raise typer.Exit(0)
 
 
 @app.command()

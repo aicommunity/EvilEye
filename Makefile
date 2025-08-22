@@ -1,137 +1,105 @@
 # EvilEye Makefile
 # Provides convenient commands for development and project management
 
-.PHONY: help install install-dev install-gui install-gpu install-full clean test test-cov lint format type-check docs build dist publish
+.PHONY: install install-dev uninstall clean test lint format docs fix-entry-points
 
 # Default target
-help:
-	@echo "EvilEye - Intelligence Video Surveillance System"
-	@echo ""
-	@echo "Available commands:"
-	@echo "  install      - Install the package in development mode"
-	@echo "  install-dev  - Install with development dependencies"
-	@echo "  install-gui  - Install with GUI dependencies"
-	@echo "  install-gpu  - Install with GPU support"
-	@echo "  install-full - Install with all dependencies"
-	@echo "  clean        - Clean build artifacts"
-	@echo "  test         - Run tests"
-	@echo "  test-cov     - Run tests with coverage"
-	@echo "  lint         - Run linting checks"
-	@echo "  format       - Format code with black and isort"
-	@echo "  type-check   - Run type checking with mypy"
-	@echo "  docs         - Build documentation"
-	@echo "  build        - Build package"
-	@echo "  dist         - Create distribution"
-	@echo "  publish      - Publish to PyPI"
+all: install
 
-# Installation targets
+# Install package in development mode
 install:
+	@echo "Installing EvilEye package..."
 	pip install -e .
+	@echo "Fixing entry points..."
+	./fix_entry_points.sh
+	@echo "✅ Installation complete!"
 
+# Install with development dependencies
 install-dev:
+	@echo "Installing EvilEye package with development dependencies..."
 	pip install -e ".[dev]"
+	@echo "Fixing entry points..."
+	./fix_entry_points.sh
+	@echo "✅ Development installation complete!"
 
-install-gui:
-	pip install -e ".[gui]"
-
-install-gpu:
-	pip install -e ".[gpu]"
-
+# Install with all dependencies
 install-full:
+	@echo "Installing EvilEye package with all dependencies..."
 	pip install -e ".[full]"
+	@echo "Fixing entry points..."
+	./fix_entry_points.sh
+	@echo "✅ Full installation complete!"
 
-# Development targets
+# Uninstall package
+uninstall:
+	@echo "Uninstalling EvilEye package..."
+	pip uninstall evileye -y
+	@echo "✅ Uninstallation complete!"
+
+# Clean build artifacts
 clean:
+	@echo "Cleaning build artifacts..."
 	rm -rf build/
 	rm -rf dist/
 	rm -rf *.egg-info/
+	rm -rf __pycache__/
 	rm -rf .pytest_cache/
 	rm -rf .coverage
 	rm -rf htmlcov/
-	rm -rf .mypy_cache/
-	find . -type d -name __pycache__ -exec rm -rf {} +
+	find . -type d -name "__pycache__" -exec rm -rf {} +
 	find . -type f -name "*.pyc" -delete
+	@echo "✅ Clean complete!"
 
+# Run tests
 test:
+	@echo "Running tests..."
 	pytest tests/ -v
 
-test-cov:
-	pytest tests/ --cov=evileye --cov-report=html --cov-report=term-missing
-
+# Run linting
 lint:
+	@echo "Running linting..."
 	flake8 evileye/ tests/
-	bandit -r evileye/
+	mypy evileye/
 
+# Format code
 format:
+	@echo "Formatting code..."
 	black evileye/ tests/
 	isort evileye/ tests/
 
-type-check:
-	mypy evileye/
-
-# Documentation targets
+# Build documentation
 docs:
+	@echo "Building documentation..."
 	cd docs && make html
 
-# Build targets
-build:
-	python -m build
+# Fix entry points manually
+fix-entry-points:
+	@echo "Fixing entry points..."
+	./fix_entry_points.sh
 
-dist: build
-	@echo "Distribution created in dist/"
+# Reinstall (uninstall + install)
+reinstall: uninstall install
 
-publish: dist
-	twine upload dist/*
+# Reinstall with development dependencies
+reinstall-dev: uninstall install-dev
 
-# Development workflow
-dev-setup: install-dev
-	pre-commit install
+# Reinstall with all dependencies
+reinstall-full: uninstall install-full
 
-# Quick development commands
-run:
-	python -m evileye.cli run configs/single_cam.json
-
-run-gui:
-	python -m evileye.gui
-
-validate:
-	python -m evileye.cli validate configs/single_cam.json
-
-list-configs:
-	python -m evileye.cli list-configs
-
-info:
-	python -m evileye.cli info
-
-# Docker targets (if needed)
-docker-build:
-	docker build -t evileye .
-
-docker-run:
-	docker run -it --rm evileye
-
-# Environment setup
-venv:
-	python -m venv .venv
-	@echo "Virtual environment created. Activate with:"
-	@echo "  source .venv/bin/activate  # Linux/Mac"
-	@echo "  .venv\\Scripts\\activate     # Windows"
-
-# Security checks
-security:
-	safety check
-	bandit -r evileye/
-
-# Performance profiling
-profile:
-	python -m cProfile -o profile.stats -m evileye.cli run configs/single_cam.json
-
-# Code quality
-quality: format lint type-check test
-
-# Full development cycle
-dev-cycle: clean install-dev quality test-cov
-
-# Release preparation
-release-prep: clean quality test-cov docs build
-	@echo "Release preparation complete. Check dist/ for packages."
+# Show help
+help:
+	@echo "Available targets:"
+	@echo "  install          - Install package in development mode"
+	@echo "  install-dev      - Install with development dependencies"
+	@echo "  install-full     - Install with all dependencies"
+	@echo "  uninstall        - Uninstall package"
+	@echo "  clean            - Clean build artifacts"
+	@echo "  test             - Run tests"
+	@echo "  lint             - Run linting"
+	@echo "  format           - Format code"
+	@echo "  docs             - Build documentation"
+	@echo "  fix-entry-points - Fix entry points manually"
+	@echo "  reinstall        - Uninstall and install"
+	@echo "  reinstall-dev    - Uninstall and install with dev deps"
+	@echo "  reinstall-full   - Uninstall and install with all deps"
+	@echo "  help             - Show this help"
