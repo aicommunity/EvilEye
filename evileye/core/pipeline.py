@@ -67,6 +67,7 @@ class Pipeline(EvilEyeBase):
         params = {}
         
         # Get parameters from each processor type
+        params["pipeline_class"] = self.__class__.__name__
         for processor in self.processors:
             if processor is not None:
                 section_name = processor.get_name()

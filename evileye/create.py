@@ -29,6 +29,7 @@ Examples:
   evileye-create --sources 2                  # Create config with 2 sources
   evileye-create --pipeline PipelineSurveillance  # Use specific pipeline
   evileye-create --source-type video_file     # Set source type for all sources
+  evileye-create --list-pipelines             # List available pipeline classes
         """
     )
     
@@ -73,7 +74,35 @@ Examples:
         help="Overwrite existing configuration file"
     )
     
+    parser.add_argument(
+        '--list-pipelines',
+        action='store_true',
+        help="List available pipeline classes"
+    )
+    
     return parser
+
+
+def list_pipeline_classes():
+    """List available pipeline classes"""
+    try:
+        controller_instance = controller.Controller()
+        pipeline_classes = controller_instance.get_available_pipeline_classes()
+        
+        if not pipeline_classes:
+            print("No pipeline classes found.")
+            return
+        
+        print("Available pipeline classes:")
+        print("=" * 40)
+        for i, class_name in enumerate(pipeline_classes, 1):
+            print(f"{i}. {class_name}")
+        
+        print(f"\nTotal: {len(pipeline_classes)} pipeline class(es)")
+        print("\nUse --pipeline <class_name> to specify a pipeline when creating a configuration.")
+        
+    except Exception as e:
+        print(f"Error listing pipeline classes: {e}")
 
 
 def create_config_file(config_name, sources=0, pipeline_class='PipelineSurveillance', 
@@ -131,12 +160,15 @@ def create_config_file(config_name, sources=0, pipeline_class='PipelineSurveilla
                 # Add source-specific configuration based on type
                 if source_type == 'video_file':
                     source_config['camera'] = f'video_{i+1}.mp4'
+                    source_config['source'] = 'VideoFile'
                 elif source_type == 'ip_camera':
                     source_config['camera'] = f'rtsp://camera_{i+1}/stream'
+                    source_config['source'] = 'IpCamera'
                     source_config['username'] = 'admin'
                     source_config['password'] = 'password'
                 elif source_type == 'device':
                     source_config['camera'] = str(i)  # Device index
+                    source_config['source'] = 'Device'
                 
                 config_data['pipeline']['sources'].append(source_config)
         
@@ -159,6 +191,11 @@ def main():
     """Main entry point for the configuration creator"""
     parser = create_args_parser()
     args = parser.parse_args()
+    
+    # Handle list pipelines
+    if args.list_pipelines:
+        list_pipeline_classes()
+        return 0
     
     # Validate arguments
     if args.config_name is None:

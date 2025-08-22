@@ -1,5 +1,8 @@
 import threading
 import os
+import importlib
+import inspect
+from pathlib import Path
 from evileye.capture import video_capture
 from evileye.object_detector import object_detection_yolo
 from evileye.object_tracker import object_tracking_botsort
@@ -311,8 +314,21 @@ class Controller:
             pass
 
         # Initialize processing pipeline (sources, preprocessors, detectors, trackers)
-        self.pipeline = PipelineSurveillance()
         pipeline_params = self.params.get("pipeline", {})
+        pipeline_class_name = pipeline_params.get("pipeline_class")
+        
+        if pipeline_class_name:
+            try:
+                self.pipeline = self._create_pipeline_instance(pipeline_class_name)
+                print(f"Using pipeline class: {pipeline_class_name}")
+            except Exception as e:
+                print(f"Warning: Could not create pipeline '{pipeline_class_name}': {e}")
+                print("Falling back to default PipelineSurveillance")
+                self.pipeline = PipelineSurveillance()
+        else:
+            print("Warning: No pipeline_class specified in pipeline parameters, using default PipelineSurveillance")
+            self.pipeline = PipelineSurveillance()
+        
         self.pipeline.set_credentials(self.credentials)
         self.pipeline.set_params(**pipeline_params)
         self.pipeline.init()
@@ -624,11 +640,86 @@ class Controller:
         self.debug_info["controller"]["timestamp"] = datetime.datetime.now()
         self.debug_info["controller"]["total_memory_usage_mb"] = total_memory_usage/(1024.0*1024.0)
 
+    def _discover_pipeline_classes(self):
+        """Discover all pipeline classes from packages and current directory"""
+        pipeline_classes = {}
+        
+        # Search in evileye.pipelines package
+        try:
+            pipelines_module = importlib.import_module('evileye.pipelines')
+            for name, obj in inspect.getmembers(pipelines_module):
+                if (inspect.isclass(obj) and 
+                    hasattr(obj, '__bases__') and 
+                    any('Pipeline' in base.__name__ for base in obj.__bases__)):
+                    pipeline_classes[name] = obj
+        except ImportError as e:
+            print(f"Warning: Could not import evileye.pipelines: {e}")
+        
+        # Search in current working directory pipelines folder
+        current_dir = Path.cwd()
+        pipelines_dir = current_dir / "pipelines"
+        if pipelines_dir.exists() and pipelines_dir.is_dir():
+            try:
+                # Add current directory to Python path
+                import sys
+                sys.path.insert(0, str(current_dir))
+                
+                # Try to import pipelines module from current directory
+                pipelines_module = importlib.import_module('pipelines')
+                for name, obj in inspect.getmembers(pipelines_module):
+                    if (inspect.isclass(obj) and 
+                        hasattr(obj, '__bases__') and 
+                        any('Pipeline' in base.__name__ for base in obj.__bases__)):
+                        pipeline_classes[name] = obj
+                
+                # Remove from path
+                sys.path.pop(0)
+            except ImportError as e:
+                print(f"Warning: Could not import local pipelines: {e}")
+        
+        return pipeline_classes
+    
+    def _create_pipeline_instance(self, pipeline_class_name: str):
+        """Create pipeline instance by class name"""
+        pipeline_classes = self._discover_pipeline_classes()
+        
+        if pipeline_class_name not in pipeline_classes:
+            available_classes = list(pipeline_classes.keys())
+            raise ValueError(f"Pipeline class '{pipeline_class_name}' not found. Available classes: {available_classes}")
+        
+        pipeline_class = pipeline_classes[pipeline_class_name]
+        return pipeline_class()
+    
+    def get_available_pipeline_classes(self):
+        """Get list of available pipeline classes"""
+        return list(self._discover_pipeline_classes().keys())
+    
     def create_config(self, num_sources: int, pipeline_class: str | None):
+        """Create configuration with specified pipeline class"""
         self.init({})
+        
+        # Create pipeline instance if class name is provided
+        if pipeline_class:
+            try:
+                self.pipeline = self._create_pipeline_instance(pipeline_class)
+                print(f"Created pipeline instance: {pipeline_class}")
+            except Exception as e:
+                print(f"Warning: Could not create pipeline '{pipeline_class}': {e}")
+                print("Falling back to default pipeline")
+                self.pipeline = PipelineSurveillance()
+        else:
+            # Use default pipeline
+            self.pipeline = PipelineSurveillance()
+
+        if self.pipeline:
+            self.pipeline.init()
+
         config_data = {}
         self.update_params()
+        
+        # Get parameters safely, avoiding non-serializable objects
         config_data = self.get_params()
+
         config_data['visualizer'] = {}
         if num_sources and num_sources > 0:
             num_width = math.ceil(math.sqrt(num_sources))
