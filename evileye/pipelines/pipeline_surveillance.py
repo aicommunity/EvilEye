@@ -136,7 +136,7 @@ class PipelineSurveillance(Pipeline):
                     "height": 1080,
                     "fps": 30,
                     "source_ids": [i],
-                    "source_names": [f"Cam{i}"]
+                    "source_names": [f"Cam{i+1}"]
                 }
                 for i in range(num_sources)
             ],
