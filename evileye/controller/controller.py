@@ -1,4 +1,5 @@
 import threading
+import os
 from evileye.capture import video_capture
 from evileye.object_detector import object_detection_yolo
 from evileye.object_tracker import object_tracking_botsort
@@ -21,6 +22,7 @@ import json
 import datetime
 import pprint
 import copy
+import math
 from evileye.core import ProcessorSource, ProcessorStep, ProcessorFrame
 from evileye.pipelines import PipelineSurveillance
 
@@ -330,7 +332,7 @@ class Controller:
             database_creds = dict()
 
         try:
-            with open("database_config.json") as data_config_file:
+            with open(os.path.join(os.path.dirname(__file__), "..", "database_config.json")) as data_config_file:
                 self.database_config = json.load(data_config_file)
         except FileNotFoundError as ex:
             pass
@@ -628,11 +630,23 @@ class Controller:
         self.update_params()
         config_data = self.get_params()
         config_data['visualizer'] = {}
-        config_data['visualizer']['num_width'] = 1
-        config_data['visualizer']['num_height'] = 1
+        if num_sources and num_sources > 0:
+            num_width = math.ceil(math.sqrt(num_sources))
+            num_height = math.ceil(num_sources / num_width)
+
+            config_data['visualizer']['num_width'] = num_width
+            config_data['visualizer']['num_height'] = num_height
+        else:
+            config_data['visualizer']['num_width'] = 1
+            config_data['visualizer']['num_height'] = 1
+
         config_data['visualizer']['visual_buffer_num_frames'] = 10
-        config_data['visualizer']['source_ids'] = []
-        config_data['visualizer']['fps'] = []
+        if num_sources and num_sources > 0:
+            config_data['visualizer']['source_ids'] = list(range(num_sources))
+            config_data['visualizer']['fps'] = [5]*num_sources
+        else:
+            config_data['visualizer']['source_ids'] = []
+            config_data['visualizer']['fps'] = []
         config_data['visualizer']['gui_enabled'] = False
         config_data['visualizer']['show_debug_info'] = True
         config_data['visualizer']['objects_journal_enabled'] = True

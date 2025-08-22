@@ -78,7 +78,7 @@ class ConfigurerMainWindow(QMainWindow):
         with open(full_path, 'r+') as params_file:
             config_params = json.load(params_file)
 
-        with open("database_config.json", 'r+') as database_config_file:
+        with open(os.path.join(utils.get_project_root(), "evileye", "database_config.json"), 'r+') as database_config_file:
             database_params = json.load(database_config_file)
 
         try:
@@ -92,7 +92,7 @@ class ConfigurerMainWindow(QMainWindow):
             database_creds = dict()
 
         try:
-            with open("database_config.json") as data_config_file:
+            with open(os.path.join(utils.get_project_root(), "evileye", "database_config.json")) as data_config_file:
                 self.database_config = json.load(data_config_file)
         except FileNotFoundError as ex:
             self.database_config = dict()

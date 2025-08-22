@@ -157,6 +157,55 @@ def list_configs() -> None:
 
 
 @app.command()
+def deploy() -> None:
+    """
+    Deploy EvilEye configuration files to current directory.
+    
+    This command:
+    1. Copies credentials_proto.json to credentials.json (if credentials.json doesn't exist)
+    2. Creates configs folder if it doesn't exist
+    """
+    import shutil
+    
+    current_dir = Path.cwd()
+    console.print(f"[blue]Deploying EvilEye files to: {current_dir}[/blue]")
+    
+    # Step 1: Copy credentials_proto.json to credentials.json
+    credentials_proto = Path(__file__).parent / "credentials_proto.json"
+    credentials_target = current_dir / "credentials.json"
+    
+    if credentials_target.exists():
+        console.print("[yellow]credentials.json already exists, skipping...[/yellow]")
+    else:
+        if credentials_proto.exists():
+            try:
+                shutil.copy2(credentials_proto, credentials_target)
+                console.print(f"[green]✓ Copied credentials_proto.json to credentials.json[/green]")
+            except Exception as e:
+                console.print(f"[red]✗ Error copying credentials file: {e}[/red]")
+                raise typer.Exit(1)
+        else:
+            console.print("[red]✗ credentials_proto.json not found in package[/red]")
+            raise typer.Exit(1)
+    
+    # Step 2: Create configs folder
+    configs_dir = current_dir / "configs"
+    if configs_dir.exists():
+        console.print("[yellow]configs folder already exists, skipping...[/yellow]")
+    else:
+        try:
+            configs_dir.mkdir(parents=True, exist_ok=True)
+            console.print(f"[green]✓ Created configs folder[/green]")
+        except Exception as e:
+            console.print(f"[red]✗ Error creating configs folder: {e}[/red]")
+            raise typer.Exit(1)
+    
+    console.print("[green]✓ Deployment completed successfully![/green]")
+    console.print(f"[blue]You can now create configurations with:[/blue]")
+    console.print(f"[yellow]  evileye-create my_config --sources 1[/yellow]")
+
+
+@app.command()
 def info() -> None:
     """
     Display EvilEye system information.
