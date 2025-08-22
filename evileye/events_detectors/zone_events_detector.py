@@ -323,4 +323,5 @@ class ZoneEventsDetector(EventsDetector):
         self.run_flag = False
         self.event.set()
         self.queue_in.put((None, None))
-        self.processing_thread.join()
+        if self.processing_thread.is_alive():
+            self.processing_thread.join()

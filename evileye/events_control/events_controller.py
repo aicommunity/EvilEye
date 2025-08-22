@@ -62,7 +62,8 @@ class EventsDetectorsController(EvilEyeBase):
 
     def stop(self):
         self.run_flag = False
-        self.control_thread.join()
+        if self.control_thread.is_alive():
+            self.control_thread.join()
         print('Everything in controller stopped')
 
     def default(self):

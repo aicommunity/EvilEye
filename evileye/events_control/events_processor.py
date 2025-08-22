@@ -74,7 +74,8 @@ class EventsProcessor(EvilEyeBase):
     def stop(self):
         self.run_flag = False
         self.queue.put(None)
-        self.processing_thread.join()
+        if self.processing_thread.is_alive():
+            self.processing_thread.join()
 
     def process(self):
         filtered_long_term = {key: None for key in self.long_term_events}

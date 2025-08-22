@@ -84,7 +84,7 @@
         "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE"
       }
     },
-    "image_dir": "/home/user/EvilEyeData",
+    "image_dir": "EvilEyeData",
     "create_new_project": false,
     "preview_width": 300,
     "preview_height": 150

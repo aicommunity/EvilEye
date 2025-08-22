@@ -40,7 +40,8 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
 
     def stop(self):
         self.run_flag = False
-        self.query_thread.join()
+        if self.query_thread.is_alive():
+            self.query_thread.join()
 
     def default(self):
         pass

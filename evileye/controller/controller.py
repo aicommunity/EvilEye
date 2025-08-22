@@ -69,7 +69,88 @@ class Controller:
         self.db_adapter_cam_events = None
         self.db_adapter_fov_events = None
         self.db_adapter_zone_events = None
-        self.class_names = list()
+        self.class_names = [
+            "person",
+            "bicycle",
+            "car",
+            "motorcycle",
+            "airplane",
+            "bus",
+            "train",
+            "truck",
+            "boat",
+            "traffic light",
+            "fire hydrant",
+            "stop sign",
+            "parking meter",
+            "bench",
+            "bird",
+            "cat",
+            "dog",
+            "horse",
+            "sheep",
+            "cow",
+            "elephant",
+            "bear",
+            "zebra",
+            "giraffe",
+            "backpack",
+            "umbrella",
+            "handbag",
+            "tie",
+            "suitcase",
+            "frisbee",
+            "skis",
+            "snowboard",
+            "sports ball",
+            "kite",
+            "baseball bat",
+            "baseball glove",
+            "skateboard",
+            "surfboard",
+            "tennis racket",
+            "bottle",
+            "wine glass",
+            "cup",
+            "fork",
+            "knife",
+            "spoon",
+            "bowl",
+            "banana",
+            "apple",
+            "sandwich",
+            "orange",
+            "broccoli",
+            "carrot",
+            "hot dog",
+            "pizza",
+            "donut",
+            "cake",
+            "chair",
+            "couch",
+            "potted plant",
+            "bed",
+            "dining table",
+            "toilet",
+            "tv",
+            "laptop",
+            "mouse",
+            "remote",
+            "keyboard",
+            "cell phone",
+            "microwave",
+            "oven",
+            "toaster",
+            "sink",
+            "refrigerator",
+            "book",
+            "clock",
+            "vase",
+            "scissors",
+            "teddy bear",
+            "hair drier",
+            "toothbrush"
+        ]
 
         self.run_flag = False
         self.restart_flag = False
@@ -81,6 +162,9 @@ class Controller:
         self.current_main_widget_size = [1920, 1080]
 
         self.debug_info = dict()
+
+    def get_params(self):
+        return self.params
 
     def add_pipeline(self, pipeline_type):
         pass
@@ -196,13 +280,15 @@ class Controller:
     def stop(self):
         # self._save_video_duration()
         self.run_flag = False
-        self.control_thread.join()
+        if self.control_thread.is_alive():
+            self.control_thread.join()
         self.events_processor.stop()
         self.events_detectors_controller.stop()
         self.cam_events_detector.stop()
         self.fov_events_detector.stop()
         self.zone_events_detector.stop()
-        self.visualizer.stop()
+        if self.visualizer:
+            self.visualizer.stop()
         self.obj_handler.stop()
         self.db_adapter_cam_events.stop()
         self.db_adapter_fov_events.stop()
@@ -271,10 +357,18 @@ class Controller:
         self.database_config["database"]["default_host_name"] = self.database_config["database"].get("default_host_name", database_creds["default_host_name"])
         self.database_config["database"]["default_port"] = self.database_config["database"].get("default_port", database_creds["default_port"])
 
+        if 'database' in self.params.keys():
+            self.database_config["database"]['database_name'] = self.params['database'].get('database_name', self.database_config["database"]['database_name'])
+            self.database_config["database"]['host_name'] = self.params['database'].get('host_name', self.database_config["database"]['host_name'])
+            self.database_config["database"]['port'] = self.params['database'].get('port', self.database_config["database"]['port'])
+            self.database_config["database"]['image_dir'] = self.params['database'].get('image_dir', self.database_config["database"]['image_dir'])
+            self.database_config["database"]['preview_width'] = self.params['database'].get('preview_width', self.database_config["database"]['preview_width'])
+            self.database_config["database"]['preview_height'] = self.params['database'].get('preview_height', self.database_config["database"]['preview_height'])
+
         self._init_db_controller(self.database_config['database'], system_params=self.params)
         self._init_db_adapters(self.database_config['database_adapters'])
 
-        self.__init_object_handler(self.db_controller, params.get('objects_handler', dict()))
+        self._init_object_handler(self.db_controller, params.get('objects_handler', dict()))
         self._init_events_detectors(self.params.get('events_detectors', dict()))
         self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
         self._init_events_processor(self.params.get('events_processor', dict()))
@@ -302,7 +396,7 @@ class Controller:
         self.pipeline.release()
         print('Everything in controller released')
 
-    def save_params(self, params: dict):
+    def update_params(self):
         self.params['controller'] = dict()
         self.params['controller']["autoclose"] = self.autoclose
         self.params['controller']["fps"] = self.fps
@@ -326,7 +420,16 @@ class Controller:
         self.params['events_detectors']['ZoneEventsDetector'] = self.zone_events_detector.get_params()
 
         self.params['events_processor'] = self.events_processor.get_params()
-        # self.params['database'] = self.db_controller.get_params()
+        self.database_config = self.db_controller.get_params()
+
+        self.params['database'] = {}
+        self.params['database']['database_name'] = self.database_config.get('database_name', 'evil_eye_db')
+        self.params['database']['host_name'] = self.database_config.get('host_name', 'localhost')
+        self.params['database']['port'] = self.database_config.get('port', 5432)
+        self.params['database']['image_dir'] = self.database_config.get('image_dir', 'EvilEyeData')
+        self.params['database']['preview_width'] = self.database_config.get('preview_width', 300)
+        self.params['database']['preview_height'] = self.database_config.get('preview_height', 150)
+
         if self.visualizer:
             self.params['visualizer'] = self.visualizer.get_params()
         else:
@@ -336,7 +439,7 @@ class Controller:
         self.current_main_widget_size = [width, height]
         self.visualizer.set_current_main_widget_size(width, height)
 
-    def __init_object_handler(self, db_controller, params):
+    def _init_object_handler(self, db_controller, params):
         self.obj_handler = objects_handler.ObjectsHandler(db_controller=db_controller, db_adapter=self.db_adapter_obj)
         self.obj_handler.set_params(**params)
         self.obj_handler.init()
@@ -519,6 +622,22 @@ class Controller:
         self.debug_info["controller"]["timestamp"] = datetime.datetime.now()
         self.debug_info["controller"]["total_memory_usage_mb"] = total_memory_usage/(1024.0*1024.0)
 
+    def create_config(self, num_sources: int, pipeline_class: str | None):
+        self.init({})
+        config_data = {}
+        self.update_params()
+        config_data = self.get_params()
+        config_data['visualizer'] = {}
+        config_data['visualizer']['num_width'] = 1
+        config_data['visualizer']['num_height'] = 1
+        config_data['visualizer']['visual_buffer_num_frames'] = 10
+        config_data['visualizer']['source_ids'] = []
+        config_data['visualizer']['fps'] = []
+        config_data['visualizer']['gui_enabled'] = False
+        config_data['visualizer']['show_debug_info'] = True
+        config_data['visualizer']['objects_journal_enabled'] = True
 
+        self.stop()
+        return config_data
     # def _save_video_duration(self):
     #     self.db_controller.update_video_dur(self.source_video_duration)

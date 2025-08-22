@@ -1,6 +1,7 @@
 import argparse
 import json
 import sys
+import os
 from pathlib import Path
 
 try:
@@ -22,10 +23,10 @@ file_path = 'configs/vehicle_perpocessing.json'
 
 def create_args_parser():
     pars = argparse.ArgumentParser()
-    pars.add_argument('--video', nargs='?', const="1", type=str,
-                      help="file name for processing")
     pars.add_argument('--config', nargs='?', const="1", type=str,
                       help="system configuration")
+    pars.add_argument('--create', action=argparse.BooleanOptionalAction, default=False,
+                      help="Create new config file")
     pars.add_argument('--gui', action=argparse.BooleanOptionalAction, default=True,
                       help="Show gui when processing")
     pars.add_argument('--autoclose', action=argparse.BooleanOptionalAction, default=False,
@@ -43,35 +44,72 @@ def main():
 
     print(f"Launch system with CLI arguments: {args}")
 
+    if args.create:
+        new_config_file = None
+        if args.config:
+            new_config_file = args.config
+        else:
+            print(f"Please specify config file --config <file_name>")
+            sys.exit(1)
+
+        if os.path.exists(new_config_file):
+            print(f"Config file {new_config_file} already exists")
+            sys.exit(1)
+
+        print(f"Create new config file from {new_config_file}")
+        controller_instance = controller.Controller()
+        config_data = controller_instance.create_config(num_sources=0, pipeline_class=None)
+        if not os.path.exists("configs"):
+            os.makedirs("configs")
+
+        if not new_config_file.endswith(".json"):
+            new_config_file = os.path.join("configs", new_config_file + ".json")
+
+        if not new_config_file.startswith("configs/"):
+            new_config_file = os.path.join("configs", new_config_file)
+
+        if os.path.exists(new_config_file):
+            print(f"Config file {new_config_file} already exists")
+            sys.exit(1)
+
+        with open(new_config_file, 'w') as f:
+            json.dump(config_data, f, indent=4)
+        sys.exit(0)
+
     if args.config is None and args.video is None:
-        print("Video file doesn't set")
+        print("Video source doesn't set")
         sys.exit(1)
 
     use_default_config = True
     video_file = None
     if args.config is not None:
         config_file_name = args.config
+        if not config_file_name.startswith("configs/"):
+            config_file_name = os.path.join("configs", config_file_name)
+
         use_default_config = False
         print(f"Using configuration from {config_file_name}")
     else:
-        if args.sources_preset is not None:
-            print(f"Sources presets doesn't supports now")
-            config_file_name = 'configs/video_file.json'
-            print(f"Using default configuration from {config_file_name}")
-        else:
-            config_file_name = 'configs/video_file.json'
-            print(f"Using default configuration from {config_file_name}")
+        print(f"Running without configuration doesn't support now")
+        exit(2)
+        #if args.sources_preset is not None:
+        #    print(f"Sources presets doesn't supports now")
+        #    config_file_name = 'configs/video_file.json'
+        #    print(f"Using default configuration from {config_file_name}")
+        #else:
+        #    config_file_name = 'configs/video_file.json'
+        #    print(f"Using default configuration from {config_file_name}")
 
     with open(config_file_name) as config_file:
         config_data = json.load(config_file)
 
-    if args.video is not None:
-        video_file = args.video
-        config_data["pipeline"]["sources"][0]["camera"] = video_file
-        print(f"Using video source from cli: {video_file}")
-    else:
-        video_file = config_data["pipeline"]["sources"][0]["camera"]
-        print(f"Using video source from config")
+#    if args.video is not None:
+#        video_file = args.video
+#        config_data["pipeline"]["sources"][0]["camera"] = video_file
+#        print(f"Using video source from cli: {video_file}")
+#    else:
+#        video_file = config_data["pipeline"]["sources"][0]["camera"]
+#        print(f"Using video source from config")
 
     if not args.gui:
         config_data["visualizer"]["gui_enabled"] = False

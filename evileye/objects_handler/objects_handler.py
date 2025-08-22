@@ -87,12 +87,14 @@ class ObjectsHandler(EvilEyeBase):
         params['lost_thresh'] = self.lost_thresh
         params['max_active_objects'] = self.max_active_objects
         params['max_lost_objects'] = self.max_lost_objects
+        return params
 
     def stop(self):
         # self.objects_file.close()
         self.run_flag = False
         self.objs_queue.put(None)
-        self.handler.join()
+        if self.handler.is_alive():
+            self.handler.join()
         print('Handler stopped')
 
     def start(self):
