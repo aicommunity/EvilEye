@@ -697,7 +697,7 @@ class Controller:
     def create_config(self, num_sources: int, pipeline_class: str | None):
         """Create configuration with specified pipeline class"""
         self.init({})
-        
+
         # Create pipeline instance if class name is provided
         if pipeline_class:
             try:
@@ -712,7 +712,7 @@ class Controller:
             self.pipeline = PipelineSurveillance()
 
         if self.pipeline:
-            self.pipeline.init()
+            self.pipeline.generate_default_structure(num_sources)
 
         config_data = {}
         self.update_params()
@@ -743,6 +743,7 @@ class Controller:
         config_data['visualizer']['objects_journal_enabled'] = True
 
         self.stop()
+        self.release()
         return config_data
     # def _save_video_duration(self):
     #     self.db_controller.update_video_dur(self.source_video_duration)

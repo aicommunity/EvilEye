@@ -55,7 +55,8 @@ class DatabaseControllerBase(EvilEyeBase):
         if self.query_thread:
             self.run_flag = False
             self.queue_in.put((None,))
-            self.query_thread.join()
+            if self.query_thread.is_alive():
+                self.query_thread.join()
         print('DataBase stopped')
 
     @abstractmethod

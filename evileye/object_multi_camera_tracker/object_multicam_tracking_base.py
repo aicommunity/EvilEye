@@ -57,7 +57,8 @@ class ObjectMultiCameraTrackingBase(EvilEyeBase):
     def stop(self):
         self.run_flag = False
         self.queue_in.put(None)
-        self.processing_thread.join()
+        if self.processing_thread.is_alive():
+            self.processing_thread.join()
         print('Tracker stopped')
 
     @abstractmethod

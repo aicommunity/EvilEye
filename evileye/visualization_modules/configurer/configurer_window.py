@@ -243,7 +243,8 @@ class ConfigurerMainWindow(QMainWindow):
     def _run_app(self):
         self.new_process = multiprocessing.Process(target=process.start_app, args=(self.result_filename,))
         self.new_process.start()
-        self.new_process.join()
+        if self.new_process.is_alive():
+            self.new_process.join()
 
     @pyqtSlot()
     def _open_save_win(self):

@@ -71,8 +71,7 @@ class Pipeline(EvilEyeBase):
         for processor in self.processors:
             if processor is not None:
                 section_name = processor.get_name()
-                params[section_name] = {}
-                processor.get_params(params[section_name])
+                params[section_name] = processor.get_params()
         
         return params
 
@@ -162,4 +161,9 @@ class Pipeline(EvilEyeBase):
 
         if isinstance(processor, ProcessorSource):
             self.sources_proc = processor
+
+    @abstractmethod
+    def generate_default_structure(self, num_sources: int):
+        """Generate default structure for pipeline"""
+        pass
 

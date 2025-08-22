@@ -28,10 +28,12 @@ class ProcessorBase(ABC):
         for i in range(0, self.num_processors):
             self.processors[i].set_params(**params[i])
 
-    def get_params(self, params: dict):
-        params = list()
+    def get_params(self):
+        processors_params = list()
         for processor in self.processors:
-            params.append(processor.get_params())
+            processors_params.append(processor.get_params())
+
+        return processors_params
 
     def init(self, **kwargs):
         for i, processor in enumerate(self.processors):

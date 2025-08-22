@@ -36,7 +36,7 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
         self.tracker = None
 
     def init_impl(self, **kwargs):
-        sources_ids = self.params["source_ids"]
+        sources_ids = self.params.get("source_ids", [])
         encoders = kwargs.get('encoders', None)
         self.tracker = MultiCameraTracker(len(sources_ids), encoders)
         return True

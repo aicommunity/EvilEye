@@ -87,10 +87,12 @@ class VideoCaptureBase(EvilEyeBase):
         #     self.capture_thread = None
         #     print('Capture stopped')
         if self.grab_thread:
-            self.grab_thread.join()
+            if self.grab_thread.is_alive():
+                self.grab_thread.join()
             self.grab_thread = None
         if self.retrieve_thread:
-            self.retrieve_thread.join()
+            if self.retrieve_thread.is_alive():
+                self.retrieve_thread.join()
             self.retrieve_thread = None
 
     def set_params_impl(self):
@@ -127,7 +129,7 @@ class VideoCaptureBase(EvilEyeBase):
         params['desired_fps'] = self.desired_fps
         params['source_names'] = self.source_names
         params['loop_play'] = self.loop_play
-        params['source_type'] = self.source_type.name
+        params['source'] = self.source_type.name
         params['camera'] = self.source_address
         return params
 

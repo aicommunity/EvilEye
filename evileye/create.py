@@ -137,41 +137,7 @@ def create_config_file(config_name, sources=0, pipeline_class='PipelineSurveilla
     try:
         controller_instance = controller.Controller()
         config_data = controller_instance.create_config(num_sources=sources, pipeline_class=pipeline_class)
-        
-        # If pipeline is PipelineSurveillance and sources > 0, configure sources
-        if pipeline_class == 'PipelineSurveillance' and sources > 0:
-            if 'pipeline' not in config_data:
-                config_data['pipeline'] = {}
-            
-            if 'sources' not in config_data['pipeline']:
-                config_data['pipeline']['sources'] = []
-            
-            # Create source configurations
-            for i in range(sources):
-                source_config = {
-                    'camera': f'source_{i+1}',
-                    'source': source_type.upper(),
-                    'source_ids': [i],
-                    'source_names': [f'Source {i+1}'],
-                    'loop_play': True,
-                    'desired_fps': 30
-                }
-                
-                # Add source-specific configuration based on type
-                if source_type == 'video_file':
-                    source_config['camera'] = f'video_{i+1}.mp4'
-                    source_config['source'] = 'VideoFile'
-                elif source_type == 'ip_camera':
-                    source_config['camera'] = f'rtsp://camera_{i+1}/stream'
-                    source_config['source'] = 'IpCamera'
-                    source_config['username'] = 'admin'
-                    source_config['password'] = 'password'
-                elif source_type == 'device':
-                    source_config['camera'] = str(i)  # Device index
-                    source_config['source'] = 'Device'
-                
-                config_data['pipeline']['sources'].append(source_config)
-        
+
         # Write configuration to file
         with open(output_path, 'w') as f:
             json.dump(config_data, f, indent=4)

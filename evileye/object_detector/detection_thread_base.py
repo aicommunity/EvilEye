@@ -44,7 +44,8 @@ class DetectionThreadBase:
 
     def stop(self):
         self.run_flag = False
-        self.processing_thread.join()
+        if self.processing_thread.is_alive():
+            self.processing_thread.join()
         print('Detection thread stopped')
 
     def put(self, image: CaptureImage, force=False):

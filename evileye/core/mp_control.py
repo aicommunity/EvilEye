@@ -34,5 +34,6 @@ class MpControl(ABC):
 
     def stop(self):
         for i in range(len(self.processes)):
-            self.processes[i].join()
+            if self.processes[i].is_alive():
+                self.processes[i].join()
 

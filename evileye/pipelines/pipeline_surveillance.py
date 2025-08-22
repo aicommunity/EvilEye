@@ -29,14 +29,15 @@ class PipelineSurveillance(Pipeline):
         # Initialize processors in surveillance-specific order
         self._init_sources(pipeline_params.get("sources", []), self._credentials)
         self._init_preprocessors(pipeline_params.get("preprocessors", []))
-        self._init_detectors(pipeline_params.get("detectors", []))
+        detectors_params = pipeline_params.get("detectors", [])
+        self._init_detectors(detectors_params)
         self._init_trackers(pipeline_params.get("trackers", []))
         self._init_mc_trackers(pipeline_params.get("mc_trackers", []))
 
         return True
 
     # Surveillance-specific processor initialization methods
-    def _init_sources(self, params: List[Dict], credentials: Dict):
+    def _init_sources(self, params: List[Dict], credentials: Dict|None):
         """Initialize source processors for surveillance"""
         if not params:
             return
@@ -123,3 +124,34 @@ class PipelineSurveillance(Pipeline):
                 except Exception:
                     # Continue without encoder
                     pass
+
+    def generate_default_structure(self, num_sources: int):
+        """Generate default structure for pipeline"""
+        params = {
+                "sources": [
+                {
+                    "source": "IpCamera",
+                    "camera": "rtsp://url",
+                    "width": 1920,
+                    "height": 1080,
+                    "fps": 30
+                }
+            ] * num_sources,
+            "detectors": [
+                {
+                }
+            ] * num_sources,
+            "trackers": [
+                {
+                }
+            ] * num_sources,    
+            "mc_trackers": [
+                {
+                    "source_ids": list(range(num_sources)),
+                    "enable": False
+                }
+            ]
+        }
+
+        self.set_params(**params)
+        self.init()
