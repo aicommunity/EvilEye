@@ -327,3 +327,34 @@ class ObjectResultEncoder(json.JSONEncoder):
             return None
 
         return super().default(obj)
+
+
+def normalize_config_path(config_path):
+    """
+    Normalize configuration file path by adding 'configs/' prefix if not present.
+    
+    Args:
+        config_path: Path to configuration file (string or Path object)
+        
+    Returns:
+        Normalized path as string
+        
+    Examples:
+        >>> normalize_config_path("my_config.json")
+        "configs/my_config.json"
+        >>> normalize_config_path("configs/existing.json")
+        "configs/existing.json"
+        >>> normalize_config_path("/absolute/path/config.json")
+        "/absolute/path/config.json"
+    """
+    import os
+    from pathlib import Path
+    
+    config_path_str = str(config_path)
+    
+    # If it's already an absolute path or already has configs/ prefix, return as is
+    if os.path.isabs(config_path_str) or config_path_str.startswith("configs/"):
+        return config_path_str
+    
+    # Add configs/ prefix
+    return os.path.join("configs", config_path_str)

@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from evileye.controller import controller
 from evileye.visualization_modules.main_window import MainWindow
+from evileye.utils.utils import normalize_config_path
 
 def create_args_parser():
     pars = argparse.ArgumentParser()
@@ -47,10 +48,7 @@ def main():
     use_default_config = True
     video_file = None
     if args.config is not None:
-        config_file_name = args.config
-        if not config_file_name.startswith("configs/"):
-            config_file_name = os.path.join("configs", config_file_name)
-
+        config_file_name = normalize_config_path(args.config)
         use_default_config = False
         print(f"Using configuration from {config_file_name}")
     else:

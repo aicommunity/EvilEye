@@ -16,6 +16,8 @@ from rich.console import Console
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
+from evileye.utils.utils import normalize_config_path
+
 
 # Create CLI app
 app = typer.Typer(
@@ -61,10 +63,12 @@ def run(
     cmd = [sys.executable, "evileye/process.py"]
 
     if config:
-        if not config.exists():
-            console.print(f"[red]Configuration file not found: {config}[/red]")
+        # Normalize config path and check if it exists
+        normalized_config = Path(normalize_config_path(config))
+        if not normalized_config.exists():
+            console.print(f"[red]Configuration file not found: {normalized_config}[/red]")
             raise typer.Exit(1)
-        cmd.extend(["--config", str(config)])
+        cmd.extend(["--config", str(normalized_config)])
     elif video:
         cmd.extend(["--video", video])
     else:
@@ -74,7 +78,7 @@ def run(
             cmd.extend(["--config", str(default_config)])
         else:
             console.print("[red]No configuration file specified and default not found[/red]")
-            console.print("Please specify a config file: [yellow]evileye gui <config_file>[/yellow]")
+            console.print("Please specify a config file: [yellow]evileye run <config_file>[/yellow]")
             raise typer.Exit(1)
 
     # Add GUI flag based on boolean value
@@ -107,7 +111,6 @@ def validate(
     config: Path = typer.Argument(
         ...,
         help="Path to configuration JSON file",
-        exists=True,
         file_okay=True,
         dir_okay=False,
     ),
@@ -116,14 +119,22 @@ def validate(
     Validate EvilEye configuration file.
     
     Example:
+        evileye validate single_cam.json
         evileye validate configs/single_cam.json
     """
     try:
-        with open(config, 'r') as f:
+        # Normalize config path
+        normalized_config = Path(normalize_config_path(config))
+        
+        if not normalized_config.exists():
+            console.print(f"[red]Configuration file not found: {normalized_config}[/red]")
+            raise typer.Exit(1)
+        
+        with open(normalized_config, 'r') as f:
             pipeline_config = json.load(f)
         
         validate_config(pipeline_config)
-        console.print(f"[green]Configuration {config} is valid![/green]")
+        console.print(f"[green]Configuration {normalized_config} is valid![/green]")
         
     except Exception as e:
         console.print(f"[red]Configuration validation failed: {e}[/red]")

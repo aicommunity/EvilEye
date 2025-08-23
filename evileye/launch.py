@@ -25,13 +25,14 @@ except ImportError:
 
 from evileye.controller import controller
 from evileye.visualization_modules.main_window import MainWindow
+from evileye.utils.utils import normalize_config_path
 
 
 class ConfigLauncher:
     """Configuration launcher that uses launch_main_app approach"""
     
     def __init__(self, config_file_path: str):
-        self.config_file_path = config_file_path
+        self.config_file_path = normalize_config_path(config_file_path)
         self.process = None
         
     def launch(self):
@@ -260,7 +261,10 @@ class EvilEyeGUI(QMainWindow):
     def load_config(self, file_path: str):
         """Load configuration from file"""
         try:
-            with open(file_path, 'r') as f:
+            # Normalize config path
+            normalized_path = normalize_config_path(file_path)
+            
+            with open(normalized_path, 'r') as f:
                 config = json.load(f)
             
             # Update config editor
@@ -268,9 +272,9 @@ class EvilEyeGUI(QMainWindow):
             
             # Store current config and file path
             self.current_config = config
-            self.config_file_path = file_path
+            self.config_file_path = normalized_path
             
-            self.log_message(f"Loaded configuration from {file_path}")
+            self.log_message(f"Loaded configuration from {normalized_path}")
             
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load configuration: {e}")

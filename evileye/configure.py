@@ -15,6 +15,7 @@ except ImportError:
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from evileye.visualization_modules.configurer import configurer_window as config
+from evileye.utils.utils import normalize_config_path
 
 def start_configurer(config_file_name):
     app = QApplication(sys.argv)
@@ -31,5 +32,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
     config_path = ''
     if args.fullpath:
-        config_path = args.fullpath
+        config_path = normalize_config_path(args.fullpath)
     start_configurer(config_path)

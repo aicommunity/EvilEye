@@ -11,6 +11,8 @@ import sys
 import os
 from pathlib import Path
 
+from evileye.utils.utils import normalize_config_path
+
 # Add project root to path for imports when running as script
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -119,7 +121,13 @@ def create_config_file(config_name, sources=0, pipeline_class='PipelineSurveilla
     if not config_name.endswith('.json'):
         config_name += '.json'
     
-    output_path = os.path.join(output_dir, config_name)
+    # For output directory, we don't want to normalize if it's already "configs"
+    if output_dir == "configs":
+        output_path = os.path.join(output_dir, config_name)
+    else:
+        # Normalize output directory path for other directories
+        normalized_output_dir = normalize_config_path(output_dir)
+        output_path = os.path.join(normalized_output_dir, config_name)
     
     # Check if file already exists
     if os.path.exists(output_path) and not force:
