@@ -278,8 +278,8 @@ class MainWindow(QMainWindow):
             self.controller.release()
             self.zone_window.close()
             self.db_journal_win.close()
-            with open(self.params_path, 'w') as params_file:
-                json.dump(self.params, params_file, indent=4)
+            #with open(self.params_path, 'w') as params_file:
+            #    json.dump(self.params, params_file, indent=4)
             QApplication.closeAllWindows()
             event.accept()
         else:

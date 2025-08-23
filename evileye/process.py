@@ -19,8 +19,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from evileye.controller import controller
 from evileye.visualization_modules.main_window import MainWindow
 
-file_path = 'configs/vehicle_perpocessing.json'
-
 def create_args_parser():
     pars = argparse.ArgumentParser()
     pars.add_argument('--config', nargs='?', const="1", type=str,
@@ -93,7 +91,7 @@ def main():
     controller_instance = controller.Controller()
     controller_instance.init(config_data)
 
-    a = MainWindow(controller_instance, file_path, config_data, 1600, 720)
+    a = MainWindow(controller_instance, config_file_name, config_data, 1600, 720)
     controller_instance.init_main_window(a, a.slots, a.signals)
     if controller_instance.show_main_gui:
         a.show()
