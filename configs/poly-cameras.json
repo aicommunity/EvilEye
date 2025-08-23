@@ -429,7 +429,7 @@
         ],
         "gui_enabled": true,
         "show_debug_info": true,
-        "objects_journal_enabled": false
+        "objects_journal_enabled": true
     },
     "objects_handler": {
         "history_len": 30,

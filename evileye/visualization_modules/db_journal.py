@@ -64,11 +64,11 @@ class DatabaseJournalWindow(QWidget):
         self.tabs.tabCloseRequested.connect(self._close_tab)
         if self.obj_journal_enabled:
             self.tabs.addTab(handler_journal_view.HandlerJournal(self.db_controller, 'objects', self.params, self.database_params,
-                                                                 self.tables['objects'], parent=self), 'Handler journal')
+                                                                 self.tables['objects'], parent=self), 'Objects journal')
         self.tabs.addTab(events_journal.EventsJournal([self.cam_events_adapter,
                                                        self.perimeter_events_adapter, self.zone_events_adapter],
                                                       self.db_controller, 'objects', self.params, self.database_params,
-                                                      self.tables['objects'], parent=self), 'Alarms journal')
+                                                      self.tables['objects'], parent=self), 'Events journal')
 
         self.layout = QVBoxLayout()
         self.layout.addWidget(self.tabs)
