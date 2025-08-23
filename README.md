@@ -16,44 +16,26 @@ Intelligence video surveillance system with object detection, tracking, and mult
 
 ### Installation
 
-#### Automatic Installation (Recommended)
+#### From PyPI (Production)
 
 ```bash
-# Install with all dependencies (automatically fixes entry points)
-python install.py --full
+# Install from PyPI with all dependencies
+pip install evileye
 
-# Or install specific components
-python install.py --gui    # With GUI support
-python install.py --gpu    # With GPU support
-python install.py --dev    # With development tools
 ```
 
-#### Manual Installation
+#### From Source (Development)
 
 ```bash
-# Install with all dependencies
-pip install -e ".[full]"
+# Clone the repository
+git clone https://github.com/evileye/evileye.git
+cd evileye
 
-# Fix entry points manually
-./fix_entry_points.sh
+# Install in development mode
+pip install -e "."
 
-# Or install specific components
-pip install -e ".[gui]"    # With GUI support
-pip install -e ".[gpu]"    # With GPU support
-pip install -e ".[dev]"    # With development tools
-```
-
-#### Using Makefile
-
-```bash
-# Install with all dependencies
-make install-full
-
-# Install with development tools
-make install-dev
-
-# Reinstall (uninstall + install)
-make reinstall
+# Fix entry points
+python fix_entry_points.py
 ```
 
 ### Basic Usage
@@ -65,38 +47,234 @@ evileye deploy
 # Create new configuration
 evileye-create my_config --sources 2 --source-type video_file
 
-# Run with configuration file
+# Run with configuration
 evileye run configs/my_config.json
-
-# Validate configuration
-evileye validate configs/my_config.json
-
-# List available configurations
-evileye list-configs
-
-# Show system information
-evileye info
-
-# Launch GUI
-evileye gui
 ```
 
-### Using the GUI
 
-```bash
-# Launch the graphical interface
-evileye gui
-```
-
-The GUI provides:
-- Configuration file browser
-- Real-time pipeline control
-- Configuration editor and validation
-- Live logs and status monitoring
 
 ## Configuration
 
-EvilEye uses JSON configuration files. Example configuration:
+EvilEye uses JSON configuration files for the **PipelineSurveillance** class. The configuration is divided into sections that define different components of the surveillance pipeline.
+
+### Configuration Structure
+
+```json
+{
+  "pipeline": {
+    "sources": [...],      // Video sources configuration
+    "detectors": [...],    // Object detection configuration
+    "trackers": [...],     // Object tracking configuration
+    "mc_trackers": [...]   // Multi-camera tracking configuration
+  },
+  "controller": {
+    "fps": 30,
+    "show_main_gui": true
+  }
+}
+```
+
+### Sources Configuration
+
+The `sources` section defines video input sources. Each source can be configured with different types and splitting options.
+
+#### Source Types
+
+**1. IP Camera (`IpCamera`)**
+```json
+{
+  "source": "IpCamera",
+  "camera": "rtsp://url",
+  "apiPreference": "CAP_FFMPEG",
+  "source_ids": [0],
+  "source_names": ["Main Camera"]
+}
+```
+
+**2. Video File (`VideoFile`)**
+```json
+{
+  "source": "VideoFile",
+  "camera": "/path/to/video.mp4",
+  "apiPreference": "CAP_FFMPEG",
+  "loop_play": true,
+  "source_ids": [0],
+  "source_names": ["Video Source"]
+}
+```
+
+**3. Device Camera (`Device`)**
+```json
+{
+  "source": "Device",
+  "camera": 0,
+  "apiPreference": "CAP_FFMPEG",
+  "source_ids": [0],
+  "source_names": ["USB Camera"]
+}
+```
+
+#### Source Splitting Options
+
+**Without Splitting (Single Output)**
+```json
+{
+  "source": "IpCamera",
+  "camera": "rtsp://url1",
+  "split": false,
+  "num_split": 0,
+  "src_coords": [0],
+  "source_ids": [0],
+  "source_names": ["Camera1"]
+}
+```
+
+**With Splitting (Multiple Outputs)**
+```json
+{
+  "source": "IpCamera",
+  "camera": "rtsp://url2",
+  "split": true,
+  "num_split": 2,
+  "src_coords": [
+    [0, 0, 2304, 1300],      // Top region: x, y, width, height
+    [0, 1300, 2304, 1292]    // Bottom region: x, y, width, height
+  ],
+  "source_ids": [1, 2],
+  "source_names": ["Camera2_Top", "Camera2_Bottom"]
+}
+```
+
+#### Source Parameters
+
+| Parameter | Type | Description | Default |
+|-----------|------|-------------|---------|
+| `source` | string | Source type: `IpCamera`, `VideoFile`, `Device` | - |
+| `camera` | string/int | Camera URL, file path, or device index | - |
+| `apiPreference` | string | OpenCV API preference | `CAP_FFMPEG` |
+| `split` | boolean | Enable source splitting | `false` |
+| `num_split` | int | Number of split regions | `0` |
+| `src_coords` | array | Coordinates for split regions | `[0]` |
+| `source_ids` | array | Unique IDs for each output | - |
+| `source_names` | array | Names for each output | - |
+| `loop_play` | boolean | Loop video files | `true` |
+| `desired_fps` | int | Target FPS for the source | `null` |
+
+### Detectors Configuration
+
+The `detectors` section configures object detection for each source.
+
+#### YOLO Detector Configuration
+
+```json
+{
+  "source_ids": [0],
+  "model": "models/yolov8n.pt",
+  "show": false,
+  "inference_size": 640,
+  "device": null,
+  "conf": 0.4,
+  "save": false,
+  "stride_type": "frames",
+  "vid_stride": 1,
+  "classes": [0, 1, 24, 25, 63, 66, 67],
+  "roi": [
+    [[1790, 0, 500, 400], [1700, 0, 1000, 1045]]
+  ]
+}
+```
+
+#### Detector Parameters
+
+| Parameter | Type | Description | Default |
+|-----------|------|-------------|---------|
+| `source_ids` | array | Source IDs to process | - |
+| `model` | string | YOLO model path | `models/yolov8n.pt` |
+| `show` | boolean | Show detection results | `false` |
+| `inference_size` | int | Model input size | `640` |
+| `device` | string | Device for inference (`cpu`, `cuda:0`) | `null` |
+| `conf` | float | Confidence threshold | `0.25` |
+| `save` | boolean | Save detection results | `false` |
+| `stride_type` | string | Stride type: `frames` | `frames` |
+| `vid_stride` | int | Video stride | `1` |
+| `classes` | array | Object classes to detect | `[0, 1, 24, 25, 63, 66, 67]` |
+| `roi` | array | Regions of interest | `[[]]` |
+
+### Trackers Configuration
+
+The `trackers` section configures object tracking for each source.
+
+#### Botsort Tracker Configuration
+
+```json
+{
+  "source_ids": [0],
+  "fps": 30,
+  "tracker_type": "botsort",
+  "botsort_cfg": {
+    "appearance_thresh": 0.25,
+    "gmc_method": "sparseOptFlow",
+    "match_thresh": 0.8,
+    "new_track_thresh": 0.6,
+    "proximity_thresh": 0.5,
+    "track_buffer": 30,
+    "track_high_thresh": 0.5,
+    "track_low_thresh": 0.1,
+    "with_reid": false
+  }
+}
+```
+
+#### Tracker Parameters
+
+| Parameter | Type | Description | Default |
+|-----------|------|-------------|---------|
+| `source_ids` | array | Source IDs to track | - |
+| `fps` | int | Tracking FPS | `5` |
+| `tracker_type` | string | Tracker type | `botsort` |
+| `botsort_cfg` | object | Botsort configuration | See above |
+
+### Multi-Camera Trackers Configuration
+
+The `mc_trackers` section configures cross-camera object tracking.
+
+#### Multi-Camera Tracking Configuration
+
+```json
+{
+  "source_ids": [0, 1, 2],
+  "enable": true
+}
+```
+
+#### Multi-Camera Tracker Parameters
+
+| Parameter | Type | Description | Default |
+|-----------|------|-------------|---------|
+| `source_ids` | array | Source IDs for cross-camera tracking | - |
+| `enable` | boolean | Enable multi-camera tracking | `false` |
+
+### Pipeline Class Specificity
+
+⚠️ **Important**: The configuration structure described above is specific to the **PipelineSurveillance** class. Other pipeline classes may have different configuration requirements and structure.
+
+To use a different pipeline class, specify it in the configuration:
+
+```json
+{
+  "pipeline": {
+    "pipeline_class": "PipelineSurveillance",
+    "sources": [...],
+    "detectors": [...],
+    "trackers": [...],
+    "mc_trackers": [...]
+  }
+}
+```
+
+### Complete Configuration Examples
+
+#### IP Camera Configuration (poly-cameras.json)
 
 ```json
 {
@@ -104,17 +282,40 @@ EvilEye uses JSON configuration files. Example configuration:
     "sources": [
       {
         "source": "IpCamera",
-        "camera": "rtsp://camera-ip:554/stream",
+        "camera": "rtsp://url1",
+        "apiPreference": "CAP_FFMPEG",
+        "split": false,
+        "num_split": 0,
+        "src_coords": [0],
         "source_ids": [0],
-        "source_names": ["Main Camera"]
+        "source_names": ["Cam1"]
+      },
+      {
+        "source": "IpCamera",
+        "camera": "rtsp://url2",
+        "apiPreference": "CAP_FFMPEG",
+        "split": true,
+        "num_split": 2,
+        "src_coords": [
+          [0, 0, 2304, 1300],
+          [0, 1300, 2304, 1292]
+        ],
+        "source_ids": [1, 2],
+        "source_names": ["Cam2", "Cam3"]
       }
     ],
     "detectors": [
       {
         "source_ids": [0],
-        "model": "yolov8n.pt",
+        "model": "models/yolov8n.pt",
+        "show": false,
+        "inference_size": 640,
+        "device": null,
         "conf": 0.4,
-        "classes": [0, 1, 24, 25]
+        "save": false,
+        "stride_type": "frames",
+        "vid_stride": 1,
+        "classes": [0, 1, 24, 25, 63, 66, 67]
       }
     ],
     "trackers": [
@@ -126,7 +327,72 @@ EvilEye uses JSON configuration files. Example configuration:
     ],
     "mc_trackers": [
       {
+        "source_ids": [0, 1, 2],
+        "enable": true
+      }
+    ]
+  },
+  "controller": {
+    "fps": 30,
+    "show_main_gui": true
+  }
+}
+```
+
+#### Video File Configuration (poly-videos.json)
+
+```json
+{
+  "pipeline": {
+    "sources": [
+      {
+        "source": "VideoFile",
+        "camera": "/path/to/video1.mp4",
+        "apiPreference": "CAP_FFMPEG",
+        "split": false,
+        "num_split": 0,
+        "src_coords": [0],
         "source_ids": [0],
+        "source_names": ["Video1"]
+      },
+      {
+        "source": "VideoFile",
+        "camera": "/path/to/video2.mp4",
+        "apiPreference": "CAP_FFMPEG",
+        "split": true,
+        "num_split": 2,
+        "src_coords": [
+          [0, 0, 2304, 1300],
+          [0, 1300, 2304, 1292]
+        ],
+        "source_ids": [1, 2],
+        "source_names": ["Video2_1", "Video2_2"]
+      }
+    ],
+    "detectors": [
+      {
+        "source_ids": [0],
+        "model": "models/yolov8n.pt",
+        "show": false,
+        "inference_size": 640,
+        "device": null,
+        "conf": 0.4,
+        "save": false,
+        "stride_type": "frames",
+        "vid_stride": 1,
+        "classes": [0, 1, 24, 25, 63, 66, 67]
+      }
+    ],
+    "trackers": [
+      {
+        "source_ids": [0],
+        "fps": 30,
+        "tracker_type": "botsort"
+      }
+    ],
+    "mc_trackers": [
+      {
+        "source_ids": [0, 1, 2],
         "enable": true
       }
     ]
@@ -142,25 +408,34 @@ EvilEye uses JSON configuration files. Example configuration:
 
 EvilEye provides a comprehensive command-line interface for all operations:
 
-### Deployment and Setup
+### Basic Commands
 
 ```bash
 # Deploy configuration files to current directory
 evileye deploy
 
-# Creates:
-# - credentials.json (from credentials_proto.json)
-# - configs/ folder
+# Create new configuration
+evileye-create my_config --sources 2 --source-type video_file
+
+# Run with configuration
+evileye run configs/my_config.json
+
+# Show system information
+evileye info
 ```
+
+The Configuration GUI provides:
+- Configuration file browser and editor
+- Process control (launch/stop surveillance system via process.py)
+- Real-time status monitoring
+- Log display and management
+- Tabbed interface for configuration, logs, and controls
 
 ### Configuration Management
 
 ```bash
 # List available pipeline classes
 evileye-create --list-pipelines
-
-# Create new configuration file
-evileye-create my_config --sources 2 --source-type video_file
 
 # Create configuration with specific pipeline
 evileye-create my_config --sources 2 --pipeline PipelineSurveillance
@@ -175,19 +450,6 @@ evileye validate configs/my_config.json
 
 # List available configurations
 evileye list-configs
-```
-
-### System Operations
-
-```bash
-# Run EvilEye with configuration
-evileye run configs/my_config.json
-
-# Run with specific options
-evileye run configs/my_config.json --gui --autoclose
-
-# Show system information
-evileye info
 ```
 
 ### Complete Workflow Example
@@ -209,60 +471,9 @@ evileye validate configs/surveillance_config.json
 
 # 6. Run the system
 evileye run configs/surveillance_config.json
-
-# Alternative: Use specific pipeline class
-evileye-create custom_config --sources 2 --pipeline PipelineSurveillance
 ```
 
 ## Development
-
-### Setup Development Environment
-
-```bash
-# Clone repository
-git clone https://github.com/evileye/evileye.git
-cd evileye
-
-# Create virtual environment
-python -m venv .venv
-source .venv/bin/activate  # Linux/Mac
-# or
-.venv\Scripts\activate     # Windows
-
-# Install development dependencies
-make install-dev
-
-# Setup pre-commit hooks
-make dev-setup
-```
-
-### Development Commands
-
-```bash
-# Run tests
-make test
-
-# Run tests with coverage
-make test-cov
-
-# Format code
-make format
-
-# Lint code
-make lint
-
-# Type checking
-make type-check
-
-# Full quality check
-make quality
-
-# Build package
-make build
-
-# Clean build artifacts
-make clean
-```
 
 ### Project Structure
 
@@ -279,12 +490,12 @@ evileye/
 ├── object_multi_camera_tracker/  # Multi-camera tracking
 ├── events_detectors/       # Event detection
 ├── database_controller/    # Database integration
-├── visualization_modules/  # GUI components
+├── visualization_modules/  # Main application GUI components
 ├── configs/               # Configuration files
 ├── tests/                 # Test suite
 ├── evileye/               # Package entry points
 │   ├── cli.py            # Command-line interface
-│   ├── gui.py            # Graphical interface
+│   ├── launch.py         # Configuration GUI launcher
 │   └── __init__.py       # Package initialization
 ├── pyproject.toml        # Project configuration
 ├── Makefile              # Development commands
@@ -307,14 +518,38 @@ Each component is implemented as a processor that can be configured and combined
 
 EvilEye supports multiple pipeline implementations:
 
-- **PipelineSurveillance** - Full-featured pipeline with all components
+- **PipelineSurveillance** - Full-featured pipeline with all components (sources, detectors, trackers, mc_trackers)
 - **Custom Pipelines** - User-defined pipeline implementations
 
 Pipeline classes are automatically discovered from:
 - Built-in `evileye.pipelines` package
 - Local `pipelines/` folder in working directory
 
-Create custom pipelines by extending the base `Pipeline` class and placing them in a local `pipelines/` folder.
+#### Available Pipeline Classes
+
+```bash
+# List available pipeline classes
+evileye-create --list-pipelines
+```
+
+#### Creating Custom Pipelines
+
+Create custom pipelines by extending the base `Pipeline` class and placing them in a local `pipelines/` folder:
+
+```python
+from evileye.core.pipeline import Pipeline
+
+class MyCustomPipeline(Pipeline):
+    def __init__(self):
+        super().__init__()
+        # Custom initialization
+    
+    def generate_default_structure(self, num_sources: int):
+        # Custom configuration generation
+        pass
+```
+
+Each pipeline class can define its own configuration structure and processing logic.
 
 ## Contributing
 
