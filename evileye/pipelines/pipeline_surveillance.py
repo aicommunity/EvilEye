@@ -116,8 +116,7 @@ class PipelineSurveillance(Pipeline):
                 try:
                     from ..object_tracker.trackers.onnx_encoder import OnnxEncoder
                     import os
-                    if os.path.exists(path):
-                        self.encoders[path] = OnnxEncoder(path)
+                    self.encoders[path] = OnnxEncoder(path)
                 except ImportError:
                     # Continue without encoder
                     pass

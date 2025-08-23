@@ -525,19 +525,7 @@ class Controller:
         self.trackers_proc = ProcessorStep(class_name="ObjectTrackingBotsort", num_processors=num_trackers, order=3)
         self.trackers_proc.set_params(params)
         self.trackers_proc.init(encoders=self.encoders)
-    
-    def _init_encoders(self, params):
-        num_trackers = len(params)
-        self.encoders = {}
 
-        for i in range(num_trackers):
-            tracker_params = params[i]
-            path = tracker_params.get("tracker_onnx", "models/osnet_ain_x1_0_M.onnx")
-            
-            if path not in self.encoders:
-                encoder = OnnxEncoder(path)
-                self.encoders[path] = encoder
-    
     def _init_mc_trackers(self, params):
         #num_of_cameras = len(self.params.get('sources', list()))
         self.mc_trackers_proc = ProcessorStep(class_name="ObjectMultiCameraTracking", num_processors=1, order=4)
