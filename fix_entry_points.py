@@ -67,7 +67,7 @@ def fix_entry_points():
         "evileye": "cli_wrapper.py",
         "evileye-process": "process_wrapper.py", 
         "evileye-configure": "configure_wrapper.py",
-        "evileye-gui": "gui_wrapper.py",
+        "evileye-launch": "launch_wrapper.py",
         "evileye-create": "create_wrapper.py"
     }
     
