@@ -23,73 +23,74 @@ try:
 except ImportError:
     PYQT_AVAILABLE = False
 
-from .pipelines import PipelineSurveillance
-from .core import Pipeline
+from evileye.controller import controller
+from evileye.visualization_modules.main_window import MainWindow
 
 
-class PipelineWorker(QThread):
-    """Worker thread for running the pipeline"""
+class ConfigLauncher:
+    """Configuration launcher that uses launch_main_app approach"""
     
-    # Signals
-    started = pyqtSignal()
-    stopped = pyqtSignal()
-    error = pyqtSignal(str)
-    log_message = pyqtSignal(str)
-    
-    def __init__(self, config: Dict[str, Any]):
-        super().__init__()
-        self.config = config
-        self.pipeline: Optional[Pipeline] = None
-        self.running = False
+    def __init__(self, config_file_path: str):
+        self.config_file_path = config_file_path
+        self.process = None
         
-    def run(self):
-        """Run the pipeline in a separate thread"""
-        try:
-            self.log_message.emit("Initializing pipeline...")
+    def launch(self):
+        """Launch the configuration using process.py"""
+        import subprocess
+        import sys
+        from pathlib import Path
+        
+        # Get the project root directory (where process.py is located)
+        project_root = Path(__file__).parent.parent
+        
+        # Launch the main process.py with the config
+        process_script = project_root / "evileye" / "process.py"
+        
+        if not process_script.exists():
+            # Try alternative locations
+            alt_locations = [
+                project_root / "process.py",
+                Path.cwd() / "process.py",
+                Path.cwd() / "evileye" / "process.py"
+            ]
             
-            # Create and initialize pipeline
-            self.pipeline = PipelineSurveillance()
-            self.pipeline.params = self.config
-            
-            if not self.pipeline.init():
-                self.error.emit("Failed to initialize pipeline")
-                return
-            
-            self.log_message.emit("Pipeline initialized successfully")
-            self.started.emit()
-            
-            # Start pipeline
-            self.pipeline.start()
-            self.running = True
-            self.log_message.emit("Pipeline started")
-            
-            # Main processing loop
-            while self.running:
-                try:
-                    results = self.pipeline.process()
-                    
-                    # Check if all sources are finished
-                    if self.pipeline.check_all_sources_finished():
-                        self.log_message.emit("All sources finished")
-                        break
-                        
-                except Exception as e:
-                    self.error.emit(f"Processing error: {e}")
+            for alt_path in alt_locations:
+                if alt_path.exists():
+                    process_script = alt_path
                     break
-                    
+            else:
+                raise FileNotFoundError(f"process.py not found. Tried: {process_script}, {alt_locations}")
+        
+        # Build command
+        cmd = [sys.executable, str(process_script), "--config", self.config_file_path, "--gui"]
+        
+        try:
+            # Launch in background
+            print(f"Launching command: {' '.join(cmd)}")
+            print(f"Working directory: {project_root}")
+            self.process = subprocess.Popen(cmd, cwd=project_root)
+            return True
         except Exception as e:
-            self.error.emit(f"Pipeline error: {e}")
-        finally:
-            if self.pipeline:
-                self.pipeline.stop()
-                self.pipeline.release()
-            self.running = False
-            self.stopped.emit()
-            self.log_message.emit("Pipeline stopped")
+            raise RuntimeError(f"Failed to launch process: {e}")
     
     def stop(self):
-        """Stop the pipeline"""
-        self.running = False
+        """Stop the launched process"""
+        if self.process:
+            self.process.terminate()
+            self.process.wait()
+            self.process = None
+    
+    def is_running(self):
+        """Check if the process is still running"""
+        if self.process is None:
+            return False
+        return self.process.poll() is None
+    
+    def get_return_code(self):
+        """Get the return code of the process (None if still running)"""
+        if self.process is None:
+            return None
+        return self.process.poll()
 
 
 class EvilEyeGUI(QMainWindow):
@@ -97,12 +98,15 @@ class EvilEyeGUI(QMainWindow):
     
     def __init__(self):
         super().__init__()
-        self.worker: Optional[PipelineWorker] = None
+        self.launcher: Optional[ConfigLauncher] = None
+        self.config_file_path: str = ""
+        self.process_monitor_timer = QTimer()
+        self.process_monitor_timer.timeout.connect(self.check_process_status)
         self.init_ui()
         
     def init_ui(self):
         """Initialize the user interface"""
-        self.setWindowTitle("EvilEye - Intelligence Video Surveillance System")
+        self.setWindowTitle("EvilEye - Configuration Launcher")
         self.setGeometry(100, 100, 800, 600)
         
         # Create central widget
@@ -131,16 +135,24 @@ class EvilEyeGUI(QMainWindow):
         # Status bar
         self.statusBar().showMessage("Ready")
         
+        # Handle window close event
+        self.closeEvent = self.on_close_event
+        
     def create_main_tab(self) -> QWidget:
         """Create the main tab"""
         widget = QWidget()
         layout = QVBoxLayout(widget)
         
         # Title
-        title = QLabel("EvilEye Surveillance System")
+        title = QLabel("EvilEye Configuration Launcher")
         title.setFont(QFont("Arial", 16, QFont.Weight.Bold))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
+        
+        # Description
+        desc = QLabel("Select a configuration file and launch the system using process.py")
+        desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(desc)
         
         # Configuration group
         config_group = QGroupBox("Configuration")
@@ -157,15 +169,15 @@ class EvilEyeGUI(QMainWindow):
         layout.addWidget(config_group)
         
         # Control group
-        control_group = QGroupBox("Controls")
+        control_group = QGroupBox("Process Controls")
         control_layout = QHBoxLayout(control_group)
         
-        self.start_btn = QPushButton("Start")
+        self.start_btn = QPushButton("Launch Process")
         self.start_btn.clicked.connect(self.start_pipeline)
         self.start_btn.setEnabled(False)
         control_layout.addWidget(self.start_btn)
         
-        self.stop_btn = QPushButton("Stop")
+        self.stop_btn = QPushButton("Stop Process")
         self.stop_btn.clicked.connect(self.stop_pipeline)
         self.stop_btn.setEnabled(False)
         control_layout.addWidget(self.stop_btn)
@@ -254,8 +266,9 @@ class EvilEyeGUI(QMainWindow):
             # Update config editor
             self.config_editor.setPlainText(json.dumps(config, indent=2))
             
-            # Store current config
+            # Store current config and file path
             self.current_config = config
+            self.config_file_path = file_path
             
             self.log_message(f"Loaded configuration from {file_path}")
             
@@ -322,20 +335,30 @@ class EvilEyeGUI(QMainWindow):
             self.log_message(f"Configuration validation failed: {e}")
     
     def start_pipeline(self):
-        """Start the pipeline"""
+        """Launch the configuration using process.py"""
         try:
-            # Get configuration from editor
+            # Ensure we have a config file path
+            if not self.config_file_path:
+                QMessageBox.warning(self, "Warning", "Please select a configuration file first")
+                return
+            
+            # Save current config to file if it was edited
             config_text = self.config_editor.toPlainText()
-            config = json.loads(config_text)
+            if config_text.strip():
+                try:
+                    config = json.loads(config_text)
+                    with open(self.config_file_path, 'w') as f:
+                        json.dump(config, f, indent=2)
+                    self.log_message(f"Configuration saved to {self.config_file_path}")
+                except Exception as e:
+                    QMessageBox.warning(self, "Warning", f"Failed to save configuration: {e}")
             
-            # Create and start worker
-            self.worker = PipelineWorker(config)
-            self.worker.started.connect(self.on_pipeline_started)
-            self.worker.stopped.connect(self.on_pipeline_stopped)
-            self.worker.error.connect(self.on_pipeline_error)
-            self.worker.log_message.connect(self.log_message)
+            # Create and start launcher
+            self.launcher = ConfigLauncher(self.config_file_path)
+            self.launcher.launch()
             
-            self.worker.start()
+            # Start monitoring the process
+            self.process_monitor_timer.start(1000)  # Check every second
             
             # Update UI
             self.start_btn.setEnabled(False)
@@ -343,36 +366,53 @@ class EvilEyeGUI(QMainWindow):
             self.progress_bar.setVisible(True)
             self.progress_bar.setRange(0, 0)  # Indeterminate progress
             
+            self.log_message(f"Launched configuration: {self.config_file_path}")
+            self.status_label.setText("Status: Running")
+            
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to start pipeline: {e}")
+            QMessageBox.critical(self, "Error", f"Failed to launch configuration: {e}")
+            self.log_message(f"Launch error: {e}")
     
     def stop_pipeline(self):
-        """Stop the pipeline"""
-        if self.worker:
-            self.worker.stop()
-            self.worker.wait()
-    
-    def on_pipeline_started(self):
-        """Handle pipeline started event"""
-        self.status_label.setText("Status: Running")
-        self.log_message("Pipeline started")
-    
-    def on_pipeline_stopped(self):
-        """Handle pipeline stopped event"""
+        """Stop the launched process"""
+        if self.launcher:
+            self.launcher.stop()
+            self.launcher = None
+            
+        # Stop monitoring
+        self.process_monitor_timer.stop()
+            
+        # Update UI
         self.status_label.setText("Status: Stopped")
         self.start_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.progress_bar.setVisible(False)
-        self.log_message("Pipeline stopped")
+        self.log_message("Process stopped")
     
-    def on_pipeline_error(self, error: str):
-        """Handle pipeline error event"""
-        self.status_label.setText("Status: Error")
-        self.start_btn.setEnabled(True)
-        self.stop_btn.setEnabled(False)
-        self.progress_bar.setVisible(False)
-        self.log_message(f"Pipeline error: {error}")
-        QMessageBox.critical(self, "Pipeline Error", error)
+    def check_process_status(self):
+        """Check if the launched process is still running"""
+        if self.launcher is None:
+            return
+            
+        if not self.launcher.is_running():
+            # Process has finished
+            return_code = self.launcher.get_return_code()
+            self.launcher = None
+            self.process_monitor_timer.stop()
+            
+            # Update UI
+            if return_code == 0:
+                self.status_label.setText("Status: Completed")
+                self.log_message("Process completed successfully")
+            else:
+                self.status_label.setText("Status: Failed")
+                self.log_message(f"Process failed with return code: {return_code}")
+            
+            self.start_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
+            self.progress_bar.setVisible(False)
+    
+
     
     def log_message(self, message: str):
         """Add message to log display"""
@@ -381,6 +421,25 @@ class EvilEyeGUI(QMainWindow):
     def clear_logs(self):
         """Clear log display"""
         self.log_display.clear()
+    
+    def on_close_event(self, event):
+        """Handle window close event"""
+        if self.launcher and self.launcher.is_running():
+            reply = QMessageBox.question(
+                self, 
+                "Confirm Exit", 
+                "A process is still running. Do you want to stop it and exit?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            
+            if reply == QMessageBox.StandardButton.Yes:
+                self.stop_pipeline()
+                event.accept()
+            else:
+                event.ignore()
+        else:
+            event.accept()
 
 
 def main():
