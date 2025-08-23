@@ -49,7 +49,54 @@ evileye-create my_config --sources 2 --source-type video_file
 
 # Run with configuration
 evileye run configs/my_config.json
+
+# Launch Configuration GUI
+evileye gui
 ```
+
+#### After Running `evileye deploy`
+
+The `deploy` command creates the following structure in your current directory:
+
+```
+your_project/
+├── credentials.json          # Database and camera credentials
+└── configs/                  # Configuration files directory
+    └── (empty - ready for your configs)
+```
+
+#### Credentials Configuration
+
+The `credentials.json` file contains database and camera access credentials:
+
+```json
+{
+  "sources": {
+    "rtsp://camera1.example.com": {
+      "username": "camera_user",
+      "password": "camera_password"
+    },
+    "rtsp://camera2.example.com": {
+      "username": "admin",
+      "password": "admin123"
+    }
+  },
+  "database": {
+    "user_name": "postgres",
+    "password": "your_db_password",
+    "database_name": "evil_eye_db",
+    "host_name": "localhost",
+    "port": 5432,
+    "default_database_name": "postgres",
+    "default_password": "your_default_password",
+    "default_user_name": "postgres",
+    "default_host_name": "localhost",
+    "default_port": 5432
+  }
+}
+```
+
+⚠️ **Security Warning**: The `credentials.json` file contains plain text passwords. Store this file securely and never commit it to version control. Consider using environment variables or a secure credential manager for production deployments.
 
 
 
@@ -57,11 +104,14 @@ evileye run configs/my_config.json
 
 EvilEye uses JSON configuration files for the **PipelineSurveillance** class. The configuration is divided into sections that define different components of the surveillance pipeline.
 
+⚠️ **Important**: The configuration structure described above is specific to the **PipelineSurveillance** class. Other pipeline classes may have different configuration requirements and structure.
+
 ### Configuration Structure
 
 ```json
 {
   "pipeline": {
+    "pipeline_class": "PipelineSurveillance",
     "sources": [...],      // Video sources configuration
     "detectors": [...],    // Object detection configuration
     "trackers": [...],     // Object tracking configuration
@@ -254,24 +304,6 @@ The `mc_trackers` section configures cross-camera object tracking.
 | `source_ids` | array | Source IDs for cross-camera tracking | - |
 | `enable` | boolean | Enable multi-camera tracking | `false` |
 
-### Pipeline Class Specificity
-
-⚠️ **Important**: The configuration structure described above is specific to the **PipelineSurveillance** class. Other pipeline classes may have different configuration requirements and structure.
-
-To use a different pipeline class, specify it in the configuration:
-
-```json
-{
-  "pipeline": {
-    "pipeline_class": "PipelineSurveillance",
-    "sources": [...],
-    "detectors": [...],
-    "trackers": [...],
-    "mc_trackers": [...]
-  }
-}
-```
-
 ### Complete Configuration Examples
 
 #### IP Camera Configuration (poly-cameras.json)
@@ -431,6 +463,23 @@ The Configuration GUI provides:
 - Log display and management
 - Tabbed interface for configuration, logs, and controls
 
+### Deployment Command Details
+
+The `evileye deploy` command:
+
+1. **Copies** `credentials_proto.json` to `credentials.json` (if `credentials.json` doesn't exist)
+2. **Creates** `configs/` folder (if it doesn't exist)
+3. **Prepares** your project directory for EvilEye configuration
+
+**Created Files:**
+- `credentials.json` - Database and camera access credentials
+- `configs/` - Directory for your configuration files
+
+**Next Steps After Deploy:**
+1. Edit `credentials.json` with your actual credentials
+2. Create configurations using `evileye-create`
+3. Run the system with `evileye run`
+
 ### Configuration Management
 
 ```bash
@@ -460,17 +509,25 @@ mkdir my_surveillance_project
 cd my_surveillance_project
 evileye deploy
 
-# 2. Create configuration for 2 IP cameras
+# 2. Edit credentials.json with your actual credentials
+#    - Add camera usernames/passwords
+#    - Configure database connection
+
+# 3. Create configuration for 2 IP cameras
 evileye-create surveillance_config --sources 2 --source-type ip_camera
 
-# 3. Edit credentials.json with your camera credentials
 # 4. Edit configs/surveillance_config.json with your camera URLs
+#    - Replace "rtsp://url" with actual camera URLs
+#    - Configure detection and tracking parameters
 
 # 5. Validate configuration
 evileye validate configs/surveillance_config.json
 
 # 6. Run the system
 evileye run configs/surveillance_config.json
+
+# Alternative: Use GUI for easier management
+evileye-launch
 ```
 
 ## Development
