@@ -29,15 +29,12 @@ class DatabaseControllerPg(DatabaseControllerBase):
         self.cameras_params = system_params.get('pipeline', {}).get('sources', dict())
         self.conn_pool = None
         self.user_name = ""
-        self.default_user_name = ""
         self.password = ""
-        self.default_password = ""
         self.database_name = ""
-        self.default_database_name = ""
         self.host_name = ""
-        self.default_host_name = ""
         self.port = 0
-        self.default_port = 0
+        self.admin_user_name = ""
+        self.admin_password = ""
         self.create_new_project = False
         self.image_dir = None
         self.tables = None
@@ -47,15 +44,12 @@ class DatabaseControllerPg(DatabaseControllerBase):
 
     def set_params_impl(self):
         self.user_name = self.params['user_name']
-        self.default_user_name = self.params['default_user_name']
         self.password = self.params['password']
-        self.default_password = self.params['default_password']
         self.database_name = self.params['database_name']
-        self.default_database_name = self.params['default_database_name']
         self.host_name = self.params['host_name']
-        self.default_host_name = self.params['default_host_name']
         self.port = self.params['port']
-        self.default_port = self.params['default_port']
+        self.admin_user_name = self.params.get('admin_user_name', 'postgres')
+        self.admin_password = self.params.get('admin_password', '')
         self.image_dir = self.params['image_dir']
         self.create_new_project = self.params['create_new_project']
         self.tables = copy.deepcopy(self.params['tables'])
@@ -66,15 +60,12 @@ class DatabaseControllerPg(DatabaseControllerBase):
     def get_params_impl(self):
         params = dict()
         params['user_name'] = self.user_name
-        params['default_user_name'] = self.default_user_name
         params['password'] = self.password
-        params['default_password'] = self.default_password
         params['database_name'] = self.database_name
-        params['default_database_name'] = self.default_database_name
         params['host_name'] = self.host_name
-        params['default_host_name'] = self.default_host_name
         params['port'] = self.port
-        params['default_port'] = self.default_port
+        params['admin_user_name'] = self.admin_user_name
+        params['admin_password'] = self.admin_password
         params['image_dir'] = self.image_dir
         params['create_new_project'] = self.create_new_project
         params['tables'] = copy.deepcopy(self.tables)
@@ -89,11 +80,13 @@ class DatabaseControllerPg(DatabaseControllerBase):
         return self.params
 
     def default(self):
-        self.params['user_name'] = "postgres"
+        self.params['user_name'] = "evil_eye_user"
         self.params['password'] = ""
         self.params['database_name'] = "evil_eye_db"
         self.params['host_name'] = "localhost"
         self.params['port'] = 5432
+        self.params['admin_user_name'] = "postgres"
+        self.params['admin_password'] = ""
         self.params['image_dir'] = utils.get_project_root()
         self.set_params_impl()
 
@@ -222,9 +215,10 @@ class DatabaseControllerPg(DatabaseControllerBase):
     def _create_db(self, db_name):
         conn = None
         try:
-            conn = psycopg2.connect(dbname=self.default_database_name, user=self.default_user_name,
-                                    password=self.default_password, host=self.default_host_name,
-                                    port=self.default_port)
+            # Connect to postgres database using admin credentials to create new database
+            conn = psycopg2.connect(dbname="postgres", user=self.admin_user_name,
+                                    password=self.admin_password, host=self.host_name,
+                                    port=self.port)
             conn.autocommit = True
             with conn.cursor() as curs:
                 curs.execute(sql.SQL('SELECT 1 FROM pg_catalog.pg_database WHERE datname = %s;'), (db_name,))

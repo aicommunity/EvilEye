@@ -83,30 +83,25 @@ class DatabaseTab(QWidget):
         layout.addRow('Port', port)
         self.line_edit_param['database']['Port'] = 'port'
 
-        default_database_name = QLineEdit()
-        default_database_name.setText('postgres')
-        layout.addRow('Default DB name', default_database_name)
-        self.line_edit_param['database']['Default DB name'] = 'default_database_name'
+        # Admin credentials section
+        admin_label = QLabel('Admin Credentials (for database creation)')
+        admin_label.setStyleSheet("font-weight: bold; color: #2c3e50;")
+        layout.addRow(admin_label)
 
-        default_password = QLineEdit()
-        default_password.setText('')
-        layout.addRow('Default password', default_password)
-        self.line_edit_param['database']['Default password'] = 'default_password'
+        admin_user_name = QLineEdit()
+        admin_user_name.setText('postgres')
+        layout.addRow('Admin username', admin_user_name)
+        self.line_edit_param['database']['Admin username'] = 'admin_user_name'
 
-        default_user_name = QLineEdit()
-        default_user_name.setText('postgres')
-        layout.addRow('Default username', default_user_name)
-        self.line_edit_param['database']['Default username'] = 'default_user_name'
+        admin_password = QLineEdit()
+        admin_password.setEchoMode(QLineEdit.EchoMode.Password)
+        layout.addRow('Admin password', admin_password)
+        self.line_edit_param['database']['Admin password'] = 'admin_password'
 
-        default_host_name = QLineEdit()
-        default_host_name.setText('localhost')
-        layout.addRow('Default host name', default_host_name)
-        self.line_edit_param['database']['Default host name'] = 'default_host_name'
-
-        default_port = QLineEdit()
-        default_port.setText('5433')
-        layout.addRow('Default port', default_port)
-        self.line_edit_param['database']['Default port'] = 'default_port'
+        # Other settings section
+        other_label = QLabel('Other Settings')
+        other_label.setStyleSheet("font-weight: bold; color: #2c3e50;")
+        layout.addRow(other_label)
 
         image_dir = QLineEdit()
         layout.addRow('Image directory', image_dir)

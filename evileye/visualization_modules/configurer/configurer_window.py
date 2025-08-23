@@ -98,27 +98,21 @@ class ConfigurerMainWindow(QMainWindow):
             self.database_config = dict()
             self.database_config["database"] = dict()
 
-        database_creds["user_name"] = database_creds.get("user_name", "postgres")
+        database_creds["user_name"] = database_creds.get("user_name", "evil_eye_user")
         database_creds["password"] = database_creds.get("password", "")
         database_creds["database_name"] = database_creds.get("database_name", "evil_eye_db")
         database_creds["host_name"] = database_creds.get("host_name", "localhost")
         database_creds["port"] = database_creds.get("port", 5432)
-        database_creds["default_database_name"] = database_creds.get("default_database_name", "postgres")
-        database_creds["default_password"] = database_creds.get("default_password", "")
-        database_creds["default_user_name"] = database_creds.get("default_user_name", "postgres")
-        database_creds["default_host_name"] = database_creds.get("default_host_name", "localhost")
-        database_creds["default_port"] = database_creds.get("default_port", 5432)
+        database_creds["admin_user_name"] = database_creds.get("admin_user_name", "postgres")
+        database_creds["admin_password"] = database_creds.get("admin_password", "")
 
         self.database_config["database"]["user_name"] = self.database_config["database"].get("user_name", database_creds["user_name"])
         self.database_config["database"]["password"] = self.database_config["database"].get("password", database_creds["password"])
         self.database_config["database"]["database_name"] = self.database_config["database"].get("database_name", database_creds["database_name"])
         self.database_config["database"]["host_name"] = self.database_config["database"].get("host_name", database_creds["host_name"])
         self.database_config["database"]["port"] = self.database_config["database"].get("port", database_creds["port"])
-        self.database_config["database"]["default_database_name"] = self.database_config["database"].get("default_database_name", database_creds["default_database_name"])
-        self.database_config["database"]["default_password"] = self.database_config["database"].get("default_password", database_creds["default_password"])
-        self.database_config["database"]["default_user_name"] = self.database_config["database"].get("default_user_name", database_creds["default_user_name"])
-        self.database_config["database"]["default_host_name"] = self.database_config["database"].get("default_host_name", database_creds["default_host_name"])
-        self.database_config["database"]["default_port"] = self.database_config["database"].get("default_port", database_creds["default_port"])
+        self.database_config["database"]["admin_user_name"] = self.database_config["database"].get("admin_user_name", database_creds["admin_user_name"])
+        self.database_config["database"]["admin_password"] = self.database_config["database"].get("admin_password", database_creds["admin_password"])
 
         self.params = config_params
         self.default_src_params = self.params['sources'][0]
@@ -243,8 +237,7 @@ class ConfigurerMainWindow(QMainWindow):
     def _run_app(self):
         self.new_process = multiprocessing.Process(target=process.start_app, args=(self.result_filename,))
         self.new_process.start()
-        if self.new_process.is_alive():
-            self.new_process.join()
+        self.new_process.join()
 
     @pyqtSlot()
     def _open_save_win(self):
