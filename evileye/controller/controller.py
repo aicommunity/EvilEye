@@ -61,6 +61,7 @@ class Controller:
         self.enable_close_from_gui = True
         self.memory_periodic_check_sec = 60*15
         self.max_memory_usage_mb = 1024*16
+        self.show_memory_usage = False
         self.auto_restart = True
 
         self.events_detectors_controller = None
@@ -225,7 +226,8 @@ class Controller:
 
             if not self.debug_info.get("controller", None) or not self.debug_info["controller"].get("timestamp", None) or ((datetime.datetime.now() - self.debug_info["controller"]["timestamp"]).total_seconds() > self.memory_periodic_check_sec):
                 self.collect_memory_consumption()
-                pprint.pprint(self.debug_info)
+                if self.show_memory_usage:
+                    pprint.pprint(self.debug_info)
 
                 if self.debug_info.get("controller", None):
                     total_memory_usage_mb = self.debug_info["controller"].get("total_memory_usage_mb", None)
@@ -399,6 +401,7 @@ class Controller:
             self.enable_close_from_gui = self.params['controller'].get("enable_close_from_gui", self.enable_close_from_gui)
             self.class_names = self.params['controller'].get("class_names", list())
             self.memory_periodic_check_sec = self.params['controller'].get("memory_periodic_check_sec", self.memory_periodic_check_sec)
+            self.show_memory_usage = self.params['controller'].get("show_memory_usage", self.show_memory_usage)
             self.max_memory_usage_mb = self.params['controller'].get("max_memory_usage_mb", self.max_memory_usage_mb)
             self.auto_restart = self.params['controller'].get("auto_restart", self.auto_restart)
 
@@ -423,6 +426,8 @@ class Controller:
         self.params['controller']["enable_close_from_gui"] = self.enable_close_from_gui
         self.params['controller']["class_names"] = self.class_names
         self.params['controller']["memory_periodic_check_sec"] = self.memory_periodic_check_sec
+        self.params['controller']["show_memory_usage"] = self.show_memory_usage
+
         self.params['controller']["max_memory_usage_mb"] = self.max_memory_usage_mb
         self.params['controller']["auto_restart"] = self.auto_restart
 
