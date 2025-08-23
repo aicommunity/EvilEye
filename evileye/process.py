@@ -83,7 +83,7 @@ def main():
         config_data["visualizer"]["gui_enabled"] = True
 
     if args.autoclose:
-        sources = config_data["sources"]
+        sources = config_data.get("pipeline", {}).get("sources", [])
         for source in sources:
             source["loop_play"] = False
         config_data["autoclose"] = True

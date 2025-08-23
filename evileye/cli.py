@@ -44,8 +44,8 @@ def setup_logging(verbose: bool = False) -> None:
 def run(
         config: Optional[Path] = typer.Argument(None, help="Configuration file path"),
         video: Optional[str] = typer.Option(None, "--video", help="Video file to process"),
-        gui: Optional[bool] = typer.Option(True, "--gui", help="Launch with gui interface"),
-        autoclose: Optional[bool] = typer.Option(True, "--autoclose", help="Automatic close application when video ends"),
+        gui: bool = typer.Option(True, "--gui/--no-gui", help="Launch with gui interface"),
+        autoclose: bool = typer.Option(False, "--autoclose/--no-autoclose", help="Automatic close application when video ends"),
 ) -> None:
     """
     Launch EvilEye 
@@ -58,7 +58,7 @@ def run(
     import os
 
     # Build command arguments
-    cmd = [sys.executable, "process.py", "--gui"]
+    cmd = [sys.executable, "evileye/process.py"]
 
     if config:
         if not config.exists():
@@ -77,8 +77,17 @@ def run(
             console.print("Please specify a config file: [yellow]evileye gui <config_file>[/yellow]")
             raise typer.Exit(1)
 
-    cmd.extend(["--gui", gui])
-    cmd.extend(["--autoclose", autoclose])
+    # Add GUI flag based on boolean value
+    if gui:
+        cmd.append("--gui")
+    else:
+        cmd.append("--no-gui")
+
+    # Add autoclose flag based on boolean value
+    if autoclose:
+        cmd.append("--autoclose")
+    else:
+        cmd.append("--no-autoclose")
 
     try:
         console.print(f"[green]Launching with command:[/green] {' '.join(cmd)}")
