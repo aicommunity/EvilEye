@@ -166,15 +166,40 @@ def get_objs_info(bboxes_coords, confidences, class_ids):
     return objects
 
 
-def draw_boxes(image, objects, cam_id, model_names):
+def draw_boxes(image, objects, cam_id, model_names, text_config=None):
+    """
+    Draw bounding boxes and labels with adaptive text positioning.
+    
+    Args:
+        image: OpenCV image
+        objects: List of detected objects
+        cam_id: Camera ID
+        model_names: Class names mapping
+        text_config: Text configuration dictionary (optional)
+    """
+    # Apply text configuration
+    config = apply_text_config(text_config)
+    
     for cam_objs in objects:
         if cam_objs['cam_id'] == cam_id:
             for obj in cam_objs['objects']:
+                # Draw bounding box
                 cv2.rectangle(image, (int(obj['bbox'][0]), int(obj['bbox'][1])),
                               (int(obj['bbox'][2]), int(obj['bbox'][3])), (0, 255, 0), thickness=8)
-                cv2.putText(image, str(model_names[obj['class']]) + " " + "{:.2f}".format(obj['conf']),
-                            (int(obj['bbox'][0]), int(obj['bbox'][1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 1,
-                            (255, 255, 255), 2)
+                
+                # Create text label
+                text = str(model_names[obj['class']]) + " " + "{:.2f}".format(obj['conf'])
+                
+                # Draw text with adaptive positioning
+                put_text_with_bbox(image, text, obj['bbox'], 
+                                 font_size_pt=config['font_size_pt'],
+                                 font_face=config['font_face'],
+                                 color=config['color'],
+                                 thickness=config['thickness'],
+                                 background_color=config['background_color'],
+                                 position_offset_percent=config['position_offset_percent'],
+                                 font_scale_method=config.get('font_scale_method', 'resolution_based'),
+                                 base_resolution=config.get('base_resolution', (1920, 1080)))
 
 
 def draw_preview_boxes(image, width, height, box):
@@ -238,20 +263,42 @@ def draw_boxes_from_db(db_controller, table_name, load_folder, save_folder):
             print('Error saving image with boxes')
 
 
-def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_duration_msecs, font_scale, font_thickness, font_color):
+def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_duration_msecs, font_scale, font_thickness, font_color, text_config=None):
     height, width, channels = image.image.shape
+    
+    # Apply text configuration
+    config = apply_text_config(text_config)
+    
+    # Draw source name
     if source_name is int:
-        cv2.putText(image.image, "Source Id: " + str(source_name), (100, height - 100), cv2.FONT_HERSHEY_SIMPLEX,
-                    font_scale, font_color, font_thickness)
+        source_text = "Source Id: " + str(source_name)
     else:
-        cv2.putText(image.image, str(source_name), (100, height - 100), cv2.FONT_HERSHEY_SIMPLEX,
-                    font_scale, font_color, font_thickness)
+        source_text = str(source_name)
+    
+    # Position source name at bottom-left (10% from left, 10% from bottom)
+    put_text_adaptive(image.image, source_text, (10, 90), 
+                     font_size_pt=config['font_size_pt'],
+                     font_face=config['font_face'],
+                     color=config['color'],
+                     thickness=config['thickness'],
+                     background_color=config['background_color'],
+                     font_scale_method=config.get('font_scale_method', 'resolution_based'),
+                     base_resolution=config.get('base_resolution', (1920, 1080)))
 
+    # Draw time position
     if image.current_video_position and source_duration_msecs is not None:
         time_position_secs = image.current_video_position / 1000.0
         pos_string = "{:.1f}".format(time_position_secs) + " [" + "{:.1f}".format(source_duration_msecs / 1000.0) + "]"
-        cv2.putText(image.image, pos_string, (width - 900, height - 100), cv2.FONT_HERSHEY_SIMPLEX,
-                    font_scale, font_color, font_thickness)
+        
+        # Position time at bottom-right (10% from right, 10% from bottom)
+        put_text_adaptive(image.image, pos_string, (90, 90), 
+                         font_size_pt=config['font_size_pt'],
+                         font_face=config['font_face'],
+                         color=config['color'],
+                         thickness=config['thickness'],
+                         background_color=config['background_color'],
+                         font_scale_method=config.get('font_scale_method', 'resolution_based'),
+                         base_resolution=config.get('base_resolution', (1920, 1080)))
 
     # Для трекинга отображаем только последние данные об объекте из истории
     # print(cameras_objs)
@@ -270,17 +317,23 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
 
         cv2.rectangle(image.image, (int(last_info.bounding_box[0]), int(last_info.bounding_box[1])),
                       (int(last_info.bounding_box[2]), int(last_info.bounding_box[3])), (0, 255, 0), thickness=font_thickness)
+        
+        # Create tracking text
         if obj.global_id is not None:
-            cv2.putText(image.image,
-                        'g' + str(obj.global_id) + ' ' + str([last_info.class_id]) +
-                        " " + "{:.2f}".format(last_info.confidence),
-                        (int(last_info.bounding_box[0]), int(last_info.bounding_box[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX,
-                        font_scale, font_color, font_thickness)
+            tracking_text = 'g' + str(obj.global_id) + ' ' + str([last_info.class_id]) + " " + "{:.2f}".format(last_info.confidence)
         else:
-            cv2.putText(image.image, str(last_info.track_id) + ' ' + str([last_info.class_id]) +
-                        " " + "{:.2f}".format(last_info.confidence),
-                        (int(last_info.bounding_box[0]), int(last_info.bounding_box[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX,
-                        font_scale, font_color, font_thickness)
+            tracking_text = str(last_info.track_id) + ' ' + str([last_info.class_id]) + " " + "{:.2f}".format(last_info.confidence)
+        
+        # Draw tracking text with adaptive positioning
+        put_text_with_bbox(image.image, tracking_text, last_info.bounding_box,
+                          font_size_pt=config['font_size_pt'],
+                          font_face=config['font_face'],
+                          color=config['color'],
+                          thickness=config['thickness'],
+                          background_color=config['background_color'],
+                          position_offset_percent=config['position_offset_percent'],
+                          font_scale_method=config.get('font_scale_method', 'resolution_based'),
+                          base_resolution=config.get('base_resolution', (1920, 1080)))
 
         # print(len(obj['obj_info']))
         if len(obj.history) > 1:
@@ -358,3 +411,322 @@ def normalize_config_path(config_path):
     
     # Add configs/ prefix
     return os.path.join("configs", config_path_str)
+
+
+# =============================================================================
+# TEXT RENDERING UTILITIES
+# =============================================================================
+
+def pt_to_pixels(pt_size, dpi=96):
+    """
+    Convert points to pixels based on DPI.
+    
+    Args:
+        pt_size: Font size in points
+        dpi: Dots per inch (default: 96 for standard screen)
+        
+    Returns:
+        Font size in pixels
+    """
+    return int(pt_size * dpi / 72.0)
+
+
+def calculate_font_scale_for_resolution(font_size_pt, image_width, image_height, base_resolution=(1920, 1080)):
+    """
+    Calculate font scale based on image resolution.
+    
+    This function calculates an appropriate font scale for OpenCV's putText function
+    based on the desired font size in points and the current image resolution.
+    
+    Args:
+        font_size_pt: Desired font size in points
+        image_width: Width of the image in pixels
+        image_height: Height of the image in pixels
+        base_resolution: Base resolution for scaling (default: 1920x1080)
+        
+    Returns:
+        Font scale value for OpenCV putText function
+    """
+    # Convert points to pixels at 96 DPI
+    font_size_px = pt_to_pixels(font_size_pt, dpi=96)
+    
+    # Calculate resolution factor based on image size
+    # Use the smaller dimension to avoid oversized text on very wide/tall images
+    image_min_dimension = min(image_width, image_height)
+    base_min_dimension = min(base_resolution[0], base_resolution[1])
+    
+    # Calculate scaling factor
+    resolution_factor = image_min_dimension / base_min_dimension
+    
+    # Apply resolution scaling to font size
+    scaled_font_size_px = font_size_px * resolution_factor
+    
+    # Convert to OpenCV font scale (approximate conversion)
+    # OpenCV font scale is roughly pixels / 30 for FONT_HERSHEY_SIMPLEX
+    font_scale = scaled_font_size_px / 30.0
+    
+    # Ensure minimum and maximum reasonable values
+    font_scale = max(0.1, min(font_scale, 10.0))
+    
+    return font_scale
+
+
+def calculate_font_scale_simple(font_size_pt, image_width, image_height):
+    """
+    Simple font scale calculation based on image diagonal.
+    
+    Args:
+        font_size_pt: Desired font size in points
+        image_width: Width of the image in pixels
+        image_height: Height of the image in pixels
+        
+    Returns:
+        Font scale value for OpenCV putText function
+    """
+    # Convert points to pixels
+    font_size_px = pt_to_pixels(font_size_pt, dpi=96)
+    
+    # Calculate image diagonal
+    image_diagonal = (image_width ** 2 + image_height ** 2) ** 0.5
+    
+    # Base diagonal for 1920x1080
+    base_diagonal = (1920 ** 2 + 1080 ** 2) ** 0.5
+    
+    # Calculate scaling factor
+    scale_factor = image_diagonal / base_diagonal
+    
+    # Apply scaling and convert to OpenCV scale
+    scaled_font_size_px = font_size_px * scale_factor
+    font_scale = scaled_font_size_px / 30.0
+    
+    # Ensure reasonable bounds
+    font_scale = max(0.1, min(font_scale, 10.0))
+    
+    return font_scale
+
+
+def percent_to_pixels(percent, total_size):
+    """
+    Convert percentage to pixels.
+    
+    Args:
+        percent: Percentage value (0.0 to 100.0)
+        total_size: Total size in pixels
+        
+    Returns:
+        Position in pixels
+    """
+    return int(percent * total_size / 100.0)
+
+
+def calculate_text_size(text, font_face=cv2.FONT_HERSHEY_SIMPLEX, font_scale=1.0, thickness=1):
+    """
+    Calculate text size in pixels.
+    
+    Args:
+        text: Text string
+        font_face: OpenCV font face
+        font_scale: Font scale
+        thickness: Font thickness
+        
+    Returns:
+        Tuple of (width, height) in pixels
+    """
+    (text_width, text_height), baseline = cv2.getTextSize(text, font_face, font_scale, thickness)
+    return text_width, text_height + baseline
+
+
+def get_adaptive_font_scale(text, target_width_px, font_face=cv2.FONT_HERSHEY_SIMPLEX, thickness=1):
+    """
+    Calculate font scale to fit text within target width.
+    
+    Args:
+        text: Text string
+        target_width_px: Target width in pixels
+        font_face: OpenCV font face
+        thickness: Font thickness
+        
+    Returns:
+        Font scale that fits the text
+    """
+    # Start with scale 1.0 and reduce until text fits
+    scale = 1.0
+    while scale > 0.1:  # Minimum scale limit
+        text_width, _ = calculate_text_size(text, font_face, scale, thickness)
+        if text_width <= target_width_px:
+            return scale
+        scale *= 0.9
+    return 0.1
+
+
+def put_text_adaptive(image, text, position_percent, font_size_pt=12, font_face=cv2.FONT_HERSHEY_SIMPLEX, 
+                     color=(255, 255, 255), thickness=None, background_color=None, padding_percent=2.0,
+                     font_scale_method="resolution_based", base_resolution=(1920, 1080)):
+    """
+    Draw text with adaptive positioning and sizing.
+    
+    Args:
+        image: OpenCV image
+        text: Text to draw
+        position_percent: Position as (x_percent, y_percent) from top-left
+        font_size_pt: Font size in points
+        font_face: OpenCV font face
+        color: Text color (B, G, R)
+        thickness: Font thickness (auto-calculated if None)
+        background_color: Background color for text (optional)
+        padding_percent: Padding around text in percent of image width
+        font_scale_method: Method for calculating font scale ("resolution_based" or "simple")
+        base_resolution: Base resolution for scaling (width, height)
+        
+    Returns:
+        Modified image
+    """
+    height, width = image.shape[:2]
+    
+    # Calculate font scale based on image resolution
+    if font_scale_method == "simple":
+        font_scale = calculate_font_scale_simple(font_size_pt, width, height)
+    else:  # resolution_based
+        font_scale = calculate_font_scale_for_resolution(font_size_pt, width, height, base_resolution)
+    
+    # Auto-calculate thickness if not provided
+    if thickness is None:
+        thickness = max(1, int(font_scale * 2))
+    
+    # Calculate position in pixels
+    x_px = percent_to_pixels(position_percent[0], width)
+    y_px = percent_to_pixels(position_percent[1], height)
+    
+    # Calculate text size
+    text_width, text_height = calculate_text_size(text, font_face, font_scale, thickness)
+    
+    # Adjust position to ensure text fits within image bounds
+    if x_px + text_width > width:
+        x_px = width - text_width - 10
+    if y_px - text_height < 0:
+        y_px = text_height + 10
+    
+    # Draw background if specified
+    if background_color:
+        padding_px = percent_to_pixels(padding_percent, width)
+        cv2.rectangle(image, 
+                     (x_px - padding_px, y_px - text_height - padding_px),
+                     (x_px + text_width + padding_px, y_px + padding_px),
+                     background_color, -1)
+    
+    # Draw text
+    cv2.putText(image, text, (x_px, y_px), font_face, font_scale, color, thickness)
+    
+    return image
+
+
+def put_text_with_bbox(image, text, bbox, font_size_pt=12, font_face=cv2.FONT_HERSHEY_SIMPLEX,
+                      color=(255, 255, 255), thickness=None, background_color=None, 
+                      position_offset_percent=(0, -10), font_scale_method="resolution_based", 
+                      base_resolution=(1920, 1080)):
+    """
+    Draw text near a bounding box with adaptive positioning.
+    
+    Args:
+        image: OpenCV image
+        text: Text to draw
+        bbox: Bounding box (x1, y1, x2, y2)
+        font_size_pt: Font size in points
+        font_face: OpenCV font face
+        color: Text color (B, G, R)
+        thickness: Font thickness (auto-calculated if None)
+        background_color: Background color for text (optional)
+        position_offset_percent: Offset from bbox in percent of image size
+        font_scale_method: Method for calculating font scale ("resolution_based" or "simple")
+        base_resolution: Base resolution for scaling (width, height)
+        
+    Returns:
+        Modified image
+    """
+    height, width = image.shape[:2]
+    
+    # Calculate font scale based on image resolution
+    if font_scale_method == "simple":
+        font_scale = calculate_font_scale_simple(font_size_pt, width, height)
+    else:  # resolution_based
+        font_scale = calculate_font_scale_for_resolution(font_size_pt, width, height, base_resolution)
+    
+    # Auto-calculate thickness if not provided
+    if thickness is None:
+        thickness = max(1, int(font_scale * 2))
+    
+    # Calculate position relative to bbox
+    x_offset = percent_to_pixels(position_offset_percent[0], width)
+    y_offset = percent_to_pixels(position_offset_percent[1], height)
+    
+    x_px = int(bbox[0]) + x_offset
+    y_px = int(bbox[1]) + y_offset
+    
+    # Ensure text doesn't go outside image bounds
+    if x_px < 0:
+        x_px = 10
+    if y_px < 0:
+        y_px = 10
+    
+    # Calculate text size
+    text_width, text_height = calculate_text_size(text, font_face, font_scale, thickness)
+    
+    # Adjust if text would go outside image
+    if x_px + text_width > width:
+        x_px = width - text_width - 10
+    if y_px - text_height < 0:
+        y_px = text_height + 10
+    
+    # Draw background if specified
+    if background_color:
+        padding_px = 5
+        cv2.rectangle(image, 
+                     (x_px - padding_px, y_px - text_height - padding_px),
+                     (x_px + text_width + padding_px, y_px + padding_px),
+                     background_color, -1)
+    
+    # Draw text
+    cv2.putText(image, text, (x_px, y_px), font_face, font_scale, color, thickness)
+    
+    return image
+
+
+def get_default_text_config():
+    """
+    Get default text configuration.
+    
+    Returns:
+        Dictionary with default text settings
+    """
+    return {
+        "font_size_pt": 12,
+        "font_face": cv2.FONT_HERSHEY_SIMPLEX,
+        "color": (255, 255, 255),  # White
+        "thickness": None,  # Auto-calculated
+        "background_color": None,  # No background
+        "padding_percent": 2.0,
+        "position_offset_percent": (0, -10),
+        "font_scale_method": "resolution_based",  # "resolution_based" or "simple"
+        "base_resolution": (1920, 1080)  # Base resolution for scaling
+    }
+
+
+def apply_text_config(text_config, default_config=None):
+    """
+    Apply text configuration with defaults.
+    
+    Args:
+        text_config: User-provided text configuration
+        default_config: Default configuration (optional)
+        
+    Returns:
+        Merged configuration
+    """
+    if default_config is None:
+        default_config = get_default_text_config()
+    
+    merged_config = default_config.copy()
+    if text_config:
+        merged_config.update(text_config)
+    
+    return merged_config

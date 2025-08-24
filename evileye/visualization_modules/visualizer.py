@@ -28,6 +28,7 @@ class Visualizer(EvilEyeBase):
         self.objects: list[ObjectResultList] = []
         self.last_displayed_frame = dict()
         self.visual_buffer_num_frames = 50
+        self.text_config = {}  # Text configuration for rendering
         self.memory_consumption_detail = dict()
 
 
@@ -40,7 +41,8 @@ class Visualizer(EvilEyeBase):
         for i in range(len(self.source_ids)):
             self.visual_threads.append(VideoThread(self.source_ids[i], self.fps[i], self.num_height,
                                                            self.num_width, self.show_debug_info,
-                                                   self.font_params[i] if self.font_params is not None else None))
+                                                   self.font_params[i] if self.font_params is not None else None,
+                                                   text_config=self.text_config))
             self.visual_threads[-1].update_image_signal.connect(
                 self.pyqt_slots['update_image'])  # Сигнал из потока для обновления label на новое изображение
             self.visual_threads[-1].add_zone_signal.connect(self.pyqt_slots['open_zone_win'])
@@ -67,6 +69,7 @@ class Visualizer(EvilEyeBase):
         self.num_height = self.params.get('num_height', self.num_height)
         self.num_width = self.params.get('num_width', self.num_width)
         self.visual_buffer_num_frames = self.params.get('visual_buffer_num_frames', 50)
+        self.text_config = self.params.get('text_config', {})
 
     def get_params_impl(self):
         params = dict()
@@ -77,6 +80,7 @@ class Visualizer(EvilEyeBase):
         params['num_height'] = self.num_height
         params['num_width'] = self.num_width
         params['visual_buffer_num_frames'] = self.visual_buffer_num_frames
+        params['text_config'] = self.text_config
         return params
 
     def start(self):

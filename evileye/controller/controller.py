@@ -454,6 +454,9 @@ class Controller:
         else:
             self.params['visualizer'] = dict()
 
+        # Text configuration is now part of visualizer section
+        # No need to add separate text_config here
+
     def set_current_main_widget_size(self, width, height):
         self.current_main_widget_size = [width, height]
         self.visualizer.set_current_main_widget_size(width, height)

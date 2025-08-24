@@ -165,6 +165,17 @@
     "fps": [5, 5, 5],
     "gui_enabled": true,
     "show_debug_info": true,
-    "objects_journal_enabled": true
+    "objects_journal_enabled": true,
+    "text_config": {
+      "font_size_pt": 10,
+      "font_face": 0,
+      "color": [255, 255, 255],
+      "thickness": null,
+      "background_color": [0, 0, 0],
+      "padding_percent": 0.8,
+      "position_offset_percent": [0, -5],
+      "font_scale_method": "resolution_based",
+      "base_resolution": [1920, 1080]
+    }
   }
 }
