@@ -52,6 +52,9 @@ evileye run configs/my_config.json
 
 # Launch Configuration GUI
 evileye gui
+
+# Deploy sample configurations (recommended for beginners)
+evileye deploy-samples
 ```
 
 #### After Running `evileye deploy`
@@ -63,6 +66,25 @@ your_project/
 ├── credentials.json          # Database and camera credentials
 └── configs/                  # Configuration files directory
     └── (empty - ready for your configs)
+```
+
+#### After Running `evileye deploy-samples`
+
+The `deploy-samples` command creates the following structure in your current directory:
+
+```
+your_project/
+├── credentials.json          # Database and camera credentials
+├── videos/                   # Sample video files
+│   ├── sample_video.mp4      # Sample video 1
+│   ├── sample_video2.mp4     # Sample video 2
+│   └── sample_video3.mp4     # Sample video 3
+└── configs/                  # Configuration files directory
+    ├── single_video.json     # Single video processing
+    ├── single_video_split.json # Video with 4-way split
+    ├── multi_videos.json     # Multiple videos with tracking
+    ├── single_ip_camera.json # IP camera processing
+    └── README_SAMPLES.md     # Sample configurations guide
 ```
 
 #### Credentials Configuration

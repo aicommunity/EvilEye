@@ -226,6 +226,142 @@ def deploy() -> None:
 
 
 @app.command()
+def deploy_samples() -> None:
+    """
+    Deploy sample configurations with working examples.
+    
+    This command:
+    1. Runs regular deploy command
+    2. Downloads sample videos from internet
+    3. Copies pre-configured sample configurations
+    4. Creates documentation for samples
+    """
+    import shutil
+    
+    current_dir = Path.cwd()
+    console.print(f"[blue]🎬 Deploying EvilEye sample configurations to: {current_dir}[/blue]")
+    
+    # First run regular deploy
+    deploy()
+    
+    # Create videos directory
+    videos_dir = current_dir / "videos"
+    if not videos_dir.exists():
+        videos_dir.mkdir()
+        console.print("[green]✓ Created videos folder[/green]")
+    else:
+        console.print("[yellow]videos folder already exists, skipping...[/yellow]")
+    
+    # Download sample videos
+    console.print("\n[blue]📥 Downloading sample videos...[/blue]")
+    try:
+        from evileye.utils.download_samples import download_sample_videos
+        video_results = download_sample_videos(str(videos_dir))
+        
+        successful_videos = sum(1 for r in video_results.values() 
+                              if "downloaded" in r["status"] or r["status"] == "exists")
+        total_videos = len(video_results)
+        
+        if successful_videos > 0:
+            console.print(f"[green]✓ Downloaded {successful_videos}/{total_videos} sample videos[/green]")
+        else:
+            console.print("[yellow]⚠️  No videos downloaded, but continuing with sample configs...[/yellow]")
+            
+    except Exception as e:
+        console.print(f"[yellow]⚠️  Video download failed: {e}[/yellow]")
+        console.print("[blue]Continuing with sample configs (you can add videos manually)...[/blue]")
+    
+    # Copy sample configurations
+    console.print("\n[blue]📋 Copying sample configurations...[/blue]")
+    samples_dir = Path(__file__).parent / "samples_configs"
+    configs_dir = current_dir / "configs"
+    
+    sample_configs = [
+        "single_video.json",
+        "single_video_split.json", 
+        "single_ip_camera.json",
+        "multi_videos.json"
+    ]
+    
+    copied_count = 0
+    for config_name in sample_configs:
+        source_path = samples_dir / config_name
+        dest_path = configs_dir / config_name
+        
+        if source_path.exists():
+            shutil.copy2(source_path, dest_path)
+            console.print(f"[green]✓ Copied {config_name}[/green]")
+            copied_count += 1
+        else:
+            console.print(f"[yellow]⚠️  Sample config {config_name} not found[/yellow]")
+    
+    # Create README for samples
+    readme_content = """# EvilEye Sample Configurations
+
+This directory contains sample configurations for EvilEye system.
+
+## Available Samples:
+
+### 🎬 Video Processing
+- **single_video.json** - Single video file processing
+- **single_video_split.json** - Single video with 4-way split processing
+- **multi_videos.json** - Multiple video files with multi-camera tracking
+
+### 📹 IP Camera Processing  
+- **single_ip_camera.json** - Single IP camera stream processing
+
+## Usage:
+
+```bash
+# Run single video example
+evileye run single_video.json
+
+# Run video split example  
+evileye run single_video_split.json
+
+# Run multi-video example
+evileye run multi_videos.json
+
+# Run IP camera example
+evileye run single_ip_camera.json
+```
+
+## Notes:
+
+- Sample videos are downloaded to `videos/` directory
+- IP camera example uses public demo stream
+- All configurations include admin database credentials
+- Multi-camera tracking is enabled where appropriate
+
+## Customization:
+
+You can modify these configurations or use them as templates:
+```bash
+# Create your own config based on samples
+evileye-create my_config --sources 2 --pipeline PipelineSurveillance
+```
+
+For more information, see the main README.md file.
+"""
+    
+    readme_path = configs_dir / "README_SAMPLES.md"
+    with open(readme_path, 'w') as f:
+        f.write(readme_content)
+    
+    console.print(f"[green]✓ Copied {copied_count} sample configurations[/green]")
+    console.print("[green]✓ Created README_SAMPLES.md[/green]")
+    
+    console.print("\n[green]🎉 Sample deployment completed successfully![/green]")
+    console.print("\n[blue]📋 Available sample configurations:[/blue]")
+    for config_name in sample_configs:
+        if (configs_dir / config_name).exists():
+            console.print(f"  [yellow]• {config_name}[/yellow]")
+    
+    console.print("\n[blue]🚀 Try running a sample:[/blue]")
+    console.print("  [yellow]evileye run configs/single_video.json[/yellow]")
+
+
+@app.command()
 def info() -> None:
     """
     Display EvilEye system information.
