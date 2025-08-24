@@ -199,7 +199,8 @@ def draw_boxes(image, objects, cam_id, model_names, text_config=None):
                                  background_color=config['background_color'],
                                  position_offset_percent=config['position_offset_percent'],
                                  font_scale_method=config.get('font_scale_method', 'resolution_based'),
-                                 base_resolution=config.get('base_resolution', (1920, 1080)))
+                                 base_resolution=config.get('base_resolution', (1920, 1080)),
+                                 background_enabled=config.get('background_enabled', True))
 
 
 def draw_preview_boxes(image, width, height, box):
@@ -283,7 +284,8 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
                      thickness=config['thickness'],
                      background_color=config['background_color'],
                      font_scale_method=config.get('font_scale_method', 'resolution_based'),
-                     base_resolution=config.get('base_resolution', (1920, 1080)))
+                     base_resolution=config.get('base_resolution', (1920, 1080)),
+                     background_enabled=config.get('background_enabled', True))
 
     # Draw time position
     if image.current_video_position and source_duration_msecs is not None:
@@ -298,7 +300,8 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
                          thickness=config['thickness'],
                          background_color=config['background_color'],
                          font_scale_method=config.get('font_scale_method', 'resolution_based'),
-                         base_resolution=config.get('base_resolution', (1920, 1080)))
+                         base_resolution=config.get('base_resolution', (1920, 1080)),
+                         background_enabled=config.get('background_enabled', True))
 
     # Для трекинга отображаем только последние данные об объекте из истории
     # print(cameras_objs)
@@ -333,7 +336,8 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
                           background_color=config['background_color'],
                           position_offset_percent=config['position_offset_percent'],
                           font_scale_method=config.get('font_scale_method', 'resolution_based'),
-                          base_resolution=config.get('base_resolution', (1920, 1080)))
+                          base_resolution=config.get('base_resolution', (1920, 1080)),
+                          background_enabled=config.get('background_enabled', True))
 
         # print(len(obj['obj_info']))
         if len(obj.history) > 1:
@@ -561,7 +565,7 @@ def get_adaptive_font_scale(text, target_width_px, font_face=cv2.FONT_HERSHEY_SI
 
 def put_text_adaptive(image, text, position_percent, font_size_pt=12, font_face=cv2.FONT_HERSHEY_SIMPLEX, 
                      color=(255, 255, 255), thickness=None, background_color=None, padding_percent=2.0,
-                     font_scale_method="resolution_based", base_resolution=(1920, 1080)):
+                     font_scale_method="resolution_based", base_resolution=(1920, 1080), background_enabled=True):
     """
     Draw text with adaptive positioning and sizing.
     
@@ -577,6 +581,7 @@ def put_text_adaptive(image, text, position_percent, font_size_pt=12, font_face=
         padding_percent: Padding around text in percent of image width
         font_scale_method: Method for calculating font scale ("resolution_based" or "simple")
         base_resolution: Base resolution for scaling (width, height)
+        background_enabled: Whether to draw background rectangle (True/False)
         
     Returns:
         Modified image
@@ -606,8 +611,8 @@ def put_text_adaptive(image, text, position_percent, font_size_pt=12, font_face=
     if y_px - text_height < 0:
         y_px = text_height + 10
     
-    # Draw background if specified
-    if background_color:
+    # Draw background if specified and enabled
+    if background_color and background_enabled:
         padding_px = percent_to_pixels(padding_percent, width)
         cv2.rectangle(image, 
                      (x_px - padding_px, y_px - text_height - padding_px),
@@ -623,7 +628,7 @@ def put_text_adaptive(image, text, position_percent, font_size_pt=12, font_face=
 def put_text_with_bbox(image, text, bbox, font_size_pt=12, font_face=cv2.FONT_HERSHEY_SIMPLEX,
                       color=(255, 255, 255), thickness=None, background_color=None, 
                       position_offset_percent=(0, -10), font_scale_method="resolution_based", 
-                      base_resolution=(1920, 1080)):
+                      base_resolution=(1920, 1080), background_enabled=True):
     """
     Draw text near a bounding box with adaptive positioning.
     
@@ -639,6 +644,7 @@ def put_text_with_bbox(image, text, bbox, font_size_pt=12, font_face=cv2.FONT_HE
         position_offset_percent: Offset from bbox in percent of image size
         font_scale_method: Method for calculating font scale ("resolution_based" or "simple")
         base_resolution: Base resolution for scaling (width, height)
+        background_enabled: Whether to draw background rectangle (True/False)
         
     Returns:
         Modified image
@@ -677,8 +683,8 @@ def put_text_with_bbox(image, text, bbox, font_size_pt=12, font_face=cv2.FONT_HE
     if y_px - text_height < 0:
         y_px = text_height + 10
     
-    # Draw background if specified
-    if background_color:
+    # Draw background if specified and enabled
+    if background_color and background_enabled:
         padding_px = 5
         cv2.rectangle(image, 
                      (x_px - padding_px, y_px - text_height - padding_px),
@@ -699,11 +705,12 @@ def get_default_text_config():
         Dictionary with default text settings
     """
     return {
-        "font_size_pt": 12,
+        "font_size_pt": 42,
         "font_face": cv2.FONT_HERSHEY_SIMPLEX,
-        "color": (255, 255, 255),  # White
+        "color": (0, 0, 255),  # White
         "thickness": None,  # Auto-calculated
-        "background_color": None,  # No background
+        "background_color": (0, 0, 0),  # No background
+        "background_enabled": False,  # Enable/disable background
         "padding_percent": 2.0,
         "position_offset_percent": (0, -10),
         "font_scale_method": "resolution_based",  # "resolution_based" or "simple"

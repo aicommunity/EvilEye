@@ -172,6 +172,7 @@
       "color": [255, 255, 255],
       "thickness": null,
       "background_color": [0, 0, 0],
+      "background_enabled": true,
       "padding_percent": 0.8,
       "position_offset_percent": [0, -5],
       "font_scale_method": "resolution_based",

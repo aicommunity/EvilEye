@@ -102,6 +102,7 @@
       "color": [255, 255, 255],
       "thickness": null,
       "background_color": [0, 0, 0],
+      "background_enabled": false,
       "padding_percent": 1.0,
       "position_offset_percent": [0, -6],
       "font_scale_method": "simple",
