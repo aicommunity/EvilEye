@@ -12,22 +12,22 @@ import hashlib
 
 # Sample video URLs (public domain or free to use)
 SAMPLE_VIDEOS = {
-    "sample_video.mp4": {
+    "planes_sample.mp4": {
         "url": "https://github.com/aicommunity/EvilEye/releases/download/dev/planes_sample.mp4",
         "description": "Single video sample with planes and without",
         "md5": None  # Placeholder MD5
     },
-    "sample_video2.mp4": {
+    "sample_split.mp4": {
         "url": "https://github.com/aicommunity/EvilEye/releases/download/dev/sample_split.mp4", 
         "description": "Sample with two head camera video for splitting to two sources",
         "md5": None  # Placeholder MD5
     },
-    "sample_video3.mp4": {
+    "6p-c0.avi": {
         "url": "https://github.com/aicommunity/EvilEye/releases/download/dev/6p-c0.avi",
         "description": "Video for testing multi-camera tracking (camera 0)", 
         "md5": None  # Placeholder MD5
     },
-    "sample_video3.mp4": {
+    "6p-c1.avi": {
         "url": "https://github.com/aicommunity/EvilEye/releases/download/dev/6p-c1.avi",
         "description": "Video for testing multi-camera tracking (camera 1)", 
         "md5": None  # Placeholder MD5

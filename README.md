@@ -76,12 +76,13 @@ The `deploy-samples` command creates the following structure in your current dir
 your_project/
 ├── credentials.json          # Database and camera credentials
 ├── videos/                   # Sample video files
-│   ├── sample_video.mp4      # Sample video 1
-│   ├── sample_video2.mp4     # Sample video 2
-│   └── sample_video3.mp4     # Sample video 3
+│   ├── planes_sample.mp4     # Single video with planes
+│   ├── sample_split.mp4      # Video with two camera views
+│   ├── 6p-c0.avi            # Multi-camera tracking (camera 0)
+│   └── 6p-c1.avi            # Multi-camera tracking (camera 1)
 └── configs/                  # Configuration files directory
     ├── single_video.json     # Single video processing
-    ├── single_video_split.json # Video with 4-way split
+    ├── single_video_split.json # Video with 2-way split
     ├── multi_videos.json     # Multiple videos with tracking
     ├── single_ip_camera.json # IP camera processing
     └── README_SAMPLES.md     # Sample configurations guide
