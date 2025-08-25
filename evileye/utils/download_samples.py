@@ -13,40 +13,27 @@ import hashlib
 # Sample video URLs (public domain or free to use)
 SAMPLE_VIDEOS = {
     "sample_video.mp4": {
-        "url": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-        "description": "Big Buck Bunny (open source, 158MB)",
-        "md5": "d4e5f6a1b2c3"  # Placeholder MD5
+        "url": "https://github.com/aicommunity/EvilEye/releases/download/dev/planes_sample.mp4",
+        "description": "Single video sample with planes and without",
+        "md5": None  # Placeholder MD5
     },
     "sample_video2.mp4": {
-        "url": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4", 
-        "description": "Elephants Dream (open source, 16MB)",
-        "md5": "e5f6a1b2c3d4"  # Placeholder MD5
+        "url": "https://github.com/aicommunity/EvilEye/releases/download/dev/sample_split.mp4", 
+        "description": "Sample with two head camera video for splitting to two sources",
+        "md5": None  # Placeholder MD5
     },
     "sample_video3.mp4": {
-        "url": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
-        "description": "For Bigger Blazes (open source, 6MB)", 
-        "md5": "f6a1b2c3d4e5"  # Placeholder MD5
+        "url": "https://github.com/aicommunity/EvilEye/releases/download/dev/6p-c0.avi",
+        "description": "Video for testing multi-camera tracking (camera 0)", 
+        "md5": None  # Placeholder MD5
+    },
+    "sample_video3.mp4": {
+        "url": "https://github.com/aicommunity/EvilEye/releases/download/dev/6p-c1.avi",
+        "description": "Video for testing multi-camera tracking (camera 1)", 
+        "md5": None  # Placeholder MD5
     }
 }
 
-# Alternative URLs for testing (if primary URLs fail)
-ALTERNATIVE_VIDEOS = {
-    "sample_video.mp4": {
-        "url": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-        "description": "Big Buck Bunny (open source)",
-        "md5": "d4e5f6a1b2c3"
-    },
-    "sample_video2.mp4": {
-        "url": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4", 
-        "description": "Elephants Dream (open source)",
-        "md5": "e5f6a1b2c3d4"
-    },
-    "sample_video3.mp4": {
-        "url": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
-        "description": "For Bigger Blazes (open source)",
-        "md5": "f6a1b2c3d4e5"
-    }
-}
 
 def download_file(url, filepath, description=""):
     """
@@ -137,25 +124,8 @@ def download_sample_videos(videos_dir="videos", force=False):
             results[filename] = {"status": "downloaded", "path": str(filepath)}
             print(f"✓ Successfully downloaded {filename}")
         else:
-            # Try alternative URL
-            if filename in ALTERNATIVE_VIDEOS:
-                alt_info = ALTERNATIVE_VIDEOS[filename]
-                print(f"Retrying with alternative URL for {filename}...")
-                success = download_file(
-                    alt_info["url"],
-                    filepath,
-                    alt_info["description"]
-                )
-                
-                if success and verify_file(filepath, alt_info.get("md5")):
-                    results[filename] = {"status": "downloaded_alt", "path": str(filepath)}
-                    print(f"✓ Successfully downloaded {filename} (alternative)")
-                else:
-                    results[filename] = {"status": "failed", "path": str(filepath)}
-                    print(f"✗ Failed to download {filename}")
-            else:
-                results[filename] = {"status": "failed", "path": str(filepath)}
-                print(f"✗ Failed to download {filename}")
+            results[filename] = {"status": "failed", "path": str(filepath)}
+            print(f"✗ Failed to download {filename}")
     
     return results
 

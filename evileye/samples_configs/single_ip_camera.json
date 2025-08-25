@@ -98,17 +98,17 @@
     "gui_enabled": true,
     "show_debug_info": true,
     "objects_journal_enabled": true,
-    "text_config": {
-      "font_size_pt": 16,
-      "font_face": 0,
-      "color": [255, 255, 255],
-      "thickness": null,
-      "background_color": [0, 0, 0],
-      "background_enabled": true,
-      "padding_percent": 2.0,
-      "position_offset_percent": [0, -10],
-      "font_scale_method": "resolution_based",
-      "base_resolution": [1920, 1080]
-    }
+        "text_config": {
+          "font_size_pt": 42,
+          "font_face": 0,
+          "color": [0, 0, 255],
+          "thickness": null,
+          "background_color": [0, 0, 0],
+          "background_enabled": false,
+          "padding_percent": 1.5,
+          "position_offset_percent": [0, -8],
+          "font_scale_method": "resolution_based",
+          "base_resolution": [1920, 1080]
+        }
   }
 }

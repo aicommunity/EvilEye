@@ -2,35 +2,15 @@
   "pipeline": {
     "pipeline_class": "PipelineSurveillance",
     "sources": [
-            {
-                "source": "VideoFile",
-                "camera": "videos/sample_split.mp4",
-                "apiPreference": "CAP_FFMPEG",
-                "split": true,
-                "num_split": 2,
-                "src_coords": [
-                    [
-                        0,
-                        0,
-                        2304,
-                        1300
-                    ],
-                    [
-                        0,
-                        1300,
-                        2304,
-                        1292
-                    ]
-                ],
-                "source_ids": [
-                    0,
-                    1
-                ],
-                "source_names": [
-                    "Cam1",
-                    "Cam2"
-                ]
-            }
+      {
+        "camera": "videos/planes_sample.mp4",
+        "source": "VideoFile",
+        "split": false,
+        "num_split": 0,
+        "src_coords": [0],
+        "source_ids": [0],
+        "source_names": ["Cam1"]
+      }
     ],
     "detectors": [
             {
@@ -39,9 +19,9 @@
                 ],
                 "model": "models/yolo11n.pt",
                 "show": false,
-                "conf": 0.4,
                 "inference_size": 640,
                 "device": null,
+                "conf": 0.4,
                 "save": false,
                 "stride_type": "frames",
                 "vid_stride": 1,
@@ -58,95 +38,50 @@
                 "roi": [
                     [
                         [
+                            1790,
                             0,
-                            0,
-                            2304,
-                            1300
+                            500,
+                            400
                         ],
                         [
-                            736,
+                            1700,
                             0,
-                            640,
-                            670
+                            1000,
+                            1045
                         ],
                         [
-                            905,
+                            1500,
                             0,
-                            310,
-                            265
+                            2340,
+                            2160
                         ]
                     ]
                 ]
             },
-            {
-                "source_ids": [
-                    1
-                ],
-                "model": "models/yolo11n.pt",
-                "show": false,
-                "inference_size": 1280,
-                "device": null,
-                "conf": 0.4,
-                "save": false,
-                "stride_type": "frames",
-                "vid_stride": 1,
-                "classes": [
-                    0,
-                    1,
-                    24,
-                    25,
-                    63,
-                    66,
-                    67
-                ],
-                "num_detection_threads": 1,
-                "roi": [
-                    []
-                ]
-            }
+
     ],
     "trackers": [
-            {
-                "source_ids": [
-                    0
-                ],
-                "fps": 5,
-                "botsort_cfg": {
-                    "appearance_thresh": 0.25,
-                    "gmc_method": "sparseOptFlow",
-                    "match_thresh": 0.8,
-                    "new_track_thresh": 0.6,
-                    "proximity_thresh": 0.5,
-                    "track_buffer": 30,
-                    "track_high_thresh": 0.5,
-                    "track_low_thresh": 0.1,
-                    "tracker_type": "botsort",
-                    "with_reid": false
-                }
-            },
-            {
-                "source_ids": [
-                    1
-                ],
-                "fps": 5,
-                "botsort_cfg": {
-                    "appearance_thresh": 0.25,
-                    "gmc_method": "sparseOptFlow",
-                    "match_thresh": 0.8,
-                    "new_track_thresh": 0.6,
-                    "proximity_thresh": 0.5,
-                    "track_buffer": 30,
-                    "track_high_thresh": 0.5,
-                    "track_low_thresh": 0.1,
-                    "tracker_type": "botsort",
-                    "with_reid": false
-                }
-            }
+      {
+        "source_ids": [0],
+        "fps": 5,
+        "botsort_cfg": {
+          "tracker_type": "botsort",
+          "track_high_thresh": 0.5,
+          "track_low_thresh": 0.1,
+          "new_track_thresh": 0.6,
+          "track_buffer": 30,
+          "match_thresh": 0.8,
+          "proximity_thresh": 0.5,
+          "appearance_thresh": 0.25,
+          "gmc_method": "sparseOptFlow",
+          "with_reid": true
+        }
+      }
     ],
     "mc_trackers": [
       {
         "enable": false,
-        "source_ids": [0, 1]
+        "source_ids": [0]
       }
     ]
   },
@@ -189,11 +124,11 @@
     "preview_height": 150
   },
   "visualizer": {
-    "num_width": 2,
+    "num_width": 1,
     "num_height": 1,
     "visual_buffer_num_frames": 10,
-    "source_ids": [0, 1],
-    "fps": [5, 5],
+    "source_ids": [0],
+    "fps": [5],
     "gui_enabled": true,
     "show_debug_info": true,
     "objects_journal_enabled": true,

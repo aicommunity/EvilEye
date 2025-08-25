@@ -3,15 +3,13 @@
     "pipeline_class": "PipelineSurveillance",
     "sources": [
       {
-        "camera": "videos/sample_video.mp4",
+        "camera": "videos/planes_sample.mp4",
         "source": "VideoFile",
-        "source_names": ["Sample Video"],
-        "source_ids": [0],
-        "loop_play": true,
-        "desired_fps": null,
         "split": false,
-        "num_split": null,
-        "src_coords": null
+        "num_split": 0,
+        "src_coords": [0],
+        "source_ids": [0],
+        "source_names": ["Cam1"]
       }
     ],
     "detectors": [
@@ -21,7 +19,7 @@
         "source_ids": [0],
         "roi": [[]],
         "vid_stride": 1,
-        "num_detection_threads": 3
+        "num_detection_threads": 1
       }
     ],
     "trackers": [
@@ -38,7 +36,7 @@
           "proximity_thresh": 0.5,
           "appearance_thresh": 0.25,
           "gmc_method": "sparseOptFlow",
-          "with_reid": false
+          "with_reid": true
         }
       }
     ],
@@ -96,17 +94,17 @@
     "gui_enabled": true,
     "show_debug_info": true,
     "objects_journal_enabled": true,
-    "text_config": {
-      "font_size_pt": 14,
-      "font_face": 0,
-      "color": [255, 255, 255],
-      "thickness": null,
-      "background_color": [0, 0, 0],
-      "background_enabled": true,
-      "padding_percent": 1.5,
-      "position_offset_percent": [0, -8],
-      "font_scale_method": "resolution_based",
-      "base_resolution": [1920, 1080]
-    }
+        "text_config": {
+          "font_size_pt": 42,
+          "font_face": 0,
+          "color": [0, 0, 255],
+          "thickness": null,
+          "background_color": [0, 0, 0],
+          "background_enabled": false,
+          "padding_percent": 1.5,
+          "position_offset_percent": [0, -8],
+          "font_scale_method": "resolution_based",
+          "base_resolution": [1920, 1080]
+        }
   }
 }

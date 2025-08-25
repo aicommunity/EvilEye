@@ -3,7 +3,7 @@
     "pipeline_class": "PipelineSurveillance",
     "sources": [
       {
-        "camera": "videos/sample_video.mp4",
+        "camera": "videos/6p-c0.avi",
         "source": "VideoFile",
         "source_names": ["Video 1"],
         "source_ids": [0],
@@ -14,21 +14,10 @@
         "src_coords": null
       },
       {
-        "camera": "videos/sample_video2.mp4",
+        "camera": "videos/6p-c1.avi",
         "source": "VideoFile",
         "source_names": ["Video 2"],
         "source_ids": [1],
-        "loop_play": true,
-        "desired_fps": null,
-        "split": false,
-        "num_split": null,
-        "src_coords": null
-      },
-      {
-        "camera": "videos/sample_video3.mp4",
-        "source": "VideoFile",
-        "source_names": ["Video 3"],
-        "source_ids": [2],
         "loop_play": true,
         "desired_fps": null,
         "split": false,
@@ -52,14 +41,6 @@
         "roi": [[]],
         "vid_stride": 1,
         "num_detection_threads": 3
-      },
-      {
-        "model": "models/yolo11n.pt",
-        "classes": [0, 1, 24, 25, 63, 66, 67],
-        "source_ids": [2],
-        "roi": [[]],
-        "vid_stride": 1,
-        "num_detection_threads": 3
       }
     ],
     "trackers": [
@@ -76,7 +57,7 @@
           "proximity_thresh": 0.5,
           "appearance_thresh": 0.25,
           "gmc_method": "sparseOptFlow",
-          "with_reid": false
+          "with_reid": true
         }
       },
       {
@@ -92,30 +73,15 @@
           "proximity_thresh": 0.5,
           "appearance_thresh": 0.25,
           "gmc_method": "sparseOptFlow",
-          "with_reid": false
+          "with_reid": true
         }
-      },
-      {
-        "source_ids": [2],
-        "fps": 5,
-        "botsort_cfg": {
-          "tracker_type": "botsort",
-          "track_high_thresh": 0.5,
-          "track_low_thresh": 0.1,
-          "new_track_thresh": 0.6,
-          "track_buffer": 30,
-          "match_thresh": 0.8,
-          "proximity_thresh": 0.5,
-          "appearance_thresh": 0.25,
-          "gmc_method": "sparseOptFlow",
-          "with_reid": false
-        }
+      }
       }
     ],
     "mc_trackers": [
       {
         "enable": true,
-        "source_ids": [0, 1, 2]
+        "source_ids": [0, 1]
       }
     ]
   },
@@ -161,22 +127,22 @@
     "num_width": 2,
     "num_height": 2,
     "visual_buffer_num_frames": 10,
-    "source_ids": [0, 1, 2],
-    "fps": [5, 5, 5],
+    "source_ids": [0, 1],
+    "fps": [5, 5],
     "gui_enabled": true,
     "show_debug_info": true,
     "objects_journal_enabled": true,
-    "text_config": {
-      "font_size_pt": 10,
-      "font_face": 0,
-      "color": [255, 255, 255],
-      "thickness": null,
-      "background_color": [0, 0, 0],
-      "background_enabled": true,
-      "padding_percent": 0.8,
-      "position_offset_percent": [0, -5],
-      "font_scale_method": "resolution_based",
-      "base_resolution": [1920, 1080]
-    }
+        "text_config": {
+          "font_size_pt": 42,
+          "font_face": 0,
+          "color": [0, 0, 255],
+          "thickness": null,
+          "background_color": [0, 0, 0],
+          "background_enabled": false,
+          "padding_percent": 1.5,
+          "position_offset_percent": [0, -8],
+          "font_scale_method": "resolution_based",
+          "base_resolution": [1920, 1080]
+        }
   }
 }
