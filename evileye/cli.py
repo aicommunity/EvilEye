@@ -60,7 +60,7 @@ def run(
     import os
 
     # Build command arguments
-    cmd = [sys.executable, "evileye/process.py"]
+    cmd = [sys.executable, str(Path(__file__).parent / "process.py")]
 
     if config:
         # Normalize config path and check if it exists
@@ -95,9 +95,8 @@ def run(
 
     try:
         console.print(f"[green]Launching with command:[/green] {' '.join(cmd)}")
-        # Change to project root directory before running
-        os.chdir(Path(__file__).parent.parent)
-        subprocess.run(cmd, check=True)
+        # Run command in current working directory (where CLI was launched from)
+        subprocess.run(cmd, check=True, cwd=os.getcwd())
     except subprocess.CalledProcessError as e:
         console.print(f"[red]Error launching: {e}[/red]")
         raise typer.Exit(1)
