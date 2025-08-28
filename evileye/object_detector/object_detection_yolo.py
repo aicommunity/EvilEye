@@ -1,3 +1,4 @@
+import os
 from .object_detection_base import ObjectDetectorBase
 from .detection_thread_yolo import DetectionThreadYolo
 from ..core.base_class import EvilEyeBase
@@ -19,7 +20,12 @@ class ObjectDetectorYolo(ObjectDetectorBase):
                       "device": self.params.get('device', None)}
 
         for i in range(self.num_detection_threads):
-            thread = DetectionThreadYolo(self.model_name, self.stride, self.classes, self.source_ids, self.roi, inf_params,
+            # Resolve relative model path to current working directory for access
+            model_path = self.model_name
+            if not os.path.isabs(model_path):
+                model_path = os.path.join(os.getcwd(), model_path)
+            
+            thread = DetectionThreadYolo(model_path, self.stride, self.classes, self.source_ids, self.roi, inf_params,
                                          self.queue_out)
             thread.start()
             self.detection_threads.append(thread)

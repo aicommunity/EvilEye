@@ -197,8 +197,13 @@ class DatabaseControllerPg(DatabaseControllerBase):
                     self.conn_pool.putconn(connection)
 
     def _save_image(self, preview_path, frame_path, image, box):
-        preview_save_dir = os.path.join(self.image_dir, preview_path)
-        frame_save_dir = os.path.join(self.image_dir, frame_path)
+        # Resolve relative image_dir path to current working directory for access
+        image_dir_resolved = self.image_dir
+        if not os.path.isabs(image_dir_resolved):
+            image_dir_resolved = os.path.join(os.getcwd(), image_dir_resolved)
+        
+        preview_save_dir = os.path.join(image_dir_resolved, preview_path)
+        frame_save_dir = os.path.join(image_dir_resolved, frame_path)
         preview = cv2.resize(copy.deepcopy(image.image), self.preview_size, cv2.INTER_NEAREST)
         preview_boxes = utils.utils.draw_preview_boxes(preview,
                                                        self.preview_width, self.preview_height, box)

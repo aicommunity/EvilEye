@@ -41,6 +41,22 @@ def main():
 
     print(f"Launch system with CLI arguments: {args}")
 
+    # Change working directory to the parent directory of configs folder
+    '''
+    if args.config is not None:
+        config_file_name = normalize_config_path(args.config)
+        config_dir = os.path.dirname(os.path.abspath(config_file_name))
+        if config_dir:
+            # If config is in a 'configs' subdirectory, change to parent directory
+            if os.path.basename(config_dir) == 'configs':
+                parent_dir = os.path.dirname(config_dir)
+                os.chdir(parent_dir)
+                print(f"Changed working directory to parent of configs: {parent_dir}")
+            else:
+                os.chdir(config_dir)
+                print(f"Changed working directory to: {config_dir}")
+    '''
+
     if args.config is None and args.video is None:
         print("Video source doesn't set")
         sys.exit(1)
