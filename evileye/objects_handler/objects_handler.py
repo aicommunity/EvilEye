@@ -15,6 +15,7 @@ from ..object_tracker.tracking_results import TrackingResultList
 from timeit import default_timer as timer
 from .object_result import ObjectResultHistory, ObjectResult, ObjectResultList
 from ..database_controller.db_adapter_objects import DatabaseAdapterObjects
+from .labeling_manager import LabelingManager
 from pympler import asizeof
 
 '''
@@ -65,6 +66,10 @@ class ObjectsHandler(EvilEyeBase):
         self.snapshot = None
         self.subscribers = []
         # self.objects_file = open('roi_detector_exp_file3.txt', 'w')
+        
+        # Initialize labeling manager
+        base_dir = self.db_params.get('image_dir', 'EvilEyeData') if self.db_params else 'EvilEyeData'
+        self.labeling_manager = LabelingManager(base_dir=base_dir)
 
     def default(self):
         pass
@@ -223,6 +228,23 @@ class ObjectsHandler(EvilEyeBase):
                 if self.db_adapter is not None:
                     self.db_adapter.insert(obj)
                 end_insert_it = timer()
+                
+                # Save labeling data for found object
+                try:
+                    image_filename = os.path.basename(self._get_img_path('frame', 'detected', obj))
+                    preview_filename = os.path.basename(self._get_img_path('preview', 'detected', obj))
+                    
+                    # Get image dimensions from the image object
+                    image_width = obj.last_image.width if hasattr(obj.last_image, 'width') else 1920
+                    image_height = obj.last_image.height if hasattr(obj.last_image, 'height') else 1080
+                    
+                    object_data = self.labeling_manager.create_found_object_data(
+                        obj, image_width, image_height, image_filename, preview_filename
+                    )
+                    self.labeling_manager.add_object_found(object_data)
+                except Exception as e:
+                    print(f"Error saving labeling data for found object: {e}")
+                
                 self.active_objs.objects.append(obj)
                # print(f"active_objs len={len(self.active_objs.objects)} size={asizeof.asizeof(self.active_objs.objects)/(1024.0*1024.0)}")
                # print(f"lost_objs len={len(self.lost_objs.objects)} size={asizeof.asizeof(self.lost_objs.objects)/(1024.0*1024.0)}")
@@ -237,6 +259,23 @@ class ObjectsHandler(EvilEyeBase):
                     if self.db_adapter is not None:
                         self.db_adapter.update(active_obj)
                     end_update_it = timer()
+                    
+                    # Save labeling data for lost object
+                    try:
+                        image_filename = os.path.basename(self._get_img_path('frame', 'lost', active_obj))
+                        preview_filename = os.path.basename(self._get_img_path('preview', 'lost', active_obj))
+                        
+                        # Get image dimensions from the image object
+                        image_width = active_obj.last_image.width if hasattr(active_obj.last_image, 'width') else 1920
+                        image_height = active_obj.last_image.height if hasattr(active_obj.last_image, 'height') else 1080
+                        
+                        object_data = self.labeling_manager.create_lost_object_data(
+                            active_obj, image_width, image_height, image_filename, preview_filename
+                        )
+                        self.labeling_manager.add_object_lost(object_data)
+                    except Exception as e:
+                        print(f"Error saving labeling data for lost object: {e}")
+                    
                     self.lost_objs.objects.append(active_obj)
                 else:
                     filtered_active_objects.append(active_obj)
