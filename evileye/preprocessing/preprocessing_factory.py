@@ -1,13 +1,17 @@
 import json
 import importlib
-from preprocessing import steps
+from . import steps
 
 
 class PreprocessingFactory:
     def __init__(self, json_path):
-        with open(json_path, 'r') as f:
-            config = json.load(f)
-        self.pipeline_config = config["preprocessors"][0]["pipeline"]
+        try:
+            with open(json_path, 'r') as f:
+                config = json.load(f)
+                self.pipeline_config = config.get("preprocessing_sequence", [])
+        except Exception as ex:
+            print(f"Failed to load preprocessing pipeline: {ex}")
+            self.pipeline_config = []
 
     def build_pipeline(self):
         next_step = None

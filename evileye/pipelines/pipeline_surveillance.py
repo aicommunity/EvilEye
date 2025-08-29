@@ -5,6 +5,8 @@ from ..core.processor_step import ProcessorStep
 from ..core.processor_base import ProcessorBase
 from ..core.pipeline import Pipeline
 from typing import Any, Tuple, List, Dict
+import evileye.preprocessing  # Import to register PreprocessingVehicle
+
 
 
 class PipelineSurveillance(Pipeline):

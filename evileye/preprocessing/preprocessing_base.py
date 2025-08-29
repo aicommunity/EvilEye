@@ -1,12 +1,12 @@
 from abc import ABC, abstractmethod
-import core
 from queue import Queue
 import threading
 from time import sleep
-from core import Frame
+from ..core.base_class import EvilEyeBase
+from ..core.frame import Frame
 
 
-class PreprocessingBase(core.EvilEyeBase):
+class PreprocessingBase(EvilEyeBase):
     ResultType = Frame
     def __init__(self):
         super().__init__()
@@ -29,7 +29,9 @@ class PreprocessingBase(core.EvilEyeBase):
         if not self.queue_in.full():
             self.queue_in.put(det_info)
             return True
-        print(f"Failed to put preprocessing data {det_info.source_id}:{det_info.frame_id} to Preprocessing queue. Queue is Full.")
+        else:
+            old_info = self.queue_in.get()
+            print(f"Preprocessing queue for {det_info.source_id} is full. Remove oldest frame {old_info.frame_id}")
         return False
 
     def get(self):
