@@ -76,6 +76,33 @@
                 ]
             }
         ],
+          "preprocessors": [
+            {
+                "source_ids": [
+                    0
+                ]
+            },
+            {
+                "source_ids": [
+                    1
+                ]
+            },
+            {
+                "source_ids": [
+                    2
+                ]
+            },
+            {
+                "source_ids": [
+                    3
+                ]
+            },
+            {
+                "source_ids": [
+                    4
+                ]
+            }
+          ],
         "detectors": [
             {
                 "source_ids": [

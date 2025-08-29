@@ -509,7 +509,7 @@ class Controller:
 
     def _init_preprocessors(self, params):
         num_preps = len(params)
-        self.preprocessors_proc = ProcessorFrame(class_name="PreprocessingVehicle", num_processors=num_preps, order=1)
+        self.preprocessors_proc = ProcessorFrame(class_name="PreprocessingPipeline", num_processors=num_preps, order=1)
         self.preprocessors_proc.set_params(params)
         self.preprocessors_proc.init()
 

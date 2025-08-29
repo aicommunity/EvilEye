@@ -8,8 +8,8 @@ from ..core.base_class import EvilEyeBase
 # from preprocessing.steps import Input, Normalize, Output, Inpaint, Clahe
 
 
-@EvilEyeBase.register("PreprocessingVehicle")
-class PreprocessingVehicle(PreprocessingBase):
+@EvilEyeBase.register("PreprocessingPipeline")
+class PreprocessingPipeline(PreprocessingBase):
     def __init__(self):
         super().__init__()
         self.json_path = None

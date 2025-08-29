@@ -5,7 +5,7 @@ from ..core.processor_step import ProcessorStep
 from ..core.processor_base import ProcessorBase
 from ..core.pipeline import Pipeline
 from typing import Any, Tuple, List, Dict
-import evileye.preprocessing  # Import to register PreprocessingVehicle
+import evileye.preprocessing  # Import to register PreprocessingPipeline
 
 
 
@@ -70,7 +70,7 @@ class PipelineSurveillance(Pipeline):
             return
             
         num_preps = len(params)
-        preprocessors_proc = ProcessorFrame(processor_name="preprocessors", class_name="PreprocessingVehicle", num_processors=num_preps, order=1)
+        preprocessors_proc = ProcessorFrame(processor_name="preprocessors", class_name="PreprocessingPipeline", num_processors=num_preps, order=1)
         preprocessors_proc.set_params(params)
         preprocessors_proc.init()
         self._add_processor(preprocessors_proc)
