@@ -6,8 +6,12 @@ Labeling Manager for saving object detection and tracking labels to JSON files.
 import json
 import os
 import datetime
+import time
+import threading
 from typing import Dict, List, Any, Optional
 from pathlib import Path
+from queue import Queue
+from threading import Thread, Lock
 
 
 class LabelingManager:
@@ -27,23 +31,38 @@ class LabelingManager:
             base_dir: Base directory for saving labels and images
         """
         self.base_dir = base_dir
-        self.labels_dir = os.path.join(base_dir, 'labels')
         self.images_dir = os.path.join(base_dir, 'images')
         
-        # Create directories if they don't exist
-        os.makedirs(self.labels_dir, exist_ok=True)
+        # Create base directory if it doesn't exist
         os.makedirs(self.images_dir, exist_ok=True)
         
         # Current date for file naming
         self.current_date = datetime.date.today()
         self.date_str = self.current_date.strftime('%Y_%m_%d')
         
-        # File paths
-        self.found_labels_file = os.path.join(self.labels_dir, f'{self.date_str}_objects_found.json')
-        self.lost_labels_file = os.path.join(self.labels_dir, f'{self.date_str}_objects_lost.json')
+        # Create date-specific directory
+        self.current_day_dir = os.path.join(self.images_dir, self.date_str)
+        os.makedirs(self.current_day_dir, exist_ok=True)
+        
+        # File paths - now in the same directory as images
+        self.found_labels_file = os.path.join(self.current_day_dir, 'objects_found.json')
+        self.lost_labels_file = os.path.join(self.current_day_dir, 'objects_lost.json')
         
         # Initialize files if they don't exist
         self._init_label_files()
+        
+        # Buffering configuration
+        self.buffer_size = 100  # Save when buffer reaches this size
+        self.save_interval = 30  # Save every N seconds
+        self.found_buffer = []
+        self.lost_buffer = []
+        self.last_save_time = time.time()
+        self.running = True
+        self.buffer_lock = Lock()
+        
+        # Start background save thread
+        self.save_thread = Thread(target=self._save_worker, daemon=True)
+        self.save_thread.start()
     
     def _init_label_files(self):
         """Initialize JSON label files if they don't exist."""
@@ -97,41 +116,73 @@ class LabelingManager:
     
     def add_object_found(self, object_data: Dict[str, Any]):
         """
-        Add a newly detected object to the found labels.
+        Add a newly detected object to the found labels buffer.
         
         Args:
             object_data: Dictionary containing object information
         """
-        # Load current data
-        data = self._load_json(self.found_labels_file)
-        
-        # Add object
-        data["objects"].append(object_data)
-        
-        # Update metadata
-        self._update_metadata(data, len(data["objects"]))
-        
-        # Save updated data
-        self._save_json(self.found_labels_file, data)
+        with self.buffer_lock:
+            self.found_buffer.append(object_data)
+            
+            # Save if buffer is full
+            if len(self.found_buffer) >= self.buffer_size:
+                self._save_found_buffer()
+    
+    def _save_found_buffer(self):
+        """Save found objects buffer to file."""
+        if not self.found_buffer:
+            return
+            
+        with self.buffer_lock:
+            # Load current data
+            data = self._load_json(self.found_labels_file)
+            
+            # Add all buffered objects
+            data["objects"].extend(self.found_buffer)
+            
+            # Update metadata
+            self._update_metadata(data, len(data["objects"]))
+            
+            # Save updated data
+            self._save_json(self.found_labels_file, data)
+            
+            # Clear buffer
+            self.found_buffer.clear()
     
     def add_object_lost(self, object_data: Dict[str, Any]):
         """
-        Add a lost object to the lost labels.
+        Add a lost object to the lost labels buffer.
         
         Args:
             object_data: Dictionary containing object information
         """
-        # Load current data
-        data = self._load_json(self.lost_labels_file)
-        
-        # Add object
-        data["objects"].append(object_data)
-        
-        # Update metadata
-        self._update_metadata(data, len(data["objects"]))
-        
-        # Save updated data
-        self._save_json(self.lost_labels_file, data)
+        with self.buffer_lock:
+            self.lost_buffer.append(object_data)
+            
+            # Save if buffer is full
+            if len(self.lost_buffer) >= self.buffer_size:
+                self._save_lost_buffer()
+    
+    def _save_lost_buffer(self):
+        """Save lost objects buffer to file."""
+        if not self.lost_buffer:
+            return
+            
+        with self.buffer_lock:
+            # Load current data
+            data = self._load_json(self.lost_labels_file)
+            
+            # Add all buffered objects
+            data["objects"].extend(self.lost_buffer)
+            
+            # Update metadata
+            self._update_metadata(data, len(data["objects"]))
+            
+            # Save updated data
+            self._save_json(self.lost_labels_file, data)
+            
+            # Clear buffer
+            self.lost_buffer.clear()
     
     def create_found_object_data(self, obj, image_width: int, image_height: int, 
                                 image_filename: str, preview_filename: str) -> Dict[str, Any]:
@@ -148,13 +199,13 @@ class LabelingManager:
         Returns:
             Dictionary with object data in labeling format
         """
-        # Normalize bounding box coordinates
+        # Use absolute pixel coordinates for COCO compatibility
         bbox = obj.track.bounding_box
-        normalized_bbox = {
-            "x": bbox[0] / image_width,
-            "y": bbox[1] / image_height,
-            "width": (bbox[2] - bbox[0]) / image_width,
-            "height": (bbox[3] - bbox[1]) / image_height
+        pixel_bbox = {
+            "x": int(bbox[0]),
+            "y": int(bbox[1]),
+            "width": int(bbox[2] - bbox[0]),
+            "height": int(bbox[3] - bbox[1])
         }
         
         return {
@@ -163,7 +214,7 @@ class LabelingManager:
             "timestamp": obj.time_stamp.isoformat(),
             "image_filename": image_filename,
             "preview_filename": preview_filename,
-            "bounding_box": normalized_bbox,
+            "bounding_box": pixel_bbox,
             "confidence": float(obj.track.confidence),
             "class_id": obj.class_id,
             "class_name": self._get_class_name(obj.class_id),
@@ -187,13 +238,13 @@ class LabelingManager:
         Returns:
             Dictionary with object data in labeling format
         """
-        # Normalize bounding box coordinates
+        # Use absolute pixel coordinates for COCO compatibility
         bbox = obj.track.bounding_box
-        normalized_bbox = {
-            "x": bbox[0] / image_width,
-            "y": bbox[1] / image_height,
-            "width": (bbox[2] - bbox[0]) / image_width,
-            "height": (bbox[3] - bbox[1]) / image_height
+        pixel_bbox = {
+            "x": int(bbox[0]),
+            "y": int(bbox[1]),
+            "width": int(bbox[2] - bbox[0]),
+            "height": int(bbox[3] - bbox[1])
         }
         
         return {
@@ -203,7 +254,7 @@ class LabelingManager:
             "lost_timestamp": obj.time_lost.isoformat(),
             "image_filename": image_filename,
             "preview_filename": preview_filename,
-            "bounding_box": normalized_bbox,
+            "bounding_box": pixel_bbox,
             "confidence": float(obj.track.confidence),
             "class_id": obj.class_id,
             "class_name": self._get_class_name(obj.class_id),
@@ -300,3 +351,31 @@ class LabelingManager:
         self._save_json(training_file, training_data)
         
         return training_file
+    
+    def _save_worker(self):
+        """Background worker for periodic saving."""
+        while self.running:
+            time.sleep(1)  # Check every second
+            
+            current_time = time.time()
+            if current_time - self.last_save_time > self.save_interval:
+                self._save_all_buffers()
+                self.last_save_time = current_time
+    
+    def _save_all_buffers(self):
+        """Save all buffers (found and lost objects)."""
+        self._save_found_buffer()
+        self._save_lost_buffer()
+    
+    def flush_buffers(self):
+        """Force save all buffered data."""
+        self._save_all_buffers()
+    
+    def stop(self):
+        """Stop the labeling manager and save any remaining data."""
+        self.running = False
+        self.flush_buffers()
+        
+        # Wait for save thread to finish
+        if self.save_thread.is_alive():
+            self.save_thread.join(timeout=5)

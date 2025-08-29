@@ -105,6 +105,11 @@ class ObjectsHandler(EvilEyeBase):
         self.objs_queue.put(None)
         if self.handler.is_alive():
             self.handler.join()
+        
+        # Stop labeling manager and save any remaining data
+        if hasattr(self, 'labeling_manager'):
+            self.labeling_manager.stop()
+        
         print('Handler stopped')
 
     def start(self):
