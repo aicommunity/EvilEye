@@ -63,6 +63,7 @@ class Controller:
         self.max_memory_usage_mb = 1024*16
         self.show_memory_usage = False
         self.auto_restart = True
+        self.use_database = True  # Default to True for backward compatibility
 
         self.events_detectors_controller = None
         self.events_processor = None
@@ -271,11 +272,15 @@ class Controller:
         self.obj_handler.start()
         if self.visualizer:
             self.visualizer.start()
-        self.db_controller.connect()
-        self.db_adapter_obj.start()
-        self.db_adapter_zone_events.start()
-        self.db_adapter_fov_events.start()
-        self.db_adapter_cam_events.start()
+        
+        # Start database components only if database is enabled
+        if self.use_database and self.db_controller:
+            self.db_controller.connect()
+            self.db_adapter_obj.start()
+            self.db_adapter_zone_events.start()
+            self.db_adapter_fov_events.start()
+            self.db_adapter_cam_events.start()
+        
         self.zone_events_detector.start()
         self.cam_events_detector.start()
         self.fov_events_detector.start()
@@ -297,11 +302,15 @@ class Controller:
         if self.visualizer:
             self.visualizer.stop()
         self.obj_handler.stop()
-        self.db_adapter_cam_events.stop()
-        self.db_adapter_fov_events.stop()
-        self.db_adapter_zone_events.stop()
-        self.db_adapter_obj.stop()
-        self.db_controller.disconnect()
+        
+        # Stop database components only if database is enabled
+        if self.use_database and self.db_controller:
+            self.db_adapter_cam_events.stop()
+            self.db_adapter_fov_events.stop()
+            self.db_adapter_zone_events.stop()
+            self.db_adapter_obj.stop()
+            self.db_controller.disconnect()
+        
         # Stop pipeline components
         self.pipeline.stop()
         print('Everything in controller stopped')
@@ -345,47 +354,60 @@ class Controller:
                         self.source_video_duration[source_id] = source.video_duration
                         self.source_last_processed_frame_id[source_id] = 0
 
-        database_creds = self.credentials.get("database", None)
-        if not database_creds:
-            database_creds = dict()
+        # Initialize database configuration only if database is enabled
+        if self.use_database:
+            database_creds = self.credentials.get("database", None)
+            if not database_creds:
+                database_creds = dict()
 
-        try:
-            with open(os.path.join(os.path.dirname(__file__), "..", "database_config.json")) as data_config_file:
-                self.database_config = json.load(data_config_file)
-        except FileNotFoundError as ex:
-            pass
+            try:
+                with open(os.path.join(os.path.dirname(__file__), "..", "database_config.json")) as data_config_file:
+                    self.database_config = json.load(data_config_file)
+            except FileNotFoundError as ex:
+                pass
 
-        database_creds["user_name"] = database_creds.get("user_name", "postgres")
-        database_creds["password"] = database_creds.get("password", "")
-        database_creds["database_name"] = database_creds.get("database_name", "evil_eye_db")
-        database_creds["host_name"] = database_creds.get("host_name", "localhost")
-        database_creds["port"] = database_creds.get("port", 5432)
-        database_creds["admin_user_name"] = database_creds.get("admin_user_name", "postgres")
-        database_creds["admin_password"] = database_creds.get("admin_password", "")
+            database_creds["user_name"] = database_creds.get("user_name", "postgres")
+            database_creds["password"] = database_creds.get("password", "")
+            database_creds["database_name"] = database_creds.get("database_name", "evil_eye_db")
+            database_creds["host_name"] = database_creds.get("host_name", "localhost")
+            database_creds["port"] = database_creds.get("port", 5432)
+            database_creds["admin_user_name"] = database_creds.get("admin_user_name", "postgres")
+            database_creds["admin_password"] = database_creds.get("admin_password", "")
 
-        self.database_config["database"]["user_name"] = self.database_config["database"].get("user_name", database_creds["user_name"])
-        self.database_config["database"]["password"] = self.database_config["database"].get("password", database_creds["password"])
-        self.database_config["database"]["database_name"] = self.database_config["database"].get("database_name", database_creds["database_name"])
-        self.database_config["database"]["host_name"] = self.database_config["database"].get("host_name", database_creds["host_name"])
-        self.database_config["database"]["port"] = self.database_config["database"].get("port", database_creds["port"])
-        self.database_config["database"]["admin_user_name"] = self.database_config["database"].get("admin_user_name", database_creds["admin_user_name"])
-        self.database_config["database"]["admin_password"] = self.database_config["database"].get("admin_password", database_creds["admin_password"])
+            self.database_config["database"]["user_name"] = self.database_config["database"].get("user_name", database_creds["user_name"])
+            self.database_config["database"]["password"] = self.database_config["database"].get("password", database_creds["password"])
+            self.database_config["database"]["database_name"] = self.database_config["database"].get("database_name", database_creds["database_name"])
+            self.database_config["database"]["host_name"] = self.database_config["database"].get("host_name", database_creds["host_name"])
+            self.database_config["database"]["port"] = self.database_config["database"].get("port", database_creds["port"])
+            self.database_config["database"]["admin_user_name"] = self.database_config["database"].get("admin_user_name", database_creds["admin_user_name"])
+            self.database_config["database"]["admin_password"] = self.database_config["database"].get("admin_password", database_creds["admin_password"])
 
-        if 'database' in self.params.keys():
-            self.database_config["database"]['database_name'] = self.params['database'].get('database_name', self.database_config["database"]['database_name'])
-            self.database_config["database"]['host_name'] = self.params['database'].get('host_name', self.database_config["database"]['host_name'])
-            self.database_config["database"]['port'] = self.params['database'].get('port', self.database_config["database"]['port'])
-            self.database_config["database"]['image_dir'] = self.params['database'].get('image_dir', self.database_config["database"]['image_dir'])
-            self.database_config["database"]['preview_width'] = self.params['database'].get('preview_width', self.database_config["database"]['preview_width'])
-            self.database_config["database"]['preview_height'] = self.params['database'].get('preview_height', self.database_config["database"]['preview_height'])
+            if 'database' in self.params.keys():
+                self.database_config["database"]['database_name'] = self.params['database'].get('database_name', self.database_config["database"]['database_name'])
+                self.database_config["database"]['host_name'] = self.params['database'].get('host_name', self.database_config["database"]['host_name'])
+                self.database_config["database"]['port'] = self.params['database'].get('port', self.database_config["database"]['port'])
+                self.database_config["database"]['image_dir'] = self.params['database'].get('image_dir', self.database_config["database"]['image_dir'])
+                self.database_config["database"]['preview_width'] = self.params['database'].get('preview_width', self.database_config["database"]['preview_width'])
+                self.database_config["database"]['preview_height'] = self.params['database'].get('preview_height', self.database_config["database"]['preview_height'])
+        else:
+            # Initialize empty database config when database is disabled
+            self.database_config = {"database": {}, "database_adapters": {}}
 
-        self._init_db_controller(self.database_config['database'], system_params=self.params)
-        self._init_db_adapters(self.database_config['database_adapters'])
-
-        self._init_object_handler(self.db_controller, params.get('objects_handler', dict()))
-        self._init_events_detectors(self.params.get('events_detectors', dict()))
-        self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
-        self._init_events_processor(self.params.get('events_processor', dict()))
+        # Initialize database components only if use_database is True
+        if self.use_database:
+            self._init_db_controller(self.database_config['database'], system_params=self.params)
+            self._init_db_adapters(self.database_config['database_adapters'])
+            self._init_object_handler(self.db_controller, params.get('objects_handler', dict()))
+            self._init_events_detectors(self.params.get('events_detectors', dict()))
+            self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
+            self._init_events_processor(self.params.get('events_processor', dict()))
+        else:
+            print("Database functionality disabled. Running without database connection.")
+            # Initialize minimal components for operation without database
+            self._init_object_handler_without_db(params.get('objects_handler', dict()))
+            self._init_events_detectors_without_db(self.params.get('events_detectors', dict()))
+            self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
+            self._init_events_processor_without_db(self.params.get('events_processor', dict()))
 
         if 'controller' in self.params.keys():
             self.autoclose = self.params['controller'].get("autoclose", self.autoclose)
@@ -398,6 +420,7 @@ class Controller:
             self.show_memory_usage = self.params['controller'].get("show_memory_usage", self.show_memory_usage)
             self.max_memory_usage_mb = self.params['controller'].get("max_memory_usage_mb", self.max_memory_usage_mb)
             self.auto_restart = self.params['controller'].get("auto_restart", self.auto_restart)
+            self.use_database = self.params['controller'].get("use_database", self.use_database)
 
     def init_main_window(self, main_window: QMainWindow, pyqt_slots: dict, pyqt_signals: dict):
         self.main_window = main_window
@@ -424,6 +447,7 @@ class Controller:
 
         self.params['controller']["max_memory_usage_mb"] = self.max_memory_usage_mb
         self.params['controller']["auto_restart"] = self.auto_restart
+        self.params['controller']["use_database"] = self.use_database
 
         # Get pipeline parameters
         pipeline_params = self.pipeline.get_params()
@@ -437,17 +461,23 @@ class Controller:
         self.params['events_detectors']['ZoneEventsDetector'] = self.zone_events_detector.get_params()
 
         self.params['events_processor'] = self.events_processor.get_params()
-        self.database_config = self.db_controller.get_params()
+        
+        # Only update database config if database is enabled
+        if self.use_database and self.db_controller:
+            self.database_config = self.db_controller.get_params()
 
-        self.params['database'] = {}
-        self.params['database']['database_name'] = self.database_config.get('database_name', 'evil_eye_db')
-        self.params['database']['host_name'] = self.database_config.get('host_name', 'localhost')
-        self.params['database']['port'] = self.database_config.get('port', 5432)
-        self.params['database']['admin_user_name'] = self.database_config.get('admin_user_name', 'postgres')
-        self.params['database']['admin_password'] = self.database_config.get('admin_password', '')
-        self.params['database']['image_dir'] = self.database_config.get('image_dir', 'EvilEyeData')
-        self.params['database']['preview_width'] = self.database_config.get('preview_width', 300)
-        self.params['database']['preview_height'] = self.database_config.get('preview_height', 150)
+            self.params['database'] = {}
+            self.params['database']['database_name'] = self.database_config.get('database_name', 'evil_eye_db')
+            self.params['database']['host_name'] = self.database_config.get('host_name', 'localhost')
+            self.params['database']['port'] = self.database_config.get('port', 5432)
+            self.params['database']['admin_user_name'] = self.database_config.get('admin_user_name', 'postgres')
+            self.params['database']['admin_password'] = self.database_config.get('admin_password', '')
+            self.params['database']['image_dir'] = self.database_config.get('image_dir', 'EvilEyeData')
+            self.params['database']['preview_width'] = self.database_config.get('preview_width', 300)
+            self.params['database']['preview_height'] = self.database_config.get('preview_height', 150)
+        else:
+            # Set empty database config when database is disabled
+            self.params['database'] = {}
 
         if self.visualizer:
             self.params['visualizer'] = self.visualizer.get_params()
@@ -463,6 +493,12 @@ class Controller:
 
     def _init_object_handler(self, db_controller, params):
         self.obj_handler = objects_handler.ObjectsHandler(db_controller=db_controller, db_adapter=self.db_adapter_obj)
+        self.obj_handler.set_params(**params)
+        self.obj_handler.init()
+
+    def _init_object_handler_without_db(self, params):
+        """Initialize object handler without database connection."""
+        self.obj_handler = objects_handler.ObjectsHandler(db_controller=None, db_adapter=None)
         self.obj_handler.set_params(**params)
         self.obj_handler.init()
 
@@ -554,6 +590,25 @@ class Controller:
         for source in self.pipeline.get_sources_processors():
             source.subscribe(self.cam_events_detector)
 
+    def _init_events_detectors_without_db(self, params):
+        """Initialize events detectors without database connection."""
+        self.cam_events_detector = CamEventsDetector(self.pipeline.get_sources_processors())
+        self.cam_events_detector.set_params(**params.get('CamEventsDetector', dict()))
+        self.cam_events_detector.init()
+
+        # Initialize FOV and Zone detectors without database functionality
+        self.fov_events_detector = FieldOfViewEventsDetector(self.obj_handler)
+        self.fov_events_detector.set_params(**params.get('FieldOfViewEventsDetector', dict()))
+        self.fov_events_detector.init()
+
+        self.zone_events_detector = ZoneEventsDetector(self.obj_handler)
+        self.zone_events_detector.set_params(**params.get('ZoneEventsDetector', dict()))
+        self.zone_events_detector.init()
+
+        self.obj_handler.subscribe(self.fov_events_detector, self.zone_events_detector)
+        for source in self.pipeline.get_sources_processors():
+            source.subscribe(self.cam_events_detector)
+
     def _init_events_detectors_controller(self, params):
         detectors = [self.cam_events_detector, self.fov_events_detector, self.zone_events_detector]
         self.events_detectors_controller = EventsDetectorsController(detectors)
@@ -563,6 +618,13 @@ class Controller:
     def _init_events_processor(self, params):
         db_adapters = [self.db_adapter_fov_events, self.db_adapter_cam_events, self.db_adapter_zone_events]
         self.events_processor = EventsProcessor(db_adapters, self.db_controller)
+        self.events_processor.set_params(**params)
+        self.events_processor.init()
+
+    def _init_events_processor_without_db(self, params):
+        """Initialize events processor without database connection."""
+        # Create dummy adapters that don't save to database
+        self.events_processor = EventsProcessor([], None)  # No adapters, no db_controller
         self.events_processor.set_params(**params)
         self.events_processor.init()
 
@@ -608,25 +670,27 @@ class Controller:
         comp_debug_info = self.visualizer.insert_debug_info_by_id(self.debug_info.setdefault("visualizer", {}))
         total_memory_usage += comp_debug_info["memory_measure_results"]
 
-        self.db_controller.calc_memory_consumption()
-        comp_debug_info = self.db_controller.insert_debug_info_by_id(self.debug_info.setdefault("db_controller", {}))
-        total_memory_usage += comp_debug_info["memory_measure_results"]
+        # Only collect database memory if database is enabled
+        if self.use_database and self.db_controller:
+            self.db_controller.calc_memory_consumption()
+            comp_debug_info = self.db_controller.insert_debug_info_by_id(self.debug_info.setdefault("db_controller", {}))
+            total_memory_usage += comp_debug_info["memory_measure_results"]
 
-        self.db_adapter_obj.calc_memory_consumption()
-        comp_debug_info = self.db_adapter_obj.insert_debug_info_by_id(self.debug_info.setdefault("db_adapter_obj", {}))
-        total_memory_usage += comp_debug_info["memory_measure_results"]
+            self.db_adapter_obj.calc_memory_consumption()
+            comp_debug_info = self.db_adapter_obj.insert_debug_info_by_id(self.debug_info.setdefault("db_adapter_obj", {}))
+            total_memory_usage += comp_debug_info["memory_measure_results"]
 
-        self.db_adapter_cam_events.calc_memory_consumption()
-        comp_debug_info = self.db_adapter_cam_events.insert_debug_info_by_id(self.debug_info.setdefault("db_adapter_cam_events", {}))
-        total_memory_usage += comp_debug_info["memory_measure_results"]
+            self.db_adapter_cam_events.calc_memory_consumption()
+            comp_debug_info = self.db_adapter_cam_events.insert_debug_info_by_id(self.debug_info.setdefault("db_adapter_cam_events", {}))
+            total_memory_usage += comp_debug_info["memory_measure_results"]
 
-        self.db_adapter_fov_events.calc_memory_consumption()
-        comp_debug_info = self.db_adapter_fov_events.insert_debug_info_by_id(self.debug_info.setdefault("db_adapter_fov_events", {}))
-        total_memory_usage += comp_debug_info["memory_measure_results"]
+            self.db_adapter_fov_events.calc_memory_consumption()
+            comp_debug_info = self.db_adapter_fov_events.insert_debug_info_by_id(self.debug_info.setdefault("db_adapter_fov_events", {}))
+            total_memory_usage += comp_debug_info["memory_measure_results"]
 
-        self.db_adapter_zone_events.calc_memory_consumption()
-        comp_debug_info = self.db_adapter_zone_events.insert_debug_info_by_id(self.debug_info.setdefault("db_adapter_zone_events", {}))
-        total_memory_usage += comp_debug_info["memory_measure_results"]
+            self.db_adapter_zone_events.calc_memory_consumption()
+            comp_debug_info = self.db_adapter_zone_events.insert_debug_info_by_id(self.debug_info.setdefault("db_adapter_zone_events", {}))
+            total_memory_usage += comp_debug_info["memory_measure_results"]
 
         self.debug_info["controller"] = dict()
         self.debug_info["controller"]["timestamp"] = datetime.datetime.now()

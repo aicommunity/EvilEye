@@ -35,7 +35,14 @@ class EventsProcessor(EvilEyeBase):
         # print(self.events_adapters)
 
     def get_last_id(self):  # Функция для получения последнего id события из БД
+        # Return 0 if no database controller is available
+        if self.db_controller is None:
+            return 0
+            
         table_names = list(self.events_tables.values())
+        if not table_names:  # No tables available
+            return 0
+            
         subqueries = []
         # Объединяем результаты из всех таблиц событий, выбираем максимальный id
         for i in range(len(table_names) - 1):
@@ -97,7 +104,8 @@ class EventsProcessor(EvilEyeBase):
                                 if event.is_finished():  # Обновляем запись о долгосрочном событии, если оно закончилось
                                     long_term[i].update_on_finished(
                                         event)  # Обновляем информацию о событии по его завершении
-                                    self.events_adapters[event.get_name()].update(long_term[i])  # Получаем адаптер по имени события, отправляем в него завершенное
+                                    if event.get_name() in self.events_adapters:
+                                        self.events_adapters[event.get_name()].update(long_term[i])  # Получаем адаптер по имени события, отправляем в него завершенное
                                     if events not in self.finished_events:
                                         self.finished_events[events] = []
                                     self.finished_events[events].append(event)
@@ -107,7 +115,8 @@ class EventsProcessor(EvilEyeBase):
                             event.set_id(self.id_counter)
                             self.id_counter += 1
                             self.long_term_events[events].append(event)
-                            self.events_adapters[event.get_name()].insert(event)
+                            if event.get_name() in self.events_adapters:
+                                self.events_adapters[event.get_name()].insert(event)
                 else:  # Если нет активных долгосрочных событий, анализируем новые
                     for event in new_events[events]:
                         event.set_id(self.id_counter)
@@ -119,14 +128,16 @@ class EventsProcessor(EvilEyeBase):
                                 if events not in self.finished_events:
                                     self.finished_events[events] = []
                                 self.finished_events[events].append(event)
-                                self.events_adapters[event.get_name()].insert(event)
+                                if event.get_name() in self.events_adapters:
+                                    self.events_adapters[event.get_name()].insert(event)
                             else:
                                 self.long_term_events[events].append(event)
                         else:  # Иначе отправляем в завершенные
                             if events not in self.finished_events:
                                 self.finished_events[events] = []
                             self.finished_events[events].append(event)
-                        self.events_adapters[event.get_name()].insert(event)
+                        if event.get_name() in self.events_adapters:
+                            self.events_adapters[event.get_name()].insert(event)
                 # Удаляем завершенные долгосрочные события
                 if events in self.long_term_events:
                     filtered_long_term[events] = [self.long_term_events[events][i] for i

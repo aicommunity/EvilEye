@@ -35,6 +35,11 @@ class DatabaseJournalWindow(QWidget):
         self.main_window = main_window
         self.params = params
         self.database_params = database_params
+        
+        # Handle case when database is disabled
+        if not self.database_params or 'database_adapters' not in self.database_params:
+            raise ValueError("Database journal cannot be created without database configuration")
+            
         self.adapter_params = self.database_params['database_adapters']
         self.db_params = self.database_params['database']
         self.vis_params = self.params['visualizer']

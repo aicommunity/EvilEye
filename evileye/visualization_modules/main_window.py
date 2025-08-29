@@ -118,8 +118,12 @@ class MainWindow(QMainWindow):
         if self.controller.enable_close_from_gui and not self.controller.show_main_gui and self.controller.show_journal:
             close_app = True
 
-        self.db_journal_win = DatabaseJournalWindow(self, self.params, self.controller.database_config, close_app)
-        self.db_journal_win.setVisible(False)
+        # Create database journal window only if database is enabled
+        if hasattr(self.controller, 'use_database') and self.controller.use_database:
+            self.db_journal_win = DatabaseJournalWindow(self, self.params, self.controller.database_config, close_app)
+            self.db_journal_win.setVisible(False)
+        else:
+            self.db_journal_win = None
         self.zone_window = ZoneWindow(self.params)
         self.zone_window.setVisible(False)
 
@@ -191,6 +195,10 @@ class MainWindow(QMainWindow):
         self.db_journal = QAction('&DB journal', self)
         icon_path = os.path.join(utils_utils.get_project_root(), 'icons', 'journal.svg')
         self.db_journal.setIcon(QIcon(icon_path))
+        # Disable database journal if database is not available
+        if hasattr(self.controller, 'use_database') and not self.controller.use_database:
+            self.db_journal.setEnabled(False)
+            self.db_journal.setToolTip("Database journal is not available (database is disabled)")
 
         self.add_zone = QAction('&Add zone', self)
         icon_path = os.path.join(utils_utils.get_project_root(), 'icons', 'add_zone.svg')
@@ -227,6 +235,9 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot()
     def open_journal(self):
+        if self.db_journal_win is None:
+            print("Database journal is not available (database is disabled)")
+            return
         if self.db_journal_win.isVisible():
             self.db_journal_win.setVisible(False)
         else:
@@ -277,7 +288,8 @@ class MainWindow(QMainWindow):
         if self.controller.enable_close_from_gui:
             self.controller.release()
             self.zone_window.close()
-            self.db_journal_win.close()
+            if self.db_journal_win is not None:
+                self.db_journal_win.close()
             #with open(self.params_path, 'w') as params_file:
             #    json.dump(self.params, params_file, indent=4)
             QApplication.closeAllWindows()

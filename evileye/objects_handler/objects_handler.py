@@ -45,8 +45,13 @@ class ObjectsHandler(EvilEyeBase):
 
         self.db_controller = db_controller
         self.db_adapter = db_adapter
-        self.db_params = self.db_controller.get_params()
-        self.cameras_params = self.db_controller.get_cameras_params()
+        # Initialize database parameters only if database controller is available
+        if self.db_controller is not None:
+            self.db_params = self.db_controller.get_params()
+            self.cameras_params = self.db_controller.get_cameras_params()
+        else:
+            self.db_params = {}
+            self.cameras_params = {}
         # Условие для блокировки других потоков
         self.condition = Condition()
         self.lock = Lock()
@@ -215,7 +220,8 @@ class ObjectsHandler(EvilEyeBase):
                 obj.track = track
                 obj.history.append(obj.get_current_history_element())
                 start_insert_it = timer()
-                self.db_adapter.insert(obj)
+                if self.db_adapter is not None:
+                    self.db_adapter.insert(obj)
                 end_insert_it = timer()
                 self.active_objs.objects.append(obj)
                # print(f"active_objs len={len(self.active_objs.objects)} size={asizeof.asizeof(self.active_objs.objects)/(1024.0*1024.0)}")
@@ -228,7 +234,8 @@ class ObjectsHandler(EvilEyeBase):
                 if active_obj.lost_frames >= self.lost_thresh:
                     active_obj.time_lost = datetime.datetime.now()
                     start_update_it = timer()
-                    self.db_adapter.update(active_obj)
+                    if self.db_adapter is not None:
+                        self.db_adapter.update(active_obj)
                     end_update_it = timer()
                     self.lost_objs.objects.append(active_obj)
                 else:
@@ -265,8 +272,8 @@ class ObjectsHandler(EvilEyeBase):
                              'frame_path': self._get_img_path('frame', 'detected', obj),
                              'lost_frame_path': None,
                              'object_data': json.dumps(obj.__dict__, cls=ObjectResultEncoder),
-                             'project_id': self.db_controller.get_project_id(),
-                             'job_id': self.db_controller.get_job_id(),
+                             'project_id': self.db_controller.get_project_id() if self.db_controller is not None else 0,
+                             'job_id': self.db_controller.get_job_id() if self.db_controller is not None else 0,
                              'camera_full_address': ''}
 
         for camera in self.cameras_params:
@@ -300,7 +307,12 @@ class ObjectsHandler(EvilEyeBase):
                 fields_for_updating['lost_preview_path'], fields_for_updating['lost_frame_path'])
 
     def _get_img_path(self, image_type, obj_event_type, obj):
-        save_dir = self.db_params['image_dir']
+        # Use default image directory if database is not available
+        if 'image_dir' in self.db_params and self.db_params['image_dir']:
+            save_dir = self.db_params['image_dir']
+        else:
+            save_dir = 'EvilEyeData'  # Default directory
+            
         img_dir = os.path.join(save_dir, 'images')
         cur_date = datetime.date.today()
         cur_date_str = cur_date.strftime('%Y_%m_%d')
