@@ -94,6 +94,16 @@ class PipelineSimple(PipelineBase):
         """
         pass
 
+    def get_sources(self):
+        """
+        Get video sources for external subscriptions.
+        Simple pipelines typically don't have video sources.
+        
+        Returns:
+            Empty list since simple pipelines don't have video sources
+        """
+        return []
+
     def generate_default_structure(self, num_sources: int):
         """
         Generate default structure for simple pipeline.

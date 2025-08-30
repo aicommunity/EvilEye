@@ -164,6 +164,17 @@ class PipelineBase(EvilEyeBase):
         pass
 
     @abstractmethod
+    def get_sources(self) -> List:
+        """
+        Get video sources for external subscriptions (events, etc.).
+        This method is used by the controller to access video sources.
+        
+        Returns:
+            List of video sources (CaptureImage objects or similar)
+        """
+        pass
+
+    @abstractmethod
     def generate_default_structure(self, num_sources: int):
         """
         Generate default structure for pipeline.

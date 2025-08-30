@@ -345,8 +345,8 @@ class Controller:
         self.pipeline.init()
 
         # Fill source maps for visualizer and bookkeeping
-        if hasattr(self.pipeline, "get_sources_processors"):
-            sources = self.pipeline.get_sources_processors()
+        if hasattr(self.pipeline, "get_sources"):
+            sources = self.pipeline.get_sources()
             if sources:
                 for source in sources:
                     for source_id, source_name in zip(source.source_ids, source.source_names):
@@ -574,7 +574,7 @@ class Controller:
         #self.mc_tracker.init()
 
     def _init_events_detectors(self, params):
-        self.cam_events_detector = CamEventsDetector(self.pipeline.get_sources_processors())
+        self.cam_events_detector = CamEventsDetector(self.pipeline.get_sources())
         self.cam_events_detector.set_params(**params.get('CamEventsDetector', dict()))
         self.cam_events_detector.init()
 
@@ -587,12 +587,12 @@ class Controller:
         self.zone_events_detector.init()
 
         self.obj_handler.subscribe(self.fov_events_detector, self.zone_events_detector)
-        for source in self.pipeline.get_sources_processors():
+        for source in self.pipeline.get_sources():
             source.subscribe(self.cam_events_detector)
 
     def _init_events_detectors_without_db(self, params):
         """Initialize events detectors without database connection."""
-        self.cam_events_detector = CamEventsDetector(self.pipeline.get_sources_processors())
+        self.cam_events_detector = CamEventsDetector(self.pipeline.get_sources())
         self.cam_events_detector.set_params(**params.get('CamEventsDetector', dict()))
         self.cam_events_detector.init()
 
@@ -606,7 +606,7 @@ class Controller:
         self.zone_events_detector.init()
 
         self.obj_handler.subscribe(self.fov_events_detector, self.zone_events_detector)
-        for source in self.pipeline.get_sources_processors():
+        for source in self.pipeline.get_sources():
             source.subscribe(self.cam_events_detector)
 
     def _init_events_detectors_controller(self, params):

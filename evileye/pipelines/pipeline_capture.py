@@ -29,7 +29,8 @@ class PipelineCapture(PipelineSimple):
         sources_config = self.params.get('sources', [])
         if sources_config and len(sources_config) > 0:
             source_config = sources_config[0]
-            self.video_path = source_config.get('source', '')
+            # Try different possible field names for video path
+            self.video_path = source_config.get('camera', source_config.get('source', ''))
             
             # Get video properties
             fps_config = source_config.get('fps', 30)
@@ -193,3 +194,15 @@ class PipelineCapture(PipelineSimple):
         }
         
         return default_config
+
+    def get_sources(self):
+        """
+        Get video sources for external subscriptions.
+        PipelineCapture returns a list with the current capture object.
+        
+        Returns:
+            List containing the current video capture object
+        """
+        if hasattr(self, 'cap') and self.cap is not None:
+            return [self.cap]
+        return []

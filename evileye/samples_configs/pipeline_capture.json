@@ -3,7 +3,13 @@
     "pipeline_class": "PipelineCapture",
     "sources": [
       {
-        "source": "videos/sample_video.mp4",
+        "camera": "videos/planes_sample.mp4",
+        "source": "VideoFile",
+        "split": false,
+        "num_split": 0,
+        "src_coords": [0],
+        "source_ids": [0],
+        "source_names": ["Cam1"],
         "fps": {
           "value": 30
         }

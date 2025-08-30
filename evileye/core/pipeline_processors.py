@@ -9,8 +9,8 @@ from typing import List, Dict, Any, Optional, Tuple
 
 class PipelineProcessors(PipelineBase):
     """
-    Base class for pipeline implementations.
-    Defines the interface for processing pipelines with unified processor management.
+    Processor-based pipeline implementation.
+    Manages multiple processors in a processing chain.
     """
     
     def __init__(self):
@@ -26,7 +26,6 @@ class PipelineProcessors(PipelineBase):
         self.encoders: Dict[str, Any] = {}
 
         self.sources_proc: ProcessorSource | None = None
-
 
     def default(self):
         """Reset pipeline to default state"""
@@ -137,8 +136,8 @@ class PipelineProcessors(PipelineBase):
             if processor is not None:
                 processor.insert_debug_info_by_id(processor.get_name(), debug_info)
 
-    def get_sources_processors(self):
-        """Get source processors for external subscriptions (events, etc.)"""
+    def get_sources(self):
+        """Get video sources for external subscriptions (events, etc.)"""
         return self.sources_proc.get_processors() if self.sources_proc else []
 
     def run_sources(self):
