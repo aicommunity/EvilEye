@@ -617,13 +617,14 @@ evileye-create --list-pipelines
 Create custom pipelines by extending the base `Pipeline` class and placing them in a local `pipelines/` folder:
 
 ```python
-from evileye.core.pipeline import Pipeline
+from evileye.core.pipeline_processors import Pipeline
+
 
 class MyCustomPipeline(Pipeline):
     def __init__(self):
         super().__init__()
         # Custom initialization
-    
+
     def generate_default_structure(self, num_sources: int):
         # Custom configuration generation
         pass

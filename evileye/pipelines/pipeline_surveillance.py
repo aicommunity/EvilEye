@@ -3,7 +3,7 @@ from ..core.processor_source import ProcessorSource
 from ..core.processor_frame import ProcessorFrame
 from ..core.processor_step import ProcessorStep
 from ..core.processor_base import ProcessorBase
-from ..core.pipeline import PipelineProcessors
+from ..core.pipeline_processors import PipelineProcessors
 from typing import Any, Tuple, List, Dict
 import evileye.preprocessing  # Import to register PreprocessingPipeline
 
