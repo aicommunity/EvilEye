@@ -57,7 +57,8 @@ class EventsProcessor(EvilEyeBase):
             subqueries=sql.SQL(' ').join(subqueries))
         record = self.db_controller.query(query)
 
-        if not record[0][0]:  # Если ни одного события в БД нет, возвращаем ноль
+        # Check if record is None or empty
+        if record is None or len(record) == 0 or len(record[0]) == 0 or record[0][0] is None:
             return 0
         return record[0][0] + 1
 

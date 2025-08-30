@@ -14,13 +14,11 @@ class PipelineCapture(PipelineSimple):
     
     def __init__(self):
         super().__init__()
-        self.video_path = ""
+        self.source_config = {}
         self.video_capture = None
         self.frame_width = 0
         self.frame_height = 0
-        self.fps = 30
         self.total_frames = 0
-        self.current_frame = 0
 
     def set_params_impl(self):
         """Set pipeline parameters from config"""
@@ -29,52 +27,36 @@ class PipelineCapture(PipelineSimple):
         # Get video file path from config
         sources_config = self.params.get('sources', [])
         if sources_config and len(sources_config) > 0:
-            source_config = sources_config[0]
-            # Try different possible field names for video path
-            self.video_path = source_config.get('camera', source_config.get('source', ''))
-            
-            # Get video properties
-            fps_config = source_config.get('fps', 30)
-            if isinstance(fps_config, dict):
-                self.fps = fps_config.get('value', 30)
-            else:
-                self.fps = fps_config
+            self.source_config = sources_config[0]
+        else:
+            self.source_config = {}
 
     def init_impl(self, **kwargs):
         """Initialize video capture"""
-        if not self.video_path or not os.path.exists(self.video_path):
-            print(f"Error: Video file not found: {self.video_path}")
+        # Get video path from source config
+        video_path = self.source_config.get('camera', '')
+        if not video_path or not os.path.exists(video_path):
+            print(f"Error: Video file not found: {video_path}")
             return False
         
-        # Create and configure VideoCapture
+        # Create VideoCapture and use source config directly
         self.video_capture = VideoCapture()
-        self.video_capture.params = {
-            'camera': self.video_path,
-            'source': 'VideoFile',
-            'source_ids': [0],
-            'source_names': ['VideoCapture'],
-            'split': False,
-            'num_split': 0,
-            'src_coords': [0],
-            'loop_play': False,
-            'desired_fps': self.fps
-        }
+        #self.video_capture.params = self.source_config
         
         # Set parameters and initialize video capture
-        self.video_capture.set_params()
+        self.video_capture.set_params(**self.source_config)
         if not self.video_capture.init():
-            print(f"Error: Could not initialize video capture: {self.video_path}")
+            print(f"Error: Could not initialize video capture: {video_path}")
             return False
         
         # Get video properties
         self.frame_width = int(self.video_capture.capture.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.frame_height = int(self.video_capture.capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self.total_frames = int(self.video_capture.capture.get(cv2.CAP_PROP_FRAME_COUNT))
-        self.current_frame = 0
         
-        print(f"Video initialized: {self.video_path}")
+        print(f"Video initialized: {video_path}")
         print(f"Resolution: {self.frame_width}x{self.frame_height}")
-        print(f"FPS: {self.fps}")
+        print(f"FPS: {self.video_capture.source_fps}")
         print(f"Total frames: {self.total_frames}")
         
         return True
@@ -88,7 +70,6 @@ class PipelineCapture(PipelineSimple):
     def start_impl(self):
         """Start video capture"""
         if self.video_capture:
-            self.current_frame = 0
             print("Video capture started")
 
     def stop_impl(self):
@@ -97,7 +78,7 @@ class PipelineCapture(PipelineSimple):
 
     def process_logic(self) -> Dict[str, Any]:
         """
-        Capture and return next frame from video.
+        Capture and return next frame from video using VideoCapture.get() method.
         
         Returns:
             Dictionary with frame data and metadata
@@ -105,35 +86,32 @@ class PipelineCapture(PipelineSimple):
         if not self.video_capture or not self.video_capture.is_opened():
             return {}
         
-        # Read next frame
-        ret, frame = self.video_capture.capture.read()
-        if not ret:
-            # End of video
-            return {}
+        # Get frames from VideoCapture using the get() method
+        captured_images = self.video_capture.get()
         
-        # Create capture image object
-        capture_image = CaptureImage()
-        capture_image.image = frame
-        capture_image.width = self.frame_width
-        capture_image.height = self.frame_height
-        capture_image.current_video_position = self.current_frame
-        capture_image.source_id = 0  # Single source
+        if not captured_images:
+            # No frames available or end of video
+            return {}
+
+        return captured_images
+        
+        # Get the first (and only) captured image
+        capture_image = captured_images[0]
         
         # Prepare result
         result = {
-            'source_id': 0,
-            'frame_id': self.current_frame,
+            'source_id': capture_image.source_id,
+            'frame_id': capture_image.frame_id,
             'image': capture_image,
-            'timestamp': self.current_frame / self.fps,  # Approximate timestamp
-            'video_path': self.video_path,
+            'timestamp': capture_image.time_stamp,
+            'video_path': self.source_config.get('camera', ''),
             'frame_width': self.frame_width,
             'frame_height': self.frame_height,
-            'fps': self.fps,
+            'fps': self.video_capture.source_fps,
             'total_frames': self.total_frames,
-            'progress': self.current_frame / self.total_frames if self.total_frames > 0 else 0
+            'progress': capture_image.current_video_frame / self.total_frames if self.total_frames > 0 else 0
         }
         
-        self.current_frame += 1
         return result
 
     def check_all_sources_finished(self) -> bool:
@@ -145,7 +123,7 @@ class PipelineCapture(PipelineSimple):
         """
         if not self.video_capture or not self.video_capture.is_opened():
             return True
-        return self.current_frame >= self.total_frames
+        return self.video_capture.is_finished()
 
     def get_video_info(self) -> Dict[str, Any]:
         """
@@ -154,14 +132,25 @@ class PipelineCapture(PipelineSimple):
         Returns:
             Dictionary with video properties
         """
+        if not self.video_capture:
+            return {
+                'video_path': self.source_config.get('camera', ''),
+                'frame_width': 0,
+                'frame_height': 0,
+                'fps': None,
+                'total_frames': 0,
+                'current_frame': 0,
+                'progress': 0
+            }
+        
         return {
-            'video_path': self.video_path,
+            'video_path': self.source_config.get('camera', ''),
             'frame_width': self.frame_width,
             'frame_height': self.frame_height,
-            'fps': self.fps,
+            'fps': self.video_capture.source_fps,
             'total_frames': self.total_frames,
-            'current_frame': self.current_frame,
-            'progress': self.current_frame / self.total_frames if self.total_frames > 0 else 0
+            'current_frame': self.video_capture.video_current_frame if hasattr(self.video_capture, 'video_current_frame') else 0,
+            'progress': (self.video_capture.video_current_frame / self.total_frames) if self.total_frames > 0 and hasattr(self.video_capture, 'video_current_frame') else 0
         }
 
     def seek_frame(self, frame_number: int) -> bool:
@@ -179,7 +168,6 @@ class PipelineCapture(PipelineSimple):
         
         if 0 <= frame_number < self.total_frames:
             self.video_capture.capture.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
-            self.current_frame = frame_number
             return True
         return False
 
