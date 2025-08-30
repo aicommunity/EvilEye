@@ -10,7 +10,7 @@ __author__ = "EvilEye Team"
 __email__ = "team@evileye.com"
 
 # Import core components
-from .core import Pipeline, ProcessorBase, ProcessorSource, ProcessorFrame, ProcessorStep
+from .core import PipelineProcessors, ProcessorBase, ProcessorSource, ProcessorFrame, ProcessorStep
 from .pipelines import PipelineSurveillance
 
 # Import registered classes

@@ -1,4 +1,4 @@
-from .base_class import EvilEyeBase
+from .pipeline_base import PipelineBase
 from .processor_source import ProcessorSource
 from .processor_frame import ProcessorFrame
 from .processor_step import ProcessorStep
@@ -7,7 +7,7 @@ from abc import abstractmethod
 from typing import List, Dict, Any, Optional, Tuple
 
 
-class Pipeline(EvilEyeBase):
+class PipelineProcessors(PipelineBase):
     """
     Base class for pipeline implementations.
     Defines the interface for processing pipelines with unified processor management.
@@ -15,7 +15,6 @@ class Pipeline(EvilEyeBase):
     
     def __init__(self):
         super().__init__()
-        self._credentials = None
         
         # List of processor components in execution order
         self.processors: List[ProcessorBase] = []
@@ -31,14 +30,14 @@ class Pipeline(EvilEyeBase):
 
     def default(self):
         """Reset pipeline to default state"""
+        super().default()
         self._processor_params = {}
-        self._credentials = {}
         self.encoders = {}
         self.processors = []
 
     def set_credentials(self, credentials):
         """Set credentials for pipeline components"""
-        self._credentials = credentials
+        super().set_credentials(credentials)
 
     def init_impl(self, **kwargs):
         """Initialize pipeline implementation with processors - override in subclasses"""
@@ -64,10 +63,9 @@ class Pipeline(EvilEyeBase):
 
     def get_params_impl(self):
         """Get parameters from all processors"""
-        params = {}
+        params = super().get_params_impl()
         
         # Get parameters from each processor type
-        params["pipeline_class"] = self.__class__.__name__
         for processor in self.processors:
             if processor is not None:
                 section_name = processor.get_name()
@@ -104,6 +102,10 @@ class Pipeline(EvilEyeBase):
                 self.run_sources()
             step_result = processor.process(step_result)
             pipeline_results[processor.get_name()] = step_result
+
+        # Store results for external access
+        if pipeline_results:
+            self.add_result(pipeline_results)
 
         return pipeline_results
 
@@ -162,8 +164,8 @@ class Pipeline(EvilEyeBase):
         if isinstance(processor, ProcessorSource):
             self.sources_proc = processor
 
-    @abstractmethod
     def generate_default_structure(self, num_sources: int):
         """Generate default structure for pipeline"""
+        # Default implementation for processor-based pipelines
         pass
 
