@@ -23,15 +23,17 @@ class LabelingManager:
     - objects_lost.json: For objects that were lost (tracking ended)
     """
     
-    def __init__(self, base_dir: str = 'EvilEyeData'):
+    def __init__(self, base_dir: str = 'EvilEyeData', cameras_params: list = None):
         """
         Initialize the labeling manager.
         
         Args:
             base_dir: Base directory for saving labels and images
+            cameras_params: List of camera parameters for source name mapping
         """
         self.base_dir = base_dir
         self.images_dir = os.path.join(base_dir, 'images')
+        self.cameras_params = cameras_params or []
         
         # Create base directory if it doesn't exist
         os.makedirs(self.images_dir, exist_ok=True)
@@ -194,7 +196,7 @@ class LabelingManager:
             image_width: Width of the image
             image_height: Height of the image
             image_filename: Name of the saved image file
-            preview_filename: Name of the saved preview file
+            preview_filename: Name of the saved preview file (not used in labels)
             
         Returns:
             Dictionary with object data in labeling format
@@ -208,17 +210,23 @@ class LabelingManager:
             "height": int(bbox[3] - bbox[1])
         }
         
+        # Create relative path to image (without date folder)
+        relative_image_path = os.path.join('detected_frames', image_filename)
+        
+        # Get source name from cameras params if available
+        source_name = self._get_source_name(obj.source_id)
+        
         return {
             "object_id": obj.object_id,
             "frame_id": obj.frame_id,
             "timestamp": obj.time_stamp.isoformat(),
-            "image_filename": image_filename,
-            "preview_filename": preview_filename,
+            "image_filename": relative_image_path,
             "bounding_box": pixel_bbox,
             "confidence": float(obj.track.confidence),
             "class_id": obj.class_id,
             "class_name": self._get_class_name(obj.class_id),
             "source_id": obj.source_id,
+            "source_name": source_name,
             "track_id": obj.track.track_id,
             "global_id": getattr(obj, 'global_id', None)
         }
@@ -233,7 +241,7 @@ class LabelingManager:
             image_width: Width of the image
             image_height: Height of the image
             image_filename: Name of the saved image file
-            preview_filename: Name of the saved preview file
+            preview_filename: Name of the saved preview file (not used in labels)
             
         Returns:
             Dictionary with object data in labeling format
@@ -247,18 +255,24 @@ class LabelingManager:
             "height": int(bbox[3] - bbox[1])
         }
         
+        # Create relative path to image (without date folder)
+        relative_image_path = os.path.join('lost_frames', image_filename)
+        
+        # Get source name from cameras params if available
+        source_name = self._get_source_name(obj.source_id)
+        
         return {
             "object_id": obj.object_id,
             "frame_id": obj.frame_id,
             "detected_timestamp": obj.time_detected.isoformat(),
             "lost_timestamp": obj.time_lost.isoformat(),
-            "image_filename": image_filename,
-            "preview_filename": preview_filename,
+            "image_filename": relative_image_path,
             "bounding_box": pixel_bbox,
             "confidence": float(obj.track.confidence),
             "class_id": obj.class_id,
             "class_name": self._get_class_name(obj.class_id),
             "source_id": obj.source_id,
+            "source_name": source_name,
             "track_id": obj.track.track_id,
             "global_id": getattr(obj, 'global_id', None),
             "lost_frames": obj.lost_frames
@@ -292,6 +306,24 @@ class LabelingManager:
             return coco_classes[class_id]
         else:
             return f"class_{class_id}"
+    
+    def _get_source_name(self, source_id: int) -> str:
+        """
+        Get source name from source ID using cameras parameters.
+        
+        Args:
+            source_id: Source ID
+            
+        Returns:
+            Source name or default name if not found
+        """
+        for camera in self.cameras_params:
+            if source_id in camera.get('source_ids', []):
+                id_idx = camera['source_ids'].index(source_id)
+                source_names = camera.get('source_names', [])
+                if id_idx < len(source_names):
+                    return source_names[id_idx]
+        return f"camera_{source_id}"
     
     def get_statistics(self) -> Dict[str, Any]:
         """

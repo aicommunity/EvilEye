@@ -69,7 +69,7 @@ class ObjectsHandler(EvilEyeBase):
         
         # Initialize labeling manager
         base_dir = self.db_params.get('image_dir', 'EvilEyeData') if self.db_params else 'EvilEyeData'
-        self.labeling_manager = LabelingManager(base_dir=base_dir)
+        self.labeling_manager = LabelingManager(base_dir=base_dir, cameras_params=self.cameras_params)
 
     def default(self):
         pass
