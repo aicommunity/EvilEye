@@ -3,6 +3,7 @@ import os
 from typing import Dict, Any, Optional
 from ..core.pipeline_simple import PipelineSimple
 from ..capture.video_capture_base import CaptureImage
+from ..capture.video_capture import VideoCapture
 
 
 class PipelineCapture(PipelineSimple):
@@ -14,7 +15,7 @@ class PipelineCapture(PipelineSimple):
     def __init__(self):
         super().__init__()
         self.video_path = ""
-        self.cap = None
+        self.video_capture = None
         self.frame_width = 0
         self.frame_height = 0
         self.fps = 30
@@ -45,16 +46,30 @@ class PipelineCapture(PipelineSimple):
             print(f"Error: Video file not found: {self.video_path}")
             return False
         
-        # Open video capture
-        self.cap = cv2.VideoCapture(self.video_path)
-        if not self.cap.isOpened():
-            print(f"Error: Could not open video file: {self.video_path}")
+        # Create and configure VideoCapture
+        self.video_capture = VideoCapture()
+        self.video_capture.params = {
+            'camera': self.video_path,
+            'source': 'VideoFile',
+            'source_ids': [0],
+            'source_names': ['VideoCapture'],
+            'split': False,
+            'num_split': 0,
+            'src_coords': [0],
+            'loop_play': False,
+            'desired_fps': self.fps
+        }
+        
+        # Set parameters and initialize video capture
+        self.video_capture.set_params()
+        if not self.video_capture.init():
+            print(f"Error: Could not initialize video capture: {self.video_path}")
             return False
         
         # Get video properties
-        self.frame_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        self.frame_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        self.total_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        self.frame_width = int(self.video_capture.capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+        self.frame_height = int(self.video_capture.capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        self.total_frames = int(self.video_capture.capture.get(cv2.CAP_PROP_FRAME_COUNT))
         self.current_frame = 0
         
         print(f"Video initialized: {self.video_path}")
@@ -66,13 +81,13 @@ class PipelineCapture(PipelineSimple):
 
     def release_impl(self):
         """Release video capture resources"""
-        if self.cap:
-            self.cap.release()
-            self.cap = None
+        if self.video_capture:
+            self.video_capture.release()
+            self.video_capture = None
 
     def start_impl(self):
         """Start video capture"""
-        if self.cap:
+        if self.video_capture:
             self.current_frame = 0
             print("Video capture started")
 
@@ -87,11 +102,11 @@ class PipelineCapture(PipelineSimple):
         Returns:
             Dictionary with frame data and metadata
         """
-        if not self.cap or not self.cap.isOpened():
+        if not self.video_capture or not self.video_capture.is_opened():
             return {}
         
         # Read next frame
-        ret, frame = self.cap.read()
+        ret, frame = self.video_capture.capture.read()
         if not ret:
             # End of video
             return {}
@@ -128,7 +143,7 @@ class PipelineCapture(PipelineSimple):
         Returns:
             True if video has finished, False otherwise
         """
-        if not self.cap or not self.cap.isOpened():
+        if not self.video_capture or not self.video_capture.is_opened():
             return True
         return self.current_frame >= self.total_frames
 
@@ -159,11 +174,11 @@ class PipelineCapture(PipelineSimple):
         Returns:
             True if seek successful, False otherwise
         """
-        if not self.cap or not self.cap.isOpened():
+        if not self.video_capture or not self.video_capture.is_opened():
             return False
         
         if 0 <= frame_number < self.total_frames:
-            self.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+            self.video_capture.capture.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
             self.current_frame = frame_number
             return True
         return False
@@ -198,11 +213,11 @@ class PipelineCapture(PipelineSimple):
     def get_sources(self):
         """
         Get video sources for external subscriptions.
-        PipelineCapture returns a list with the current capture object.
+        PipelineCapture returns a list with the current video capture object.
         
         Returns:
             List containing the current video capture object
         """
-        if hasattr(self, 'cap') and self.cap is not None:
-            return [self.cap]
+        if hasattr(self, 'video_capture') and self.video_capture is not None:
+            return [self.video_capture]
         return []

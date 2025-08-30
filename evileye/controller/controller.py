@@ -349,10 +349,12 @@ class Controller:
             sources = self.pipeline.get_sources()
             if sources:
                 for source in sources:
-                    for source_id, source_name in zip(source.source_ids, source.source_names):
-                        self.source_id_name_table[source_id] = source_name
-                        self.source_video_duration[source_id] = source.video_duration
-                        self.source_last_processed_frame_id[source_id] = 0
+                    if hasattr(source, 'source_ids') and hasattr(source, 'source_names') and source.source_ids and source.source_names:
+                        for source_id, source_name in zip(source.source_ids, source.source_names):
+                            self.source_id_name_table[source_id] = source_name
+                            if hasattr(source, 'video_duration'):
+                                self.source_video_duration[source_id] = source.video_duration
+                            self.source_last_processed_frame_id[source_id] = 0
 
         # Initialize database configuration only if database is enabled
         if self.use_database:

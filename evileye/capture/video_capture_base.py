@@ -104,8 +104,12 @@ class VideoCaptureBase(EvilEyeBase):
         self.desired_fps = self.params.get('desired_fps', None)
         self.source_names = self.params.get('source_names', self.source_ids)
         self.loop_play = self.params.get('loop_play', True)
-        self.source_type = CaptureDeviceType[self.params.get('source', "")]
-        self.source_address = self.params['camera']
+        source_param = self.params.get('source', "")
+        if source_param:
+            self.source_type = CaptureDeviceType[source_param]
+        else:
+            self.source_type = CaptureDeviceType.NotSet
+        self.source_address = self.params.get('camera', '')
         if self.source_type == CaptureDeviceType.IpCamera:
             parsed = urlparse(self.source_address)
             self.username = parsed.username
