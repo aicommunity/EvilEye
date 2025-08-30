@@ -279,7 +279,8 @@ def deploy_samples() -> None:
         "single_video.json",
         "single_video_split.json", 
         "single_ip_camera.json",
-        "multi_videos.json"
+        "multi_videos.json",
+        "pipeline_capture.json"
     ]
     
     copied_count = 0
