@@ -378,7 +378,7 @@ class ObjectsHandler(EvilEyeBase):
             print(f"Error saving object images: {e}")
 
     def _save_image(self, image, box, image_type, obj_event_type, obj):
-        """Save image to file system independent of database"""
+        """Save image to file system independent of database - using same logic as database journal"""
         try:
             # Get image path
             img_path = self._get_img_path(image_type, obj_event_type, obj)
@@ -397,21 +397,29 @@ class ObjectsHandler(EvilEyeBase):
             # Create directory if it doesn't exist
             os.makedirs(os.path.dirname(full_img_path), exist_ok=True)
             
-            # Save image
+            # Save image using the same logic as database journal
             if image_type == 'preview':
-                # Create preview with bounding box
+                # Create preview with bounding box (same as database journal)
                 preview = cv2.resize(copy.deepcopy(image.image), (self.db_params.get('preview_width', 300), self.db_params.get('preview_height', 150)), cv2.INTER_NEAREST)
-                preview_boxes = utils.draw_preview_boxes(preview, self.db_params.get('preview_width', 300), self.db_params.get('preview_height', 150), box)
+                
+                # Convert bounding box to normalized coordinates (same as database journal)
+                image_height, image_width, _ = image.image.shape
+                normalized_box = [
+                    box[0] / image_width,   # x
+                    box[1] / image_height,  # y
+                    box[2] / image_width,   # width
+                    box[3] / image_height   # height
+                ]
+                
+                preview_boxes = utils.draw_preview_boxes(preview, self.db_params.get('preview_width', 300), self.db_params.get('preview_height', 150), normalized_box)
                 saved = cv2.imwrite(full_img_path, preview_boxes)
             else:
-                # Save original frame without any graphical info
+                # Save original frame without any graphical info (same as database journal)
                 saved = cv2.imwrite(full_img_path, image.image)
             
             if not saved:
                 print(f'ERROR: can\'t save image file {full_img_path}')
-            else:
-                print(f'Image saved: {full_img_path}')
-                
+
         except Exception as e:
             print(f"Error saving image: {e}")
 
