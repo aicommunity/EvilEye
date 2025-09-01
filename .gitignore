@@ -148,3 +148,7 @@ x64/
 *.exe
 yolov8n.pt
 credentials.json
+
+EvilEyeData/
+*.mp4
+*.avi

@@ -1,0 +1,80 @@
+{
+  "pipeline": {
+    "pipeline_class": "PipelineCapture",
+    "sources": [
+      {
+        "camera": "videos/planes_sample.mp4",
+        "source": "VideoFile",
+        "split": false,
+        "num_split": 0,
+        "src_coords": [0],
+        "source_ids": [0],
+        "source_names": ["Cam1"],
+        "fps": {
+          "value": 30
+        }
+      }
+    ]
+  },
+  "controller": {
+    "fps": 30,
+    "enable_close_from_gui": true,
+    "class_names": ["person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light", "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard", "sports ball", "kite", "baseball bat", "baseball glove", "skateboard", "surfboard", "tennis racket", "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair", "couch", "potted plant", "bed", "dining table", "toilet", "tv", "laptop", "mouse", "remote", "keyboard", "cell phone", "microwave", "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase", "scissors", "teddy bear", "hair drier", "toothbrush"],
+    "memory_periodic_check_sec": 60,
+    "show_memory_usage": true,
+    "max_memory_usage_mb": 2048,
+    "auto_restart": false,
+    "use_database": false
+  },
+  "objects_handler": {
+    "max_active_objects": 100,
+    "max_lost_objects": 100,
+    "lost_thresh": 5,
+    "lost_store_time_secs": 60,
+    "history_len": 1
+  },
+  "events_detectors": {
+    "CamEventsDetector": {},
+    "FieldOfViewEventsDetector": {
+      "sources": {}
+    },
+    "ZoneEventsDetector": {
+      "sources": {},
+      "event_threshold": 0,
+      "zone_left_threshold": 0
+    }
+  },
+  "events_processor": {},
+  "database": {
+    "database_name": "evil_eye_db",
+    "host_name": "localhost",
+    "port": 5432,
+    "admin_user_name": "postgres",
+    "admin_password": "",
+    "image_dir": "EvilEyeData",
+    "preview_width": 300,
+    "preview_height": 150
+  },
+  "visualizer": {
+    "num_width": 1,
+    "num_height": 1,
+    "visual_buffer_num_frames": 10,
+    "source_ids": [0],
+    "fps": [5],
+    "gui_enabled": true,
+    "show_debug_info": true,
+    "objects_journal_enabled": true,
+    "text_config": {
+      "font_size_pt": 42,
+      "font_face": 0,
+      "color": [0, 0, 255],
+      "thickness": null,
+      "background_color": [0, 0, 0],
+      "background_enabled": false,
+      "padding_percent": 1.5,
+      "position_offset_percent": [0, -8],
+      "font_scale_method": "resolution_based",
+      "base_resolution": [1920, 1080]
+    }
+  }
+}
