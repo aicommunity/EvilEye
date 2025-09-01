@@ -1,9 +1,10 @@
 import os
 import json
+import datetime
 from typing import Dict, List
 
 try:
-    from PyQt6.QtCore import Qt
+    from PyQt6.QtCore import Qt, pyqtSlot
     from PyQt6.QtWidgets import (
         QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton,
         QHeaderView, QComboBox, QTableWidget, QTableWidgetItem, QFileDialog, QStyledItemDelegate
@@ -12,7 +13,7 @@ try:
     from PyQt6.QtCore import QSize, QTimer
     pyqt_version = 6
 except ImportError:
-    from PyQt5.QtCore import Qt
+    from PyQt5.QtCore import Qt, pyqtSlot
     from PyQt5.QtWidgets import (
         QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton,
         QHeaderView, QComboBox, QTableWidget, QTableWidgetItem, QFileDialog, QStyledItemDelegate
@@ -81,6 +82,75 @@ class ImageDelegate(QStyledItemDelegate):
         return QSize(self.preview_width, self.preview_height)
 
 
+class DateTimeDelegate(QStyledItemDelegate):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+    def displayText(self, value, locale) -> str:
+        """Format datetime to show only seconds precision"""
+        try:
+            if isinstance(value, str):
+                # Parse ISO format datetime string
+                if 'T' in value:
+                    # ISO format: 2025-09-01T17:30:45.123456
+                    dt = datetime.datetime.fromisoformat(value.replace('Z', '+00:00'))
+                    return dt.strftime('%Y-%m-%d %H:%M:%S')
+                else:
+                    # Already formatted or other format
+                    return value
+            return str(value)
+        except Exception as e:
+            print(f"Error formatting time: {e}")
+            return str(value)
+
+
+class ImageWindow(QLabel):
+    def __init__(self, image_path, box=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle('Image')
+        self.setFixedSize(900, 600)
+        self.image_path = image_path
+        
+        # Load image
+        pixmap = QPixmap(image_path)
+        if pixmap.isNull():
+            print(f"Error loading image: {image_path}")
+            return
+            
+        # Scale image to fit window
+        pixmap = pixmap.scaled(self.width(), self.height(), 
+                              Qt.AspectRatioMode.KeepAspectRatio, 
+                              Qt.TransformationMode.SmoothTransformation)
+        
+        # Draw bounding box if provided
+        if box:
+            painter = QPainter(pixmap)
+            pen = QPen(QColor(0, 255, 0), 2)  # Green color
+            painter.setPen(pen)
+            
+            # Convert normalized coordinates to pixel coordinates
+            x = int(box[0] * pixmap.width())
+            y = int(box[1] * pixmap.height())
+            w = int(box[2] * pixmap.width())
+            h = int(box[3] * pixmap.height())
+            
+            painter.drawRect(x, y, w, h)
+            painter.end()
+        
+        # Create label and set pixmap
+        self.label = QLabel()
+        self.label.setPixmap(pixmap)
+        
+        # Setup layout
+        self.layout = QVBoxLayout()
+        self.layout.addWidget(self.label)
+        self.setLayout(self.layout)
+
+    def mouseDoubleClickEvent(self, event):
+        self.hide()
+        event.accept()
+
+
 class EventsJournalJson(QWidget):
     def __init__(self, base_dir: str, parent=None):
         super().__init__(parent)
@@ -138,6 +208,17 @@ class EventsJournalJson(QWidget):
         self.image_delegate = ImageDelegate(self.table, self.base_dir)
         self.table.setItemDelegateForColumn(5, self.image_delegate)  # Preview
         self.table.setItemDelegateForColumn(6, self.image_delegate)  # Lost preview
+
+        # Set up datetime delegate for time columns
+        self.datetime_delegate = DateTimeDelegate(self.table)
+        self.table.setItemDelegateForColumn(3, self.datetime_delegate)  # Time
+        self.table.setItemDelegateForColumn(4, self.datetime_delegate)  # Time lost
+
+        # Connect double click signal - use cellDoubleClicked for QTableWidget
+        self.table.cellDoubleClicked.connect(self._display_image)
+        
+        # Store image window reference
+        self.image_win = None
 
         self.setLayout(self.layout)
 
@@ -234,6 +315,8 @@ class EventsJournalJson(QWidget):
                     date_folder = row_data['found_event'].get('date_folder', '')
                     img_path = os.path.join(self.base_dir, 'images', date_folder, row_data['preview'])
                     item = QTableWidgetItem(img_path)
+                    # Store event data for double click functionality
+                    item.setData(Qt.ItemDataRole.UserRole, row_data['found_event'])
                     self.table.setItem(r, 5, item)
                 else:
                     # Store empty string but still create item for delegate
@@ -245,6 +328,8 @@ class EventsJournalJson(QWidget):
                     date_folder = row_data['lost_event'].get('date_folder', '')
                     img_path = os.path.join(self.base_dir, 'images', date_folder, row_data['lost_preview'])
                     item = QTableWidgetItem(img_path)
+                    # Store event data for double click functionality
+                    item.setData(Qt.ItemDataRole.UserRole, row_data['lost_event'])
                     self.table.setItem(r, 6, item)
                 else:
                     # Store empty string but still create item for delegate
@@ -262,5 +347,103 @@ class EventsJournalJson(QWidget):
             self.update_timer.stop()
         self.ds.close()
         super().closeEvent(event)
+
+    @pyqtSlot(int, int)
+    def _display_image(self, row, col):
+        """Display full image on double click (similar to database journal)"""
+        if col != 5 and col != 6:  # Only Preview and Lost preview columns
+            return
+
+        # Get path from table item
+        path = None
+        table_item = self.table.item(row, col)
+        if table_item:
+            path = table_item.text()
+        if not path:
+            return
+
+        # Get row data to find bounding box
+        if row >= self.table.rowCount():
+            return
+
+        # Get event data from the row
+        found_event = None
+        lost_event = None
+        
+        # Try to get event data from table items (stored in UserRole)
+        found_item = self.table.item(row, 5)  # Preview column
+        lost_item = self.table.item(row, 6)    # Lost preview column
+        
+        if found_item:
+            found_event = found_item.data(Qt.ItemDataRole.UserRole)
+        if lost_item:
+            lost_event = lost_item.data(Qt.ItemDataRole.UserRole)
+
+        # Get bounding box from event data
+        box = None
+        if col == 5 and found_event:  # Preview column
+            bbox_data = found_event.get('bounding_box')
+            if bbox_data:
+                if isinstance(bbox_data, dict):
+                    # Convert dict format to list format
+                    x = bbox_data.get('x', 0)
+                    y = bbox_data.get('y', 0)
+                    w = bbox_data.get('width', 0)
+                    h = bbox_data.get('height', 0)
+                    # Convert to normalized coordinates
+                    if found_event.get('image_width') and found_event.get('image_height'):
+                        img_w = found_event['image_width']
+                        img_h = found_event['image_height']
+                        box = [x / img_w, y / img_h, w / img_w, h / img_h]
+                    else:
+                        # Assume standard dimensions if not available
+                        box = [x / 1920, y / 1080, w / 1920, h / 1080]
+                elif isinstance(bbox_data, list) and len(bbox_data) == 4:
+                    box = bbox_data
+        elif col == 6 and lost_event:  # Lost preview column
+            bbox_data = lost_event.get('bounding_box')
+            if bbox_data:
+                if isinstance(bbox_data, dict):
+                    # Convert dict format to list format
+                    x = bbox_data.get('x', 0)
+                    y = bbox_data.get('y', 0)
+                    w = bbox_data.get('width', 0)
+                    h = bbox_data.get('height', 0)
+                    # Convert to normalized coordinates
+                    if lost_event.get('image_width') and lost_event.get('image_height'):
+                        img_w = lost_event['image_width']
+                        img_h = lost_event['image_height']
+                        box = [x / img_w, y / img_h, w / img_w, h / img_h]
+                    else:
+                        # Assume standard dimensions if not available
+                        box = [x / 1920, y / 1080, w / 1920, h / 1080]
+                elif isinstance(bbox_data, list) and len(bbox_data) == 4:
+                    box = bbox_data
+
+        # Convert preview path to frame path (similar to database journal)
+        image_path = path
+        if 'preview' in path:
+            # Extract filename and convert preview to frame
+            dir_path, filename = os.path.split(path)
+            if 'preview' in filename:
+                # Replace 'preview' with 'frame' in filename
+                new_filename = filename.replace('preview', 'frame')
+                
+                # Convert directory path from 'previews' to 'frames'
+                if 'previews' in dir_path:
+                    new_dir_path = dir_path.replace('previews', 'frames')
+                    image_path = os.path.join(new_dir_path, new_filename)
+                else:
+                    # If no 'previews' in path, just replace filename
+                    image_path = os.path.join(dir_path, new_filename)
+
+        # Check if frame image exists, otherwise use preview
+        if not os.path.exists(image_path):
+            print(f"Frame image not found: {image_path}, using preview: {path}")
+            image_path = path
+
+        # Create and show image window
+        self.image_win = ImageWindow(image_path, box)
+        self.image_win.show()
 
 
