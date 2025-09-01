@@ -400,12 +400,23 @@ class Controller:
 
         # Initialize database components only if use_database is True
         if self.use_database:
-            self._init_db_controller(self.database_config['database'], system_params=self.params)
-            self._init_db_adapters(self.database_config['database_adapters'])
-            self._init_object_handler(self.db_controller, params.get('objects_handler', dict()))
-            self._init_events_detectors(self.params.get('events_detectors', dict()))
-            self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
-            self._init_events_processor(self.params.get('events_processor', dict()))
+            try:
+                self._init_db_controller(self.database_config['database'], system_params=self.params)
+                self._init_db_adapters(self.database_config['database_adapters'])
+                self._init_object_handler(self.db_controller, params.get('objects_handler', dict()))
+                self._init_events_detectors(self.params.get('events_detectors', dict()))
+                self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
+                self._init_events_processor(self.params.get('events_processor', dict()))
+            except Exception as e:
+                print(f"Warning: Database is enabled but not accessible. Running without database. Reason: {e}")
+                # Fallback to no-database mode
+                self.use_database = False
+                self.db_controller = None
+                self.database_config = {"database": {}, "database_adapters": {}}
+                self._init_object_handler_without_db(params.get('objects_handler', dict()))
+                self._init_events_detectors_without_db(self.params.get('events_detectors', dict()))
+                self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
+                self._init_events_processor_without_db(self.params.get('events_processor', dict()))
         else:
             print("Database functionality disabled. Running without database connection.")
             # Initialize minimal components for operation without database
