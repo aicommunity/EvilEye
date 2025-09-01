@@ -125,7 +125,7 @@ class MainWindow(QMainWindow):
             # Ensure the directory exists to prevent crashes
             try:
                 os.makedirs(images_dir, exist_ok=True)
-                self.db_journal_win = EventsJournalJson(images_dir, parent=self)
+                self.db_journal_win = EventsJournalJson(images_dir)
                 self.db_journal_win.setVisible(False)
             except Exception as e:
                 print(f"Error creating JSON journal: {e}")
@@ -245,8 +245,10 @@ class MainWindow(QMainWindow):
                 self.db_journal.setText('&Journal')
                 self.db_journal.setToolTip("Open events journal (JSON mode)")
             else:
+                # Disable button if no journal is available
                 self.db_journal.setEnabled(False)
-                self.db_journal.setToolTip("Journal is not available (failed to initialize)")
+                self.db_journal.setText('&Journal')
+                self.db_journal.setToolTip("Journal is not available (database disabled)")
 
     @pyqtSlot()
     def display_zones(self):  # Включение отображения зон
@@ -266,7 +268,7 @@ class MainWindow(QMainWindow):
     @pyqtSlot()
     def open_journal(self):
         if self.db_journal_win is None:
-            print("Database journal is not available (database is disabled)")
+            print("Journal is not available (database disabled or initialization failed)")
             return
         if self.db_journal_win.isVisible():
             self.db_journal_win.setVisible(False)
