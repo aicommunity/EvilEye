@@ -515,6 +515,24 @@ class Controller:
     def _init_object_handler_without_db(self, params):
         """Initialize object handler without database connection."""
         self.obj_handler = objects_handler.ObjectsHandler(db_controller=None, db_adapter=None)
+        
+        # Set cameras parameters from pipeline sources
+        if hasattr(self.pipeline, "get_sources"):
+            sources = self.pipeline.get_sources()
+            if sources:
+                cameras_params = []
+                for source in sources:
+                    if hasattr(source, 'source_ids') and hasattr(source, 'source_names') and source.source_ids and source.source_names:
+                        camera_param = {
+                            'source_ids': source.source_ids,
+                            'source_names': source.source_names,
+                            'camera': getattr(source, 'camera', '')
+                        }
+                        cameras_params.append(camera_param)
+                
+                # Set cameras params in obj_handler
+                self.obj_handler.cameras_params = cameras_params
+        
         self.obj_handler.set_params(**params)
         self.obj_handler.init()
 

@@ -236,7 +236,9 @@ class ObjectsHandler(EvilEyeBase):
                 
                 # Save labeling data for found object
                 try:
-                    image_filename = os.path.basename(self._get_img_path('frame', 'detected', obj))
+                    # Get full image path and extract filename with camera name
+                    full_img_path = self._get_img_path('frame', 'detected', obj)
+                    image_filename = os.path.basename(full_img_path)
                     preview_filename = os.path.basename(self._get_img_path('preview', 'detected', obj))
                     
                     # Get image dimensions from the image object
@@ -267,7 +269,9 @@ class ObjectsHandler(EvilEyeBase):
                     
                     # Save labeling data for lost object
                     try:
-                        image_filename = os.path.basename(self._get_img_path('frame', 'lost', active_obj))
+                        # Get full image path and extract filename with camera name
+                        full_img_path = self._get_img_path('frame', 'lost', active_obj)
+                        image_filename = os.path.basename(full_img_path)
                         preview_filename = os.path.basename(self._get_img_path('preview', 'lost', active_obj))
                         
                         # Get image dimensions from the image object
@@ -373,10 +377,18 @@ class ObjectsHandler(EvilEyeBase):
         # if not os.path.exists(obj_event_path):
         #     os.mkdir(obj_event_path)
 
+        # Get source name for the object
+        source_name = ''
+        for camera in self.cameras_params:
+            if obj.source_id in camera['source_ids']:
+                id_idx = camera['source_ids'].index(obj.source_id)
+                source_name = camera['source_names'][id_idx]
+                break
+        
         if obj_event_type == 'detected':
             timestamp = obj.time_stamp.strftime('%Y_%m_%d_%H_%M_%S.%f')
-            img_path = os.path.join(obj_type_path, f'{timestamp}_{image_type}.jpeg')
+            img_path = os.path.join(obj_type_path, f'{timestamp}_{source_name}_{image_type}.jpeg')
         elif obj_event_type == 'lost':
             timestamp = obj.time_lost.strftime('%Y_%m_%d_%H_%M_%S_%f')
-            img_path = os.path.join(obj_type_path, f'{timestamp}_{image_type}.jpeg')
+            img_path = os.path.join(obj_type_path, f'{timestamp}_{source_name}_{image_type}.jpeg')
         return os.path.relpath(img_path, save_dir)
