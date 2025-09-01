@@ -62,6 +62,9 @@ class LabelingManager:
         self.running = True
         self.buffer_lock = Lock()
         
+        # Pre-load existing data into buffers to avoid clearing files
+        self._preload_existing_data()
+        
         # Start background save thread
         self.save_thread = Thread(target=self._save_worker, daemon=True)
         self.save_thread.start()
@@ -174,8 +177,22 @@ class LabelingManager:
             if "objects" not in data:
                 data["objects"] = []
             
-            # Add all buffered objects
-            data["objects"].extend(self.found_buffer)
+            # Check for duplicates before adding
+            existing_ids = {obj.get('object_id') for obj in data["objects"]}
+            new_objects = []
+            
+            for obj in self.found_buffer:
+                if obj.get('object_id') not in existing_ids:
+                    new_objects.append(obj)
+                else:
+                    print(f"⚠️ Skipping duplicate object_id: {obj.get('object_id')}")
+            
+            # Add only new objects
+            if new_objects:
+                data["objects"].extend(new_objects)
+                print(f"💾 Saving {len(new_objects)} new found objects (total: {len(data['objects'])})")
+            else:
+                print(f"ℹ️ No new found objects to save")
             
             # Update metadata
             self._update_metadata(data, len(data["objects"]))
@@ -215,8 +232,22 @@ class LabelingManager:
             if "objects" not in data:
                 data["objects"] = []
             
-            # Add all buffered objects
-            data["objects"].extend(self.lost_buffer)
+            # Check for duplicates before adding
+            existing_ids = {obj.get('object_id') for obj in data["objects"]}
+            new_objects = []
+            
+            for obj in self.lost_buffer:
+                if obj.get('object_id') not in existing_ids:
+                    new_objects.append(obj)
+                else:
+                    print(f"⚠️ Skipping duplicate object_id: {obj.get('object_id')}")
+            
+            # Add only new objects
+            if new_objects:
+                data["objects"].extend(new_objects)
+                print(f"💾 Saving {len(new_objects)} new lost objects (total: {len(data['objects'])})")
+            else:
+                print(f"ℹ️ No new lost objects to save")
             
             # Update metadata
             self._update_metadata(data, len(data["objects"]))
@@ -454,3 +485,95 @@ class LabelingManager:
         # Wait for save thread to finish
         if self.save_thread.is_alive():
             self.save_thread.join(timeout=5)
+    
+    def _preload_existing_data(self):
+        """Pre-load existing data from JSON files to avoid clearing them on startup."""
+        try:
+            print(f"🔄 Pre-loading existing data from {self.date_str}...")
+            
+            # Check and repair JSON files if needed
+            self._check_and_repair_json_files()
+            
+            # Load found objects
+            found_data = self._load_json(self.found_labels_file)
+            existing_found = found_data.get("objects", [])
+            if existing_found:
+                print(f"📊 Found {len(existing_found)} existing found objects")
+                # Don't add to buffer, just ensure file is preserved
+            
+            # Load lost objects
+            lost_data = self._load_json(self.lost_labels_file)
+            existing_lost = lost_data.get("objects", [])
+            if existing_lost:
+                print(f"📊 Found {len(existing_lost)} existing lost objects")
+                # Don't add to buffer, just ensure file is preserved
+            
+            total_existing = len(existing_found) + len(existing_lost)
+            if total_existing > 0:
+                print(f"✅ Successfully pre-loaded {total_existing} existing objects")
+            else:
+                print(f"ℹ️ No existing objects found, starting fresh")
+                
+        except Exception as e:
+            print(f"⚠️ Warning: Error pre-loading existing data: {e}")
+            print(f"ℹ️ Continuing with fresh start")
+    
+    def _check_and_repair_json_files(self):
+        """Check and repair corrupted JSON files."""
+        try:
+            # Check found objects file
+            if os.path.exists(self.found_labels_file):
+                try:
+                    with open(self.found_labels_file, 'r', encoding='utf-8') as f:
+                        json.load(f)
+                    print(f"✅ Found objects file is valid")
+                except json.JSONDecodeError as e:
+                    print(f"⚠️ Found objects file is corrupted: {e}")
+                    print(f"🔄 Attempting to repair...")
+                    self._repair_json_file(self.found_labels_file, "found")
+            
+            # Check lost objects file
+            if os.path.exists(self.lost_labels_file):
+                try:
+                    with open(self.lost_labels_file, 'r', encoding='utf-8') as f:
+                        json.load(f)
+                    print(f"✅ Lost objects file is valid")
+                except json.JSONDecodeError as e:
+                    print(f"⚠️ Lost objects file is corrupted: {e}")
+                    print(f"🔄 Attempting to repair...")
+                    self._repair_json_file(self.lost_labels_file, "lost")
+                    
+        except Exception as e:
+            print(f"⚠️ Warning: Error checking JSON files: {e}")
+    
+    def _repair_json_file(self, file_path: str, file_type: str):
+        """Attempt to repair a corrupted JSON file."""
+        try:
+            # Create backup of corrupted file
+            backup_path = f"{file_path}.backup.{int(time.time())}"
+            os.rename(file_path, backup_path)
+            print(f"💾 Created backup: {backup_path}")
+            
+            # Create new valid file
+            new_data = {
+                "metadata": {
+                    "version": "1.0",
+                    "created": datetime.datetime.now().isoformat(),
+                    "description": f"Object {file_type} labels (repaired)",
+                    "total_objects": 0
+                },
+                "objects": []
+            }
+            
+            self._save_json(file_path, new_data)
+            print(f"✅ Repaired {file_type} objects file")
+            
+        except Exception as e:
+            print(f"❌ Failed to repair {file_type} objects file: {e}")
+            # Try to restore from backup
+            try:
+                if os.path.exists(backup_path):
+                    os.rename(backup_path, file_path)
+                    print(f"🔄 Restored original file from backup")
+            except Exception as restore_e:
+                print(f"❌ Failed to restore from backup: {restore_e}")
