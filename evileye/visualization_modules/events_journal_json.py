@@ -120,23 +120,24 @@ class EventsJournalJson(QWidget):
 
         self.layout.addLayout(toolbar)
 
-        # Use database journal structure: Event, Time, Time lost, Information, Preview, Lost preview
-        self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(['Event', 'Time', 'Time lost', 'Information', 'Preview', 'Lost preview'])
+        # Use database journal structure: Name, Event, Information, Time, Time lost, Preview, Lost preview
+        self.table = QTableWidget(0, 7)
+        self.table.setHorizontalHeaderLabels(['Name', 'Event', 'Information', 'Time', 'Time lost', 'Preview', 'Lost preview'])
         h = self.table.horizontalHeader()
         h.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         h.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         h.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         h.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        h.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
+        h.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         h.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
+        h.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
         h.setDefaultSectionSize(300)  # Set default size for image columns
         self.layout.addWidget(self.table)
 
         # Set up image delegate for image columns (Preview and Lost preview)
         self.image_delegate = ImageDelegate(self.table, self.base_dir)
-        self.table.setItemDelegateForColumn(4, self.image_delegate)  # Preview
-        self.table.setItemDelegateForColumn(5, self.image_delegate)  # Lost preview
+        self.table.setItemDelegateForColumn(5, self.image_delegate)  # Preview
+        self.table.setItemDelegateForColumn(6, self.image_delegate)  # Lost preview
 
         self.setLayout(self.layout)
 
@@ -199,10 +200,11 @@ class EventsJournalJson(QWidget):
                 
                 # Create row data
                 row_data = {
-                    'event': f"Object {object_id}",
+                    'name': base_event.get('source_name', 'Unknown'),
+                    'event': 'Event',  # Match database journal format
+                    'information': f"Object Id={object_id}; class: {base_event.get('class_name', base_event.get('class_id', ''))}; conf: {base_event.get('confidence', 0):.2f}",
                     'time': found_event.get('ts') if found_event else (lost_event.get('ts') if lost_event else ''),
                     'time_lost': lost_event.get('ts') if lost_event else '',
-                    'information': f"Object Id={object_id}; class: {base_event.get('class_name', base_event.get('class_id', ''))}; conf: {base_event.get('confidence', 0):.2f}",
                     'preview': found_event.get('image_filename') if found_event else '',
                     'lost_preview': lost_event.get('image_filename') if lost_event else '',
                     'found_event': found_event,
@@ -212,39 +214,42 @@ class EventsJournalJson(QWidget):
             
             self.table.setRowCount(len(table_rows))
             for r, row_data in enumerate(table_rows):
+                # Name column
+                self.table.setItem(r, 0, QTableWidgetItem(row_data['name']))
+                
                 # Event column
-                self.table.setItem(r, 0, QTableWidgetItem(row_data['event']))
-                
-                # Time column
-                self.table.setItem(r, 1, QTableWidgetItem(str(row_data['time'])))
-                
-                # Time lost column
-                self.table.setItem(r, 2, QTableWidgetItem(str(row_data['time_lost'])))
+                self.table.setItem(r, 1, QTableWidgetItem(row_data['event']))
                 
                 # Information column
-                self.table.setItem(r, 3, QTableWidgetItem(row_data['information']))
+                self.table.setItem(r, 2, QTableWidgetItem(row_data['information']))
+                
+                # Time column
+                self.table.setItem(r, 3, QTableWidgetItem(str(row_data['time'])))
+                
+                # Time lost column
+                self.table.setItem(r, 4, QTableWidgetItem(str(row_data['time_lost'])))
                 
                 # Preview column (found image)
                 if row_data['preview']:
                     date_folder = row_data['found_event'].get('date_folder', '')
                     img_path = os.path.join(self.base_dir, 'images', date_folder, row_data['preview'])
                     item = QTableWidgetItem(img_path)
-                    self.table.setItem(r, 4, item)
+                    self.table.setItem(r, 5, item)
                 else:
                     # Store empty string but still create item for delegate
                     item = QTableWidgetItem('')
-                    self.table.setItem(r, 4, item)
+                    self.table.setItem(r, 5, item)
                 
                 # Lost preview column
                 if row_data['lost_preview']:
                     date_folder = row_data['lost_event'].get('date_folder', '')
                     img_path = os.path.join(self.base_dir, 'images', date_folder, row_data['lost_preview'])
                     item = QTableWidgetItem(img_path)
-                    self.table.setItem(r, 5, item)
+                    self.table.setItem(r, 6, item)
                 else:
                     # Store empty string but still create item for delegate
                     item = QTableWidgetItem('')
-                    self.table.setItem(r, 5, item)
+                    self.table.setItem(r, 6, item)
                 
                 # Set row height for image display
                 self.table.setRowHeight(r, 150)
