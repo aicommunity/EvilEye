@@ -103,18 +103,25 @@ class ImageDelegate(QStyledItemDelegate):
                     scale_x = pixmap.width() / original_pixmap.width()
                     scale_y = pixmap.height() / original_pixmap.height()
                 
-                # Draw bounding box
+                # Draw bounding box using the same logic as database journal
                 pen = QPen(QColor(0, 255, 0), 2)  # Green color
                 painter.setPen(pen)
                 painter.setBrush(QBrush())
                 
+                # Calculate scaled coordinates relative to the displayed pixmap
                 x_scaled = int(x * scale_x)
                 y_scaled = int(y * scale_y)
                 w_scaled = int(w * scale_x)
                 h_scaled = int(h * scale_y)
                 
-                painter.drawRect(x_scaled, y_scaled, w_scaled, h_scaled)
-            except:
+                # Draw rectangle relative to the pixmap position in the cell
+                rect = option.rect
+                x_pos = rect.x() + (rect.width() - pixmap.width()) // 2
+                y_pos = rect.y() + (rect.height() - pixmap.height()) // 2
+                
+                painter.drawRect(x_pos + x_scaled, y_pos + y_scaled, w_scaled, h_scaled)
+            except Exception as e:
+                print(f"Error drawing bounding box: {e}")
                 pass  # Ignore bbox parsing errors
 
     def sizeHint(self, option, index):

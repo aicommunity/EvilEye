@@ -404,7 +404,7 @@ class ObjectsHandler(EvilEyeBase):
                 preview_boxes = utils.draw_preview_boxes(preview, self.db_params.get('preview_width', 300), self.db_params.get('preview_height', 150), box)
                 saved = cv2.imwrite(full_img_path, preview_boxes)
             else:
-                # Save full frame
+                # Save original frame without any graphical info
                 saved = cv2.imwrite(full_img_path, image.image)
             
             if not saved:
