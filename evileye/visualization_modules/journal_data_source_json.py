@@ -26,8 +26,11 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
     def list_available_dates(self) -> List[str]:
         if not os.path.isdir(self.base_dir):
             return []
-        return sorted([d for d in os.listdir(self.base_dir)
-                       if os.path.isdir(os.path.join(self.base_dir, d)) and d[:4].isdigit()])
+        images_dir = os.path.join(self.base_dir, 'images')
+        if not os.path.isdir(images_dir):
+            return []
+        return sorted([d for d in os.listdir(images_dir)
+                       if os.path.isdir(os.path.join(images_dir, d)) and d[:4].isdigit()])
 
     def _load_cache(self) -> None:
         if self._cache:
@@ -36,8 +39,8 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
         for d in dates:
             if not d:
                 continue
-            found_fp = os.path.join(self.base_dir, d, 'objects_found.json')
-            lost_fp = os.path.join(self.base_dir, d, 'objects_lost.json')
+            found_fp = os.path.join(self.base_dir, 'images', d, 'objects_found.json')
+            lost_fp = os.path.join(self.base_dir, 'images', d, 'objects_lost.json')
             self._read_file(found_fp, 'found', d)
             self._read_file(lost_fp, 'lost', d)
         # default sort: ts desc
@@ -49,17 +52,36 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
         try:
             with open(filepath, 'r', encoding='utf-8') as f:
                 data = json.load(f)
+            
+            # Handle different JSON structures
             if isinstance(data, list):
-                for idx, item in enumerate(data):
-                    ev = self._map_item(item, event_type, date_folder, idx)
-                    if ev:
-                        self._cache.append(ev)
-        except Exception:
+                # Direct array of objects
+                items = data
+            elif isinstance(data, dict) and 'objects' in data:
+                # Objects in 'objects' array
+                items = data['objects']
+            else:
+                # Single object or other structure
+                items = [data] if data else []
+            
+            for idx, item in enumerate(items):
+                ev = self._map_item(item, event_type, date_folder, idx)
+                if ev:
+                    self._cache.append(ev)
+        except Exception as e:
+            print(f"Error reading {filepath}: {e}")
             # ignore broken files
             pass
 
     def _map_item(self, item: Dict, event_type: str, date_folder: str, idx: int) -> Optional[Dict]:
         try:
+            # Handle bounding box format
+            bbox = item.get('bounding_box', {})
+            if isinstance(bbox, dict):
+                bbox_str = f"[{bbox.get('x', 0)}, {bbox.get('y', 0)}, {bbox.get('width', 0)}, {bbox.get('height', 0)}]"
+            else:
+                bbox_str = str(bbox)
+            
             return {
                 'event_id': f"{date_folder}:{event_type}:{idx}",
                 'event_type': event_type,
@@ -71,11 +93,12 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                 'class_name': item.get('class_name'),
                 'frame_id': item.get('frame_id'),
                 'image_filename': item.get('image_filename'),
-                'bounding_box': item.get('bounding_box'),
+                'bounding_box': bbox_str,
                 'confidence': item.get('confidence'),
                 'date_folder': date_folder,
             }
-        except Exception:
+        except Exception as e:
+            print(f"Error mapping item: {e}")
             return None
 
     def _apply_filters(self, items: List[Dict], filters: Dict) -> List[Dict]:
@@ -101,7 +124,13 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
             return items
         for key, direction in reversed(sort):
             reverse = (direction.lower() == 'desc')
-            items.sort(key=lambda e: e.get(key), reverse=reverse)
+            # Handle None values properly for sorting
+            def sort_key(e):
+                value = e.get(key)
+                if value is None:
+                    return '' if reverse else 'zzz'  # Empty string for desc, 'zzz' for asc
+                return str(value)
+            items.sort(key=sort_key, reverse=reverse)
         return items
 
     def fetch(self, page: int, size: int, filters: Dict, sort: List[Tuple[str, str]]) -> List[Dict]:

@@ -109,7 +109,7 @@ class EventsJournalJson(QWidget):
                 # Image preview path
                 img_rel = ev.get('image_filename') or ''
                 date_folder = ev.get('date_folder') or ''
-                img_path = os.path.join(self.base_dir, date_folder, img_rel)
+                img_path = os.path.join(self.base_dir, 'images', date_folder, img_rel)
                 self.table.setItem(r, 4, QTableWidgetItem(img_path))
                 self.table.setItem(r, 5, QTableWidgetItem(str(ev.get('bounding_box') or '')))
         except Exception as e:

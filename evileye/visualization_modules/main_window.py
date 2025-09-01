@@ -119,16 +119,21 @@ class MainWindow(QMainWindow):
             self.db_journal_win = DatabaseJournalWindow(self, self.params, self.controller.database_config, close_app)
             self.db_journal_win.setVisible(False)
         else:
-            images_dir = 'EvilEyeData'
+            # Get image_dir from database_config (even if database is disabled)
+            images_dir = 'EvilEyeData'  # default
             if hasattr(self.controller, 'database_config') and self.controller.database_config.get('database', {}):
-                images_dir = self.controller.database_config['database'].get('image_dir', images_dir)
-            # Ensure the directory exists to prevent crashes
-            try:
-                os.makedirs(images_dir, exist_ok=True)
-                self.db_journal_win = EventsJournalJson(images_dir)
-                self.db_journal_win.setVisible(False)
-            except Exception as e:
-                print(f"Error creating JSON journal: {e}")
+                images_dir = self.controller.database_config['database'].get('images_dir', images_dir)
+            
+            # Check if directory exists before creating journal
+            if os.path.exists(images_dir):
+                try:
+                    self.db_journal_win = EventsJournalJson(images_dir)
+                    self.db_journal_win.setVisible(False)
+                except Exception as e:
+                    print(f"Error creating JSON journal: {e}")
+                    self.db_journal_win = None
+            else:
+                print(f"Images directory does not exist: {images_dir}")
                 self.db_journal_win = None
         self.zone_window = ZoneWindow(self.params)
         self.zone_window.setVisible(False)
@@ -245,10 +250,10 @@ class MainWindow(QMainWindow):
                 self.db_journal.setText('&Journal')
                 self.db_journal.setToolTip("Open events journal (JSON mode)")
             else:
-                # Disable button if no journal is available
+                # Disable button if no journal is available (directory doesn't exist or creation failed)
                 self.db_journal.setEnabled(False)
                 self.db_journal.setText('&Journal')
-                self.db_journal.setToolTip("Journal is not available (database disabled)")
+                self.db_journal.setToolTip("Journal is not available (images directory not found)")
 
     @pyqtSlot()
     def display_zones(self):  # Включение отображения зон
