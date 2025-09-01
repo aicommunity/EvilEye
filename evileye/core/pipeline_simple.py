@@ -12,12 +12,10 @@ class PipelineSimple(PipelineBase):
     def __init__(self):
         super().__init__()
         self._is_running = False
-        self._frame_count = 0
 
     def start(self):
         """Start the simple pipeline"""
         self._is_running = True
-        self._frame_count = 0
         self.start_impl()
 
     def stop(self):
@@ -42,8 +40,7 @@ class PipelineSimple(PipelineBase):
         # Store result for external access
         if result:
             self.add_result(result)
-            self._frame_count += 1
-        
+
         return result
 
     def is_running(self) -> bool:
@@ -55,19 +52,9 @@ class PipelineSimple(PipelineBase):
         """
         return self._is_running
 
-    def get_frame_count(self) -> int:
-        """
-        Get number of processed frames.
-        
-        Returns:
-            Number of processed frames
-        """
-        return self._frame_count
-
     def reset_impl(self):
         """Reset pipeline state"""
         super().reset_impl()
-        self._frame_count = 0
 
     @abstractmethod
     def process_logic(self) -> Dict[str, Any]:

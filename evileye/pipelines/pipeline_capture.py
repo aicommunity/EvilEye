@@ -4,6 +4,7 @@ from typing import Dict, Any, Optional
 from ..core.pipeline_simple import PipelineSimple
 from ..capture.video_capture_base import CaptureImage
 from ..capture.video_capture import VideoCapture
+from ..object_tracker.tracking_results import TrackingResultList
 
 
 class PipelineCapture(PipelineSimple):
@@ -19,6 +20,7 @@ class PipelineCapture(PipelineSimple):
         self.frame_width = 0
         self.frame_height = 0
         self.total_frames = 0
+        self._final_results_name = "output"
 
     def set_params_impl(self):
         """Set pipeline parameters from config"""
@@ -70,10 +72,13 @@ class PipelineCapture(PipelineSimple):
     def start_impl(self):
         """Start video capture"""
         if self.video_capture:
+            self.video_capture.start()
             print("Video capture started")
 
     def stop_impl(self):
         """Stop video capture"""
+        if self.video_capture:
+            self.video_capture.stop()
         print("Video capture stopped")
 
     def process_logic(self) -> Dict[str, Any]:
@@ -83,36 +88,36 @@ class PipelineCapture(PipelineSimple):
         Returns:
             Dictionary with frame data and metadata
         """
+        results = {}
+        results["sources"] = []
+        results[self.get_final_results_name()] = []
+
         if not self.video_capture or not self.video_capture.is_opened():
-            return {}
+            return results
         
         # Get frames from VideoCapture using the get() method
         captured_images = self.video_capture.get()
         
         if not captured_images:
             # No frames available or end of video
-            return {}
+            return results
 
-        return captured_images
-        
-        # Get the first (and only) captured image
-        capture_image = captured_images[0]
-        
-        # Prepare result
-        result = {
-            'source_id': capture_image.source_id,
-            'frame_id': capture_image.frame_id,
-            'image': capture_image,
-            'timestamp': capture_image.time_stamp,
-            'video_path': self.source_config.get('camera', ''),
-            'frame_width': self.frame_width,
-            'frame_height': self.frame_height,
-            'fps': self.video_capture.source_fps,
-            'total_frames': self.total_frames,
-            'progress': capture_image.current_video_frame / self.total_frames if self.total_frames > 0 else 0
-        }
-        
-        return result
+        results["sources"] = captured_images
+
+        # ToDo: process frames here
+
+        # Produce dummy results
+        processed_results = []
+        for frame in captured_images:
+            frame_res = TrackingResultList()
+            frame_res.frame_id = frame.frame_id
+            frame_res.source_id = frame.source_id
+            frame_res.time_stamp = frame.time_stamp
+            processed_results.append((frame_res, frame))
+
+        results[self.get_final_results_name()] = processed_results
+
+        return results
 
     def check_all_sources_finished(self) -> bool:
         """

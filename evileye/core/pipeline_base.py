@@ -16,6 +16,7 @@ class PipelineBase(EvilEyeBase):
         # Results storage for external access
         self._results_list: List[Dict[str, Any]] = []
         self._current_results: Dict[str, Any] = {}
+        self._final_results_name: str|None = None
 
     def default(self):
         """Reset pipeline to default state"""
@@ -125,6 +126,9 @@ class PipelineBase(EvilEyeBase):
         if self._results_list:
             return self._results_list[-1]
         return None
+
+    def get_final_results_name(self):
+        return self._final_results_name
 
     def check_all_sources_finished(self) -> bool:
         """

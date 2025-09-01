@@ -36,6 +36,8 @@ class PipelineSurveillance(PipelineProcessors):
         self._init_trackers(pipeline_params.get("trackers", []))
         self._init_mc_trackers(pipeline_params.get("mc_trackers", []))
 
+        self._final_results_name = "mc_trackers"
+
         return True
 
     # Surveillance-specific processor initialization methods
