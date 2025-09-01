@@ -1,0 +1,126 @@
+import os
+import json
+from typing import List, Dict, Tuple, Callable, Optional
+from .journal_data_source import EventJournalDataSource
+
+
+class JsonLabelJournalDataSource(EventJournalDataSource):
+    """
+    Data source that reads events from objects_found.json and objects_lost.json
+    stored under base_dir/YYYY_MM_DD/.
+    """
+
+    def __init__(self, base_dir: str):
+        self.base_dir = base_dir
+        self.date_folder: Optional[str] = None
+        self._cache: List[Dict] = []
+
+    def set_base_dir(self, base_dir: str) -> None:
+        self.base_dir = base_dir
+        self._cache = []
+
+    def set_date(self, date_folder: Optional[str]) -> None:
+        self.date_folder = date_folder
+        self._cache = []
+
+    def list_available_dates(self) -> List[str]:
+        if not os.path.isdir(self.base_dir):
+            return []
+        return sorted([d for d in os.listdir(self.base_dir)
+                       if os.path.isdir(os.path.join(self.base_dir, d)) and d[:4].isdigit()])
+
+    def _load_cache(self) -> None:
+        if self._cache:
+            return
+        dates = [self.date_folder] if self.date_folder else self.list_available_dates()[-7:]
+        for d in dates:
+            if not d:
+                continue
+            found_fp = os.path.join(self.base_dir, d, 'objects_found.json')
+            lost_fp = os.path.join(self.base_dir, d, 'objects_lost.json')
+            self._read_file(found_fp, 'found', d)
+            self._read_file(lost_fp, 'lost', d)
+        # default sort: ts desc
+        self._cache.sort(key=lambda e: e.get('ts', ''), reverse=True)
+
+    def _read_file(self, filepath: str, event_type: str, date_folder: str) -> None:
+        if not os.path.isfile(filepath):
+            return
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                for idx, item in enumerate(data):
+                    ev = self._map_item(item, event_type, date_folder, idx)
+                    if ev:
+                        self._cache.append(ev)
+        except Exception:
+            # ignore broken files
+            pass
+
+    def _map_item(self, item: Dict, event_type: str, date_folder: str, idx: int) -> Optional[Dict]:
+        try:
+            return {
+                'event_id': f"{date_folder}:{event_type}:{idx}",
+                'event_type': event_type,
+                'ts': item.get('timestamp'),
+                'source_id': item.get('source_id'),
+                'source_name': item.get('source_name'),
+                'object_id': item.get('object_id'),
+                'class_id': item.get('class_id'),
+                'class_name': item.get('class_name'),
+                'frame_id': item.get('frame_id'),
+                'image_filename': item.get('image_filename'),
+                'bounding_box': item.get('bounding_box'),
+                'confidence': item.get('confidence'),
+                'date_folder': date_folder,
+            }
+        except Exception:
+            return None
+
+    def _apply_filters(self, items: List[Dict], filters: Dict) -> List[Dict]:
+        if not filters:
+            return items
+        res = items
+        if et := filters.get('event_type'):
+            res = [e for e in res if e.get('event_type') == et]
+        if sid := filters.get('source_id'):
+            res = [e for e in res if e.get('source_id') == sid]
+        if sname := filters.get('source_name'):
+            res = [e for e in res if e.get('source_name') == sname]
+        if cls := filters.get('class_name'):
+            res = [e for e in res if e.get('class_name') == cls]
+        if oid := filters.get('object_id'):
+            res = [e for e in res if e.get('object_id') == oid]
+        if dr := filters.get('date_folder'):
+            res = [e for e in res if e.get('date_folder') == dr]
+        return res
+
+    def _apply_sort(self, items: List[Dict], sort: List[Tuple[str, str]]) -> List[Dict]:
+        if not sort:
+            return items
+        for key, direction in reversed(sort):
+            reverse = (direction.lower() == 'desc')
+            items.sort(key=lambda e: e.get(key), reverse=reverse)
+        return items
+
+    def fetch(self, page: int, size: int, filters: Dict, sort: List[Tuple[str, str]]) -> List[Dict]:
+        self._load_cache()
+        items = self._apply_filters(self._cache, filters)
+        items = self._apply_sort(items, sort)
+        start = max(0, page * size)
+        end = start + size
+        return items[start:end]
+
+    def get_total(self, filters: Dict) -> int:
+        self._load_cache()
+        return len(self._apply_filters(self._cache, filters))
+
+    def watch_live(self, callback: Callable[[List[Dict]], None]) -> None:
+        # no-op for now
+        pass
+
+    def close(self) -> None:
+        self._cache = []
+
+

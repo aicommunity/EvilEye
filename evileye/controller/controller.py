@@ -321,6 +321,19 @@ class Controller:
     def init(self, params):
         self.params = params
 
+        if 'controller' in self.params.keys():
+            self.autoclose = self.params['controller'].get("autoclose", self.autoclose)
+            self.fps = self.params['controller'].get("fps", self.fps)
+            self.show_main_gui = self.params['controller'].get("show_main_gui", self.show_main_gui)
+            self.show_journal = self.params['controller'].get("show_journal", self.show_journal)
+            self.enable_close_from_gui = self.params['controller'].get("enable_close_from_gui", self.enable_close_from_gui)
+            self.class_names = self.params['controller'].get("class_names", list())
+            self.memory_periodic_check_sec = self.params['controller'].get("memory_periodic_check_sec", self.memory_periodic_check_sec)
+            self.show_memory_usage = self.params['controller'].get("show_memory_usage", self.show_memory_usage)
+            self.max_memory_usage_mb = self.params['controller'].get("max_memory_usage_mb", self.max_memory_usage_mb)
+            self.auto_restart = self.params['controller'].get("auto_restart", self.auto_restart)
+            self.use_database = self.params['controller'].get("use_database", self.use_database)
+
         try:
             with open("credentials.json") as creds_file:
                 self.credentials = json.load(creds_file)
@@ -424,19 +437,6 @@ class Controller:
             self._init_events_detectors_without_db(self.params.get('events_detectors', dict()))
             self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
             self._init_events_processor_without_db(self.params.get('events_processor', dict()))
-
-        if 'controller' in self.params.keys():
-            self.autoclose = self.params['controller'].get("autoclose", self.autoclose)
-            self.fps = self.params['controller'].get("fps", self.fps)
-            self.show_main_gui = self.params['controller'].get("show_main_gui", self.show_main_gui)
-            self.show_journal = self.params['controller'].get("show_journal", self.show_journal)
-            self.enable_close_from_gui = self.params['controller'].get("enable_close_from_gui", self.enable_close_from_gui)
-            self.class_names = self.params['controller'].get("class_names", list())
-            self.memory_periodic_check_sec = self.params['controller'].get("memory_periodic_check_sec", self.memory_periodic_check_sec)
-            self.show_memory_usage = self.params['controller'].get("show_memory_usage", self.show_memory_usage)
-            self.max_memory_usage_mb = self.params['controller'].get("max_memory_usage_mb", self.max_memory_usage_mb)
-            self.auto_restart = self.params['controller'].get("auto_restart", self.auto_restart)
-            self.use_database = self.params['controller'].get("use_database", self.use_database)
 
     def init_main_window(self, main_window: QMainWindow, pyqt_slots: dict, pyqt_signals: dict):
         self.main_window = main_window
