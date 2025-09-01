@@ -1,0 +1,208 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "evileye"
+version = "1.0.0"
+description = "Intelligence video surveillance system"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "EvilEye Team", email = "team@evileye.com"}
+]
+maintainers = [
+    {name = "EvilEye Team", email = "team@evileye.com"}
+]
+keywords = ["surveillance", "computer-vision", "object-detection", "object-tracking", "video-processing"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Image Processing",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+requires-python = ">=3.10"
+dependencies = [
+    "ultralytics>=8.0.0",
+    "psycopg2-binary>=2.9.0",
+    "lapx>=0.1.0",
+    "albumentations>=1.3.0",
+    "shapely>=2.0.0",
+    "scikit-learn>=1.3.0",
+    "onnxruntime>=1.15.0",
+    "tqdm>=4.65.0",
+    "pympler>=0.9.0",
+    "opencv-python>=4.8.0",
+    "numpy>=1.24.0",
+    "pillow>=10.0.0",
+    "pyyaml>=6.0",
+    "matplotlib>=3.7.0",
+    "seaborn>=0.12.0",
+    "pandas>=2.0.0",
+    "sqlalchemy>=2.0.0",
+    "psutil>=5.9.0",
+    "requests>=2.31.0",
+    "websockets>=11.0.0",
+    "aiohttp>=3.8.0",
+    "asyncio-mqtt>=0.13.0",
+    "pydantic>=2.0.0",
+    "loguru>=0.7.0",
+    "rich>=13.0.0",
+    "click>=8.1.0",
+    "typer>=0.9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+    "flake8>=6.0.0",
+    "mypy>=1.5.0",
+    "pre-commit>=3.3.0",
+    "tox>=4.6.0",
+    "sphinx>=7.1.0",
+    "sphinx-rtd-theme>=1.3.0",
+    "myst-parser>=2.0.0",
+]
+gui = [
+    "PyQt6>=6.5.0",
+    "PyQt6-Qt6>=6.5.0",
+    "PyQt6-sip>=13.5.0",
+]
+gpu = [
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "torchaudio>=2.0.0",
+    "cuda-python>=12.0.0",
+]
+full = [
+    "evileye[dev,gui,gpu]",
+]
+
+[project.urls]
+Homepage = "https://github.com/evileye/evileye"
+Documentation = "https://evileye.readthedocs.io/"
+Repository = "https://github.com/evileye/evileye.git"
+"Bug Tracker" = "https://github.com/evileye/evileye/issues"
+"Source Code" = "https://github.com/evileye/evileye"
+
+[project.scripts]
+evileye = "evileye.cli_wrapper:main"
+evileye-launch = "evileye.launch_wrapper:main"
+evileye-process = "evileye.process_wrapper:main"
+evileye-configure = "evileye.configure_wrapper:start_configurer"
+evileye-create = "evileye.create_wrapper:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["core*", "pipelines*", "object_*", "events_*", "database_*", "visualization_*", "utils*"]
+exclude = ["tests*", "scripts*", "samples*", "configs*", "models*", "icons*"]
+
+[tool.setuptools.package-data]
+"*" = ["*.json", "*.yaml", "*.yml", "*.onnx", "*.pt", "*.pth"]
+
+[tool.black]
+line-length = 88
+target-version = ["py38"]
+include = "\\.pyi?$"
+extend-exclude = '''
+/(
+  # directories
+  \\.eggs
+  | \\.git
+  | \\.hg
+  | \\.mypy_cache
+  | \\.tox
+  | \\.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+known_first_party = ["core", "pipelines", "object_tracker", "object_detector", "object_multi_camera_tracker", "events_detectors", "events_control", "database_controller", "visualization_modules", "utils", "preprocessing", "capture", "objects_handler"]
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = [
+    "ultralytics.*",
+    "cv2.*",
+    "onnxruntime.*",
+    "torch.*",
+    "torchvision.*",
+    "albumentations.*",
+    "sklearn.*",
+    "psycopg2.*",
+    "lapx.*",
+    "shapely.*",
+    "pympler.*",
+    "PyQt6.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --strict-markers --strict-config"
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+    "gui: marks tests as GUI tests",
+    "gpu: marks tests as GPU tests",
+]
+
+[tool.coverage.run]
+source = ["core", "pipelines", "object_tracker", "object_detector", "object_multi_camera_tracker", "events_detectors", "events_control", "database_controller", "visualization_modules", "utils", "preprocessing", "capture", "objects_handler"]
+omit = [
+    "*/tests/*",
+    "*/test_*",
+    "*/__pycache__/*",
+    "*/migrations/*",
+    "*/venv/*",
+    "*/.venv/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]

@@ -1,0 +1,110 @@
+{
+  "database": {
+    "tables": {
+      "projects": {
+        "project_id": "SERIAL PRIMARY KEY",
+        "creation_time": "timestamp"
+      },
+      "jobs": {
+        "job_id": "SERIAL PRIMARY KEY",
+        "finish_time": "timestamp",
+        "first_record": "integer",
+        "last_record": "integer DEFAULT -1",
+        "is_terminated": "boolean NOT NULL",
+        "creation_time": "timestamp",
+        "configuration_id": "integer DEFAULT NULL",
+        "configuration_info": "json",
+        "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE"
+      },
+      "camera_information":  {
+        "full_address": "text PRIMARY KEY",
+        "short_address": "text",
+        "sources": "integer[]",
+        "roi": "integer[][]",
+        "video_dur_frames": "integer",
+        "video_dur_ms": "integer",
+        "creation_time": "timestamp",
+        "calibration_info": "json DEFAULT NULL",
+        "additional_info": "json DEFAULT NULL"
+      },
+      "objects": {
+        "record_id": "SERIAL PRIMARY KEY",
+        "source_id": "integer",
+        "source_name": "text",
+        "time_stamp": "timestamp",
+        "time_lost": "timestamp DEFAULT NULL",
+        "object_id": "integer",
+        "bounding_box": "real ARRAY[4]",
+        "lost_bounding_box": "real ARRAY[4] DEFAULT NULL",
+        "confidence": "double precision",
+        "class_id": "integer",
+        "preview_path": "text",
+        "lost_preview_path": "text DEFAULT NULL",
+        "frame_path": "text",
+        "lost_frame_path": "text DEFAULT NULL",
+        "object_data": "json DEFAULT NULL",
+        "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE",
+        "job_id": "integer REFERENCES jobs (job_id) ON DELETE CASCADE",
+        "camera_full_address": "text REFERENCES camera_information (full_address) ON DELETE CASCADE"
+      },
+      "camera_events": {
+        "event_id": "integer PRIMARY KEY",
+        "camera_full_address": "text REFERENCES camera_information (full_address) ON DELETE CASCADE",
+        "time_stamp": "timestamp NOT NULL",
+        "connection_status": "boolean NOT NULL",
+        "job_id": "integer REFERENCES jobs (job_id) ON DELETE CASCADE",
+        "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE"
+      },
+      "fov_events": {
+        "event_id": "integer PRIMARY KEY",
+        "source_id": "integer",
+        "time_stamp": "timestamp",
+        "time_obj_detected": "timestamp",
+        "time_lost": "timestamp",
+        "preview_path": "text",
+        "lost_preview_path": "text",
+        "object_id": "integer",
+        "job_id": "integer REFERENCES jobs (job_id) ON DELETE CASCADE",
+        "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE"
+      },
+      "zone_events": {
+        "event_id": "integer PRIMARY KEY",
+        "source_id": "integer",
+        "time_entered": "timestamp",
+        "time_left": "timestamp",
+        "zone_coords": "real[][]",
+        "frame_path_entered": "text",
+        "frame_path_left": "text DEFAULT NULL",
+        "preview_path_entered": "text",
+        "preview_path_left": "text",
+        "object_id": "integer",
+        "box_entered": "real ARRAY[4]",
+        "box_left": "real ARRAY[4]",
+        "job_id": "integer REFERENCES jobs (job_id) ON DELETE CASCADE",
+        "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE"
+      }
+    },
+    "image_dir": "EvilEyeData",
+    "create_new_project": false,
+    "preview_width": 300,
+    "preview_height": 150
+  },
+
+  "database_adapters": {
+    "DatabaseAdapterObjects": {
+      "table_name": "objects"
+    },
+    "DatabaseAdapterCamEvents": {
+      "table_name": "camera_events",
+      "event_name": "CameraEvent"
+    },
+    "DatabaseAdapterFieldOfViewEvents": {
+      "table_name": "fov_events",
+      "event_name": "FieldOfViewEvent"
+    },
+    "DatabaseAdapterZoneEvents": {
+      "table_name": "zone_events",
+      "event_name": "ZoneEvent"
+    }
+  }
+}
