@@ -82,10 +82,18 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
             else:
                 bbox_str = str(bbox)
             
+            # Handle different timestamp fields for different event types
+            if event_type == 'found':
+                timestamp = item.get('timestamp')
+            elif event_type == 'lost':
+                timestamp = item.get('lost_timestamp')  # Use lost_timestamp for lost events
+            else:
+                timestamp = item.get('timestamp')
+            
             return {
                 'event_id': f"{date_folder}:{event_type}:{idx}",
                 'event_type': event_type,
-                'ts': item.get('timestamp'),
+                'ts': timestamp,
                 'source_id': item.get('source_id'),
                 'source_name': item.get('source_name'),
                 'object_id': item.get('object_id'),

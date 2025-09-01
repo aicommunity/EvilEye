@@ -9,7 +9,7 @@ try:
         QHeaderView, QComboBox, QTableWidget, QTableWidgetItem, QFileDialog, QStyledItemDelegate
     )
     from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor, QBrush
-    from PyQt6.QtCore import QSize
+    from PyQt6.QtCore import QSize, QTimer
     pyqt_version = 6
 except ImportError:
     from PyQt5.QtCore import Qt
@@ -18,7 +18,7 @@ except ImportError:
         QHeaderView, QComboBox, QTableWidget, QTableWidgetItem, QFileDialog, QStyledItemDelegate
     )
     from PyQt5.QtGui import QPixmap, QPainter, QPen, QColor, QBrush
-    from PyQt5.QtCore import QSize
+    from PyQt5.QtCore import QSize, QTimer
     pyqt_version = 5
 
 from .journal_data_source_json import JsonLabelJournalDataSource
@@ -44,18 +44,25 @@ class ImageDelegate(QStyledItemDelegate):
         if row >= table.rowCount():
             return
             
-        # Get image filename and bounding box from the row
-        img_filename_item = table.item(row, 4)  # Image column
-        bbox_item = table.item(row, 5)  # BBox column
+        # Get image filename from the row (Preview or Lost preview column)
+        img_filename_item = table.item(row, index.column())  # Use current column
         
-        if not img_filename_item or not bbox_item:
+        if not img_filename_item:
             return
             
         img_path = img_filename_item.text()
-        bbox_text = bbox_item.text()
+        
+        # If no image path, just return (empty cell)
+        if not img_path:
+            return
         
         # Use image path directly from JSON
-        if not img_path or not os.path.exists(img_path):
+        if not img_path:
+            return
+            
+        if not os.path.exists(img_path):
+            # Debug: print missing image path
+            print(f"Image not found: {img_path}")
             return
             
         # Load and scale image
@@ -70,46 +77,45 @@ class ImageDelegate(QStyledItemDelegate):
         # Draw image
         painter.drawPixmap(option.rect, pixmap)
         
-        # Parse and draw bounding box
-        try:
-            # Handle different bbox formats
-            if bbox_text.startswith('[') and bbox_text.endswith(']'):
-                # Array format: [x, y, width, height]
-                bbox_values = json.loads(bbox_text)
-                if len(bbox_values) == 4:
-                    x, y, w, h = bbox_values
+        # Get bounding box from event data (stored in table item data)
+        bbox_data = img_filename_item.data(Qt.ItemDataRole.UserRole)
+        if bbox_data:
+            try:
+                # Handle different bbox formats
+                if isinstance(bbox_data, list) and len(bbox_data) == 4:
+                    x, y, w, h = bbox_data
+                elif isinstance(bbox_data, dict) and 'x' in bbox_data and 'y' in bbox_data and 'width' in bbox_data and 'height' in bbox_data:
+                    x = bbox_data['x']
+                    y = bbox_data['y']
+                    w = bbox_data['width']
+                    h = bbox_data['height']
                 else:
                     return
-            else:
-                # Try to parse as dict
-                bbox = json.loads(bbox_text)
-                if isinstance(bbox, dict) and 'x' in bbox and 'y' in bbox and 'width' in bbox and 'height' in bbox:
-                    x = bbox['x']
-                    y = bbox['y']
-                    w = bbox['width']
-                    h = bbox['height']
+                
+                # Get original image dimensions for proper scaling
+                original_pixmap = QPixmap(img_path)
+                if original_pixmap.isNull():
+                    # Fallback to assumed dimensions if original can't be loaded
+                    scale_x = pixmap.width() / 1920
+                    scale_y = pixmap.height() / 1080
                 else:
-                    return
-            
-            # Calculate scaling factors (assuming original image dimensions)
-            # For now, use simple scaling - in real implementation you'd need original image size
-            scale_x = pixmap.width() / 1920  # Assuming 1920x1080 original
-            scale_y = pixmap.height() / 1080
-            
-            # Draw bounding box
-            pen = QPen(QColor(0, 255, 0), 2)  # Green color
-            painter.setPen(pen)
-            painter.setBrush(QBrush())
-            
-            x_scaled = int(x * scale_x)
-            y_scaled = int(y * scale_y)
-            w_scaled = int(w * scale_x)
-            h_scaled = int(h * scale_y)
-            
-            painter.drawRect(x_scaled, y_scaled, w_scaled, h_scaled)
-        except Exception as e:
-            # print(f"Error drawing bbox: {e}")
-            pass  # Ignore bbox parsing errors
+                    # Use actual original image dimensions
+                    scale_x = pixmap.width() / original_pixmap.width()
+                    scale_y = pixmap.height() / original_pixmap.height()
+                
+                # Draw bounding box
+                pen = QPen(QColor(0, 255, 0), 2)  # Green color
+                painter.setPen(pen)
+                painter.setBrush(QBrush())
+                
+                x_scaled = int(x * scale_x)
+                y_scaled = int(y * scale_y)
+                w_scaled = int(w * scale_x)
+                h_scaled = int(h * scale_y)
+                
+                painter.drawRect(x_scaled, y_scaled, w_scaled, h_scaled)
+            except:
+                pass  # Ignore bbox parsing errors
 
     def sizeHint(self, option, index):
         return QSize(self.preview_width, self.preview_height)
@@ -124,6 +130,11 @@ class EventsJournalJson(QWidget):
         self.page = 0
         self.page_size = 50
         self.filters: Dict = {}
+        
+        # Real-time update timer
+        self.update_timer = QTimer()
+        self.update_timer.timeout.connect(self._reload_table)
+        self.update_timer.start(5000)  # Update every 5 seconds
 
         self._build_ui()
         self._reload_dates()
@@ -149,8 +160,9 @@ class EventsJournalJson(QWidget):
 
         self.layout.addLayout(toolbar)
 
+        # Use database journal structure: Event, Time, Time lost, Information, Preview, Lost preview
         self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels(['Type', 'Time', 'Source', 'Class', 'Image', 'BBox'])
+        self.table.setHorizontalHeaderLabels(['Event', 'Time', 'Time lost', 'Information', 'Preview', 'Lost preview'])
         h = self.table.horizontalHeader()
         h.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         h.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
@@ -161,10 +173,10 @@ class EventsJournalJson(QWidget):
         h.setDefaultSectionSize(300)  # Set default size for image columns
         self.layout.addWidget(self.table)
 
-        # Set up image delegate for image columns
+        # Set up image delegate for image columns (Preview and Lost preview)
         self.image_delegate = ImageDelegate(self.table, self.base_dir)
-        self.table.setItemDelegateForColumn(4, self.image_delegate)
-        self.table.setItemDelegateForColumn(5, self.image_delegate)
+        self.table.setItemDelegateForColumn(4, self.image_delegate)  # Preview
+        self.table.setItemDelegateForColumn(5, self.image_delegate)  # Lost preview
 
         self.setLayout(self.layout)
 
@@ -199,20 +211,102 @@ class EventsJournalJson(QWidget):
     def _reload_table(self):
         try:
             filters = {k: v for k, v in self.filters.items() if v}
-            rows = self.ds.fetch(self.page, self.page_size, filters, [('ts', 'desc')])
-            self.table.setRowCount(len(rows))
-            for r, ev in enumerate(rows):
-                self.table.setItem(r, 0, QTableWidgetItem(ev.get('event_type') or ''))
-                self.table.setItem(r, 1, QTableWidgetItem(ev.get('ts') or ''))
-                self.table.setItem(r, 2, QTableWidgetItem(str(ev.get('source_name') or ev.get('source_id') or '')))
-                self.table.setItem(r, 3, QTableWidgetItem(str(ev.get('class_name') or ev.get('class_id') or '')))
+            # Use empty sort list to avoid sorting errors with None values
+            rows = self.ds.fetch(self.page, self.page_size, filters, [])
+            
+            # Group events by object_id to show found and lost in same row
+            grouped_events = {}
+            for ev in rows:
+                object_id = ev.get('object_id')
+                if object_id not in grouped_events:
+                    grouped_events[object_id] = {'found': None, 'lost': None}
                 
-                # Image path and bounding box for delegate
-                img_rel = ev.get('image_filename') or ''
-                date_folder = ev.get('date_folder') or ''
-                img_path = os.path.join(self.base_dir, 'images', date_folder, img_rel)
-                self.table.setItem(r, 4, QTableWidgetItem(img_path))
-                self.table.setItem(r, 5, QTableWidgetItem(str(ev.get('bounding_box') or '')))
+                if ev.get('event_type') == 'found':
+                    grouped_events[object_id]['found'] = ev
+                elif ev.get('event_type') == 'lost':
+                    grouped_events[object_id]['lost'] = ev
+            
+            # Create table rows from grouped events
+            table_rows = []
+            for object_id, events in grouped_events.items():
+                found_event = events['found']
+                lost_event = events['lost']
+                
+                # Use found event as base, or lost event if no found event
+                base_event = found_event or lost_event
+                if not base_event:
+                    continue
+                
+                # Create row data
+                row_data = {
+                    'event': f"Object {object_id}",
+                    'time': found_event.get('ts') if found_event else (lost_event.get('ts') if lost_event else ''),
+                    'time_lost': lost_event.get('ts') if lost_event else '',
+                    'information': f"Object Id={object_id}; class: {base_event.get('class_name', base_event.get('class_id', ''))}; conf: {base_event.get('confidence', 0):.2f}",
+                    'preview': found_event.get('image_filename') if found_event else '',
+                    'lost_preview': lost_event.get('image_filename') if lost_event else '',
+                    'found_event': found_event,
+                    'lost_event': lost_event
+                }
+                table_rows.append(row_data)
+            
+            self.table.setRowCount(len(table_rows))
+            for r, row_data in enumerate(table_rows):
+                # Event column
+                self.table.setItem(r, 0, QTableWidgetItem(row_data['event']))
+                
+                # Time column
+                self.table.setItem(r, 1, QTableWidgetItem(str(row_data['time'])))
+                
+                # Time lost column
+                self.table.setItem(r, 2, QTableWidgetItem(str(row_data['time_lost'])))
+                
+                # Information column
+                self.table.setItem(r, 3, QTableWidgetItem(row_data['information']))
+                
+                # Preview column (found image)
+                if row_data['preview']:
+                    date_folder = row_data['found_event'].get('date_folder', '')
+                    img_path = os.path.join(self.base_dir, 'images', date_folder, row_data['preview'])
+                    item = QTableWidgetItem(img_path)
+                    # Store bounding box data for delegate
+                    bbox_str = row_data['found_event'].get('bounding_box', '')
+                    if bbox_str:
+                        try:
+                            if bbox_str.startswith('[') and bbox_str.endswith(']'):
+                                bbox_data = json.loads(bbox_str)
+                            else:
+                                bbox_data = json.loads(bbox_str)
+                            item.setData(Qt.ItemDataRole.UserRole, bbox_data)
+                        except:
+                            pass
+                    self.table.setItem(r, 4, item)
+                else:
+                    # Store empty string but still create item for delegate
+                    item = QTableWidgetItem('')
+                    self.table.setItem(r, 4, item)
+                
+                # Lost preview column
+                if row_data['lost_preview']:
+                    date_folder = row_data['lost_event'].get('date_folder', '')
+                    img_path = os.path.join(self.base_dir, 'images', date_folder, row_data['lost_preview'])
+                    item = QTableWidgetItem(img_path)
+                    # Store bounding box data for delegate
+                    bbox_str = row_data['lost_event'].get('bounding_box', '')
+                    if bbox_str:
+                        try:
+                            if bbox_str.startswith('[') and bbox_str.endswith(']'):
+                                bbox_data = json.loads(bbox_str)
+                            else:
+                                bbox_data = json.loads(bbox_str)
+                            item.setData(Qt.ItemDataRole.UserRole, bbox_data)
+                        except:
+                            pass
+                    self.table.setItem(r, 5, item)
+                else:
+                    # Store empty string but still create item for delegate
+                    item = QTableWidgetItem('')
+                    self.table.setItem(r, 5, item)
                 
                 # Set row height for image display
                 self.table.setRowHeight(r, 150)
@@ -221,6 +315,8 @@ class EventsJournalJson(QWidget):
             self.table.setRowCount(0)
 
     def closeEvent(self, event):
+        if hasattr(self, 'update_timer'):
+            self.update_timer.stop()
         self.ds.close()
         super().closeEvent(event)
 
