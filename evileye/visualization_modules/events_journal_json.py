@@ -74,55 +74,8 @@ class ImageDelegate(QStyledItemDelegate):
                              Qt.AspectRatioMode.KeepAspectRatio, 
                              Qt.TransformationMode.SmoothTransformation)
         
-        # Draw image
+        # Draw image only - no bounding boxes
         painter.drawPixmap(option.rect, pixmap)
-        
-        # Get bounding box from event data (stored in table item data)
-        bbox_data = img_filename_item.data(Qt.ItemDataRole.UserRole)
-        if bbox_data:
-            try:
-                # Handle different bbox formats
-                if isinstance(bbox_data, list) and len(bbox_data) == 4:
-                    x, y, w, h = bbox_data
-                elif isinstance(bbox_data, dict) and 'x' in bbox_data and 'y' in bbox_data and 'width' in bbox_data and 'height' in bbox_data:
-                    x = bbox_data['x']
-                    y = bbox_data['y']
-                    w = bbox_data['width']
-                    h = bbox_data['height']
-                else:
-                    return
-                
-                # Get original image dimensions for proper scaling
-                original_pixmap = QPixmap(img_path)
-                if original_pixmap.isNull():
-                    # Fallback to assumed dimensions if original can't be loaded
-                    scale_x = pixmap.width() / 1920
-                    scale_y = pixmap.height() / 1080
-                else:
-                    # Use actual original image dimensions
-                    scale_x = pixmap.width() / original_pixmap.width()
-                    scale_y = pixmap.height() / original_pixmap.height()
-                
-                # Draw bounding box using the same logic as database journal
-                pen = QPen(QColor(0, 255, 0), 2)  # Green color
-                painter.setPen(pen)
-                painter.setBrush(QBrush())
-                
-                # Calculate scaled coordinates relative to the displayed pixmap
-                x_scaled = int(x * scale_x)
-                y_scaled = int(y * scale_y)
-                w_scaled = int(w * scale_x)
-                h_scaled = int(h * scale_y)
-                
-                # Draw rectangle relative to the pixmap position in the cell
-                rect = option.rect
-                x_pos = rect.x() + (rect.width() - pixmap.width()) // 2
-                y_pos = rect.y() + (rect.height() - pixmap.height()) // 2
-                
-                painter.drawRect(x_pos + x_scaled, y_pos + y_scaled, w_scaled, h_scaled)
-            except Exception as e:
-                print(f"Error drawing bounding box: {e}")
-                pass  # Ignore bbox parsing errors
 
     def sizeHint(self, option, index):
         return QSize(self.preview_width, self.preview_height)
@@ -276,17 +229,6 @@ class EventsJournalJson(QWidget):
                     date_folder = row_data['found_event'].get('date_folder', '')
                     img_path = os.path.join(self.base_dir, 'images', date_folder, row_data['preview'])
                     item = QTableWidgetItem(img_path)
-                    # Store bounding box data for delegate
-                    bbox_str = row_data['found_event'].get('bounding_box', '')
-                    if bbox_str:
-                        try:
-                            if bbox_str.startswith('[') and bbox_str.endswith(']'):
-                                bbox_data = json.loads(bbox_str)
-                            else:
-                                bbox_data = json.loads(bbox_str)
-                            item.setData(Qt.ItemDataRole.UserRole, bbox_data)
-                        except:
-                            pass
                     self.table.setItem(r, 4, item)
                 else:
                     # Store empty string but still create item for delegate
@@ -298,17 +240,6 @@ class EventsJournalJson(QWidget):
                     date_folder = row_data['lost_event'].get('date_folder', '')
                     img_path = os.path.join(self.base_dir, 'images', date_folder, row_data['lost_preview'])
                     item = QTableWidgetItem(img_path)
-                    # Store bounding box data for delegate
-                    bbox_str = row_data['lost_event'].get('bounding_box', '')
-                    if bbox_str:
-                        try:
-                            if bbox_str.startswith('[') and bbox_str.endswith(']'):
-                                bbox_data = json.loads(bbox_str)
-                            else:
-                                bbox_data = json.loads(bbox_str)
-                            item.setData(Qt.ItemDataRole.UserRole, bbox_data)
-                        except:
-                            pass
                     self.table.setItem(r, 5, item)
                 else:
                     # Store empty string but still create item for delegate
