@@ -161,10 +161,14 @@ class EventsJournalJson(QWidget):
         self.page_size = 50
         self.filters: Dict = {}
         
+        # Store last data hash for efficient updates
+        self.last_data_hash = None
+        self.is_visible = False
+        
         # Real-time update timer
         self.update_timer = QTimer()
-        self.update_timer.timeout.connect(self._reload_table)
-        self.update_timer.start(5000)  # Update every 5 seconds
+        self.update_timer.timeout.connect(self._check_for_updates)
+        self.update_timer.start(1000)  # Check every 1 second for better responsiveness
 
         self._build_ui()
         self._reload_dates()
@@ -221,6 +225,18 @@ class EventsJournalJson(QWidget):
         self.image_win = None
 
         self.setLayout(self.layout)
+        
+        # Enable automatic updates
+        self.table.setUpdatesEnabled(True)
+        
+        # Connect show event to force update
+        # Note: showEvent will be overridden in the class definition
+        
+        # Connect visibility change event (only if signal exists)
+        try:
+            self.visibilityChanged.connect(self._on_visibility_changed)
+        except AttributeError:
+            print("⚠️ visibilityChanged signal not available, skipping visibility tracking")
 
     def _choose_dir(self):
         d = QFileDialog.getExistingDirectory(self, 'Select images base directory', self.base_dir)
@@ -249,6 +265,35 @@ class EventsJournalJson(QWidget):
             print(f"Error loading dates: {e}")
             self.cmb_date.clear()
             self.cmb_date.addItem('All')
+
+    def _check_for_updates(self):
+        """Check if data has changed and reload if necessary"""
+        try:
+            # Get current data hash
+            filters = {k: v for k, v in self.filters.items() if v}
+            current_data = self.ds.fetch(self.page, self.page_size, filters, [])
+            
+            # Create a hash based on data count and latest timestamp
+            if current_data:
+                latest_ts = max(ev.get('ts', '') for ev in current_data)
+                data_count = len(current_data)
+                current_hash = hash(f"{data_count}_{latest_ts}")
+            else:
+                current_hash = hash("empty")
+            
+            # Only reload if data has changed
+            if current_hash != self.last_data_hash:
+                print(f"🔄 Data changed! Hash: {self.last_data_hash} -> {current_hash}")
+                self.last_data_hash = current_hash
+                self._reload_table()
+            elif self.is_visible:
+                # Force update if window is visible (for better responsiveness)
+                print(f"🔄 Forcing update for visible window. Hash: {current_hash}")
+                self._reload_table()
+            else:
+                print(f"⏳ No data changes detected. Hash: {current_hash}")
+        except Exception as e:
+            print(f"❌ Error checking for updates: {e}")
 
     def _reload_table(self):
         try:
@@ -338,9 +383,40 @@ class EventsJournalJson(QWidget):
                 
                 # Set row height for image display
                 self.table.setRowHeight(r, 150)
+            
+            # Force widget update to ensure changes are visible
+            self.table.viewport().update()
+            self.table.update()
+            
+            # Force repaint and process events
+            self.table.repaint()
+            from PyQt6.QtWidgets import QApplication
+            QApplication.processEvents()
+            
         except Exception as e:
             print(f"Error loading table data: {e}")
-            self.table.setRowCount(0)
+    
+    def _on_visibility_changed(self, visible):
+        """Handle visibility change to force update when window becomes visible"""
+        self.is_visible = visible
+        if visible:
+            print("🔄 Window became visible, forcing update...")
+            self._reload_table()
+
+    def showEvent(self, event):
+        """Start update timer when window is shown"""
+        super().showEvent(event)
+        if hasattr(self, 'update_timer'):
+            self.update_timer.stop()  # Stop first to ensure clean restart
+            self.update_timer.start(1000)  # Restart timer every 1 second
+        # Force immediate reload to show latest data
+        self._reload_table()
+
+    def hideEvent(self, event):
+        """Stop update timer when window is hidden"""
+        super().hideEvent(event)
+        if hasattr(self, 'update_timer'):
+            self.update_timer.stop()
 
     def closeEvent(self, event):
         if hasattr(self, 'update_timer'):

@@ -99,9 +99,31 @@ class LabelingManager:
         """Load JSON file safely."""
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                data = json.load(f)
+                # Ensure the data has the required structure
+                if not isinstance(data, dict):
+                    data = {}
+                if "metadata" not in data:
+                    data["metadata"] = {
+                        "version": "1.0",
+                        "created": datetime.datetime.now().isoformat(),
+                        "description": "Object detection labels",
+                        "total_objects": 0
+                    }
+                if "objects" not in data:
+                    data["objects"] = []
+                return data
         except (FileNotFoundError, json.JSONDecodeError):
-            return {}
+            # Return default structure if file doesn't exist or is corrupted
+            return {
+                "metadata": {
+                    "version": "1.0",
+                    "created": datetime.datetime.now().isoformat(),
+                    "description": "Object detection labels",
+                    "total_objects": 0
+                },
+                "objects": []
+            }
     
     def _save_json(self, file_path: str, data: Dict[str, Any]):
         """Save JSON file safely."""
@@ -113,6 +135,15 @@ class LabelingManager:
     
     def _update_metadata(self, data: Dict[str, Any], total_objects: int):
         """Update metadata in label data."""
+        # Ensure metadata exists
+        if "metadata" not in data:
+            data["metadata"] = {
+                "version": "1.0",
+                "created": datetime.datetime.now().isoformat(),
+                "description": "Object detection labels",
+                "total_objects": 0
+            }
+        
         data["metadata"]["last_updated"] = datetime.datetime.now().isoformat()
         data["metadata"]["total_objects"] = total_objects
     
@@ -139,6 +170,10 @@ class LabelingManager:
             # Load current data
             data = self._load_json(self.found_labels_file)
             
+            # Ensure objects list exists
+            if "objects" not in data:
+                data["objects"] = []
+            
             # Add all buffered objects
             data["objects"].extend(self.found_buffer)
             
@@ -146,10 +181,12 @@ class LabelingManager:
             self._update_metadata(data, len(data["objects"]))
             
             # Save updated data
-            self._save_json(self.found_labels_file, data)
-            
-            # Clear buffer
-            self.found_buffer.clear()
+            try:
+                self._save_json(self.found_labels_file, data)
+                # Clear buffer only if save was successful
+                self.found_buffer.clear()
+            except Exception as e:
+                print(f"Error saving found objects buffer: {e}")
     
     def add_object_lost(self, object_data: Dict[str, Any]):
         """
@@ -174,6 +211,10 @@ class LabelingManager:
             # Load current data
             data = self._load_json(self.lost_labels_file)
             
+            # Ensure objects list exists
+            if "objects" not in data:
+                data["objects"] = []
+            
             # Add all buffered objects
             data["objects"].extend(self.lost_buffer)
             
@@ -181,10 +222,12 @@ class LabelingManager:
             self._update_metadata(data, len(data["objects"]))
             
             # Save updated data
-            self._save_json(self.lost_labels_file, data)
-            
-            # Clear buffer
-            self.lost_buffer.clear()
+            try:
+                self._save_json(self.lost_labels_file, data)
+                # Clear buffer only if save was successful
+                self.lost_buffer.clear()
+            except Exception as e:
+                print(f"Error saving lost objects buffer: {e}")
     
     def create_found_object_data(self, obj, image_width: int, image_height: int, 
                                 image_filename: str, preview_filename: str) -> Dict[str, Any]:
