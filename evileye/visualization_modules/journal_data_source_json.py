@@ -14,6 +14,7 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
         self.base_dir = base_dir
         self.date_folder: Optional[str] = None
         self._cache: List[Dict] = []
+        self._last_file_timestamps = {}  # Track file modification times
 
     def set_base_dir(self, base_dir: str) -> None:
         self.base_dir = base_dir
@@ -22,6 +23,11 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
     def set_date(self, date_folder: Optional[str]) -> None:
         self.date_folder = date_folder
         self._cache = []
+    
+    def force_refresh(self) -> None:
+        """Force refresh of cache by clearing timestamps"""
+        self._last_file_timestamps.clear()
+        self._cache.clear()
 
     def list_available_dates(self) -> List[str]:
         if not os.path.isdir(self.base_dir):
@@ -32,19 +38,50 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
         return sorted([d for d in os.listdir(images_dir)
                        if os.path.isdir(os.path.join(images_dir, d)) and d[:4].isdigit()])
 
+    def _check_file_changed(self, filepath: str) -> bool:
+        """Check if file has been modified since last check"""
+        try:
+            if not os.path.exists(filepath):
+                return False
+            
+            current_mtime = os.path.getmtime(filepath)
+            last_mtime = self._last_file_timestamps.get(filepath, 0)
+            
+            if current_mtime > last_mtime:
+                self._last_file_timestamps[filepath] = current_mtime
+                return True
+            return False
+        except Exception:
+            return False
+
     def _load_cache(self) -> None:
-        if self._cache:
-            return
+        """Load cache and track file timestamps"""
         dates = [self.date_folder] if self.date_folder else self.list_available_dates()[-7:]
+        
+        # Check if files have changed
+        files_changed = False
         for d in dates:
             if not d:
                 continue
             found_fp = os.path.join(self.base_dir, 'images', d, 'objects_found.json')
             lost_fp = os.path.join(self.base_dir, 'images', d, 'objects_lost.json')
-            self._read_file(found_fp, 'found', d)
-            self._read_file(lost_fp, 'lost', d)
-        # default sort: ts desc
-        self._cache.sort(key=lambda e: e.get('ts', ''), reverse=True)
+            
+            # Check if files have been modified
+            if self._check_file_changed(found_fp) or self._check_file_changed(lost_fp):
+                files_changed = True
+        
+        # Only reload if files have changed or cache is empty
+        if files_changed or not self._cache:
+            self._cache.clear()  # Clear cache to reload
+            for d in dates:
+                if not d:
+                    continue
+                found_fp = os.path.join(self.base_dir, 'images', d, 'objects_found.json')
+                lost_fp = os.path.join(self.base_dir, 'images', d, 'objects_lost.json')
+                self._read_file(found_fp, 'found', d)
+                self._read_file(lost_fp, 'lost', d)
+            # default sort: ts desc
+            self._cache.sort(key=lambda e: e.get('ts', ''), reverse=True)
 
     def _read_file(self, filepath: str, event_type: str, date_folder: str) -> None:
         if not os.path.isfile(filepath):

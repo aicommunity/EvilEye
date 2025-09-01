@@ -168,7 +168,7 @@ class EventsJournalJson(QWidget):
         # Real-time update timer
         self.update_timer = QTimer()
         self.update_timer.timeout.connect(self._check_for_updates)
-        self.update_timer.start(1000)  # Check every 1 second for better responsiveness
+        self.update_timer.start(500)  # Check every 0.5 seconds for better responsiveness
 
         self._build_ui()
         self._reload_dates()
@@ -237,6 +237,12 @@ class EventsJournalJson(QWidget):
             self.visibilityChanged.connect(self._on_visibility_changed)
         except AttributeError:
             print("⚠️ visibilityChanged signal not available, skipping visibility tracking")
+        
+        # Connect focus change event for better responsiveness
+        try:
+            self.windowActivated.connect(self._on_window_activated)
+        except AttributeError:
+            print("⚠️ windowActivated signal not available, skipping activation tracking")
 
     def _choose_dir(self):
         d = QFileDialog.getExistingDirectory(self, 'Select images base directory', self.base_dir)
@@ -281,15 +287,18 @@ class EventsJournalJson(QWidget):
             else:
                 current_hash = hash("empty")
             
-            # Only reload if data has changed
-            if current_hash != self.last_data_hash:
-                print(f"🔄 Data changed! Hash: {self.last_data_hash} -> {current_hash}")
-                self.last_data_hash = current_hash
+            # Always reload for visible windows, or if data changed
+            if current_hash != self.last_data_hash or self.is_visible:
+                if current_hash != self.last_data_hash:
+                    print(f"🔄 Data changed! Hash: {self.last_data_hash} -> {current_hash}")
+                    self.last_data_hash = current_hash
+                else:
+                    print(f"🔄 Forcing update for visible window. Hash: {current_hash}")
+                
                 self._reload_table()
-            elif self.is_visible:
-                # Force update if window is visible (for better responsiveness)
-                print(f"🔄 Forcing update for visible window. Hash: {current_hash}")
-                self._reload_table()
+                # Force widget repaint
+                self.table.viewport().update()
+                self.table.repaint()
             else:
                 print(f"⏳ No data changes detected. Hash: {current_hash}")
         except Exception as e:
@@ -402,6 +411,20 @@ class EventsJournalJson(QWidget):
         if visible:
             print("🔄 Window became visible, forcing update...")
             self._reload_table()
+    
+    def force_update(self):
+        """Force immediate update of the journal"""
+        print("🔄 Force update requested...")
+        self._reload_table()
+        self.table.viewport().update()
+        self.table.repaint()
+    
+    def _on_window_activated(self):
+        """Handle window activation to force update"""
+        print("🔄 Window activated, forcing update...")
+        self._reload_table()
+        self.table.viewport().update()
+        self.table.repaint()
 
     def showEvent(self, event):
         """Start update timer when window is shown"""
