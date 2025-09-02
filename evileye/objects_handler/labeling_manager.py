@@ -62,6 +62,10 @@ class LabelingManager:
         self.running = True
         self.buffer_lock = Lock()
         
+        # File locks to prevent simultaneous read/write access
+        self.found_file_lock = Lock()
+        self.lost_file_lock = Lock()
+        
         # Pre-load existing data into buffers to avoid clearing files
         self._preload_existing_data()
         
@@ -83,7 +87,7 @@ class LabelingManager:
                 },
                 "objects": []
             }
-            self._save_json(self.found_labels_file, found_data)
+            self._save_json(self.found_labels_file, found_data, self.found_file_lock)
         
         # Initialize objects_lost.json
         if not os.path.exists(self.lost_labels_file):
@@ -96,10 +100,21 @@ class LabelingManager:
                 },
                 "objects": []
             }
-            self._save_json(self.lost_labels_file, lost_data)
+            self._save_json(self.lost_labels_file, lost_data, self.lost_file_lock)
     
-    def _load_json(self, file_path: str) -> Dict[str, Any]:
-        """Load JSON file safely."""
+    def _load_json(self, file_path: str, file_lock: Lock = None) -> Dict[str, Any]:
+        """Load JSON file safely with optional file locking."""
+        if file_lock:
+            file_lock.acquire()
+            try:
+                return self._load_json_internal(file_path)
+            finally:
+                file_lock.release()
+        else:
+            return self._load_json_internal(file_path)
+    
+    def _load_json_internal(self, file_path: str) -> Dict[str, Any]:
+        """Internal JSON loading method."""
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
@@ -128,13 +143,37 @@ class LabelingManager:
                 "objects": []
             }
     
-    def _save_json(self, file_path: str, data: Dict[str, Any]):
-        """Save JSON file safely."""
+    def _save_json(self, file_path: str, data: Dict[str, Any], file_lock: Lock = None):
+        """Save JSON file safely with optional file locking."""
+        if file_lock:
+            file_lock.acquire()
+            try:
+                return self._save_json_internal(file_path, data)
+            finally:
+                file_lock.release()
+        else:
+            return self._save_json_internal(file_path, data)
+    
+    def _save_json_internal(self, file_path: str, data: Dict[str, Any]):
+        """Internal JSON saving method."""
         try:
-            with open(file_path, 'w', encoding='utf-8') as f:
+            # Create temporary file first
+            temp_file = f"{file_path}.tmp"
+            with open(temp_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
+            
+            # Atomic rename to prevent corruption
+            os.replace(temp_file, file_path)
+            return True
         except Exception as e:
             print(f"Error saving JSON file {file_path}: {e}")
+            # Clean up temp file if it exists
+            if os.path.exists(temp_file):
+                try:
+                    os.remove(temp_file)
+                except:
+                    pass
+            return False
     
     def _update_metadata(self, data: Dict[str, Any], total_objects: int):
         """Update metadata in label data."""
@@ -170,8 +209,8 @@ class LabelingManager:
             return
             
         with self.buffer_lock:
-            # Load current data
-            data = self._load_json(self.found_labels_file)
+            # Load current data with file lock
+            data = self._load_json(self.found_labels_file, self.found_file_lock)
             
             # Ensure objects list exists
             if "objects" not in data:
@@ -186,25 +225,25 @@ class LabelingManager:
                 if obj.get('timestamp') not in existing_timestamps or obj.get('object_id') not in existing_ids:
                     new_objects.append(obj)
                 else:
-                    print(f"Skipping duplicate found object with timestamp: {obj.get('timestamp')} for object: {obj.get('object_id')}")
+                    print(f"⚠️ Skipping duplicate found object with timestamp: {obj.get('timestamp')} for object: {obj.get('object_id')}")
             
             # Add only new objects
             if new_objects:
                 data["objects"].extend(new_objects)
-                print(f"Saving {len(new_objects)} new found objects (total: {len(data['objects'])})")
+                print(f"💾 Saving {len(new_objects)} new found objects (total: {len(data['objects'])})")
             else:
-                print(f"No new found objects to save")
+                print(f"ℹ️ No new found objects to save")
             
             # Update metadata
             self._update_metadata(data, len(data["objects"]))
             
-            # Save updated data
-            try:
-                self._save_json(self.found_labels_file, data)
+            # Save updated data with file lock
+            if self._save_json(self.found_labels_file, data, self.found_file_lock):
                 # Clear buffer only if save was successful
                 self.found_buffer.clear()
-            except Exception as e:
-                print(f"Error saving found objects buffer: {e}")
+                print(f"✅ Found objects saved successfully")
+            else:
+                print(f"❌ Failed to save found objects")
     
     def add_object_lost(self, object_data: Dict[str, Any]):
         """
@@ -226,8 +265,8 @@ class LabelingManager:
             return
             
         with self.buffer_lock:
-            # Load current data
-            data = self._load_json(self.lost_labels_file)
+            # Load current data with file lock
+            data = self._load_json(self.lost_labels_file, self.lost_file_lock)
             
             # Ensure objects list exists
             if "objects" not in data:
@@ -242,25 +281,25 @@ class LabelingManager:
                 if obj.get('detected_timestamp') not in existing_timestamps or obj.get('object_id') not in existing_ids:
                     new_objects.append(obj)
                 else:
-                    print(f"Skipping duplicate lost object with timestamp: {obj.get('detected_timestamp')} for object: {obj.get('object_id')}")
+                    print(f"⚠️ Skipping duplicate lost object with timestamp: {obj.get('detected_timestamp')} for object: {obj.get('object_id')}")
             
             # Add only new objects
             if new_objects:
                 data["objects"].extend(new_objects)
-                print(f"Saving {len(new_objects)} new lost objects (total: {len(data['objects'])})")
+                print(f"💾 Saving {len(new_objects)} new lost objects (total: {len(data['objects'])})")
             else:
-                print(f"No new lost objects to save")
+                print(f"ℹ️ No new lost objects to save")
             
             # Update metadata
             self._update_metadata(data, len(data["objects"]))
             
-            # Save updated data
-            try:
-                self._save_json(self.lost_labels_file, data)
+            # Save updated data with file lock
+            if self._save_json(self.lost_labels_file, data, self.lost_file_lock):
                 # Clear buffer only if save was successful
                 self.lost_buffer.clear()
-            except Exception as e:
-                print(f"Error saving lost objects buffer: {e}")
+                print(f"✅ Lost objects saved successfully")
+            else:
+                print(f"❌ Failed to save lost objects")
     
     def create_found_object_data(self, obj, image_width: int, image_height: int, 
                                 image_filename: str, preview_filename: str) -> Dict[str, Any]:
@@ -408,8 +447,8 @@ class LabelingManager:
         Returns:
             Dictionary with statistics
         """
-        found_data = self._load_json(self.found_labels_file)
-        lost_data = self._load_json(self.lost_labels_file)
+        found_data = self._load_json(self.found_labels_file, self.found_file_lock)
+        lost_data = self._load_json(self.lost_labels_file, self.lost_file_lock)
         
         return {
             "found_objects": len(found_data.get("objects", [])),
@@ -435,9 +474,9 @@ class LabelingManager:
         
         os.makedirs(output_dir, exist_ok=True)
         
-        # Load current data
-        found_data = self._load_json(self.found_labels_file)
-        lost_data = self._load_json(self.lost_labels_file)
+        # Load current data with file locks
+        found_data = self._load_json(self.found_labels_file, self.found_file_lock)
+        lost_data = self._load_json(self.lost_labels_file, self.lost_file_lock)
         
         # Combine all objects
         all_objects = found_data.get("objects", []) + lost_data.get("objects", [])
@@ -496,15 +535,15 @@ class LabelingManager:
             # Check and repair JSON files if needed
             self._check_and_repair_json_files()
             
-            # Load found objects
-            found_data = self._load_json(self.found_labels_file)
+            # Load found objects with file lock
+            found_data = self._load_json(self.found_labels_file, self.found_file_lock)
             existing_found = found_data.get("objects", [])
             if existing_found:
                 print(f"📊 Found {len(existing_found)} existing found objects")
                 # Don't add to buffer, just ensure file is preserved
             
-            # Load lost objects
-            lost_data = self._load_json(self.lost_labels_file)
+            # Load lost objects with file lock
+            lost_data = self._load_json(self.lost_labels_file, self.lost_file_lock)
             existing_lost = lost_data.get("objects", [])
             if existing_lost:
                 print(f"📊 Found {len(existing_lost)} existing lost objects")
@@ -567,7 +606,9 @@ class LabelingManager:
                 "objects": []
             }
             
-            self._save_json(file_path, new_data)
+            # Use appropriate file lock based on file type
+            file_lock = self.found_file_lock if "found" in file_path else self.lost_file_lock
+            self._save_json(file_path, new_data, file_lock)
             print(f"✅ Repaired {file_type} objects file")
             
         except Exception as e:
