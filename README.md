@@ -16,7 +16,7 @@ Intelligence video surveillance system with object detection, tracking, and mult
 
 ### Installation
 
-#### From PyPI (Production)
+#### From PyPI (Users)
 
 ```bash
 # Install from PyPI with all dependencies
@@ -24,7 +24,7 @@ pip install evileye
 
 ```
 
-#### From Source (Development)
+#### From Source (Developers)
 
 ```bash
 # Clone the repository
@@ -41,20 +41,22 @@ python fix_entry_points.py
 ### Basic Usage
 
 ```bash
-# Deploy configuration files to current directory
+# Deploy sample configurations (recommended for beginners)
+evileye deploy-samples
+
+or 
+
+# Deploy EvilEye system to current directory
 evileye deploy
+
+# List configs
+evileye list-configs
+
+# Run with configuration ('configs/' prefix may be omitted)
+evileye run configs/my_config.json
 
 # Create new configuration
 evileye-create my_config --sources 2 --source-type video_file
-
-# Run with configuration
-evileye run configs/my_config.json
-
-# Launch Configuration GUI
-evileye gui
-
-# Deploy sample configurations (recommended for beginners)
-evileye deploy-samples
 ```
 
 #### After Running `evileye deploy`

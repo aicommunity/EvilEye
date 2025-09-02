@@ -3,6 +3,7 @@ import json
 import time
 import os
 import datetime
+import copy
 from ..core.base_class import EvilEyeBase
 from ..capture.video_capture_base import CaptureImage
 from ..utils import threading_events
@@ -17,6 +18,8 @@ from .object_result import ObjectResultHistory, ObjectResult, ObjectResultList
 from ..database_controller.db_adapter_objects import DatabaseAdapterObjects
 from .labeling_manager import LabelingManager
 from pympler import asizeof
+import cv2
+from ..utils import utils
 
 '''
 Модуль работы с объектами ожидает данные от детектора в виде dict: {'cam_id': int, 'objects': list, 'actual': bool}, 
@@ -97,7 +100,6 @@ class ObjectsHandler(EvilEyeBase):
         params['lost_thresh'] = self.lost_thresh
         params['max_active_objects'] = self.max_active_objects
         params['max_lost_objects'] = self.max_lost_objects
-        return params
 
     def stop(self):
         # self.objects_file.close()
@@ -234,9 +236,14 @@ class ObjectsHandler(EvilEyeBase):
                     self.db_adapter.insert(obj)
                 end_insert_it = timer()
                 
+                # Save images for found object
+                self._save_object_images(obj, 'detected')
+                
                 # Save labeling data for found object
                 try:
-                    image_filename = os.path.basename(self._get_img_path('frame', 'detected', obj))
+                    # Get full image path and extract filename with camera name
+                    full_img_path = self._get_img_path('frame', 'detected', obj)
+                    image_filename = os.path.basename(full_img_path)
                     preview_filename = os.path.basename(self._get_img_path('preview', 'detected', obj))
                     
                     # Get image dimensions from the image object
@@ -265,9 +272,14 @@ class ObjectsHandler(EvilEyeBase):
                         self.db_adapter.update(active_obj)
                     end_update_it = timer()
                     
+                    # Save images for lost object
+                    self._save_object_images(active_obj, 'lost')
+                    
                     # Save labeling data for lost object
                     try:
-                        image_filename = os.path.basename(self._get_img_path('frame', 'lost', active_obj))
+                        # Get full image path and extract filename with camera name
+                        full_img_path = self._get_img_path('frame', 'lost', active_obj)
+                        image_filename = os.path.basename(full_img_path)
                         preview_filename = os.path.basename(self._get_img_path('preview', 'lost', active_obj))
                         
                         # Get image dimensions from the image object
@@ -350,13 +362,73 @@ class ObjectsHandler(EvilEyeBase):
         return (list(fields_for_updating.keys()), list(fields_for_updating.values()),
                 fields_for_updating['lost_preview_path'], fields_for_updating['lost_frame_path'])
 
+    def _save_object_images(self, obj, event_type):
+        """Save both preview and frame images for an object"""
+        try:
+            if obj.last_image is None:
+                return
+                
+            # Save preview image
+            self._save_image(obj.last_image, obj.track.bounding_box, 'preview', event_type, obj)
+            
+            # Save frame image
+            self._save_image(obj.last_image, obj.track.bounding_box, 'frame', event_type, obj)
+            
+        except Exception as e:
+            print(f"Error saving object images: {e}")
+
+    def _save_image(self, image, box, image_type, obj_event_type, obj):
+        """Save image to file system independent of database - using same logic as database journal"""
+        try:
+            # Get image path
+            img_path = self._get_img_path(image_type, obj_event_type, obj)
+            
+            # Resolve full path
+            if 'image_dir' in self.db_params and self.db_params['image_dir']:
+                save_dir = self.db_params['image_dir']
+            else:
+                save_dir = 'EvilEyeData'  # Default directory
+                
+            if not os.path.isabs(save_dir):
+                save_dir = os.path.join(os.getcwd(), save_dir)
+            
+            full_img_path = os.path.join(save_dir, img_path)
+            
+            # Create directory if it doesn't exist
+            os.makedirs(os.path.dirname(full_img_path), exist_ok=True)
+            
+            # Save image using the same logic as database journal
+            if image_type == 'preview':
+                # Create preview with bounding box (same as database journal)
+                preview = cv2.resize(copy.deepcopy(image.image), (self.db_params.get('preview_width', 300), self.db_params.get('preview_height', 150)), cv2.INTER_NEAREST)
+                
+                # Convert bounding box to normalized coordinates (same as database journal)
+                image_height, image_width, _ = image.image.shape
+                normalized_box = [
+                    box[0] / image_width,   # x
+                    box[1] / image_height,  # y
+                    box[2] / image_width,   # width
+                    box[3] / image_height   # height
+                ]
+                
+                preview_boxes = utils.draw_preview_boxes(preview, self.db_params.get('preview_width', 300), self.db_params.get('preview_height', 150), normalized_box)
+                saved = cv2.imwrite(full_img_path, preview_boxes)
+            else:
+                # Save original frame without any graphical info (same as database journal)
+                saved = cv2.imwrite(full_img_path, image.image)
+            
+            if not saved:
+                print(f'ERROR: can\'t save image file {full_img_path}')
+
+        except Exception as e:
+            print(f"Error saving image: {e}")
+
     def _get_img_path(self, image_type, obj_event_type, obj):
         # Use default image directory if database is not available
         if 'image_dir' in self.db_params and self.db_params['image_dir']:
             save_dir = self.db_params['image_dir']
         else:
             save_dir = 'EvilEyeData'  # Default directory
-            
         img_dir = os.path.join(save_dir, 'images')
         cur_date = datetime.date.today()
         cur_date_str = cur_date.strftime('%Y_%m_%d')
@@ -373,10 +445,18 @@ class ObjectsHandler(EvilEyeBase):
         # if not os.path.exists(obj_event_path):
         #     os.mkdir(obj_event_path)
 
+        # Get source name for the object
+        source_name = ''
+        for camera in self.cameras_params:
+            if obj.source_id in camera['source_ids']:
+                id_idx = camera['source_ids'].index(obj.source_id)
+                source_name = camera['source_names'][id_idx]
+                break
+        
         if obj_event_type == 'detected':
             timestamp = obj.time_stamp.strftime('%Y_%m_%d_%H_%M_%S.%f')
-            img_path = os.path.join(obj_type_path, f'{timestamp}_{image_type}.jpeg')
+            img_path = os.path.join(obj_type_path, f'{timestamp}_{source_name}_{image_type}.jpeg')
         elif obj_event_type == 'lost':
             timestamp = obj.time_lost.strftime('%Y_%m_%d_%H_%M_%S_%f')
-            img_path = os.path.join(obj_type_path, f'{timestamp}_{image_type}.jpeg')
+            img_path = os.path.join(obj_type_path, f'{timestamp}_{source_name}_{image_type}.jpeg')
         return os.path.relpath(img_path, save_dir)

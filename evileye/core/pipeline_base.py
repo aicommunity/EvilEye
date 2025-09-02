@@ -99,7 +99,10 @@ class PipelineBase(EvilEyeBase):
         Args:
             result: Result dictionary to add
         """
-        self._results_list.append(result)
+        if len(self._results_list) == 0:
+            self._results_list.append(result)
+        else:
+            self._results_list[0] = result
         self._current_results = result
 
     def clear_results(self):

@@ -321,6 +321,19 @@ class Controller:
     def init(self, params):
         self.params = params
 
+        if 'controller' in self.params.keys():
+            self.autoclose = self.params['controller'].get("autoclose", self.autoclose)
+            self.fps = self.params['controller'].get("fps", self.fps)
+            self.show_main_gui = self.params['controller'].get("show_main_gui", self.show_main_gui)
+            self.show_journal = self.params['controller'].get("show_journal", self.show_journal)
+            self.enable_close_from_gui = self.params['controller'].get("enable_close_from_gui", self.enable_close_from_gui)
+            self.class_names = self.params['controller'].get("class_names", list())
+            self.memory_periodic_check_sec = self.params['controller'].get("memory_periodic_check_sec", self.memory_periodic_check_sec)
+            self.show_memory_usage = self.params['controller'].get("show_memory_usage", self.show_memory_usage)
+            self.max_memory_usage_mb = self.params['controller'].get("max_memory_usage_mb", self.max_memory_usage_mb)
+            self.auto_restart = self.params['controller'].get("auto_restart", self.auto_restart)
+            self.use_database = self.params['controller'].get("use_database", self.use_database)
+
         try:
             with open("credentials.json") as creds_file:
                 self.credentials = json.load(creds_file)
@@ -400,12 +413,23 @@ class Controller:
 
         # Initialize database components only if use_database is True
         if self.use_database:
-            self._init_db_controller(self.database_config['database'], system_params=self.params)
-            self._init_db_adapters(self.database_config['database_adapters'])
-            self._init_object_handler(self.db_controller, params.get('objects_handler', dict()))
-            self._init_events_detectors(self.params.get('events_detectors', dict()))
-            self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
-            self._init_events_processor(self.params.get('events_processor', dict()))
+            try:
+                self._init_db_controller(self.database_config['database'], system_params=self.params)
+                self._init_db_adapters(self.database_config['database_adapters'])
+                self._init_object_handler(self.db_controller, params.get('objects_handler', dict()))
+                self._init_events_detectors(self.params.get('events_detectors', dict()))
+                self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
+                self._init_events_processor(self.params.get('events_processor', dict()))
+            except Exception as e:
+                print(f"Warning: Database is enabled but not accessible. Running without database. Reason: {e}")
+                # Fallback to no-database mode
+                self.use_database = False
+                self.db_controller = None
+                self.database_config = {"database": {}, "database_adapters": {}}
+                self._init_object_handler_without_db(params.get('objects_handler', dict()))
+                self._init_events_detectors_without_db(self.params.get('events_detectors', dict()))
+                self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
+                self._init_events_processor_without_db(self.params.get('events_processor', dict()))
         else:
             print("Database functionality disabled. Running without database connection.")
             # Initialize minimal components for operation without database
@@ -413,19 +437,6 @@ class Controller:
             self._init_events_detectors_without_db(self.params.get('events_detectors', dict()))
             self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
             self._init_events_processor_without_db(self.params.get('events_processor', dict()))
-
-        if 'controller' in self.params.keys():
-            self.autoclose = self.params['controller'].get("autoclose", self.autoclose)
-            self.fps = self.params['controller'].get("fps", self.fps)
-            self.show_main_gui = self.params['controller'].get("show_main_gui", self.show_main_gui)
-            self.show_journal = self.params['controller'].get("show_journal", self.show_journal)
-            self.enable_close_from_gui = self.params['controller'].get("enable_close_from_gui", self.enable_close_from_gui)
-            self.class_names = self.params['controller'].get("class_names", list())
-            self.memory_periodic_check_sec = self.params['controller'].get("memory_periodic_check_sec", self.memory_periodic_check_sec)
-            self.show_memory_usage = self.params['controller'].get("show_memory_usage", self.show_memory_usage)
-            self.max_memory_usage_mb = self.params['controller'].get("max_memory_usage_mb", self.max_memory_usage_mb)
-            self.auto_restart = self.params['controller'].get("auto_restart", self.auto_restart)
-            self.use_database = self.params['controller'].get("use_database", self.use_database)
 
     def init_main_window(self, main_window: QMainWindow, pyqt_slots: dict, pyqt_signals: dict):
         self.main_window = main_window
@@ -504,6 +515,24 @@ class Controller:
     def _init_object_handler_without_db(self, params):
         """Initialize object handler without database connection."""
         self.obj_handler = objects_handler.ObjectsHandler(db_controller=None, db_adapter=None)
+        
+        # Set cameras parameters from pipeline sources
+        if hasattr(self.pipeline, "get_sources"):
+            sources = self.pipeline.get_sources()
+            if sources:
+                cameras_params = []
+                for source in sources:
+                    if hasattr(source, 'source_ids') and hasattr(source, 'source_names') and source.source_ids and source.source_names:
+                        camera_param = {
+                            'source_ids': source.source_ids,
+                            'source_names': source.source_names,
+                            'camera': getattr(source, 'camera', '')
+                        }
+                        cameras_params.append(camera_param)
+                
+                # Set cameras params in obj_handler
+                self.obj_handler.cameras_params = cameras_params
+        
         self.obj_handler.set_params(**params)
         self.obj_handler.init()
 
