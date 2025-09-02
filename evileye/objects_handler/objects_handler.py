@@ -73,6 +73,29 @@ class ObjectsHandler(EvilEyeBase):
         # Initialize labeling manager
         base_dir = self.db_params.get('image_dir', 'EvilEyeData') if self.db_params else 'EvilEyeData'
         self.labeling_manager = LabelingManager(base_dir=base_dir, cameras_params=self.cameras_params)
+        
+        # Initialize object_id counter from existing data
+        self._init_object_id_counter()
+
+    def _init_object_id_counter(self):
+        """Initialize object_id counter from existing data to avoid ID conflicts."""
+        try:
+            # Get the maximum object_id from existing data
+            max_existing_id = self.labeling_manager._preload_existing_data()
+            
+            if max_existing_id > 0:
+                # Set counter to next available ID
+                self.object_id_counter = max_existing_id + 1
+                print(f"🔄 Initialized object_id counter to {self.object_id_counter} (max existing: {max_existing_id})")
+            else:
+                # No existing objects, start from 1
+                self.object_id_counter = 1
+                print(f"🔄 Starting with fresh object_id counter: {self.object_id_counter}")
+                
+        except Exception as e:
+            print(f"⚠️ Warning: Error initializing object_id counter: {e}")
+            print(f"ℹ️ Starting with default counter value: {self.object_id_counter}")
+            # Keep default value (1)
 
     def default(self):
         pass
