@@ -178,21 +178,22 @@ class LabelingManager:
                 data["objects"] = []
             
             # Check for duplicates before adding
+            existing_timestamps = {obj.get('timestamp') for obj in data["objects"]}
             existing_ids = {obj.get('object_id') for obj in data["objects"]}
             new_objects = []
             
             for obj in self.found_buffer:
-                if obj.get('object_id') not in existing_ids:
+                if obj.get('timestamp') not in existing_timestamps or obj.get('object_id') not in existing_ids:
                     new_objects.append(obj)
                 else:
-                    print(f"⚠️ Skipping duplicate object_id: {obj.get('object_id')}")
+                    print(f"Skipping duplicate found object with timestamp: {obj.get('timestamp')} for object: {obj.get('object_id')}")
             
             # Add only new objects
             if new_objects:
                 data["objects"].extend(new_objects)
-                print(f"💾 Saving {len(new_objects)} new found objects (total: {len(data['objects'])})")
+                print(f"Saving {len(new_objects)} new found objects (total: {len(data['objects'])})")
             else:
-                print(f"ℹ️ No new found objects to save")
+                print(f"No new found objects to save")
             
             # Update metadata
             self._update_metadata(data, len(data["objects"]))
@@ -233,21 +234,22 @@ class LabelingManager:
                 data["objects"] = []
             
             # Check for duplicates before adding
+            existing_timestamps = {obj.get('detected_timestamp') for obj in data["objects"]}
             existing_ids = {obj.get('object_id') for obj in data["objects"]}
             new_objects = []
             
             for obj in self.lost_buffer:
-                if obj.get('object_id') not in existing_ids:
+                if obj.get('detected_timestamp') not in existing_timestamps or obj.get('object_id') not in existing_ids:
                     new_objects.append(obj)
                 else:
-                    print(f"⚠️ Skipping duplicate object_id: {obj.get('object_id')}")
+                    print(f"Skipping duplicate lost object with timestamp: {obj.get('detected_timestamp')} for object: {obj.get('object_id')}")
             
             # Add only new objects
             if new_objects:
                 data["objects"].extend(new_objects)
-                print(f"💾 Saving {len(new_objects)} new lost objects (total: {len(data['objects'])})")
+                print(f"Saving {len(new_objects)} new lost objects (total: {len(data['objects'])})")
             else:
-                print(f"ℹ️ No new lost objects to save")
+                print(f"No new lost objects to save")
             
             # Update metadata
             self._update_metadata(data, len(data["objects"]))

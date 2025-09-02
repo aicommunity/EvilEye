@@ -290,17 +290,15 @@ class EventsJournalJson(QWidget):
             # Always reload for visible windows, or if data changed
             if current_hash != self.last_data_hash or self.is_visible:
                 if current_hash != self.last_data_hash:
-                    print(f"🔄 Data changed! Hash: {self.last_data_hash} -> {current_hash}")
+                    #print(f"🔄 Data changed! Hash: {self.last_data_hash} -> {current_hash}")
                     self.last_data_hash = current_hash
-                else:
-                    print(f"🔄 Forcing update for visible window. Hash: {current_hash}")
+                #else:
+                #    print(f"🔄 Forcing update for visible window. Hash: {current_hash}")
                 
                 self._reload_table()
                 # Force widget repaint
                 self.table.viewport().update()
                 self.table.repaint()
-            else:
-                print(f"⏳ No data changes detected. Hash: {current_hash}")
         except Exception as e:
             print(f"❌ Error checking for updates: {e}")
 
