@@ -224,15 +224,15 @@ class LabelingManager:
             for obj in self.found_buffer:
                 if obj.get('timestamp') not in existing_timestamps or obj.get('object_id') not in existing_ids:
                     new_objects.append(obj)
-                else:
-                    print(f"⚠️ Skipping duplicate found object with timestamp: {obj.get('timestamp')} for object: {obj.get('object_id')}")
+            #    else:
+            #        print(f"⚠️ Skipping duplicate found object with timestamp: {obj.get('timestamp')} for object: {obj.get('object_id')}")
             
             # Add only new objects
             if new_objects:
                 data["objects"].extend(new_objects)
-                print(f"💾 Saving {len(new_objects)} new found objects (total: {len(data['objects'])})")
-            else:
-                print(f"ℹ️ No new found objects to save")
+            #    print(f"💾 Saving {len(new_objects)} new found objects (total: {len(data['objects'])})")
+            #else:
+            #    print(f"ℹ️ No new found objects to save")
             
             # Update metadata
             self._update_metadata(data, len(data["objects"]))
@@ -241,9 +241,9 @@ class LabelingManager:
             if self._save_json(self.found_labels_file, data, self.found_file_lock):
                 # Clear buffer only if save was successful
                 self.found_buffer.clear()
-                print(f"✅ Found objects saved successfully")
-            else:
-                print(f"❌ Failed to save found objects")
+            #    print(f"✅ Found objects saved successfully")
+            #else:
+            #    print(f"❌ Failed to save found objects")
     
     def add_object_lost(self, object_data: Dict[str, Any]):
         """
@@ -280,15 +280,15 @@ class LabelingManager:
             for obj in self.lost_buffer:
                 if obj.get('detected_timestamp') not in existing_timestamps or obj.get('object_id') not in existing_ids:
                     new_objects.append(obj)
-                else:
-                    print(f"⚠️ Skipping duplicate lost object with timestamp: {obj.get('detected_timestamp')} for object: {obj.get('object_id')}")
+                #else:
+                #    print(f"⚠️ Skipping duplicate lost object with timestamp: {obj.get('detected_timestamp')} for object: {obj.get('object_id')}")
             
             # Add only new objects
             if new_objects:
                 data["objects"].extend(new_objects)
-                print(f"💾 Saving {len(new_objects)} new lost objects (total: {len(data['objects'])})")
-            else:
-                print(f"ℹ️ No new lost objects to save")
+                #print(f"💾 Saving {len(new_objects)} new lost objects (total: {len(data['objects'])})")
+            #else:
+            #    print(f"ℹ️ No new lost objects to save")
             
             # Update metadata
             self._update_metadata(data, len(data["objects"]))
@@ -297,9 +297,9 @@ class LabelingManager:
             if self._save_json(self.lost_labels_file, data, self.lost_file_lock):
                 # Clear buffer only if save was successful
                 self.lost_buffer.clear()
-                print(f"✅ Lost objects saved successfully")
-            else:
-                print(f"❌ Failed to save lost objects")
+            #    print(f"✅ Lost objects saved successfully")
+            #else:
+            #    print(f"❌ Failed to save lost objects")
     
     def create_found_object_data(self, obj, image_width: int, image_height: int, 
                                 image_filename: str, preview_filename: str) -> Dict[str, Any]:
