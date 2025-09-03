@@ -195,7 +195,7 @@ class Controller:
             self.pipeline.process()
             all_sources_finished = self.pipeline.check_all_sources_finished()
 
-            pipeline_results = self.pipeline.get_latest_result()
+            pipeline_results = self.pipeline.peek_latest_result()
 
             #mc_tracking_results = pipeline_results.get("mc_trackers", [])
             mc_tracking_results = pipeline_results.get(self.pipeline.get_final_results_name(), [])

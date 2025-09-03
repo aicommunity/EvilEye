@@ -1,6 +1,7 @@
 from .base_class import EvilEyeBase
 from abc import abstractmethod
 from typing import List, Dict, Any, Optional
+from queue import Queue
 
 
 class PipelineBase(EvilEyeBase):
@@ -14,14 +15,19 @@ class PipelineBase(EvilEyeBase):
         self._credentials = None
         
         # Results storage for external access
-        self._results_list: List[Dict[str, Any]] = []
+        self._results_queue: Queue = Queue(maxsize=2)
         self._current_results: Dict[str, Any] = {}
         self._final_results_name: str|None = None
 
     def default(self):
         """Reset pipeline to default state"""
         self._credentials = {}
-        self._results_list = []
+        # Clear the queue
+        while not self._results_queue.empty():
+            try:
+                self._results_queue.get_nowait()
+            except:
+                pass
         self._current_results = {}
 
     def set_credentials(self, credentials):
@@ -42,7 +48,12 @@ class PipelineBase(EvilEyeBase):
 
     def reset_impl(self):
         """Reset pipeline state - override in subclasses"""
-        self._results_list = []
+        # Clear the queue
+        while not self._results_queue.empty():
+            try:
+                self._results_queue.get_nowait()
+            except:
+                pass
         self._current_results = {}
 
     def set_params_impl(self):
@@ -81,7 +92,31 @@ class PipelineBase(EvilEyeBase):
         Returns:
             List of result dictionaries
         """
-        return self._results_list
+        # Return empty list if queue is empty
+        if self._results_queue.empty():
+            return []
+        
+        # Convert queue to list efficiently
+        results = []
+        temp_queue = Queue()
+        
+        # Copy all items from the original queue
+        while not self._results_queue.empty():
+            try:
+                item = self._results_queue.get_nowait()
+                results.append(item)
+                temp_queue.put(item)
+            except:
+                break
+        
+        # Restore the original queue
+        while not temp_queue.empty():
+            try:
+                self._results_queue.put(temp_queue.get_nowait())
+            except:
+                break
+        
+        return results
 
     def get_current_results(self) -> Dict[str, Any]:
         """
@@ -94,20 +129,31 @@ class PipelineBase(EvilEyeBase):
 
     def add_result(self, result: Dict[str, Any]):
         """
-        Add result to the results list.
+        Add result to the results queue.
+        If queue is full, automatically remove oldest result.
         
         Args:
             result: Result dictionary to add
         """
-        if len(self._results_list) == 0:
-            self._results_list.append(result)
-        else:
-            self._results_list[0] = result
+        # If queue is full, remove oldest result automatically
+        if self._results_queue.full():
+            try:
+                self._results_queue.get_nowait()  # Remove oldest result
+            except:
+                pass
+        
+        # Add new result
+        self._results_queue.put(result)
         self._current_results = result
 
     def clear_results(self):
         """Clear all stored results"""
-        self._results_list = []
+        # Clear the queue
+        while not self._results_queue.empty():
+            try:
+                self._results_queue.get_nowait()
+            except:
+                pass
         self._current_results = {}
 
     def get_result_count(self) -> int:
@@ -117,7 +163,7 @@ class PipelineBase(EvilEyeBase):
         Returns:
             Number of results
         """
-        return len(self._results_list)
+        return self._results_queue.qsize()
 
     def get_latest_result(self) -> Optional[Dict[str, Any]]:
         """
@@ -126,9 +172,117 @@ class PipelineBase(EvilEyeBase):
         Returns:
             Latest result dictionary or None if no results
         """
-        if self._results_list:
-            return self._results_list[-1]
-        return None
+        if self._results_queue.empty():
+            return None
+        
+        # Get the latest result without removing it from queue
+        latest_result = None
+        temp_queue = Queue()
+        
+        # Copy all items to find the latest
+        while not self._results_queue.empty():
+            try:
+                item = self._results_queue.get_nowait()
+                latest_result = item
+                temp_queue.put(item)
+            except:
+                break
+        
+        # Restore the original queue
+        while not temp_queue.empty():
+            try:
+                self._results_queue.put(temp_queue.get_nowait())
+            except:
+                break
+        
+        return latest_result
+    
+    def get_results_queue(self) -> Queue:
+        """
+        Get the results queue directly.
+        
+        Returns:
+            Queue containing results
+        """
+        return self._results_queue
+    
+    def is_results_queue_full(self) -> bool:
+        """
+        Check if results queue is full.
+        
+        Returns:
+            True if queue is full, False otherwise
+        """
+        return self._results_queue.full()
+    
+    def get_results_queue_size(self) -> int:
+        """
+        Get the current size of the results queue.
+        
+        Returns:
+            Current number of items in the queue
+        """
+        return self._results_queue.qsize()
+    
+    def peek_latest_result(self) -> Optional[Dict[str, Any]]:
+        """
+        Peek at the latest result without removing it from queue.
+        More efficient than get_latest_result() for frequent access.
+        
+        Returns:
+            Latest result dictionary or None if no results
+        """
+        if self._results_queue.empty():
+            return None
+        
+        # Use a more efficient approach for single item access
+        try:
+            # Get all items temporarily
+            items = []
+            while not self._results_queue.empty():
+                items.append(self._results_queue.get_nowait())
+            
+            # Restore all items
+            for item in items:
+                self._results_queue.put(item)
+            
+            # Return the last item if any
+            return items[-1] if items else None
+        except:
+            return None
+    
+    def get_results_iterator(self):
+        """
+        Get an iterator over all results in the queue.
+        This is more memory efficient than get_results_list() for large queues.
+        
+        Returns:
+            Iterator over results
+        """
+        if self._results_queue.empty():
+            return iter([])
+        
+        # Create a temporary queue to preserve original
+        temp_queue = Queue()
+        results = []
+        
+        # Copy all items
+        while not self._results_queue.empty():
+            try:
+                item = self._results_queue.get_nowait()
+                results.append(item)
+                temp_queue.put(item)
+            except:
+                break
+        
+        # Restore the original queue
+        while not temp_queue.empty():
+            try:
+                self._results_queue.put(temp_queue.get_nowait())
+            except:
+                break
+        
+        return iter(results)
 
     def get_final_results_name(self):
         return self._final_results_name

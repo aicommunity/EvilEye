@@ -50,6 +50,10 @@ class LabelingManager:
         self.found_labels_file = os.path.join(self.current_day_dir, 'objects_found.json')
         self.lost_labels_file = os.path.join(self.current_day_dir, 'objects_lost.json')
         
+        # File locks to prevent simultaneous read/write access
+        self.found_file_lock = Lock()
+        self.lost_file_lock = Lock()
+        
         # Initialize files if they don't exist
         self._init_label_files()
         
@@ -61,10 +65,6 @@ class LabelingManager:
         self.last_save_time = time.time()
         self.running = True
         self.buffer_lock = Lock()
-        
-        # File locks to prevent simultaneous read/write access
-        self.found_file_lock = Lock()
-        self.lost_file_lock = Lock()
         
         # Pre-load existing data into buffers to avoid clearing files
         self._preload_existing_data()
@@ -224,15 +224,15 @@ class LabelingManager:
             for obj in self.found_buffer:
                 if obj.get('timestamp') not in existing_timestamps or obj.get('object_id') not in existing_ids:
                     new_objects.append(obj)
-                else:
-                    print(f"⚠️ Skipping duplicate found object with timestamp: {obj.get('timestamp')} for object: {obj.get('object_id')}")
+            #    else:
+            #        print(f"⚠️ Skipping duplicate found object with timestamp: {obj.get('timestamp')} for object: {obj.get('object_id')}")
             
             # Add only new objects
             if new_objects:
                 data["objects"].extend(new_objects)
-                print(f"💾 Saving {len(new_objects)} new found objects (total: {len(data['objects'])})")
-            else:
-                print(f"ℹ️ No new found objects to save")
+            #    print(f"💾 Saving {len(new_objects)} new found objects (total: {len(data['objects'])})")
+            #else:
+            #    print(f"ℹ️ No new found objects to save")
             
             # Update metadata
             self._update_metadata(data, len(data["objects"]))
@@ -241,9 +241,9 @@ class LabelingManager:
             if self._save_json(self.found_labels_file, data, self.found_file_lock):
                 # Clear buffer only if save was successful
                 self.found_buffer.clear()
-                print(f"✅ Found objects saved successfully")
-            else:
-                print(f"❌ Failed to save found objects")
+            #    print(f"✅ Found objects saved successfully")
+            #else:
+            #    print(f"❌ Failed to save found objects")
     
     def add_object_lost(self, object_data: Dict[str, Any]):
         """
@@ -280,15 +280,15 @@ class LabelingManager:
             for obj in self.lost_buffer:
                 if obj.get('detected_timestamp') not in existing_timestamps or obj.get('object_id') not in existing_ids:
                     new_objects.append(obj)
-                else:
-                    print(f"⚠️ Skipping duplicate lost object with timestamp: {obj.get('detected_timestamp')} for object: {obj.get('object_id')}")
+                #else:
+                #    print(f"⚠️ Skipping duplicate lost object with timestamp: {obj.get('detected_timestamp')} for object: {obj.get('object_id')}")
             
             # Add only new objects
             if new_objects:
                 data["objects"].extend(new_objects)
-                print(f"💾 Saving {len(new_objects)} new lost objects (total: {len(data['objects'])})")
-            else:
-                print(f"ℹ️ No new lost objects to save")
+                #print(f"💾 Saving {len(new_objects)} new lost objects (total: {len(data['objects'])})")
+            #else:
+            #    print(f"ℹ️ No new lost objects to save")
             
             # Update metadata
             self._update_metadata(data, len(data["objects"]))
@@ -297,9 +297,9 @@ class LabelingManager:
             if self._save_json(self.lost_labels_file, data, self.lost_file_lock):
                 # Clear buffer only if save was successful
                 self.lost_buffer.clear()
-                print(f"✅ Lost objects saved successfully")
-            else:
-                print(f"❌ Failed to save lost objects")
+            #    print(f"✅ Lost objects saved successfully")
+            #else:
+            #    print(f"❌ Failed to save lost objects")
     
     def create_found_object_data(self, obj, image_width: int, image_height: int, 
                                 image_filename: str, preview_filename: str) -> Dict[str, Any]:
@@ -552,12 +552,53 @@ class LabelingManager:
             total_existing = len(existing_found) + len(existing_lost)
             if total_existing > 0:
                 print(f"✅ Successfully pre-loaded {total_existing} existing objects")
+                
+                # Return the maximum object_id found for counter initialization
+                max_object_id = self._get_max_object_id(existing_found, existing_lost)
+                return max_object_id
             else:
                 print(f"ℹ️ No existing objects found, starting fresh")
+                return 0
                 
         except Exception as e:
             print(f"⚠️ Warning: Error pre-loading existing data: {e}")
             print(f"ℹ️ Continuing with fresh start")
+            return 0
+    
+    def _get_max_object_id(self, found_objects: List[Dict], lost_objects: List[Dict]) -> int:
+        """
+        Get the maximum object_id from existing objects.
+        
+        Args:
+            found_objects: List of found objects
+            lost_objects: List of lost objects
+            
+        Returns:
+            Maximum object_id found, or 0 if no objects exist
+        """
+        max_id = 0
+        
+        # Check found objects
+        for obj in found_objects:
+            obj_id = obj.get('object_id')
+            if obj_id is not None and isinstance(obj_id, (int, str)):
+                try:
+                    obj_id_int = int(obj_id)
+                    max_id = max(max_id, obj_id_int)
+                except (ValueError, TypeError):
+                    continue
+        
+        # Check lost objects
+        for obj in lost_objects:
+            obj_id = obj.get('object_id')
+            if obj_id is not None and isinstance(obj_id, (int, str)):
+                try:
+                    obj_id_int = int(obj_id)
+                    max_id = max(max_id, obj_id_int)
+                except (ValueError, TypeError):
+                    continue
+        
+        return max_id
     
     def _check_and_repair_json_files(self):
         """Check and repair corrupted JSON files."""
