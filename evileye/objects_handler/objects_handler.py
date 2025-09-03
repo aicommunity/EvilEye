@@ -42,7 +42,7 @@ class ObjectsHandler(EvilEyeBase):
         self.new_objs: ObjectResultList = ObjectResultList()
         self.active_objs: ObjectResultList = ObjectResultList()
         self.lost_objs: ObjectResultList = ObjectResultList()
-        self.history_len = 1
+        self.history_len = 30
         self.lost_thresh = 5  # Порог перевода (в кадрах) в потерянные объекты
         self.max_active_objects = 100
         self.max_lost_objects = 100
