@@ -1,0 +1,185 @@
+{
+  "pipeline": {
+    "sources": [
+      {
+        "source": "VideoFile",
+        "camera": "/home/user/Videos/40376-video_trim.mp4",
+        "apiPreference": "CAP_FFMPEG",
+        "split": true,
+        "num_split": 2,
+        "src_coords": [[0, 0, 2304, 1300], [0, 1300, 2304, 1292]],
+        "source_ids": [1, 2],
+        "source_names": ["Cam2", "Cam3"]
+      }
+    ],
+    "detectors":[
+      {
+        "source_ids": [1],
+        "model": "yolov8n.pt",
+        "show" : false,
+        "inference_size": 1280,
+        "device": null,
+        "conf" : 0.4,
+        "save" : false,
+        "stride_type": "frames",
+        "vid_stride": 1,
+        "classes" : [0, 1, 24, 25, 63, 66, 67],
+        "num_detection_threads": 3,
+        "roi": [[]]
+      },
+      {
+        "source_ids": [2],
+        "model": "yolov8n.pt",
+        "show" : false,
+        "inference_size": 640,
+        "device": null,
+        "conf" : 0.4,
+        "save" : false,
+        "stride_type": "frames",
+        "vid_stride": 1,
+        "classes" : [0, 1, 24, 25, 63, 66, 67],
+        "num_detection_threads": 3,
+        "roi": [[[0, 0, 250, 200], [0, 0, 500, 400], [0, 0, 1000, 800], [0, 0, 2304, 1292]]]
+      }
+    ],
+    "trackers":[
+      {
+        "source_ids": [1],
+        "fps": 5,
+        "botsort_cfg": {
+          "appearance_thresh": 0.25,
+          "gmc_method": "sparseOptFlow",
+          "match_thresh": 0.8,
+          "new_track_thresh": 0.6,
+          "proximity_thresh": 0.5,
+          "track_buffer": 30,
+          "track_high_thresh": 0.5,
+          "track_low_thresh": 0.1,
+          "tracker_type": "botsort",
+          "with_reid": false
+        }
+      },
+      {
+        "source_ids": [2],
+        "fps": 5,
+        "botsort_cfg": {
+          "appearance_thresh": 0.25,
+          "gmc_method": "sparseOptFlow",
+          "match_thresh": 0.8,
+          "new_track_thresh": 0.6,
+          "proximity_thresh": 0.5,
+          "track_buffer": 30,
+          "track_high_thresh": 0.5,
+          "track_low_thresh": 0.1,
+          "tracker_type": "botsort",
+          "with_reid": false
+        }
+      }
+    ],
+    "mc_trackers": [
+      {
+        "source_ids": [
+          1, 2
+        ],
+        "enable": true
+      }
+    ]
+  },
+  "visualizer" : {
+    "num_width": 2,
+    "num_height": 1,
+    "visual_buffer_num_frames": 10,
+    "source_ids": [1,2],
+    "fps": [5,5],
+    "show_debug_info": true
+  },
+  "objects_handler": {
+    "history_len": 30,
+    "lost_store_time_secs": 60,
+    "lost_thresh": 5
+  },
+  "controller": {
+    "autoclose": false,
+    "fps": 30,
+    "class_names": [ "person",
+                     "bicycle",
+                     "car",
+                     "motorcycle",
+                     "airplane",
+                     "bus",
+                     "train",
+                     "truck",
+                     "boat",
+                     "traffic light",
+                     "fire hydrant",
+                     "stop sign",
+                     "parking meter",
+                     "bench",
+                     "bird",
+                     "cat",
+                     "dog",
+                     "horse",
+                     "sheep",
+                     "cow",
+                     "elephant",
+                     "bear",
+                     "zebra",
+                     "giraffe",
+                     "backpack",
+                     "umbrella",
+                     "handbag",
+                     "tie",
+                     "suitcase",
+                     "frisbee",
+                     "skis",
+                     "snowboard",
+                     "sports ball",
+                     "kite",
+                     "baseball bat",
+                     "baseball glove",
+                     "skateboard",
+                     "surfboard",
+                     "tennis racket",
+                     "bottle",
+                     "wine glass",
+                     "cup",
+                     "fork",
+                     "knife",
+                     "spoon",
+                     "bowl",
+                     "banana",
+                     "apple",
+                     "sandwich",
+                     "orange",
+                     "broccoli",
+                     "carrot",
+                     "hot dog",
+                     "pizza",
+                     "donut",
+                     "cake",
+                     "chair",
+                     "couch",
+                     "potted plant",
+                     "bed",
+                     "dining table",
+                     "toilet",
+                     "tv",
+                     "laptop",
+                     "mouse",
+                     "remote",
+                     "keyboard",
+                     "cell phone",
+                     "microwave",
+                     "oven",
+                     "toaster",
+                     "sink",
+                     "refrigerator",
+                     "book",
+                     "clock",
+                     "vase",
+                     "scissors",
+                     "teddy bear",
+                     "hair drier",
+                     "toothbrush" ]
+  }
+}

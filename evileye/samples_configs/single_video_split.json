@@ -1,0 +1,213 @@
+{
+  "pipeline": {
+    "pipeline_class": "PipelineSurveillance",
+    "sources": [
+            {
+                "source": "VideoFile",
+                "camera": "videos/sample_split.mp4",
+                "apiPreference": "CAP_FFMPEG",
+                "split": true,
+                "num_split": 2,
+                "src_coords": [
+                    [
+                        0,
+                        0,
+                        2304,
+                        1300
+                    ],
+                    [
+                        0,
+                        1300,
+                        2304,
+                        1292
+                    ]
+                ],
+                "source_ids": [
+                    0,
+                    1
+                ],
+                "source_names": [
+                    "Cam1",
+                    "Cam2"
+                ]
+            }
+    ],
+    "detectors": [
+            {
+                "source_ids": [
+                    0
+                ],
+                "model": "models/yolo11n.pt",
+                "show": false,
+                "conf": 0.4,
+                "inference_size": 640,
+                "device": null,
+                "save": false,
+                "stride_type": "frames",
+                "vid_stride": 1,
+                "classes": [
+                    0,
+                    1,
+                    24,
+                    25,
+                    63,
+                    66,
+                    67
+                ],
+                "num_detection_threads": 3,
+                "roi": [
+                    [
+                        [
+                            0,
+                            0,
+                            2304,
+                            1300
+                        ],
+                        [
+                            736,
+                            0,
+                            640,
+                            670
+                        ],
+                        [
+                            905,
+                            0,
+                            310,
+                            265
+                        ]
+                    ]
+                ]
+            },
+            {
+                "source_ids": [
+                    1
+                ],
+                "model": "models/yolo11n.pt",
+                "show": false,
+                "inference_size": 1280,
+                "device": null,
+                "conf": 0.4,
+                "save": false,
+                "stride_type": "frames",
+                "vid_stride": 1,
+                "classes": [
+                    0,
+                    1,
+                    24,
+                    25,
+                    63,
+                    66,
+                    67
+                ],
+                "num_detection_threads": 1,
+                "roi": [
+                    []
+                ]
+            }
+    ],
+    "trackers": [
+            {
+                "source_ids": [
+                    0
+                ],
+                "fps": 5,
+                "botsort_cfg": {
+                    "appearance_thresh": 0.25,
+                    "gmc_method": "sparseOptFlow",
+                    "match_thresh": 0.8,
+                    "new_track_thresh": 0.6,
+                    "proximity_thresh": 0.5,
+                    "track_buffer": 30,
+                    "track_high_thresh": 0.5,
+                    "track_low_thresh": 0.1,
+                    "tracker_type": "botsort",
+                    "with_reid": false
+                }
+            },
+            {
+                "source_ids": [
+                    1
+                ],
+                "fps": 5,
+                "botsort_cfg": {
+                    "appearance_thresh": 0.25,
+                    "gmc_method": "sparseOptFlow",
+                    "match_thresh": 0.8,
+                    "new_track_thresh": 0.6,
+                    "proximity_thresh": 0.5,
+                    "track_buffer": 30,
+                    "track_high_thresh": 0.5,
+                    "track_low_thresh": 0.1,
+                    "tracker_type": "botsort",
+                    "with_reid": false
+                }
+            }
+    ],
+    "mc_trackers": [
+      {
+        "enable": false,
+        "source_ids": [0, 1]
+      }
+    ]
+  },
+  "controller": {
+    "fps": 10,
+    "enable_close_from_gui": true,
+    "class_names": ["person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light", "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard", "sports ball", "kite", "baseball bat", "baseball glove", "skateboard", "surfboard", "tennis racket", "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair", "couch", "potted plant", "bed", "dining table", "toilet", "tv", "laptop", "mouse", "remote", "keyboard", "cell phone", "microwave", "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase", "scissors", "teddy bear", "hair drier", "toothbrush"],
+    "memory_periodic_check_sec": 60,
+    "show_memory_usage": true,
+    "max_memory_usage_mb": 2048,
+    "auto_restart": false
+  },
+  "objects_handler": {
+    "max_active_objects": 100,
+    "max_lost_objects": 100,
+    "lost_thresh": 5,
+    "lost_store_time_secs": 60,
+    "history_len": 1
+  },
+  "events_detectors": {
+    "CamEventsDetector": {},
+    "FieldOfViewEventsDetector": {
+      "sources": {}
+    },
+    "ZoneEventsDetector": {
+      "sources": {},
+      "event_threshold": 0,
+      "zone_left_threshold": 0
+    }
+  },
+  "events_processor": {},
+  "database": {
+    "database_name": "evil_eye_db",
+    "host_name": "localhost",
+    "port": 5432,
+    "admin_user_name": "postgres",
+    "admin_password": "",
+    "image_dir": "EvilEyeData",
+    "preview_width": 300,
+    "preview_height": 150
+  },
+  "visualizer": {
+    "num_width": 2,
+    "num_height": 1,
+    "visual_buffer_num_frames": 10,
+    "source_ids": [0, 1],
+    "fps": [5, 5],
+    "gui_enabled": true,
+    "show_debug_info": true,
+    "objects_journal_enabled": true,
+        "text_config": {
+          "font_size_pt": 42,
+          "font_face": 0,
+          "color": [0, 0, 255],
+          "thickness": null,
+          "background_color": [0, 0, 0],
+          "background_enabled": false,
+          "padding_percent": 1.5,
+          "position_offset_percent": [0, -8],
+          "font_scale_method": "resolution_based",
+          "base_resolution": [1920, 1080]
+        }
+  }
+}
