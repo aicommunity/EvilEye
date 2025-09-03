@@ -4,15 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "evileye"
-version = "0.0.1"
+version = "0.0.2"
 description = "Intelligence video surveillance system"
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
-    {name = "EvilEye Team", email = "team@evileye.com"}
+    {name = "AI Community", email = "palexab@gmail.com"}
 ]
 maintainers = [
-    {name = "EvilEye Team", email = "team@evileye.com"}
+    {name = "AI Community", email = "palexab@gmail.com"}
 ]
 keywords = ["surveillance", "computer-vision", "object-detection", "object-tracking", "video-processing"]
 classifiers = [
