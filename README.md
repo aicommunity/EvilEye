@@ -29,13 +29,16 @@ pip install evileye
 ```bash
 # Clone the repository
 git clone https://github.com/evileye/evileye.git
-cd evileye
+cd EvilEye
 
 # Install in development mode
 pip install -e "."
 
 # Fix entry points
 python fix_entry_points.py
+
+Next you can use the 'evileye' command to work, or if the command does not work:
+python3 -m evileye.cli_wrapper
 ```
 
 ### Basic Usage

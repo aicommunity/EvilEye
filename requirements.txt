@@ -11,4 +11,5 @@ tqdm
 shapely
 pympler
 tdqm
+PyQt6
 
