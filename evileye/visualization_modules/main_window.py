@@ -116,8 +116,13 @@ class MainWindow(QMainWindow):
 
         # Create journal window (DB or JSON mode)
         if hasattr(self.controller, 'use_database') and self.controller.use_database:
-            self.db_journal_win = DatabaseJournalWindow(self, self.params, self.controller.database_config, close_app)
-            self.db_journal_win.setVisible(False)
+            try:
+                self.db_journal_win = DatabaseJournalWindow(self, self.params, self.controller.database_config, close_app)
+                self.db_journal_win.setVisible(False)
+            except Exception as e:
+                print(f"Warning: Failed to create database journal window. Falling back to JSON mode. Reason: {e}")
+                # Fallback to JSON journal mode
+                self._create_json_journal_window()
         else:
             # Get image_dir from database_config (even if database is disabled)
             images_dir = 'EvilEyeData'  # default
@@ -348,6 +353,25 @@ class MainWindow(QMainWindow):
         #src_widget = SourceWidget(params=None, creds=None, parent=self)
         #src_widget.show()
         self.controller.add_channel()
+
+    def _create_json_journal_window(self):
+        """Create JSON journal window as fallback when database is not available"""
+        # Get image_dir from database_config (even if database is disabled)
+        images_dir = 'EvilEyeData'  # default
+        if hasattr(self.controller, 'database_config') and self.controller.database_config.get('database', {}):
+            images_dir = self.controller.database_config['database'].get('images_dir', images_dir)
+        
+        # Check if directory exists before creating journal
+        if os.path.exists(images_dir):
+            try:
+                self.db_journal_win = EventsJournalJson(images_dir)
+                self.db_journal_win.setVisible(False)
+            except Exception as e:
+                print(f"Error creating JSON journal: {e}")
+                self.db_journal_win = None
+        else:
+            print(f"Images directory does not exist: {images_dir}")
+            self.db_journal_win = None
 
     @pyqtSlot()
     def del_channel_slot(self):  # Выбор источника для добавления зон

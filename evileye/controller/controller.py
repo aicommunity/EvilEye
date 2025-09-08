@@ -278,11 +278,16 @@ class Controller:
         
         # Start database components only if database is enabled
         if self.use_database and self.db_controller:
-            self.db_controller.connect()
-            self.db_adapter_obj.start()
-            self.db_adapter_zone_events.start()
-            self.db_adapter_fov_events.start()
-            self.db_adapter_cam_events.start()
+            try:
+                self.db_controller.connect()
+                self.db_adapter_obj.start()
+                self.db_adapter_zone_events.start()
+                self.db_adapter_fov_events.start()
+                self.db_adapter_cam_events.start()
+            except Exception as e:
+                print(f"Warning: Database connection failed during start. Disabling database functionality. Reason: {e}")
+                self.use_database = False
+                self.db_controller = None
         
         self.zone_events_detector.start()
         self.cam_events_detector.start()

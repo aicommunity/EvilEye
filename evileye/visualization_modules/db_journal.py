@@ -48,8 +48,19 @@ class DatabaseJournalWindow(QWidget):
         self.db_controller = database_controller_pg.DatabaseControllerPg(params, controller_type='Receiver')
         self.db_controller.set_params(**self.db_params)
         self.db_controller.init()
-        self.db_controller.connect()
-        self.tables = self.db_params['tables']
+        
+        # Try to connect to database, fallback to no-database mode if connection fails
+        try:
+            self.db_controller.connect()
+            self.tables = self.db_params['tables']
+            self.database_available = True
+        except Exception as e:
+            print(f"Warning: Cannot connect to database. Database journal will be disabled. Reason: {e}")
+            # Disable database functionality
+            self.db_controller = None
+            self.tables = {}
+            # Set flag to indicate database is not available
+            self.database_available = False
 
         self.cam_events_adapter = JournalAdapterCamEvents()
         self.cam_events_adapter.set_params(**self.adapter_params['DatabaseAdapterCamEvents'])
@@ -86,8 +97,11 @@ class DatabaseJournalWindow(QWidget):
             tab = self.tabs.widget(tab_idx)
             tab.close()
         print('Database journal closed')
-        self.db_controller.save_job_configuration_info(self.params)
-        self.db_controller.disconnect()
+        
+        # Only save and disconnect if database is available
+        if hasattr(self, 'database_available') and self.database_available and self.db_controller:
+            self.db_controller.save_job_configuration_info(self.params)
+            self.db_controller.disconnect()
 
     def closeEvent(self, event):
         if self.main_window and self.close_app:
