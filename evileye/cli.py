@@ -302,12 +302,12 @@ This directory contains sample configurations for EvilEye system.
 
 ## Available Samples:
 
-### 🎬 Video Processing
+### Video Processing
 - **single_video.json** - Single video file processing (planes_sample.mp4)
 - **single_video_split.json** - Single video with 2-way split processing (sample_split.mp4)
 - **multi_videos.json** - Multiple video files with multi-camera tracking (6p-c0.avi, 6p-c1.avi)
 
-### 📹 IP Camera Processing  
+### IP Camera Processing  
 - **single_ip_camera.json** - Single IP camera stream processing
 
 ## Video Files:

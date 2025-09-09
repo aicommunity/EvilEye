@@ -7,7 +7,7 @@ name = "evileye"
 version = "0.0.3"
 description = "Intelligence video surveillance system"
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
 authors = [
     {name = "AI Community", email = "palexab@gmail.com"}
 ]
@@ -19,7 +19,6 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -107,11 +106,15 @@ evileye-create = "evileye.create_wrapper:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["core*", "pipelines*", "object_*", "events_*", "database_*", "visualization_*", "utils*"]
-exclude = ["tests*", "scripts*", "samples*", "configs*", "models*", "icons*"]
+include = ["evileye*"]
+exclude = ["tests*", "scripts*", "samples*", "configs*", "models*", "icons*", "docs*", "dist*", "build*", "*.egg-info*"]
 
 [tool.setuptools.package-data]
-"*" = ["*.json", "*.yaml", "*.yml", "*.onnx", "*.pt", "*.pth"]
+"evileye" = [
+    "*.json", "*.yaml", "*.yml", "*.onnx", "*.pt", "*.pth",
+    "icons/*.svg", "models/*.pt", "models/*.onnx",
+    "samples_configs/*.json", "credentials_proto.json", "database_config.json"
+]
 
 [tool.black]
 line-length = 88
