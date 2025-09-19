@@ -410,7 +410,7 @@ def normalize_config_path(config_path):
     config_path_str = str(config_path)
     
     # If it's already an absolute path or already has configs/ prefix, return as is
-    if os.path.isabs(config_path_str) or config_path_str.startswith("configs/"):
+    if os.path.isabs(config_path_str) or config_path_str.startswith("configs"):
         return config_path_str
     
     # Add configs/ prefix

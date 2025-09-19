@@ -29,27 +29,30 @@ pip install evileye
 ```bash
 # Clone the repository
 git clone https://github.com/evileye/evileye.git
-cd evileye
+cd EvilEye
 
 # Install in development mode
 pip install -e "."
 
 # Fix entry points
 python fix_entry_points.py
+
+Next you can use the 'evileye' command to work, or if the command does not work:
+python3 -m evileye.cli_wrapper
 ```
 
 ### Basic Usage
+
+EvilEye provides multiple entry points for different use cases:
 
 ```bash
 # Deploy sample configurations (recommended for beginners)
 evileye deploy-samples
 
-or 
-
 # Deploy EvilEye system to current directory
 evileye deploy
 
-# List configs
+# List available configurations
 evileye list-configs
 
 # Run with configuration ('configs/' prefix may be omitted)
@@ -57,7 +60,22 @@ evileye run configs/my_config.json
 
 # Create new configuration
 evileye-create my_config --sources 2 --source-type video_file
+
+# Launch main application with GUI
+evileye-launch
+
+# Open configuration editor
+evileye-configure configs/my_config.json
+
+# Direct process launcher
+evileye-process --config configs/my_config.json
 ```
+
+**Quick Start Options:**
+- **GUI Users**: Use `evileye-launch` for the main application interface
+- **CLI Users**: Use `evileye` commands for command-line operations
+- **Configuration**: Use `evileye-configure` for visual configuration editing
+- **Automation**: Use `evileye-process` for headless operation
 
 #### After Running `evileye deploy`
 
@@ -463,13 +481,30 @@ The `mc_trackers` section configures cross-camera object tracking.
 
 ## CLI Commands
 
-EvilEye provides a comprehensive command-line interface for all operations:
+EvilEye provides a comprehensive command-line interface for all operations through multiple entry points:
 
-### Basic Commands
+### Available Entry Points
+
+EvilEye provides several command-line entry points for different operations:
+
+| Command | Description | Usage |
+|---------|-------------|-------|
+| `evileye` | Main CLI interface with all commands | `evileye [COMMAND] [OPTIONS]` |
+| `evileye-process` | Direct process launcher with GUI | `evileye-process [OPTIONS]` |
+| `evileye-configure` | Configuration editor GUI | `evileye-configure [CONFIG_FILE]` |
+| `evileye-launch` | Main application launcher GUI | `evileye-launch [CONFIG_FILE]` |
+| `evileye-create` | Configuration file creator | `evileye-create [NAME] [OPTIONS]` |
+
+### Main CLI Commands (`evileye`)
+
+The main `evileye` command provides access to all system functionality:
 
 ```bash
 # Deploy configuration files to current directory
 evileye deploy
+
+# Deploy sample configurations with working examples
+evileye deploy-samples
 
 # Create new configuration
 evileye-create my_config --sources 2 --source-type video_file
@@ -477,9 +512,110 @@ evileye-create my_config --sources 2 --source-type video_file
 # Run with configuration
 evileye run configs/my_config.json
 
+# Validate configuration file
+evileye validate configs/my_config.json
+
+# List available configurations
+evileye list-configs
+
 # Show system information
 evileye info
 ```
+
+### Process Launcher (`evileye-process`)
+
+Direct launcher for the surveillance process with GUI support:
+
+```bash
+# Launch with configuration file
+evileye-process --config configs/my_config.json
+
+# Launch with GUI disabled (headless mode)
+evileye-process --config configs/my_config.json --no-gui
+
+# Launch with auto-close when video ends
+evileye-process --config configs/my_config.json --autoclose
+
+# Use preset for multiple video sources
+evileye-process --sources_preset multi_camera
+```
+
+**Options:**
+- `--config CONFIG_FILE` - Configuration file path
+- `--gui` / `--no-gui` - Enable/disable GUI (default: enabled)
+- `--autoclose` - Auto-close when video ends
+- `--sources_preset PRESET` - Use preset for multiple sources
+
+### Configuration Editor (`evileye-configure`)
+
+Graphical configuration editor for creating and modifying configuration files:
+
+```bash
+# Open configuration editor
+evileye-configure
+
+# Open specific configuration file
+evileye-configure configs/my_config.json
+
+# Open configuration from any path
+evileye-configure /path/to/config.json
+```
+
+**Features:**
+- Visual configuration editor
+- Real-time validation
+- Template-based configuration creation
+- Source, detector, and tracker configuration
+- Multi-camera setup support
+
+### Application Launcher (`evileye-launch`)
+
+Main application launcher with integrated configuration management:
+
+```bash
+# Launch main application
+evileye-launch
+
+# Launch with specific configuration
+evileye-launch configs/my_config.json
+```
+
+**Features:**
+- Configuration file browser
+- Process control (start/stop surveillance)
+- Real-time status monitoring
+- Log display and management
+- Tabbed interface for different functions
+
+### Configuration Creator (`evileye-create`)
+
+Command-line tool for creating new configuration files:
+
+```bash
+# Create basic configuration
+evileye-create my_config
+
+# Create configuration with specific number of sources
+evileye-create my_config --sources 3
+
+# Create configuration with specific source type
+evileye-create my_config --sources 2 --source-type ip_camera
+
+# Create configuration with specific pipeline
+evileye-create my_config --pipeline PipelineSurveillance
+
+# List available pipeline classes
+evileye-create --list-pipelines
+
+# Create configuration in specific directory
+evileye-create /path/to/custom_config
+```
+
+**Options:**
+- `--sources N` - Number of video sources (default: 0)
+- `--source-type TYPE` - Source type: `video_file`, `ip_camera`, `device`
+- `--pipeline PIPELINE` - Pipeline class to use
+- `--list-pipelines` - List available pipeline classes
 
 The Configuration GUI provides:
 - Configuration file browser and editor
@@ -548,11 +684,52 @@ evileye-create surveillance_config --sources 2 --source-type ip_camera
 # 5. Validate configuration
 evileye validate configs/surveillance_config.json
 
-# 6. Run the system
+# 6. Run the system (multiple options available)
 evileye run configs/surveillance_config.json
 
-# Alternative: Use GUI for easier management
+# Alternative: Use direct process launcher
+evileye-process --config configs/surveillance_config.json
+
+# Alternative: Use GUI launcher for easier management
 evileye-launch
+
+# Alternative: Use configuration editor for fine-tuning
+evileye-configure configs/surveillance_config.json
+```
+
+### Entry Point Usage Scenarios
+
+**For Beginners:**
+```bash
+# Use the main launcher with GUI
+evileye-launch
+```
+
+**For Advanced Users:**
+```bash
+# Use direct process launcher with specific options
+evileye-process --config configs/my_config.json --no-gui --autoclose
+```
+
+**For Configuration Management:**
+```bash
+# Create new configurations
+evileye-create my_config --sources 3 --source-type ip_camera
+
+# Edit existing configurations
+evileye-configure configs/my_config.json
+
+# Validate configurations
+evileye validate configs/my_config.json
+```
+
+**For Automation/Scripts:**
+```bash
+# Use main CLI for scripting
+evileye run configs/automated_config.json
+
+# Use process launcher for headless operation
+evileye-process --config configs/headless_config.json --no-gui
 ```
 
 ## Development

@@ -3,6 +3,7 @@ import json
 import sys
 import os
 from pathlib import Path
+import onnxruntime as ort
 
 try:
     from PyQt6 import QtCore
