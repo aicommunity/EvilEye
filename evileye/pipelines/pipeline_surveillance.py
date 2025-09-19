@@ -6,6 +6,7 @@ from ..core.processor_base import ProcessorBase
 from ..core.pipeline_processors import PipelineProcessors
 from typing import Any, Tuple, List, Dict
 import evileye.preprocessing  # Import to register PreprocessingPipeline
+import evileye.attributes_detection  # Import to register RoiFeeder and AttributeClassifier
 
 
 
@@ -34,6 +35,9 @@ class PipelineSurveillance(PipelineProcessors):
         detectors_params = pipeline_params.get("detectors", [])
         self._init_detectors(detectors_params)
         self._init_trackers(pipeline_params.get("trackers", []))
+        # Инициализация атрибутных процессоров (если присутствуют в конфиге)
+        self._init_attributes_roi(pipeline_params.get("attributes_roi", []))
+        self._init_attribute_classifier(pipeline_params.get("attributes_classifier", []))
         self._init_mc_trackers(pipeline_params.get("mc_trackers", []))
 
         self._final_results_name = "mc_trackers"
@@ -109,6 +113,26 @@ class PipelineSurveillance(PipelineProcessors):
         mc_trackers_proc.set_params(params)
         mc_trackers_proc.init(encoders=self.encoders)
         self._add_processor(mc_trackers_proc)
+
+    def _init_attributes_roi(self, params: List[Dict]):
+        """Initialize ROI feeder for attributes if configured"""
+        if not params:
+            return
+        num = len(params)
+        roi_proc = ProcessorFrame(processor_name="attributes_roi", class_name="RoiFeeder", num_processors=num, order=4)
+        roi_proc.set_params(params)
+        roi_proc.init()
+        self._add_processor(roi_proc)
+
+    def _init_attribute_classifier(self, params: List[Dict]):
+        """Initialize AttributeClassifier as ProcessorFrame if configured"""
+        if not params:
+            return
+        num = len(params)
+        cls_proc = ProcessorFrame(processor_name="attributes_classifier", class_name="AttributeClassifier", num_processors=num, order=5)
+        cls_proc.set_params(params)
+        cls_proc.init()
+        self._add_processor(cls_proc)
 
     def _init_encoders(self, tracker_params_list: List[Dict]):
         """Initialize encoders for tracking in surveillance pipeline"""

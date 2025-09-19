@@ -22,6 +22,8 @@ class ObjectResult(ObjectResultHistory):
     def __init__(self):
         super().__init__()
         self.history: list[ObjectResultHistory] = []
+        # Атрибуты первичного объекта: name -> AttributeState-like dict
+        self.attributes: dict = {}
 
     def __str__(self):
         return f'ID: {self.object_id}, Source: {self.source_id}, Updated: {self.last_update}, Lost: {self.lost_frames}'

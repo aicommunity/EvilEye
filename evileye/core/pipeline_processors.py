@@ -92,6 +92,7 @@ class PipelineProcessors(PipelineBase):
     def process(self) -> dict[Any, Any]:
         pipeline_results = dict()
         step_result = None
+        tracking_results = None  # Store tracking results for attributes processors
 
         for processor in self.processors:
             if processor is None:
@@ -99,8 +100,20 @@ class PipelineProcessors(PipelineBase):
                 
             if isinstance(processor, ProcessorSource):
                 self.run_sources()
+            
             step_result = processor.process(step_result)
             pipeline_results[processor.get_name()] = step_result
+            
+            # Store tracking results for attributes processors
+            if processor.get_name() == 'trackers':
+                tracking_results = step_result
+            
+            # Pass tracking results to attributes processors
+            if processor.get_name() in ['attributes_roi', 'attributes_classifier'] and tracking_results is not None:
+                # Process attributes with tracking data
+                attr_result = processor.process(tracking_results)
+                if attr_result:
+                    step_result = attr_result
 
         # Store results for external access
         if pipeline_results:

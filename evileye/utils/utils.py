@@ -338,6 +338,10 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
                           font_scale_method=config.get('font_scale_method', 'resolution_based'),
                           base_resolution=config.get('base_resolution', (1920, 1080)),
                           background_enabled=config.get('background_enabled', True))
+        
+        # Draw attributes if available
+        if hasattr(obj, 'attributes') and obj.attributes:
+            draw_object_attributes(image.image, obj, last_info.bounding_box, config, font_scale)
 
         # print(len(obj['obj_info']))
         if len(obj.history) > 1:
@@ -695,6 +699,82 @@ def put_text_with_bbox(image, text, bbox, font_size_pt=12, font_face=cv2.FONT_HE
     cv2.putText(image, text, (x_px, y_px), font_face, font_scale, color, thickness)
     
     return image
+
+
+def draw_object_attributes(image, obj, bbox, config, font_scale=None):
+    """
+    Draw object attributes as colored indicators.
+    
+    Args:
+        image: OpenCV image
+        obj: ObjectResult object with attributes
+        bbox: Bounding box coordinates [x1, y1, x2, y2]
+        config: Text configuration dictionary
+        font_scale: Font scale from main drawing function (optional)
+    """
+    if not hasattr(obj, 'attributes') or not obj.attributes:
+        return
+    
+    # Position attributes below the main label
+    x1, y1, x2, y2 = bbox
+    attr_y = y2 + 5  # Start below the bounding box
+    
+    # Color mapping for attribute states
+    state_colors = {
+        'none': (128, 128, 128),    # Gray
+        'exists': (0, 255, 0),      # Green  
+        'lost': (0, 255, 255)       # Yellow
+    }
+    
+    # Calculate font scale for attributes (0.5x of object class font scale)
+    if font_scale is not None:
+        attr_font_scale = font_scale * 0.5
+        attr_thickness = max(1, int(attr_font_scale * 2))
+    else:
+        # Fallback to config-based calculation
+        attr_font_scale = (config['font_size_pt'] * 0.5) / 72.0
+        attr_thickness = config['thickness']
+    
+    attr_texts = []
+    for attr_name, attr_data in obj.attributes.items():
+        if isinstance(attr_data, dict):
+            state = attr_data.get('state', 'none')
+            confidence = attr_data.get('confidence_smooth', 0.0)
+            total_time = attr_data.get('total_time_ms', 0)
+            
+            # Create attribute text with state indicator
+            color = state_colors.get(state, (128, 128, 128))
+            attr_text = f"{attr_name}: {state} ({confidence:.2f}, {total_time}ms)"
+            attr_texts.append((attr_text, color))
+    
+    # Calculate text height for proper spacing
+    if attr_texts:
+        # Use first attribute text to calculate height
+        sample_text = attr_texts[0][0]
+        (_, text_height), baseline = cv2.getTextSize(sample_text, config['font_face'], 
+                                                    attr_font_scale, attr_thickness)
+        line_spacing = text_height + 4  # Add 4 pixels padding between lines
+    else:
+        line_spacing = 20  # Fallback spacing
+    
+    # Draw attribute texts
+    for i, (attr_text, color) in enumerate(attr_texts):
+        text_y = attr_y + i * line_spacing
+        
+        # Draw background rectangle for better visibility
+        (text_width, text_height), baseline = cv2.getTextSize(attr_text, config['font_face'], 
+                                                             attr_font_scale, attr_thickness)
+        # Ensure coordinates are integers
+        rect_x1 = int(x1)
+        rect_y1 = int(text_y - text_height - 2)
+        rect_x2 = int(x1 + text_width + 4)
+        rect_y2 = int(text_y + 2)
+        cv2.rectangle(image, (rect_x1, rect_y1), (rect_x2, rect_y2), (0, 0, 0), -1)
+        
+        # Draw attribute text
+        cv2.putText(image, attr_text, (int(x1 + 2), int(text_y)), 
+                   config['font_face'], attr_font_scale, 
+                   color, attr_thickness)
 
 
 def get_default_text_config():

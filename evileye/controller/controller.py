@@ -213,7 +213,14 @@ class Controller:
             # Process tracking results
             processing_frames = []
             for track_info in mc_tracking_results:
-                tracking_result, image = track_info
+                # Handle both tuples [tracking_result, image] and Frame objects
+                if isinstance(track_info, (tuple, list)) and len(track_info) == 2:
+                    tracking_result, image = track_info
+                else:
+                    # Assume it's a Frame object (from attributes processors)
+                    tracking_result = None
+                    image = track_info
+                
                 self.obj_handler.put(track_info)
                 processing_frames.append(image)
                 self.source_last_processed_frame_id[image.source_id] = image.frame_id
@@ -628,6 +635,27 @@ class Controller:
         self.obj_handler.subscribe(self.fov_events_detector, self.zone_events_detector)
         for source in self.pipeline.get_sources():
             source.subscribe(self.cam_events_detector)
+        
+        # Инициализация атрибутных процессоров, если они есть в пайплайне
+        self._init_attributes_processors(params)
+
+    def _init_attributes_processors(self, params):
+        """Инициализация атрибутных процессоров и связывание с ObjectsHandler."""
+        # Проверяем, есть ли атрибутные процессоры в пайплайне
+        if hasattr(self.pipeline, 'processors'):
+            for processor in self.pipeline.processors:
+                if hasattr(processor, 'get_name'):
+                    proc_name = processor.get_name()
+                    if proc_name in ['attributes_roi', 'attributes_classifier']:
+                        # Получаем параметры для атрибутных процессоров
+                        attr_params = params.get('attributes_detection', {})
+                        if attr_params:
+                            # Прокидываем параметры в ObjectsHandler
+                            if 'objects_handler' not in self.obj_handler.params:
+                                self.obj_handler.params['objects_handler'] = {}
+                            self.obj_handler.params['objects_handler']['attributes_detection'] = attr_params
+                            self.obj_handler.set_params_impl()
+                            print(f"✅ Attributes detection configured for {proc_name}")
 
     def _init_events_detectors_without_db(self, params):
         """Initialize events detectors without database connection."""

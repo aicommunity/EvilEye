@@ -40,6 +40,7 @@ class DetectionThreadYolo(DetectionThreadBase):
         coords = boxes.xyxy
         confs = boxes.conf
         class_ids = boxes.cls
+        
         for coord, class_id, conf in zip(coords, class_ids, confs):
             if int(class_id) not in self.classes:
                 continue

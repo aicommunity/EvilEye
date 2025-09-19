@@ -8,23 +8,36 @@ class ProcessorFrame(ProcessorBase):
     def process(self, frames_list=None):
         processing_results = []
         if frames_list is not None:
-            for frame in frames_list:
+            for item in frames_list:
+                # Handle both Frame objects and tuples [data, frame]
+                if isinstance(item, tuple) and len(item) == 2:
+                    data, frame = item
+                    # For attributes processors, we only need the frame
+                    frame_to_process = frame
+                else:
+                    # Assume it's a Frame object
+                    frame_to_process = item
+                
                 is_processor_found = False
                 for processor in self.processors:
                     source_ids = processor.get_source_ids()
-                    if frame.source_id in source_ids:
-                        processor.put(frame)
+                    if hasattr(frame_to_process, 'source_id') and frame_to_process.source_id in source_ids:
+                        processor.put(frame_to_process)
                         is_processor_found = True
 
                     if is_processor_found:
                         break
 
                 if not is_processor_found:
-                    processing_results.append(frame)
+                    processing_results.append(item)
 
         for processor in self.processors:
             result = processor.get()
             if result:
                 processing_results.append(result)
+
+        # Always return original data if no results from processors
+        if not processing_results and frames_list is not None:
+            processing_results = frames_list
 
         return processing_results

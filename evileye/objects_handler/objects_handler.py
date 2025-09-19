@@ -20,6 +20,7 @@ from .labeling_manager import LabelingManager
 from pympler import asizeof
 import cv2
 from ..utils import utils
+from .attribute_manager import AttributeManager
 
 '''
 Модуль работы с объектами ожидает данные от детектора в виде dict: {'cam_id': int, 'objects': list, 'actual': bool}, 
@@ -49,6 +50,7 @@ class ObjectsHandler(EvilEyeBase):
 
         self.db_controller = db_controller
         self.db_adapter = db_adapter
+        self._last_frame_ts = {}  # Initialize timestamp tracking for attributes
         # Initialize database parameters only if database controller is available
         if self.db_controller is not None:
             self.db_params = self.db_controller.get_params()
@@ -76,6 +78,14 @@ class ObjectsHandler(EvilEyeBase):
         
         # Initialize object_id counter from existing data
         self._init_object_id_counter()
+
+        # Attributes aggregation (lazy-configurable)
+        self.attr_manager: AttributeManager | None = None
+        self._attr_conf_thresholds = {}
+        self._attr_time_thresholds = {}
+        self._attr_ema_alpha = 0.6
+        # Временный буфер поступивших предсказаний от AttributeClassifier: {track_id: {attr: confidence}}
+        self._attr_pending: dict[int, dict[str, float]] = {}
 
     def _init_object_id_counter(self):
         """Initialize object_id counter from existing data to avoid ID conflicts."""
@@ -115,6 +125,17 @@ class ObjectsHandler(EvilEyeBase):
         self.lost_thresh = self.params.get('lost_thresh', 5)
         self.max_active_objects = self.params.get('max_active_objects', 100)
         self.max_lost_objects = self.params.get('max_lost_objects', 100)
+        # thresholds for attributes (optional)
+        attrs = self.params.get('attributes_detection', {})
+        classifier = attrs.get('classifier', {})
+        self._attr_conf_thresholds = classifier.get('confidence_thresholds', {})
+        self._attr_time_thresholds = classifier.get('time_thresholds', {})
+        self._attr_ema_alpha = classifier.get('ema_alpha', 0.6)
+        
+        # Always create AttributeManager and set params
+        self.attr_manager = AttributeManager(self._attr_conf_thresholds, self._attr_time_thresholds, self._attr_ema_alpha)
+        if attrs:
+            self.attr_manager.set_params(attrs)
 
     def get_params_impl(self):
         params = dict()
@@ -143,6 +164,14 @@ class ObjectsHandler(EvilEyeBase):
 
     def put(self, data):  # Добавление данных из детектора/трекера в очередь
         self.objs_queue.put(data)
+
+    def put_attributes(self, track_id: int, attrs: dict[str, float]):
+        """Публичный метод приёма результатов атрибутов для конкретного трека.
+        attrs: {attr_name: confidence}
+        """
+        if track_id is None or not attrs:
+            return
+        self._attr_pending[track_id] = attrs
 
     def get(self, objs_type, cam_id):  # Получение списка объектов в зависимости от указанного типа
         # Блокируем остальные потоки на время получения объектов
@@ -203,7 +232,14 @@ class ObjectsHandler(EvilEyeBase):
             tracking_results = self.objs_queue.get()
             if tracking_results is None:
                 continue
-            tracks, image = tracking_results
+            
+            # Handle both tuples [tracks, image] and Frame objects
+            if isinstance(tracking_results, (tuple, list)) and len(tracking_results) == 2:
+                tracks, image = tracking_results
+            else:
+                # Assume it's a Frame object (from attributes processors)
+                tracks = None
+                image = tracking_results
             # Блокируем остальные потоки для предотвращения одновременного обращения к объектам
             with self.lock:
                 # self.condition.acquire()
@@ -213,12 +249,79 @@ class ObjectsHandler(EvilEyeBase):
                 else:
                     self.snapshot = None
 
-            for subscriber in self.subscribers:
-                subscriber.update()
+        for subscriber in self.subscribers:
+            subscriber.update()
+    
+    def _is_primary_object(self, obj):
+        """Check if object is primary based on class name or ID"""
+        if not hasattr(self, 'attr_manager') or not self.attr_manager:
+            return False
+            
+        # Get primary classes from attr_manager config
+        primary_by_name = getattr(self.attr_manager, '_primary_by_name', [])
+        primary_by_id = getattr(self.attr_manager, '_primary_by_id', [])
+        
+        # Check by class name (person = class 0)
+        class_names = ["person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck"]
+        if obj.class_id < len(class_names):
+            class_name = class_names[obj.class_id]
+            if class_name in primary_by_name:
+                return True
+        
+        # Check by class ID
+        if obj.class_id in primary_by_id:
+            return True
+        return False
+    
+    def _create_default_attributes(self, obj):
+        """Create default attributes for primary objects"""
+        if not hasattr(self, 'attr_manager') or not self.attr_manager:
+            return
+            
+        # Get configured attributes from attr_manager
+        attr_config = getattr(self.attr_manager, 'params', {}).get('attributes_detection', {})
+        classifier_config = attr_config.get('classifier', {})
+        attrs = classifier_config.get('attrs', ['hard_hat', 'backpack', 'safety_vest'])
+        
+        # Create default attributes with 'none' state
+        default_attributes = {}
+        for attr_name in attrs:
+            default_attributes[attr_name] = {
+                'attr_name': attr_name,
+                'state': 'none',
+                'confidence_smooth': 0.0,
+                'frames_present': 0,
+                'total_time_ms': 0,
+                'no_detect_time_ms': 0,
+                'enter_count': 0,
+                'enter_ts': None,
+                'last_seen_ts': None,
+                'ema_alpha': 0.7
+            }
+        
+        obj.attributes = default_attributes
 
     def _handle_active(self, tracking_results: TrackingResultList, image):
         for active_obj in self.active_objs.objects:
             active_obj.last_update = False
+
+        # Handle case when tracking_results is None (from attributes processors)
+        if tracking_results is None:
+            # Update attributes for active objects without new tracking data
+            current_ts = time.time()
+            dt_ms = int((current_ts - (self._last_frame_ts.get(image.source_id, current_ts))) * 1000)
+            self._last_frame_ts[image.source_id] = current_ts
+
+            for active_obj in self.active_objs.objects:
+                # Update attributes for active objects
+                if self.attr_manager:
+                    attr_states = self.attr_manager.get_states(active_obj.track.track_id)
+                    active_obj.attributes = {name: state.__dict__ for name, state in attr_states.items()}
+                    
+                # Create default attributes for primary objects if no attributes exist
+                if not active_obj.attributes and self._is_primary_object(active_obj):
+                    self._create_default_attributes(active_obj)
+            return
 
         for track in tracking_results.tracks:
             track_object = None
@@ -283,6 +386,34 @@ class ObjectsHandler(EvilEyeBase):
                 self.active_objs.objects.append(obj)
                # print(f"active_objs len={len(self.active_objs.objects)} size={asizeof.asizeof(self.active_objs.objects)/(1024.0*1024.0)}")
                # print(f"lost_objs len={len(self.lost_objs.objects)} size={asizeof.asizeof(self.lost_objs.objects)/(1024.0*1024.0)}")
+
+        # Обновление атрибутов для активных объектов (если включено)
+        if self.attr_manager is not None and tracking_results is not None:
+            dt_ms = 0
+            # оценка dt по fps/времени могла бы быть точнее; используем 33мс как дефолт
+            try:
+                dt_ms = int(1000.0 / max(1, getattr(image, 'fps', 30)))
+            except Exception:
+                dt_ms = 33
+            now_ts = time.time()
+            # Применяем накопленные предсказания к объектам текущего source
+            for obj in self.active_objs.objects:
+                if obj.source_id != tracking_results.source_id:
+                    continue
+                pred = self._attr_pending.pop(getattr(obj.track, 'track_id', None), None)
+                if pred:
+                    for attr_name, conf in pred.items():
+                        self.attr_manager.update(obj.track.track_id, attr_name, True, float(conf), now_ts, dt_ms)
+                else:
+                    # Обновим состояние отсутствием детекции для всех известных атрибутов объекта
+                    for attr_name, st in self.attr_manager.get_states(obj.track.track_id).items():
+                        self.attr_manager.update(obj.track.track_id, attr_name, False, 0.0, now_ts, dt_ms)
+                # Сохранить снимок состояний в объект
+                obj.attributes = {k: vars(v) for k, v in self.attr_manager.get_states(obj.track.track_id).items()}
+                
+                # Создать атрибуты для первичных объектов, даже если классификатор не работает
+                if not obj.attributes and self._is_primary_object(obj):
+                    self._create_default_attributes(obj)
 
         filtered_active_objects = []
         for active_obj in self.active_objs.objects:
