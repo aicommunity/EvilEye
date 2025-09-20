@@ -84,8 +84,6 @@ class ObjectsHandler(EvilEyeBase):
         self._attr_conf_thresholds = {}
         self._attr_time_thresholds = {}
         self._attr_ema_alpha = 0.6
-        # Временный буфер поступивших предсказаний от AttributeClassifier: {track_id: {attr: confidence}}
-        self._attr_pending: dict[int, dict[str, float]] = {}
 
     def _init_object_id_counter(self):
         """Initialize object_id counter from existing data to avoid ID conflicts."""
@@ -165,13 +163,6 @@ class ObjectsHandler(EvilEyeBase):
     def put(self, data):  # Добавление данных из детектора/трекера в очередь
         self.objs_queue.put(data)
 
-    def put_attributes(self, track_id: int, attrs: dict[str, float]):
-        """Публичный метод приёма результатов атрибутов для конкретного трека.
-        attrs: {attr_name: confidence}
-        """
-        if track_id is None or not attrs:
-            return
-        self._attr_pending[track_id] = attrs
 
     def get(self, objs_type, cam_id):  # Получение списка объектов в зависимости от указанного типа
         # Блокируем остальные потоки на время получения объектов
@@ -305,7 +296,9 @@ class ObjectsHandler(EvilEyeBase):
             return
             
         # Get configured attributes from attr_manager
-        attrs = getattr(self.attr_manager, '_configured_attrs', ['hard_hat', 'no_hard_hat'])
+        attrs = getattr(self.attr_manager, '_configured_attrs', [])
+        if not attrs:
+            return
         
         # Initialize obj.attributes if it doesn't exist
         if not hasattr(obj, 'attributes') or obj.attributes is None:
@@ -315,7 +308,7 @@ class ObjectsHandler(EvilEyeBase):
         for attr_name in attrs:
             if attr_name not in obj.attributes:
                 obj.attributes[attr_name] = {
-                    'attr_name': attr_name,
+                    'name': attr_name,
                     'state': 'none',
                     'confidence_smooth': 0.0,
                     'frames_present': 0,
@@ -323,8 +316,7 @@ class ObjectsHandler(EvilEyeBase):
                     'no_detect_time_ms': 0,
                     'enter_count': 0,
                     'enter_ts': None,
-                    'last_seen_ts': None,
-                    'ema_alpha': 0.7
+                    'last_seen_ts': None
                 }
 
     def _handle_active(self, tracking_results: TrackingResultList, image):
@@ -447,18 +439,11 @@ class ObjectsHandler(EvilEyeBase):
                         confidence = attr_info.get('confidence', 0.0)
                         self.attr_manager.update(track_id, attr_name, detected_now, confidence, now_ts, dt_ms)
             
-            # Применяем накопленные предсказания к объектам текущего source
+            # Сохранить снимок состояний атрибутов в объекты
             for obj in self.active_objs.objects:
                 if obj.source_id != tracking_results.source_id:
                     continue
-                pred = self._attr_pending.pop(getattr(obj.track, 'track_id', None), None)
-                if pred:
-                    for attr_name, conf in pred.items():
-                        self.attr_manager.update(obj.track.track_id, attr_name, True, float(conf), now_ts, dt_ms)
-                else:
-                    # Обновим состояние отсутствием детекции для всех известных атрибутов объекта
-                    for attr_name, st in self.attr_manager.get_states(obj.track.track_id).items():
-                        self.attr_manager.update(obj.track.track_id, attr_name, False, 0.0, now_ts, dt_ms)
+                    
                 # Сохранить снимок состояний в объект
                 attr_states = self.attr_manager.get_states(obj.track.track_id)
                 obj.attributes = {k: vars(v) for k, v in attr_states.items()}
