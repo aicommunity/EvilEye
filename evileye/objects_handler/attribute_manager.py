@@ -43,27 +43,33 @@ class AttributeManager:
         if detected and confidence >= thr_conf:
             state.frames_present += 1
             state.total_time_ms += dt_ms
+            state.total_found_time_ms += dt_ms
             state.no_detect_time_ms = 0
             state.last_seen_ts = now_ts
-
-            if state.state == 'none':
-                if state.total_time_ms >= confirm_time_ms:
-                    state.state = 'exists'
-                    state.enter_count += 1
-                    state.enter_ts = now_ts
-            elif state.state == 'lost':
-                # В lost накапливаем снова; подтверждаем при достижении confirm_time_ms
-                if state.total_time_ms >= confirm_time_ms:
-                    state.state = 'exists'
-                    state.enter_count += 1
-                    state.enter_ts = now_ts
-            # exists остаётся exists
         else:
             state.no_detect_time_ms += dt_ms
-            if state.state == 'exists' and state.no_detect_time_ms >= min_time_ms:
-                state.state = 'lost'
-            elif state.state == 'lost' and state.no_detect_time_ms >= confirm_time_ms:
-                state.state = 'none'
+            state.total_lost_time_ms += dt_ms
+        
+        # Обновляем found_ratio для принятия решений
+        total_time = state.total_found_time_ms + state.total_lost_time_ms
+        if total_time > 0:
+            state.found_ratio = state.total_found_time_ms / total_time
+        else:
+            state.found_ratio = 0.0
+        
+        # Принимаем решение о состоянии на основе улучшенной логики
+        decision_state = self._calculate_decision_state(state, min_time_ms, confirm_time_ms)
+        
+        # Обновляем состояние только если оно изменилось
+        if state.state != decision_state:
+            old_state = state.state
+            state.state = decision_state
+            
+            # Логируем переходы состояний
+            if decision_state == 'exists' and old_state != 'exists':
+                state.enter_count += 1
+                state.enter_ts = now_ts
+            elif decision_state == 'none' and old_state != 'none':
                 state.reset_presence()
 
     def remove_track(self, track_id: int):
@@ -72,6 +78,38 @@ class AttributeManager:
 
     def _ema(self, new_value: float, prev_value: float) -> float:
         return self._ema_alpha * new_value + (1.0 - self._ema_alpha) * prev_value
+    
+    def _calculate_decision_state(self, state: 'AttributeState', min_time_ms: int, confirm_time_ms: int) -> str:
+        """
+        Рассчитывает решение о состоянии атрибута на основе суммарного времени.
+        
+        Args:
+            state: Состояние атрибута
+            min_time_ms: Минимальное время для потери
+            confirm_time_ms: Время подтверждения
+            
+        Returns:
+            Решение о состоянии: 'none', 'exists', 'lost'
+        """
+        # Если нет данных - none
+        if state.total_found_time_ms + state.total_lost_time_ms == 0:
+            return 'none'
+        
+        # Если недавно обнаружен - exists
+        if state.no_detect_time_ms == 0 and state.total_time_ms >= confirm_time_ms:
+            return 'exists'
+        
+        # Если недавно потерян - lost
+        if state.no_detect_time_ms > 0 and state.no_detect_time_ms < confirm_time_ms:
+            return 'lost'
+        
+        # Принимаем решение на основе found_ratio
+        if state.found_ratio >= 0.7:  # 70% времени обнаружен
+            return 'exists'
+        elif state.found_ratio >= 0.3:  # 30-70% времени обнаружен
+            return 'lost'
+        else:  # < 30% времени обнаружен
+            return 'none'
     
     def set_params(self, attributes_detection: Dict):
         """Set parameters from attributes_detection config"""
