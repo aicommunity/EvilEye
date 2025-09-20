@@ -299,6 +299,34 @@ class ObjectsHandler(EvilEyeBase):
         
         obj.attributes = default_attributes
 
+    def _ensure_all_attributes_present(self, obj):
+        """Ensure all configured attributes are present in the object"""
+        if not hasattr(self, 'attr_manager') or not self.attr_manager:
+            return
+            
+        # Get configured attributes from attr_manager
+        attrs = getattr(self.attr_manager, '_configured_attrs', ['hard_hat', 'no_hard_hat'])
+        
+        # Initialize obj.attributes if it doesn't exist
+        if not hasattr(obj, 'attributes') or obj.attributes is None:
+            obj.attributes = {}
+        
+        # Add missing attributes with 'none' state
+        for attr_name in attrs:
+            if attr_name not in obj.attributes:
+                obj.attributes[attr_name] = {
+                    'attr_name': attr_name,
+                    'state': 'none',
+                    'confidence_smooth': 0.0,
+                    'frames_present': 0,
+                    'total_time_ms': 0,
+                    'no_detect_time_ms': 0,
+                    'enter_count': 0,
+                    'enter_ts': None,
+                    'last_seen_ts': None,
+                    'ema_alpha': 0.7
+                }
+
     def _handle_active(self, tracking_results: TrackingResultList, image):
         for active_obj in self.active_objs.objects:
             active_obj.last_update = False
@@ -332,9 +360,9 @@ class ObjectsHandler(EvilEyeBase):
                     attr_states = self.attr_manager.get_states(active_obj.track.track_id)
                     active_obj.attributes = {name: state.__dict__ for name, state in attr_states.items()}
                     
-                # Create default attributes for primary objects if no attributes exist
-                if not active_obj.attributes and self._is_primary_object(active_obj):
-                    self._create_default_attributes(active_obj)
+                # Ensure all attributes are present for primary objects
+                if self._is_primary_object(active_obj):
+                    self._ensure_all_attributes_present(active_obj)
             return
 
         for track in tracking_results.tracks:
@@ -438,9 +466,9 @@ class ObjectsHandler(EvilEyeBase):
                 attr_states = self.attr_manager.get_states(obj.track.track_id)
                 obj.attributes = {k: vars(v) for k, v in attr_states.items()}
                 
-                # Создать атрибуты для первичных объектов, даже если классификатор не работает
-                if not obj.attributes and self._is_primary_object(obj):
-                    self._create_default_attributes(obj)
+                # Убедиться, что все настроенные атрибуты присутствуют в объекте
+                if self._is_primary_object(obj):
+                    self._ensure_all_attributes_present(obj)
 
         filtered_active_objects = []
         for active_obj in self.active_objs.objects:
