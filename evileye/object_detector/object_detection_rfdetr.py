@@ -16,8 +16,8 @@ class ObjectDetectorRfdetr(ObjectDetectorBase):
         super().init_impl()
         self.detection_threads = []
         inf_params = {"show": self.params.get('show', False), 'conf': self.params.get('conf', 0.25),
-                      'save': self.params.get('save', False), "imgsz": self.params.get('inference_size', 640),
-                      "device": self.params.get('device', None)}
+                      'save': self.params.get('save', False), "inference_size": self.params.get('inference_size', 640),
+                      "device": self.params.get('device', 'cpu')}
 
         for i in range(self.num_detection_threads):
             # Используем model_name как имя модели RF-DETR

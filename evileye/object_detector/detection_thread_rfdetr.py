@@ -26,18 +26,22 @@ class DetectionThreadRfdetr(DetectionThreadBase):
             try:
                 from rfdetr import RFDETRNano, RFDETRSmall, RFDETRMedium, RFDETRLarge
                 
+                # Получаем параметры из inf_params
+                # RF-DETR использует inference_size из конфигурации
+                resolution = self.inf_params.get('inference_size', 640)
+                
                 # Выбираем модель в зависимости от имени
                 if "nano" in self.model_name.lower():
-                    self.model = RFDETRNano()
+                    self.model = RFDETRNano(resolution=resolution)
                 elif "small" in self.model_name.lower():
-                    self.model = RFDETRSmall()
+                    self.model = RFDETRSmall(resolution=resolution)
                 elif "medium" in self.model_name.lower():
-                    self.model = RFDETRMedium()
+                    self.model = RFDETRMedium(resolution=resolution)
                 elif "large" in self.model_name.lower():
-                    self.model = RFDETRLarge()
+                    self.model = RFDETRLarge(resolution=resolution)
                 else:
                     # По умолчанию используем nano
-                    self.model = RFDETRNano()
+                    self.model = RFDETRNano(resolution=resolution)
 
                 self.model.optimize_for_inference()
                     
@@ -55,7 +59,9 @@ class DetectionThreadRfdetr(DetectionThreadBase):
         
         try:
             # RF-DETR принимает список изображений и возвращает результаты
-            results = self.model.predict(images, conf=self.inf_params.get('conf', 0.25))
+            # Используем threshold вместо conf для RF-DETR
+            threshold = self.inf_params.get('conf', 0.25)
+            results = self.model.predict(images, confidence=threshold)
             return results
         except Exception as e:
             print(f"Error during RF-DETR prediction: {e}")
