@@ -188,12 +188,35 @@ class AttributeClassifier(EvilEyeBase):
             
             result = results[0]
             if result.boxes is None or len(result.boxes) == 0:
-                return {}
+                # No detections - return all attributes as not detected
+                attr_results = {}
+                for attr_name in self.attrs:
+                    attr_results[attr_name] = {
+                        'detected_now': False,
+                        'confidence': 0.0,
+                        'max_confidence': 0.0,
+                        'detection_count': 0,
+                        'bbox': None,
+                        'class_id': None
+                    }
+                return attr_results
             
             # Process YOLO results
             attr_results = {}
             boxes = result.boxes.cpu().numpy()
             
+            # Initialize all configured attributes as not detected
+            for attr_name in self.attrs:
+                attr_results[attr_name] = {
+                    'detected_now': False,
+                    'confidence': 0.0,
+                    'max_confidence': 0.0,
+                    'detection_count': 0,
+                    'bbox': None,
+                    'class_id': None
+                }
+            
+            # Update with actual detections
             for i, box in enumerate(boxes):
                 class_id = int(box.cls[0])
                 confidence = float(box.conf[0])
@@ -202,14 +225,14 @@ class AttributeClassifier(EvilEyeBase):
                 # Map class_id to attribute name
                 attr_name = self.attr_class_mapping.get(class_id)
                 if attr_name and confidence >= self.conf_threshold:
-                        attr_results[attr_name] = {
-                            'detected_now': True,
-                            'confidence': confidence,
-                            'max_confidence': confidence,
-                            'detection_count': 1,
-                            'bbox': bbox,
-                            'class_id': class_id
-                        }
+                    attr_results[attr_name] = {
+                        'detected_now': True,
+                        'confidence': confidence,
+                        'max_confidence': confidence,
+                        'detection_count': 1,
+                        'bbox': bbox,
+                        'class_id': class_id
+                    }
             
             return attr_results
             
