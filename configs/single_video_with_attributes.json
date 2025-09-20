@@ -53,18 +53,22 @@
       {
         "source_ids": [0],
         "enabled": true,
-        "model": "models/yolo11n.pt",
-        "attrs": ["person", "bottle"],
+        "model": "models/y8mhardhats.pt",
+        "attrs": ["hard_hat", "no_hard_hat"],
+        "class_mapping": {
+          "hard_hat": 0,
+          "no_hard_hat": 1
+        },
         "confidence_thresholds": {
-          "person": 0.3,
-          "bottle": 0.3
+          "hard_hat": 0.3,
+          "no_hard_hat": 0.3
         },
         "time_thresholds": {
-          "person": {
+          "hard_hat": {
             "min_time_ms": 600,
             "confirm_time_ms": 1500
           },
-          "bottle": {
+          "no_hard_hat": {
             "min_time_ms": 600,
             "confirm_time_ms": 1500
           }
@@ -97,8 +101,8 @@
     "attributes_detection": {
       "primary_by_name": ["person"],
       "primary_by_id": [0],
-      "secondary_by_name": ["person", "bottle"],
-      "secondary_by_id": [0, 39],
+      "secondary_by_name": ["hard_hat", "no_hard_hat"],
+      "secondary_by_id": [0, 1],
       "roi": {
         "padding": 0.15,
         "size": [224, 224],
@@ -106,18 +110,22 @@
       },
       "classifier": {
         "enabled": true,
-        "model": "models/yolo11n.pt",
-        "attrs": ["person", "bottle"],
+        "model": "models/y8mhardhats.pt",
+        "attrs": ["hard_hat", "no_hard_hat"],
+        "class_mapping": {
+          "hard_hat": 0,
+          "no_hard_hat": 1
+        },
         "confidence_thresholds": {
-          "person": 0.3,
-          "bottle": 0.3
+          "hard_hat": 0.3,
+          "no_hard_hat": 0.3
         },
         "time_thresholds": {
-          "person": {
+          "hard_hat": {
             "min_time_ms": 600,
             "confirm_time_ms": 1500
           },
-          "bottle": {
+          "no_hard_hat": {
             "min_time_ms": 600,
             "confirm_time_ms": 1500
           }

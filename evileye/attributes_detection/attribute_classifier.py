@@ -55,14 +55,18 @@ class AttributeClassifier(EvilEyeBase):
             self.conf_threshold = self.params.get('conf_threshold', 0.5)
             self.inference_size = self.params.get('inference_size', 224)
             
-            # Create class mapping for COCO classes
-            coco_class_mapping = {
-                "person": 0,
-                "bottle": 39
-            }
-            for attr_name in self.attrs:
-                if attr_name in coco_class_mapping:
-                    self.attr_class_mapping[coco_class_mapping[attr_name]] = attr_name
+            # Create class mapping from configuration
+            # Get class mapping from config or use default sequential mapping
+            class_mapping = self.params.get('class_mapping', {})
+            if not class_mapping:
+                # If no class mapping provided, create sequential mapping (0, 1, 2, ...)
+                for i, attr_name in enumerate(self.attrs):
+                    self.attr_class_mapping[i] = attr_name
+            else:
+                # Use provided class mapping
+                for attr_name, class_id in class_mapping.items():
+                    if attr_name in self.attrs:
+                        self.attr_class_mapping[class_id] = attr_name
 
     def get_params_impl(self):
         """Get current parameters"""
