@@ -3,7 +3,7 @@
     "pipeline_class": "PipelineSurveillance",
     "sources": [
       {
-        "camera": "videos/sample_video.mp4",
+        "camera": "videos/2-GTK_UMPN_ICHI_20250912_082734_trim.mp4",
         "source": "VideoFile",
         "split": false,
         "num_split": 0,
@@ -14,13 +14,15 @@
     ],
     "detectors": [
       {
-        "model": "models/yolo11n.pt",
-        "classes": [0, 1, 24, 25, 63, 66, 67],
+        "type": "ObjectDetectorRfdetr",
+        "model": "rfdetr-nano",
+        "classes": [0, 1, 2, 3, 4],
         "source_ids": [0],
+        "inference_size": 1024,
+        "conf": 0.1,
         "roi": [[]],
         "vid_stride": 1,
-        "num_detection_threads": 1,
-        "conf_threshold": 0.3
+        "num_detection_threads": 1
       }
     ],
     "trackers": [
@@ -46,7 +48,7 @@
         "source_ids": [0],
         "padding": 0.15,
         "size": [224, 224],
-        "every_n_frames": 2
+        "every_n_frames": 1
       }
     ],
     "attributes_classifier": [
@@ -59,21 +61,7 @@
           "hard_hat": 0,
           "no_hard_hat": 1
         },
-        "confidence_thresholds": {
-          "hard_hat": 0.3,
-          "no_hard_hat": 0.3
-        },
-        "time_thresholds": {
-          "hard_hat": {
-            "min_time_ms": 50,
-            "confirm_time_ms": 100
-          },
-          "no_hard_hat": {
-            "min_time_ms": 50,
-            "confirm_time_ms": 100
-          }
-        },
-        "ema_alpha": 0.7
+        "conf_threshold": 0.4
       }
     ],
     "mc_trackers": [
@@ -106,7 +94,7 @@
       "roi": {
         "padding": 0.15,
         "size": [224, 224],
-        "every_n_frames": 2
+        "every_n_frames": 1
       },
       "classifier": {
         "enabled": true,
@@ -117,20 +105,20 @@
           "no_hard_hat": 1
         },
         "confidence_thresholds": {
-          "hard_hat": 0.3,
-          "no_hard_hat": 0.3
+          "hard_hat": 0.4,
+          "no_hard_hat": 0.4
         },
         "time_thresholds": {
           "hard_hat": {
-            "min_time_ms": 50,
-            "confirm_time_ms": 100
+            "min_time_ms": 30,
+            "confirm_time_ms": 60
           },
           "no_hard_hat": {
-            "min_time_ms": 50,
-            "confirm_time_ms": 100
+            "min_time_ms": 30,
+            "confirm_time_ms": 60
           }
         },
-        "ema_alpha": 0.7
+        "ema_alpha": 1.0
       }
     }
   },
