@@ -123,7 +123,8 @@ class DetectionThreadRfdetr(DetectionThreadBase):
                             confidence=np.array(valid_conf),
                             class_id=np.array(valid_class_ids)
                         )
-                        return [combined_result]
+                        # Возвращаем результат для каждого изображения
+                        return [combined_result] * len(images)
                 
                 return []
             else:
@@ -141,6 +142,10 @@ class DetectionThreadRfdetr(DetectionThreadBase):
         ids = []
         
         try:
+            # Проверяем, что result не None и имеет нужные атрибуты
+            if result is None:
+                return bboxes_coords, confidences, ids
+                
             # RF-DETR возвращает объект supervision.Detections
             if hasattr(result, 'xyxy') and hasattr(result, 'confidence') and hasattr(result, 'class_id'):
                 # Получаем данные из объекта Detections
@@ -148,8 +153,8 @@ class DetectionThreadRfdetr(DetectionThreadBase):
                 confs = result.confidence
                 class_ids = result.class_id
                 
-                # Проверяем, что есть детекции
-                if len(coords) > 0:
+                # Проверяем, что есть детекции и все массивы имеют одинаковую длину
+                if len(coords) > 0 and len(coords) == len(confs) == len(class_ids):
                     for coord, class_id, conf in zip(coords, class_ids, confs):
                         if int(class_id) not in self.classes:
                             continue
