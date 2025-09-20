@@ -89,7 +89,7 @@ class PipelineSurveillance(PipelineProcessors):
             return
             
         num_det = len(params)
-        detectors_proc = ProcessorStep(processor_name="detectors", class_name="ObjectDetectorYolo", num_processors=num_det, order=2)
+        detectors_proc = ProcessorStep(processor_name="detectors", class_name="ObjectDetectorRfdetr", num_processors=num_det, order=2)
         detectors_proc.set_params(params)
         detectors_proc.init()
         self._add_processor(detectors_proc)
