@@ -53,7 +53,12 @@ class PipelineSurveillance(PipelineProcessors):
             return
             
         num_sources = len(params)
-        sources_proc = ProcessorSource(processor_name="sources", class_name="VideoCapture", num_processors=num_sources, order=0)
+        # Get class_name from config, default to VideoCapture
+        class_name = params[0].get("type", "VideoCapture") if params else "VideoCapture"
+        if not any(param.get("type") for param in params):
+            print(f"Warning: No 'type' parameter found in sources config. Using default: {class_name}")
+        
+        sources_proc = ProcessorSource(processor_name="sources", class_name=class_name, num_processors=num_sources, order=0)
 
         # Merge credentials if available
         if credentials and isinstance(credentials, dict):
@@ -78,7 +83,12 @@ class PipelineSurveillance(PipelineProcessors):
             return
             
         num_preps = len(params)
-        preprocessors_proc = ProcessorFrame(processor_name="preprocessors", class_name="PreprocessingPipeline", num_processors=num_preps, order=1)
+        # Get class_name from config, default to PreprocessingPipeline
+        class_name = params[0].get("type", "PreprocessingPipeline") if params else "PreprocessingPipeline"
+        if not any(param.get("type") for param in params):
+            print(f"Warning: No 'type' parameter found in preprocessors config. Using default: {class_name}")
+        
+        preprocessors_proc = ProcessorFrame(processor_name="preprocessors", class_name=class_name, num_processors=num_preps, order=1)
         preprocessors_proc.set_params(params)
         preprocessors_proc.init()
         self._add_processor(preprocessors_proc)
@@ -89,7 +99,12 @@ class PipelineSurveillance(PipelineProcessors):
             return
             
         num_det = len(params)
-        detectors_proc = ProcessorStep(processor_name="detectors", class_name="ObjectDetectorRfdetr", num_processors=num_det, order=2)
+        # Get class_name from config, default to ObjectDetectorRfdetr
+        class_name = params[0].get("type", "ObjectDetectorRfdetr") if params else "ObjectDetectorRfdetr"
+        if not any(param.get("type") for param in params):
+            print(f"Warning: No 'type' parameter found in detectors config. Using default: {class_name}")
+        
+        detectors_proc = ProcessorStep(processor_name="detectors", class_name=class_name, num_processors=num_det, order=2)
         detectors_proc.set_params(params)
         detectors_proc.init()
         self._add_processor(detectors_proc)
@@ -100,7 +115,12 @@ class PipelineSurveillance(PipelineProcessors):
             return
             
         num_trackers = len(params)
-        trackers_proc = ProcessorStep(processor_name="trackers", class_name="ObjectTrackingBotsort", num_processors=num_trackers, order=3)
+        # Get class_name from config, default to ObjectTrackingBotsort
+        class_name = params[0].get("type", "ObjectTrackingBotsort") if params else "ObjectTrackingBotsort"
+        if not any(param.get("type") for param in params):
+            print(f"Warning: No 'type' parameter found in trackers config. Using default: {class_name}")
+        
+        trackers_proc = ProcessorStep(processor_name="trackers", class_name=class_name, num_processors=num_trackers, order=3)
         trackers_proc.set_params(params)
         trackers_proc.init(encoders=self.encoders)
         self._add_processor(trackers_proc)
@@ -111,7 +131,12 @@ class PipelineSurveillance(PipelineProcessors):
             return
             
         num_trackers = len(params)
-        mc_trackers_proc = ProcessorStep(processor_name="mc_trackers", class_name="ObjectMultiCameraTracking", num_processors=num_trackers, order=4)
+        # Get class_name from config, default to ObjectMultiCameraTracking
+        class_name = params[0].get("type", "ObjectMultiCameraTracking") if params else "ObjectMultiCameraTracking"
+        if not any(param.get("type") for param in params):
+            print(f"Warning: No 'type' parameter found in mc_trackers config. Using default: {class_name}")
+        
+        mc_trackers_proc = ProcessorStep(processor_name="mc_trackers", class_name=class_name, num_processors=num_trackers, order=4)
         mc_trackers_proc.set_params(params)
         mc_trackers_proc.init(encoders=self.encoders)
         self._add_processor(mc_trackers_proc)
@@ -121,7 +146,12 @@ class PipelineSurveillance(PipelineProcessors):
         if not params:
             return
         num = len(params)
-        roi_proc = ProcessorStep(processor_name="attributes_roi", class_name="RoiFeeder", num_processors=num, order=4)
+        # Get class_name from config, default to RoiFeeder
+        class_name = params[0].get("type", "RoiFeeder") if params else "RoiFeeder"
+        if not any(param.get("type") for param in params):
+            print(f"Warning: No 'type' parameter found in attributes_roi config. Using default: {class_name}")
+        
+        roi_proc = ProcessorStep(processor_name="attributes_roi", class_name=class_name, num_processors=num, order=4)
         roi_proc.set_params(params)
         roi_proc.init()
         self._add_processor(roi_proc)
@@ -131,7 +161,12 @@ class PipelineSurveillance(PipelineProcessors):
         if not params:
             return
         num = len(params)
-        cls_proc = ProcessorStep(processor_name="attributes_classifier", class_name="AttributeClassifier", num_processors=num, order=5)
+        # Get class_name from config, default to AttributeClassifier
+        class_name = params[0].get("type", "AttributeClassifier") if params else "AttributeClassifier"
+        if not any(param.get("type") for param in params):
+            print(f"Warning: No 'type' parameter found in attributes_classifier config. Using default: {class_name}")
+        
+        cls_proc = ProcessorStep(processor_name="attributes_classifier", class_name=class_name, num_processors=num, order=5)
         cls_proc.set_params(params)
         cls_proc.init()
         self._add_processor(cls_proc)
