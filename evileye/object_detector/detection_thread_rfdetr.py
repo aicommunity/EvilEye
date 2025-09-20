@@ -38,6 +38,8 @@ class DetectionThreadRfdetr(DetectionThreadBase):
                 else:
                     # По умолчанию используем nano
                     self.model = RFDETRNano()
+
+                self.model.optimize_for_inference()
                     
             except ImportError:
                 raise ImportError("RF-DETR package not installed. Please install it using: pip install rfdetr")
