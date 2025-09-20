@@ -40,7 +40,12 @@ class PipelineSurveillance(PipelineProcessors):
         self._init_attributes_roi(pipeline_params.get("attributes_roi", []))
         self._init_attribute_classifier(pipeline_params.get("attributes_classifier", []))
 
-        self._final_results_name = "mc_trackers"
+        # Set final results name dynamically based on mc_trackers status
+        mc_trackers_enabled = any(tracker.get("enable", True) for tracker in pipeline_params.get("mc_trackers", []))
+        if mc_trackers_enabled:
+            self._final_results_name = "mc_trackers"
+        else:
+            self._final_results_name = "trackers"
 
         return True
 
@@ -119,7 +124,7 @@ class PipelineSurveillance(PipelineProcessors):
         if not params:
             return
         num = len(params)
-        roi_proc = ProcessorFrame(processor_name="attributes_roi", class_name="RoiFeeder", num_processors=num, order=4)
+        roi_proc = ProcessorStep(processor_name="attributes_roi", class_name="RoiFeeder", num_processors=num, order=4)
         roi_proc.set_params(params)
         roi_proc.init()
         self._add_processor(roi_proc)

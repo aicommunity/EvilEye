@@ -101,22 +101,7 @@ class PipelineProcessors(PipelineBase):
             if isinstance(processor, ProcessorSource):
                 self.run_sources()
             
-            # Handle attributes processors specially - pass tracking_results to them
-            if processor.get_name() in ['attributes_roi', 'attributes_classifier'] and tracking_results is not None:
-                #print(f"🔍 PipelineProcessors: Passing tracking_results to {processor.get_name()}")
-                # Create a new Frame with tracking_results for attributes processors
-                from ..core.frame import Frame
-                frame_with_tracking = Frame()
-                frame_with_tracking.tracking_results = tracking_results
-                frame_with_tracking.image = step_result  # Use step_result as image
-                frame_with_tracking.source_id = 0  # Set source_id for ProcessorFrame.process()
-                #print(f"🔍 PipelineProcessors: Created Frame with tracking_results for {processor.get_name()}")
-                
-                # Process the frame with tracking_results
-                step_result = processor.process(frame_with_tracking)
-            else:
-                # Normal processing for other processors
-                step_result = processor.process(step_result)
+            step_result = processor.process(step_result)
             
             pipeline_results[processor.get_name()] = step_result
             

@@ -28,8 +28,8 @@ class RoiFeeder(EvilEyeBase):
         super().__init__()
 
         self.run_flag = False
-        self.queue_in: Queue[Frame | None] = Queue(maxsize=2)
-        self.queue_out: Queue[Frame] = Queue()
+        self.queue_in = Queue(maxsize=2)
+        self.queue_out = Queue()
         self.processing_thread = threading.Thread(target=self._process_impl)
 
         # Конфигурируемые параметры
@@ -84,25 +84,16 @@ class RoiFeeder(EvilEyeBase):
                 break
         self._frame_counters.clear()
 
-    def put(self, frame: Frame):
-        print(f"🔍 RoiFeeder: Received frame with tracking_results: {hasattr(frame, 'tracking_results')}")
-        if hasattr(frame, 'tracking_results') and frame.tracking_results:
-            print(f"🔍 RoiFeeder: tracking_results type: {type(frame.tracking_results)}")
-            if hasattr(frame.tracking_results, 'tracks'):
-                print(f"🔍 RoiFeeder: Number of tracks: {len(frame.tracking_results.tracks)}")
-            else:
-                print(f"🔍 RoiFeeder: tracking_results has no 'tracks' attribute")
-        else:
-            print(f"🔍 RoiFeeder: No tracking_results or tracking_results is falsy")
+    def put(self, input_data: tuple):
         if not self.queue_in.full():
-            self.queue_in.put(frame)
+            self.queue_in.put(input_data)
             return True
         else:
             try:
                 _ = self.queue_in.get_nowait()
             except Exception:
                 pass
-            self.queue_in.put(frame)
+            self.queue_in.put(input_data)
             return True
 
     def get(self):
@@ -128,27 +119,28 @@ class RoiFeeder(EvilEyeBase):
     def _process_impl(self):
         while self.run_flag:
             sleep(0.01)
-            frame = self.queue_in.get()
-            if frame is None:
+            data_pack = self.queue_in.get()
+            if data_pack is None:
                 continue
 
-            # Check if we should process this frame
+            (tracking_data, frame) = data_pack
+            # Check if we should process this data_pack
             if frame.source_id not in self.source_ids:
-                # Pass frame through even if source_id doesn't match
-                self.queue_out.put(frame)
+                # Pass data_pack through even if source_id doesn't match
+                self.queue_out.put(data_pack)
                 continue
                 
-            # Increment frame counter for this source
+            # Increment data_pack counter for this source
             if frame.source_id not in self._frame_counters:
                 self._frame_counters[frame.source_id] = 0
             self._frame_counters[frame.source_id] += 1
             
             # Extract ROI from primary objects if conditions are met
             if self._should_process_frame(frame.source_id):
-                self._extract_rois(frame)
+                self._extract_rois(tracking_data, frame)
             
-            # Always pass frame through
-            self.queue_out.put(frame)
+            # Always pass data_pack through
+            self.queue_out.put(data_pack)
     
     def _should_process_frame(self, source_id: int) -> bool:
         """Check if frame should be processed based on every_n_frames setting"""
@@ -156,43 +148,36 @@ class RoiFeeder(EvilEyeBase):
             return False
         return self._frame_counters[source_id] % self.every_n_frames == 0
     
-    def _extract_rois(self, frame: Frame):
+    def _extract_rois(self, tracking_data, image):
         """Extract ROI images from primary objects in the frame"""
         try:
             # Get tracking results from frame (if available)
-            if hasattr(frame, 'tracking_results') and frame.tracking_results:
-                print(f"🔍 RoiFeeder: Processing {len(frame.tracking_results.tracks)} tracks")
-                roi_data = []
-                
-                for track in frame.tracking_results.tracks:
-                    print(f"🔍 RoiFeeder: Track {track.track_id}, class_id {track.class_id}, bbox {track.bbox}")
-                    # Check if this is a primary object
-                    if self._is_primary_object(track):
-                        print(f"🔍 RoiFeeder: Track {track.track_id} is primary object")
-                        # Extract ROI from bounding box
-                        roi_image = self._extract_roi_from_bbox(frame.image, track.bbox)
-                        if roi_image is not None:
-                            print(f"🔍 RoiFeeder: Extracted ROI shape {roi_image.shape} for track {track.track_id}")
-                            roi_data.append({
-                                'track_id': track.track_id,
-                                'roi_image': roi_image,
-                                'bbox': track.bbox,
-                                'class_id': track.class_id
-                            })
-                        else:
-                            print(f"🔍 RoiFeeder: Failed to extract ROI for track {track.track_id}")
-                    else:
-                        print(f"🔍 RoiFeeder: Track {track.track_id} is not primary object")
-                
-                # Store ROI data in frame
-                if roi_data:
-                    frame.roi_data = roi_data
-                    print(f"🔍 RoiFeeder: Created {len(roi_data)} ROIs")
+            print(f"🔍 RoiFeeder: Processing {len(tracking_data.tracks)} tracks")
+            roi_data = []
+
+            for track in tracking_data.tracks:
+                print(f"🔍 RoiFeeder: Track {track.track_id}, class_id {track.class_id}, bbox {track.bounding_box}")
+                # Extract ROI from bounding box
+
+                roi_image = self._extract_roi_from_bbox(image.image, track.bounding_box)
+                if roi_image is not None:
+                    print(f"🔍 RoiFeeder: Extracted ROI shape {roi_image.shape} for track {track.track_id}")
+                    roi_data.append({
+                        'track_id': track.track_id,
+                        'roi_image': roi_image,
+                        'bbox': track.bounding_box,
+                        'class_id': track.class_id
+                    })
                 else:
-                    print("🔍 RoiFeeder: No ROIs created")
+                    print(f"🔍 RoiFeeder: Failed to extract ROI for track {track.track_id}")
+
+            # Store ROI data in frame
+            if roi_data:
+                tracking_data.roi_data = roi_data
+                print(f"🔍 RoiFeeder: Created {len(roi_data)} ROIs")
             else:
-                print("🔍 RoiFeeder: No tracking results in frame")
-                    
+                print("🔍 RoiFeeder: No ROIs created")
+
         except Exception as e:
             print(f"❌ Error extracting ROI in RoiFeeder: {e}")
     
@@ -241,9 +226,9 @@ class RoiFeeder(EvilEyeBase):
                 return None
             
             # Resize to target size
-            roi_resized = cv2.resize(roi, self.target_size)
+            #roi_resized = cv2.resize(roi, self.target_size)
             
-            return roi_resized
+            return roi
             
         except Exception as e:
             print(f"❌ Error extracting ROI from bbox: {e}")
