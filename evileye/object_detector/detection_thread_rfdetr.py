@@ -58,11 +58,49 @@ class DetectionThreadRfdetr(DetectionThreadBase):
             raise RuntimeError("Model not initialized")
         
         try:
+            import numpy as np
             # RF-DETR принимает список изображений и возвращает результаты
             # Используем threshold вместо conf для RF-DETR
             threshold = self.inf_params.get('conf', 0.25)
-            results = self.model.predict(images, confidence=threshold)
-            return results
+            results = self.model.predict(images, threshold=threshold)
+            
+            # RF-DETR возвращает список результатов, нужно объединить все непустые детекции
+            if not results:
+                return []
+            
+            # Если это список результатов, объединяем их
+            if isinstance(results, list):
+                # Находим непустые результаты
+                non_empty_results = [r for r in results if hasattr(r, 'xyxy') and len(r.xyxy) > 0]
+                if non_empty_results:
+                    # Объединяем все непустые детекции в один результат
+                    from supervision import Detections
+                    all_xyxy = []
+                    all_conf = []
+                    all_class_ids = []
+                    
+                    for result in non_empty_results:
+                        if hasattr(result, 'xyxy') and len(result.xyxy) > 0:
+                            # Фильтруем по confidence threshold
+                            mask = result.confidence >= threshold
+                            if np.any(mask):
+                                all_xyxy.append(result.xyxy[mask])
+                                all_conf.append(result.confidence[mask])
+                                all_class_ids.append(result.class_id[mask])
+                    
+                    if all_xyxy:
+                        import numpy as np
+                        combined_result = Detections(
+                            xyxy=np.vstack(all_xyxy),
+                            confidence=np.hstack(all_conf),
+                            class_id=np.hstack(all_class_ids)
+                        )
+                        return [combined_result]
+                return []
+            else:
+                # Если это не список, возвращаем как есть
+                return [results]
+                
         except Exception as e:
             print(f"Error during RF-DETR prediction: {e}")
             return []
