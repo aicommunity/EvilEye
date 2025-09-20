@@ -311,8 +311,15 @@ class ObjectsHandler(EvilEyeBase):
             self._last_frame_ts[image.source_id] = current_ts
 
             # Process attribute results from AttributeClassifier
+            # Check both image.attr_results and tracking_data.attr_results
+            attr_results_source = None
             if hasattr(image, 'attr_results') and image.attr_results:
-                for track_id, attr_results in image.attr_results.items():
+                attr_results_source = image.attr_results
+            elif hasattr(tracking_results, 'attr_results') and tracking_results.attr_results:
+                attr_results_source = tracking_results.attr_results
+                
+            if attr_results_source:
+                for track_id, attr_results in attr_results_source.items():
                     if self.attr_manager:
                         for attr_name, attr_info in attr_results.items():
                             detected_now = attr_info.get('detected_now', False)
@@ -403,6 +410,18 @@ class ObjectsHandler(EvilEyeBase):
             except Exception:
                 dt_ms = 33
             now_ts = time.time()
+            
+            # Process attribute results from AttributeClassifier
+            if hasattr(tracking_results, 'attr_results') and tracking_results.attr_results:
+                print(f"🔍 ObjectsHandler: Processing {len(tracking_results.attr_results)} attribute results")
+                for track_id, attr_results in tracking_results.attr_results.items():
+                    print(f"🔍 ObjectsHandler: Processing attributes for track {track_id}: {list(attr_results.keys())}")
+                    for attr_name, attr_info in attr_results.items():
+                        detected_now = attr_info.get('detected_now', False)
+                        confidence = attr_info.get('confidence', 0.0)
+                        print(f"🔍 ObjectsHandler: Updating {attr_name} for track {track_id}: detected={detected_now}, conf={confidence:.3f}")
+                        self.attr_manager.update(track_id, attr_name, detected_now, confidence, now_ts, dt_ms)
+            
             # Применяем накопленные предсказания к объектам текущего source
             for obj in self.active_objs.objects:
                 if obj.source_id != tracking_results.source_id:
