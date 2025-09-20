@@ -435,7 +435,8 @@ class ObjectsHandler(EvilEyeBase):
                     for attr_name, st in self.attr_manager.get_states(obj.track.track_id).items():
                         self.attr_manager.update(obj.track.track_id, attr_name, False, 0.0, now_ts, dt_ms)
                 # Сохранить снимок состояний в объект
-                obj.attributes = {k: vars(v) for k, v in self.attr_manager.get_states(obj.track.track_id).items()}
+                attr_states = self.attr_manager.get_states(obj.track.track_id)
+                obj.attributes = {k: vars(v) for k, v in attr_states.items()}
                 
                 # Создать атрибуты для первичных объектов, даже если классификатор не работает
                 if not obj.attributes and self._is_primary_object(obj):

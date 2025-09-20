@@ -65,12 +65,12 @@
         },
         "time_thresholds": {
           "hard_hat": {
-            "min_time_ms": 600,
-            "confirm_time_ms": 1500
+            "min_time_ms": 50,
+            "confirm_time_ms": 100
           },
           "no_hard_hat": {
-            "min_time_ms": 600,
-            "confirm_time_ms": 1500
+            "min_time_ms": 50,
+            "confirm_time_ms": 100
           }
         },
         "ema_alpha": 0.7
@@ -122,12 +122,12 @@
         },
         "time_thresholds": {
           "hard_hat": {
-            "min_time_ms": 600,
-            "confirm_time_ms": 1500
+            "min_time_ms": 50,
+            "confirm_time_ms": 100
           },
           "no_hard_hat": {
-            "min_time_ms": 600,
-            "confirm_time_ms": 1500
+            "min_time_ms": 50,
+            "confirm_time_ms": 100
           }
         },
         "ema_alpha": 0.7
