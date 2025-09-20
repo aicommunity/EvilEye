@@ -32,7 +32,6 @@ class AttributeClassifier(EvilEyeBase):
         # Direct YOLO model instead of AttributeDetector
         self.yolo_model = None
         self.attr_class_mapping = {}
-        self.conf_thresholds = {}
         self.conf_threshold = 0.5
         self.inference_size = 224
         
@@ -51,7 +50,6 @@ class AttributeClassifier(EvilEyeBase):
             # Set YOLO model parameters
             self.model_path = self.params.get('model', 'models/yolo11n.pt')
             self.attrs = self.params.get('attrs', [])
-            self.conf_thresholds = self.params.get('confidence_thresholds', {})
             self.conf_threshold = self.params.get('conf_threshold', 0.5)
             self.inference_size = self.params.get('inference_size', 224)
             
@@ -74,7 +72,6 @@ class AttributeClassifier(EvilEyeBase):
         params['enabled'] = self.enabled
         params['model'] = getattr(self, 'model_path', 'models/yolo11n.pt')
         params['attrs'] = getattr(self, 'attrs', [])
-        params['confidence_thresholds'] = getattr(self, 'conf_thresholds', {})
         params['conf_threshold'] = getattr(self, 'conf_threshold', 0.5)
         params['inference_size'] = getattr(self, 'inference_size', 224)
         return params
@@ -204,9 +201,7 @@ class AttributeClassifier(EvilEyeBase):
                 
                 # Map class_id to attribute name
                 attr_name = self.attr_class_mapping.get(class_id)
-                if attr_name:
-                    threshold = self.conf_thresholds.get(attr_name, self.conf_threshold)
-                    if confidence >= threshold:
+                if attr_name and confidence >= self.conf_threshold:
                         attr_results[attr_name] = {
                             'detected_now': True,
                             'confidence': confidence,

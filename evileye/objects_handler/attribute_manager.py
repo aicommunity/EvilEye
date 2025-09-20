@@ -35,12 +35,10 @@ class AttributeManager:
         min_time_ms = int(thr_times.get("min_time_ms", 0))
         confirm_time_ms = int(thr_times.get("confirm_time_ms", 0))
 
-        # Сглаживание доверия
+        # Сглаживание доверия - только при детекции
         if detected:
             state.confidence_smooth = self._ema(confidence, state.confidence_smooth)
-        else:
-            # медленное затухание
-            state.confidence_smooth = self._ema(0.0, state.confidence_smooth)
+        # Если не обнаружен - не изменяем confidence_smooth
 
         if detected and confidence >= thr_conf:
             state.frames_present += 1
