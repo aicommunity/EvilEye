@@ -119,14 +119,10 @@ class AttributeClassifier(EvilEyeBase):
 
     def start(self):
         """Start the processing thread"""
-        print("🔍 AttributeClassifier: start() called")
         if not self.run_flag:
             self.run_flag = True
             if not self.processing_thread.is_alive():
                 self.processing_thread.start()
-                print("🔍 AttributeClassifier: Processing thread started")
-        else:
-            print("🔍 AttributeClassifier: Already running")
 
     def stop(self):
         """Stop the processing thread"""
@@ -137,13 +133,11 @@ class AttributeClassifier(EvilEyeBase):
 
     def _process_impl(self):
         """Process frames and classify attributes in ROI images"""
-        print("🔍 AttributeClassifier: _process_impl started")
         while self.run_flag:
             sleep(0.01)
             detections = self.queue_in.get()
             if detections is None:
                 continue
-            print(f"🔍 AttributeClassifier: Received detections: {type(detections)}")
                 
             # Skip processing if not enabled or no YOLO model
             if not self.enabled or self.yolo_model is None:
@@ -155,15 +149,12 @@ class AttributeClassifier(EvilEyeBase):
                 
             # Check if tracking_data has ROI data from RoiFeeder
             if hasattr(tracking_data, 'roi_data') and tracking_data.roi_data:
-                print(f"🔍 AttributeClassifier: Processing {len(tracking_data.roi_data)} ROIs")
                 try:
                     # Process each ROI using AttributeDetector
                     for roi_info in tracking_data.roi_data:
                         track_id = roi_info.get('track_id')
                         roi_image = roi_info.get('roi_image')
                         bbox = roi_info.get('bbox')
-                        
-                        print(f"🔍 AttributeClassifier: Processing ROI for track {track_id}, bbox {bbox}, shape {roi_image.shape if roi_image is not None else 'None'}")
                         
                         if roi_image is not None and track_id is not None:
                             # Use AttributeDetector to classify ROI
@@ -175,9 +166,7 @@ class AttributeClassifier(EvilEyeBase):
                             tracking_data.attr_results[track_id] = attr_results
                             
                 except Exception as e:
-                    print(f"❌ Error processing ROI in AttributeClassifier: {e}")
-            else:
-                print("🔍 AttributeClassifier: No ROI data in tracking_data")
+                    pass  # Silent error handling
             
             # Always pass detections through: (tracking_data, frame)
             self.queue_out.put((tracking_data, frame))
@@ -185,12 +174,9 @@ class AttributeClassifier(EvilEyeBase):
     def _classify_roi_with_detector(self, roi_image: np.ndarray) -> Dict[str, Dict[str, Any]]:
         """Classify attributes in ROI image using direct YOLO call"""
         if self.yolo_model is None:
-            print("🔍 AttributeClassifier: No YOLO model available")
             return {}
             
         try:
-            print(f"🔍 AttributeClassifier: Classifying ROI image shape {roi_image.shape}")
-            
             # Direct YOLO inference
             results = self.yolo_model.predict(
                 source=roi_image,
@@ -201,12 +187,10 @@ class AttributeClassifier(EvilEyeBase):
             )
             
             if not results or len(results) == 0:
-                print("🔍 AttributeClassifier: No YOLO results")
                 return {}
             
             result = results[0]
             if result.boxes is None or len(result.boxes) == 0:
-                print("🔍 AttributeClassifier: No detections in YOLO results")
                 return {}
             
             # Process YOLO results
@@ -231,12 +215,10 @@ class AttributeClassifier(EvilEyeBase):
                             'bbox': bbox,
                             'class_id': class_id
                         }
-                        print(f"🔍 AttributeClassifier: Detected {attr_name} with confidence {confidence:.3f}")
             
             return attr_results
             
         except Exception as e:
-            print(f"❌ Error in AttributeClassifier._classify_roi_with_detector: {e}")
             return {}
 
     def get_source_ids(self):

@@ -441,13 +441,10 @@ class ObjectsHandler(EvilEyeBase):
             
             # Process attribute results from AttributeClassifier
             if hasattr(tracking_results, 'attr_results') and tracking_results.attr_results:
-                print(f"🔍 ObjectsHandler: Processing {len(tracking_results.attr_results)} attribute results")
                 for track_id, attr_results in tracking_results.attr_results.items():
-                    print(f"🔍 ObjectsHandler: Processing attributes for track {track_id}: {list(attr_results.keys())}")
                     for attr_name, attr_info in attr_results.items():
                         detected_now = attr_info.get('detected_now', False)
                         confidence = attr_info.get('confidence', 0.0)
-                        print(f"🔍 ObjectsHandler: Updating {attr_name} for track {track_id}: detected={detected_now}, conf={confidence:.3f}")
                         self.attr_manager.update(track_id, attr_name, detected_now, confidence, now_ts, dt_ms)
             
             # Применяем накопленные предсказания к объектам текущего source

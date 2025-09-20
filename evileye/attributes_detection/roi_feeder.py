@@ -105,13 +105,9 @@ class RoiFeeder(EvilEyeBase):
         return self.source_ids
 
     def start(self):
-        print("🔍 RoiFeeder: start() called")
         self.run_flag = True
         if not self.processing_thread.is_alive():
             self.processing_thread.start()
-            print("🔍 RoiFeeder: Processing thread started")
-        else:
-            print("🔍 RoiFeeder: Already running")
 
     def stop(self):
         self.run_flag = False
@@ -120,13 +116,11 @@ class RoiFeeder(EvilEyeBase):
             self.processing_thread.join()
 
     def _process_impl(self):
-        print("🔍 RoiFeeder: _process_impl started")
         while self.run_flag:
             sleep(0.01)
             data_pack = self.queue_in.get()
             if data_pack is None:
                 continue
-            print(f"🔍 RoiFeeder: Received data_pack: {type(data_pack)}")
 
             (tracking_data, frame) = data_pack
             # Check if we should process this data_pack
@@ -157,55 +151,39 @@ class RoiFeeder(EvilEyeBase):
         """Extract ROI images from primary objects in the frame"""
         try:
             # Get tracking results from frame (if available)
-            print(f"🔍 RoiFeeder: Processing {len(tracking_data.tracks)} tracks")
             roi_data = []
 
             for track in tracking_data.tracks:
-                print(f"🔍 RoiFeeder: Track {track.track_id}, class_id {track.class_id}, bbox {track.bounding_box}")
                 # Extract ROI from bounding box
-
                 roi_image = self._extract_roi_from_bbox(image.image, track.bounding_box)
                 if roi_image is not None:
-                    print(f"🔍 RoiFeeder: Extracted ROI shape {roi_image.shape} for track {track.track_id}")
                     roi_data.append({
                         'track_id': track.track_id,
                         'roi_image': roi_image,
                         'bbox': track.bounding_box,
                         'class_id': track.class_id
                     })
-                else:
-                    print(f"🔍 RoiFeeder: Failed to extract ROI for track {track.track_id}")
 
             # Store ROI data in frame
             if roi_data:
                 tracking_data.roi_data = roi_data
-                print(f"🔍 RoiFeeder: Created {len(roi_data)} ROIs")
-            else:
-                print("🔍 RoiFeeder: No ROIs created")
 
         except Exception as e:
-            print(f"❌ Error extracting ROI in RoiFeeder: {e}")
+            pass  # Silent error handling
     
     def _is_primary_object(self, track) -> bool:
         """Check if track represents a primary object"""
-        print(f"🔍 RoiFeeder: Checking if track {track.track_id} (class_id {track.class_id}) is primary")
-        print(f"🔍 RoiFeeder: primary_by_id: {self.primary_by_id}, primary_by_name: {self.primary_by_name}")
-        
         # Check by class ID
         if track.class_id in self.primary_by_id:
-            print(f"🔍 RoiFeeder: Track {track.track_id} is primary by ID")
             return True
         
         # Check by class name (person = class 0)
         class_names = ["person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck"]
         if track.class_id < len(class_names):
             class_name = class_names[track.class_id]
-            print(f"🔍 RoiFeeder: Track {track.track_id} class_name: {class_name}")
             if class_name in self.primary_by_name:
-                print(f"🔍 RoiFeeder: Track {track.track_id} is primary by name")
                 return True
         
-        print(f"🔍 RoiFeeder: Track {track.track_id} is NOT primary")
         return False
     
     def _extract_roi_from_bbox(self, image: np.ndarray, bbox) -> np.ndarray | None:

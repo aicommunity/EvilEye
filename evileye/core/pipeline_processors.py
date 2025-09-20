@@ -109,15 +109,6 @@ class PipelineProcessors(PipelineBase):
             # Always use mc_trackers results for attributes, regardless of mc_trackers status
             if processor.get_name() == 'mc_trackers' and step_result is not None:
                 tracking_results = step_result
-                #print(f"🔍 PipelineProcessors: Got tracking_results from {processor.get_name()}: {type(tracking_results)}")
-                #if hasattr(tracking_results, '__len__'):
-                #    print(f"🔍 PipelineProcessors: tracking_results length: {len(tracking_results)}")
-                #if hasattr(tracking_results, '__iter__'):
-                #    for i, item in enumerate(tracking_results):
-                #        print(f"🔍 PipelineProcessors: tracking_results[{i}]: {type(item)}")
-                #        if hasattr(item, 'tracks'):
-                #            print(f"🔍 PipelineProcessors: item.tracks length: {len(item.tracks)}")
-                #        break  # Only show first item
 
         # Store results for external access
         if pipeline_results:
