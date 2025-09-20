@@ -28,64 +28,76 @@ class AttributeClassifier(EvilEyeBase):
     def __init__(self):
         super().__init__()
         self.enabled = True
-        self.attribute_detector = None
+        
+        # Direct YOLO model instead of AttributeDetector
+        self.yolo_model = None
+        self.attr_class_mapping = {}
+        self.conf_thresholds = {}
+        self.conf_threshold = 0.5
+        self.inference_size = 224
         
         # Threading components
         self.run_flag = False
         self.queue_in = Queue(maxsize=2)
         self.queue_out = Queue()
-        self.processing_thread = threading.Thread(target=self._process_impl)
+        self.queue_dropped_id = Queue()
+        self.processing_thread = None
 
     def set_params_impl(self):
         """Set parameters from configuration"""
         self.enabled = self.params.get('enabled', True)
         
-        # Initialize AttributeDetector with parameters
-        if self.attribute_detector is None:
-            self.attribute_detector = AttributeDetector()
-        
-        # Set parameters for AttributeDetector
-        detector_params = {
-            'model': self.params.get('model', 'models/y8mhardhats.pt'),
-            'attrs': self.params.get('attrs', ['hard_hat', 'no_hard_hat']),
-            'confidence_thresholds': self.params.get('confidence_thresholds', {}),
-            'source_ids': self.params.get('source_ids', [0]),
-            'stride': self.params.get('stride', 1),
-            'roi': [[]],
-            'num_detection_threads': 1
-        }
-        
-        self.attribute_detector.params = detector_params
-        self.attribute_detector.set_params_impl()
+        if self.enabled:
+            # Set YOLO model parameters
+            self.model_path = self.params.get('model', 'models/yolo11n.pt')
+            self.attrs = self.params.get('attrs', [])
+            self.conf_thresholds = self.params.get('confidence_thresholds', {})
+            self.conf_threshold = self.params.get('conf_threshold', 0.5)
+            self.inference_size = self.params.get('inference_size', 224)
+            
+            # Create class mapping for COCO classes
+            coco_class_mapping = {
+                "person": 0,
+                "bottle": 39
+            }
+            for attr_name in self.attrs:
+                if attr_name in coco_class_mapping:
+                    self.attr_class_mapping[coco_class_mapping[attr_name]] = attr_name
 
     def get_params_impl(self):
         """Get current parameters"""
         params = super().get_params_impl()
         params['enabled'] = self.enabled
-        if self.attribute_detector:
-            detector_params = self.attribute_detector.get_params_impl()
-            params.update(detector_params)
+        params['model'] = getattr(self, 'model_path', 'models/yolo11n.pt')
+        params['attrs'] = getattr(self, 'attrs', [])
+        params['confidence_thresholds'] = getattr(self, 'conf_thresholds', {})
+        params['conf_threshold'] = getattr(self, 'conf_threshold', 0.5)
+        params['inference_size'] = getattr(self, 'inference_size', 224)
         return params
 
     def init_impl(self, **kwargs):
-        """Initialize attribute detector"""
+        """Initialize YOLO model directly"""
         if not self.enabled:
             return True
             
         try:
-            if self.attribute_detector:
-                success = self.attribute_detector.init_impl(**kwargs)
-                if success:
-                    print(f"✅ AttributeClassifier initialized with AttributeDetector")
-                return success
-            return False
+            from ultralytics import YOLO
+            self.yolo_model = YOLO(self.model_path)
+            self.yolo_model.fuse()  # Fuse Conv+BN layers for faster inference
+            print(f"✅ AttributeClassifier initialized with YOLO model: {self.model_path}")
+            print(f"✅ Attribute classes: {self.attr_class_mapping}")
+            self.processing_thread = threading.Thread(target=self._process_impl)
+            return True
         except Exception as e:
             print(f"❌ Failed to initialize AttributeClassifier: {e}")
             return False
 
     def release_impl(self):
-        if self.attribute_detector:
-            self.attribute_detector.release_impl()
+        if self.yolo_model:
+            del self.yolo_model
+            self.yolo_model = None
+        del self.processing_thread
+        self.processing_thread = None
 
     def reset_impl(self):
         while not self.queue_in.empty():
@@ -103,9 +115,14 @@ class AttributeClassifier(EvilEyeBase):
 
     def start(self):
         """Start the processing thread"""
+        print("🔍 AttributeClassifier: start() called")
         if not self.run_flag:
             self.run_flag = True
-            self.processing_thread.start()
+            if not self.processing_thread.is_alive():
+                self.processing_thread.start()
+                print("🔍 AttributeClassifier: Processing thread started")
+        else:
+            print("🔍 AttributeClassifier: Already running")
 
     def stop(self):
         """Stop the processing thread"""
@@ -116,23 +133,28 @@ class AttributeClassifier(EvilEyeBase):
 
     def _process_impl(self):
         """Process frames and classify attributes in ROI images"""
+        print("🔍 AttributeClassifier: _process_impl started")
         while self.run_flag:
             sleep(0.01)
-            frame = self.queue_in.get()
-            if frame is None:
+            detections = self.queue_in.get()
+            if detections is None:
+                continue
+            print(f"🔍 AttributeClassifier: Received detections: {type(detections)}")
+                
+            # Skip processing if not enabled or no YOLO model
+            if not self.enabled or self.yolo_model is None:
+                self.queue_out.put(detections)
                 continue
                 
-            # Skip processing if not enabled or no detector
-            if not self.enabled or self.attribute_detector is None:
-                self.queue_out.put(frame)
-                continue
+            # Unpack data from RoiFeeder: (tracking_data, frame)
+            tracking_data, frame = detections
                 
-            # Check if frame has ROI data from RoiFeeder
-            if hasattr(frame, 'roi_data') and frame.roi_data:
-                print(f"🔍 AttributeClassifier: Processing {len(frame.roi_data)} ROIs")
+            # Check if tracking_data has ROI data from RoiFeeder
+            if hasattr(tracking_data, 'roi_data') and tracking_data.roi_data:
+                print(f"🔍 AttributeClassifier: Processing {len(tracking_data.roi_data)} ROIs")
                 try:
                     # Process each ROI using AttributeDetector
-                    for roi_info in frame.roi_data:
+                    for roi_info in tracking_data.roi_data:
                         track_id = roi_info.get('track_id')
                         roi_image = roi_info.get('roi_image')
                         bbox = roi_info.get('bbox')
@@ -143,93 +165,118 @@ class AttributeClassifier(EvilEyeBase):
                             # Use AttributeDetector to classify ROI
                             attr_results = self._classify_roi_with_detector(roi_image)
                             
-                            # Store results in frame for ObjectsHandler
-                            if not hasattr(frame, 'attr_results'):
-                                frame.attr_results = {}
-                            frame.attr_results[track_id] = attr_results
+                            # Store results in tracking_data for ObjectsHandler
+                            if not hasattr(tracking_data, 'attr_results'):
+                                tracking_data.attr_results = {}
+                            tracking_data.attr_results[track_id] = attr_results
                             
                 except Exception as e:
                     print(f"❌ Error processing ROI in AttributeClassifier: {e}")
             else:
-                print("🔍 AttributeClassifier: No ROI data in frame")
+                print("🔍 AttributeClassifier: No ROI data in tracking_data")
             
-            # Always pass frame through
-            self.queue_out.put(frame)
+            # Always pass detections through: (tracking_data, frame)
+            self.queue_out.put((tracking_data, frame))
     
     def _classify_roi_with_detector(self, roi_image: np.ndarray) -> Dict[str, Dict[str, Any]]:
-        """Classify attributes in ROI image using AttributeDetector"""
-        if self.attribute_detector is None:
-            print("🔍 AttributeClassifier: No attribute detector available")
+        """Classify attributes in ROI image using direct YOLO call"""
+        if self.yolo_model is None:
+            print("🔍 AttributeClassifier: No YOLO model available")
             return {}
             
         try:
             print(f"🔍 AttributeClassifier: Classifying ROI image shape {roi_image.shape}")
-            # Create a mock CaptureImage for the detector
-            from ..core.frame import CaptureImage
-            mock_image = CaptureImage()
-            mock_image.image = roi_image
-            mock_image.source_id = 0
-            mock_image.frame_id = 0
             
-            # Put image into detector
-            print("🔍 AttributeClassifier: Putting image into detector")
-            self.attribute_detector.put(mock_image)
+            # Direct YOLO inference
+            results = self.yolo_model.predict(
+                source=roi_image,
+                classes=list(self.attr_class_mapping.keys()),
+                verbose=False,
+                conf=self.conf_threshold,
+                imgsz=self.inference_size
+            )
             
-            # Get detection results
-            print("🔍 AttributeClassifier: Getting detection results")
-            detection_results = self.attribute_detector.get()
-            
-            if detection_results is None:
-                print("🔍 AttributeClassifier: No detection results")
+            if not results or len(results) == 0:
+                print("🔍 AttributeClassifier: No YOLO results")
                 return {}
             
-            print(f"🔍 AttributeClassifier: Got {len(detection_results.detections)} detections")
+            result = results[0]
+            if result.boxes is None or len(result.boxes) == 0:
+                print("🔍 AttributeClassifier: No detections in YOLO results")
+                return {}
             
-            # Convert detection results to attribute results format
+            # Process YOLO results
             attr_results = {}
-            for detection in detection_results.detections:
-                class_id = int(detection.class_id)
-                confidence = float(detection.confidence)
+            boxes = result.boxes.cpu().numpy()
+            
+            for i, box in enumerate(boxes):
+                class_id = int(box.cls[0])
+                confidence = float(box.conf[0])
+                bbox = box.xyxy[0].tolist()
                 
                 # Map class_id to attribute name
-                attr_name = None
-                for attr_id, attr_name_mapped in self.attribute_detector.detection_threads[0].attr_class_mapping.items():
-                    if attr_id == class_id:
-                        attr_name = attr_name_mapped
-                        break
-                
+                attr_name = self.attr_class_mapping.get(class_id)
                 if attr_name:
-                    threshold = self.attribute_detector.conf_thresholds.get(attr_name, 0.5)
-                    attr_results[attr_name] = {
-                        'detected_now': confidence >= threshold,
-                        'confidence': confidence,
-                        'max_confidence': confidence,
-                        'detection_count': 1
-                    }
-                    print(f"🔍 AttributeDetection: {attr_name} - conf {confidence:.3f}")
+                    threshold = self.conf_thresholds.get(attr_name, self.conf_threshold)
+                    if confidence >= threshold:
+                        attr_results[attr_name] = {
+                            'detected_now': True,
+                            'confidence': confidence,
+                            'max_confidence': confidence,
+                            'detection_count': 1,
+                            'bbox': bbox,
+                            'class_id': class_id
+                        }
+                        print(f"🔍 AttributeClassifier: Detected {attr_name} with confidence {confidence:.3f}")
             
             return attr_results
             
         except Exception as e:
-            print(f"❌ Error in ROI classification with detector: {e}")
+            print(f"❌ Error in AttributeClassifier._classify_roi_with_detector: {e}")
             return {}
 
     def get_source_ids(self):
         """Get source IDs for this processor"""
         return self.params.get('source_ids', [0])
 
-    def put(self, frame: Frame) -> bool:
-        """Put frame into processing queue"""
-        if not self.queue_in.full():
-            self.queue_in.put(frame)
-            return True
-        return False
+    def put(self, det_info, force=False):
+        """Put detection info into processing queue"""
+        dropped_id = []
+        result = True
+        if self.queue_in.full():
+            if force:
+                dropped_data = self.queue_in.get()
+                dropped_id.append(dropped_data[1].source_id)
+                dropped_id.append(dropped_data[1].frame_id)
+                result = True
+            else:
+                dropped_id.append(det_info[1].source_id)
+                dropped_id.append(det_info[1].frame_id)
+                result = False
+        if len(dropped_id) > 0:
+            self.queue_dropped_id.put(dropped_id)
 
-    def get(self) -> Frame | None:
-        """Get processed frame from output queue"""
+        if result:
+            self.queue_in.put(det_info)
+
+        return result
+
+    def get(self):
+        """Get processed results from output queue"""
         if self.queue_out.empty():
             return None
         return self.queue_out.get()
+
+    def get_dropped_ids(self) -> list:
+        """Get dropped frame IDs"""
+        res = []
+        while not self.queue_dropped_id.empty():
+            res.append(self.queue_dropped_id.get())
+        return res
+
+    def get_oueue_out_size(self):
+        """Get output queue size"""
+        return self.queue_out.qsize()
 
     def default(self):
         """Default implementation"""

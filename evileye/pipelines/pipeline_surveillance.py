@@ -42,10 +42,7 @@ class PipelineSurveillance(PipelineProcessors):
 
         # Set final results name dynamically based on mc_trackers status
         mc_trackers_enabled = any(tracker.get("enable", True) for tracker in pipeline_params.get("mc_trackers", []))
-        if mc_trackers_enabled:
-            self._final_results_name = "mc_trackers"
-        else:
-            self._final_results_name = "trackers"
+        self._final_results_name = "attributes_classifier"
 
         return True
 
