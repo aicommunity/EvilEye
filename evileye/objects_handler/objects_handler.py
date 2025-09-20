@@ -279,9 +279,7 @@ class ObjectsHandler(EvilEyeBase):
             return
             
         # Get configured attributes from attr_manager
-        attr_config = getattr(self.attr_manager, 'params', {}).get('attributes_detection', {})
-        classifier_config = attr_config.get('classifier', {})
-        attrs = classifier_config.get('attrs', ['hard_hat', 'backpack', 'safety_vest'])
+        attrs = getattr(self.attr_manager, '_configured_attrs', ['hard_hat', 'no_hard_hat'])
         
         # Create default attributes with 'none' state
         default_attributes = {}
@@ -311,6 +309,15 @@ class ObjectsHandler(EvilEyeBase):
             current_ts = time.time()
             dt_ms = int((current_ts - (self._last_frame_ts.get(image.source_id, current_ts))) * 1000)
             self._last_frame_ts[image.source_id] = current_ts
+
+            # Process attribute results from AttributeClassifier
+            if hasattr(image, 'attr_results') and image.attr_results:
+                for track_id, attr_results in image.attr_results.items():
+                    if self.attr_manager:
+                        for attr_name, attr_info in attr_results.items():
+                            detected_now = attr_info.get('detected_now', False)
+                            confidence = attr_info.get('confidence', 0.0)
+                            self.attr_manager.update(track_id, attr_name, detected_now, confidence, current_ts, dt_ms)
 
             for active_obj in self.active_objs.objects:
                 # Update attributes for active objects

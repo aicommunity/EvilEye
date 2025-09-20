@@ -52,25 +52,20 @@
       {
         "source_ids": [0],
         "enabled": false,
-        "model": "models/ppe_classifier.onnx",
-        "attrs": ["hard_hat", "backpack", "safety_vest"],
+        "model": "models/yolo11n.pt",
+        "attrs": ["person", "bottle"],
         "confidence_thresholds": {
-          "hard_hat": 0.6,
-          "backpack": 0.5,
-          "safety_vest": 0.5
+          "person": 0.3,
+          "bottle": 0.3
         },
         "time_thresholds": {
-          "hard_hat": {
-            "min_time_ms": 800,
-            "confirm_time_ms": 2000
+          "person": {
+            "min_time_ms": 600,
+            "confirm_time_ms": 1500
           },
-          "backpack": {
-            "min_time_ms": 1000,
-            "confirm_time_ms": 2500
-          },
-          "safety_vest": {
-            "min_time_ms": 1200,
-            "confirm_time_ms": 3000
+          "bottle": {
+            "min_time_ms": 600,
+            "confirm_time_ms": 1500
           }
         },
         "ema_alpha": 0.7
@@ -97,12 +92,12 @@
     "max_lost_objects": 100,
     "lost_thresh": 5,
     "lost_store_time_secs": 60,
-    "history_len": 1,
+    "history_len": 30,
     "attributes_detection": {
       "primary_by_name": ["person"],
       "primary_by_id": [0],
-      "secondary_by_name": ["hard_hat", "backpack", "safety_vest"],
-      "secondary_by_id": [27, 28, 29],
+      "secondary_by_name": ["person", "bottle"],
+      "secondary_by_id": [0, 39],
       "roi": {
         "padding": 0.15,
         "size": [224, 224],
@@ -110,25 +105,20 @@
       },
       "classifier": {
         "enabled": true,
-        "model": "models/ppe_classifier.onnx",
-        "attrs": ["hard_hat", "backpack", "safety_vest"],
+        "model": "models/yolo11n.pt",
+        "attrs": ["person", "bottle"],
         "confidence_thresholds": {
-          "hard_hat": 0.6,
-          "backpack": 0.5,
-          "safety_vest": 0.5
+          "person": 0.3,
+          "bottle": 0.3
         },
         "time_thresholds": {
-          "hard_hat": {
-            "min_time_ms": 800,
-            "confirm_time_ms": 2000
+          "person": {
+            "min_time_ms": 600,
+            "confirm_time_ms": 1500
           },
-          "backpack": {
-            "min_time_ms": 1000,
-            "confirm_time_ms": 2500
-          },
-          "safety_vest": {
-            "min_time_ms": 1200,
-            "confirm_time_ms": 3000
+          "bottle": {
+            "min_time_ms": 600,
+            "confirm_time_ms": 1500
           }
         },
         "ema_alpha": 0.7

@@ -101,19 +101,38 @@ class PipelineProcessors(PipelineBase):
             if isinstance(processor, ProcessorSource):
                 self.run_sources()
             
-            step_result = processor.process(step_result)
+            # Handle attributes processors specially - pass tracking_results to them
+            if processor.get_name() in ['attributes_roi', 'attributes_classifier'] and tracking_results is not None:
+                #print(f"🔍 PipelineProcessors: Passing tracking_results to {processor.get_name()}")
+                # Create a new Frame with tracking_results for attributes processors
+                from ..core.frame import Frame
+                frame_with_tracking = Frame()
+                frame_with_tracking.tracking_results = tracking_results
+                frame_with_tracking.image = step_result  # Use step_result as image
+                frame_with_tracking.source_id = 0  # Set source_id for ProcessorFrame.process()
+                #print(f"🔍 PipelineProcessors: Created Frame with tracking_results for {processor.get_name()}")
+                
+                # Process the frame with tracking_results
+                step_result = processor.process(frame_with_tracking)
+            else:
+                # Normal processing for other processors
+                step_result = processor.process(step_result)
+            
             pipeline_results[processor.get_name()] = step_result
             
             # Store tracking results for attributes processors
-            if processor.get_name() == 'trackers':
+            # Always use mc_trackers results for attributes, regardless of mc_trackers status
+            if processor.get_name() == 'mc_trackers' and step_result is not None:
                 tracking_results = step_result
-            
-            # Pass tracking results to attributes processors
-            if processor.get_name() in ['attributes_roi', 'attributes_classifier'] and tracking_results is not None:
-                # Process attributes with tracking data
-                attr_result = processor.process(tracking_results)
-                if attr_result:
-                    step_result = attr_result
+                #print(f"🔍 PipelineProcessors: Got tracking_results from {processor.get_name()}: {type(tracking_results)}")
+                #if hasattr(tracking_results, '__len__'):
+                #    print(f"🔍 PipelineProcessors: tracking_results length: {len(tracking_results)}")
+                #if hasattr(tracking_results, '__iter__'):
+                #    for i, item in enumerate(tracking_results):
+                #        print(f"🔍 PipelineProcessors: tracking_results[{i}]: {type(item)}")
+                #        if hasattr(item, 'tracks'):
+                #            print(f"🔍 PipelineProcessors: item.tracks length: {len(item.tracks)}")
+                #        break  # Only show first item
 
         # Store results for external access
         if pipeline_results:

@@ -19,6 +19,7 @@ class AttributeManager:
         self._ema_alpha = ema_alpha
         self._primary_by_name = []
         self._primary_by_id = []
+        self._configured_attrs = []
 
     def get_states(self, track_id: int) -> Dict[str, AttributeState]:
         return self._attr_by_track.get(track_id, {})
@@ -86,5 +87,8 @@ class AttributeManager:
         self._thr_conf = classifier_config.get('confidence_thresholds', {})
         self._thr_time = classifier_config.get('time_thresholds', {})
         self._ema_alpha = classifier_config.get('ema_alpha', 0.7)
+        
+        # Store configured attributes for default creation
+        self._configured_attrs = classifier_config.get('attrs', [])
 
 

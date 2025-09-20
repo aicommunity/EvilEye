@@ -35,10 +35,10 @@ class PipelineSurveillance(PipelineProcessors):
         detectors_params = pipeline_params.get("detectors", [])
         self._init_detectors(detectors_params)
         self._init_trackers(pipeline_params.get("trackers", []))
-        # Инициализация атрибутных процессоров (если присутствуют в конфиге)
+        self._init_mc_trackers(pipeline_params.get("mc_trackers", []))
+
         self._init_attributes_roi(pipeline_params.get("attributes_roi", []))
         self._init_attribute_classifier(pipeline_params.get("attributes_classifier", []))
-        self._init_mc_trackers(pipeline_params.get("mc_trackers", []))
 
         self._final_results_name = "mc_trackers"
 
