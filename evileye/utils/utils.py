@@ -741,10 +741,17 @@ def draw_object_attributes(image, obj, bbox, font_face, font_scale, thickness):
             confidence = attr_data.get('confidence_smooth', 0.0)
             total_time = attr_data.get('total_time_ms', 0)
             
-            # Create attribute text with state indicator
+            # Получаем новые поля для улучшенного отображения
+            total_found_time = attr_data.get('total_found_time_ms', 0)
+            total_lost_time = attr_data.get('total_lost_time_ms', 0)
+            found_ratio = attr_data.get('found_ratio', 0.0)
+            
+            # Рассчитываем суммарное время (или ноль если < 0)
+            summary_time = max(0, total_found_time - total_lost_time)
+            
+            # Create attribute text with enhanced information
             color = state_colors.get(state, (128, 128, 128))
-            # attr_text = f"{attr_name}: {state} ({confidence:.2f}, {total_time}ms)"
-            attr_text = f"{attr_name}: ({confidence:.2f}, {total_time}ms)"
+            attr_text = f"{attr_name}: {state} ({confidence:.2f}, {summary_time}ms, {found_ratio:.1%})"
             attr_texts.append((attr_text, color))
     
     # Calculate text height for proper spacing
