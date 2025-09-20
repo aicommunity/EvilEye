@@ -134,7 +134,7 @@ class PipelineSurveillance(PipelineProcessors):
         if not params:
             return
         num = len(params)
-        cls_proc = ProcessorFrame(processor_name="attributes_classifier", class_name="AttributeClassifier", num_processors=num, order=5)
+        cls_proc = ProcessorStep(processor_name="attributes_classifier", class_name="AttributeClassifier", num_processors=num, order=5)
         cls_proc.set_params(params)
         cls_proc.init()
         self._add_processor(cls_proc)

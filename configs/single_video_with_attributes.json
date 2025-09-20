@@ -19,7 +19,8 @@
         "source_ids": [0],
         "roi": [[]],
         "vid_stride": 1,
-        "num_detection_threads": 1
+        "num_detection_threads": 1,
+        "conf_threshold": 0.3
       }
     ],
     "trackers": [
@@ -51,7 +52,7 @@
     "attributes_classifier": [
       {
         "source_ids": [0],
-        "enabled": false,
+        "enabled": true,
         "model": "models/yolo11n.pt",
         "attrs": ["person", "bottle"],
         "confidence_thresholds": {
@@ -73,7 +74,7 @@
     ],
     "mc_trackers": [
       {
-        "enable": false,
+        "enable": true,
         "source_ids": [0]
       }
     ]

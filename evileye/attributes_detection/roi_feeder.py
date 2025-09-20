@@ -105,10 +105,13 @@ class RoiFeeder(EvilEyeBase):
         return self.source_ids
 
     def start(self):
+        print("🔍 RoiFeeder: start() called")
         self.run_flag = True
         if not self.processing_thread.is_alive():
-            self.processing_thread = threading.Thread(target=self._process_impl)
             self.processing_thread.start()
+            print("🔍 RoiFeeder: Processing thread started")
+        else:
+            print("🔍 RoiFeeder: Already running")
 
     def stop(self):
         self.run_flag = False
@@ -117,11 +120,13 @@ class RoiFeeder(EvilEyeBase):
             self.processing_thread.join()
 
     def _process_impl(self):
+        print("🔍 RoiFeeder: _process_impl started")
         while self.run_flag:
             sleep(0.01)
             data_pack = self.queue_in.get()
             if data_pack is None:
                 continue
+            print(f"🔍 RoiFeeder: Received data_pack: {type(data_pack)}")
 
             (tracking_data, frame) = data_pack
             # Check if we should process this data_pack
