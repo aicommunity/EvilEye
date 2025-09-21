@@ -31,7 +31,7 @@ class VideoThread(QThread):
     display_zones_signal = pyqtSignal(dict)
     add_zone_signal = pyqtSignal(int, QPixmap)
 
-    def __init__(self, source_id, fps, rows, cols, show_debug_info, font_params, text_config=None):
+    def __init__(self, source_id, fps, rows, cols, show_debug_info, font_params, text_config=None, class_mapping=None):
         super().__init__()
 
         VideoThread.rows = rows  # Количество строк и столбцов для правильного перевода изображения в полный экран
@@ -50,6 +50,7 @@ class VideoThread(QThread):
         self.thread_num = VideoThread.thread_counter  # Номер потока для определения, какой label обновлять
         self.det_params = None
         self.text_config = text_config or {}  # Text configuration for rendering
+        self.class_mapping = class_mapping or {}  # Class mapping for displaying class names
 
         # Таймер для задания fps у видеороликов
         self.timer = QTimer()
@@ -139,7 +140,7 @@ class VideoThread(QThread):
             begin_it = timer()
             utils.draw_boxes_tracking(frame, track_info, source_name, source_duration_secs,
                                       self.font_scale, self.font_thickness, self.font_color,
-                                      text_config=self.text_config)
+                                      text_config=self.text_config, class_mapping=self.class_mapping)
             if self.show_debug_info:
                 utils.draw_debug_info(frame, debug_info)
             qt_image = self.convert_cv_qt(frame.image, self.widget_width, self.widget_height)

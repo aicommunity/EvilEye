@@ -166,7 +166,24 @@ def get_objs_info(bboxes_coords, confidences, class_ids):
     return objects
 
 
-def draw_boxes(image, objects, cam_id, model_names, text_config=None):
+def get_class_name_from_mapping(class_id: int, class_mapping: dict) -> str:
+    """
+    Get class name from class ID using class_mapping.
+    
+    Args:
+        class_id: Class ID
+        class_mapping: Dictionary mapping class_name -> class_id
+        
+    Returns:
+        Class name string or 'class_{id}' if not found
+    """
+    for name, cid in class_mapping.items():
+        if cid == class_id:
+            return name
+    return f"class_{class_id}"
+
+
+def draw_boxes(image, objects, cam_id, class_mapping, text_config=None):
     """
     Draw bounding boxes and labels with adaptive text positioning.
     
@@ -174,7 +191,7 @@ def draw_boxes(image, objects, cam_id, model_names, text_config=None):
         image: OpenCV image
         objects: List of detected objects
         cam_id: Camera ID
-        model_names: Class names mapping
+        class_mapping: Class mapping dict {class_name: class_id}
         text_config: Text configuration dictionary (optional)
     """
     # Apply text configuration
@@ -187,8 +204,11 @@ def draw_boxes(image, objects, cam_id, model_names, text_config=None):
                 cv2.rectangle(image, (int(obj['bbox'][0]), int(obj['bbox'][1])),
                               (int(obj['bbox'][2]), int(obj['bbox'][3])), (0, 255, 0), thickness=8)
                 
+                # Get class name from class_mapping
+                class_name = get_class_name_from_mapping(obj['class'], class_mapping)
+                
                 # Create text label
-                text = str(model_names[obj['class']]) + " " + "{:.2f}".format(obj['conf'])
+                text = str(class_name) + " " + "{:.2f}".format(obj['conf'])
                 
                 # Draw text with adaptive positioning
                 put_text_with_bbox(image, text, obj['bbox'], 
@@ -264,7 +284,7 @@ def draw_boxes_from_db(db_controller, table_name, load_folder, save_folder):
             print('Error saving image with boxes')
 
 
-def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_duration_msecs, font_scale, font_thickness, font_color, text_config=None):
+def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_duration_msecs, font_scale, font_thickness, font_color, text_config=None, class_mapping=None):
     height, width, channels = image.image.shape
     
     # Apply text configuration
@@ -321,11 +341,16 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
         cv2.rectangle(image.image, (int(last_info.bounding_box[0]), int(last_info.bounding_box[1])),
                       (int(last_info.bounding_box[2]), int(last_info.bounding_box[3])), (0, 255, 0), thickness=font_thickness)
         
-        # Create tracking text
-        if obj.global_id is not None:
-            tracking_text = 'g' + str(obj.global_id) + ' ' + str([last_info.class_id]) + " " + "{:.2f}".format(last_info.confidence)
+        # Create tracking text with class name instead of class_id
+        if class_mapping:
+            class_name = get_class_name_from_mapping(last_info.class_id, class_mapping)
         else:
-            tracking_text = str(last_info.track_id) + ' ' + str([last_info.class_id]) + " " + "{:.2f}".format(last_info.confidence)
+            class_name = f"class_{last_info.class_id}"
+            
+        if obj.global_id is not None:
+            tracking_text = 'g' + str(obj.global_id) + ' ' + class_name + " " + "{:.2f}".format(last_info.confidence)
+        else:
+            tracking_text = str(last_info.track_id) + ' ' + class_name + " " + "{:.2f}".format(last_info.confidence)
 
         # Calculate font scale based on image resolution
         font_scale_method = config.get('font_scale_method', 'resolution_based')

@@ -29,6 +29,7 @@ class Visualizer(EvilEyeBase):
         self.last_displayed_frame = dict()
         self.visual_buffer_num_frames = 50
         self.text_config = {}  # Text configuration for rendering
+        self.class_mapping = {}  # Class mapping for displaying class names
         self.memory_consumption_detail = dict()
 
 
@@ -42,7 +43,7 @@ class Visualizer(EvilEyeBase):
             self.visual_threads.append(VideoThread(self.source_ids[i], self.fps[i], self.num_height,
                                                            self.num_width, self.show_debug_info,
                                                    self.font_params[i] if self.font_params is not None else None,
-                                                   text_config=self.text_config))
+                                                   text_config=self.text_config, class_mapping=self.class_mapping))
             self.visual_threads[-1].update_image_signal.connect(
                 self.pyqt_slots['update_image'])  # Сигнал из потока для обновления label на новое изображение
             self.visual_threads[-1].add_zone_signal.connect(self.pyqt_slots['open_zone_win'])

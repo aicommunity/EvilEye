@@ -177,12 +177,18 @@ class RoiFeeder(EvilEyeBase):
         if track.class_id in self.primary_by_id:
             return True
         
-        # Check by class name (person = class 0)
-        class_names = ["person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck"]
-        if track.class_id < len(class_names):
-            class_name = class_names[track.class_id]
-            if class_name in self.primary_by_name:
-                return True
+        # Check by class name using class_mapping if available
+        if hasattr(self, 'class_mapping') and self.class_mapping:
+            for name, cid in self.class_mapping.items():
+                if cid == track.class_id and name in self.primary_by_name:
+                    return True
+        else:
+            # Fallback to hardcoded class names for backward compatibility
+            class_names = ["person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck"]
+            if track.class_id < len(class_names):
+                class_name = class_names[track.class_id]
+                if class_name in self.primary_by_name:
+                    return True
         
         return False
     

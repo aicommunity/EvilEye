@@ -59,7 +59,7 @@ class Controller:
         self.show_main_gui = True
         self.show_journal = False
         self.enable_close_from_gui = True
-        self.memory_periodic_check_sec = 60*15
+        self.memory_periodic_check_sec = 60*15*60
         self.max_memory_usage_mb = 1024*16
         self.show_memory_usage = False
         self.auto_restart = True
@@ -76,88 +76,89 @@ class Controller:
         self.db_adapter_cam_events = None
         self.db_adapter_fov_events = None
         self.db_adapter_zone_events = None
-        self.class_names = [
-            "person",
-            "bicycle",
-            "car",
-            "motorcycle",
-            "airplane",
-            "bus",
-            "train",
-            "truck",
-            "boat",
-            "traffic light",
-            "fire hydrant",
-            "stop sign",
-            "parking meter",
-            "bench",
-            "bird",
-            "cat",
-            "dog",
-            "horse",
-            "sheep",
-            "cow",
-            "elephant",
-            "bear",
-            "zebra",
-            "giraffe",
-            "backpack",
-            "umbrella",
-            "handbag",
-            "tie",
-            "suitcase",
-            "frisbee",
-            "skis",
-            "snowboard",
-            "sports ball",
-            "kite",
-            "baseball bat",
-            "baseball glove",
-            "skateboard",
-            "surfboard",
-            "tennis racket",
-            "bottle",
-            "wine glass",
-            "cup",
-            "fork",
-            "knife",
-            "spoon",
-            "bowl",
-            "banana",
-            "apple",
-            "sandwich",
-            "orange",
-            "broccoli",
-            "carrot",
-            "hot dog",
-            "pizza",
-            "donut",
-            "cake",
-            "chair",
-            "couch",
-            "potted plant",
-            "bed",
-            "dining table",
-            "toilet",
-            "tv",
-            "laptop",
-            "mouse",
-            "remote",
-            "keyboard",
-            "cell phone",
-            "microwave",
-            "oven",
-            "toaster",
-            "sink",
-            "refrigerator",
-            "book",
-            "clock",
-            "vase",
-            "scissors",
-            "teddy bear",
-            "hair drier",
-            "toothbrush"
-        ]
+        # Default COCO class mapping: class_name -> class_id
+        self.class_mapping = {
+            "person": 0,
+            "bicycle": 1,
+            "car": 2,
+            "motorcycle": 3,
+            "airplane": 4,
+            "bus": 5,
+            "train": 6,
+            "truck": 7,
+            "boat": 8,
+            "traffic light": 9,
+            "fire hydrant": 10,
+            "stop sign": 11,
+            "parking meter": 12,
+            "bench": 13,
+            "bird": 14,
+            "cat": 15,
+            "dog": 16,
+            "horse": 17,
+            "sheep": 18,
+            "cow": 19,
+            "elephant": 20,
+            "bear": 21,
+            "zebra": 22,
+            "giraffe": 23,
+            "backpack": 24,
+            "umbrella": 25,
+            "handbag": 26,
+            "tie": 27,
+            "suitcase": 28,
+            "frisbee": 29,
+            "skis": 30,
+            "snowboard": 31,
+            "sports ball": 32,
+            "kite": 33,
+            "baseball bat": 34,
+            "baseball glove": 35,
+            "skateboard": 36,
+            "surfboard": 37,
+            "tennis racket": 38,
+            "bottle": 39,
+            "wine glass": 40,
+            "cup": 41,
+            "fork": 42,
+            "knife": 43,
+            "spoon": 44,
+            "bowl": 45,
+            "banana": 46,
+            "apple": 47,
+            "sandwich": 48,
+            "orange": 49,
+            "broccoli": 50,
+            "carrot": 51,
+            "hot dog": 52,
+            "pizza": 53,
+            "donut": 54,
+            "cake": 55,
+            "chair": 56,
+            "couch": 57,
+            "potted plant": 58,
+            "bed": 59,
+            "dining table": 60,
+            "toilet": 61,
+            "tv": 62,
+            "laptop": 63,
+            "mouse": 64,
+            "remote": 65,
+            "keyboard": 66,
+            "cell phone": 67,
+            "microwave": 68,
+            "oven": 69,
+            "toaster": 70,
+            "sink": 71,
+            "refrigerator": 72,
+            "book": 73,
+            "clock": 74,
+            "vase": 75,
+            "scissors": 76,
+            "teddy bear": 77,
+            "hair drier": 78,
+            "toothbrush": 79
+        }
 
         self.run_flag = False
         self.restart_flag = False
@@ -339,7 +340,16 @@ class Controller:
             self.show_main_gui = self.params['controller'].get("show_main_gui", self.show_main_gui)
             self.show_journal = self.params['controller'].get("show_journal", self.show_journal)
             self.enable_close_from_gui = self.params['controller'].get("enable_close_from_gui", self.enable_close_from_gui)
-            self.class_names = self.params['controller'].get("class_names", list())
+            # Handle both old class_names format and new class_mapping format
+            if "class_mapping" in self.params['controller']:
+                self.class_mapping = self.params['controller'].get("class_mapping", {})
+            elif "class_names" in self.params['controller']:
+                # Convert old class_names list to class_mapping dict
+                class_names = self.params['controller'].get("class_names", [])
+                self.class_mapping = {name: idx for idx, name in enumerate(class_names)}
+            else:
+                # Keep default class_mapping if neither is specified
+                pass
             self.memory_periodic_check_sec = self.params['controller'].get("memory_periodic_check_sec", self.memory_periodic_check_sec)
             self.show_memory_usage = self.params['controller'].get("show_memory_usage", self.show_memory_usage)
             self.max_memory_usage_mb = self.params['controller'].get("max_memory_usage_mb", self.max_memory_usage_mb)
@@ -469,7 +479,7 @@ class Controller:
         self.params['controller']["show_main_gui"] = self.show_main_gui
         self.params['controller']["show_journal"] = self.show_journal
         self.params['controller']["enable_close_from_gui"] = self.enable_close_from_gui
-        self.params['controller']["class_names"] = self.class_names
+        self.params['controller']["class_mapping"] = self.class_mapping
         self.params['controller']["memory_periodic_check_sec"] = self.memory_periodic_check_sec
         self.params['controller']["show_memory_usage"] = self.show_memory_usage
 
@@ -701,6 +711,7 @@ class Controller:
         self.visualizer.set_params(**params)
         self.visualizer.source_id_name_table = self.source_id_name_table
         self.visualizer.source_video_duration = self.source_video_duration
+        self.visualizer.class_mapping = self.class_mapping  # Pass class mapping to visualizer
         self.visualizer.init()
 
     def collect_memory_consumption(self):
@@ -816,6 +827,22 @@ class Controller:
     def get_available_pipeline_classes(self):
         """Get list of available pipeline classes"""
         return list(self._discover_pipeline_classes().keys())
+    
+    def get_class_name(self, class_id: int) -> str:
+        """Get class name from class ID using class_mapping"""
+        for name, cid in self.class_mapping.items():
+            if cid == class_id:
+                return name
+        return f"class_{class_id}"
+    
+    def get_class_id(self, class_name: str) -> int:
+        """Get class ID from class name using class_mapping"""
+        return self.class_mapping.get(class_name, -1)
+    
+    def get_class_names_list(self) -> list:
+        """Get list of class names in order of their IDs"""
+        sorted_classes = sorted(self.class_mapping.items(), key=lambda x: x[1])
+        return [name for name, _ in sorted_classes]
     
     def create_config(self, num_sources: int, pipeline_class: str | None):
         """Create configuration with specified pipeline class"""

@@ -435,7 +435,14 @@ class LabelingManager:
         Returns:
             Class name string
         """
-        # Default COCO classes (can be extended or made configurable)
+        # Use class_mapping if available
+        if hasattr(self, 'class_mapping') and self.class_mapping:
+            for name, cid in self.class_mapping.items():
+                if cid == class_id:
+                    return name
+            return f"class_{class_id}"
+        
+        # Fallback to default COCO classes for backward compatibility
         coco_classes = [
             "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat",
             "traffic light", "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat",

@@ -252,12 +252,18 @@ class ObjectsHandler(EvilEyeBase):
         primary_by_name = getattr(self.attr_manager, '_primary_by_name', [])
         primary_by_id = getattr(self.attr_manager, '_primary_by_id', [])
         
-        # Check by class name (person = class 0)
-        class_names = ["person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck"]
-        if obj.class_id < len(class_names):
-            class_name = class_names[obj.class_id]
-            if class_name in primary_by_name:
-                return True
+        # Check by class name using class_mapping if available
+        if hasattr(self, 'class_mapping') and self.class_mapping:
+            for name, cid in self.class_mapping.items():
+                if cid == obj.class_id and name in primary_by_name:
+                    return True
+        else:
+            # Fallback to hardcoded class names for backward compatibility
+            class_names = ["person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck"]
+            if obj.class_id < len(class_names):
+                class_name = class_names[obj.class_id]
+                if class_name in primary_by_name:
+                    return True
         
         # Check by class ID
         if obj.class_id in primary_by_id:
