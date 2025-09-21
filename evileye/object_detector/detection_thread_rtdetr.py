@@ -30,6 +30,9 @@ class DetectionThreadRtdetr(DetectionThreadBase):
             if self.inf_params.get('half', True):
                 self.model.half()
             print(f"Model names: {self.model.names}")
+            
+            # Update model_class_mapping from model
+            self._update_model_class_mapping_from_model()
 
 
     def predict(self, images: list):
@@ -78,3 +81,10 @@ class DetectionThreadRtdetr(DetectionThreadBase):
                 confidences.append(conf)
                 ids.append(class_id)
         return bboxes_coords, confidences, ids
+    
+    def _update_model_class_mapping_from_model(self):
+        """Update model_class_mapping from RTDETR model names"""
+        if self.model and hasattr(self.model, 'names') and self.model.names:
+            # Create mapping from model names: {class_name: class_id}
+            self.model_class_mapping = {name: idx for idx, name in self.model.names.items()}
+            print(f"Updated model_class_mapping from RTDETR model: {self.model_class_mapping}")

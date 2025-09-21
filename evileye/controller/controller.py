@@ -27,6 +27,7 @@ import pprint
 import copy
 import math
 from evileye.core import ProcessorSource, ProcessorStep, ProcessorFrame
+from evileye.core.class_manager import ClassManager
 from evileye.pipelines import PipelineSurveillance
 
 
@@ -76,6 +77,10 @@ class Controller:
         self.db_adapter_cam_events = None
         self.db_adapter_fov_events = None
         self.db_adapter_zone_events = None
+        
+        # Initialize centralized class manager
+        self.class_manager = ClassManager()
+        
         # Default COCO class mapping: class_name -> class_id
         self.class_mapping = {
             "person": 0,
@@ -381,6 +386,9 @@ class Controller:
         self.pipeline.set_credentials(self.credentials)
         self.pipeline.set_params(**pipeline_params)
         self.pipeline.init()
+        
+        # Update class_mapping from detectors after pipeline initialization
+        self.update_class_mapping_from_detectors()
 
         # Fill source maps for visualizer and bookkeeping
         if hasattr(self.pipeline, "get_sources"):
@@ -532,6 +540,9 @@ class Controller:
     def _init_object_handler(self, db_controller, params):
         self.obj_handler = objects_handler.ObjectsHandler(db_controller=db_controller, db_adapter=self.db_adapter_obj)
         self.obj_handler.set_params(**params)
+        # Set class manager for ObjectsHandler
+        if hasattr(self.obj_handler, 'class_manager'):
+            self.obj_handler.class_manager = self.class_manager
         self.obj_handler.init()
 
     def _init_object_handler_without_db(self, params):
@@ -556,6 +567,9 @@ class Controller:
                 self.obj_handler.cameras_params = cameras_params
         
         self.obj_handler.set_params(**params)
+        # Set class manager for ObjectsHandler
+        if hasattr(self.obj_handler, 'class_manager'):
+            self.obj_handler.class_manager = self.class_manager
         self.obj_handler.init()
 
     def _init_db_controller(self, params, system_params):
@@ -843,6 +857,53 @@ class Controller:
         """Get list of class names in order of their IDs"""
         sorted_classes = sorted(self.class_mapping.items(), key=lambda x: x[1])
         return [name for name, _ in sorted_classes]
+    
+    def update_class_mapping_from_detectors(self):
+        """Update class_mapping from all detectors in the pipeline using ClassManager"""
+        if not hasattr(self, 'pipeline') or not self.pipeline:
+            return
+            
+        # Get all detectors from pipeline
+        detectors = []
+        if hasattr(self.pipeline, 'processors'):
+            for processor in self.pipeline.processors:
+                if hasattr(processor, 'get_processors'):
+                    for proc in processor.get_processors():
+                        if hasattr(proc, 'get_model_class_mapping'):
+                            detectors.append(proc)
+        
+        # Collect class mappings from all detectors using ClassManager
+        for detector in detectors:
+            mapping = detector.get_model_class_mapping()
+            if mapping:
+                detector_name = detector.__class__.__name__
+                success = self.class_manager.add_class_mapping(mapping, detector_name)
+                if not success:
+                    print(f"⚠️  Conflicts detected when adding mapping from {detector_name}")
+        
+        # Update controller's class_mapping from ClassManager
+        if self.class_manager.class_mapping:
+            self.class_mapping = self.class_manager.get_class_mapping()
+            print(f"✅ Updated controller class_mapping with {len(self.class_mapping)} classes from {len(detectors)} detectors")
+            
+            # Update visualizer if available
+            if hasattr(self, 'visualizer') and self.visualizer:
+                self.visualizer.class_mapping = self.class_mapping
+                print("✅ Updated visualizer class_mapping")
+            
+            # Set class manager for all detectors
+            for detector in detectors:
+                if hasattr(detector, 'set_class_manager'):
+                    detector.set_class_manager(self.class_manager)
+            
+            # Report conflicts if any
+            if self.class_manager.has_conflicts():
+                print("⚠️  Class mapping conflicts detected:")
+                for conflict in self.class_manager.get_conflicts():
+                    print(f"   - {conflict}")
+                print("Using first occurrence for each class name/ID pair.")
+        else:
+            print("No class mappings found from detectors")
     
     def create_config(self, num_sources: int, pipeline_class: str | None):
         """Create configuration with specified pipeline class"""

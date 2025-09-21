@@ -44,6 +44,9 @@ class DetectionThreadRfdetr(DetectionThreadBase):
                     self.model = RFDETRNano(resolution=resolution)
 
                 self.model.optimize_for_inference()
+                
+                # Update model_class_mapping from model
+                self._update_model_class_mapping_from_model()
                     
             except ImportError:
                 raise ImportError("RF-DETR package not installed. Please install it using: pip install rfdetr")
@@ -159,3 +162,17 @@ class DetectionThreadRfdetr(DetectionThreadBase):
             pass
             
         return bboxes_coords, confidences, ids
+    
+    def _update_model_class_mapping_from_model(self):
+        """Update model_class_mapping from RFDETR model names"""
+        if self.model and hasattr(self.model, 'class_names'):
+            # RFDETR uses class_names attribute
+            class_names = self.model.class_names
+            if class_names:
+                # Create mapping from model names: {class_name: class_id}
+                self.model_class_mapping = {name: idx for idx, name in enumerate(class_names)}
+                print(f"Updated model_class_mapping from RFDETR model: {self.model_class_mapping}")
+        elif self.model and hasattr(self.model, 'names'):
+            # Fallback to names attribute if available
+            self.model_class_mapping = {name: idx for idx, name in self.model.names.items()}
+            print(f"Updated model_class_mapping from RFDETR model (names): {self.model_class_mapping}")

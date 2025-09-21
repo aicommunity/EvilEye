@@ -252,22 +252,33 @@ class ObjectsHandler(EvilEyeBase):
         primary_by_name = getattr(self.attr_manager, '_primary_by_name', [])
         primary_by_id = getattr(self.attr_manager, '_primary_by_id', [])
         
-        # Check by class name using class_mapping if available
-        if hasattr(self, 'class_mapping') and self.class_mapping:
-            for name, cid in self.class_mapping.items():
-                if cid == obj.class_id and name in primary_by_name:
-                    return True
+        # Use ClassManager if available
+        if hasattr(self, 'class_manager') and self.class_manager:
+            # Convert primary class names to IDs using ClassManager
+            primary_ids_from_names = self.class_manager.get_primary_classes_by_name(primary_by_name)
+            primary_ids_from_ids = self.class_manager.get_primary_classes_by_id(primary_by_id)
+            
+            # Check if object's class_id is in any primary list
+            all_primary_ids = primary_ids_from_names + primary_ids_from_ids
+            return obj.class_id in all_primary_ids
         else:
-            # Fallback to hardcoded class names for backward compatibility
-            class_names = ["person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck"]
-            if obj.class_id < len(class_names):
-                class_name = class_names[obj.class_id]
-                if class_name in primary_by_name:
-                    return True
-        
-        # Check by class ID
-        if obj.class_id in primary_by_id:
-            return True
+            # Fallback to old logic
+            # Check by class name using class_mapping if available
+            if hasattr(self, 'class_mapping') and self.class_mapping:
+                for name, cid in self.class_mapping.items():
+                    if cid == obj.class_id and name in primary_by_name:
+                        return True
+            else:
+                # Fallback to hardcoded class names for backward compatibility
+                class_names = ["person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck"]
+                if obj.class_id < len(class_names):
+                    class_name = class_names[obj.class_id]
+                    if class_name in primary_by_name:
+                        return True
+            
+            # Check by class ID
+            if obj.class_id in primary_by_id:
+                return True
         return False
     
     def _create_default_attributes(self, obj):

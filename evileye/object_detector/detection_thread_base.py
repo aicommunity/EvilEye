@@ -67,6 +67,10 @@ class DetectionThreadBase:
 
     def get_model_class_mapping(self) -> dict|None:
         return self.model_class_mapping
+    
+    def _update_model_class_mapping_from_model(self):
+        """Update model_class_mapping from loaded model (to be implemented in subclasses)"""
+        pass
 
     def _process_impl(self):
         while self.run_flag:

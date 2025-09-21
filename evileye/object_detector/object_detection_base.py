@@ -1,6 +1,7 @@
 from abc import ABC
 
 from ..core.frame import CaptureImage
+from ..core.class_manager import ClassManager
 
 from ..core.base_class import EvilEyeBase
 from queue import Queue
@@ -46,6 +47,7 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         self.processing_thread = None
 
         self.model_class_mapping = None
+        self.class_manager = None  # Will be set by Controller
 
     def put(self, image: CaptureImage) -> bool:
         if not self.queue_in.full():
@@ -65,9 +67,66 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
             if self.model_class_mapping is not None and model_class_mapping is not None and self.model_class_mapping != model_class_mapping:
                 print(f"Model class mapping overrides by internal data: {model_class_mapping}")
                 self.model_class_mapping = model_class_mapping
+            elif model_class_mapping is not None and self.model_class_mapping is None:
+                # Auto-update from thread if not set manually
+                self.model_class_mapping = model_class_mapping
+                print(f"Auto-updated model_class_mapping from detection thread: {model_class_mapping}")
         else:
             self.model_class_mapping = None
         return self.model_class_mapping
+    
+    def _process_classes_parameter(self):
+        """Process classes parameter to support both class IDs and class names"""
+        if not self.classes:
+            return
+            
+        # Store original classes for reference
+        original_classes = self.classes.copy()
+        
+        # Use ClassManager if available, otherwise fallback to old logic
+        if self.class_manager:
+            self.classes = self.class_manager.convert_classes_to_ids(self.classes)
+            if original_classes != self.classes:
+                print(f"Updated classes from {original_classes} to {self.classes} using ClassManager")
+        else:
+            # Fallback to old logic
+            if all(isinstance(cls, str) for cls in self.classes):
+                # Classes are names - convert to IDs if model_class_mapping is available
+                if self.model_class_mapping:
+                    self.classes = [self.model_class_mapping.get(name, -1) for name in self.classes]
+                    # Remove invalid class names (not found in mapping)
+                    self.classes = [cls_id for cls_id in self.classes if cls_id != -1]
+                    if len(self.classes) != len([cls for cls in original_classes if isinstance(cls, str)]):
+                        print(f"Warning: Some class names not found in model mapping: {original_classes}")
+                else:
+                    print(f"Warning: Class names provided but no model_class_mapping available: {self.classes}")
+                    self.classes = []  # Clear classes if no mapping available
+            elif all(isinstance(cls, int) for cls in self.classes):
+                # Classes are IDs - keep as is
+                pass
+            else:
+                # Mixed types - convert all to strings and treat as names
+                print(f"Warning: Mixed class types detected, treating all as names: {self.classes}")
+                self.classes = [str(cls) for cls in self.classes]
+                if self.model_class_mapping:
+                    self.classes = [self.model_class_mapping.get(name, -1) for name in self.classes]
+                    self.classes = [cls_id for cls_id in self.classes if cls_id != -1]
+    
+    def update_classes_from_model_mapping(self):
+        """Update classes parameter after model_class_mapping is available"""
+        if self.model_class_mapping and self.classes:
+            # Re-process classes parameter with updated mapping
+            original_classes = self.classes.copy()
+            self._process_classes_parameter()
+            if original_classes != self.classes:
+                print(f"Updated classes from {original_classes} to {self.classes} using model mapping")
+    
+    def set_class_manager(self, class_manager: ClassManager):
+        """Set the class manager for this detector"""
+        self.class_manager = class_manager
+        # Re-process classes with new class manager
+        if self.classes:
+            self._process_classes_parameter()
 
     def get_dropped_ids(self) -> list:
         res = []
@@ -89,6 +148,9 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         self.source_ids = self.params.get('source_ids', [])
         self.num_detection_threads = self.params.get('num_detection_threads', 3)
         self.model_class_mapping = self.params.get('model_class_mapping', None)
+        
+        # Process classes parameter - support both class IDs and class names
+        self._process_classes_parameter()
 
     def get_params_impl(self):
         params = dict()
