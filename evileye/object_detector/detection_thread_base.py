@@ -37,6 +37,7 @@ class DetectionThreadBase:
         self.source_ids = source_ids
         self.processing_thread = threading.Thread(target=self._process_impl)
         self.roi_coords_per_camera = {source_id: roi_coords for source_id, roi_coords in zip(self.source_ids, self.roi)}
+        self.model_class_mapping = None
 
     def start(self):
         self.run_flag = True
@@ -63,6 +64,9 @@ class DetectionThreadBase:
                 return False, dropped_id
         self.queue_in.put(image)
         return True, dropped_id
+
+    def get_model_class_mapping(self) -> dict|None:
+        return self.model_class_mapping
 
     def _process_impl(self):
         while self.run_flag:

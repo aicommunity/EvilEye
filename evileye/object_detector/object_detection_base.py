@@ -45,6 +45,8 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
 
         self.processing_thread = None
 
+        self.model_class_mapping = None
+
     def put(self, image: CaptureImage) -> bool:
         if not self.queue_in.full():
             self.queue_in.put(image)
@@ -56,6 +58,16 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         if self.queue_out.empty():
             return None
         return self.queue_out.get()
+
+    def get_model_class_mapping(self) -> dict|None:
+        if len(self.detection_threads) > 0:
+            model_class_mapping = self.detection_threads[0].get_model_class_mapping()
+            if self.model_class_mapping is not None and model_class_mapping is not None and self.model_class_mapping != model_class_mapping:
+                print(f"Model class mapping overrides by internal data: {model_class_mapping}")
+                self.model_class_mapping = model_class_mapping
+        else:
+            self.model_class_mapping = None
+        return self.model_class_mapping
 
     def get_dropped_ids(self) -> list:
         res = []
@@ -76,6 +88,7 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         self.stride = self.params.get('vid_stride', 1)
         self.source_ids = self.params.get('source_ids', [])
         self.num_detection_threads = self.params.get('num_detection_threads', 3)
+        self.model_class_mapping = self.params.get('model_class_mapping', None)
 
     def get_params_impl(self):
         params = dict()
@@ -84,6 +97,7 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         params['vid_stride'] = self.stride
         params['source_ids'] = self.source_ids
         params['num_detection_threads'] = self.num_detection_threads
+        params['model_class_mapping'] = self.model_class_mapping
         return params
 
     def get_debug_info(self, debug_info: dict):

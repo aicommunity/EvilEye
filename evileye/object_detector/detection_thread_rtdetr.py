@@ -29,6 +29,8 @@ class DetectionThreadRtdetr(DetectionThreadBase):
             self.model.fuse()  # Fuse Conv+BN layers
             if self.inf_params.get('half', True):
                 self.model.half()
+            print(f"Model names: {self.model.names}")
+
 
     def predict(self, images: list):
         return self.model.predict(source=images, classes=self.classes, verbose=False, **self.inf_params)
