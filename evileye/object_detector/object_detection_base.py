@@ -71,6 +71,12 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
                 # Auto-update from thread if not set manually
                 self.model_class_mapping = model_class_mapping
                 print(f"Auto-updated model_class_mapping from detection thread: {model_class_mapping}")
+                
+                # CRITICAL: Update classes after getting model_class_mapping
+                self._update_classes_after_model_loading()
+            elif model_class_mapping is not None and self.model_class_mapping is not None:
+                # Model is loaded, check if we need to update classes
+                self._check_and_update_classes_if_needed()
         else:
             self.model_class_mapping = None
         return self.model_class_mapping
@@ -127,6 +133,66 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         # Re-process classes with new class manager
         if self.classes:
             self._process_classes_parameter()
+    
+    def _update_classes_after_model_loading(self):
+        """Update classes after model is loaded and model_class_mapping is available"""
+        if not self.model_class_mapping:
+            return
+            
+        # Store original classes from params for reference
+        original_classes = self.params.get('classes', [])
+        if not original_classes:
+            return
+            
+        print(f"🔄 Updating classes after model loading. Original: {original_classes}")
+        
+        # Re-process classes with now-available model_class_mapping
+        if all(isinstance(cls, str) for cls in original_classes):
+            # Classes are names - convert to IDs using model_class_mapping
+            new_classes = [self.model_class_mapping.get(name, -1) for name in original_classes]
+            new_classes = [cls_id for cls_id in new_classes if cls_id != -1]
+            
+            if new_classes != self.classes:
+                print(f"✅ Updated classes from {self.classes} to {new_classes} using model mapping")
+                self.classes = new_classes
+                
+                # Update classes in all detection threads
+                self._update_threads_classes()
+            else:
+                print(f"ℹ️  Classes already correct: {self.classes}")
+        else:
+            print(f"ℹ️  Classes are IDs, no conversion needed: {self.classes}")
+    
+    def _update_threads_classes(self):
+        """Update classes in all detection threads"""
+        for thread in self.detection_threads:
+            if hasattr(thread, 'classes'):
+                thread.classes = self.classes.copy()
+                print(f"🔄 Updated thread classes to: {thread.classes}")
+    
+    def _check_and_update_classes_if_needed(self):
+        """Check if classes need to be updated and update them if necessary"""
+        if not self.model_class_mapping:
+            return
+            
+        # Store original classes from params for reference
+        original_classes = self.params.get('classes', [])
+        if not original_classes:
+            return
+            
+        # Check if we have string classes that need conversion
+        if all(isinstance(cls, str) for cls in original_classes):
+            # Convert to IDs using current model_class_mapping
+            new_classes = [self.model_class_mapping.get(name, -1) for name in original_classes]
+            new_classes = [cls_id for cls_id in new_classes if cls_id != -1]
+            
+            # Check if classes are different from current
+            if new_classes != self.classes:
+                print(f"🔄 Late update: classes from {self.classes} to {new_classes} using model mapping")
+                self.classes = new_classes
+                
+                # Update classes in all detection threads
+                self._update_threads_classes()
 
     def get_dropped_ids(self) -> list:
         res = []

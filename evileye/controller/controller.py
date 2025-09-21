@@ -880,6 +880,13 @@ class Controller:
                 success = self.class_manager.add_class_mapping(mapping, detector_name)
                 if not success:
                     print(f"⚠️  Conflicts detected when adding mapping from {detector_name}")
+                
+                # CRITICAL: Force update classes after getting model mapping
+                if hasattr(detector, '_update_classes_after_model_loading'):
+                    detector._update_classes_after_model_loading()
+            else:
+                # Model not loaded yet, try to get mapping (this will trigger late update if model is loaded)
+                detector.get_model_class_mapping()
         
         # Update controller's class_mapping from ClassManager
         if self.class_manager.class_mapping:
@@ -904,6 +911,55 @@ class Controller:
                 print("Using first occurrence for each class name/ID pair.")
         else:
             print("No class mappings found from detectors")
+            
+        # Schedule periodic check for late model loading
+        self._schedule_periodic_class_update()
+    
+    def _schedule_periodic_class_update(self):
+        """Schedule periodic check for classes update after model loading"""
+        import threading
+        import time
+        
+        def periodic_check():
+            """Periodically check and update classes"""
+            max_attempts = 10  # Check for 10 seconds
+            attempt = 0
+            
+            while attempt < max_attempts:
+                time.sleep(1)  # Wait 1 second
+                attempt += 1
+                
+                # Check if we have detectors
+                if not hasattr(self, 'pipeline') or not self.pipeline:
+                    continue
+                    
+                # Get all detectors from pipeline
+                detectors = []
+                if hasattr(self.pipeline, 'processors'):
+                    for processor in self.pipeline.processors:
+                        if hasattr(processor, 'get_processors'):
+                            for proc in processor.get_processors():
+                                if hasattr(proc, 'get_model_class_mapping'):
+                                    detectors.append(proc)
+                
+                # Check each detector
+                updated = False
+                for detector in detectors:
+                    mapping = detector.get_model_class_mapping()
+                    if mapping and hasattr(detector, '_check_and_update_classes_if_needed'):
+                        detector._check_and_update_classes_if_needed()
+                        updated = True
+                
+                if updated:
+                    print("✅ Late model loading detected, classes updated")
+                    break
+                    
+            if attempt >= max_attempts:
+                print("⚠️  Timeout waiting for model loading, some classes may not be updated")
+        
+        # Start periodic check in background thread
+        check_thread = threading.Thread(target=periodic_check, daemon=True)
+        check_thread.start()
     
     def create_config(self, num_sources: int, pipeline_class: str | None):
         """Create configuration with specified pipeline class"""
