@@ -119,8 +119,8 @@ class DetectionThreadBase:
 
         for bbox, class_id, conf in zip(bboxes_coords, class_ids, confidences):
             detection_result = DetectionResult()
-            detection_result.bounding_box = bbox
-            detection_result.class_id = class_id
+            detection_result.bounding_box = [int(x) for x in bbox]
+            detection_result.class_id = int(class_id)
             detection_result.confidence = conf
             detection_result_list.detections.append(detection_result)
         return detection_result_list

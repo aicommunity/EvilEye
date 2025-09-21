@@ -4,7 +4,9 @@ from .object_detection_base import ObjectDetectorBase
 from .object_detection_yolo import ObjectDetectorYolo
 from .object_detection_yolo_mp import ObjectDetectorYoloMp
 from .object_detection_rfdetr import ObjectDetectorRfdetr
+from .object_detection_rtdetr import ObjectDetectorRtdetr
 from .detection_thread_yolo import DetectionThreadBase
 from .detection_thread_yolo import DetectionThreadYolo
 from .detection_thread_yolo_mp import DetectionThreadYoloMp
 from .detection_thread_rfdetr import DetectionThreadRfdetr
+from .detection_thread_rtdetr import DetectionThreadRtdetr

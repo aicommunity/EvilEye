@@ -3,7 +3,7 @@
     "pipeline_class": "PipelineSurveillance",
     "sources": [
       {
-        "camera": "videos/2-GTK_UMPN_ICHI_20250912_082734_trim.mp4",
+        "camera": "videos/bandicam 2025-07-07 11-41-41-333.mp4",
         "source": "VideoFile",
         "split": false,
         "num_split": 0,
@@ -14,15 +14,36 @@
     ],
     "detectors": [
       {
-        "type": "ObjectDetectorRtdetr",
-        "model": "rtdetr-x.pt",
+        "type": "ObjectDetectorRfdetr",
+        "model": "rfdetr-nano",
         "classes": [0, 1, 2, 3, 4],
         "source_ids": [0],
         "inference_size": 640,
-        "conf": 0.25,
-        "roi": [[]],
+        "conf": 0.1,
+        "roi": [[[
+                        0,
+                        164,
+                        401,
+                        288
+                    ],
+                    [
+                        1337,
+                        169,
+                        550,
+                        303
+                    ],
+                    [
+                        446,
+                        57,
+                        861,
+                        287
+                    ],
+                    [ 0, 0, 1911, 1075]
+
+                     ]
+                    ],
         "vid_stride": 1,
-        "num_detection_threads": 1
+        "num_detection_threads": 4
       }
     ],
     "trackers": [
@@ -48,7 +69,7 @@
         "source_ids": [0],
         "padding": 0.15,
         "size": [224, 224],
-        "every_n_frames": 1
+        "every_n_frames": 2
       }
     ],
     "attributes_classifier": [
@@ -61,7 +82,7 @@
           "hard_hat": 0,
           "no_hard_hat": 1
         },
-        "conf_threshold": 0.4
+        "conf_threshold": 0.3
       }
     ],
     "mc_trackers": [
@@ -94,7 +115,7 @@
       "roi": {
         "padding": 0.15,
         "size": [224, 224],
-        "every_n_frames": 1
+        "every_n_frames": 2
       },
       "classifier": {
         "enabled": true,
@@ -105,8 +126,8 @@
           "no_hard_hat": 1
         },
         "confidence_thresholds": {
-          "hard_hat": 0.4,
-          "no_hard_hat": 0.4
+          "hard_hat": 0.3,
+          "no_hard_hat": 0.3
         },
         "time_thresholds": {
           "hard_hat": {
