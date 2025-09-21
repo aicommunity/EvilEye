@@ -172,6 +172,7 @@ class PipelineProcessors(PipelineBase):
 
         if isinstance(processor, ProcessorSource):
             self.sources_proc = processor
+        self._final_results_name = processor.get_name()
 
     def generate_default_structure(self, num_sources: int):
         """Generate default structure for pipeline"""
