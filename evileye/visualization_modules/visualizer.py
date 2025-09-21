@@ -136,7 +136,7 @@ class Visualizer(EvilEyeBase):
                 start_proc_frame = timer()
                 frame = proc_frames[i]
 
-                if self.last_displayed_frame.get(source_id, 0) >= frame.frame_id:
+                if frame.frame_id is not None and self.last_displayed_frame.get(source_id, 0) >= frame.frame_id:
                     remove_processed_idx[source_id].append(i)
                     continue
 
@@ -152,6 +152,8 @@ class Visualizer(EvilEyeBase):
     #                continue
 
                 start_find_objects = timer()
+                if source_id is None or source_id not in self.source_ids:
+                    continue
                 source_index = self.source_ids.index(source_id)
                 #objs = objects[source_index].objects
                 objs = objects[source_index].find_objects_by_frame_id(frame.frame_id, use_history=False)

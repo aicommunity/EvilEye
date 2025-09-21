@@ -1,0 +1,113 @@
+{
+  "pipeline": {
+    "pipeline_class": "PipelineSurveillance",
+    "sources": [
+      {
+        "camera": "videos/sample_video.mp4",
+        "source": "VideoFile",
+        "split": false,
+        "num_split": 0,
+        "src_coords": [0],
+        "source_ids": [0],
+        "source_names": ["Cam1"]
+      }
+    ],
+    "detectors": [
+      {
+        "type": "ObjectDetectorRtdetr",
+        "model": "rtdetr-l.pt",
+        "classes": [0, 1, 2, 3, 4],
+        "source_ids": [0],
+        "inference_size": 640,
+        "conf": 0.25,
+        "roi": [[]],
+        "vid_stride": 1,
+        "num_detection_threads": 1
+      }
+    ],
+    "trackers": [
+      {
+        "source_ids": [0],
+        "fps": 5,
+        "botsort_cfg": {
+          "tracker_type": "botsort",
+          "track_high_thresh": 0.5,
+          "track_low_thresh": 0.1,
+          "new_track_thresh": 0.6,
+          "track_buffer": 30,
+          "match_thresh": 0.8,
+          "proximity_thresh": 0.5,
+          "appearance_thresh": 0.25,
+          "gmc_method": "sparseOptFlow",
+          "with_reid": true
+        }
+      }
+    ],
+    "attributes_roi": [
+      {
+        "source_ids": [0],
+        "padding": 0.15,
+        "size": [224, 224],
+        "roi": [[
+          [
+            0,
+            164,
+            401,
+            288
+          ],
+          [
+            1337,
+            169,
+            550,
+            303
+          ],
+          [
+            446,
+            57,
+            861,
+            287
+          ],
+          [ 0, 0, 1911, 1075]
+        ]]
+      }
+    ],
+    "attributes_classifier": [
+      {
+        "source_ids": [0],
+        "model": "models/y11mhardhats.pt",
+        "classes": [0, 1],
+        "class_names": ["no_helmet", "helmet"],
+        "roi": [[
+          [
+            0,
+            164,
+            401,
+            288
+          ],
+          [
+            1337,
+            169,
+            550,
+            303
+          ],
+          [
+            446,
+            57,
+            861,
+            287
+          ],
+          [ 0, 0, 1911, 1075]
+        ]],
+        "vid_stride": 1,
+        "num_detection_threads": 1
+      }
+    ]
+  },
+  "controller": {
+    "fps": 30,
+    "class_names": ["person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat", "traffic light", "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat", "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe", "backpack", "umbrella", "handbag", "tie", "suitcase", "frisbee", "skis", "snowboard", "sports ball", "kite", "baseball bat", "baseball glove", "skateboard", "surfboard", "tennis racket", "bottle", "wine glass", "cup", "fork", "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange", "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair", "couch", "potted plant", "bed", "dining table", "toilet", "tv", "laptop", "mouse", "remote", "keyboard", "cell phone", "microwave", "oven", "toaster", "sink", "refrigerator", "book", "clock", "vase", "scissors", "teddy bear", "hair drier", "toothbrush"]
+  },
+  "visualizer": {
+    "gui_enabled": true
+  }
+}

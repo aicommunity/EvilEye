@@ -6,6 +6,7 @@ from ..core.processor_base import ProcessorBase
 from ..core.pipeline_processors import PipelineProcessors
 from typing import Any, Tuple, List, Dict
 import evileye.preprocessing  # Import to register PreprocessingPipeline
+import evileye.attributes_detection  # Import to register RoiFeeder and AttributeClassifier
 
 
 
@@ -36,7 +37,11 @@ class PipelineSurveillance(PipelineProcessors):
         self._init_trackers(pipeline_params.get("trackers", []))
         self._init_mc_trackers(pipeline_params.get("mc_trackers", []))
 
-        self._final_results_name = "mc_trackers"
+        self._init_attributes_roi(pipeline_params.get("attributes_roi", []))
+        self._init_attribute_classifier(pipeline_params.get("attributes_classifier", []))
+
+        # Set final results name dynamically based on mc_trackers status
+        mc_trackers_enabled = any(tracker.get("enable", True) for tracker in pipeline_params.get("mc_trackers", []))
 
         return True
 
@@ -47,7 +52,12 @@ class PipelineSurveillance(PipelineProcessors):
             return
             
         num_sources = len(params)
-        sources_proc = ProcessorSource(processor_name="sources", class_name="VideoCapture", num_processors=num_sources, order=0)
+        # Get class_name from config, default to VideoCapture
+        class_name = params[0].get("type", "VideoCapture") if params else "VideoCapture"
+        if not any(param.get("type") for param in params):
+            print(f"Warning: No 'type' parameter found in sources config. Using default: {class_name}")
+        
+        sources_proc = ProcessorSource(processor_name="sources", class_name=class_name, num_processors=num_sources, order=0)
 
         # Merge credentials if available
         if credentials and isinstance(credentials, dict):
@@ -72,7 +82,12 @@ class PipelineSurveillance(PipelineProcessors):
             return
             
         num_preps = len(params)
-        preprocessors_proc = ProcessorFrame(processor_name="preprocessors", class_name="PreprocessingPipeline", num_processors=num_preps, order=1)
+        # Get class_name from config, default to PreprocessingPipeline
+        class_name = params[0].get("type", "PreprocessingPipeline") if params else "PreprocessingPipeline"
+        if not any(param.get("type") for param in params):
+            print(f"Warning: No 'type' parameter found in preprocessors config. Using default: {class_name}")
+        
+        preprocessors_proc = ProcessorFrame(processor_name="preprocessors", class_name=class_name, num_processors=num_preps, order=1)
         preprocessors_proc.set_params(params)
         preprocessors_proc.init()
         self._add_processor(preprocessors_proc)
@@ -83,7 +98,12 @@ class PipelineSurveillance(PipelineProcessors):
             return
             
         num_det = len(params)
-        detectors_proc = ProcessorStep(processor_name="detectors", class_name="ObjectDetectorYolo", num_processors=num_det, order=2)
+        # Get class_name from config, default to ObjectDetectorYolo
+        class_name = params[0].get("type", "ObjectDetectorYolo") if params else "ObjectDetectorYolo"
+        if not any(param.get("type") for param in params):
+            print(f"Warning: No 'type' parameter found in detectors config. Using default: {class_name}")
+        
+        detectors_proc = ProcessorStep(processor_name="detectors", class_name=class_name, num_processors=num_det, order=2)
         detectors_proc.set_params(params)
         detectors_proc.init()
         self._add_processor(detectors_proc)
@@ -94,7 +114,12 @@ class PipelineSurveillance(PipelineProcessors):
             return
             
         num_trackers = len(params)
-        trackers_proc = ProcessorStep(processor_name="trackers", class_name="ObjectTrackingBotsort", num_processors=num_trackers, order=3)
+        # Get class_name from config, default to ObjectTrackingBotsort
+        class_name = params[0].get("type", "ObjectTrackingBotsort") if params else "ObjectTrackingBotsort"
+        if not any(param.get("type") for param in params):
+            print(f"Warning: No 'type' parameter found in trackers config. Using default: {class_name}")
+        
+        trackers_proc = ProcessorStep(processor_name="trackers", class_name=class_name, num_processors=num_trackers, order=3)
         trackers_proc.set_params(params)
         trackers_proc.init(encoders=self.encoders)
         self._add_processor(trackers_proc)
@@ -105,10 +130,45 @@ class PipelineSurveillance(PipelineProcessors):
             return
             
         num_trackers = len(params)
-        mc_trackers_proc = ProcessorStep(processor_name="mc_trackers", class_name="ObjectMultiCameraTracking", num_processors=num_trackers, order=4)
+        # Get class_name from config, default to ObjectMultiCameraTracking
+        class_name = params[0].get("type", "ObjectMultiCameraTracking") if params else "ObjectMultiCameraTracking"
+        if not any(param.get("type") for param in params):
+            print(f"Warning: No 'type' parameter found in mc_trackers config. Using default: {class_name}")
+        
+        mc_trackers_proc = ProcessorStep(processor_name="mc_trackers", class_name=class_name, num_processors=num_trackers, order=4)
         mc_trackers_proc.set_params(params)
         mc_trackers_proc.init(encoders=self.encoders)
         self._add_processor(mc_trackers_proc)
+
+    def _init_attributes_roi(self, params: List[Dict]):
+        """Initialize ROI feeder for attributes if configured"""
+        if not params:
+            return
+        num = len(params)
+        # Get class_name from config, default to RoiFeeder
+        class_name = params[0].get("type", "RoiFeeder") if params else "RoiFeeder"
+        if not any(param.get("type") for param in params):
+            print(f"Warning: No 'type' parameter found in attributes_roi config. Using default: {class_name}")
+        
+        roi_proc = ProcessorStep(processor_name="attributes_roi", class_name=class_name, num_processors=num, order=4)
+        roi_proc.set_params(params)
+        roi_proc.init()
+        self._add_processor(roi_proc)
+
+    def _init_attribute_classifier(self, params: List[Dict]):
+        """Initialize AttributeClassifier as ProcessorFrame if configured"""
+        if not params:
+            return
+        num = len(params)
+        # Get class_name from config, default to AttributeClassifier
+        class_name = params[0].get("type", "AttributeClassifier") if params else "AttributeClassifier"
+        if not any(param.get("type") for param in params):
+            print(f"Warning: No 'type' parameter found in attributes_classifier config. Using default: {class_name}")
+        
+        cls_proc = ProcessorStep(processor_name="attributes_classifier", class_name=class_name, num_processors=num, order=5)
+        cls_proc.set_params(params)
+        cls_proc.init()
+        self._add_processor(cls_proc)
 
     def _init_encoders(self, tracker_params_list: List[Dict]):
         """Initialize encoders for tracking in surveillance pipeline"""

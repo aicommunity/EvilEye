@@ -331,7 +331,7 @@ class LabelingManager:
         # Get source name from cameras params if available
         source_name = self._get_source_name(obj.source_id)
         
-        return {
+        object_data = {
             "object_id": obj.object_id,
             "frame_id": obj.frame_id,
             "timestamp": obj.time_stamp.isoformat(),
@@ -345,6 +345,22 @@ class LabelingManager:
             "track_id": obj.track.track_id,
             "global_id": getattr(obj, 'global_id', None)
         }
+        
+        # Добавляем атрибуты, если они есть
+        if hasattr(obj, 'attributes') and obj.attributes:
+            object_data["attributes"] = {}
+            for attr_name, attr_data in obj.attributes.items():
+                if isinstance(attr_data, dict):
+                    object_data["attributes"][attr_name] = {
+                        "state": attr_data.get("state", "none"),
+                        "confidence_smooth": float(attr_data.get("confidence_smooth", 0.0)),
+                        "frames_present": int(attr_data.get("frames_present", 0)),
+                        "total_time_ms": int(attr_data.get("total_time_ms", 0)),
+                        "enter_count": int(attr_data.get("enter_count", 0)),
+                        "last_seen_ts": attr_data.get("last_seen_ts")
+                    }
+        
+        return object_data
     
     def create_lost_object_data(self, obj, image_width: int, image_height: int,
                                image_filename: str, preview_filename: str) -> Dict[str, Any]:
@@ -376,7 +392,7 @@ class LabelingManager:
         # Get source name from cameras params if available
         source_name = self._get_source_name(obj.source_id)
         
-        return {
+        object_data = {
             "object_id": obj.object_id,
             "frame_id": obj.frame_id,
             "detected_timestamp": obj.time_detected.isoformat(),
@@ -392,6 +408,22 @@ class LabelingManager:
             "global_id": getattr(obj, 'global_id', None),
             "lost_frames": obj.lost_frames
         }
+        
+        # Добавляем атрибуты, если они есть
+        if hasattr(obj, 'attributes') and obj.attributes:
+            object_data["attributes"] = {}
+            for attr_name, attr_data in obj.attributes.items():
+                if isinstance(attr_data, dict):
+                    object_data["attributes"][attr_name] = {
+                        "state": attr_data.get("state", "none"),
+                        "confidence_smooth": float(attr_data.get("confidence_smooth", 0.0)),
+                        "frames_present": int(attr_data.get("frames_present", 0)),
+                        "total_time_ms": int(attr_data.get("total_time_ms", 0)),
+                        "enter_count": int(attr_data.get("enter_count", 0)),
+                        "last_seen_ts": attr_data.get("last_seen_ts")
+                    }
+        
+        return object_data
     
     def _get_class_name(self, class_id: int) -> str:
         """
