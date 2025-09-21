@@ -27,6 +27,8 @@ class PipelineProcessors(PipelineBase):
 
         self.sources_proc: ProcessorSource | None = None
 
+        self._final_results_name = ""
+
     def default(self):
         """Reset pipeline to default state"""
         super().default()

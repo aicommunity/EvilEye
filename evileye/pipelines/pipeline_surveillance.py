@@ -42,7 +42,6 @@ class PipelineSurveillance(PipelineProcessors):
 
         # Set final results name dynamically based on mc_trackers status
         mc_trackers_enabled = any(tracker.get("enable", True) for tracker in pipeline_params.get("mc_trackers", []))
-        self._final_results_name = "attributes_classifier"
 
         return True
 
@@ -76,6 +75,8 @@ class PipelineSurveillance(PipelineProcessors):
             raise Exception(f"Failed to initialize sources processor: {sources_proc}")
         self._add_processor(sources_proc)
         self.sources_proc = sources_proc
+        self._final_results_name = "sources"
+
 
     def _init_preprocessors(self, params: List[Dict]):
         """Initialize preprocessor processors for surveillance"""
@@ -92,6 +93,7 @@ class PipelineSurveillance(PipelineProcessors):
         preprocessors_proc.set_params(params)
         preprocessors_proc.init()
         self._add_processor(preprocessors_proc)
+        self._final_results_name = "preprocessors"
 
     def _init_detectors(self, params: List[Dict]):
         """Initialize detector processors for surveillance"""
@@ -99,8 +101,8 @@ class PipelineSurveillance(PipelineProcessors):
             return
             
         num_det = len(params)
-        # Get class_name from config, default to ObjectDetectorRfdetr
-        class_name = params[0].get("type", "ObjectDetectorRfdetr") if params else "ObjectDetectorRfdetr"
+        # Get class_name from config, default to ObjectDetectorYolo
+        class_name = params[0].get("type", "ObjectDetectorYolo") if params else "ObjectDetectorYolo"
         if not any(param.get("type") for param in params):
             print(f"Warning: No 'type' parameter found in detectors config. Using default: {class_name}")
         
@@ -108,6 +110,8 @@ class PipelineSurveillance(PipelineProcessors):
         detectors_proc.set_params(params)
         detectors_proc.init()
         self._add_processor(detectors_proc)
+        self._final_results_name = "detectors"
+
 
     def _init_trackers(self, params: List[Dict]):
         """Initialize tracker processors for surveillance"""
@@ -124,6 +128,7 @@ class PipelineSurveillance(PipelineProcessors):
         trackers_proc.set_params(params)
         trackers_proc.init(encoders=self.encoders)
         self._add_processor(trackers_proc)
+        self._final_results_name = "attributes_classifier"
 
     def _init_mc_trackers(self, params: List[Dict]):
         """Initialize multi-camera tracker processors for surveillance"""
@@ -140,6 +145,8 @@ class PipelineSurveillance(PipelineProcessors):
         mc_trackers_proc.set_params(params)
         mc_trackers_proc.init(encoders=self.encoders)
         self._add_processor(mc_trackers_proc)
+        self._final_results_name = "mc_trackers"
+
 
     def _init_attributes_roi(self, params: List[Dict]):
         """Initialize ROI feeder for attributes if configured"""
@@ -170,6 +177,8 @@ class PipelineSurveillance(PipelineProcessors):
         cls_proc.set_params(params)
         cls_proc.init()
         self._add_processor(cls_proc)
+        self._final_results_name = "attributes_classifier"
+
 
     def _init_encoders(self, tracker_params_list: List[Dict]):
         """Initialize encoders for tracking in surveillance pipeline"""
