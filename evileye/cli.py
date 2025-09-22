@@ -105,7 +105,7 @@ def run(
 
     try:
         logger.info(f"Launching command: {' '.join(cmd)}")
-        console.print(f"[green]Launching with command:[/green] {' '.join(cmd)}")
+            console.print(f"[green]Launching with command:[/green] {' '.join(cmd)}")
         # Run command in current working directory (where CLI was launched from)
         subprocess.run(cmd, check=True, cwd=os.getcwd())
         logger.info("Command executed successfully")
@@ -201,7 +201,7 @@ def deploy() -> None:
     import shutil
     
     current_dir = Path.cwd()
-    console.print(f"[blue]Deploying EvilEye files to: {current_dir}[/blue]")
+        console.print(f"[blue]Deploying EvilEye files to: {current_dir}[/blue]")
     
     # Step 1: Copy credentials_proto.json to credentials.json
     credentials_proto = Path(__file__).parent / "credentials_proto.json"
@@ -213,12 +213,12 @@ def deploy() -> None:
         if credentials_proto.exists():
             try:
                 shutil.copy2(credentials_proto, credentials_target)
-                console.print(f"[green]✓ Copied credentials_proto.json to credentials.json[/green]")
+                console.print(f"[green]Copied credentials_proto.json to credentials.json[/green]")
             except Exception as e:
-                console.print(f"[red]✗ Error copying credentials file: {e}[/red]")
+                console.print(f"[red]Error copying credentials file: {e}[/red]")
                 raise typer.Exit(1)
         else:
-            console.print("[red]✗ credentials_proto.json not found in package[/red]")
+            console.print("[red]credentials_proto.json not found in package[/red]")
             raise typer.Exit(1)
     
     # Step 2: Create configs folder
@@ -228,12 +228,12 @@ def deploy() -> None:
     else:
         try:
             configs_dir.mkdir(parents=True, exist_ok=True)
-            console.print(f"[green]✓ Created configs folder[/green]")
+            console.print(f"[green]Created configs folder[/green]")
         except Exception as e:
-            console.print(f"[red]✗ Error creating configs folder: {e}[/red]")
+            console.print(f"[red]Error creating configs folder: {e}[/red]")
             raise typer.Exit(1)
     
-    console.print("[green]✓ Deployment completed successfully![/green]")
+    console.print("[green]Deployment completed successfully![/green]")
     console.print(f"[blue]You can now create configurations with:[/blue]")
     console.print(f"[yellow]  evileye-create my_config --sources 1[/yellow]")
 
@@ -252,7 +252,7 @@ def deploy_samples() -> None:
     import shutil
     
     current_dir = Path.cwd()
-    console.print(f"[blue]🎬 Deploying EvilEye sample configurations to: {current_dir}[/blue]")
+    console.print(f"[blue]Deploying EvilEye sample configurations to: {current_dir}[/blue]")
     
     # First run regular deploy
     deploy()
@@ -261,12 +261,12 @@ def deploy_samples() -> None:
     videos_dir = current_dir / "videos"
     if not videos_dir.exists():
         videos_dir.mkdir()
-        console.print("[green]✓ Created videos folder[/green]")
+        console.print("[green]Created videos folder[/green]")
     else:
         console.print("[yellow]videos folder already exists, skipping...[/yellow]")
     
     # Download sample videos
-    console.print("\n[blue]📥 Downloading sample videos...[/blue]")
+    console.print("\n[blue]Downloading sample videos...[/blue]")
     try:
         from evileye.utils.download_samples import download_sample_videos
         video_results = download_sample_videos(str(videos_dir))
@@ -276,16 +276,16 @@ def deploy_samples() -> None:
         total_videos = len(video_results)
         
         if successful_videos > 0:
-            console.print(f"[green]✓ Downloaded {successful_videos}/{total_videos} sample videos[/green]")
+            console.print(f"[green]Downloaded {successful_videos}/{total_videos} sample videos[/green]")
         else:
-            console.print("[yellow]⚠️  No videos downloaded, but continuing with sample configs...[/yellow]")
+            console.print("[yellow]No videos downloaded, but continuing with sample configs...[/yellow]")
             
     except Exception as e:
-        console.print(f"[yellow]⚠️  Video download failed: {e}[/yellow]")
+        console.print(f"[yellow]Video download failed: {e}[/yellow]")
         console.print("[blue]Continuing with sample configs (you can add videos manually)...[/blue]")
     
     # Copy sample configurations
-    console.print("\n[blue]📋 Copying sample configurations...[/blue]")
+    console.print("\n[blue]Copying sample configurations...[/blue]")
     samples_dir = Path(__file__).parent / "samples_configs"
     configs_dir = current_dir / "configs"
     
@@ -307,10 +307,10 @@ def deploy_samples() -> None:
         
         if source_path.exists():
             shutil.copy2(source_path, dest_path)
-            console.print(f"[green]✓ Copied {config_name}[/green]")
+            console.print(f"[green]Copied {config_name}[/green]")
             copied_count += 1
         else:
-            console.print(f"[yellow]⚠️  Sample config {config_name} not found[/yellow]")
+            console.print(f"[yellow]Sample config {config_name} not found[/yellow]")
     
     # Create README for samples
     readme_content = """# EvilEye Sample Configurations
@@ -425,23 +425,23 @@ For more information, see the main README.md file.
     with open(readme_path, 'w') as f:
         f.write(readme_content)
     
-    console.print(f"[green]✓ Copied {copied_count} sample configurations[/green]")
-    console.print("[green]✓ Created README_SAMPLES.md[/green]")
+    console.print(f"[green]Copied {copied_count} sample configurations[/green]")
+    console.print("[green]Created README_SAMPLES.md[/green]")
     
-    console.print("\n[green]🎉 Sample deployment completed successfully![/green]")
-    console.print("\n[blue]📋 Available sample configurations:[/blue]")
+    console.print("\n[green]Sample deployment completed successfully![/green]")
+    console.print("\n[blue]Available sample configurations:[/blue]")
     for config_name in sample_configs:
         if (configs_dir / config_name).exists():
-            console.print(f"  [yellow]• {config_name}[/yellow]")
+            console.print(f"  [yellow]- {config_name}[/yellow]")
     
-    console.print("\n[blue]🚀 Try running a sample:[/blue]")
+    console.print("\n[blue]Try running a sample:[/blue]")
     console.print("  [yellow]evileye run configs/single_video.json[/yellow]")
-    console.print("\n[blue]📁 Downloaded video files:[/blue]")
+    console.print("\n[blue]Downloaded video files:[/blue]")
     for video_name in ["planes_sample.mp4", "sample_split.mp4", "6p-c0.avi", "6p-c1.avi"]:
         if (videos_dir / video_name).exists():
-            console.print(f"  [green]✓ {video_name}[/green]")
+            console.print(f"  [green]{video_name}[/green]")
         else:
-            console.print(f"  [yellow]⚠️  {video_name} (not downloaded)[/yellow]")
+            console.print(f"  [yellow]{video_name} (not downloaded)[/yellow]")
 
 
 @app.command()

@@ -137,12 +137,12 @@ def create_config_file(config_name, sources=0, pipeline_class='PipelineSurveilla
     
     # Check if file already exists
     if os.path.exists(output_path) and not force:
-        create_logger.info(f"❌ Configuration file '{output_path}' already exists!")
+        create_logger.info(f"Configuration file '{output_path}' already exists!")
         create_logger.info(f"   Use --force to overwrite or choose a different name.")
         return False
     
     # Create controller instance and generate configuration
-    create_logger.info(f"🔧 Creating configuration:")
+     create_logger.info(f"Creating configuration:")
     create_logger.info(f"   Pipeline: {pipeline_class}")
     create_logger.info(f"   Sources: {sources}")
     create_logger.info(f"   Source type: {source_type}")
@@ -156,14 +156,14 @@ def create_config_file(config_name, sources=0, pipeline_class='PipelineSurveilla
         with open(output_path, 'w') as f:
             json.dump(config_data, f, indent=4)
         
-        create_logger.info(f"✅ Configuration created successfully!")
+         create_logger.info(f"Configuration created successfully!")
         create_logger.info(f"   File: {output_path}")
         create_logger.info(f"   Size: {os.path.getsize(output_path)} bytes")
         
         return True
         
     except Exception as e:
-        create_logger.info(f"❌ Error creating configuration: {e}")
+         create_logger.info(f"Error creating configuration: {e}")
         return False
 
 
@@ -179,7 +179,7 @@ def main():
     
     # Validate arguments
     if args.config_name is None:
-        create_logger.info("❌ Configuration name is required!")
+         create_logger.info("Configuration name is required!")
         create_logger.info("   Usage: evileye-create <config_name>")
         create_logger.info("   Use --help for more information.")
         return 1

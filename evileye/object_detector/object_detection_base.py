@@ -144,7 +144,7 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         if not original_classes:
             return
             
-        self.logger.info(f"🔄 Updating classes after model loading. Original: {original_classes}")
+        self.logger.info(f"Updating classes after model loading. Original: {original_classes}")
         
         # Re-process classes with now-available model_class_mapping
         if all(isinstance(cls, str) for cls in original_classes):
@@ -153,22 +153,22 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
             new_classes = [cls_id for cls_id in new_classes if cls_id != -1]
             
             if new_classes != self.classes:
-                self.logger.info(f"✅ Classes updated from {self.classes} to {new_classes} using model mapping")
+                self.logger.info(f"Classes updated from {self.classes} to {new_classes} using model mapping")
                 self.classes = new_classes
                 
                 # Update classes in all detection threads
                 self._update_threads_classes()
             else:
-                self.logger.info(f"ℹ️  Classes already correct: {self.classes}")
+                self.logger.info(f"Classes already correct: {self.classes}")
         else:
-            self.logger.info(f"ℹ️  Classes are IDs, conversion not needed: {self.classes}")
+            self.logger.info(f"Classes are IDs, conversion not needed: {self.classes}")
     
     def _update_threads_classes(self):
         """Update classes in all detection threads"""
         for thread in self.detection_threads:
             if hasattr(thread, 'classes'):
                 thread.classes = self.classes.copy()
-                self.logger.info(f"🔄 Thread classes updated to: {thread.classes}")
+                self.logger.info(f"Thread classes updated to: {thread.classes}")
     
     def _check_and_update_classes_if_needed(self):
         """Check if classes need to be updated and update them if necessary"""
@@ -188,7 +188,7 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
             
             # Check if classes are different from current
             if new_classes != self.classes:
-                self.logger.info(f"🔄 Late update: classes from {self.classes} to {new_classes} using model mapping")
+                self.logger.info(f"Late update: classes from {self.classes} to {new_classes} using model mapping")
                 self.classes = new_classes
                 
                 # Update classes in all detection threads

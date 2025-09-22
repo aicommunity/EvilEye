@@ -681,7 +681,7 @@ class Controller:
                                 self.obj_handler.params['objects_handler'] = {}
                             self.obj_handler.params['objects_handler']['attributes_detection'] = attr_params
                             self.obj_handler.set_params_impl()
-                            self.logger.info(f"✅ Attribute detection configured for {proc_name}")
+                            self.logger.info(f"Attribute detection configured for {proc_name}")
 
     def _init_events_detectors_without_db(self, params):
         """Initialize events detectors without database connection."""
@@ -881,7 +881,7 @@ class Controller:
                 detector_name = detector.__class__.__name__
                 success = self.class_manager.add_class_mapping(mapping, detector_name)
                 if not success:
-                    self.logger.warning(f"⚠️  Conflicts detected when adding mapping from {detector_name}")
+                    self.logger.warning(f"Conflicts detected when adding mapping from {detector_name}")
                 
                 # CRITICAL: Force update classes after getting model mapping
                 if hasattr(detector, '_update_classes_after_model_loading'):
@@ -893,12 +893,12 @@ class Controller:
         # Update controller's class_mapping from ClassManager
         if self.class_manager.class_mapping:
             self.class_mapping = self.class_manager.get_class_mapping()
-            self.logger.info(f"✅ Updated controller class_mapping with {len(self.class_mapping)} classes from {len(detectors)} detectors")
+            self.logger.info(f"Updated controller class_mapping with {len(self.class_mapping)} classes from {len(detectors)} detectors")
             
             # Update visualizer if available
             if hasattr(self, 'visualizer') and self.visualizer:
                 self.visualizer.class_mapping = self.class_mapping
-                self.logger.info("✅ Updated visualizer class_mapping")
+                self.logger.info("Updated visualizer class_mapping")
             
             # Set class manager for all detectors
             for detector in detectors:
@@ -907,7 +907,7 @@ class Controller:
             
             # Report conflicts if any
             if self.class_manager.has_conflicts():
-                self.logger.warning("⚠️  Class mapping conflicts detected:")
+                self.logger.warning("Class mapping conflicts detected:")
                 for conflict in self.class_manager.get_conflicts():
                     self.logger.warning(f"   - {conflict}")
                 self.logger.info("Using first occurrence for each class name/ID pair.")
@@ -953,11 +953,11 @@ class Controller:
                         updated = True
                 
                 if updated:
-                    self.logger.info("✅ Late model loading detected, classes updated")
+                    self.logger.info("Late model loading detected, classes updated")
                     break
                     
             if attempt >= max_attempts:
-                self.logger.warning("⚠️  Model loading timeout, some classes may not update")
+                self.logger.warning("Model loading timeout, some classes may not update")
         
         # Start periodic check in background thread
         check_thread = threading.Thread(target=periodic_check, daemon=True)

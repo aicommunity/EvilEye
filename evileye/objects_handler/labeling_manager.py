@@ -571,7 +571,7 @@ class LabelingManager:
     def _preload_existing_data(self):
         """Pre-load existing data from JSON files to avoid clearing them on startup."""
         try:
-            self.logger.info(f"🔄 Pre-loading existing data from {self.date_str}...")
+            self.logger.info(f"Pre-loading existing data from {self.date_str}...")
             
             # Check and repair JSON files if needed
             self._check_and_repair_json_files()
@@ -580,30 +580,30 @@ class LabelingManager:
             found_data = self._load_json(self.found_labels_file, self.found_file_lock)
             existing_found = found_data.get("objects", [])
             if existing_found:
-                self.logger.info(f"📊 Found {len(existing_found)} existing found objects")
+                self.logger.info(f"Found {len(existing_found)} existing found objects")
                 # Don't add to buffer, just ensure file is preserved
             
             # Load lost objects with file lock
             lost_data = self._load_json(self.lost_labels_file, self.lost_file_lock)
             existing_lost = lost_data.get("objects", [])
             if existing_lost:
-                self.logger.info(f"📊 Found {len(existing_lost)} existing lost objects")
+                self.logger.info(f"Found {len(existing_lost)} existing lost objects")
                 # Don't add to buffer, just ensure file is preserved
             
             total_existing = len(existing_found) + len(existing_lost)
             if total_existing > 0:
-                self.logger.info(f"✅ Successfully pre-loaded {total_existing} existing objects")
+                self.logger.info(f"Successfully pre-loaded {total_existing} existing objects")
                 
                 # Return the maximum object_id found for counter initialization
                 max_object_id = self._get_max_object_id(existing_found, existing_lost)
                 return max_object_id
             else:
-                self.logger.info(f"ℹ️ No existing objects found, starting fresh")
+                self.logger.info(f"No existing objects found, starting fresh")
                 return 0
                 
         except Exception as e:
-            self.logger.warning(f"⚠️ Warning: Error pre-loading existing data: {e}")
-            self.logger.info(f"ℹ️ Continuing with fresh start")
+            self.logger.warning(f"Warning: Error pre-loading existing data: {e}")
+            self.logger.info(f"Continuing with fresh start")
             return 0
     
     def _get_max_object_id(self, found_objects: List[Dict], lost_objects: List[Dict]) -> int:
@@ -649,10 +649,10 @@ class LabelingManager:
                 try:
                     with open(self.found_labels_file, 'r', encoding='utf-8') as f:
                         json.load(f)
-                    self.logger.info(f"✅ Found objects file is valid")
+                    self.logger.info(f"Found objects file is valid")
                 except json.JSONDecodeError as e:
-                    self.logger.warning(f"⚠️ Found objects file is corrupted: {e}")
-                    self.logger.info(f"🔄 Attempting recovery...")
+                    self.logger.warning(f"Found objects file is corrupted: {e}")
+                    self.logger.info(f"Attempting recovery...")
                     self._repair_json_file(self.found_labels_file, "found")
             
             # Check lost objects file
@@ -660,14 +660,14 @@ class LabelingManager:
                 try:
                     with open(self.lost_labels_file, 'r', encoding='utf-8') as f:
                         json.load(f)
-                    self.logger.info(f"✅ Lost objects file is valid")
+                    self.logger.info(f"Lost objects file is valid")
                 except json.JSONDecodeError as e:
-                    self.logger.warning(f"⚠️ Lost objects file is corrupted: {e}")
-                    self.logger.info(f"🔄 Attempting recovery...")
+                    self.logger.warning(f"Lost objects file is corrupted: {e}")
+                    self.logger.info(f"Attempting recovery...")
                     self._repair_json_file(self.lost_labels_file, "lost")
                     
         except Exception as e:
-            self.logger.warning(f"⚠️ Warning: Error checking JSON files: {e}")
+            self.logger.warning(f"Warning: Error checking JSON files: {e}")
     
     def _repair_json_file(self, file_path: str, file_type: str):
         """Attempt to repair a corrupted JSON file."""
@@ -675,7 +675,7 @@ class LabelingManager:
             # Create backup of corrupted file
             backup_path = f"{file_path}.backup.{int(time.time())}"
             os.rename(file_path, backup_path)
-            self.logger.info(f"💾 Backup created: {backup_path}")
+            self.logger.info(f"Backup created: {backup_path}")
             
             # Create new valid file
             new_data = {
@@ -691,14 +691,14 @@ class LabelingManager:
             # Use appropriate file lock based on file type
             file_lock = self.found_file_lock if "found" in file_path else self.lost_file_lock
             self._save_json(file_path, new_data, file_lock)
-            self.logger.info(f"✅ Restored {file_type} objects file")
+            self.logger.info(f"Restored {file_type} objects file")
             
         except Exception as e:
-            self.logger.error(f"❌ Failed to restore {file_type} objects file: {e}")
+            self.logger.error(f"Failed to restore {file_type} objects file: {e}")
             # Try to restore from backup
             try:
                 if os.path.exists(backup_path):
                     os.rename(backup_path, file_path)
-                    self.logger.info(f"🔄 Restored original file from backup")
+                    self.logger.info(f"Restored original file from backup")
             except Exception as restore_e:
-                self.logger.error(f"❌ Failed to restore from backup: {restore_e}")
+                self.logger.error(f"Failed to restore from backup: {restore_e}")

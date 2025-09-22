@@ -83,9 +83,9 @@ def _auto_fix_entry_points():
             )
             
             if result.returncode == 0:
-                package_logger.info("✅ EvilEye entry points automatically fixed")
+                package_logger.info("EvilEye entry points automatically fixed")
             else:
-                package_logger.info(f"⚠️  Warning: Could not auto-fix entry points: {result.stderr}")
+                package_logger.info(f"Warning: Could not auto-fix entry points: {result.stderr}")
                 
     except Exception as e:
         # Don't fail the import if fixing fails

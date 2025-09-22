@@ -220,7 +220,7 @@ class RoiFeeder(EvilEyeBase):
             return roi
             
         except Exception as e:
-            self.logger.error(f"❌ Error extracting ROI from bbox: {e}")
+            self.logger.error(f"Error extracting ROI from bbox: {e}")
             return None
 
 

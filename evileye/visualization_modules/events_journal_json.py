@@ -244,13 +244,13 @@ class EventsJournalJson(QWidget):
         try:
             self.visibilityChanged.connect(self._on_visibility_changed)
         except AttributeError:
-            self.logger.warning("⚠️ visibilityChanged signal unavailable, skipping visibility tracking")
+            self.logger.warning("visibilityChanged signal unavailable, skipping visibility tracking")
         
         # Connect focus change event for better responsiveness
         try:
             self.windowActivated.connect(self._on_window_activated)
         except AttributeError:
-            self.logger.warning("⚠️ windowActivated signal unavailable, skipping activation tracking")
+            self.logger.warning("windowActivated signal unavailable, skipping activation tracking")
 
     def _choose_dir(self):
         d = QFileDialog.getExistingDirectory(self, 'Select images base directory', self.base_dir)
@@ -308,7 +308,7 @@ class EventsJournalJson(QWidget):
                 self.table.viewport().update()
                 self.table.repaint()
         except Exception as e:
-            self.logger.error(f"❌ Update check error: {e}")
+            self.logger.error(f"Update check error: {e}")
 
     def _reload_table(self):
         try:
@@ -415,19 +415,19 @@ class EventsJournalJson(QWidget):
         """Handle visibility change to force update when window becomes visible"""
         self.is_visible = visible
         if visible:
-            self.logger.info("🔄 Window became visible, forced update...")
+            self.logger.info("Window became visible, forced update...")
             self._reload_table()
     
     def force_update(self):
         """Force immediate update of the journal"""
-        self.logger.info("🔄 Forced update requested...")
+        self.logger.info("Forced update requested...")
         self._reload_table()
         self.table.viewport().update()
         self.table.repaint()
     
     def _on_window_activated(self):
         """Handle window activation to force update"""
-        self.logger.info("🔄 Window activated, forced update...")
+        self.logger.info("Window activated, forced update...")
         self._reload_table()
         self.table.viewport().update()
         self.table.repaint()

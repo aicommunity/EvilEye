@@ -94,15 +94,15 @@ class ObjectsHandler(EvilEyeBase):
             if max_existing_id > 0:
                 # Set counter to next available ID
                 self.object_id_counter = max_existing_id + 1
-                self.logger.info(f"🔄 Object ID counter initialized to {self.object_id_counter} (maximum existing: {max_existing_id})")
+                self.logger.info(f"Object ID counter initialized to {self.object_id_counter} (maximum existing: {max_existing_id})")
             else:
                 # No existing objects, start from 1
                 self.object_id_counter = 1
-                self.logger.info(f"🔄 Starting with new counter object_id: {self.object_id_counter}")
+                self.logger.info(f"Starting with new counter object_id: {self.object_id_counter}")
                 
         except Exception as e:
-            self.logger.warning(f"⚠️ Warning: Object ID counter initialization error: {e}")
-            self.logger.info(f"ℹ️ Starting with default counter value: {self.object_id_counter}")
+            self.logger.warning(f"Warning: Object ID counter initialization error: {e}")
+            self.logger.info(f"Starting with default counter value: {self.object_id_counter}")
             # Keep default value (1)
 
     def default(self):

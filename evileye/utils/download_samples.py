@@ -115,7 +115,7 @@ def download_sample_videos(videos_dir="videos", force=False):
         
         # Skip if file exists and not forcing re-download
         if filepath.exists() and not force:
-            download_logger.info(f"✓ {filename} already exists, skipping...")
+             download_logger.info(f"{filename} already exists, skipping...")
             results[filename] = {"status": "exists", "path": str(filepath)}
             continue
         
@@ -128,10 +128,10 @@ def download_sample_videos(videos_dir="videos", force=False):
         
         if success and verify_file(filepath, video_info.get("md5")):
             results[filename] = {"status": "downloaded", "path": str(filepath)}
-            download_logger.info(f"✓ Successfully downloaded {filename}")
+             download_logger.info(f"Successfully downloaded {filename}")
         else:
             results[filename] = {"status": "failed", "path": str(filepath)}
-            download_logger.info(f"✗ Failed to download {filename}")
+             download_logger.info(f"Failed to download {filename}")
     
     return results
 
@@ -145,28 +145,27 @@ def main():
     
     args = parser.parse_args()
     
-    download_logger.info("🎬 EvilEye Sample Videos Downloader")
+     download_logger.info("EvilEye Sample Videos Downloader")
     download_logger.info("=" * 40)
     
     results = download_sample_videos(args.videos_dir, args.force)
     
-    download_logger.info("\n📊 Download Summary:")
+     download_logger.info("\nDownload Summary:")
     download_logger.info("-" * 20)
     
-    for filename, result in results.items():
-        status_icon = "✓" if "downloaded" in result["status"] or result["status"] == "exists" else "✗"
-        download_logger.info(f"{status_icon} {filename}: {result['status']}")
+     for filename, result in results.items():
+         download_logger.info(f"{filename}: {result['status']}")
     
     successful = sum(1 for r in results.values() if "downloaded" in r["status"] or r["status"] == "exists")
     total = len(results)
     
-    download_logger.info(f"\n✅ Successfully processed {successful}/{total} videos")
+     download_logger.info(f"\nSuccessfully processed {successful}/{total} videos")
     
     if successful == total:
-        download_logger.info("🎉 All sample videos are ready!")
+         download_logger.info("All sample videos are ready!")
         return 0
     else:
-        download_logger.info("⚠️  Some videos failed to download. Check your internet connection.")
+         download_logger.info("Some videos failed to download. Check your internet connection.")
         return 1
 
 if __name__ == "__main__":

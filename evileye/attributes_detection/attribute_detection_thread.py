@@ -35,9 +35,9 @@ class AttributeDetectionThread(DetectionThreadBase):
                 if attr_name in coco_class_mapping:
                     self.attr_class_mapping[coco_class_mapping[attr_name]] = attr_name
                 
-            self.logger.info(f"✅ AttributeDetectionThread initialized with model: {self.model_name}")
-            self.logger.info(f"✅ Attribute classes: {self.attr_class_mapping}")
-            self.logger.info(f"✅ COCO class mapping: {coco_class_mapping}")
+            self.logger.info(f"AttributeDetectionThread initialized with model: {self.model_name}")
+            self.logger.info(f"Attribute classes: {self.attr_class_mapping}")
+            self.logger.info(f"COCO class mapping: {coco_class_mapping}")
 
     def predict(self, images: list):
         """Run YOLO inference on ROI images"""
