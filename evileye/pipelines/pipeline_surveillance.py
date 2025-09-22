@@ -4,7 +4,6 @@ from ..core.processor_frame import ProcessorFrame
 from ..core.processor_step import ProcessorStep
 from ..core.processor_base import ProcessorBase
 from ..core.pipeline_processors import PipelineProcessors
-from ..core.logger import get_module_logger
 from typing import Any, Tuple, List, Dict
 import evileye.preprocessing  # Import to register PreprocessingPipeline
 import evileye.attributes_detection  # Import to register RoiFeeder and AttributeClassifier
@@ -20,7 +19,6 @@ class PipelineSurveillance(PipelineProcessors):
     
     def __init__(self):
         super().__init__()
-        self.logger = get_module_logger("pipeline_surveillance")
 
     def init_impl(self, **kwargs):
         """Initialize surveillance pipeline with specific processor sequence"""

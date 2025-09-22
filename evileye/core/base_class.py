@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from pympler import asizeof
 import datetime
+import logging
 
 
 class EvilEyeBase(ABC):
@@ -28,11 +29,27 @@ class EvilEyeBase(ABC):
         self.id: int = EvilEyeBase._id_counter
         EvilEyeBase._id_counter += 1
         self.params = {}
+        self.logger_name = None
         self.memory_measure_results = None
         self.memory_measure_time = None
+        # Автоматическая инициализация логгера для всех наследников
+        # Имя логгера: evileye.{classlower}[{id}] или evileye.{classlower}[{id}].{logger_name}
+        self._init_logger()
+
+    def _init_logger(self):
+        try:
+            base_name = f"evileye.{self.__class__.__name__.lower()}[{self.id}]"
+            full_name = f"{base_name}.{self.logger_name}" if self.logger_name else base_name
+            self.logger = logging.getLogger(full_name)
+        except Exception:
+            self.logger = logging.getLogger("evileye")
 
     def set_params(self, **params):
         self.params = params
+        # Опционально переименовать логгер, если задано имя
+        if 'logger_name' in params and params['logger_name']:
+            self.logger_name = params['logger_name']
+            self._init_logger()
         self.set_params_impl()
 
     def get_params(self):

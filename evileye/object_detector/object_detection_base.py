@@ -4,7 +4,6 @@ from ..core.frame import CaptureImage
 from ..core.class_manager import ClassManager
 
 from ..core.base_class import EvilEyeBase
-from ..core.logger import get_module_logger
 from queue import Queue
 import threading
 from time import sleep
@@ -31,7 +30,6 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
 
     def __init__(self):
         super().__init__()
-        self.logger = get_module_logger("object_detector")
 
         self.run_flag = False
         self.queue_in = Queue(maxsize=2)

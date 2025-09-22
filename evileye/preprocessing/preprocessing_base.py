@@ -4,14 +4,12 @@ import threading
 from time import sleep
 from ..core.base_class import EvilEyeBase
 from ..core.frame import Frame
-from ..core.logger import get_module_logger
 
 
 class PreprocessingBase(EvilEyeBase):
     ResultType = Frame
     def __init__(self):
         super().__init__()
-        self.logger = get_module_logger("preprocessing_base")
 
         self.run_flag = False
         self.queue_in = Queue(maxsize=2)

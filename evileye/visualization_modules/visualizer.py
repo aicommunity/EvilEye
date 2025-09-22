@@ -3,7 +3,6 @@ from datetime import datetime
 
 from .video_thread import VideoThread
 from ..core.base_class import EvilEyeBase
-from ..core.logger import get_module_logger
 import copy
 from ..capture.video_capture_base import CaptureImage
 from ..objects_handler.objects_handler import ObjectResultList
@@ -14,7 +13,6 @@ from pympler import asizeof
 class Visualizer(EvilEyeBase):
     def __init__(self, pyqt_slots: dict, pyqt_signals: dict):
         super().__init__()
-        self.logger = get_module_logger("visualizer")
         self.pyqt_slots = pyqt_slots
         self.pyqt_signals = pyqt_signals
         self.visual_threads: list[VideoThread] = []

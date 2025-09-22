@@ -1,12 +1,10 @@
 import json
 import importlib
 from . import steps
-from ..core.logger import get_module_logger
 
 
 class PreprocessingFactory:
     def __init__(self, json_path):
-        self.logger = get_module_logger("preprocessing_factory")
         try:
             with open(json_path, 'r') as f:
                 config = json.load(f)

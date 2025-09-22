@@ -5,7 +5,6 @@ from ..core.pipeline_simple import PipelineSimple
 from ..capture.video_capture_base import CaptureImage
 from ..capture.video_capture import VideoCapture
 from ..object_tracker.tracking_results import TrackingResultList
-from ..core.logger import get_module_logger
 
 
 class PipelineCapture(PipelineSimple):
@@ -16,7 +15,6 @@ class PipelineCapture(PipelineSimple):
     
     def __init__(self):
         super().__init__()
-        self.logger = get_module_logger("pipeline_capture")
         self.source_config = {}
         self.video_capture = None
         self.frame_width = 0

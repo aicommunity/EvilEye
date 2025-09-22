@@ -10,7 +10,6 @@ import numpy as np
 from ..core.base_class import EvilEyeBase
 from ..core.frame import Frame
 from .attribute_detector import AttributeDetector
-from ..core.logger import get_module_logger
 
 
 @EvilEyeBase.register("AttributeClassifier")
@@ -28,7 +27,6 @@ class AttributeClassifier(EvilEyeBase):
     
     def __init__(self):
         super().__init__()
-        self.logger = get_module_logger("attribute_classifier")
         self.enabled = True
         
         # Direct YOLO model instead of AttributeDetector

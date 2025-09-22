@@ -4,14 +4,12 @@ from ..core.base_class import EvilEyeBase
 from queue import Queue
 import threading
 from ..object_tracker.tracking_results import TrackingResult, TrackingResultList
-from ..core.logger import get_module_logger
 
 class ObjectMultiCameraTrackingBase(EvilEyeBase):
     ResultType = TrackingResultList
 
     def __init__(self):
         super().__init__()
-        self.logger = get_module_logger("object_multicam_tracking_base")
 
         self.run_flag = False
         self.queue_in = Queue()

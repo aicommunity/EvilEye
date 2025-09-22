@@ -2,13 +2,11 @@ from abc import ABC, abstractmethod
 from ..core.base_class import EvilEyeBase
 import threading
 from queue import Queue
-from ..core.logger import get_module_logger
 
 
 class DatabaseControllerBase(EvilEyeBase):
     def __init__(self, controller_type):
         super().__init__()
-        self.logger = get_module_logger("database_controller_base")
         self.host_name = "localhost"
         self.database_name = ""
         self.user_name = ""

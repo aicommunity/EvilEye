@@ -8,7 +8,6 @@ from .video_capture_base import VideoCaptureBase, CaptureImage, CaptureDeviceTyp
 from enum import IntEnum
 
 from ..core.base_class import EvilEyeBase
-from ..core.logger import get_module_logger
 
 
 @EvilEyeBase.register("VideoCapture")
@@ -21,7 +20,6 @@ class VideoCapture(VideoCaptureBase):
 
     def __init__(self):
         super().__init__()
-        self.logger = get_module_logger("video_capture")
 
         self.capture = cv2.VideoCapture()
         self.mutex = Lock()

@@ -18,7 +18,6 @@ from .object_result import ObjectResultHistory, ObjectResult, ObjectResultList
 from ..database_controller.db_adapter_objects import DatabaseAdapterObjects
 from .labeling_manager import LabelingManager
 from pympler import asizeof
-from ..core.logger import get_module_logger
 import cv2
 from ..utils import utils
 from .attribute_manager import AttributeManager
@@ -38,7 +37,6 @@ from .attribute_manager import AttributeManager
 class ObjectsHandler(EvilEyeBase):
     def __init__(self, db_controller, db_adapter):
         super().__init__()
-        self.logger = get_module_logger("objects_handler")
         # Очередь для потокобезопасного приема данных от каждой камеры
         self.objs_queue = Queue()
         # Списки для хранения различных типов объектов

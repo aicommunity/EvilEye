@@ -4,13 +4,11 @@ from timeit import default_timer as timer
 import time
 import copy
 from ..core.base_class import EvilEyeBase
-from ..core.logger import get_module_logger
 
 
 class EventsDetectorsController(EvilEyeBase):
     def __init__(self, events_detectors: list):
         super().__init__()
-        self.logger = get_module_logger("events_controller")
         self.control_thread = Thread(target=self.run)
         self.queue_out = Queue()
         self.detectors = events_detectors
