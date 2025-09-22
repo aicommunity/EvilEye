@@ -1,6 +1,7 @@
 import copy
 import json
 import os.path
+from ....core.logger import get_module_logger
 try:
     from PyQt6 import QtGui
     from PyQt6.QtWidgets import (
@@ -113,7 +114,7 @@ class DetectorTab(QWidget):
         for tab_idx in range(self.det_tabs.count()):
             tab = self.det_tabs.widget(tab_idx)
             forms.append(tab.get_form())
-        print(forms)
+        # print(forms)
         return forms
 
     def get_params(self):

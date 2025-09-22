@@ -7,6 +7,10 @@ from ..object_tracker.tracking_results import TrackingResult
 from ..objects_handler.object_result import ObjectResultHistory
 import copy
 from pathlib import Path
+from ..core.logger import get_module_logger
+
+# Инициализация логгера для утилит
+utils_logger = get_module_logger("utils")
 
 from sympy.multipledispatch.dispatcher import source
 
@@ -281,7 +285,7 @@ def draw_boxes_from_db(db_controller, table_name, load_folder, save_folder):
         lost_saved = cv2.imwrite(lost_save_path.as_posix(), lost_image)
         detected_saved = cv2.imwrite(detected_save_path.as_posix(), detected_image)
         if not lost_saved or not detected_saved:
-            print('Error saving image with boxes')
+            utils_logger.error('Error saving image with boxes')
 
 
 def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_duration_msecs, font_scale, font_thickness, font_color, text_config=None, class_mapping=None):
@@ -324,7 +328,7 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
                          background_enabled=config.get('background_enabled', True))
 
     # Для трекинга отображаем только последние данные об объекте из истории
-    # print(cameras_objs)
+    # utils_logger.error(cameras_objs)
     for obj in cameras_objs:
         # if obj.frame_id < image.frame_id:
         #     continue
@@ -382,7 +386,7 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
         if hasattr(obj, 'attributes') and obj.attributes:
             draw_object_attributes(image.image, obj, last_info.bounding_box, font_face, font_scale*0.5, thickness)
 
-        # print(len(obj['obj_info']))
+        # utils_logger.error(len(obj['obj_info']))
         if len(obj.history) > 1:
             for i in range(0, last_hist_index):
                 first_info = obj.history[i].track

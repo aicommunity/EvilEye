@@ -1,6 +1,7 @@
 from queue import Queue
 import threading
 from .detection_thread_base import DetectionThreadBase
+from ..core.logger import get_module_logger
 
 # Import utils later to avoid circular imports
 utils = None
@@ -17,6 +18,7 @@ class DetectionThreadRfdetr(DetectionThreadBase):
     id_cnt = 0  # Переменная для присвоения каждому детектору своего идентификатора
 
     def __init__(self, model_name: str, stride: int, classes: list, source_ids: list, roi: list, inf_params: dict, queue_out: Queue):
+        self.logger = get_module_logger("detection_thread_rfdetr")
         self.model_name = model_name
         self.model = None
         super().__init__(stride, classes, source_ids, roi, inf_params, queue_out)
@@ -171,8 +173,8 @@ class DetectionThreadRfdetr(DetectionThreadBase):
             if class_names:
                 # Create mapping from model names: {class_name: class_id}
                 self.model_class_mapping = {name: idx for idx, name in enumerate(class_names)}
-                print(f"Updated model_class_mapping from RFDETR model: {self.model_class_mapping}")
+                self.logger.info(f"Updated model_class_mapping from RFDETR model: {self.model_class_mapping}")
         elif self.model and hasattr(self.model, 'names'):
             # Fallback to names attribute if available
             self.model_class_mapping = {name: idx for idx, name in self.model.names.items()}
-            print(f"Updated model_class_mapping from RFDETR model (names): {self.model_class_mapping}")
+            self.logger.info(f"Updated model_class_mapping from RFDETR model (names): {self.model_class_mapping}")

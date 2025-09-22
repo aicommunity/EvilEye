@@ -4,12 +4,14 @@ import threading
 from time import sleep
 from ..core.base_class import EvilEyeBase
 from ..core.frame import Frame
+from ..core.logger import get_module_logger
 
 
 class PreprocessingBase(EvilEyeBase):
     ResultType = Frame
     def __init__(self):
         super().__init__()
+        self.logger = get_module_logger("preprocessing_base")
 
         self.run_flag = False
         self.queue_in = Queue(maxsize=2)
@@ -31,7 +33,7 @@ class PreprocessingBase(EvilEyeBase):
             return True
         else:
             old_info = self.queue_in.get()
-            print(f"Preprocessing queue for {det_info.source_id} is full. Remove oldest frame {old_info.frame_id}")
+            self.logger.info(f"Preprocessing queue for {det_info.source_id} is full. Remove oldest frame {old_info.frame_id}")
         return False
 
     def get(self):
@@ -54,7 +56,7 @@ class PreprocessingBase(EvilEyeBase):
         self.queue_in.put(None)
         if self.processing_thread.is_alive():
             self.processing_thread.join()
-        print('Tracker stopped')
+        self.logger.info('Tracker stopped')
 
     def _process_impl(self):
         while self.run_flag:

@@ -24,11 +24,13 @@ except ImportError:
     pyqt_version = 5
 
 from .table_updater_view import TableUpdater
+from ..core.logger import get_module_logger
 
 
 class ImageDelegate(QStyledItemDelegate):
     def __init__(self, parent=None, image_dir=None):
         super().__init__(parent)
+        self.logger = get_module_logger("image_delegate")
         self.image_dir = image_dir
 
     def paint(self, painter, option, index):
@@ -97,6 +99,7 @@ class EventsJournal(QWidget):
 
     def __init__(self, journal_adapters: list, db_controller, table_name, params, database_params, table_params, parent=None):
         super().__init__()
+        self.logger = get_module_logger("events_journal")
         self.db_controller = db_controller
         self.journal_adapters = journal_adapters
 
@@ -163,7 +166,7 @@ class EventsJournal(QWidget):
                 "Events journal - Error!",
                 "Database Error: %s" % db.lastError().databaseText(),
             )
-        print(QSqlDatabase.connectionNames())
+        self.logger.debug(f"Database connections: {QSqlDatabase.connectionNames()}")
 
     def _setup_table(self):
         self._setup_model()
@@ -201,7 +204,7 @@ class EventsJournal(QWidget):
         query.bindValue(":start", self.current_start_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
         query.bindValue(":finish", self.current_end_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
         query.exec()
-        # print(query.lastError().text())
+        # self.logger.debug(query.lastError().text())
 
         self.model.setQuery(query)
         self.model.setHeaderData(0, Qt.Orientation.Horizontal, self.tr('Event'))
@@ -381,7 +384,7 @@ class EventsJournal(QWidget):
             return
 
         source_id, full_address = self.source_name_id_address[camera_name]
-        # print(camera_name, source_id, full_address)
+        # self.logger.debug(f"{camera_name}, {source_id}, {full_address}")
         query = QSqlQuery(QSqlDatabase.database('events_conn'))
         query.prepare('SELECT source_name, CAST(\'Event\' AS text) AS event_type, '
                       '\'Object Id=\' || object_id || \'; class: \' || class_id || \'; conf: \' || confidence AS information,'

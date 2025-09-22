@@ -4,6 +4,7 @@ from ..core.frame import CaptureImage
 from ..core.class_manager import ClassManager
 
 from ..core.base_class import EvilEyeBase
+from ..core.logger import get_module_logger
 from queue import Queue
 import threading
 from time import sleep
@@ -30,6 +31,7 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
 
     def __init__(self):
         super().__init__()
+        self.logger = get_module_logger("object_detector")
 
         self.run_flag = False
         self.queue_in = Queue(maxsize=2)
@@ -53,7 +55,7 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         if not self.queue_in.full():
             self.queue_in.put(image)
             return True
-        print(f"Failed to put image {image.source_id}:{image.frame_id} to ObjectDetection queue. Queue is Full.")
+        self.logger.warning(f"Failed to put image {image.source_id}:{image.frame_id} to ObjectDetection queue. Queue is full.")
         return False
 
     def get(self):
@@ -65,12 +67,12 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         if len(self.detection_threads) > 0:
             model_class_mapping = self.detection_threads[0].get_model_class_mapping()
             if self.model_class_mapping is not None and model_class_mapping is not None and self.model_class_mapping != model_class_mapping:
-                print(f"Model class mapping overrides by internal data: {model_class_mapping}")
+                self.logger.info(f"Model class mapping overridden by internal data: {model_class_mapping}")
                 self.model_class_mapping = model_class_mapping
             elif model_class_mapping is not None and self.model_class_mapping is None:
                 # Auto-update from thread if not set manually
                 self.model_class_mapping = model_class_mapping
-                print(f"Auto-updated model_class_mapping from detection thread: {model_class_mapping}")
+                self.logger.info(f"Auto-updated model_class_mapping from detection thread: {model_class_mapping}")
                 
                 # CRITICAL: Update classes after getting model_class_mapping
                 self._update_classes_after_model_loading()
@@ -93,7 +95,7 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         if self.class_manager:
             self.classes = self.class_manager.convert_classes_to_ids(self.classes)
             if original_classes != self.classes:
-                print(f"Updated classes from {original_classes} to {self.classes} using ClassManager")
+                self.logger.info(f"Classes updated from {original_classes} to {self.classes} using ClassManager")
         else:
             # Fallback to old logic
             if all(isinstance(cls, str) for cls in self.classes):
@@ -103,16 +105,16 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
                     # Remove invalid class names (not found in mapping)
                     self.classes = [cls_id for cls_id in self.classes if cls_id != -1]
                     if len(self.classes) != len([cls for cls in original_classes if isinstance(cls, str)]):
-                        print(f"Warning: Some class names not found in model mapping: {original_classes}")
+                        self.logger.warning(f"Warning: Some class names not found in model mapping: {original_classes}")
                 else:
-                    print(f"Warning: Class names provided but no model_class_mapping available: {self.classes}")
+                    self.logger.warning(f"Warning: Class names provided but model_class_mapping unavailable: {self.classes}")
                     self.classes = []  # Clear classes if no mapping available
             elif all(isinstance(cls, int) for cls in self.classes):
                 # Classes are IDs - keep as is
                 pass
             else:
                 # Mixed types - convert all to strings and treat as names
-                print(f"Warning: Mixed class types detected, treating all as names: {self.classes}")
+                self.logger.warning(f"Warning: Mixed class types detected, treating all as names: {self.classes}")
                 self.classes = [str(cls) for cls in self.classes]
                 if self.model_class_mapping:
                     self.classes = [self.model_class_mapping.get(name, -1) for name in self.classes]
@@ -125,7 +127,7 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
             original_classes = self.classes.copy()
             self._process_classes_parameter()
             if original_classes != self.classes:
-                print(f"Updated classes from {original_classes} to {self.classes} using model mapping")
+                self.logger.info(f"Classes updated from {original_classes} to {self.classes} using model mapping")
     
     def set_class_manager(self, class_manager: ClassManager):
         """Set the class manager for this detector"""
@@ -144,7 +146,7 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         if not original_classes:
             return
             
-        print(f"🔄 Updating classes after model loading. Original: {original_classes}")
+        self.logger.info(f"🔄 Updating classes after model loading. Original: {original_classes}")
         
         # Re-process classes with now-available model_class_mapping
         if all(isinstance(cls, str) for cls in original_classes):
@@ -153,22 +155,22 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
             new_classes = [cls_id for cls_id in new_classes if cls_id != -1]
             
             if new_classes != self.classes:
-                print(f"✅ Updated classes from {self.classes} to {new_classes} using model mapping")
+                self.logger.info(f"✅ Classes updated from {self.classes} to {new_classes} using model mapping")
                 self.classes = new_classes
                 
                 # Update classes in all detection threads
                 self._update_threads_classes()
             else:
-                print(f"ℹ️  Classes already correct: {self.classes}")
+                self.logger.info(f"ℹ️  Classes already correct: {self.classes}")
         else:
-            print(f"ℹ️  Classes are IDs, no conversion needed: {self.classes}")
+            self.logger.info(f"ℹ️  Classes are IDs, conversion not needed: {self.classes}")
     
     def _update_threads_classes(self):
         """Update classes in all detection threads"""
         for thread in self.detection_threads:
             if hasattr(thread, 'classes'):
                 thread.classes = self.classes.copy()
-                print(f"🔄 Updated thread classes to: {thread.classes}")
+                self.logger.info(f"🔄 Thread classes updated to: {thread.classes}")
     
     def _check_and_update_classes_if_needed(self):
         """Check if classes need to be updated and update them if necessary"""
@@ -188,7 +190,7 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
             
             # Check if classes are different from current
             if new_classes != self.classes:
-                print(f"🔄 Late update: classes from {self.classes} to {new_classes} using model mapping")
+                self.logger.info(f"🔄 Late update: classes from {self.classes} to {new_classes} using model mapping")
                 self.classes = new_classes
                 
                 # Update classes in all detection threads
@@ -246,7 +248,7 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         # self.queue_in.put('STOP')
         if self.processing_thread and self.processing_thread.is_alive():
             self.processing_thread.join()
-        print('Detection stopped')
+        self.logger.info('Detection stopped')
 
     def init_impl(self):
         self.processing_thread = threading.Thread(target=self._process_impl)

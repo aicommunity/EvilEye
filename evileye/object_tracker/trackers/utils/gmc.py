@@ -6,6 +6,7 @@ import cv2
 import numpy as np
 
 from ultralytics.utils import LOGGER
+from ....core.logger import get_module_logger
 
 
 class GMC:
@@ -42,6 +43,7 @@ class GMC:
             downscale (int): Downscale factor for processing frames.
         """
         super().__init__()
+        self.logger = get_module_logger("gmc")
 
         self.method = method
         self.downscale = max(1, int(downscale))
@@ -329,7 +331,7 @@ class GMC:
         if self.prevKeyPoints is not None and len(self.prevKeyPoints) > 0:
             matchedKeypoints, status, _ = cv2.calcOpticalFlowPyrLK(self.prevFrame, frame, self.prevKeyPoints, None)
         else:
-            print(f"Correspondences search faild: self.prevKeyPoint={self.prevKeyPoints}")
+            self.logger.error(f"Correspondences search faild: self.prevKeyPoint={self.prevKeyPoints}")
             return H
 
         # Leave good correspondences only

@@ -23,11 +23,13 @@ except ImportError:
     pyqt_version = 5
 
 from .journal_data_source_json import JsonLabelJournalDataSource
+from ..core.logger import get_module_logger
 
 
 class ImageDelegate(QStyledItemDelegate):
     def __init__(self, parent=None, base_dir=None):
         super().__init__(parent)
+        self.logger = get_module_logger("image_delegate")
         self.base_dir = base_dir
         self.preview_width = 300
         self.preview_height = 150
@@ -63,7 +65,7 @@ class ImageDelegate(QStyledItemDelegate):
             
         if not os.path.exists(img_path):
             # Debug: print missing image path
-            print(f"Image not found: {img_path}")
+            self.logger.warning(f"Image not found: {img_path}")
             return
             
         # Load and scale image
@@ -100,7 +102,7 @@ class DateTimeDelegate(QStyledItemDelegate):
                     return value
             return str(value)
         except Exception as e:
-            print(f"Error formatting time: {e}")
+            self.logger.error(f"Time formatting error: {e}")
             return str(value)
 
 
@@ -114,7 +116,7 @@ class ImageWindow(QLabel):
         # Load image
         pixmap = QPixmap(image_path)
         if pixmap.isNull():
-            print(f"Error loading image: {image_path}")
+            self.logger.error(f"Image loading error: {image_path}")
             return
             
         # Scale image to fit window
@@ -154,6 +156,7 @@ class ImageWindow(QLabel):
 class EventsJournalJson(QWidget):
     def __init__(self, base_dir: str, parent=None):
         super().__init__(parent)
+        self.logger = get_module_logger("events_journal_json")
         self.setWindowTitle('Events journal (JSON)')
         self.base_dir = base_dir
         self.ds = JsonLabelJournalDataSource(base_dir)
@@ -236,13 +239,13 @@ class EventsJournalJson(QWidget):
         try:
             self.visibilityChanged.connect(self._on_visibility_changed)
         except AttributeError:
-            print("⚠️ visibilityChanged signal not available, skipping visibility tracking")
+            self.logger.warning("⚠️ visibilityChanged signal unavailable, skipping visibility tracking")
         
         # Connect focus change event for better responsiveness
         try:
             self.windowActivated.connect(self._on_window_activated)
         except AttributeError:
-            print("⚠️ windowActivated signal not available, skipping activation tracking")
+            self.logger.warning("⚠️ windowActivated signal unavailable, skipping activation tracking")
 
     def _choose_dir(self):
         d = QFileDialog.getExistingDirectory(self, 'Select images base directory', self.base_dir)
@@ -268,7 +271,7 @@ class EventsJournalJson(QWidget):
             for d in dates:
                 self.cmb_date.addItem(d)
         except Exception as e:
-            print(f"Error loading dates: {e}")
+            self.logger.error(f"Date loading error: {e}")
             self.cmb_date.clear()
             self.cmb_date.addItem('All')
 
@@ -290,17 +293,17 @@ class EventsJournalJson(QWidget):
             # Always reload for visible windows, or if data changed
             if current_hash != self.last_data_hash or self.is_visible:
                 if current_hash != self.last_data_hash:
-                    #print(f"🔄 Data changed! Hash: {self.last_data_hash} -> {current_hash}")
+                    #self.logger.debug(f"🔄 Data changed! Hash: {self.last_data_hash} -> {current_hash}")
                     self.last_data_hash = current_hash
                 #else:
-                #    print(f"🔄 Forcing update for visible window. Hash: {current_hash}")
+                #    self.logger.debug(f"🔄 Forcing update for visible window. Hash: {current_hash}")
                 
                 self._reload_table()
                 # Force widget repaint
                 self.table.viewport().update()
                 self.table.repaint()
         except Exception as e:
-            print(f"❌ Error checking for updates: {e}")
+            self.logger.error(f"❌ Update check error: {e}")
 
     def _reload_table(self):
         try:
@@ -401,25 +404,25 @@ class EventsJournalJson(QWidget):
             QApplication.processEvents()
             
         except Exception as e:
-            print(f"Error loading table data: {e}")
+            self.logger.error(f"Table data loading error: {e}")
     
     def _on_visibility_changed(self, visible):
         """Handle visibility change to force update when window becomes visible"""
         self.is_visible = visible
         if visible:
-            print("🔄 Window became visible, forcing update...")
+            self.logger.info("🔄 Window became visible, forced update...")
             self._reload_table()
     
     def force_update(self):
         """Force immediate update of the journal"""
-        print("🔄 Force update requested...")
+        self.logger.info("🔄 Forced update requested...")
         self._reload_table()
         self.table.viewport().update()
         self.table.repaint()
     
     def _on_window_activated(self):
         """Handle window activation to force update"""
-        print("🔄 Window activated, forcing update...")
+        self.logger.info("🔄 Window activated, forced update...")
         self._reload_table()
         self.table.viewport().update()
         self.table.repaint()
@@ -536,7 +539,7 @@ class EventsJournalJson(QWidget):
 
         # Check if frame image exists, otherwise use preview
         if not os.path.exists(image_path):
-            print(f"Frame image not found: {image_path}, using preview: {path}")
+            self.logger.warning(f"Frame image not found: {image_path}, using preview: {path}")
             image_path = path
 
         # Create and show image window

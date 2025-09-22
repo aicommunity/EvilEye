@@ -4,12 +4,14 @@ from ..core.base_class import EvilEyeBase
 from queue import Queue
 import threading
 from ..object_tracker.tracking_results import TrackingResult, TrackingResultList
+from ..core.logger import get_module_logger
 
 class ObjectMultiCameraTrackingBase(EvilEyeBase):
     ResultType = TrackingResultList
 
     def __init__(self):
         super().__init__()
+        self.logger = get_module_logger("object_multicam_tracking_base")
 
         self.run_flag = False
         self.queue_in = Queue()
@@ -36,7 +38,7 @@ class ObjectMultiCameraTrackingBase(EvilEyeBase):
             return True
         
         #designator = '; '.join(f"{t[0].source_id}:{t[0].frame_id}" for t in track_info)
-        #print(f"Failed to put tracking info {designator} to ObjectMultiCameraTrackingBase queue. Queue is Full.")
+        #self.logger.info(f"Failed to put tracking info {designator} to ObjectMultiCameraTrackingBase queue. Queue is Full.")
         #return False
 
     def get(self):
@@ -59,7 +61,7 @@ class ObjectMultiCameraTrackingBase(EvilEyeBase):
         self.queue_in.put(None)
         if self.processing_thread.is_alive():
             self.processing_thread.join()
-        print('Tracker stopped')
+        self.logger.info('Tracker stopped')
 
     @abstractmethod
     def _process_impl(self):

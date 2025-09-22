@@ -1,4 +1,5 @@
 import time
+from ....core.logger import get_module_logger
 try:
     from PyQt6 import QtGui
     from PyQt6.QtWidgets import (
@@ -42,6 +43,7 @@ class SourceWidget(QWidget):
 
     def __init__(self, params, creds, parent=None):
         super().__init__(parent)
+        self.logger = get_module_logger("source_widget")
 
         self.params = params
         self.credentials = creds
@@ -126,7 +128,7 @@ class SourceWidget(QWidget):
         self.thread.update_image_signal.connect(self._update_label)
         is_started = self.thread.start_thread()
         if not is_started:
-            print('Connection Error. Try again')
+            self.logger.error('Connection error. Try again')
             self.stop_source_btn.setEnabled(False)
             self.test_source_btn.setEnabled(True)
 
@@ -342,7 +344,7 @@ class SrcThread(QThread):
         self.run_flag = False
         self.capture.stop()
         self.capture = None
-        print('Test stopped')
+        self.logger.info('Test stopped')
 
     def run(self):
         while self.run_flag:

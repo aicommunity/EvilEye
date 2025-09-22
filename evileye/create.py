@@ -12,9 +12,15 @@ import os
 from pathlib import Path
 
 from evileye.utils.utils import normalize_config_path
+from evileye.core.logging_config import setup_evileye_logging
+from evileye.core.logger import get_module_logger
 
 # Add project root to path for imports when running as script
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Инициализация логирования
+logger = setup_evileye_logging(log_level="INFO", log_to_console=True, log_to_file=True)
+create_logger = get_module_logger("create")
 
 from evileye.controller import controller
 
@@ -92,19 +98,19 @@ def list_pipeline_classes():
         pipeline_classes = controller_instance.get_available_pipeline_classes()
         
         if not pipeline_classes:
-            print("No pipeline classes found.")
+            create_logger.info("No pipeline classes found.")
             return
         
-        print("Available pipeline classes:")
-        print("=" * 40)
+        create_logger.info("Available pipeline classes:")
+        create_logger.info("=" * 40)
         for i, class_name in enumerate(pipeline_classes, 1):
-            print(f"{i}. {class_name}")
+            create_logger.info(f"{i}. {class_name}")
         
-        print(f"\nTotal: {len(pipeline_classes)} pipeline class(es)")
-        print("\nUse --pipeline <class_name> to specify a pipeline when creating a configuration.")
+        create_logger.info(f"\nTotal: {len(pipeline_classes)} pipeline class(es)")
+        create_logger.info("\nUse --pipeline <class_name> to specify a pipeline when creating a configuration.")
         
     except Exception as e:
-        print(f"Error listing pipeline classes: {e}")
+        create_logger.info(f"Error listing pipeline classes: {e}")
 
 
 def create_config_file(config_name, sources=0, pipeline_class='PipelineSurveillance', 
@@ -131,16 +137,16 @@ def create_config_file(config_name, sources=0, pipeline_class='PipelineSurveilla
     
     # Check if file already exists
     if os.path.exists(output_path) and not force:
-        print(f"❌ Configuration file '{output_path}' already exists!")
-        print(f"   Use --force to overwrite or choose a different name.")
+        create_logger.info(f"❌ Configuration file '{output_path}' already exists!")
+        create_logger.info(f"   Use --force to overwrite or choose a different name.")
         return False
     
     # Create controller instance and generate configuration
-    print(f"🔧 Creating configuration:")
-    print(f"   Pipeline: {pipeline_class}")
-    print(f"   Sources: {sources}")
-    print(f"   Source type: {source_type}")
-    print(f"   Output: {output_path}")
+    create_logger.info(f"🔧 Creating configuration:")
+    create_logger.info(f"   Pipeline: {pipeline_class}")
+    create_logger.info(f"   Sources: {sources}")
+    create_logger.info(f"   Source type: {source_type}")
+    create_logger.info(f"   Output: {output_path}")
     
     try:
         controller_instance = controller.Controller()
@@ -150,14 +156,14 @@ def create_config_file(config_name, sources=0, pipeline_class='PipelineSurveilla
         with open(output_path, 'w') as f:
             json.dump(config_data, f, indent=4)
         
-        print(f"✅ Configuration created successfully!")
-        print(f"   File: {output_path}")
-        print(f"   Size: {os.path.getsize(output_path)} bytes")
+        create_logger.info(f"✅ Configuration created successfully!")
+        create_logger.info(f"   File: {output_path}")
+        create_logger.info(f"   Size: {os.path.getsize(output_path)} bytes")
         
         return True
         
     except Exception as e:
-        print(f"❌ Error creating configuration: {e}")
+        create_logger.info(f"❌ Error creating configuration: {e}")
         return False
 
 
@@ -173,9 +179,9 @@ def main():
     
     # Validate arguments
     if args.config_name is None:
-        print("❌ Configuration name is required!")
-        print("   Usage: evileye-create <config_name>")
-        print("   Use --help for more information.")
+        create_logger.info("❌ Configuration name is required!")
+        create_logger.info("   Usage: evileye-create <config_name>")
+        create_logger.info("   Use --help for more information.")
         return 1
     
     # Create configuration

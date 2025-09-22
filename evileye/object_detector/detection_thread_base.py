@@ -7,6 +7,7 @@ from .object_detection_base import DetectionResultList
 from .object_detection_base import DetectionResult
 from ..capture.video_capture_base import CaptureImage
 from timeit import default_timer as timer
+from ..core.logger import get_module_logger
 
 # Import utils later to avoid circular imports
 utils = None
@@ -24,6 +25,7 @@ class DetectionThreadBase:
 
     def __init__(self, stride: int, classes: list, source_ids: list, roi: list, inf_params: dict, queue_out: Queue):
         super().__init__()
+        self.logger = get_module_logger("detection_thread")
 
         self.prev_time = 0  # Для параметра скважности, заданного временем; отсчет времени
         self.stride = stride  # Параметр скважности
@@ -47,12 +49,12 @@ class DetectionThreadBase:
         self.run_flag = False
         if self.processing_thread.is_alive():
             self.processing_thread.join()
-        print('Detection thread stopped')
+        self.logger.info('Detection thread stopped')
 
     def put(self, image: CaptureImage, force=False):
         dropped_id = []
         if not self.run_flag:
-            print(f"Detection thread doesn't started. Put ignored for {image.source_id}:{image.frame_id}")
+            self.logger.warning(f"Detection thread not started. Put ignored for {image.source_id}:{image.frame_id}")
         if self.queue_in.full():
             if force:
                 dropped_image = self.queue_in.get()
@@ -81,7 +83,7 @@ class DetectionThreadBase:
                 else:
                     image = None
             except ValueError as ex:
-                print(f"Exception in detection thread: _process_impl: {ex}")
+                self.logger.error(f"Exception in detection thread: _process_impl: {ex}")
 
                 break
             if not image:
@@ -98,7 +100,7 @@ class DetectionThreadBase:
             if detection_result_list:
                 self.queue_out.put([detection_result_list, image])
             # finish_it = timer()
-            # print(f'TIME: {finish_it - start_it}')
+            # self.logger.debug(f'TIME: {finish_it - start_it}')
 
     def process_stride(self, split_image):
         bboxes_coords = []

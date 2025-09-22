@@ -26,6 +26,7 @@ except ImportError:
     pyqt_version = 5
 
 from .table_updater_view import TableUpdater
+from ..core.logger import get_module_logger
 
 
 class ImageDelegate(QStyledItemDelegate):
@@ -85,6 +86,7 @@ class HandlerJournal(QWidget):
 
     def __init__(self, db_controller, table_name, params, database_params, table_params, parent=None):
         super().__init__()
+        self.logger = get_module_logger("handler_journal")
         self.db_controller = db_controller
         self.table_updater = TableUpdater()
         self.table_updater.append_object_signal.connect(self._insert_rows)
@@ -345,7 +347,7 @@ class HandlerJournal(QWidget):
             return
 
         source_id, full_address = self.source_name_id_address[camera_name]
-        # print(camera_name, source_id, full_address)
+        # self.logger.debug(f"{camera_name}, {source_id}, {full_address}")
         query = QSqlQuery(QSqlDatabase.database('obj_conn'))
         query.prepare('SELECT source_name, CAST(\'Event\' AS text) AS event_type, '
                       '\'Object Id=\' || object_id || \'; class: \' || class_id || \'; conf: \' || ROUND(confidence::numeric, 2)'
@@ -442,6 +444,6 @@ class HandlerJournal(QWidget):
                 update_query = sql.SQL('UPDATE jobs SET last_record = %s WHERE job_id = %s;')
                 data = (last_record, job_id)
         else:
-            print(f"HandlerJournal._update_job_first_last_records: Db controller returns no data. Possible db alreaady closed.")
+            self.logger.warning(f"HandlerJournal._update_job_first_last_records: Database controller not returning data. Database may be closed.")
 
         self.db_controller.query(update_query, data)

@@ -5,6 +5,7 @@ from ..core.pipeline_simple import PipelineSimple
 from ..capture.video_capture_base import CaptureImage
 from ..capture.video_capture import VideoCapture
 from ..object_tracker.tracking_results import TrackingResultList
+from ..core.logger import get_module_logger
 
 
 class PipelineCapture(PipelineSimple):
@@ -15,6 +16,7 @@ class PipelineCapture(PipelineSimple):
     
     def __init__(self):
         super().__init__()
+        self.logger = get_module_logger("pipeline_capture")
         self.source_config = {}
         self.video_capture = None
         self.frame_width = 0
@@ -38,7 +40,7 @@ class PipelineCapture(PipelineSimple):
         # Get video path from source config
         video_path = self.source_config.get('camera', '')
         if not video_path or not os.path.exists(video_path):
-            print(f"Error: Video file not found: {video_path}")
+            self.logger.error(f"Error: Video file not found: {video_path}")
             return False
         
         # Create VideoCapture and use source config directly
@@ -48,7 +50,7 @@ class PipelineCapture(PipelineSimple):
         # Set parameters and initialize video capture
         self.video_capture.set_params(**self.source_config)
         if not self.video_capture.init():
-            print(f"Error: Could not initialize video capture: {video_path}")
+            self.logger.error(f"Error: Failed to initialize video capture: {video_path}")
             return False
         
         # Get video properties
@@ -56,10 +58,10 @@ class PipelineCapture(PipelineSimple):
         self.frame_height = int(self.video_capture.capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self.total_frames = int(self.video_capture.capture.get(cv2.CAP_PROP_FRAME_COUNT))
         
-        print(f"Video initialized: {video_path}")
-        print(f"Resolution: {self.frame_width}x{self.frame_height}")
-        print(f"FPS: {self.video_capture.source_fps}")
-        print(f"Total frames: {self.total_frames}")
+        self.logger.info(f"Video initialized: {video_path}")
+        self.logger.info(f"Resolution: {self.frame_width}x{self.frame_height}")
+        self.logger.info(f"FPS: {self.video_capture.source_fps}")
+        self.logger.info(f"Total frames: {self.total_frames}")
         
         return True
 
@@ -73,13 +75,13 @@ class PipelineCapture(PipelineSimple):
         """Start video capture"""
         if self.video_capture:
             self.video_capture.start()
-            print("Video capture started")
+            self.logger.info("Video capture started")
 
     def stop_impl(self):
         """Stop video capture"""
         if self.video_capture:
             self.video_capture.stop()
-        print("Video capture stopped")
+        self.logger.info("Video capture stopped")
 
     def process_logic(self) -> Dict[str, Any]:
         """
@@ -184,7 +186,7 @@ class PipelineCapture(PipelineSimple):
             num_sources: Number of sources (should be 1 for video capture)
         """
         if num_sources != 1:
-            print("Warning: PipelineCapture supports only 1 source")
+            self.logger.warning("Warning: PipelineCapture supports only 1 source")
             num_sources = 1
         
         default_config = {

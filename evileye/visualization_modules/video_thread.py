@@ -19,6 +19,7 @@ import copy
 import time
 import cv2
 from ..events_detectors.zone import ZoneForm
+from ..core.logger import get_module_logger
 
 
 class VideoThread(QThread):
@@ -33,6 +34,7 @@ class VideoThread(QThread):
 
     def __init__(self, source_id, fps, rows, cols, show_debug_info, font_params, text_config=None, class_mapping=None):
         super().__init__()
+        self.logger = get_module_logger("video_thread")
 
         VideoThread.rows = rows  # Количество строк и столбцов для правильного перевода изображения в полный экран
         VideoThread.cols = cols
@@ -112,7 +114,7 @@ class VideoThread(QThread):
         return QPixmap.fromImage(scaled_image)
 
     def draw_zones(self, image: QPixmap, zones: dict):
-        # print(zones)
+        # self.logger.debug(zones)
         if not zones:
             return
 
@@ -158,7 +160,7 @@ class VideoThread(QThread):
 
     def stop_thread(self):
         self.run_flag = False
-        print('Visualization stopped')
+        self.logger.info('Visualization stopped')
 
     @pyqtSlot(dict)
     def display_zones(self, zones):

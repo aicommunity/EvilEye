@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Tuple
 
 from ..core.base_class import EvilEyeBase
 from ..core.frame import Frame
+from ..core.logger import get_module_logger
 
 
 @EvilEyeBase.register("RoiFeeder")
@@ -26,6 +27,7 @@ class RoiFeeder(EvilEyeBase):
 
     def __init__(self):
         super().__init__()
+        self.logger = get_module_logger("roi_feeder")
 
         self.run_flag = False
         self.queue_in = Queue(maxsize=2)
@@ -220,7 +222,7 @@ class RoiFeeder(EvilEyeBase):
             return roi
             
         except Exception as e:
-            print(f"❌ Error extracting ROI from bbox: {e}")
+            self.logger.error(f"❌ Error extracting ROI from bbox: {e}")
             return None
 
 

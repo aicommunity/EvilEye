@@ -2,6 +2,7 @@ from queue import Queue
 import threading
 from ultralytics import YOLO
 from .detection_thread_base import DetectionThreadBase
+from ..core.logger import get_module_logger
 
 # Import utils later to avoid circular imports
 utils = None
@@ -18,6 +19,7 @@ class DetectionThreadYolo(DetectionThreadBase):
     id_cnt = 0  # Переменная для присвоения каждому детектору своего идентификатора
 
     def __init__(self, model_name: str, stride: int, classes: list, source_ids: list, roi: list, inf_params: dict, queue_out: Queue):
+        self.logger = get_module_logger("detection_thread_yolo")
         self.model_name = model_name
         self.model = None
         super().__init__(stride, classes, source_ids, roi, inf_params, queue_out)
@@ -28,7 +30,7 @@ class DetectionThreadYolo(DetectionThreadBase):
             self.model.fuse()  # Fuse Conv+BN layers
             if self.inf_params.get('half', True):
                 self.model.half()
-            print(f"Model names: {self.model.names}")
+            self.logger.info(f"Model names: {self.model.names}")
             
             # Update model_class_mapping from model
             self._update_model_class_mapping_from_model()
@@ -60,4 +62,4 @@ class DetectionThreadYolo(DetectionThreadBase):
         if self.model and hasattr(self.model, 'names') and self.model.names:
             # Create mapping from model names: {class_name: class_id}
             self.model_class_mapping = {name: idx for idx, name in self.model.names.items()}
-            print(f"Updated model_class_mapping from YOLO model: {self.model_class_mapping}")
+            self.logger.info(f"Updated model_class_mapping from YOLO model: {self.model_class_mapping}")

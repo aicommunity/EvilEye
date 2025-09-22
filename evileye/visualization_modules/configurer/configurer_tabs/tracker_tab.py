@@ -1,6 +1,7 @@
 import copy
 import json
 import os.path
+from ....core.logger import get_module_logger
 try:
     from PyQt6 import QtGui
     from PyQt6.QtWidgets import (
@@ -114,7 +115,7 @@ class TrackerTab(QWidget):
     def _add_tracker(self):
         new_params = {key: '' for key in self.default_track_params.keys()}
         new_params['botsort_cfg'] = {key: '' for key in self.default_track_params['botsort_cfg'].keys()}
-        print(new_params)
+        # print(new_params)
         new_tracker = TrackerWidget(new_params)
         self.trackers.append(new_tracker)
         self.track_tabs.addTab(new_tracker, f'Tracker{len(self.trackers) - 1}')
@@ -124,7 +125,7 @@ class TrackerTab(QWidget):
         for tab_idx in range(self.track_tabs.count()):
             tab = self.track_tabs.widget(tab_idx)
             forms.append(tab.get_form())
-        print(forms)
+        # print(forms)
         return forms
 
     def get_params(self):

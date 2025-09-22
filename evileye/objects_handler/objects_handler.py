@@ -18,6 +18,7 @@ from .object_result import ObjectResultHistory, ObjectResult, ObjectResultList
 from ..database_controller.db_adapter_objects import DatabaseAdapterObjects
 from .labeling_manager import LabelingManager
 from pympler import asizeof
+from ..core.logger import get_module_logger
 import cv2
 from ..utils import utils
 from .attribute_manager import AttributeManager
@@ -37,6 +38,7 @@ from .attribute_manager import AttributeManager
 class ObjectsHandler(EvilEyeBase):
     def __init__(self, db_controller, db_adapter):
         super().__init__()
+        self.logger = get_module_logger("objects_handler")
         # Очередь для потокобезопасного приема данных от каждой камеры
         self.objs_queue = Queue()
         # Списки для хранения различных типов объектов
@@ -94,15 +96,15 @@ class ObjectsHandler(EvilEyeBase):
             if max_existing_id > 0:
                 # Set counter to next available ID
                 self.object_id_counter = max_existing_id + 1
-                print(f"🔄 Initialized object_id counter to {self.object_id_counter} (max existing: {max_existing_id})")
+                self.logger.info(f"🔄 Object ID counter initialized to {self.object_id_counter} (maximum existing: {max_existing_id})")
             else:
                 # No existing objects, start from 1
                 self.object_id_counter = 1
-                print(f"🔄 Starting with fresh object_id counter: {self.object_id_counter}")
+                self.logger.info(f"🔄 Starting with new counter object_id: {self.object_id_counter}")
                 
         except Exception as e:
-            print(f"⚠️ Warning: Error initializing object_id counter: {e}")
-            print(f"ℹ️ Starting with default counter value: {self.object_id_counter}")
+            self.logger.warning(f"⚠️ Warning: Object ID counter initialization error: {e}")
+            self.logger.info(f"ℹ️ Starting with default counter value: {self.object_id_counter}")
             # Keep default value (1)
 
     def default(self):
@@ -154,7 +156,7 @@ class ObjectsHandler(EvilEyeBase):
         if hasattr(self, 'labeling_manager'):
             self.labeling_manager.stop()
         
-        print('Handler stopped')
+        self.logger.info('Handler stopped')
 
     def start(self):
         self.run_flag = True
@@ -215,7 +217,7 @@ class ObjectsHandler(EvilEyeBase):
         return source_objects
 
     def handle_objs(self):  # Функция, отвечающая за работу с объектами
-        print('Handler running: waiting for objects...')
+        self.logger.info('Handler working: waiting for objects...')
         while self.run_flag:
             time.sleep(0.01)
             # if self.objs_queue.empty():
@@ -432,7 +434,7 @@ class ObjectsHandler(EvilEyeBase):
                     )
                     self.labeling_manager.add_object_found(object_data)
                 except Exception as e:
-                    print(f"Error saving labeling data for found object: {e}")
+                    self.logger.error(f"Labeling data saving error for found object: {e}")
                 
                 self.active_objs.objects.append(obj)
                # print(f"active_objs len={len(self.active_objs.objects)} size={asizeof.asizeof(self.active_objs.objects)/(1024.0*1024.0)}")
@@ -499,7 +501,7 @@ class ObjectsHandler(EvilEyeBase):
                         )
                         self.labeling_manager.add_object_lost(object_data)
                     except Exception as e:
-                        print(f"Error saving labeling data for lost object: {e}")
+                        self.logger.error(f"Labeling data saving error for lost object: {e}")
                     
                     self.lost_objs.objects.append(active_obj)
                 else:
@@ -583,7 +585,7 @@ class ObjectsHandler(EvilEyeBase):
             self._save_image(obj.last_image, obj.track.bounding_box, 'frame', event_type, obj)
             
         except Exception as e:
-            print(f"Error saving object images: {e}")
+            self.logger.error(f"Object images saving error: {e}")
 
     def _save_image(self, image, box, image_type, obj_event_type, obj):
         """Save image to file system independent of database - using same logic as database journal"""
@@ -626,10 +628,10 @@ class ObjectsHandler(EvilEyeBase):
                 saved = cv2.imwrite(full_img_path, image.image)
             
             if not saved:
-                print(f'ERROR: can\'t save image file {full_img_path}')
+                self.logger.error(f'ERROR: Failed to save image file {full_img_path}')
 
         except Exception as e:
-            print(f"Error saving image: {e}")
+            self.logger.error(f"Image saving error: {e}")
 
     def _get_img_path(self, image_type, obj_event_type, obj):
         # Use default image directory if database is not available

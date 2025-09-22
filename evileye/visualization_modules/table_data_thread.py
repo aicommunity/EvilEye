@@ -7,6 +7,7 @@ from utils import utils
 from queue import Queue
 import time
 import cv2
+from ..core.logger import get_module_logger
 
 
 class TableDataThread(QThread):
@@ -15,6 +16,7 @@ class TableDataThread(QThread):
 
     def __init__(self, fps, db_controller):
         super().__init__()
+        self.logger = get_module_logger("table_data_thread")
 
         self.queue = Queue()
         self.db_controller = db_controller
@@ -31,7 +33,7 @@ class TableDataThread(QThread):
 
     def stop_thread(self):
         self.run_flag = False
-        print('Data preparation thread stopped')
+        self.logger.info('Data preparation thread stopped')
 
     def run(self):
         while self.run_flag:
@@ -48,11 +50,11 @@ class TableDataThread(QThread):
         except ValueError:
             return 0
         begin_it = timer()
-        # print(data)
+        # self.logger.debug(data)
         records = self.db_controller.query(query_string, data)
         end_it = timer()
         elapsed_seconds = end_it - begin_it
-        # print(records)
+        # self.logger.debug(records)
         if query_type == 'Insert':
             self.append_record_signal.emit(records)
         elif query_type == 'Update':

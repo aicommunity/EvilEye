@@ -9,6 +9,12 @@ import requests
 from pathlib import Path
 from tqdm import tqdm
 import hashlib
+from evileye.core.logging_config import setup_evileye_logging
+from evileye.core.logger import get_module_logger
+
+# Инициализация логирования
+logger = setup_evileye_logging(log_level="INFO", log_to_console=True, log_to_file=True)
+download_logger = get_module_logger("download_samples")
 
 # Sample video URLs (public domain or free to use)
 SAMPLE_VIDEOS = {
@@ -48,7 +54,7 @@ def download_file(url, filepath, description=""):
         bool: True if download successful, False otherwise
     """
     try:
-        print(f"Downloading {description}...")
+        download_logger.info(f"Downloading {description}...")
         response = requests.get(url, stream=True)
         response.raise_for_status()
         
@@ -64,7 +70,7 @@ def download_file(url, filepath, description=""):
         return True
         
     except Exception as e:
-        print(f"Error downloading {description}: {e}")
+        download_logger.info(f"Error downloading {description}: {e}")
         return False
 
 def verify_file(filepath, expected_md5=None):
@@ -109,7 +115,7 @@ def download_sample_videos(videos_dir="videos", force=False):
         
         # Skip if file exists and not forcing re-download
         if filepath.exists() and not force:
-            print(f"✓ {filename} already exists, skipping...")
+            download_logger.info(f"✓ {filename} already exists, skipping...")
             results[filename] = {"status": "exists", "path": str(filepath)}
             continue
         
@@ -122,10 +128,10 @@ def download_sample_videos(videos_dir="videos", force=False):
         
         if success and verify_file(filepath, video_info.get("md5")):
             results[filename] = {"status": "downloaded", "path": str(filepath)}
-            print(f"✓ Successfully downloaded {filename}")
+            download_logger.info(f"✓ Successfully downloaded {filename}")
         else:
             results[filename] = {"status": "failed", "path": str(filepath)}
-            print(f"✗ Failed to download {filename}")
+            download_logger.info(f"✗ Failed to download {filename}")
     
     return results
 
@@ -139,28 +145,28 @@ def main():
     
     args = parser.parse_args()
     
-    print("🎬 EvilEye Sample Videos Downloader")
-    print("=" * 40)
+    download_logger.info("🎬 EvilEye Sample Videos Downloader")
+    download_logger.info("=" * 40)
     
     results = download_sample_videos(args.videos_dir, args.force)
     
-    print("\n📊 Download Summary:")
-    print("-" * 20)
+    download_logger.info("\n📊 Download Summary:")
+    download_logger.info("-" * 20)
     
     for filename, result in results.items():
         status_icon = "✓" if "downloaded" in result["status"] or result["status"] == "exists" else "✗"
-        print(f"{status_icon} {filename}: {result['status']}")
+        download_logger.info(f"{status_icon} {filename}: {result['status']}")
     
     successful = sum(1 for r in results.values() if "downloaded" in r["status"] or r["status"] == "exists")
     total = len(results)
     
-    print(f"\n✅ Successfully processed {successful}/{total} videos")
+    download_logger.info(f"\n✅ Successfully processed {successful}/{total} videos")
     
     if successful == total:
-        print("🎉 All sample videos are ready!")
+        download_logger.info("🎉 All sample videos are ready!")
         return 0
     else:
-        print("⚠️  Some videos failed to download. Check your internet connection.")
+        download_logger.info("⚠️  Some videos failed to download. Check your internet connection.")
         return 1
 
 if __name__ == "__main__":

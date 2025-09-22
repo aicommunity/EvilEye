@@ -29,6 +29,7 @@ import math
 from evileye.core import ProcessorSource, ProcessorStep, ProcessorFrame
 from evileye.core.class_manager import ClassManager
 from evileye.pipelines import PipelineSurveillance
+from evileye.core.logger import get_module_logger
 
 
 try:
@@ -40,6 +41,7 @@ except ImportError:
 
 class Controller:
     def __init__(self):
+        self.logger = get_module_logger("controller")
         self.main_window = None
         # self.application = application
         self.control_thread = threading.Thread(target=self.run)
@@ -233,7 +235,7 @@ class Controller:
 
             events = dict()
             events = self.events_detectors_controller.get()
-            # print(events)
+            # self.logger.debug(f"Events: {events}")
             if events:
                 self.events_processor.put(events)
             complete_processing_it = timer()
@@ -249,8 +251,8 @@ class Controller:
                 if self.debug_info.get("controller", None):
                     total_memory_usage_mb = self.debug_info["controller"].get("total_memory_usage_mb", None)
                     if total_memory_usage_mb and total_memory_usage_mb >= self.max_memory_usage_mb:
-                        print(f"total_memory_usage={total_memory_usage_mb:.2f} Mb max_memory_usage_mb={self.max_memory_usage_mb:.2f} Mb")
-                        pprint.pprint(self.debug_info)
+                        self.logger.warning(f"Memory usage exceeded: {total_memory_usage_mb:.2f} Mb (maximum: {self.max_memory_usage_mb:.2f} Mb)")
+                        self.logger.debug(f"Debug info: {pprint.pformat(self.debug_info)}")
                         params = copy.deepcopy(self.params)
                         if self.auto_restart:
                             self.restart_flag = True
@@ -276,7 +278,7 @@ class Controller:
             else:
                 sleep_seconds = 0.03
 
-            #print(f"Time: cap[{complete_capture_it-begin_it}], det[{complete_detection_it-complete_capture_it}], track[{complete_tracking_it-complete_detection_it}], events[{complete_processing_it-complete_tracking_it}]], "
+            #self.logger.debug(f"Time: cap[{complete_capture_it-begin_it}], det[{complete_detection_it-complete_capture_it}], track[{complete_tracking_it-complete_detection_it}], events[{complete_processing_it-complete_tracking_it}]], "
             #       f"read=[{complete_read_objects_it-complete_processing_it}], vis[{end_it-complete_read_objects_it}] = {end_it-begin_it} secs, sleep {sleep_seconds} secs")
             time.sleep(sleep_seconds)
 
@@ -298,7 +300,7 @@ class Controller:
                 self.db_adapter_fov_events.start()
                 self.db_adapter_cam_events.start()
             except Exception as e:
-                print(f"Warning: Database connection failed during start. Disabling database functionality. Reason: {e}")
+                self.logger.warning(f"Database connection error at startup. Disabling database functionality. Reason: {e}")
                 self.use_database = False
                 self.db_controller = None
         
@@ -334,7 +336,7 @@ class Controller:
         
         # Stop pipeline components
         self.pipeline.stop()
-        print('Everything in controller stopped')
+        self.logger.info('All controller components stopped')
 
     def init(self, params):
         self.params = params
@@ -374,13 +376,13 @@ class Controller:
         if pipeline_class_name:
             try:
                 self.pipeline = self._create_pipeline_instance(pipeline_class_name)
-                print(f"Using pipeline class: {pipeline_class_name}")
+                self.logger.info(f"Using pipeline class: {pipeline_class_name}")
             except Exception as e:
-                print(f"Warning: Could not create pipeline '{pipeline_class_name}': {e}")
-                print("Falling back to default PipelineSurveillance")
+                self.logger.warning(f"Failed to create pipeline '{pipeline_class_name}': {e}")
+                self.logger.info("Using default PipelineSurveillance")
                 self.pipeline = PipelineSurveillance()
         else:
-            print("Warning: No pipeline_class specified in pipeline parameters, using default PipelineSurveillance")
+            self.logger.warning("Pipeline class not specified in parameters, using default PipelineSurveillance")
             self.pipeline = PipelineSurveillance()
         
         self.pipeline.set_credentials(self.credentials)
@@ -451,7 +453,7 @@ class Controller:
                 self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
                 self._init_events_processor(self.params.get('events_processor', dict()))
             except Exception as e:
-                print(f"Warning: Database is enabled but not accessible. Running without database. Reason: {e}")
+                self.logger.warning(f"Database enabled but unavailable. Working without database. Reason: {e}")
                 # Fallback to no-database mode
                 self.use_database = False
                 self.db_controller = None
@@ -461,7 +463,7 @@ class Controller:
                 self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
                 self._init_events_processor_without_db(self.params.get('events_processor', dict()))
         else:
-            print("Database functionality disabled. Running without database connection.")
+            self.logger.info("Database functionality disabled. Working without database connection.")
             # Initialize minimal components for operation without database
             self._init_object_handler_without_db(params.get('objects_handler', dict()))
             self._init_events_detectors_without_db(self.params.get('events_detectors', dict()))
@@ -478,7 +480,7 @@ class Controller:
         self.stop()
         # Release pipeline components
         self.pipeline.release()
-        print('Everything in controller released')
+        self.logger.info('All controller components released')
 
     def update_params(self):
         self.params['controller'] = dict()
@@ -679,7 +681,7 @@ class Controller:
                                 self.obj_handler.params['objects_handler'] = {}
                             self.obj_handler.params['objects_handler']['attributes_detection'] = attr_params
                             self.obj_handler.set_params_impl()
-                            print(f"✅ Attributes detection configured for {proc_name}")
+                            self.logger.info(f"✅ Attribute detection configured for {proc_name}")
 
     def _init_events_detectors_without_db(self, params):
         """Initialize events detectors without database connection."""
@@ -801,7 +803,7 @@ class Controller:
                     any('Pipeline' in base.__name__ for base in obj.__bases__)):
                     pipeline_classes[name] = obj
         except ImportError as e:
-            print(f"Warning: Could not import evileye.pipelines: {e}")
+            self.logger.warning(f"Failed to import evileye.pipelines: {e}")
         
         # Search in current working directory pipelines folder
         current_dir = Path.cwd()
@@ -823,7 +825,7 @@ class Controller:
                 # Remove from path
                 sys.path.pop(0)
             except ImportError as e:
-                print(f"Warning: Could not import local pipelines: {e}")
+                self.logger.warning(f"Failed to import local pipelines: {e}")
         
         return pipeline_classes
     
@@ -879,7 +881,7 @@ class Controller:
                 detector_name = detector.__class__.__name__
                 success = self.class_manager.add_class_mapping(mapping, detector_name)
                 if not success:
-                    print(f"⚠️  Conflicts detected when adding mapping from {detector_name}")
+                    self.logger.warning(f"⚠️  Conflicts detected when adding mapping from {detector_name}")
                 
                 # CRITICAL: Force update classes after getting model mapping
                 if hasattr(detector, '_update_classes_after_model_loading'):
@@ -891,12 +893,12 @@ class Controller:
         # Update controller's class_mapping from ClassManager
         if self.class_manager.class_mapping:
             self.class_mapping = self.class_manager.get_class_mapping()
-            print(f"✅ Updated controller class_mapping with {len(self.class_mapping)} classes from {len(detectors)} detectors")
+            self.logger.info(f"✅ Updated controller class_mapping with {len(self.class_mapping)} classes from {len(detectors)} detectors")
             
             # Update visualizer if available
             if hasattr(self, 'visualizer') and self.visualizer:
                 self.visualizer.class_mapping = self.class_mapping
-                print("✅ Updated visualizer class_mapping")
+                self.logger.info("✅ Updated visualizer class_mapping")
             
             # Set class manager for all detectors
             for detector in detectors:
@@ -905,12 +907,12 @@ class Controller:
             
             # Report conflicts if any
             if self.class_manager.has_conflicts():
-                print("⚠️  Class mapping conflicts detected:")
+                self.logger.warning("⚠️  Class mapping conflicts detected:")
                 for conflict in self.class_manager.get_conflicts():
-                    print(f"   - {conflict}")
-                print("Using first occurrence for each class name/ID pair.")
+                    self.logger.warning(f"   - {conflict}")
+                self.logger.info("Using first occurrence for each class name/ID pair.")
         else:
-            print("No class mappings found from detectors")
+            self.logger.warning("Class mappings not found in detectors")
             
         # Schedule periodic check for late model loading
         self._schedule_periodic_class_update()
@@ -951,11 +953,11 @@ class Controller:
                         updated = True
                 
                 if updated:
-                    print("✅ Late model loading detected, classes updated")
+                    self.logger.info("✅ Late model loading detected, classes updated")
                     break
                     
             if attempt >= max_attempts:
-                print("⚠️  Timeout waiting for model loading, some classes may not be updated")
+                self.logger.warning("⚠️  Model loading timeout, some classes may not update")
         
         # Start periodic check in background thread
         check_thread = threading.Thread(target=periodic_check, daemon=True)
@@ -969,10 +971,10 @@ class Controller:
         if pipeline_class:
             try:
                 self.pipeline = self._create_pipeline_instance(pipeline_class)
-                print(f"Created pipeline instance: {pipeline_class}")
+                self.logger.info(f"Created pipeline instance: {pipeline_class}")
             except Exception as e:
-                print(f"Warning: Could not create pipeline '{pipeline_class}': {e}")
-                print("Falling back to default pipeline")
+                self.logger.warning(f"Failed to create pipeline '{pipeline_class}': {e}")
+                self.logger.info("Using default pipeline")
                 self.pipeline = PipelineSurveillance()
         else:
             # Use default pipeline

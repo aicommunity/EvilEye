@@ -17,6 +17,8 @@ from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from evileye.utils.utils import normalize_config_path
+from evileye.core.logging_config import setup_evileye_logging, log_system_info
+from evileye.core.logger import get_module_logger
 
 
 # Create CLI app
@@ -31,15 +33,8 @@ console = Console()
 
 def setup_logging(verbose: bool = False) -> None:
     """Setup logging configuration"""
-    level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-            logging.FileHandler("evileye.log"),
-        ],
-    )
+    level = "DEBUG" if verbose else "INFO"
+    setup_evileye_logging(log_level=level, log_to_console=True, log_to_file=True)
 
 
 @app.command()
@@ -48,6 +43,7 @@ def run(
         video: Optional[str] = typer.Option(None, "--video", help="Video file to process"),
         gui: bool = typer.Option(True, "--gui/--no-gui", help="Launch with gui interface"),
         autoclose: bool = typer.Option(False, "--autoclose/--no-autoclose", help="Automatic close application when video ends"),
+        verbose: bool = typer.Option(False, "--verbose", help="Enable verbose logging"),
 ) -> None:
     """
     Launch EvilEye 
@@ -59,6 +55,11 @@ def run(
     import subprocess
     import os
 
+    # Setup logging
+    setup_logging(verbose=verbose)
+    logger = get_module_logger("cli")
+    log_system_info(logger)
+
     # Build command arguments
     cmd = [sys.executable, str(Path(__file__).parent / "process.py")]
 
@@ -66,17 +67,22 @@ def run(
         # Normalize config path and check if it exists
         normalized_config = Path(normalize_config_path(config))
         if not normalized_config.exists():
+            logger.error(f"Configuration file not found: {normalized_config}")
             console.print(f"[red]Configuration file not found: {normalized_config}[/red]")
             raise typer.Exit(1)
         cmd.extend(["--config", str(normalized_config)])
+        logger.info(f"Using configuration: {normalized_config}")
     elif video:
         cmd.extend(["--video", video])
+        logger.info(f"Using video file: {video}")
     else:
         # Use default config
         default_config = Path("configs/test_sources_detectors_trackers_mc.json")
         if default_config.exists():
             cmd.extend(["--config", str(default_config)])
+            logger.info(f"Using default configuration: {default_config}")
         else:
+            logger.error("Configuration file not specified and default configuration not found")
             console.print("[red]No configuration file specified and default not found[/red]")
             console.print("Please specify a config file: [yellow]evileye run <config_file>[/yellow]")
             raise typer.Exit(1)
@@ -84,23 +90,31 @@ def run(
     # Add GUI flag based on boolean value
     if gui:
         cmd.append("--gui")
+        logger.info("GUI enabled")
     else:
         cmd.append("--no-gui")
+        logger.info("GUI disabled")
 
     # Add autoclose flag based on boolean value
     if autoclose:
         cmd.append("--autoclose")
+        logger.info("Auto-close enabled")
     else:
         cmd.append("--no-autoclose")
+        logger.info("Auto-close disabled")
 
     try:
+        logger.info(f"Launching command: {' '.join(cmd)}")
         console.print(f"[green]Launching with command:[/green] {' '.join(cmd)}")
         # Run command in current working directory (where CLI was launched from)
         subprocess.run(cmd, check=True, cwd=os.getcwd())
+        logger.info("Command executed successfully")
     except subprocess.CalledProcessError as e:
+        logger.error(f"Launch error: {e}")
         console.print(f"[red]Error launching: {e}[/red]")
         raise typer.Exit(1)
     except KeyboardInterrupt:
+        logger.info("Launch interrupted by user")
         console.print("[yellow]Launch interrupted by user[/yellow]")
         raise typer.Exit(0)
 

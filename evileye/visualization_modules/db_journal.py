@@ -25,6 +25,7 @@ from . import events_journal
 from .journal_adapters.jadapter_fov_events import JournalAdapterFieldOfViewEvents
 from .journal_adapters.jadapter_cam_events import JournalAdapterCamEvents
 from .journal_adapters.jadapter_zone_events import JournalAdapterZoneEvents
+from ..core.logger import get_module_logger
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
@@ -32,6 +33,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 class DatabaseJournalWindow(QWidget):
     def __init__(self, main_window, params, database_params, close_app: bool):
         super().__init__()
+        self.logger = get_module_logger("db_journal")
         self.main_window = main_window
         self.params = params
         self.database_params = database_params
@@ -55,7 +57,7 @@ class DatabaseJournalWindow(QWidget):
             self.tables = self.db_params['tables']
             self.database_available = True
         except Exception as e:
-            print(f"Warning: Cannot connect to database. Database journal will be disabled. Reason: {e}")
+            self.logger.warning(f"Warning: Cannot connect to database. Database journal will be disabled. Reason: {e}")
             # Disable database functionality
             self.db_controller = None
             self.tables = {}
@@ -96,7 +98,7 @@ class DatabaseJournalWindow(QWidget):
         for tab_idx in range(self.tabs.count()):
             tab = self.tabs.widget(tab_idx)
             tab.close()
-        print('Database journal closed')
+        self.logger.info('Database journal closed')
         
         # Only save and disconnect if database is available
         if hasattr(self, 'database_available') and self.database_available and self.db_controller:

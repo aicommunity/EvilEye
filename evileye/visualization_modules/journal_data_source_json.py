@@ -2,6 +2,7 @@ import os
 import json
 from typing import List, Dict, Tuple, Callable, Optional
 from .journal_data_source import EventJournalDataSource
+from ..core.logger import get_module_logger
 
 
 class JsonLabelJournalDataSource(EventJournalDataSource):
@@ -11,6 +12,7 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
     """
 
     def __init__(self, base_dir: str):
+        self.logger = get_module_logger("journal_data_source_json")
         self.base_dir = base_dir
         self.date_folder: Optional[str] = None
         self._cache: List[Dict] = []
@@ -106,7 +108,7 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                 if ev:
                     self._cache.append(ev)
         except Exception as e:
-            print(f"Error reading {filepath}: {e}")
+            self.logger.error(f"Read error {filepath}: {e}")
             # ignore broken files
             pass
 
@@ -143,7 +145,7 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                 'date_folder': date_folder,
             }
         except Exception as e:
-            print(f"Error mapping item: {e}")
+            self.logger.error(f"Element mapping error: {e}")
             return None
 
     def _apply_filters(self, items: List[Dict], filters: Dict) -> List[Dict]:

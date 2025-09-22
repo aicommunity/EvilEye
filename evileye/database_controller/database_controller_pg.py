@@ -12,6 +12,7 @@ from psycopg2 import sql
 from psycopg2 import pool
 import copy
 from ..utils import threading_events
+from ..core.logger import get_module_logger
 
 from timeit import default_timer as timer
 # see https://ru.hexlet.io/blog/posts/python-postgresql
@@ -24,6 +25,8 @@ class DatabaseControllerPg(DatabaseControllerBase):
     cur_job_id = 0
 
     def __init__(self, system_params, controller_type='Writer'):
+        super().__init__(system_params, controller_type)
+        self.logger = get_module_logger("database_controller_pg")
         super().__init__(controller_type)
         self.configuration_info = system_params
         self.cameras_params = system_params.get('pipeline', {}).get('sources', dict())
@@ -104,7 +107,7 @@ class DatabaseControllerPg(DatabaseControllerBase):
                                                          password=self.password, host=self.host_name,
                                                          port=self.port, database=self.database_name)
         except Exception as ex:
-            print(f"Can't connect to database: {ex}")
+            self.logger.info(f"Can't connect to database: {ex}")
             self.conn_pool = None
             raise
 
@@ -139,7 +142,7 @@ class DatabaseControllerPg(DatabaseControllerBase):
             connection = self.conn_pool.getconn()
             with connection:
                 with connection.cursor() as curs:
-                    # print(query_string.as_string(curs))
+                    # self.logger.info(query_string.as_string(curs))
                     curs.execute(query_string, data)
                     try:
                         result = curs.fetchall()
@@ -147,7 +150,7 @@ class DatabaseControllerPg(DatabaseControllerBase):
                         result = None
             return result
         except psycopg2.OperationalError:
-            print(f'Transaction ({query_string}) is not committed')
+            self.logger.info(f'Transaction ({query_string}) is not committed')
         finally:
             if connection:
                 self.conn_pool.putconn(connection)
@@ -189,9 +192,9 @@ class DatabaseControllerPg(DatabaseControllerBase):
                 elif query_type == 'Update':
                     threading_events.notify('handler update object', row_num)
                 end_notify_it = timer()
-                # print(f'Notification:{end_notify_it-start_notify_it}; Saving:{end_save_it-start_save_it}')
+                # self.logger.info(f'Notification:{end_notify_it-start_notify_it}; Saving:{end_save_it-start_save_it}')
             except psycopg2.OperationalError:
-                print(f'Transaction ({query_string}) is not committed')
+                self.logger.info(f'Transaction ({query_string}) is not committed')
             finally:
                 if connection:
                     self.conn_pool.putconn(connection)
@@ -210,7 +213,7 @@ class DatabaseControllerPg(DatabaseControllerBase):
         preview_saved = cv2.imwrite(preview_save_dir, preview_boxes)
         frame_saved = cv2.imwrite(frame_save_dir, image.image)
         if not preview_saved or not frame_saved:
-            print(f'ERROR: can\'t save image file {frame_save_dir}')
+            self.logger.info(f'ERROR: can\'t save image file {frame_save_dir}')
 
     def get_fields_names(self, table_name):
         if self.conn_pool is None:
@@ -232,9 +235,9 @@ class DatabaseControllerPg(DatabaseControllerBase):
                     curs.execute(sql.SQL('CREATE DATABASE {database_name};').format(
                         database_name=sql.Identifier(db_name)))
                 else:
-                    print(f'Database {db_name} already exists')
+                    self.logger.info(f'Database {db_name} already exists')
         except psycopg2.OperationalError as exc:
-            print(exc)
+            self.logger.info(exc)
         finally:
             if conn:
                 conn.close()
@@ -269,7 +272,7 @@ class DatabaseControllerPg(DatabaseControllerBase):
             sql.SQL(', ').join(sql.Placeholder() * len(fields))
         )
         self.queue_in.put((query_type, insert_query, fields, data, preview_path, frame_path, image))
-        # print(f'Put. Empty: {self.queue_insert.get()}')
+        # self.logger.info(f'Put. Empty: {self.queue_insert.get()}')
 
     def get_obj_info(self, table_name, obj_id):
         if self.conn_pool is None:
@@ -373,7 +376,7 @@ class DatabaseControllerPg(DatabaseControllerBase):
     def update_video_dur(self, source_video_dur):
         sources = source_video_dur.keys()
         for source in sources:
-            print(source)
+            self.logger.info(source)
             if self.cameras_params[source]['source'] != 'VideoFile':
                 continue
             full_address = self.cameras_params[source]['camera']
@@ -451,7 +454,7 @@ if __name__ == '__main__':
     #             with connection:
     #                 with connection.cursor() as curs:
     #                     if query_string is not None:
-    #                         print(query_string.as_string(curs))
+    #                         self.logger.info(query_string.as_string(curs))
     #                         curs.execute(query_string, data)
     #                         try:
     #                             result = curs.fetchall()
@@ -461,7 +464,7 @@ if __name__ == '__main__':
     #                         result = None
     #             self.queue_out.put(result)
     #         except psycopg2.OperationalError:
-    #             print(f'Transaction ({query_string}) is not committed')
+    #             self.logger.info(f'Transaction ({query_string}) is not committed')
     #         finally:
     #             if connection:
     #                 self.conn_pool.putconn(connection)

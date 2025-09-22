@@ -4,12 +4,14 @@ from ultralytics import YOLO
 from ..object_detector.detection_thread_base import DetectionThreadBase
 from typing import Dict, Any, List
 import numpy as np
+from ..core.logger import get_module_logger
 
 
 class AttributeDetectionThread(DetectionThreadBase):
     """Thread for attribute detection using YOLO model on ROI images"""
     
     def __init__(self, model_name: str, stride: int, classes: list, source_ids: list, roi: list, inf_params: dict, queue_out: Queue):
+        self.logger = get_module_logger("attribute_detection_thread")
         self.model_name = model_name
         self.model = None
         self.attr_class_mapping = {}
@@ -33,9 +35,9 @@ class AttributeDetectionThread(DetectionThreadBase):
                 if attr_name in coco_class_mapping:
                     self.attr_class_mapping[coco_class_mapping[attr_name]] = attr_name
                 
-            print(f"✅ AttributeDetectionThread initialized with model: {self.model_name}")
-            print(f"✅ Attribute classes: {self.attr_class_mapping}")
-            print(f"✅ COCO class mapping: {coco_class_mapping}")
+            self.logger.info(f"✅ AttributeDetectionThread initialized with model: {self.model_name}")
+            self.logger.info(f"✅ Attribute classes: {self.attr_class_mapping}")
+            self.logger.info(f"✅ COCO class mapping: {coco_class_mapping}")
 
     def predict(self, images: list):
         """Run YOLO inference on ROI images"""

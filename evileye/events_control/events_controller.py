@@ -4,11 +4,13 @@ from timeit import default_timer as timer
 import time
 import copy
 from ..core.base_class import EvilEyeBase
+from ..core.logger import get_module_logger
 
 
 class EventsDetectorsController(EvilEyeBase):
     def __init__(self, events_detectors: list):
         super().__init__()
+        self.logger = get_module_logger("events_controller")
         self.control_thread = Thread(target=self.run)
         self.queue_out = Queue()
         self.detectors = events_detectors
@@ -64,7 +66,7 @@ class EventsDetectorsController(EvilEyeBase):
         self.run_flag = False
         if self.control_thread.is_alive():
             self.control_thread.join()
-        print('Everything in controller stopped')
+        self.logger.info('Everything in controller stopped')
 
     def default(self):
         pass
@@ -74,4 +76,4 @@ class EventsDetectorsController(EvilEyeBase):
 
     def release_impl(self):
         self.stop()
-        print('Everything in controller released')
+        self.logger.info('Everything in controller released')

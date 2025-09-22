@@ -3,6 +3,7 @@ from ..core.base_class import EvilEyeBase
 from queue import Queue
 import threading
 from .tracking_results import TrackingResultList
+from ..core.logger import get_module_logger
 
 
 class ObjectTrackingBase(EvilEyeBase):
@@ -10,6 +11,7 @@ class ObjectTrackingBase(EvilEyeBase):
 
     def __init__(self):
         super().__init__()
+        self.logger = get_module_logger("object_tracking_base")
 
         self.run_flag = False
         self.queue_in = Queue(maxsize=2)
@@ -65,7 +67,7 @@ class ObjectTrackingBase(EvilEyeBase):
         self.queue_in.put(None)
         if self.processing_thread and self.processing_thread.is_alive():
             self.processing_thread.join()
-        print('Tracker stopped')
+        self.logger.info('Tracker stopped')
 
     def init_impl(self, **kwargs):
         self.processing_thread = threading.Thread(target=self._process_impl)

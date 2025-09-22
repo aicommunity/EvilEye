@@ -7,6 +7,7 @@ from PyQt6.QtWidgets import (
 )
 from ...capture.video_capture_base import CaptureDeviceType
 from ...capture.video_capture import VideoCapture
+from ...core.logger import get_module_logger
 
 
 def process_numeric_types(string: str):
@@ -51,4 +52,4 @@ def process_events_src_params(widgets: list) -> dict:
 if __name__ == '__main__':
     s = ''
     s2 = '[[15:30:30, 16:00:00], [15:30:30, 16:00:00]]'
-    print(process_str_list(s), process_str_list(s))
+    # print(process_str_list(s), process_str_list(s))
