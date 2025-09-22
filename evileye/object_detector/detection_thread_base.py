@@ -7,7 +7,7 @@ from .object_detection_base import DetectionResultList
 from .object_detection_base import DetectionResult
 from ..capture.video_capture_base import CaptureImage
 from timeit import default_timer as timer
-from ..core.logger import get_module_logger
+import logging
 
 # Import utils later to avoid circular imports
 utils = None
@@ -23,9 +23,11 @@ def get_utils():
 class DetectionThreadBase:
     id_cnt = 0  # Переменная для присвоения каждому детектору своего идентификатора
 
-    def __init__(self, stride: int, classes: list, source_ids: list, roi: list, inf_params: dict, queue_out: Queue):
+    def __init__(self, stride: int, classes: list, source_ids: list, roi: list, inf_params: dict, queue_out: Queue, logger_name: str | None = None, parent_logger: logging.Logger | None = None):
         super().__init__()
-        self.logger = get_module_logger("detection_thread")
+        base_name = "evileye.detection_thread"
+        full_name = f"{base_name}.{logger_name}" if logger_name else base_name
+        self.logger = parent_logger or logging.getLogger(full_name)
 
         self.prev_time = 0  # Для параметра скважности, заданного временем; отсчет времени
         self.stride = stride  # Параметр скважности

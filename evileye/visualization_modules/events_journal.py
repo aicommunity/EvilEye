@@ -25,12 +25,15 @@ except ImportError:
 
 from .table_updater_view import TableUpdater
 from ..core.logger import get_module_logger
+import logging
 
 
 class ImageDelegate(QStyledItemDelegate):
-    def __init__(self, parent=None, image_dir=None):
+    def __init__(self, parent=None, image_dir=None, logger_name: str | None = None, parent_logger: logging.Logger | None = None):
         super().__init__(parent)
-        self.logger = get_module_logger("image_delegate")
+        base_name = "evileye.image_delegate"
+        full_name = f"{base_name}.{logger_name}" if logger_name else base_name
+        self.logger = parent_logger or logging.getLogger(full_name)
         self.image_dir = image_dir
 
     def paint(self, painter, option, index):
@@ -97,9 +100,11 @@ class EventsJournal(QWidget):
     preview_width = 300
     preview_height = 150
 
-    def __init__(self, journal_adapters: list, db_controller, table_name, params, database_params, table_params, parent=None):
+    def __init__(self, journal_adapters: list, db_controller, table_name, params, database_params, table_params, parent=None, logger_name: str | None = None, parent_logger: logging.Logger | None = None):
         super().__init__()
-        self.logger = get_module_logger("events_journal")
+        base_name = "evileye.events_journal"
+        full_name = f"{base_name}.{logger_name}" if logger_name else base_name
+        self.logger = parent_logger or logging.getLogger(full_name)
         self.db_controller = db_controller
         self.journal_adapters = journal_adapters
 
@@ -183,7 +188,7 @@ class EventsJournal(QWidget):
         h_header.setDefaultSectionSize(EventsJournal.preview_width)
         v_header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
 
-        self.image_delegate = ImageDelegate(None, image_dir=self.image_dir)
+        self.image_delegate = ImageDelegate(None, image_dir=self.image_dir, logger_name="image_delegate", parent_logger=self.logger)
         self.date_delegate = DateTimeDelegate(None)
         self.table.setItemDelegateForColumn(1, self.date_delegate)
         self.table.setItemDelegateForColumn(2, self.date_delegate)

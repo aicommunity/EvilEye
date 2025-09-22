@@ -26,14 +26,17 @@ from .journal_adapters.jadapter_fov_events import JournalAdapterFieldOfViewEvent
 from .journal_adapters.jadapter_cam_events import JournalAdapterCamEvents
 from .journal_adapters.jadapter_zone_events import JournalAdapterZoneEvents
 from ..core.logger import get_module_logger
+import logging
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 
 class DatabaseJournalWindow(QWidget):
-    def __init__(self, main_window, params, database_params, close_app: bool):
+    def __init__(self, main_window, params, database_params, close_app: bool, logger_name: str | None = None, parent_logger: logging.Logger | None = None):
         super().__init__()
-        self.logger = get_module_logger("db_journal")
+        base_name = "evileye.db_journal"
+        full_name = f"{base_name}.{logger_name}" if logger_name else base_name
+        self.logger = parent_logger or logging.getLogger(full_name)
         self.main_window = main_window
         self.params = params
         self.database_params = database_params
@@ -86,7 +89,8 @@ class DatabaseJournalWindow(QWidget):
         self.tabs.addTab(events_journal.EventsJournal([self.cam_events_adapter,
                                                        self.perimeter_events_adapter, self.zone_events_adapter],
                                                       self.db_controller, 'objects', self.params, self.database_params,
-                                                      self.tables['objects'], parent=self), 'Events journal')
+                                                      self.tables['objects'], parent=self,
+                                                      logger_name="events_journal", parent_logger=self.logger), 'Events journal')
 
         self.layout = QVBoxLayout()
         self.layout.addWidget(self.tabs)

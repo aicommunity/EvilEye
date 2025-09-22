@@ -120,7 +120,8 @@ class MainWindow(QMainWindow):
         # Create journal window (DB or JSON mode)
         if hasattr(self.controller, 'use_database') and self.controller.use_database:
             try:
-                self.db_journal_win = DatabaseJournalWindow(self, self.params, self.controller.database_config, close_app)
+                self.db_journal_win = DatabaseJournalWindow(self, self.params, self.controller.database_config, close_app,
+                                                           logger_name="db_journal", parent_logger=self.logger)
                 self.db_journal_win.setVisible(False)
             except Exception as e:
                 self.logger.warning(f"Warning: Failed to create database journal window. Switching to JSON mode. Reason: {e}")
@@ -135,7 +136,7 @@ class MainWindow(QMainWindow):
             # Check if directory exists before creating journal
             if os.path.exists(images_dir):
                 try:
-                    self.db_journal_win = EventsJournalJson(images_dir)
+                    self.db_journal_win = EventsJournalJson(images_dir, logger_name="json_journal", parent_logger=self.logger)
                     self.db_journal_win.setVisible(False)
                 except Exception as e:
                     self.logger.error(f"JSON journal creation error: {e}")

@@ -12,13 +12,11 @@ import cv2
 from ..utils import threading_events
 from ..utils import utils
 from psycopg2 import sql
-from ..core.logger import get_module_logger
 
 
 class DatabaseAdapterObjects(DatabaseAdapterBase):
     def __init__(self, db_controller):
         super().__init__(db_controller)
-        self.logger = get_module_logger("db_adapter_objects")
         self.image_dir = self.db_params['image_dir']
         self.preview_width = self.db_params['preview_width']
         self.preview_height = self.db_params['preview_height']

@@ -24,12 +24,15 @@ except ImportError:
 
 from .journal_data_source_json import JsonLabelJournalDataSource
 from ..core.logger import get_module_logger
+import logging
 
 
 class ImageDelegate(QStyledItemDelegate):
-    def __init__(self, parent=None, base_dir=None):
+    def __init__(self, parent=None, base_dir=None, logger_name: str | None = None, parent_logger: logging.Logger | None = None):
         super().__init__(parent)
-        self.logger = get_module_logger("image_delegate")
+        base_name = "evileye.image_delegate"
+        full_name = f"{base_name}.{logger_name}" if logger_name else base_name
+        self.logger = parent_logger or logging.getLogger(full_name)
         self.base_dir = base_dir
         self.preview_width = 300
         self.preview_height = 150
@@ -154,9 +157,11 @@ class ImageWindow(QLabel):
 
 
 class EventsJournalJson(QWidget):
-    def __init__(self, base_dir: str, parent=None):
+    def __init__(self, base_dir: str, parent=None, logger_name: str | None = None, parent_logger: logging.Logger | None = None):
         super().__init__(parent)
-        self.logger = get_module_logger("events_journal_json")
+        base_name = "evileye.events_journal_json"
+        full_name = f"{base_name}.{logger_name}" if logger_name else base_name
+        self.logger = parent_logger or logging.getLogger(full_name)
         self.setWindowTitle('Events journal (JSON)')
         self.base_dir = base_dir
         self.ds = JsonLabelJournalDataSource(base_dir)
@@ -212,7 +217,7 @@ class EventsJournalJson(QWidget):
         self.layout.addWidget(self.table)
 
         # Set up image delegate for image columns (Preview and Lost preview)
-        self.image_delegate = ImageDelegate(self.table, self.base_dir)
+        self.image_delegate = ImageDelegate(self.table, self.base_dir, logger_name="image_delegate", parent_logger=self.logger)
         self.table.setItemDelegateForColumn(5, self.image_delegate)  # Preview
         self.table.setItemDelegateForColumn(6, self.image_delegate)  # Lost preview
 
