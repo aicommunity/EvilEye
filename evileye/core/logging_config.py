@@ -44,10 +44,8 @@ class EvilEyeLoggingConfig:
         
         # Определяем папку для логов
         if log_dir is None:
-            # Находим корень проекта (где находится evileye/)
-            current_file = Path(__file__)
-            project_root = current_file.parent.parent.parent
-            self.log_dir = project_root / "logs"
+            # Используем рабочую директорию запуска процесса
+            self.log_dir = Path.cwd() / "logs"
         else:
             self.log_dir = Path(log_dir)
         
