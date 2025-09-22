@@ -2,7 +2,7 @@ from queue import Queue
 import threading
 from ultralytics import RTDETR
 from .detection_thread_base import DetectionThreadBase
-from ..core.logger import get_module_logger
+import logging
 
 # Import utils later to avoid circular imports
 utils = None
@@ -18,8 +18,10 @@ def get_utils():
 class DetectionThreadRtdetr(DetectionThreadBase):
     id_cnt = 0  # Переменная для присвоения каждому детектору своего идентификатора
 
-    def __init__(self, model_name: str, stride: int, classes: list, source_ids: list, roi: list, inf_params: dict, queue_out: Queue):
-        self.logger = get_module_logger("detection_thread_rtdetr")
+    def __init__(self, model_name: str, stride: int, classes: list, source_ids: list, roi: list, inf_params: dict, queue_out: Queue, logger_name: str | None = None, parent_logger: logging.Logger | None = None):
+        base_name = f"evileye.detection_thread_rtdetr"
+        full_name = f"{base_name}.{logger_name}" if logger_name else base_name
+        self.logger = parent_logger or logging.getLogger(full_name)
         self.model_name = model_name
         self.model = None
         self.original_image_size = None  # Инициализируем размер изображения

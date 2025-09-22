@@ -7,16 +7,18 @@ from utils import utils
 from queue import Queue
 import time
 import cv2
-from ..core.logger import get_module_logger
+import logging
 
 
 class TableDataThread(QThread):
     append_record_signal = pyqtSignal(list)
     update_record_signal = pyqtSignal(list)
 
-    def __init__(self, fps, db_controller):
+    def __init__(self, fps, db_controller, logger_name: str | None = None, parent_logger: logging.Logger | None = None):
         super().__init__()
-        self.logger = get_module_logger("table_data_thread")
+        base_name = "evileye.table_data_thread"
+        full_name = f"{base_name}.{logger_name}" if logger_name else base_name
+        self.logger = parent_logger or logging.getLogger(full_name)
 
         self.queue = Queue()
         self.db_controller = db_controller

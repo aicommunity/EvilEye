@@ -40,10 +40,12 @@ class Visualizer(EvilEyeBase):
         if len(self.visual_threads) > 0:
             self.visual_threads = []
         for i in range(len(self.source_ids)):
+            logger_name = f"src{self.source_ids[i]}"
             self.visual_threads.append(VideoThread(self.source_ids[i], self.fps[i], self.num_height,
                                                            self.num_width, self.show_debug_info,
                                                    self.font_params[i] if self.font_params is not None else None,
-                                                   text_config=self.text_config, class_mapping=self.class_mapping))
+                                                   text_config=self.text_config, class_mapping=self.class_mapping,
+                                                   logger_name=logger_name, parent_logger=self.logger))
             self.visual_threads[-1].update_image_signal.connect(
                 self.pyqt_slots['update_image'])  # Сигнал из потока для обновления label на новое изображение
             self.visual_threads[-1].add_zone_signal.connect(self.pyqt_slots['open_zone_win'])
