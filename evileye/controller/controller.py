@@ -599,55 +599,6 @@ class Controller:
         self.db_adapter_zone_events.set_params(**params['DatabaseAdapterZoneEvents'])
         self.db_adapter_zone_events.init()
 
-    def _init_sources(self, params):
-        num_sources = len(params)
-        self.sources_proc = ProcessorSource(class_name="VideoCapture", num_processors=num_sources, order=0)
-        for i in range(num_sources):
-            src_params = params[i]
-            camera_creds = self.credentials["sources"].get(src_params["camera"], None)
-            if camera_creds and (not src_params.get("username", None) or not src_params.get("password", None)):
-                src_params["username"] = camera_creds["username"]
-                src_params["password"] = camera_creds["password"]
-
-        self.sources_proc.set_params(params)
-        self.sources_proc.init()
-        for j in range(num_sources):
-            source = self.sources_proc.get_processors()[j]
-            for source_id, source_name in zip(source.source_ids, source.source_names):
-                self.source_id_name_table[source_id] = source_name
-                self.source_video_duration[source_id] = source.video_duration
-                self.source_last_processed_frame_id[source_id] = 0
-
-    def _init_preprocessors(self, params):
-        num_preps = len(params)
-        self.preprocessors_proc = ProcessorFrame(class_name="PreprocessingPipeline", num_processors=num_preps, order=1)
-        self.preprocessors_proc.set_params(params)
-        self.preprocessors_proc.init()
-
-    def _init_detectors(self, params):
-        num_det = len(params)
-        self.detectors_proc = ProcessorStep(class_name="ObjectDetectorYolo", num_processors=num_det, order=2)
-        self.detectors_proc.set_params(params)
-        self.detectors_proc.init()
-
-    def _init_trackers(self, params):
-        num_trackers = len(params)
-        self.trackers_proc = ProcessorStep(class_name="ObjectTrackingBotsort", num_processors=num_trackers, order=3)
-        self.trackers_proc.set_params(params)
-        self.trackers_proc.init(encoders=self.encoders)
-
-    def _init_mc_trackers(self, params):
-        #num_of_cameras = len(self.params.get('sources', list()))
-        self.mc_trackers_proc = ProcessorStep(class_name="ObjectMultiCameraTracking", num_processors=1, order=4)
-        self.mc_trackers_proc.set_params(params)
-        self.mc_trackers_proc.init(encoders=self.encoders)
-
-        #self.mc_tracker = ObjectMultiCameraTracking(
-        #    num_of_cameras,
-        #    list(self.encoders.values())
-        #)
-        #self.mc_tracker.init()
-
     def _init_events_detectors(self, params):
         self.cam_events_detector = CamEventsDetector(self.pipeline.get_sources())
         self.cam_events_detector.set_params(**params.get('CamEventsDetector', dict()))
