@@ -64,7 +64,7 @@ class EventsDetectorsController(EvilEyeBase):
         self.run_flag = False
         if self.control_thread.is_alive():
             self.control_thread.join()
-        print('Everything in controller stopped')
+        self.logger.info('Everything in controller stopped')
 
     def default(self):
         pass
@@ -74,4 +74,4 @@ class EventsDetectorsController(EvilEyeBase):
 
     def release_impl(self):
         self.stop()
-        print('Everything in controller released')
+        self.logger.info('Everything in controller released')

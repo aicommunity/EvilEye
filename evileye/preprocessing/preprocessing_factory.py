@@ -10,7 +10,7 @@ class PreprocessingFactory:
                 config = json.load(f)
                 self.pipeline_config = config.get("preprocessing_sequence", [])
         except Exception as ex:
-            print(f"Failed to load preprocessing pipeline: {ex}")
+            self.logger.error(f"Failed to load preprocessing pipeline: {ex}")
             self.pipeline_config = []
 
     def build_pipeline(self):

@@ -11,9 +11,15 @@ import argparse
 import json
 import cv2
 import imutils
+from evileye.core.logging_config import setup_evileye_logging
+from evileye.core.logger import get_module_logger
 
 
 def main():
+    # Инициализация логирования
+    logger = setup_evileye_logging(log_level="INFO", log_to_console=True, log_to_file=True)
+    sample_logger = get_module_logger("capture_sample")
+    
     parser = argparse.ArgumentParser()
     parser.add_argument('source',
                         help='The source such as: video file(file), image sequence(sequence) or IP camera(IPcam)',
@@ -40,15 +46,15 @@ def main():
     video.init()
 
     if not video.is_opened():
-        print("Error opening video stream or file")
+        sample_logger.error("Ошибка открытия видеопотока или файла")
 
-    print('Press R to restart a video or image sequence. (Reset not implemented for IP camera)')
+    sample_logger.info('Нажмите R для перезапуска видео или последовательности изображений. (Сброс не реализован для IP камеры)')
 
     while video.is_opened():
         ret, frames = video.process(split_stream=capture_params['split'],
                                     num_split=capture_params['num_split'], src_coords=capture_params['src_coords'])
         if not ret:
-            print("Can't receive frame (stream end?). Exiting ...")
+            sample_logger.warning("Не удается получить кадр (конец потока?). Выход...")
             break
         (h, w) = frames[0].shape[:2]
         if w > 1280:

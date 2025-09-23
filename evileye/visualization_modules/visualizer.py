@@ -29,6 +29,7 @@ class Visualizer(EvilEyeBase):
         self.last_displayed_frame = dict()
         self.visual_buffer_num_frames = 50
         self.text_config = {}  # Text configuration for rendering
+        self.class_mapping = {}  # Class mapping for displaying class names
         self.memory_consumption_detail = dict()
 
 
@@ -39,10 +40,12 @@ class Visualizer(EvilEyeBase):
         if len(self.visual_threads) > 0:
             self.visual_threads = []
         for i in range(len(self.source_ids)):
+            logger_name = f"src{self.source_ids[i]}"
             self.visual_threads.append(VideoThread(self.source_ids[i], self.fps[i], self.num_height,
                                                            self.num_width, self.show_debug_info,
                                                    self.font_params[i] if self.font_params is not None else None,
-                                                   text_config=self.text_config))
+                                                   text_config=self.text_config, class_mapping=self.class_mapping,
+                                                   logger_name=logger_name, parent_logger=self.logger))
             self.visual_threads[-1].update_image_signal.connect(
                 self.pyqt_slots['update_image'])  # Сигнал из потока для обновления label на новое изображение
             self.visual_threads[-1].add_zone_signal.connect(self.pyqt_slots['open_zone_win'])
@@ -158,8 +161,8 @@ class Visualizer(EvilEyeBase):
                 #objs = objects[source_index].objects
                 objs = objects[source_index].find_objects_by_frame_id(frame.frame_id, use_history=False)
 
-                #print(f"source={source_id} num_objs={len(objs)}")
-                # print(f"Found {len(objs)} objects for visualization for source_id={frame.source_id} frame_id={frame.frame_id}")
+                #self.logger.debug(f"source={source_id} num_objs={len(objs)}")
+                # self.logger.debug(f"Found {len(objs)} objects for visualization for source_id={frame.source_id} frame_id={frame.frame_id}")
 
                 if len(objs) == 0 and objects[source_index].get_num_objects() > 0:
                     # remove_processed_idx[source_id].append(i)
@@ -176,7 +179,7 @@ class Visualizer(EvilEyeBase):
                         remove_processed_idx[source_id].append(i)
                         break
                 end_proc_frame = timer()
-                # print(f"Time frame: proc_frame[{end_proc_frame - start_proc_frame}], find_objects[{start_append_data - start_find_objects}, append[{end_proc_frame - start_find_objects}] secs")
+                # self.logger.debug(f"Time frame: proc_frame[{end_proc_frame - start_proc_frame}], find_objects[{start_append_data - start_find_objects}, append[{end_proc_frame - start_find_objects}] secs")
 
             start_remove = timer()
             remove_processed_idx[source_id].sort(reverse=True)
@@ -184,6 +187,6 @@ class Visualizer(EvilEyeBase):
                 del proc_frames[index]
 
             end_update = timer()
-            # print(f"Time: update=[{end_update-start_update}] secs")
+            # self.logger.debug(f"Time: update=[{end_update-start_update}] secs")
 
-            #print(f"{datetime.now()}: Visual Queue size: {len(self.processing_frames)}. Processed sources: {processed_sources}")
+            #self.logger.debug(f"{datetime.now()}: Visual Queue size: {len(self.processing_frames)}. Processed sources: {processed_sources}")

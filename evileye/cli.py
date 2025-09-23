@@ -17,6 +17,8 @@ from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from evileye.utils.utils import normalize_config_path
+from evileye.core.logging_config import setup_evileye_logging, log_system_info
+from evileye.core.logger import get_module_logger
 
 
 # Create CLI app
@@ -31,15 +33,8 @@ console = Console()
 
 def setup_logging(verbose: bool = False) -> None:
     """Setup logging configuration"""
-    level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-            logging.FileHandler("evileye.log"),
-        ],
-    )
+    level = "DEBUG" if verbose else "INFO"
+    setup_evileye_logging(log_level=level, log_to_console=True, log_to_file=True)
 
 
 @app.command()
@@ -48,6 +43,7 @@ def run(
         video: Optional[str] = typer.Option(None, "--video", help="Video file to process"),
         gui: bool = typer.Option(True, "--gui/--no-gui", help="Launch with gui interface"),
         autoclose: bool = typer.Option(False, "--autoclose/--no-autoclose", help="Automatic close application when video ends"),
+        verbose: bool = typer.Option(False, "--verbose", help="Enable verbose logging"),
 ) -> None:
     """
     Launch EvilEye 
@@ -59,6 +55,11 @@ def run(
     import subprocess
     import os
 
+    # Setup logging
+    setup_logging(verbose=verbose)
+    logger = get_module_logger("cli")
+    log_system_info(logger)
+
     # Build command arguments
     cmd = [sys.executable, str(Path(__file__).parent / "process.py")]
 
@@ -66,17 +67,22 @@ def run(
         # Normalize config path and check if it exists
         normalized_config = Path(normalize_config_path(config))
         if not normalized_config.exists():
+            logger.error(f"Configuration file not found: {normalized_config}")
             console.print(f"[red]Configuration file not found: {normalized_config}[/red]")
             raise typer.Exit(1)
         cmd.extend(["--config", str(normalized_config)])
+        logger.info(f"Using configuration: {normalized_config}")
     elif video:
         cmd.extend(["--video", video])
+        logger.info(f"Using video file: {video}")
     else:
         # Use default config
         default_config = Path("configs/test_sources_detectors_trackers_mc.json")
         if default_config.exists():
             cmd.extend(["--config", str(default_config)])
+            logger.info(f"Using default configuration: {default_config}")
         else:
+            logger.error("Configuration file not specified and default configuration not found")
             console.print("[red]No configuration file specified and default not found[/red]")
             console.print("Please specify a config file: [yellow]evileye run <config_file>[/yellow]")
             raise typer.Exit(1)
@@ -84,23 +90,31 @@ def run(
     # Add GUI flag based on boolean value
     if gui:
         cmd.append("--gui")
+        logger.info("GUI enabled")
     else:
         cmd.append("--no-gui")
+        logger.info("GUI disabled")
 
     # Add autoclose flag based on boolean value
     if autoclose:
         cmd.append("--autoclose")
+        logger.info("Auto-close enabled")
     else:
         cmd.append("--no-autoclose")
+        logger.info("Auto-close disabled")
 
     try:
+        logger.info(f"Launching command: {' '.join(cmd)}")
         console.print(f"[green]Launching with command:[/green] {' '.join(cmd)}")
         # Run command in current working directory (where CLI was launched from)
         subprocess.run(cmd, check=True, cwd=os.getcwd())
+        logger.info("Command executed successfully")
     except subprocess.CalledProcessError as e:
+        logger.error(f"Launch error: {e}")
         console.print(f"[red]Error launching: {e}[/red]")
         raise typer.Exit(1)
     except KeyboardInterrupt:
+        logger.info("Launch interrupted by user")
         console.print("[yellow]Launch interrupted by user[/yellow]")
         raise typer.Exit(0)
 
@@ -199,12 +213,12 @@ def deploy() -> None:
         if credentials_proto.exists():
             try:
                 shutil.copy2(credentials_proto, credentials_target)
-                console.print(f"[green]✓ Copied credentials_proto.json to credentials.json[/green]")
+                console.print(f"[green]Copied credentials_proto.json to credentials.json[/green]")
             except Exception as e:
-                console.print(f"[red]✗ Error copying credentials file: {e}[/red]")
+                console.print(f"[red]Error copying credentials file: {e}[/red]")
                 raise typer.Exit(1)
         else:
-            console.print("[red]✗ credentials_proto.json not found in package[/red]")
+            console.print("[red]credentials_proto.json not found in package[/red]")
             raise typer.Exit(1)
     
     # Step 2: Create configs folder
@@ -214,12 +228,12 @@ def deploy() -> None:
     else:
         try:
             configs_dir.mkdir(parents=True, exist_ok=True)
-            console.print(f"[green]✓ Created configs folder[/green]")
+            console.print(f"[green]Created configs folder[/green]")
         except Exception as e:
-            console.print(f"[red]✗ Error creating configs folder: {e}[/red]")
+            console.print(f"[red]Error creating configs folder: {e}[/red]")
             raise typer.Exit(1)
     
-    console.print("[green]✓ Deployment completed successfully![/green]")
+    console.print("[green]Deployment completed successfully![/green]")
     console.print(f"[blue]You can now create configurations with:[/blue]")
     console.print(f"[yellow]  evileye-create my_config --sources 1[/yellow]")
 
@@ -238,7 +252,7 @@ def deploy_samples() -> None:
     import shutil
     
     current_dir = Path.cwd()
-    console.print(f"[blue]🎬 Deploying EvilEye sample configurations to: {current_dir}[/blue]")
+    console.print(f"[blue]Deploying EvilEye sample configurations to: {current_dir}[/blue]")
     
     # First run regular deploy
     deploy()
@@ -247,12 +261,12 @@ def deploy_samples() -> None:
     videos_dir = current_dir / "videos"
     if not videos_dir.exists():
         videos_dir.mkdir()
-        console.print("[green]✓ Created videos folder[/green]")
+        console.print("[green]Created videos folder[/green]")
     else:
         console.print("[yellow]videos folder already exists, skipping...[/yellow]")
     
     # Download sample videos
-    console.print("\n[blue]📥 Downloading sample videos...[/blue]")
+    console.print("\n[blue]Downloading sample videos...[/blue]")
     try:
         from evileye.utils.download_samples import download_sample_videos
         video_results = download_sample_videos(str(videos_dir))
@@ -262,16 +276,16 @@ def deploy_samples() -> None:
         total_videos = len(video_results)
         
         if successful_videos > 0:
-            console.print(f"[green]✓ Downloaded {successful_videos}/{total_videos} sample videos[/green]")
+            console.print(f"[green]Downloaded {successful_videos}/{total_videos} sample videos[/green]")
         else:
-            console.print("[yellow]⚠️  No videos downloaded, but continuing with sample configs...[/yellow]")
+            console.print("[yellow]No videos downloaded, but continuing with sample configs...[/yellow]")
             
     except Exception as e:
-        console.print(f"[yellow]⚠️  Video download failed: {e}[/yellow]")
+        console.print(f"[yellow]Video download failed: {e}[/yellow]")
         console.print("[blue]Continuing with sample configs (you can add videos manually)...[/blue]")
     
     # Copy sample configurations
-    console.print("\n[blue]📋 Copying sample configurations...[/blue]")
+    console.print("\n[blue]Copying sample configurations...[/blue]")
     samples_dir = Path(__file__).parent / "samples_configs"
     configs_dir = current_dir / "configs"
     
@@ -280,7 +294,10 @@ def deploy_samples() -> None:
         "single_video_split.json", 
         "single_ip_camera.json",
         "multi_videos.json",
-        "pipeline_capture.json"
+        "pipeline_capture.json",
+        "single_video_rtdetr.json",
+        "multi_videos_rtdetr.json",
+        "single_video_rfdetr.json"
     ]
     
     copied_count = 0
@@ -290,10 +307,10 @@ def deploy_samples() -> None:
         
         if source_path.exists():
             shutil.copy2(source_path, dest_path)
-            console.print(f"[green]✓ Copied {config_name}[/green]")
+            console.print(f"[green]Copied {config_name}[/green]")
             copied_count += 1
         else:
-            console.print(f"[yellow]⚠️  Sample config {config_name} not found[/yellow]")
+            console.print(f"[yellow]Sample config {config_name} not found[/yellow]")
     
     # Create README for samples
     readme_content = """# EvilEye Sample Configurations
@@ -306,6 +323,13 @@ This directory contains sample configurations for EvilEye system.
 - **single_video.json** - Single video file processing (planes_sample.mp4)
 - **single_video_split.json** - Single video with 2-way split processing (sample_split.mp4)
 - **multi_videos.json** - Multiple video files with multi-camera tracking (6p-c0.avi, 6p-c1.avi)
+
+### RT-DETR Detector Examples
+- **single_video_rtdetr.json** - Single video with RT-DETR detector (planes_sample.mp4)
+- **multi_videos_rtdetr.json** - Multiple videos with RT-DETR detector (6p-c0.avi, 6p-c1.avi)
+
+### RF-DETR Detector Examples
+- **single_video_rfdetr.json** - Single video with RF-DETR detector (planes_sample.mp4)
 
 ### IP Camera Processing  
 - **single_ip_camera.json** - Single IP camera stream processing
@@ -332,6 +356,13 @@ evileye run configs/multi_videos.json
 
 # Run IP camera example
 evileye run configs/single_ip_camera.json
+
+# Run RT-DETR examples
+evileye run configs/single_video_rtdetr.json
+evileye run configs/multi_videos_rtdetr.json
+
+# Run RF-DETR example
+evileye run configs/single_video_rfdetr.json
 ```
 
 ## Configuration Features:
@@ -359,6 +390,19 @@ evileye run configs/single_ip_camera.json
 - Real-time object detection
 - Enhanced text rendering
 
+### RT-DETR Detectors
+- **single_video_rtdetr.json** - Single video with RT-DETR detector
+- **multi_videos_rtdetr.json** - Multiple videos with RT-DETR detector
+- Uses Ultralytics RT-DETR model (rtdetr-l.pt)
+- Real-time detection transformer architecture
+- High accuracy object detection
+
+### RF-DETR Detector
+- **single_video_rfdetr.json** - Single video with RF-DETR detector
+- Uses Roboflow RF-DETR model (rfdetr-nano)
+- Transformer-based real-time detection
+- Optimized for speed and accuracy
+
 ## Notes:
 
 - Sample videos are downloaded to `videos/` directory
@@ -381,23 +425,23 @@ For more information, see the main README.md file.
     with open(readme_path, 'w') as f:
         f.write(readme_content)
     
-    console.print(f"[green]✓ Copied {copied_count} sample configurations[/green]")
-    console.print("[green]✓ Created README_SAMPLES.md[/green]")
+    console.print(f"[green]Copied {copied_count} sample configurations[/green]")
+    console.print("[green]Created README_SAMPLES.md[/green]")
     
-    console.print("\n[green]🎉 Sample deployment completed successfully![/green]")
-    console.print("\n[blue]📋 Available sample configurations:[/blue]")
+    console.print("\n[green]Sample deployment completed successfully![/green]")
+    console.print("\n[blue]Available sample configurations:[/blue]")
     for config_name in sample_configs:
         if (configs_dir / config_name).exists():
-            console.print(f"  [yellow]• {config_name}[/yellow]")
+            console.print(f"  [yellow]- {config_name}[/yellow]")
     
-    console.print("\n[blue]🚀 Try running a sample:[/blue]")
+    console.print("\n[blue]Try running a sample:[/blue]")
     console.print("  [yellow]evileye run configs/single_video.json[/yellow]")
-    console.print("\n[blue]📁 Downloaded video files:[/blue]")
+    console.print("\n[blue]Downloaded video files:[/blue]")
     for video_name in ["planes_sample.mp4", "sample_split.mp4", "6p-c0.avi", "6p-c1.avi"]:
         if (videos_dir / video_name).exists():
-            console.print(f"  [green]✓ {video_name}[/green]")
+            console.print(f"  [green]{video_name}[/green]")
         else:
-            console.print(f"  [yellow]⚠️  {video_name} (not downloaded)[/yellow]")
+            console.print(f"  [yellow]{video_name} (not downloaded)[/yellow]")
 
 
 @app.command()

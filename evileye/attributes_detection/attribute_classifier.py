@@ -85,12 +85,12 @@ class AttributeClassifier(EvilEyeBase):
             from ultralytics import YOLO
             self.yolo_model = YOLO(self.model_path)
             self.yolo_model.fuse()  # Fuse Conv+BN layers for faster inference
-            print(f"✅ AttributeClassifier initialized with YOLO model: {self.model_path}")
-            print(f"✅ Attribute classes: {self.attr_class_mapping}")
+            self.logger.info(f"AttributeClassifier initialized with YOLO model: {self.model_path}")
+            self.logger.info(f"Attribute classes: {self.attr_class_mapping}")
             self.processing_thread = threading.Thread(target=self._process_impl)
             return True
         except Exception as e:
-            print(f"❌ Failed to initialize AttributeClassifier: {e}")
+            self.logger.info(f"Failed to initialize AttributeClassifier: {e}")
             return False
 
     def release_impl(self):

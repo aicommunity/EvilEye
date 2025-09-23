@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QModelIndex
 from . import parameters_processing
 from PyQt6.QtSql import QSqlDatabase
+from ...core.logger import get_module_logger
 
 
 class DatabaseConnectionWindow(QWidget):
@@ -13,6 +14,7 @@ class DatabaseConnectionWindow(QWidget):
 
     def __init__(self, database_access_params, parent=None):
         super().__init__(parent)
+        self.logger = get_module_logger("db_connection_window")
         self.setWindowTitle('Database configurer')
         self.setMinimumSize(300, 150)
         self.main_layout = QVBoxLayout()
@@ -92,7 +94,7 @@ class DatabaseConnectionWindow(QWidget):
             self.is_conn = True
 
     def closeEvent(self, event) -> None:
-        print('DB jobs_conn removed')
+        self.logger.info('DB jobs_conn removed')
         QSqlDatabase.removeDatabase('jobs_conn')
         event.accept()
 

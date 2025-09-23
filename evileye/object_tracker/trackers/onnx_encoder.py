@@ -8,11 +8,13 @@ from .track_encoder import TrackEncoder
 import os
 import requests
 from tqdm import tqdm
+from ...core.logger import get_module_logger
 
 url = "https://github.com/aicommunity/EvilEye/releases/download/dev/osnet_ain_x1_0_M.onnx"
 
 class OnnxEncoder(TrackEncoder):
     def __init__(self, model_path: str, batch_size: int = 1):
+        self.logger = get_module_logger("onnx_encoder")
         self.batch_size = batch_size
 
         # Resolve relative onnx path to current working directory for access
@@ -25,7 +27,7 @@ class OnnxEncoder(TrackEncoder):
             dirname = os.path.dirname(model_path_resolved)
             if dirname:
                 os.makedirs(dirname, exist_ok=True)
-            print(f"File not found. Downloading to {model_path_resolved}...")
+            self.logger.info(f"File not found. Downloading to {model_path_resolved}...")
             response = requests.get(url, stream=True)
             response.raise_for_status()
             total_size = int(response.headers.get('content-length', 0))
@@ -38,7 +40,7 @@ class OnnxEncoder(TrackEncoder):
                     if chunk:
                         f.write(chunk)
                         pbar.update(len(chunk))
-            print("Download successful")
+            self.logger.info("Download successful")
 
         self.session = ort.InferenceSession(model_path)
         self.input_name = self.session.get_inputs()[0].name

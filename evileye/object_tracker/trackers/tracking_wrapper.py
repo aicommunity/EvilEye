@@ -5,13 +5,14 @@ from ultralytics import YOLO
 from ultralytics.engine.results import Results, Boxes
 from polytech_reid.trackers.bot_sort import BOTSORT
 from polytech_reid.trackers.byte_tracker import BYTETracker
+from ...core.logger import get_module_logger
 
 # A mapping of tracker types to corresponding tracker classes
 TRACKER_MAP = {"bytetrack": BYTETracker, "botsort": BOTSORT}
 
 class TrackingWrapper:
     def __init__(self, detector: YOLO, tracker: BYTETracker):
-    
+        self.logger = get_module_logger("tracking_wrapper")
         self.tracker = tracker
         self.detector = detector
 
@@ -25,7 +26,7 @@ class TrackingWrapper:
                 boxes = result.boxes
                 tracks = self.update(boxes)
                 break
-            print(tracks)
+            self.logger.info(tracks)
             
             # Display the annotated frame
             cv2.imshow("YOLOv8 Tracking", cv2.resize(img, (600, 600)))

@@ -70,14 +70,14 @@ class VideoCapture(VideoCaptureBase):
                 if self.source_fps == 0.0:
                     self.source_fps = None
                     self.video_duration = None
-                print(f'FPS: {self.source_fps}')
+                self.logger.info(f'FPS: {self.source_fps}')
 
                 if self.source_fps is not None and self.source_type == CaptureDeviceType.VideoFile:
                     self.video_duration = self.video_length * 1000.0 / self.source_fps
             except cv2.error as e:
-                print(f"Failed to read source_fps: {e} for sources {self.source_names}")
+                self.logger.info(f"Failed to read source_fps: {e} for sources {self.source_names}")
         else:
-            print(f"Could not connect to a sources: {self.source_names}")
+            self.logger.info(f"Could not connect to a sources: {self.source_names}")
             self.video_duration = None
             self.video_length = None
             self.video_current_frame = None
@@ -94,11 +94,11 @@ class VideoCapture(VideoCaptureBase):
         self.init()
         timestamp = datetime.datetime.now()
         if self.get_init_flag() and self.is_opened():
-            print(f"Reconnected to a sources: {self.source_names}")
+            self.logger.info(f"Reconnected to a sources: {self.source_names}")
             self.is_working = True
             self.reconnects.append((self.params['camera'], timestamp, self.is_working))
         else:
-            print(f"Could not connect to sources: {self.source_names}")
+            self.logger.info(f"Could not connect to sources: {self.source_names}")
         for sub in self.subscribers:
             sub.update()
 
@@ -109,7 +109,7 @@ class VideoCapture(VideoCaptureBase):
                 time.sleep(0.1)
                 if self.init():
                     timestamp = datetime.datetime.now()
-                    print(f"Reconnected to a sources: {self.source_names}")
+                    self.logger.info(f"Reconnected to a sources: {self.source_names}")
                     self.reconnects.append((self.params['camera'], timestamp, self.is_working))
                     for sub in self.subscribers:
                         sub.update()
@@ -174,12 +174,12 @@ class VideoCapture(VideoCaptureBase):
             time.sleep(sleep_seconds)
 
         if not self.run_flag:
-            print('Not run flag')
+            self.logger.info('Not run flag')
             while not self.frames_queue.empty:
                 self.frames_queue.get()
 
         if not self.run_flag:
-            print('Not run flag')
+            self.logger.info('Not run flag')
             while not self.frames_queue.empty:
                 self.frames_queue.get()
 
@@ -217,13 +217,13 @@ class VideoCapture(VideoCaptureBase):
     def test_disconnect(self):
         with self.conn_mutex:
             timestamp = datetime.datetime.now()
-            print(f'Disconnect: {timestamp}')
+            self.logger.info(f'Disconnect: {timestamp}')
             is_working = False
             self.disconnects.append((self.source_address, timestamp, is_working))
 
     def test_reconnect(self):
         with self.conn_mutex:
             timestamp = datetime.datetime.now()
-            print(f'Reconnect: {timestamp}')
+            self.logger.info(f'Reconnect: {timestamp}')
             is_working = True
             self.reconnects.append((self.source_address, timestamp, is_working))

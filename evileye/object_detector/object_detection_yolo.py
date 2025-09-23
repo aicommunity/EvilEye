@@ -25,8 +25,9 @@ class ObjectDetectorYolo(ObjectDetectorBase):
             if not os.path.isabs(model_path):
                 model_path = os.path.join(os.getcwd(), model_path)
             
+            logger_name = f"det{i}"
             thread = DetectionThreadYolo(model_path, self.stride, self.classes, self.source_ids, self.roi, inf_params,
-                                         self.queue_out)
+                                         self.queue_out, logger_name=logger_name, parent_logger=self.logger)
             thread.start()
             self.detection_threads.append(thread)
         return True

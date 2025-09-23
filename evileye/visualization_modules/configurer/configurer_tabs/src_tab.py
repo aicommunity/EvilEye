@@ -3,6 +3,7 @@ import json
 import os.path
 from ..jobs_history_journal import JobsHistory
 from ..db_connection_window import DatabaseConnectionWindow
+from ....core.logger import get_module_logger
 try:
     from PyQt6 import QtGui
     from PyQt6.QtWidgets import (
@@ -163,5 +164,5 @@ class SourcesTab(QWidget):
         for tab_idx in range(self.sources_tabs.count()):
             tab = self.sources_tabs.widget(tab_idx)
             forms.append(tab.get_form())
-        print(forms)
+        # print(forms)
         return forms

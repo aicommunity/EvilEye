@@ -23,8 +23,9 @@ class ObjectDetectorRfdetr(ObjectDetectorBase):
             # Используем model_name как имя модели RF-DETR
             model_path = self.model_name
             
+            logger_name = f"det{i}"
             thread = DetectionThreadRfdetr(model_path, self.stride, self.classes, self.source_ids, self.roi, inf_params,
-                                         self.queue_out)
+                                         self.queue_out, logger_name=logger_name, parent_logger=self.logger)
             thread.start()
             self.detection_threads.append(thread)
         return True

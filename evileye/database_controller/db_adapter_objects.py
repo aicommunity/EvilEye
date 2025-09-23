@@ -89,7 +89,7 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
         preview_saved = cv2.imwrite(preview_save_dir, preview_boxes)
         frame_saved = cv2.imwrite(frame_save_dir, image.image)
         if not preview_saved or not frame_saved:
-            print(f'ERROR: can\'t save image file {frame_save_dir}')
+            self.logger.error(f'ERROR: can\'t save image file {frame_save_dir}')
 
     def _prepare_for_updating(self, obj):
         fields_for_updating = {'lost_bounding_box': obj.track.bounding_box,

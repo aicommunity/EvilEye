@@ -9,6 +9,14 @@ __version__ = "1.0.0"
 __author__ = "EvilEye Team"
 __email__ = "team@evileye.com"
 
+# Инициализация логирования для пакета
+from .core.logging_config import setup_evileye_logging
+from .core.logger import get_module_logger
+
+# Инициализация логирования
+logger = setup_evileye_logging(log_level="INFO", log_to_console=True, log_to_file=True)
+package_logger = get_module_logger("evileye_package")
+
 # Import core components
 from .core import PipelineProcessors, ProcessorBase, ProcessorSource, ProcessorFrame, ProcessorStep
 from .pipelines import PipelineSurveillance
@@ -75,9 +83,9 @@ def _auto_fix_entry_points():
             )
             
             if result.returncode == 0:
-                print("✅ EvilEye entry points automatically fixed")
+                package_logger.info("EvilEye entry points automatically fixed")
             else:
-                print(f"⚠️  Warning: Could not auto-fix entry points: {result.stderr}")
+                package_logger.info(f"Warning: Could not auto-fix entry points: {result.stderr}")
                 
     except Exception as e:
         # Don't fail the import if fixing fails
