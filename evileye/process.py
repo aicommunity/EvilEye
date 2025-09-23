@@ -99,10 +99,11 @@ def main():
 #        logger.info(f"Использование sourceа видео из конфигурации")
 
     if not args.gui:
-        config_data["visualizer"]["gui_enabled"] = False
+        config_data["controller"]["gui_enabled"] = False
+        config_data["controller"]["show_main_gui"] = False
         logger.info("GUI disabled")
     else:
-        config_data["visualizer"]["gui_enabled"] = True
+        config_data["controller"]["gui_enabled"] = True
         logger.info("GUI enabled")
 
     if args.autoclose:

@@ -345,6 +345,8 @@ class Controller:
             self.autoclose = self.params['controller'].get("autoclose", self.autoclose)
             self.fps = self.params['controller'].get("fps", self.fps)
             self.show_main_gui = self.params['controller'].get("show_main_gui", self.show_main_gui)
+            self.gui_enabled = self.params['controller'].get("gui_enabled", self.gui_enabled)
+
             self.show_journal = self.params['controller'].get("show_journal", self.show_journal)
             self.enable_close_from_gui = self.params['controller'].get("enable_close_from_gui", self.enable_close_from_gui)
             # Handle both old class_names format and new class_mapping format
@@ -487,6 +489,7 @@ class Controller:
         self.params['controller']["autoclose"] = self.autoclose
         self.params['controller']["fps"] = self.fps
         self.params['controller']["show_main_gui"] = self.show_main_gui
+        self.params['controller']["gui_enabled"] = self.gui_enabled
         self.params['controller']["show_journal"] = self.show_journal
         self.params['controller']["enable_close_from_gui"] = self.enable_close_from_gui
         self.params['controller']["class_mapping"] = self.class_mapping
@@ -722,7 +725,6 @@ class Controller:
         self.events_processor.init()
 
     def _init_visualizer(self, params):
-        self.gui_enabled = params.get("gui_enabled", True)
         self.visualizer = Visualizer(self.pyqt_slots, self.pyqt_signals)
         self.visualizer.set_params(**params)
         self.visualizer.source_id_name_table = self.source_id_name_table

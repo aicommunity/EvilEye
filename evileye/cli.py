@@ -105,7 +105,7 @@ def run(
 
     try:
         logger.info(f"Launching command: {' '.join(cmd)}")
-            console.print(f"[green]Launching with command:[/green] {' '.join(cmd)}")
+        console.print(f"[green]Launching with command:[/green] {' '.join(cmd)}")
         # Run command in current working directory (where CLI was launched from)
         subprocess.run(cmd, check=True, cwd=os.getcwd())
         logger.info("Command executed successfully")
@@ -201,7 +201,7 @@ def deploy() -> None:
     import shutil
     
     current_dir = Path.cwd()
-        console.print(f"[blue]Deploying EvilEye files to: {current_dir}[/blue]")
+    console.print(f"[blue]Deploying EvilEye files to: {current_dir}[/blue]")
     
     # Step 1: Copy credentials_proto.json to credentials.json
     credentials_proto = Path(__file__).parent / "credentials_proto.json"
