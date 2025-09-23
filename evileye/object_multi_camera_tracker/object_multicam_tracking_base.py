@@ -36,7 +36,7 @@ class ObjectMultiCameraTrackingBase(EvilEyeBase):
             return True
         
         #designator = '; '.join(f"{t[0].source_id}:{t[0].frame_id}" for t in track_info)
-        #print(f"Failed to put tracking info {designator} to ObjectMultiCameraTrackingBase queue. Queue is Full.")
+        #self.logger.info(f"Failed to put tracking info {designator} to ObjectMultiCameraTrackingBase queue. Queue is Full.")
         #return False
 
     def get(self):
@@ -59,7 +59,7 @@ class ObjectMultiCameraTrackingBase(EvilEyeBase):
         self.queue_in.put(None)
         if self.processing_thread.is_alive():
             self.processing_thread.join()
-        print('Tracker stopped')
+        self.logger.info('Tracker stopped')
 
     @abstractmethod
     def _process_impl(self):

@@ -12,7 +12,7 @@ class DatabaseControllerBase(EvilEyeBase):
         self.user_name = ""
         self.password = ""
         self.controller_type = controller_type
-        print(controller_type)
+        self.logger.info(f"Controller type: {controller_type}")
         self.run_flag = False
         if self.controller_type == 'Writer':
             self.query_thread = threading.Thread(target=self._insert_impl)
@@ -47,7 +47,7 @@ class DatabaseControllerBase(EvilEyeBase):
 
     def start(self):
         if self.query_thread:
-            print('Started writer db')
+            self.logger.info('Started writer db')
             self.run_flag = True
             self.query_thread.start()
 
@@ -57,7 +57,7 @@ class DatabaseControllerBase(EvilEyeBase):
             self.queue_in.put((None,))
             if self.query_thread.is_alive():
                 self.query_thread.join()
-        print('DataBase stopped')
+        self.logger.info('DataBase stopped')
 
     @abstractmethod
     def connect_impl(self):

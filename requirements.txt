@@ -12,4 +12,6 @@ shapely
 pympler
 tdqm
 PyQt6
+rfdetr>=0.1.0
+supervision>=0.16.0
 

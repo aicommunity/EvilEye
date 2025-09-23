@@ -12,6 +12,7 @@ from typing import Dict, List, Any, Optional
 from pathlib import Path
 from queue import Queue
 from threading import Thread, Lock
+from ..core.logger import get_module_logger
 
 
 class LabelingManager:
@@ -31,6 +32,7 @@ class LabelingManager:
             base_dir: Base directory for saving labels and images
             cameras_params: List of camera parameters for source name mapping
         """
+        self.logger = get_module_logger("labeling_manager")
         self.base_dir = base_dir
         self.images_dir = os.path.join(base_dir, 'images')
         self.cameras_params = cameras_params or []
@@ -166,7 +168,7 @@ class LabelingManager:
             os.replace(temp_file, file_path)
             return True
         except Exception as e:
-            print(f"Error saving JSON file {file_path}: {e}")
+            self.logger.error(f"Error saving JSON file {file_path}: {e}")
             # Clean up temp file if it exists
             if os.path.exists(temp_file):
                 try:
@@ -331,7 +333,7 @@ class LabelingManager:
         # Get source name from cameras params if available
         source_name = self._get_source_name(obj.source_id)
         
-        return {
+        object_data = {
             "object_id": obj.object_id,
             "frame_id": obj.frame_id,
             "timestamp": obj.time_stamp.isoformat(),
@@ -345,6 +347,22 @@ class LabelingManager:
             "track_id": obj.track.track_id,
             "global_id": getattr(obj, 'global_id', None)
         }
+        
+        # Добавляем атрибуты, если они есть
+        if hasattr(obj, 'attributes') and obj.attributes:
+            object_data["attributes"] = {}
+            for attr_name, attr_data in obj.attributes.items():
+                if isinstance(attr_data, dict):
+                    object_data["attributes"][attr_name] = {
+                        "state": attr_data.get("state", "none"),
+                        "confidence_smooth": float(attr_data.get("confidence_smooth", 0.0)),
+                        "frames_present": int(attr_data.get("frames_present", 0)),
+                        "total_time_ms": int(attr_data.get("total_time_ms", 0)),
+                        "enter_count": int(attr_data.get("enter_count", 0)),
+                        "last_seen_ts": attr_data.get("last_seen_ts")
+                    }
+        
+        return object_data
     
     def create_lost_object_data(self, obj, image_width: int, image_height: int,
                                image_filename: str, preview_filename: str) -> Dict[str, Any]:
@@ -376,7 +394,7 @@ class LabelingManager:
         # Get source name from cameras params if available
         source_name = self._get_source_name(obj.source_id)
         
-        return {
+        object_data = {
             "object_id": obj.object_id,
             "frame_id": obj.frame_id,
             "detected_timestamp": obj.time_detected.isoformat(),
@@ -392,6 +410,22 @@ class LabelingManager:
             "global_id": getattr(obj, 'global_id', None),
             "lost_frames": obj.lost_frames
         }
+        
+        # Добавляем атрибуты, если они есть
+        if hasattr(obj, 'attributes') and obj.attributes:
+            object_data["attributes"] = {}
+            for attr_name, attr_data in obj.attributes.items():
+                if isinstance(attr_data, dict):
+                    object_data["attributes"][attr_name] = {
+                        "state": attr_data.get("state", "none"),
+                        "confidence_smooth": float(attr_data.get("confidence_smooth", 0.0)),
+                        "frames_present": int(attr_data.get("frames_present", 0)),
+                        "total_time_ms": int(attr_data.get("total_time_ms", 0)),
+                        "enter_count": int(attr_data.get("enter_count", 0)),
+                        "last_seen_ts": attr_data.get("last_seen_ts")
+                    }
+        
+        return object_data
     
     def _get_class_name(self, class_id: int) -> str:
         """
@@ -403,7 +437,14 @@ class LabelingManager:
         Returns:
             Class name string
         """
-        # Default COCO classes (can be extended or made configurable)
+        # Use class_mapping if available
+        if hasattr(self, 'class_mapping') and self.class_mapping:
+            for name, cid in self.class_mapping.items():
+                if cid == class_id:
+                    return name
+            return f"class_{class_id}"
+        
+        # Fallback to default COCO classes for backward compatibility
         coco_classes = [
             "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat",
             "traffic light", "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat",
@@ -530,7 +571,7 @@ class LabelingManager:
     def _preload_existing_data(self):
         """Pre-load existing data from JSON files to avoid clearing them on startup."""
         try:
-            print(f"🔄 Pre-loading existing data from {self.date_str}...")
+            self.logger.info(f"Pre-loading existing data from {self.date_str}...")
             
             # Check and repair JSON files if needed
             self._check_and_repair_json_files()
@@ -539,30 +580,30 @@ class LabelingManager:
             found_data = self._load_json(self.found_labels_file, self.found_file_lock)
             existing_found = found_data.get("objects", [])
             if existing_found:
-                print(f"📊 Found {len(existing_found)} existing found objects")
+                self.logger.info(f"Found {len(existing_found)} existing found objects")
                 # Don't add to buffer, just ensure file is preserved
             
             # Load lost objects with file lock
             lost_data = self._load_json(self.lost_labels_file, self.lost_file_lock)
             existing_lost = lost_data.get("objects", [])
             if existing_lost:
-                print(f"📊 Found {len(existing_lost)} existing lost objects")
+                self.logger.info(f"Found {len(existing_lost)} existing lost objects")
                 # Don't add to buffer, just ensure file is preserved
             
             total_existing = len(existing_found) + len(existing_lost)
             if total_existing > 0:
-                print(f"✅ Successfully pre-loaded {total_existing} existing objects")
+                self.logger.info(f"Successfully pre-loaded {total_existing} existing objects")
                 
                 # Return the maximum object_id found for counter initialization
                 max_object_id = self._get_max_object_id(existing_found, existing_lost)
                 return max_object_id
             else:
-                print(f"ℹ️ No existing objects found, starting fresh")
+                self.logger.info(f"No existing objects found, starting fresh")
                 return 0
                 
         except Exception as e:
-            print(f"⚠️ Warning: Error pre-loading existing data: {e}")
-            print(f"ℹ️ Continuing with fresh start")
+            self.logger.warning(f"Warning: Error pre-loading existing data: {e}")
+            self.logger.info(f"Continuing with fresh start")
             return 0
     
     def _get_max_object_id(self, found_objects: List[Dict], lost_objects: List[Dict]) -> int:
@@ -608,10 +649,10 @@ class LabelingManager:
                 try:
                     with open(self.found_labels_file, 'r', encoding='utf-8') as f:
                         json.load(f)
-                    print(f"✅ Found objects file is valid")
+                    self.logger.info(f"Found objects file is valid")
                 except json.JSONDecodeError as e:
-                    print(f"⚠️ Found objects file is corrupted: {e}")
-                    print(f"🔄 Attempting to repair...")
+                    self.logger.warning(f"Found objects file is corrupted: {e}")
+                    self.logger.info(f"Attempting recovery...")
                     self._repair_json_file(self.found_labels_file, "found")
             
             # Check lost objects file
@@ -619,14 +660,14 @@ class LabelingManager:
                 try:
                     with open(self.lost_labels_file, 'r', encoding='utf-8') as f:
                         json.load(f)
-                    print(f"✅ Lost objects file is valid")
+                    self.logger.info(f"Lost objects file is valid")
                 except json.JSONDecodeError as e:
-                    print(f"⚠️ Lost objects file is corrupted: {e}")
-                    print(f"🔄 Attempting to repair...")
+                    self.logger.warning(f"Lost objects file is corrupted: {e}")
+                    self.logger.info(f"Attempting recovery...")
                     self._repair_json_file(self.lost_labels_file, "lost")
                     
         except Exception as e:
-            print(f"⚠️ Warning: Error checking JSON files: {e}")
+            self.logger.warning(f"Warning: Error checking JSON files: {e}")
     
     def _repair_json_file(self, file_path: str, file_type: str):
         """Attempt to repair a corrupted JSON file."""
@@ -634,7 +675,7 @@ class LabelingManager:
             # Create backup of corrupted file
             backup_path = f"{file_path}.backup.{int(time.time())}"
             os.rename(file_path, backup_path)
-            print(f"💾 Created backup: {backup_path}")
+            self.logger.info(f"Backup created: {backup_path}")
             
             # Create new valid file
             new_data = {
@@ -650,14 +691,14 @@ class LabelingManager:
             # Use appropriate file lock based on file type
             file_lock = self.found_file_lock if "found" in file_path else self.lost_file_lock
             self._save_json(file_path, new_data, file_lock)
-            print(f"✅ Repaired {file_type} objects file")
+            self.logger.info(f"Restored {file_type} objects file")
             
         except Exception as e:
-            print(f"❌ Failed to repair {file_type} objects file: {e}")
+            self.logger.error(f"Failed to restore {file_type} objects file: {e}")
             # Try to restore from backup
             try:
                 if os.path.exists(backup_path):
                     os.rename(backup_path, file_path)
-                    print(f"🔄 Restored original file from backup")
+                    self.logger.info(f"Restored original file from backup")
             except Exception as restore_e:
-                print(f"❌ Failed to restore from backup: {restore_e}")
+                self.logger.error(f"Failed to restore from backup: {restore_e}")

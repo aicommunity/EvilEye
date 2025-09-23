@@ -7,6 +7,10 @@ from ..object_tracker.tracking_results import TrackingResult
 from ..objects_handler.object_result import ObjectResultHistory
 import copy
 from pathlib import Path
+from ..core.logger import get_module_logger
+
+# Инициализация логгера для утилит
+utils_logger = get_module_logger("utils")
 
 from sympy.multipledispatch.dispatcher import source
 
@@ -166,7 +170,24 @@ def get_objs_info(bboxes_coords, confidences, class_ids):
     return objects
 
 
-def draw_boxes(image, objects, cam_id, model_names, text_config=None):
+def get_class_name_from_mapping(class_id: int, class_mapping: dict) -> str:
+    """
+    Get class name from class ID using class_mapping.
+    
+    Args:
+        class_id: Class ID
+        class_mapping: Dictionary mapping class_name -> class_id
+        
+    Returns:
+        Class name string or 'class_{id}' if not found
+    """
+    for name, cid in class_mapping.items():
+        if cid == class_id:
+            return name
+    return f"class_{class_id}"
+
+
+def draw_boxes(image, objects, cam_id, class_mapping, text_config=None):
     """
     Draw bounding boxes and labels with adaptive text positioning.
     
@@ -174,7 +195,7 @@ def draw_boxes(image, objects, cam_id, model_names, text_config=None):
         image: OpenCV image
         objects: List of detected objects
         cam_id: Camera ID
-        model_names: Class names mapping
+        class_mapping: Class mapping dict {class_name: class_id}
         text_config: Text configuration dictionary (optional)
     """
     # Apply text configuration
@@ -187,8 +208,11 @@ def draw_boxes(image, objects, cam_id, model_names, text_config=None):
                 cv2.rectangle(image, (int(obj['bbox'][0]), int(obj['bbox'][1])),
                               (int(obj['bbox'][2]), int(obj['bbox'][3])), (0, 255, 0), thickness=8)
                 
+                # Get class name from class_mapping
+                class_name = get_class_name_from_mapping(obj['class'], class_mapping)
+                
                 # Create text label
-                text = str(model_names[obj['class']]) + " " + "{:.2f}".format(obj['conf'])
+                text = str(class_name) + " " + "{:.2f}".format(obj['conf'])
                 
                 # Draw text with adaptive positioning
                 put_text_with_bbox(image, text, obj['bbox'], 
@@ -261,10 +285,10 @@ def draw_boxes_from_db(db_controller, table_name, load_folder, save_folder):
         lost_saved = cv2.imwrite(lost_save_path.as_posix(), lost_image)
         detected_saved = cv2.imwrite(detected_save_path.as_posix(), detected_image)
         if not lost_saved or not detected_saved:
-            print('Error saving image with boxes')
+            utils_logger.error('Error saving image with boxes')
 
 
-def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_duration_msecs, font_scale, font_thickness, font_color, text_config=None):
+def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_duration_msecs, font_scale, font_thickness, font_color, text_config=None, class_mapping=None):
     height, width, channels = image.image.shape
     
     # Apply text configuration
@@ -304,7 +328,7 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
                          background_enabled=config.get('background_enabled', True))
 
     # Для трекинга отображаем только последние данные об объекте из истории
-    # print(cameras_objs)
+    # utils_logger.error(cameras_objs)
     for obj in cameras_objs:
         # if obj.frame_id < image.frame_id:
         #     continue
@@ -321,25 +345,48 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
         cv2.rectangle(image.image, (int(last_info.bounding_box[0]), int(last_info.bounding_box[1])),
                       (int(last_info.bounding_box[2]), int(last_info.bounding_box[3])), (0, 255, 0), thickness=font_thickness)
         
-        # Create tracking text
-        if obj.global_id is not None:
-            tracking_text = 'g' + str(obj.global_id) + ' ' + str([last_info.class_id]) + " " + "{:.2f}".format(last_info.confidence)
+        # Create tracking text with class name instead of class_id
+        if class_mapping:
+            class_name = get_class_name_from_mapping(last_info.class_id, class_mapping)
         else:
-            tracking_text = str(last_info.track_id) + ' ' + str([last_info.class_id]) + " " + "{:.2f}".format(last_info.confidence)
-        
+            class_name = f"class_{last_info.class_id}"
+            
+        if obj.global_id is not None:
+            tracking_text = 'g' + str(obj.global_id) + ' ' + class_name + " " + "{:.2f}".format(last_info.confidence)
+        else:
+            tracking_text = str(last_info.track_id) + ' ' + class_name + " " + "{:.2f}".format(last_info.confidence)
+
+        # Calculate font scale based on image resolution
+        font_scale_method = config.get('font_scale_method', 'resolution_based')
+        font_size_pt = config['font_size_pt']
+        base_resolution = config.get('base_resolution', (1920, 1080))
+        thickness = config['thickness']
+        font_face = config['font_face']
+
+        if font_scale_method == "simple":
+            font_scale = calculate_font_scale_simple(font_size_pt, width, height)
+        else:  # resolution_based
+            font_scale = calculate_font_scale_for_resolution(font_size_pt, width, height, base_resolution)
+
+        # Auto-calculate thickness if not provided
+        if thickness is None:
+            thickness = max(1, int(font_scale * 2))
+
         # Draw tracking text with adaptive positioning
         put_text_with_bbox(image.image, tracking_text, last_info.bounding_box,
-                          font_size_pt=config['font_size_pt'],
-                          font_face=config['font_face'],
+                          font_face=font_face,
+                          font_scale=font_scale,
                           color=config['color'],
-                          thickness=config['thickness'],
+                          thickness=thickness,
                           background_color=config['background_color'],
                           position_offset_percent=config['position_offset_percent'],
-                          font_scale_method=config.get('font_scale_method', 'resolution_based'),
-                          base_resolution=config.get('base_resolution', (1920, 1080)),
                           background_enabled=config.get('background_enabled', True))
+        
+        # Draw attributes if available
+        if hasattr(obj, 'attributes') and obj.attributes:
+            draw_object_attributes(image.image, obj, last_info.bounding_box, font_face, font_scale*0.5, thickness)
 
-        # print(len(obj['obj_info']))
+        # utils_logger.error(len(obj['obj_info']))
         if len(obj.history) > 1:
             for i in range(0, last_hist_index):
                 first_info = obj.history[i].track
@@ -625,10 +672,9 @@ def put_text_adaptive(image, text, position_percent, font_size_pt=12, font_face=
     return image
 
 
-def put_text_with_bbox(image, text, bbox, font_size_pt=12, font_face=cv2.FONT_HERSHEY_SIMPLEX,
-                      color=(255, 255, 255), thickness=None, background_color=None, 
-                      position_offset_percent=(0, -10), font_scale_method="resolution_based", 
-                      base_resolution=(1920, 1080), background_enabled=True):
+def put_text_with_bbox(image, text, bbox, font_face, font_scale, thickness,
+                      color=(255, 255, 255), background_color=None,
+                      position_offset_percent=(0, -10), background_enabled=True):
     """
     Draw text near a bounding box with adaptive positioning.
     
@@ -650,16 +696,6 @@ def put_text_with_bbox(image, text, bbox, font_size_pt=12, font_face=cv2.FONT_HE
         Modified image
     """
     height, width = image.shape[:2]
-    
-    # Calculate font scale based on image resolution
-    if font_scale_method == "simple":
-        font_scale = calculate_font_scale_simple(font_size_pt, width, height)
-    else:  # resolution_based
-        font_scale = calculate_font_scale_for_resolution(font_size_pt, width, height, base_resolution)
-    
-    # Auto-calculate thickness if not provided
-    if thickness is None:
-        thickness = max(1, int(font_scale * 2))
     
     # Calculate position relative to bbox
     x_offset = percent_to_pixels(position_offset_percent[0], width)
@@ -695,6 +731,86 @@ def put_text_with_bbox(image, text, bbox, font_size_pt=12, font_face=cv2.FONT_HE
     cv2.putText(image, text, (x_px, y_px), font_face, font_scale, color, thickness)
     
     return image
+
+
+def draw_object_attributes(image, obj, bbox, font_face, font_scale, thickness):
+    """
+    Draw object attributes as colored indicators.
+    
+    Args:
+        image: OpenCV image
+        obj: ObjectResult object with attributes
+        bbox: Bounding box coordinates [x1, y1, x2, y2]
+        config: Text configuration dictionary
+        font_scale: Font scale from main drawing function (optional)
+    """
+    if not hasattr(obj, 'attributes') or not obj.attributes:
+        return
+    
+    # Position attributes below the main label
+    x1, y1, x2, y2 = bbox
+    attr_y = y2 + 5  # Start below the bounding box
+    
+    # Color mapping for attribute states
+    state_colors = {
+        'none': (128, 128, 128),    # Gray
+        'exists': (0, 255, 0),      # Green  
+        'lost': (0, 255, 255)       # Yellow
+    }
+    
+    # Calculate font scale for attributes (0.5x of object class font scale)
+    attr_font_scale = font_scale
+    attr_thickness = thickness
+    attr_font_face = font_face
+
+    attr_texts = []
+    for attr_name, attr_data in obj.attributes.items():
+        if isinstance(attr_data, dict):
+            state = attr_data.get('state', 'none')
+            confidence = attr_data.get('confidence_smooth', 0.0)
+            total_time = attr_data.get('total_time_ms', 0)
+            
+            # Получаем новые поля для улучшенного отображения
+            total_found_time = attr_data.get('total_found_time_ms', 0)
+            total_lost_time = attr_data.get('total_lost_time_ms', 0)
+            found_ratio = attr_data.get('found_ratio', 0.0)
+            
+            # Рассчитываем суммарное время (или ноль если < 0)
+            summary_time = max(0, total_found_time - total_lost_time)
+            
+            # Create attribute text with enhanced information
+            color = state_colors.get(state, (128, 128, 128))
+            attr_text = f"{attr_name}: {state} ({confidence:.2f}, {summary_time}ms, {found_ratio:.1%})"
+            attr_texts.append((attr_text, color))
+    
+    # Calculate text height for proper spacing
+    if attr_texts:
+        # Use first attribute text to calculate height
+        sample_text = attr_texts[0][0]
+        (_, text_height), baseline = cv2.getTextSize(sample_text, attr_font_face,
+                                                    attr_font_scale, attr_thickness)
+        line_spacing = text_height + 4  # Add 4 pixels padding between lines
+    else:
+        line_spacing = 20  # Fallback spacing
+    
+    # Draw attribute texts
+    for i, (attr_text, color) in enumerate(attr_texts):
+        text_y = attr_y + i * line_spacing
+        
+        # Draw background rectangle for better visibility
+        (text_width, text_height), baseline = cv2.getTextSize(attr_text, attr_font_face,
+                                                             attr_font_scale, attr_thickness)
+        # Ensure coordinates are integers
+        rect_x1 = int(x1)
+        rect_y1 = int(text_y - text_height - 2)
+        rect_x2 = int(x1 + text_width + 4)
+        rect_y2 = int(text_y + 2)
+        cv2.rectangle(image, (rect_x1, rect_y1), (rect_x2, rect_y2), (0, 0, 0), -1)
+        
+        # Draw attribute text
+        cv2.putText(image, attr_text, (int(x1 + 2), int(text_y)), 
+                   attr_font_face, attr_font_scale,
+                   color, attr_thickness)
 
 
 def get_default_text_config():

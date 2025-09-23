@@ -19,6 +19,7 @@ import copy
 import time
 import cv2
 from ..events_detectors.zone import ZoneForm
+import logging
 
 
 class VideoThread(QThread):
@@ -31,8 +32,11 @@ class VideoThread(QThread):
     display_zones_signal = pyqtSignal(dict)
     add_zone_signal = pyqtSignal(int, QPixmap)
 
-    def __init__(self, source_id, fps, rows, cols, show_debug_info, font_params, text_config=None):
+    def __init__(self, source_id, fps, rows, cols, show_debug_info, font_params, text_config=None, class_mapping=None, logger_name: str | None = None, parent_logger: logging.Logger | None = None):
         super().__init__()
+        base_name = "evileye.video_thread"
+        full_name = f"{base_name}.{logger_name}" if logger_name else base_name
+        self.logger = parent_logger or logging.getLogger(full_name)
 
         VideoThread.rows = rows  # Количество строк и столбцов для правильного перевода изображения в полный экран
         VideoThread.cols = cols
@@ -50,6 +54,7 @@ class VideoThread(QThread):
         self.thread_num = VideoThread.thread_counter  # Номер потока для определения, какой label обновлять
         self.det_params = None
         self.text_config = text_config or {}  # Text configuration for rendering
+        self.class_mapping = class_mapping or {}  # Class mapping for displaying class names
 
         # Таймер для задания fps у видеороликов
         self.timer = QTimer()
@@ -111,7 +116,7 @@ class VideoThread(QThread):
         return QPixmap.fromImage(scaled_image)
 
     def draw_zones(self, image: QPixmap, zones: dict):
-        # print(zones)
+        # self.logger.debug(zones)
         if not zones:
             return
 
@@ -139,7 +144,7 @@ class VideoThread(QThread):
             begin_it = timer()
             utils.draw_boxes_tracking(frame, track_info, source_name, source_duration_secs,
                                       self.font_scale, self.font_thickness, self.font_color,
-                                      text_config=self.text_config)
+                                      text_config=self.text_config, class_mapping=self.class_mapping)
             if self.show_debug_info:
                 utils.draw_debug_info(frame, debug_info)
             qt_image = self.convert_cv_qt(frame.image, self.widget_width, self.widget_height)
@@ -157,7 +162,7 @@ class VideoThread(QThread):
 
     def stop_thread(self):
         self.run_flag = False
-        print('Visualization stopped')
+        self.logger.info('Visualization stopped')
 
     @pyqtSlot(dict)
     def display_zones(self, zones):

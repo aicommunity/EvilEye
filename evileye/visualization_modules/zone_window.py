@@ -25,6 +25,8 @@ except ImportError:
 
     pyqt_version = 5
 
+from ..core.logger import get_module_logger
+
 import sys
 import os
 from ..utils import utils
@@ -279,6 +281,7 @@ class GraphicsView(QGraphicsView):
 class ZoneWindow(QWidget):
     def __init__(self, params):
         super().__init__()
+        self.logger = get_module_logger("zone_window")
         self.params = params
         self.zone_params = self.params['events_detectors'].get('ZoneEventsDetector', dict()).get('sources', list())
         self.vis_params = self.params['visualizer']
@@ -311,7 +314,7 @@ class ZoneWindow(QWidget):
         self.view.set_source_id(src_id)
 
     def close(self):
-        print('Events journal closed')
+        self.logger.info('Events journal closed')
 
     def _create_actions(self):  # Добавление кнопок
         self.rect_zone = QAction('&Draw a rectangle', self)

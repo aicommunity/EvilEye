@@ -11,9 +11,15 @@ import cv2
 import argparse
 import json
 import imutils
+from evileye.core.logging_config import setup_evileye_logging
+from evileye.core.logger import get_module_logger
 
 
 def main():
+    # Инициализация логирования
+    logger = setup_evileye_logging(log_level="INFO", log_to_console=True, log_to_file=True)
+    sample_logger = get_module_logger("capture_subtraction_sample")
+    
     parser = argparse.ArgumentParser()
     parser.add_argument('source',
                         help='The source such as: video file(file), image sequence(sequence) or IP camera(IPcam)',
@@ -46,13 +52,13 @@ def main():
     back_sub.init()
 
     if not video.is_opened():
-        print("Error opening video stream or file")
+        sample_logger.error("Ошибка открытия видеопотока или файла")
 
     while video.is_opened():
         ret, frames = video.process(split_stream=capture_params['split'],
                                     num_split=capture_params['num_split'], src_coords=capture_params['src_coords'])
         if not ret:
-            print("Can't receive frame (stream end?). Exiting ...")
+            sample_logger.warning("Не удается получить кадр (конец потока?). Выход...")
             break
         frame_copy = frames[0].copy()
         frame_copy = cv2.cvtColor(frame_copy, cv2.COLOR_BGR2GRAY)

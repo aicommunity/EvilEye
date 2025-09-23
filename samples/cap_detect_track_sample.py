@@ -13,9 +13,15 @@ import argparse
 import json
 from object_tracker import object_tracking_impl
 import imutils
+from evileye.core.logging_config import setup_evileye_logging
+from evileye.core.logger import get_module_logger
 
 
 def main():
+    # Инициализация логирования
+    logger = setup_evileye_logging(log_level="INFO", log_to_console=True, log_to_file=True)
+    sample_logger = get_module_logger("cap_detect_track_sample")
+    
     parser = argparse.ArgumentParser()
     parser.add_argument('source',
                         help='The source such as: video file(file), image sequence(sequence) or IP camera(IPcam)',
@@ -31,7 +37,7 @@ def main():
     data = json.load(params_file)
     det_params = data['det_params']
     args = parser.parse_args()
-    print()
+    sample_logger.info("Запуск примера обнаружения и отслеживания объектов")
     if args.source is None or args.fullpath is None:
         cap_params = data['cap_params']
         capture_params = {'source': cap_params['source'], 'filename': cap_params['fullpath'],
@@ -51,12 +57,12 @@ def main():
     tracker.init()
 
     if not video.is_opened():
-        print("Error opening video stream or file")
+        sample_logger.error("Ошибка открытия видеопотока или файла")
 
     while video.is_opened():
         ret, frame = video.process()
         if not ret:
-            print("Can't receive frame (stream end?). Exiting ...")
+            sample_logger.warning("Не удается получить кадр (конец потока?). Выход...")
             break
         frame_copy = frame.copy()
         frame_copy = cv2.cvtColor(frame_copy, cv2.COLOR_BGR2GRAY)

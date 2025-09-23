@@ -436,7 +436,6 @@
         "show_main_gui": true,
         "show_journal": false,
         "enable_close_from_gui": true,
-        "memory_periodic_check_sec": 600,
         "class_names": [
             "person",
             "bicycle",

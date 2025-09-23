@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "evileye"
-version = "0.0.4"
+version = "0.0.5"
 description = "Intelligence video surveillance system"
 readme = "README.md"
 license = "MIT"
@@ -58,6 +58,8 @@ dependencies = [
     "click>=8.1.0",
     "typer>=0.9.0",
     "PyQt6>=6.5.0",
+    "rfdetr>=0.1.0",
+    "supervision>=0.16.0",
 ]
 
 [project.optional-dependencies]

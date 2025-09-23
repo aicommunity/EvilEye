@@ -10,6 +10,11 @@ import json
 import logging
 from pathlib import Path
 from typing import Optional, Dict, Any
+from evileye.core.logging_config import setup_evileye_logging
+from evileye.core.logger import get_module_logger
+
+# Инициализация логирования для launch.py
+launch_logger = get_module_logger("launch")
 
 try:
     from PyQt6.QtWidgets import (
@@ -26,6 +31,8 @@ except ImportError:
 from evileye.controller import controller
 from evileye.visualization_modules.main_window import MainWindow
 from evileye.utils.utils import normalize_config_path
+from evileye.core.logging_config import setup_evileye_logging, log_system_info
+from evileye.core.logger import get_module_logger
 
 
 class ConfigLauncher:
@@ -34,6 +41,7 @@ class ConfigLauncher:
     def __init__(self, config_file_path: str):
         self.config_file_path = normalize_config_path(config_file_path)
         self.process = None
+        self.logger = get_module_logger("launcher")
         
     def launch(self):
         """Launch the configuration using process.py"""
@@ -67,19 +75,23 @@ class ConfigLauncher:
         
         try:
             # Launch in background
-            print(f"Launching command: {' '.join(cmd)}")
-            print(f"Working directory: {project_root}")
+            self.logger.info(f"Launching command: {' '.join(cmd)}")
+            self.logger.info(f"Working directory: {project_root}")
             self.process = subprocess.Popen(cmd, cwd=project_root)
+            self.logger.info("Process launched successfully")
             return True
         except Exception as e:
+            self.logger.error(f"Error launching process: {e}")
             raise RuntimeError(f"Failed to launch process: {e}")
     
     def stop(self):
         """Stop the launched process"""
         if self.process:
+            self.logger.info("Stopping process")
             self.process.terminate()
             self.process.wait()
             self.process = None
+            self.logger.info("Process stopped")
     
     def is_running(self):
         """Check if the process is still running"""
@@ -448,18 +460,26 @@ class EvilEyeGUI(QMainWindow):
 
 def main():
     """Main entry point for GUI"""
+    # Инициализация логирования
+    logger = setup_evileye_logging(log_level="INFO", log_to_console=True, log_to_file=True)
+    log_system_info(logger)
+    
     if not PYQT_AVAILABLE:
-        print("PyQt6 is required for the GUI. Install it with: pip install PyQt6")
+        logger.error("PyQt6 is required for GUI. Install with: pip install PyQt6")
         sys.exit(1)
     
+    logger.info("Initializing PyQt application")
     app = QApplication(sys.argv)
     app.setApplicationName("EvilEye")
     app.setApplicationVersion("1.0.0")
     
+    logger.info("Creating main GUI window")
     # Create and show main window
     window = EvilEyeGUI()
     window.show()
+    logger.info("Main window displayed")
     
+    logger.info("Starting main application loop")
     # Run application
     sys.exit(app.exec())
 
@@ -477,17 +497,17 @@ def launch_main_app():
     process_script = project_root / "process.py"
     
     if not process_script.exists():
-        print(f"Error: process.py not found at {process_script}")
+        launch_logger.error(f"Error: process.py not found at {process_script}")
         sys.exit(1)
     
     try:
         # Launch with GUI enabled
         subprocess.run([sys.executable, str(process_script), "--gui"], check=True)
     except subprocess.CalledProcessError as e:
-        print(f"Error launching main application: {e}")
+        launch_logger.error(f"Error launching main application: {e}")
         sys.exit(1)
     except KeyboardInterrupt:
-        print("Application interrupted by user")
+        launch_logger.error("Application interrupted by user")
         sys.exit(0)
 
 

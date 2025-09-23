@@ -27,7 +27,9 @@ import pprint
 import copy
 import math
 from evileye.core import ProcessorSource, ProcessorStep, ProcessorFrame
+from evileye.core.class_manager import ClassManager
 from evileye.pipelines import PipelineSurveillance
+from evileye.core.logger import get_module_logger
 
 
 try:
@@ -39,6 +41,7 @@ except ImportError:
 
 class Controller:
     def __init__(self):
+        self.logger = get_module_logger("controller")
         self.main_window = None
         # self.application = application
         self.control_thread = threading.Thread(target=self.run)
@@ -59,7 +62,7 @@ class Controller:
         self.show_main_gui = True
         self.show_journal = False
         self.enable_close_from_gui = True
-        self.memory_periodic_check_sec = 60*15
+        self.memory_periodic_check_sec = 60*15*60
         self.max_memory_usage_mb = 1024*16
         self.show_memory_usage = False
         self.auto_restart = True
@@ -76,88 +79,93 @@ class Controller:
         self.db_adapter_cam_events = None
         self.db_adapter_fov_events = None
         self.db_adapter_zone_events = None
-        self.class_names = [
-            "person",
-            "bicycle",
-            "car",
-            "motorcycle",
-            "airplane",
-            "bus",
-            "train",
-            "truck",
-            "boat",
-            "traffic light",
-            "fire hydrant",
-            "stop sign",
-            "parking meter",
-            "bench",
-            "bird",
-            "cat",
-            "dog",
-            "horse",
-            "sheep",
-            "cow",
-            "elephant",
-            "bear",
-            "zebra",
-            "giraffe",
-            "backpack",
-            "umbrella",
-            "handbag",
-            "tie",
-            "suitcase",
-            "frisbee",
-            "skis",
-            "snowboard",
-            "sports ball",
-            "kite",
-            "baseball bat",
-            "baseball glove",
-            "skateboard",
-            "surfboard",
-            "tennis racket",
-            "bottle",
-            "wine glass",
-            "cup",
-            "fork",
-            "knife",
-            "spoon",
-            "bowl",
-            "banana",
-            "apple",
-            "sandwich",
-            "orange",
-            "broccoli",
-            "carrot",
-            "hot dog",
-            "pizza",
-            "donut",
-            "cake",
-            "chair",
-            "couch",
-            "potted plant",
-            "bed",
-            "dining table",
-            "toilet",
-            "tv",
-            "laptop",
-            "mouse",
-            "remote",
-            "keyboard",
-            "cell phone",
-            "microwave",
-            "oven",
-            "toaster",
-            "sink",
-            "refrigerator",
-            "book",
-            "clock",
-            "vase",
-            "scissors",
-            "teddy bear",
-            "hair drier",
-            "toothbrush"
-        ]
+        
+        # Initialize centralized class manager
+        self.class_manager = ClassManager()
+        
+        # Default COCO class mapping: class_name -> class_id
+        self.class_mapping = {
+            "person": 0,
+            "bicycle": 1,
+            "car": 2,
+            "motorcycle": 3,
+            "airplane": 4,
+            "bus": 5,
+            "train": 6,
+            "truck": 7,
+            "boat": 8,
+            "traffic light": 9,
+            "fire hydrant": 10,
+            "stop sign": 11,
+            "parking meter": 12,
+            "bench": 13,
+            "bird": 14,
+            "cat": 15,
+            "dog": 16,
+            "horse": 17,
+            "sheep": 18,
+            "cow": 19,
+            "elephant": 20,
+            "bear": 21,
+            "zebra": 22,
+            "giraffe": 23,
+            "backpack": 24,
+            "umbrella": 25,
+            "handbag": 26,
+            "tie": 27,
+            "suitcase": 28,
+            "frisbee": 29,
+            "skis": 30,
+            "snowboard": 31,
+            "sports ball": 32,
+            "kite": 33,
+            "baseball bat": 34,
+            "baseball glove": 35,
+            "skateboard": 36,
+            "surfboard": 37,
+            "tennis racket": 38,
+            "bottle": 39,
+            "wine glass": 40,
+            "cup": 41,
+            "fork": 42,
+            "knife": 43,
+            "spoon": 44,
+            "bowl": 45,
+            "banana": 46,
+            "apple": 47,
+            "sandwich": 48,
+            "orange": 49,
+            "broccoli": 50,
+            "carrot": 51,
+            "hot dog": 52,
+            "pizza": 53,
+            "donut": 54,
+            "cake": 55,
+            "chair": 56,
+            "couch": 57,
+            "potted plant": 58,
+            "bed": 59,
+            "dining table": 60,
+            "toilet": 61,
+            "tv": 62,
+            "laptop": 63,
+            "mouse": 64,
+            "remote": 65,
+            "keyboard": 66,
+            "cell phone": 67,
+            "microwave": 68,
+            "oven": 69,
+            "toaster": 70,
+            "sink": 71,
+            "refrigerator": 72,
+            "book": 73,
+            "clock": 74,
+            "vase": 75,
+            "scissors": 76,
+            "teddy bear": 77,
+            "hair drier": 78,
+            "toothbrush": 79
+        }
 
         self.run_flag = False
         self.restart_flag = False
@@ -213,14 +221,21 @@ class Controller:
             # Process tracking results
             processing_frames = []
             for track_info in mc_tracking_results:
-                tracking_result, image = track_info
+                # Handle both tuples [tracking_result, image] and Frame objects
+                if isinstance(track_info, (tuple, list)) and len(track_info) == 2:
+                    tracking_result, image = track_info
+                else:
+                    # Assume it's a Frame object (from attributes processors)
+                    tracking_result = None
+                    image = track_info
+                
                 self.obj_handler.put(track_info)
                 processing_frames.append(image)
                 self.source_last_processed_frame_id[image.source_id] = image.frame_id
 
             events = dict()
             events = self.events_detectors_controller.get()
-            # print(events)
+            # self.logger.debug(f"Events: {events}")
             if events:
                 self.events_processor.put(events)
             complete_processing_it = timer()
@@ -236,8 +251,8 @@ class Controller:
                 if self.debug_info.get("controller", None):
                     total_memory_usage_mb = self.debug_info["controller"].get("total_memory_usage_mb", None)
                     if total_memory_usage_mb and total_memory_usage_mb >= self.max_memory_usage_mb:
-                        print(f"total_memory_usage={total_memory_usage_mb:.2f} Mb max_memory_usage_mb={self.max_memory_usage_mb:.2f} Mb")
-                        pprint.pprint(self.debug_info)
+                        self.logger.warning(f"Memory usage exceeded: {total_memory_usage_mb:.2f} Mb (maximum: {self.max_memory_usage_mb:.2f} Mb)")
+                        self.logger.debug(f"Debug info: {pprint.pformat(self.debug_info)}")
                         params = copy.deepcopy(self.params)
                         if self.auto_restart:
                             self.restart_flag = True
@@ -263,7 +278,7 @@ class Controller:
             else:
                 sleep_seconds = 0.03
 
-            #print(f"Time: cap[{complete_capture_it-begin_it}], det[{complete_detection_it-complete_capture_it}], track[{complete_tracking_it-complete_detection_it}], events[{complete_processing_it-complete_tracking_it}]], "
+            #self.logger.debug(f"Time: cap[{complete_capture_it-begin_it}], det[{complete_detection_it-complete_capture_it}], track[{complete_tracking_it-complete_detection_it}], events[{complete_processing_it-complete_tracking_it}]], "
             #       f"read=[{complete_read_objects_it-complete_processing_it}], vis[{end_it-complete_read_objects_it}] = {end_it-begin_it} secs, sleep {sleep_seconds} secs")
             time.sleep(sleep_seconds)
 
@@ -285,7 +300,7 @@ class Controller:
                 self.db_adapter_fov_events.start()
                 self.db_adapter_cam_events.start()
             except Exception as e:
-                print(f"Warning: Database connection failed during start. Disabling database functionality. Reason: {e}")
+                self.logger.warning(f"Database connection error at startup. Disabling database functionality. Reason: {e}")
                 self.use_database = False
                 self.db_controller = None
         
@@ -321,7 +336,7 @@ class Controller:
         
         # Stop pipeline components
         self.pipeline.stop()
-        print('Everything in controller stopped')
+        self.logger.info('All controller components stopped')
 
     def init(self, params):
         self.params = params
@@ -330,9 +345,20 @@ class Controller:
             self.autoclose = self.params['controller'].get("autoclose", self.autoclose)
             self.fps = self.params['controller'].get("fps", self.fps)
             self.show_main_gui = self.params['controller'].get("show_main_gui", self.show_main_gui)
+            self.gui_enabled = self.params['controller'].get("gui_enabled", self.gui_enabled)
+
             self.show_journal = self.params['controller'].get("show_journal", self.show_journal)
             self.enable_close_from_gui = self.params['controller'].get("enable_close_from_gui", self.enable_close_from_gui)
-            self.class_names = self.params['controller'].get("class_names", list())
+            # Handle both old class_names format and new class_mapping format
+            if "class_mapping" in self.params['controller']:
+                self.class_mapping = self.params['controller'].get("class_mapping", {})
+            elif "class_names" in self.params['controller']:
+                # Convert old class_names list to class_mapping dict
+                class_names = self.params['controller'].get("class_names", [])
+                self.class_mapping = {name: idx for idx, name in enumerate(class_names)}
+            else:
+                # Keep default class_mapping if neither is specified
+                pass
             self.memory_periodic_check_sec = self.params['controller'].get("memory_periodic_check_sec", self.memory_periodic_check_sec)
             self.show_memory_usage = self.params['controller'].get("show_memory_usage", self.show_memory_usage)
             self.max_memory_usage_mb = self.params['controller'].get("max_memory_usage_mb", self.max_memory_usage_mb)
@@ -352,18 +378,21 @@ class Controller:
         if pipeline_class_name:
             try:
                 self.pipeline = self._create_pipeline_instance(pipeline_class_name)
-                print(f"Using pipeline class: {pipeline_class_name}")
+                self.logger.info(f"Using pipeline class: {pipeline_class_name}")
             except Exception as e:
-                print(f"Warning: Could not create pipeline '{pipeline_class_name}': {e}")
-                print("Falling back to default PipelineSurveillance")
+                self.logger.warning(f"Failed to create pipeline '{pipeline_class_name}': {e}")
+                self.logger.info("Using default PipelineSurveillance")
                 self.pipeline = PipelineSurveillance()
         else:
-            print("Warning: No pipeline_class specified in pipeline parameters, using default PipelineSurveillance")
+            self.logger.warning("Pipeline class not specified in parameters, using default PipelineSurveillance")
             self.pipeline = PipelineSurveillance()
         
         self.pipeline.set_credentials(self.credentials)
         self.pipeline.set_params(**pipeline_params)
         self.pipeline.init()
+        
+        # Update class_mapping from detectors after pipeline initialization
+        self.update_class_mapping_from_detectors()
 
         # Fill source maps for visualizer and bookkeeping
         if hasattr(self.pipeline, "get_sources"):
@@ -426,7 +455,7 @@ class Controller:
                 self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
                 self._init_events_processor(self.params.get('events_processor', dict()))
             except Exception as e:
-                print(f"Warning: Database is enabled but not accessible. Running without database. Reason: {e}")
+                self.logger.warning(f"Database enabled but unavailable. Working without database. Reason: {e}")
                 # Fallback to no-database mode
                 self.use_database = False
                 self.db_controller = None
@@ -436,7 +465,7 @@ class Controller:
                 self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
                 self._init_events_processor_without_db(self.params.get('events_processor', dict()))
         else:
-            print("Database functionality disabled. Running without database connection.")
+            self.logger.info("Database functionality disabled. Working without database connection.")
             # Initialize minimal components for operation without database
             self._init_object_handler_without_db(params.get('objects_handler', dict()))
             self._init_events_detectors_without_db(self.params.get('events_detectors', dict()))
@@ -453,16 +482,17 @@ class Controller:
         self.stop()
         # Release pipeline components
         self.pipeline.release()
-        print('Everything in controller released')
+        self.logger.info('All controller components released')
 
     def update_params(self):
         self.params['controller'] = dict()
         self.params['controller']["autoclose"] = self.autoclose
         self.params['controller']["fps"] = self.fps
         self.params['controller']["show_main_gui"] = self.show_main_gui
+        self.params['controller']["gui_enabled"] = self.gui_enabled
         self.params['controller']["show_journal"] = self.show_journal
         self.params['controller']["enable_close_from_gui"] = self.enable_close_from_gui
-        self.params['controller']["class_names"] = self.class_names
+        self.params['controller']["class_mapping"] = self.class_mapping
         self.params['controller']["memory_periodic_check_sec"] = self.memory_periodic_check_sec
         self.params['controller']["show_memory_usage"] = self.show_memory_usage
 
@@ -515,6 +545,9 @@ class Controller:
     def _init_object_handler(self, db_controller, params):
         self.obj_handler = objects_handler.ObjectsHandler(db_controller=db_controller, db_adapter=self.db_adapter_obj)
         self.obj_handler.set_params(**params)
+        # Set class manager for ObjectsHandler
+        if hasattr(self.obj_handler, 'class_manager'):
+            self.obj_handler.class_manager = self.class_manager
         self.obj_handler.init()
 
     def _init_object_handler_without_db(self, params):
@@ -539,6 +572,9 @@ class Controller:
                 self.obj_handler.cameras_params = cameras_params
         
         self.obj_handler.set_params(**params)
+        # Set class manager for ObjectsHandler
+        if hasattr(self.obj_handler, 'class_manager'):
+            self.obj_handler.class_manager = self.class_manager
         self.obj_handler.init()
 
     def _init_db_controller(self, params, system_params):
@@ -563,55 +599,6 @@ class Controller:
         self.db_adapter_zone_events.set_params(**params['DatabaseAdapterZoneEvents'])
         self.db_adapter_zone_events.init()
 
-    def _init_sources(self, params):
-        num_sources = len(params)
-        self.sources_proc = ProcessorSource(class_name="VideoCapture", num_processors=num_sources, order=0)
-        for i in range(num_sources):
-            src_params = params[i]
-            camera_creds = self.credentials["sources"].get(src_params["camera"], None)
-            if camera_creds and (not src_params.get("username", None) or not src_params.get("password", None)):
-                src_params["username"] = camera_creds["username"]
-                src_params["password"] = camera_creds["password"]
-
-        self.sources_proc.set_params(params)
-        self.sources_proc.init()
-        for j in range(num_sources):
-            source = self.sources_proc.get_processors()[j]
-            for source_id, source_name in zip(source.source_ids, source.source_names):
-                self.source_id_name_table[source_id] = source_name
-                self.source_video_duration[source_id] = source.video_duration
-                self.source_last_processed_frame_id[source_id] = 0
-
-    def _init_preprocessors(self, params):
-        num_preps = len(params)
-        self.preprocessors_proc = ProcessorFrame(class_name="PreprocessingPipeline", num_processors=num_preps, order=1)
-        self.preprocessors_proc.set_params(params)
-        self.preprocessors_proc.init()
-
-    def _init_detectors(self, params):
-        num_det = len(params)
-        self.detectors_proc = ProcessorStep(class_name="ObjectDetectorYolo", num_processors=num_det, order=2)
-        self.detectors_proc.set_params(params)
-        self.detectors_proc.init()
-
-    def _init_trackers(self, params):
-        num_trackers = len(params)
-        self.trackers_proc = ProcessorStep(class_name="ObjectTrackingBotsort", num_processors=num_trackers, order=3)
-        self.trackers_proc.set_params(params)
-        self.trackers_proc.init(encoders=self.encoders)
-
-    def _init_mc_trackers(self, params):
-        #num_of_cameras = len(self.params.get('sources', list()))
-        self.mc_trackers_proc = ProcessorStep(class_name="ObjectMultiCameraTracking", num_processors=1, order=4)
-        self.mc_trackers_proc.set_params(params)
-        self.mc_trackers_proc.init(encoders=self.encoders)
-
-        #self.mc_tracker = ObjectMultiCameraTracking(
-        #    num_of_cameras,
-        #    list(self.encoders.values())
-        #)
-        #self.mc_tracker.init()
-
     def _init_events_detectors(self, params):
         self.cam_events_detector = CamEventsDetector(self.pipeline.get_sources())
         self.cam_events_detector.set_params(**params.get('CamEventsDetector', dict()))
@@ -628,6 +615,27 @@ class Controller:
         self.obj_handler.subscribe(self.fov_events_detector, self.zone_events_detector)
         for source in self.pipeline.get_sources():
             source.subscribe(self.cam_events_detector)
+        
+        # Инициализация атрибутных процессоров, если они есть в пайплайне
+        self._init_attributes_processors(params)
+
+    def _init_attributes_processors(self, params):
+        """Инициализация атрибутных процессоров и связывание с ObjectsHandler."""
+        # Проверяем, есть ли атрибутные процессоры в пайплайне
+        if hasattr(self.pipeline, 'processors'):
+            for processor in self.pipeline.processors:
+                if hasattr(processor, 'get_name'):
+                    proc_name = processor.get_name()
+                    if proc_name in ['attributes_roi', 'attributes_classifier']:
+                        # Получаем параметры для атрибутных процессоров
+                        attr_params = params.get('attributes_detection', {})
+                        if attr_params:
+                            # Прокидываем параметры в ObjectsHandler
+                            if 'objects_handler' not in self.obj_handler.params:
+                                self.obj_handler.params['objects_handler'] = {}
+                            self.obj_handler.params['objects_handler']['attributes_detection'] = attr_params
+                            self.obj_handler.set_params_impl()
+                            self.logger.info(f"Attribute detection configured for {proc_name}")
 
     def _init_events_detectors_without_db(self, params):
         """Initialize events detectors without database connection."""
@@ -668,11 +676,11 @@ class Controller:
         self.events_processor.init()
 
     def _init_visualizer(self, params):
-        self.gui_enabled = params.get("gui_enabled", True)
         self.visualizer = Visualizer(self.pyqt_slots, self.pyqt_signals)
         self.visualizer.set_params(**params)
         self.visualizer.source_id_name_table = self.source_id_name_table
         self.visualizer.source_video_duration = self.source_video_duration
+        self.visualizer.class_mapping = self.class_mapping  # Pass class mapping to visualizer
         self.visualizer.init()
 
     def collect_memory_consumption(self):
@@ -748,7 +756,7 @@ class Controller:
                     any('Pipeline' in base.__name__ for base in obj.__bases__)):
                     pipeline_classes[name] = obj
         except ImportError as e:
-            print(f"Warning: Could not import evileye.pipelines: {e}")
+            self.logger.warning(f"Failed to import evileye.pipelines: {e}")
         
         # Search in current working directory pipelines folder
         current_dir = Path.cwd()
@@ -770,7 +778,7 @@ class Controller:
                 # Remove from path
                 sys.path.pop(0)
             except ImportError as e:
-                print(f"Warning: Could not import local pipelines: {e}")
+                self.logger.warning(f"Failed to import local pipelines: {e}")
         
         return pipeline_classes
     
@@ -789,6 +797,125 @@ class Controller:
         """Get list of available pipeline classes"""
         return list(self._discover_pipeline_classes().keys())
     
+    def get_class_name(self, class_id: int) -> str:
+        """Get class name from class ID using class_mapping"""
+        for name, cid in self.class_mapping.items():
+            if cid == class_id:
+                return name
+        return f"class_{class_id}"
+    
+    def get_class_id(self, class_name: str) -> int:
+        """Get class ID from class name using class_mapping"""
+        return self.class_mapping.get(class_name, -1)
+    
+    def get_class_names_list(self) -> list:
+        """Get list of class names in order of their IDs"""
+        sorted_classes = sorted(self.class_mapping.items(), key=lambda x: x[1])
+        return [name for name, _ in sorted_classes]
+    
+    def update_class_mapping_from_detectors(self):
+        """Update class_mapping from all detectors in the pipeline using ClassManager"""
+        if not hasattr(self, 'pipeline') or not self.pipeline:
+            return
+            
+        # Get all detectors from pipeline
+        detectors = []
+        if hasattr(self.pipeline, 'processors'):
+            for processor in self.pipeline.processors:
+                if hasattr(processor, 'get_processors'):
+                    for proc in processor.get_processors():
+                        if hasattr(proc, 'get_model_class_mapping'):
+                            detectors.append(proc)
+        
+        # Collect class mappings from all detectors using ClassManager
+        for detector in detectors:
+            mapping = detector.get_model_class_mapping()
+            if mapping:
+                detector_name = detector.__class__.__name__
+                success = self.class_manager.add_class_mapping(mapping, detector_name)
+                if not success:
+                    self.logger.warning(f"Conflicts detected when adding mapping from {detector_name}")
+                
+                # CRITICAL: Force update classes after getting model mapping
+                if hasattr(detector, '_update_classes_after_model_loading'):
+                    detector._update_classes_after_model_loading()
+            else:
+                # Model not loaded yet, try to get mapping (this will trigger late update if model is loaded)
+                detector.get_model_class_mapping()
+        
+        # Update controller's class_mapping from ClassManager
+        if self.class_manager.class_mapping:
+            self.class_mapping = self.class_manager.get_class_mapping()
+            self.logger.info(f"Updated controller class_mapping with {len(self.class_mapping)} classes from {len(detectors)} detectors")
+            
+            # Update visualizer if available
+            if hasattr(self, 'visualizer') and self.visualizer:
+                self.visualizer.class_mapping = self.class_mapping
+                self.logger.info("Updated visualizer class_mapping")
+            
+            # Set class manager for all detectors
+            for detector in detectors:
+                if hasattr(detector, 'set_class_manager'):
+                    detector.set_class_manager(self.class_manager)
+            
+            # Report conflicts if any
+            if self.class_manager.has_conflicts():
+                self.logger.warning("Class mapping conflicts detected:")
+                for conflict in self.class_manager.get_conflicts():
+                    self.logger.warning(f"   - {conflict}")
+                self.logger.info("Using first occurrence for each class name/ID pair.")
+        else:
+            self.logger.warning("Class mappings not found in detectors")
+            
+        # Schedule periodic check for late model loading
+        self._schedule_periodic_class_update()
+    
+    def _schedule_periodic_class_update(self):
+        """Schedule periodic check for classes update after model loading"""
+        import threading
+        import time
+        
+        def periodic_check():
+            """Periodically check and update classes"""
+            max_attempts = 10  # Check for 10 seconds
+            attempt = 0
+            
+            while attempt < max_attempts:
+                time.sleep(1)  # Wait 1 second
+                attempt += 1
+                
+                # Check if we have detectors
+                if not hasattr(self, 'pipeline') or not self.pipeline:
+                    continue
+                    
+                # Get all detectors from pipeline
+                detectors = []
+                if hasattr(self.pipeline, 'processors'):
+                    for processor in self.pipeline.processors:
+                        if hasattr(processor, 'get_processors'):
+                            for proc in processor.get_processors():
+                                if hasattr(proc, 'get_model_class_mapping'):
+                                    detectors.append(proc)
+                
+                # Check each detector
+                updated = False
+                for detector in detectors:
+                    mapping = detector.get_model_class_mapping()
+                    if mapping and hasattr(detector, '_check_and_update_classes_if_needed'):
+                        detector._check_and_update_classes_if_needed()
+                        updated = True
+                
+                if updated:
+                    self.logger.info("Late model loading detected, classes updated")
+                    break
+                    
+            if attempt >= max_attempts:
+                self.logger.warning("Model loading timeout, some classes may not update")
+        
+        # Start periodic check in background thread
+        check_thread = threading.Thread(target=periodic_check, daemon=True)
+        check_thread.start()
+    
     def create_config(self, num_sources: int, pipeline_class: str | None):
         """Create configuration with specified pipeline class"""
         self.init({})
@@ -797,10 +924,10 @@ class Controller:
         if pipeline_class:
             try:
                 self.pipeline = self._create_pipeline_instance(pipeline_class)
-                print(f"Created pipeline instance: {pipeline_class}")
+                self.logger.info(f"Created pipeline instance: {pipeline_class}")
             except Exception as e:
-                print(f"Warning: Could not create pipeline '{pipeline_class}': {e}")
-                print("Falling back to default pipeline")
+                self.logger.warning(f"Failed to create pipeline '{pipeline_class}': {e}")
+                self.logger.info("Using default pipeline")
                 self.pipeline = PipelineSurveillance()
         else:
             # Use default pipeline

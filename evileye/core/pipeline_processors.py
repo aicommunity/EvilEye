@@ -27,6 +27,8 @@ class PipelineProcessors(PipelineBase):
 
         self.sources_proc: ProcessorSource | None = None
 
+        self._final_results_name = ""
+
     def default(self):
         """Reset pipeline to default state"""
         super().default()
@@ -92,6 +94,7 @@ class PipelineProcessors(PipelineBase):
     def process(self) -> dict[Any, Any]:
         pipeline_results = dict()
         step_result = None
+        tracking_results = None  # Store tracking results for attributes processors
 
         for processor in self.processors:
             if processor is None:
@@ -99,8 +102,15 @@ class PipelineProcessors(PipelineBase):
                 
             if isinstance(processor, ProcessorSource):
                 self.run_sources()
+            
             step_result = processor.process(step_result)
+            
             pipeline_results[processor.get_name()] = step_result
+            
+            # Store tracking results for attributes processors
+            # Always use mc_trackers results for attributes, regardless of mc_trackers status
+            if processor.get_name() == 'mc_trackers' and step_result is not None:
+                tracking_results = step_result
 
         # Store results for external access
         if pipeline_results:
@@ -162,6 +172,7 @@ class PipelineProcessors(PipelineBase):
 
         if isinstance(processor, ProcessorSource):
             self.sources_proc = processor
+        self._final_results_name = processor.get_name()
 
     def generate_default_structure(self, num_sources: int):
         """Generate default structure for pipeline"""

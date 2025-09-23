@@ -105,6 +105,9 @@ your_project/
     ├── single_video_split.json # Video with 2-way split
     ├── multi_videos.json     # Multiple videos with tracking
     ├── single_ip_camera.json # IP camera processing
+    ├── single_video_rtdetr.json # Single video with RT-DETR detector
+    ├── multi_videos_rtdetr.json # Multiple videos with RT-DETR detector
+    ├── single_video_rfdetr.json # Single video with RF-DETR detector
     └── README_SAMPLES.md     # Sample configurations guide
 ```
 
@@ -292,6 +295,52 @@ The `detectors` section configures object detection for each source.
 | `vid_stride` | int | Video stride | `1` |
 | `classes` | array | Object classes to detect | `[0, 1, 24, 25, 63, 66, 67]` |
 | `roi` | array | Regions of interest | `[[]]` |
+
+#### RT-DETR Detector Configuration
+
+RT-DETR (Real-Time Detection Transformer) provides high-accuracy object detection with transformer architecture:
+
+```json
+{
+  "type": "ObjectDetectorRtdetr",
+  "source_ids": [0],
+  "model": "rtdetr-l.pt",
+  "inference_size": 640,
+  "conf": 0.25,
+  "device": "cpu",
+  "classes": [0, 1, 24, 25, 63, 66, 67],
+  "roi": [[]],
+  "vid_stride": 1,
+  "num_detection_threads": 1
+}
+```
+
+#### RF-DETR Detector Configuration
+
+RF-DETR (Roboflow Detection Transformer) provides optimized transformer-based detection:
+
+```json
+{
+  "type": "ObjectDetectorRfdetr",
+  "source_ids": [0],
+  "model": "rfdetr-nano",
+  "inference_size": 640,
+  "conf": 0.25,
+  "device": "cpu",
+  "classes": [0, 1, 24, 25, 63, 66, 67],
+  "roi": [[]],
+  "vid_stride": 1,
+  "num_detection_threads": 1
+}
+```
+
+#### Detector Types
+
+| Detector Type | Model | Architecture | Speed | Accuracy |
+|---------------|-------|--------------|-------|----------|
+| YOLO | `yolov8n.pt` | CNN | Fast | Good |
+| RT-DETR | `rtdetr-l.pt` | Transformer | Medium | High |
+| RF-DETR | `rfdetr-nano` | Transformer | Fast | Good |
 
 ### Trackers Configuration
 

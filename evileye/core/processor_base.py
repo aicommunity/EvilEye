@@ -1,8 +1,10 @@
 from .base_class import EvilEyeBase
 from abc import ABC, abstractmethod
+from .logger import get_module_logger
 
 class ProcessorBase(ABC):
     def __init__(self, processor_name, class_name, num_processors: int, order: int):
+        self.logger = get_module_logger("processor_base")
         self.processor_name = processor_name
         self.class_name = class_name
         self.params = None
@@ -24,7 +26,7 @@ class ProcessorBase(ABC):
     def set_params(self, params):
         self.params = params
         if len(params) != self.num_processors or type(params) != list:
-            print(f"Failed to initialize processors {self.class_name}[{self.num_processors}]. Wrong params list.")
+            self.logger.error(f"Failed to initialize processors {self.class_name}[{self.num_processors}]. Wrong params list.")
         for i in range(0, self.num_processors):
             self.processors[i].set_params(**params[i])
 

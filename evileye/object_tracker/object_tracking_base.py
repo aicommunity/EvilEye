@@ -65,7 +65,7 @@ class ObjectTrackingBase(EvilEyeBase):
         self.queue_in.put(None)
         if self.processing_thread and self.processing_thread.is_alive():
             self.processing_thread.join()
-        print('Tracker stopped')
+        self.logger.info('Tracker stopped')
 
     def init_impl(self, **kwargs):
         self.processing_thread = threading.Thread(target=self._process_impl)

@@ -13,9 +13,15 @@ import argparse
 import json
 import utils
 from utils import utils
+from evileye.core.logging_config import setup_evileye_logging
+from evileye.core.logger import get_module_logger
 
 
 def main():
+    # Инициализация логирования
+    logger = setup_evileye_logging(log_level="INFO", log_to_console=True, log_to_file=True)
+    sample_logger = get_module_logger("capture_detection_sample")
+    
     parser = argparse.ArgumentParser()
     parser.add_argument('source',
                         help='The source such as: video file(file), image sequence(sequence) or IP camera(IPcam)',
@@ -47,7 +53,7 @@ def main():
     video.init()
     object_detector.init()
     if not video.is_opened():
-        print("Error opening video stream or file")
+        sample_logger.error("Ошибка открытия видеопотока или файла")
 
     while video.is_opened():
         ret, frames = video.process(split_stream=capture_params['split'],

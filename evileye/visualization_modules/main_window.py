@@ -29,6 +29,8 @@ except ImportError:
     from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt
     pyqt_version = 5
 
+from ..core.logger import get_module_logger
+
 import sys
 import cv2
 import os
@@ -80,6 +82,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self, controller, params_file_path, params, win_width, win_height):
         super().__init__()
+        self.logger = get_module_logger("main_window")
         self.setWindowTitle("EvilEye")
         self.resize(win_width, win_height)
         self.slots = {'update_image': self.update_image, 'open_zone_win': self.open_zone_win}
@@ -117,10 +120,11 @@ class MainWindow(QMainWindow):
         # Create journal window (DB or JSON mode)
         if hasattr(self.controller, 'use_database') and self.controller.use_database:
             try:
-                self.db_journal_win = DatabaseJournalWindow(self, self.params, self.controller.database_config, close_app)
+                self.db_journal_win = DatabaseJournalWindow(self, self.params, self.controller.database_config, close_app,
+                                                           logger_name="db_journal", parent_logger=self.logger)
                 self.db_journal_win.setVisible(False)
             except Exception as e:
-                print(f"Warning: Failed to create database journal window. Falling back to JSON mode. Reason: {e}")
+                self.logger.warning(f"Warning: Failed to create database journal window. Switching to JSON mode. Reason: {e}")
                 # Fallback to JSON journal mode
                 self._create_json_journal_window()
         else:
@@ -132,13 +136,13 @@ class MainWindow(QMainWindow):
             # Check if directory exists before creating journal
             if os.path.exists(images_dir):
                 try:
-                    self.db_journal_win = EventsJournalJson(images_dir)
+                    self.db_journal_win = EventsJournalJson(images_dir, logger_name="json_journal", parent_logger=self.logger)
                     self.db_journal_win.setVisible(False)
                 except Exception as e:
-                    print(f"Error creating JSON journal: {e}")
+                    self.logger.error(f"JSON journal creation error: {e}")
                     self.db_journal_win = None
             else:
-                print(f"Images directory does not exist: {images_dir}")
+                self.logger.warning(f"Images folder does not exist: {images_dir}")
                 self.db_journal_win = None
         self.zone_window = ZoneWindow(self.params)
         self.zone_window.setVisible(False)
@@ -278,7 +282,7 @@ class MainWindow(QMainWindow):
     @pyqtSlot()
     def open_journal(self):
         if self.db_journal_win is None:
-            print("Journal is not available (database disabled or initialization failed)")
+            self.logger.warning("Journal unavailable (database disabled or initialization failed)")
             return
         if self.db_journal_win.isVisible():
             self.db_journal_win.setVisible(False)
@@ -367,10 +371,10 @@ class MainWindow(QMainWindow):
                 self.db_journal_win = EventsJournalJson(images_dir)
                 self.db_journal_win.setVisible(False)
             except Exception as e:
-                print(f"Error creating JSON journal: {e}")
+                self.logger.error(f"JSON journal creation error: {e}")
                 self.db_journal_win = None
         else:
-            print(f"Images directory does not exist: {images_dir}")
+            self.logger.warning(f"Images folder does not exist: {images_dir}")
             self.db_journal_win = None
 
     @pyqtSlot()

@@ -24,11 +24,16 @@ except ImportError:
     pyqt_version = 5
 
 from .table_updater_view import TableUpdater
+from ..core.logger import get_module_logger
+import logging
 
 
 class ImageDelegate(QStyledItemDelegate):
-    def __init__(self, parent=None, image_dir=None):
+    def __init__(self, parent=None, image_dir=None, logger_name: str | None = None, parent_logger: logging.Logger | None = None):
         super().__init__(parent)
+        base_name = "evileye.image_delegate"
+        full_name = f"{base_name}.{logger_name}" if logger_name else base_name
+        self.logger = parent_logger or logging.getLogger(full_name)
         self.image_dir = image_dir
 
     def paint(self, painter, option, index):
@@ -95,8 +100,11 @@ class EventsJournal(QWidget):
     preview_width = 300
     preview_height = 150
 
-    def __init__(self, journal_adapters: list, db_controller, table_name, params, database_params, table_params, parent=None):
+    def __init__(self, journal_adapters: list, db_controller, table_name, params, database_params, table_params, parent=None, logger_name: str | None = None, parent_logger: logging.Logger | None = None):
         super().__init__()
+        base_name = "evileye.events_journal"
+        full_name = f"{base_name}.{logger_name}" if logger_name else base_name
+        self.logger = parent_logger or logging.getLogger(full_name)
         self.db_controller = db_controller
         self.journal_adapters = journal_adapters
 
@@ -163,7 +171,7 @@ class EventsJournal(QWidget):
                 "Events journal - Error!",
                 "Database Error: %s" % db.lastError().databaseText(),
             )
-        print(QSqlDatabase.connectionNames())
+        self.logger.debug(f"Database connections: {QSqlDatabase.connectionNames()}")
 
     def _setup_table(self):
         self._setup_model()
@@ -180,7 +188,7 @@ class EventsJournal(QWidget):
         h_header.setDefaultSectionSize(EventsJournal.preview_width)
         v_header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
 
-        self.image_delegate = ImageDelegate(None, image_dir=self.image_dir)
+        self.image_delegate = ImageDelegate(None, image_dir=self.image_dir, logger_name="image_delegate", parent_logger=self.logger)
         self.date_delegate = DateTimeDelegate(None)
         self.table.setItemDelegateForColumn(1, self.date_delegate)
         self.table.setItemDelegateForColumn(2, self.date_delegate)
@@ -201,7 +209,7 @@ class EventsJournal(QWidget):
         query.bindValue(":start", self.current_start_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
         query.bindValue(":finish", self.current_end_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
         query.exec()
-        # print(query.lastError().text())
+        # self.logger.debug(query.lastError().text())
 
         self.model.setQuery(query)
         self.model.setHeaderData(0, Qt.Orientation.Horizontal, self.tr('Event'))
@@ -381,7 +389,7 @@ class EventsJournal(QWidget):
             return
 
         source_id, full_address = self.source_name_id_address[camera_name]
-        # print(camera_name, source_id, full_address)
+        # self.logger.debug(f"{camera_name}, {source_id}, {full_address}")
         query = QSqlQuery(QSqlDatabase.database('events_conn'))
         query.prepare('SELECT source_name, CAST(\'Event\' AS text) AS event_type, '
                       '\'Object Id=\' || object_id || \'; class: \' || class_id || \'; conf: \' || confidence AS information,'

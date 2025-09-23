@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 import multiprocessing as mp
+from .logger import get_module_logger
 
 # Глобальные константы
 #MODEL_PATH = 'yolov8n.pt'
@@ -9,6 +10,7 @@ import multiprocessing as mp
 
 class MpWorker(ABC):
     def __init__(self, input_queue, output_queue):
+        self.logger = get_module_logger("mp_worker")
         self.input_queue = input_queue
         self.output_queue = output_queue
         self.queue_timeout = 2
@@ -23,7 +25,7 @@ class MpWorker(ABC):
 
     def __call__(self):
         self.init_worker()
-        print(f"Process {mp.current_process().name} ready")
+        self.logger.info(f"Process {mp.current_process().name} ready")
 
         while True:
             try:
@@ -33,9 +35,9 @@ class MpWorker(ABC):
                 results = self.worker_impl(data)
                 self.output_queue.put(results)
             except mp.queues.Empty:
-                print(f"Process {mp.current_process().name} ends by timeout")
+                self.logger.info(f"Process {mp.current_process().name} ends by timeout")
                 break
             except Exception as e:
-                print(f"Error in process {mp.current_process().name}: {str(e)}")
+                self.logger.info(f"Error in process {mp.current_process().name}: {str(e)}")
                 break
 

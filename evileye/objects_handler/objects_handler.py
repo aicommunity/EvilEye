@@ -20,6 +20,7 @@ from .labeling_manager import LabelingManager
 from pympler import asizeof
 import cv2
 from ..utils import utils
+from .attribute_manager import AttributeManager
 
 '''
 Модуль работы с объектами ожидает данные от детектора в виде dict: {'cam_id': int, 'objects': list, 'actual': bool}, 
@@ -49,6 +50,7 @@ class ObjectsHandler(EvilEyeBase):
 
         self.db_controller = db_controller
         self.db_adapter = db_adapter
+        self._last_frame_ts = {}  # Initialize timestamp tracking for attributes
         # Initialize database parameters only if database controller is available
         if self.db_controller is not None:
             self.db_params = self.db_controller.get_params()
@@ -77,6 +79,12 @@ class ObjectsHandler(EvilEyeBase):
         # Initialize object_id counter from existing data
         self._init_object_id_counter()
 
+        # Attributes aggregation (lazy-configurable)
+        self.attr_manager: AttributeManager | None = None
+        self._attr_conf_thresholds = {}
+        self._attr_time_thresholds = {}
+        self._attr_ema_alpha = 0.6
+
     def _init_object_id_counter(self):
         """Initialize object_id counter from existing data to avoid ID conflicts."""
         try:
@@ -86,15 +94,15 @@ class ObjectsHandler(EvilEyeBase):
             if max_existing_id > 0:
                 # Set counter to next available ID
                 self.object_id_counter = max_existing_id + 1
-                print(f"🔄 Initialized object_id counter to {self.object_id_counter} (max existing: {max_existing_id})")
+                self.logger.info(f"Object ID counter initialized to {self.object_id_counter} (maximum existing: {max_existing_id})")
             else:
                 # No existing objects, start from 1
                 self.object_id_counter = 1
-                print(f"🔄 Starting with fresh object_id counter: {self.object_id_counter}")
+                self.logger.info(f"Starting with new counter object_id: {self.object_id_counter}")
                 
         except Exception as e:
-            print(f"⚠️ Warning: Error initializing object_id counter: {e}")
-            print(f"ℹ️ Starting with default counter value: {self.object_id_counter}")
+            self.logger.warning(f"Warning: Object ID counter initialization error: {e}")
+            self.logger.info(f"Starting with default counter value: {self.object_id_counter}")
             # Keep default value (1)
 
     def default(self):
@@ -115,6 +123,17 @@ class ObjectsHandler(EvilEyeBase):
         self.lost_thresh = self.params.get('lost_thresh', 5)
         self.max_active_objects = self.params.get('max_active_objects', 100)
         self.max_lost_objects = self.params.get('max_lost_objects', 100)
+        # thresholds for attributes (optional)
+        attrs = self.params.get('attributes_detection', {})
+        classifier = attrs.get('classifier', {})
+        self._attr_conf_thresholds = classifier.get('confidence_thresholds', {})
+        self._attr_time_thresholds = classifier.get('time_thresholds', {})
+        self._attr_ema_alpha = classifier.get('ema_alpha', 0.6)
+        
+        # Always create AttributeManager and set params
+        self.attr_manager = AttributeManager(self._attr_conf_thresholds, self._attr_time_thresholds, self._attr_ema_alpha)
+        if attrs:
+            self.attr_manager.set_params(attrs)
 
     def get_params_impl(self):
         params = dict()
@@ -135,7 +154,7 @@ class ObjectsHandler(EvilEyeBase):
         if hasattr(self, 'labeling_manager'):
             self.labeling_manager.stop()
         
-        print('Handler stopped')
+        self.logger.info('Handler stopped')
 
     def start(self):
         self.run_flag = True
@@ -143,6 +162,7 @@ class ObjectsHandler(EvilEyeBase):
 
     def put(self, data):  # Добавление данных из детектора/трекера в очередь
         self.objs_queue.put(data)
+
 
     def get(self, objs_type, cam_id):  # Получение списка объектов в зависимости от указанного типа
         # Блокируем остальные потоки на время получения объектов
@@ -195,7 +215,7 @@ class ObjectsHandler(EvilEyeBase):
         return source_objects
 
     def handle_objs(self):  # Функция, отвечающая за работу с объектами
-        print('Handler running: waiting for objects...')
+        self.logger.info('Handler working: waiting for objects...')
         while self.run_flag:
             time.sleep(0.01)
             # if self.objs_queue.empty():
@@ -203,7 +223,14 @@ class ObjectsHandler(EvilEyeBase):
             tracking_results = self.objs_queue.get()
             if tracking_results is None:
                 continue
-            tracks, image = tracking_results
+            
+            # Handle both tuples [tracks, image] and Frame objects
+            if isinstance(tracking_results, (tuple, list)) and len(tracking_results) == 2:
+                tracks, image = tracking_results
+            else:
+                # Assume it's a Frame object (from attributes processors)
+                tracks = None
+                image = tracking_results
             # Блокируем остальные потоки для предотвращения одновременного обращения к объектам
             with self.lock:
                 # self.condition.acquire()
@@ -213,12 +240,139 @@ class ObjectsHandler(EvilEyeBase):
                 else:
                     self.snapshot = None
 
-            for subscriber in self.subscribers:
-                subscriber.update()
+        for subscriber in self.subscribers:
+            subscriber.update()
+    
+    def _is_primary_object(self, obj):
+        """Check if object is primary based on class name or ID"""
+        if not hasattr(self, 'attr_manager') or not self.attr_manager:
+            return False
+            
+        # Get primary classes from attr_manager config
+        primary_by_name = getattr(self.attr_manager, '_primary_by_name', [])
+        primary_by_id = getattr(self.attr_manager, '_primary_by_id', [])
+        
+        # Use ClassManager if available
+        if hasattr(self, 'class_manager') and self.class_manager:
+            # Convert primary class names to IDs using ClassManager
+            primary_ids_from_names = self.class_manager.get_primary_classes_by_name(primary_by_name)
+            primary_ids_from_ids = self.class_manager.get_primary_classes_by_id(primary_by_id)
+            
+            # Check if object's class_id is in any primary list
+            all_primary_ids = primary_ids_from_names + primary_ids_from_ids
+            return obj.class_id in all_primary_ids
+        else:
+            # Fallback to old logic
+            # Check by class name using class_mapping if available
+            if hasattr(self, 'class_mapping') and self.class_mapping:
+                for name, cid in self.class_mapping.items():
+                    if cid == obj.class_id and name in primary_by_name:
+                        return True
+            else:
+                # Fallback to hardcoded class names for backward compatibility
+                class_names = ["person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck"]
+                if obj.class_id < len(class_names):
+                    class_name = class_names[obj.class_id]
+                    if class_name in primary_by_name:
+                        return True
+            
+            # Check by class ID
+            if obj.class_id in primary_by_id:
+                return True
+        return False
+    
+    def _create_default_attributes(self, obj):
+        """Create default attributes for primary objects"""
+        if not hasattr(self, 'attr_manager') or not self.attr_manager:
+            return
+            
+        # Get configured attributes from attr_manager
+        attrs = getattr(self.attr_manager, '_configured_attrs', ['hard_hat', 'no_hard_hat'])
+        
+        # Create default attributes with 'none' state
+        default_attributes = {}
+        for attr_name in attrs:
+            default_attributes[attr_name] = {
+                'attr_name': attr_name,
+                'state': 'none',
+                'confidence_smooth': 0.0,
+                'frames_present': 0,
+                'total_time_ms': 0,
+                'no_detect_time_ms': 0,
+                'enter_count': 0,
+                'enter_ts': None,
+                'last_seen_ts': None,
+                'ema_alpha': 0.7
+            }
+        
+        obj.attributes = default_attributes
+
+    def _ensure_all_attributes_present(self, obj):
+        """Ensure all configured attributes are present in the object"""
+        if not hasattr(self, 'attr_manager') or not self.attr_manager:
+            return
+            
+        # Get configured attributes from attr_manager
+        attrs = getattr(self.attr_manager, '_configured_attrs', [])
+        if not attrs:
+            return
+        
+        # Initialize obj.attributes if it doesn't exist
+        if not hasattr(obj, 'attributes') or obj.attributes is None:
+            obj.attributes = {}
+        
+        # Add missing attributes with 'none' state
+        for attr_name in attrs:
+            if attr_name not in obj.attributes:
+                obj.attributes[attr_name] = {
+                    'name': attr_name,
+                    'state': 'none',
+                    'confidence_smooth': 0.0,
+                    'frames_present': 0,
+                    'total_time_ms': 0,
+                    'no_detect_time_ms': 0,
+                    'enter_count': 0,
+                    'enter_ts': None,
+                    'last_seen_ts': None
+                }
 
     def _handle_active(self, tracking_results: TrackingResultList, image):
         for active_obj in self.active_objs.objects:
             active_obj.last_update = False
+
+        # Handle case when tracking_results is None (from attributes processors)
+        if tracking_results is None:
+            # Update attributes for active objects without new tracking data
+            current_ts = time.time()
+            dt_ms = int((current_ts - (self._last_frame_ts.get(image.source_id, current_ts))) * 1000)
+            self._last_frame_ts[image.source_id] = current_ts
+
+            # Process attribute results from AttributeClassifier
+            # Check both image.attr_results and tracking_data.attr_results
+            attr_results_source = None
+            if hasattr(image, 'attr_results') and image.attr_results:
+                attr_results_source = image.attr_results
+            elif hasattr(tracking_results, 'attr_results') and tracking_results.attr_results:
+                attr_results_source = tracking_results.attr_results
+                
+            if attr_results_source:
+                for track_id, attr_results in attr_results_source.items():
+                    if self.attr_manager:
+                        for attr_name, attr_info in attr_results.items():
+                            detected_now = attr_info.get('detected_now', False)
+                            confidence = attr_info.get('confidence', 0.0)
+                            self.attr_manager.update(track_id, attr_name, detected_now, confidence, current_ts, dt_ms)
+
+            for active_obj in self.active_objs.objects:
+                # Update attributes for active objects
+                if self.attr_manager:
+                    attr_states = self.attr_manager.get_states(active_obj.track.track_id)
+                    active_obj.attributes = {name: state.__dict__ for name, state in attr_states.items()}
+                    
+                # Ensure all attributes are present for primary objects
+                if self._is_primary_object(active_obj):
+                    self._ensure_all_attributes_present(active_obj)
+            return
 
         for track in tracking_results.tracks:
             track_object = None
@@ -278,11 +432,42 @@ class ObjectsHandler(EvilEyeBase):
                     )
                     self.labeling_manager.add_object_found(object_data)
                 except Exception as e:
-                    print(f"Error saving labeling data for found object: {e}")
+                    self.logger.error(f"Labeling data saving error for found object: {e}")
                 
                 self.active_objs.objects.append(obj)
                # print(f"active_objs len={len(self.active_objs.objects)} size={asizeof.asizeof(self.active_objs.objects)/(1024.0*1024.0)}")
                # print(f"lost_objs len={len(self.lost_objs.objects)} size={asizeof.asizeof(self.lost_objs.objects)/(1024.0*1024.0)}")
+
+        # Обновление атрибутов для активных объектов (если включено)
+        if self.attr_manager is not None and tracking_results is not None:
+            dt_ms = 0
+            # оценка dt по fps/времени могла бы быть точнее; используем 33мс как дефолт
+            try:
+                dt_ms = int(1000.0 / max(1, getattr(image, 'fps', 30)))
+            except Exception:
+                dt_ms = 33
+            now_ts = time.time()
+            
+            # Process attribute results from AttributeClassifier
+            if hasattr(tracking_results, 'attr_results') and tracking_results.attr_results:
+                for track_id, attr_results in tracking_results.attr_results.items():
+                    for attr_name, attr_info in attr_results.items():
+                        detected_now = attr_info.get('detected_now', False)
+                        confidence = attr_info.get('confidence', 0.0)
+                        self.attr_manager.update(track_id, attr_name, detected_now, confidence, now_ts, dt_ms)
+            
+            # Сохранить снимок состояний атрибутов в объекты
+            for obj in self.active_objs.objects:
+                if obj.source_id != tracking_results.source_id:
+                    continue
+                    
+                # Сохранить снимок состояний в объект
+                attr_states = self.attr_manager.get_states(obj.track.track_id)
+                obj.attributes = {k: vars(v) for k, v in attr_states.items()}
+                
+                # Убедиться, что все настроенные атрибуты присутствуют в объекте
+                if self._is_primary_object(obj):
+                    self._ensure_all_attributes_present(obj)
 
         filtered_active_objects = []
         for active_obj in self.active_objs.objects:
@@ -314,7 +499,7 @@ class ObjectsHandler(EvilEyeBase):
                         )
                         self.labeling_manager.add_object_lost(object_data)
                     except Exception as e:
-                        print(f"Error saving labeling data for lost object: {e}")
+                        self.logger.error(f"Labeling data saving error for lost object: {e}")
                     
                     self.lost_objs.objects.append(active_obj)
                 else:
@@ -398,7 +583,7 @@ class ObjectsHandler(EvilEyeBase):
             self._save_image(obj.last_image, obj.track.bounding_box, 'frame', event_type, obj)
             
         except Exception as e:
-            print(f"Error saving object images: {e}")
+            self.logger.error(f"Object images saving error: {e}")
 
     def _save_image(self, image, box, image_type, obj_event_type, obj):
         """Save image to file system independent of database - using same logic as database journal"""
@@ -441,10 +626,10 @@ class ObjectsHandler(EvilEyeBase):
                 saved = cv2.imwrite(full_img_path, image.image)
             
             if not saved:
-                print(f'ERROR: can\'t save image file {full_img_path}')
+                self.logger.error(f'ERROR: Failed to save image file {full_img_path}')
 
         except Exception as e:
-            print(f"Error saving image: {e}")
+            self.logger.error(f"Image saving error: {e}")
 
     def _get_img_path(self, image_type, obj_event_type, obj):
         # Use default image directory if database is not available

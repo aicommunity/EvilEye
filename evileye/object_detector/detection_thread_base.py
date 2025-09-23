@@ -7,6 +7,7 @@ from .object_detection_base import DetectionResultList
 from .object_detection_base import DetectionResult
 from ..capture.video_capture_base import CaptureImage
 from timeit import default_timer as timer
+import logging
 
 # Import utils later to avoid circular imports
 utils = None
@@ -22,8 +23,11 @@ def get_utils():
 class DetectionThreadBase:
     id_cnt = 0  # Переменная для присвоения каждому детектору своего идентификатора
 
-    def __init__(self, stride: int, classes: list, source_ids: list, roi: list, inf_params: dict, queue_out: Queue):
+    def __init__(self, stride: int, classes: list, source_ids: list, roi: list, inf_params: dict, queue_out: Queue, logger_name: str | None = None, parent_logger: logging.Logger | None = None):
         super().__init__()
+        base_name = "evileye.detection_thread"
+        full_name = f"{base_name}.{logger_name}" if logger_name else base_name
+        self.logger = parent_logger or logging.getLogger(full_name)
 
         self.prev_time = 0  # Для параметра скважности, заданного временем; отсчет времени
         self.stride = stride  # Параметр скважности
@@ -37,6 +41,7 @@ class DetectionThreadBase:
         self.source_ids = source_ids
         self.processing_thread = threading.Thread(target=self._process_impl)
         self.roi_coords_per_camera = {source_id: roi_coords for source_id, roi_coords in zip(self.source_ids, self.roi)}
+        self.model_class_mapping = None
 
     def start(self):
         self.run_flag = True
@@ -46,12 +51,12 @@ class DetectionThreadBase:
         self.run_flag = False
         if self.processing_thread.is_alive():
             self.processing_thread.join()
-        print('Detection thread stopped')
+        self.logger.info('Detection thread stopped')
 
     def put(self, image: CaptureImage, force=False):
         dropped_id = []
         if not self.run_flag:
-            print(f"Detection thread doesn't started. Put ignored for {image.source_id}:{image.frame_id}")
+            self.logger.warning(f"Detection thread not started. Put ignored for {image.source_id}:{image.frame_id}")
         if self.queue_in.full():
             if force:
                 dropped_image = self.queue_in.get()
@@ -64,6 +69,13 @@ class DetectionThreadBase:
         self.queue_in.put(image)
         return True, dropped_id
 
+    def get_model_class_mapping(self) -> dict|None:
+        return self.model_class_mapping
+    
+    def _update_model_class_mapping_from_model(self):
+        """Update model_class_mapping from loaded model (to be implemented in subclasses)"""
+        pass
+
     def _process_impl(self):
         while self.run_flag:
             self.init_detection_implementation()
@@ -73,7 +85,7 @@ class DetectionThreadBase:
                 else:
                     image = None
             except ValueError as ex:
-                print(f"Exception in detection thread: _process_impl: {ex}")
+                self.logger.error(f"Exception in detection thread: _process_impl: {ex}")
 
                 break
             if not image:
@@ -90,7 +102,7 @@ class DetectionThreadBase:
             if detection_result_list:
                 self.queue_out.put([detection_result_list, image])
             # finish_it = timer()
-            # print(f'TIME: {finish_it - start_it}')
+            # self.logger.debug(f'TIME: {finish_it - start_it}')
 
     def process_stride(self, split_image):
         bboxes_coords = []
@@ -119,8 +131,8 @@ class DetectionThreadBase:
 
         for bbox, class_id, conf in zip(bboxes_coords, class_ids, confidences):
             detection_result = DetectionResult()
-            detection_result.bounding_box = bbox
-            detection_result.class_id = class_id
+            detection_result.bounding_box = [int(x) for x in bbox]
+            detection_result.class_id = int(class_id)
             detection_result.confidence = conf
             detection_result_list.detections.append(detection_result)
         return detection_result_list

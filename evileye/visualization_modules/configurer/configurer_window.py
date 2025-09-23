@@ -4,6 +4,7 @@ import os.path
 import multiprocessing
 from .jobs_history_journal import JobsHistory
 from .db_connection_window import DatabaseConnectionWindow
+from ...core.logger import get_module_logger
 
 try:
     from PyQt6 import QtGui
@@ -67,6 +68,7 @@ class ConfigurerMainWindow(QMainWindow):
 
     def __init__(self, config_file_name, win_width, win_height):
         super().__init__()
+        self.logger = get_module_logger("configurer_window")
         self.config_file_name = config_file_name
         self.setWindowTitle("EvilEye Configurer")
         self.resize(win_width, win_height)
@@ -340,7 +342,7 @@ class ConfigurerMainWindow(QMainWindow):
             tab = self.tabs.widget(tab_idx)
             tab.close()
         # self.db_window.close()
-        print('DB jobs_conn removed')
+        self.logger.info('DB jobs_conn removed')
         QSqlDatabase.removeDatabase('jobs_conn')
         QApplication.closeAllWindows()
         event.accept()

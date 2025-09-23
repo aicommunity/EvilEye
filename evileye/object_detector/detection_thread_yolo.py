@@ -2,6 +2,7 @@ from queue import Queue
 import threading
 from ultralytics import YOLO
 from .detection_thread_base import DetectionThreadBase
+import logging
 
 # Import utils later to avoid circular imports
 utils = None
@@ -17,7 +18,10 @@ def get_utils():
 class DetectionThreadYolo(DetectionThreadBase):
     id_cnt = 0  # Переменная для присвоения каждому детектору своего идентификатора
 
-    def __init__(self, model_name: str, stride: int, classes: list, source_ids: list, roi: list, inf_params: dict, queue_out: Queue):
+    def __init__(self, model_name: str, stride: int, classes: list, source_ids: list, roi: list, inf_params: dict, queue_out: Queue, logger_name: str | None = None, parent_logger: logging.Logger | None = None):
+        base_name = f"evileye.detection_thread_yolo"
+        full_name = f"{base_name}.{logger_name}" if logger_name else base_name
+        self.logger = parent_logger or logging.getLogger(full_name)
         self.model_name = model_name
         self.model = None
         super().__init__(stride, classes, source_ids, roi, inf_params, queue_out)
@@ -28,6 +32,10 @@ class DetectionThreadYolo(DetectionThreadBase):
             self.model.fuse()  # Fuse Conv+BN layers
             if self.inf_params.get('half', True):
                 self.model.half()
+            self.logger.info(f"Model names: {self.model.names}")
+            
+            # Update model_class_mapping from model
+            self._update_model_class_mapping_from_model()
 
     def predict(self, images: list):
         return self.model.predict(source=images, classes=self.classes, verbose=False, **self.inf_params)
@@ -40,6 +48,7 @@ class DetectionThreadYolo(DetectionThreadBase):
         coords = boxes.xyxy
         confs = boxes.conf
         class_ids = boxes.cls
+        
         for coord, class_id, conf in zip(coords, class_ids, confs):
             if int(class_id) not in self.classes:
                 continue
@@ -49,3 +58,10 @@ class DetectionThreadYolo(DetectionThreadBase):
             confidences.append(conf)
             ids.append(class_id)
         return bboxes_coords, confidences, ids
+    
+    def _update_model_class_mapping_from_model(self):
+        """Update model_class_mapping from YOLO model names"""
+        if self.model and hasattr(self.model, 'names') and self.model.names:
+            # Create mapping from model names: {class_name: class_id}
+            self.model_class_mapping = {name: idx for idx, name in self.model.names.items()}
+            self.logger.info(f"Updated model_class_mapping from YOLO model: {self.model_class_mapping}")
