@@ -25,7 +25,6 @@ class DatabaseControllerPg(DatabaseControllerBase):
     cur_job_id = 0
 
     def __init__(self, system_params, controller_type='Writer'):
-        super().__init__(system_params, controller_type)
         self.logger = get_module_logger("database_controller_pg")
         super().__init__(controller_type)
         self.configuration_info = system_params
