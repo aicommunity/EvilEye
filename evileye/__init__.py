@@ -22,7 +22,7 @@ from .core import PipelineProcessors, ProcessorBase, ProcessorSource, ProcessorF
 from .pipelines import PipelineSurveillance
 
 # Import registered classes
-from .capture import video_capture
+from .capture import video_capture, VideoCaptureGStreamer
 from .object_detector import object_detection_yolo
 from .object_tracker import object_tracking_botsort
 from .object_multi_camera_tracker import ObjectMultiCameraTracking
@@ -44,6 +44,7 @@ __all__ = [
     
     # Registered classes
     "video_capture",
+    "VideoCaptureGStreamer",
     "object_detection_yolo", 
     "object_tracking_botsort",
     "ObjectMultiCameraTracking",
