@@ -297,7 +297,8 @@ def deploy_samples() -> None:
         "pipeline_capture.json",
         "single_video_rtdetr.json",
         "multi_videos_rtdetr.json",
-        "single_video_rfdetr.json"
+        "single_video_rfdetr.json",
+        "single_video_gstreamer.json"
     ]
     
     copied_count = 0
@@ -323,6 +324,7 @@ This directory contains sample configurations for EvilEye system.
 - **single_video.json** - Single video file processing (planes_sample.mp4)
 - **single_video_split.json** - Single video with 2-way split processing (sample_split.mp4)
 - **multi_videos.json** - Multiple video files with multi-camera tracking (6p-c0.avi, 6p-c1.avi)
+- **single_video_gstreamer.json** - Single video file processing with GStreamer backend (planes_sample.mp4)
 
 ### RT-DETR Detector Examples
 - **single_video_rtdetr.json** - Single video with RT-DETR detector (planes_sample.mp4)
