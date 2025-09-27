@@ -65,6 +65,16 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             # USB/Device camera pipeline
             device_id = self.source_address if self.source_address.isdigit() else "0"
             pipeline = f"v4l2src device=/dev/video{device_id} ! videoconvert"
+            
+        elif self.source_type == CaptureDeviceType.ImageSequence:
+            # Image sequence pipeline - support for folders with jpeg, png, bmp
+            # Check if source_address is a directory (no file mask)
+            if not any(pattern in self.source_address for pattern in ['%', '*', '?']):
+                # Directory path - use multifilesrc with wildcard pattern
+                pipeline = f"multifilesrc location={self.source_address}/* ! decodebin ! videoconvert"
+            else:
+                # File pattern - use as is
+                pipeline = f"multifilesrc location={self.source_address} ! decodebin ! videoconvert"
         
         else:
             raise ValueError(f"Unsupported source type: {self.source_type}")
