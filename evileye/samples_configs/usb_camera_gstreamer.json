@@ -1,0 +1,49 @@
+{
+  "pipeline": {
+    "pipeline_class": "PipelineSurveillance",
+    "sources": [
+      {
+        "camera": "0",
+        "source": "Device",
+        "type": "VideoCaptureGStreamer",
+        "split": false,
+        "num_split": 0,
+        "src_coords": [0],
+        "source_ids": [0],
+        "source_names": ["USB Camera"],
+        "desired_fps": 30
+      }
+    ],
+    "detectors": [
+      {
+        "model": "models/yolo11n.pt",
+        "classes": [0, 1, 24, 25, 63, 66, 67],
+        "source_ids": [0],
+        "roi": [[]],
+        "type": "ObjectDetectorRtdetr"
+      }
+    ],
+    "trackers": [
+      {
+        "type": "ObjectTrackingBotsort",
+        "source_ids": [0]
+      }
+    ],
+    "handlers": [
+      {
+        "type": "ObjectsHandler",
+        "source_ids": [0]
+      }
+    ],
+    "visualizers": [
+      {
+        "type": "BoundingBoxVisualizer",
+        "source_ids": [0]
+      }
+    ],
+    "display": {
+      "type": "display",
+      "source_ids": [0]
+    }
+  }
+}

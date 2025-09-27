@@ -298,7 +298,9 @@ def deploy_samples() -> None:
         "single_video_rtdetr.json",
         "multi_videos_rtdetr.json",
         "single_video_rfdetr.json",
-        "single_video_gstreamer.json"
+        "single_video_gstreamer.json",
+        "ip_camera_gstreamer.json",
+        "usb_camera_gstreamer.json"
     ]
     
     copied_count = 0
@@ -325,6 +327,10 @@ This directory contains sample configurations for EvilEye system.
 - **single_video_split.json** - Single video with 2-way split processing (sample_split.mp4)
 - **multi_videos.json** - Multiple video files with multi-camera tracking (6p-c0.avi, 6p-c1.avi)
 - **single_video_gstreamer.json** - Single video file processing with GStreamer backend (planes_sample.mp4)
+
+### GStreamer Backend Examples
+- **ip_camera_gstreamer.json** - IP camera stream processing with GStreamer backend (RTSP)
+- **usb_camera_gstreamer.json** - USB camera processing with GStreamer backend (/dev/video0)
 
 ### RT-DETR Detector Examples
 - **single_video_rtdetr.json** - Single video with RT-DETR detector (planes_sample.mp4)
@@ -365,6 +371,11 @@ evileye run configs/multi_videos_rtdetr.json
 
 # Run RF-DETR example
 evileye run configs/single_video_rfdetr.json
+
+# Run GStreamer examples
+evileye run configs/single_video_gstreamer.json
+evileye run configs/ip_camera_gstreamer.json
+evileye run configs/usb_camera_gstreamer.json
 ```
 
 ## Configuration Features:
