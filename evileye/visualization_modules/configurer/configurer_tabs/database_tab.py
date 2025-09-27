@@ -22,7 +22,7 @@ except ImportError:
 from evileye.utils import utils
 import sys
 from evileye.capture.video_capture_base import CaptureDeviceType
-from evileye.capture import VideoCapture
+from evileye.capture import VideoCaptureOpencv
 from evileye.visualization_modules.configurer import parameters_processing
 
 

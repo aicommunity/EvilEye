@@ -52,8 +52,8 @@ class PipelineSurveillance(PipelineProcessors):
             return
             
         num_sources = len(params)
-        # Get class_name from config, default to VideoCapture
-        class_name = params[0].get("type", "VideoCapture") if params else "VideoCapture"
+        # Get class_name from config, default to VideoCaptureOpencv
+        class_name = params[0].get("type", "VideoCaptureOpencv") if params else "VideoCaptureOpencv"
         if not any(param.get("type") for param in params):
             self.logger.warning(f"Warning: 'type' parameter not found in sources configuration. Using default: {class_name}")
         

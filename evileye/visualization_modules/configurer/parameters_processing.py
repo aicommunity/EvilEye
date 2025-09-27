@@ -6,7 +6,7 @@ from PyQt6.QtWidgets import (
     QMenu, QMainWindow, QApplication, QCheckBox, QPushButton
 )
 from ...capture.video_capture_base import CaptureDeviceType
-from ...capture.video_capture import VideoCapture
+from ...capture.video_capture_opencv import VideoCaptureOpencv
 from ...core.logger import get_module_logger
 
 

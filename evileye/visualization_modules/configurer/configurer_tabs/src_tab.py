@@ -29,7 +29,7 @@ except ImportError:
     from PyQt5.QtSql import QSqlQueryModel, QSqlQuery, QSqlDatabase
     pyqt_version = 5
 from evileye.capture.video_capture_base import CaptureDeviceType
-from evileye.capture import VideoCapture
+from evileye.capture import VideoCaptureOpencv
 from .. import parameters_processing
 from .src_widget import SourceWidget
 import sys
