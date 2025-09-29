@@ -24,7 +24,7 @@ except ImportError:
         QMenu, QMainWindow, QApplication, QCheckBox, QPushButton, QTabWidget
     )
     from PyQt5.QtGui import QIcon
-    from PyQt5.QtGui import QAction
+    from PyQt5.QtWidgets import QAction
     from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt
     from PyQt5.QtSql import QSqlQueryModel, QSqlQuery, QSqlDatabase
     pyqt_version = 5

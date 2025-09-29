@@ -1,10 +1,20 @@
 import os
 import json
-from PyQt6.QtWidgets import (
+
+try:
+    from PyQt6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout, QLineEdit, QScrollArea,
     QSizePolicy, QToolBar, QComboBox, QFormLayout, QSpacerItem,
     QMenu, QMainWindow, QApplication, QCheckBox, QPushButton
-)
+    )
+    pyqt_version = 6
+except ImportError:
+    from PyQt5.QtWidgets import (
+    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QLineEdit, QScrollArea,
+    QSizePolicy, QToolBar, QComboBox, QFormLayout, QSpacerItem,
+    QMenu, QMainWindow, QApplication, QCheckBox, QPushButton
+    )
+    pyqt_version = 5
 from ...capture.video_capture_base import CaptureDeviceType
 from ...capture.video_capture_opencv import VideoCaptureOpencv
 from ...core.logger import get_module_logger
