@@ -46,6 +46,13 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         else:
             self.logger.warning("GStreamer not available, falling back to OpenCV")
     
+    def _gst_has(self, element_name: str) -> bool:
+        """Check if GStreamer element factory exists."""
+        try:
+            return self.gstreamer_available and Gst.ElementFactory.find(element_name) is not None
+        except Exception:
+            return False
+    
     def _build_pipeline(self) -> str:
         """
         Build GStreamer pipeline based on source type and parameters.
@@ -58,8 +65,23 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 pipeline = f"rtspsrc location={self.source_address} ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert"
             
         elif self.source_type == CaptureDeviceType.VideoFile:
-            # Video file pipeline - simplified
-            pipeline = f"filesrc location={self.source_address} ! decodebin ! videoconvert"
+            # Video file pipeline
+            use_nv_decoder = (
+                self._gst_has('nvv4l2decoder') and
+                self._gst_has('nvvidconv') and
+                str(self.source_address).lower().endswith('.mp4')
+            )
+
+            if use_nv_decoder:
+                # Prefer NV hardware decode path on Jetson/NVIDIA systems
+                pipeline = (
+                    f"filesrc location={self.source_address} ! qtdemux ! h264parse ! nvv4l2decoder "
+                    f"! nvvidconv ! video/x-raw(memory:NVMM),format=BGRx ! nvvidconv ! video/x-raw,format=BGRx ! videoconvert"
+                )
+            else:
+                # Fallback: generic software decode supporting many containers/codecs
+                pipeline = f"filesrc location={self.source_address} ! decodebin ! videoconvert"
+                   
             
         elif self.source_type == CaptureDeviceType.Device:
             # USB/Device camera pipeline
