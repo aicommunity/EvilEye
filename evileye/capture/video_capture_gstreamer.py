@@ -105,7 +105,24 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             raise ValueError(f"Unsupported source type: {self.source_type}")
         
         # Add common pipeline end - simplified
-        pipeline += " ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true sync=false max-buffers=1 drop=true"
+        # Apply desired FPS if requested using videorate (before format caps/appsink)
+        if self.desired_fps and self.desired_fps > 0:
+            try:
+                # Convert to fraction (prefer integer; fallback to 1001 base)
+                fps = float(self.desired_fps)
+                if abs(fps - round(fps)) < 1e-6:
+                    num, den = int(round(fps)), 1
+                else:
+                    # Use 1001 denominator for common NTSC-like framerates
+                    num, den = int(round(fps * 1001)), 1001
+                # Limit to desired FPS without upsampling (no capsfilter forcing framerate)
+                # videorate max-rate drops frames if source faster; if slower, it passes through
+                pipeline += f" ! videorate max-rate={num} drop-only=true"
+            except Exception:
+                # If anything goes wrong, skip forcing fps
+                pass
+        # Use sync=true to play according to timestamps (real-time). Keep drop to avoid backlog.
+        pipeline += " ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true sync=true max-buffers=1 drop=true"
         
         return pipeline
     
