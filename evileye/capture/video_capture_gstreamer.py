@@ -45,6 +45,8 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 Gst.init(None)
         else:
             self.logger.warning("GStreamer not available, falling back to OpenCV")
+        
+        self.bus = None
     
     def _gst_has(self, element_name: str) -> bool:
         """Check if GStreamer element factory exists."""
@@ -186,6 +188,15 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 if not self.pipeline:
                     raise RuntimeError("Failed to create GStreamer pipeline")
                 
+                # Setup bus to handle EOS/ERROR
+                self.bus = self.pipeline.get_bus()
+                if self.bus is not None:
+                    try:
+                        self.bus.add_signal_watch()
+                        self.bus.connect("message", self._on_bus_message)
+                    except Exception:
+                        pass
+
                 # Get appsink element
                 self.appsink = self.pipeline.get_by_name("sink")
                 if not self.appsink:
@@ -210,6 +221,46 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             self.logger.error(f"Failed to initialize GStreamer pipeline: {e}")
             self.logger.error(f"Pipeline string was: {pipeline_str}")
             raise
+
+    def _on_bus_message(self, bus, message):
+        try:
+            msg_type = message.type
+            if msg_type == Gst.MessageType.EOS:
+                self.logger.info("GStreamer EOS received")
+                if self.source_type == CaptureDeviceType.VideoFile and self.loop_play:
+                    self._seek_to_start()
+                else:
+                    self.finished = True
+                    self.is_working = False
+            elif msg_type == Gst.MessageType.ERROR:
+                err, debug = message.parse_error()
+                self.logger.error(f"GStreamer ERROR: {err}, debug: {debug}")
+                self.is_working = False
+        except Exception as e:
+            self.logger.error(f"Error handling bus message: {e}")
+
+    def _seek_to_start(self):
+        try:
+            with self.pipeline_lock:
+                if not self.pipeline:
+                    return
+                # Flush and seek to start
+                success = self.pipeline.seek_simple(
+                    Gst.Format.TIME,
+                    Gst.SeekFlags.FLUSH | Gst.SeekFlags.KEY_UNIT | Gst.SeekFlags.ACCURATE,
+                    0
+                )
+                if success:
+                    self.logger.info("Looping video: seek to start")
+                    self.finished = False
+                    self.is_working = True
+                else:
+                    self.logger.warning("Looping video: seek failed, restarting pipeline")
+                    # Fallback: restart pipeline
+                    self.pipeline.set_state(Gst.State.NULL)
+                    self.pipeline.set_state(Gst.State.PLAYING)
+        except Exception as e:
+            self.logger.error(f"Looping video: exception during seek: {e}")
     
     def _start_main_loop(self):
         """
