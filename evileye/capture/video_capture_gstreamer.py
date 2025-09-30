@@ -47,6 +47,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             self.logger.warning("GStreamer not available, falling back to OpenCV")
         
         self.bus = None
+        self._fps_times = []  # rolling timestamps to estimate FPS as fallback
     
     def _gst_has(self, element_name: str) -> bool:
         """Check if GStreamer element factory exists."""
@@ -122,6 +123,15 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 structure = caps.get_structure(0)
                 width = structure.get_int("width")[1]
                 height = structure.get_int("height")[1]
+                # Try to get FPS from caps if not set
+                if self.source_fps is None and structure is not None:
+                    try:
+                        if structure.has_field("framerate"):
+                            num, den = structure.get_fraction("framerate")
+                            if den != 0:
+                                self.source_fps = float(num) / float(den)
+                    except Exception:
+                        pass
                 
                 # Extract frame data
                 success, map_info = buffer.map(Gst.MapFlags.READ)
@@ -139,6 +149,40 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     capture_image.frame_id = self.frame_id_counter
                     capture_image.time_stamp = time.time()
                     capture_image.source_id = self.source_ids[0] if self.source_ids else 0
+                    # Update current video position/frame for GUI like OpenCV implementation
+                    if self.source_type == CaptureDeviceType.VideoFile:
+                        try:
+                            # Prefer buffer PTS for accurate position
+                            pts_ns = buffer.pts
+                            if pts_ns is not None and pts_ns != Gst.CLOCK_TIME_NONE and pts_ns >= 0:
+                                self.video_current_position = float(pts_ns) / 1e6  # ms
+                            else:
+                                ok, pos_ns = self.pipeline.query_position(Gst.Format.TIME)
+                                if ok and pos_ns is not None and pos_ns >= 0:
+                                    self.video_current_position = float(pos_ns) / 1e6  # milliseconds
+                                else:
+                                    self.video_current_position = None
+                        except Exception:
+                            self.video_current_position = None
+                        # Approximate current frame if fps is known
+                        if self.source_fps and self.video_current_position is not None:
+                            self.video_current_frame = int((self.video_current_position / 1000.0) * self.source_fps)
+                        else:
+                            if self.video_current_frame is None:
+                                self.video_current_frame = 0
+                            else:
+                                self.video_current_frame += 1
+                        capture_image.current_video_frame = self.video_current_frame
+                        capture_image.current_video_position = self.video_current_position
+                    # Maintain rolling FPS estimate as fallback
+                    now = capture_image.time_stamp
+                    self._fps_times.append(now)
+                    if len(self._fps_times) > 30:
+                        self._fps_times.pop(0)
+                    if self.source_fps is None and len(self._fps_times) >= 2:
+                        dt = self._fps_times[-1] - self._fps_times[0]
+                        if dt > 0:
+                            self.source_fps = (len(self._fps_times) - 1) / dt
                     
                     # Store frame
                     with self.frame_lock:
@@ -215,6 +259,17 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     if ret[0] == Gst.StateChangeReturn.FAILURE:
                         raise RuntimeError("Failed to start GStreamer pipeline")
                 
+                # Query duration for VideoFile
+                if self.source_type == CaptureDeviceType.VideoFile:
+                    try:
+                        ok, dur_ns = self.pipeline.query_duration(Gst.Format.TIME)
+                        if ok and dur_ns and dur_ns > 0:
+                            self.video_duration = float(dur_ns) / 1e6  # ms
+                            if self.source_fps:
+                                self.video_length = int((self.video_duration / 1000.0) * self.source_fps)
+                    except Exception:
+                        pass
+
                 self.logger.info("GStreamer pipeline initialized successfully")
                 
         except Exception as e:
