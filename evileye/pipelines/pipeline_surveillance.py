@@ -7,6 +7,7 @@ from ..core.pipeline_processors import PipelineProcessors
 from typing import Any, Tuple, List, Dict
 import evileye.preprocessing  # Import to register PreprocessingPipeline
 import evileye.attributes_detection  # Import to register RoiFeeder and AttributeClassifier
+import evileye.object_multi_camera_tracker  # Import to register ObjectMultiCameraTracking
 
 
 

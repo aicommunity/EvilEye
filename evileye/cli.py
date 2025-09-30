@@ -269,7 +269,7 @@ def deploy_samples() -> None:
     console.print("\n[blue]Downloading sample videos...[/blue]")
     try:
         from evileye.utils.download_samples import download_sample_videos
-        video_results = download_sample_videos(str(videos_dir))
+        video_results = download_sample_videos(str(videos_dir), parallel=False)
         
         successful_videos = sum(1 for r in video_results.values() 
                               if "downloaded" in r["status"] or r["status"] == "exists")
