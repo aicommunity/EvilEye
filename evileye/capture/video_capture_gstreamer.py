@@ -63,7 +63,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         if self.source_type == CaptureDeviceType.IpCamera:
             # IP Camera pipeline
             if self.username and self.password:
-                pipeline = f"rtspsrc location={self.source_address} userid={self.username} passwd={self.password} ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert"
+                pipeline = f"rtspsrc location={self.source_address} user-id={self.username} user-pw={self.password} ! rtph265depay ! h265parse ! avdec_h265 ! videoconvert"
             else:
                 pipeline = f"rtspsrc location={self.source_address} ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert"
             
@@ -375,7 +375,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             self.is_inited = False
             self.is_working = False
             raise
-    
+
     def release(self):
         """
         Release resources and stop pipeline.
@@ -385,15 +385,15 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 if self.pipeline:
                     self.pipeline.set_state(Gst.State.NULL)
                     self.pipeline = None
-                
+
                 self._stop_main_loop()
-                
+
                 with self.frame_lock:
                     self.last_frame = None
-                
+
                 self.is_working = False
                 self.logger.info("GStreamer video capture released")
-                
+
         except Exception as e:
             self.logger.error(f"Error releasing GStreamer capture: {e}")
     

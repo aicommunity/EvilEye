@@ -23,16 +23,18 @@ def test_ip_camera():
     # Настройка параметров для IP камеры
     params = {
         'source': 'IpCamera',
-        'camera': 'rtsp://192.168.1.100:554/stream1',  # Замените на ваш RTSP URL
-        'username': 'admin',  # Замените на ваши данные
-        'password': 'password',
-        'desired_fps': 30,
+        'camera': 'rtsp://10.245.1.200',  # Замените на ваш RTSP URL
+        'username': 'user',  # Замените на ваши данные
+        'password': 'AutoZloboglaz821',
+        'desired_fps': 15,
         'source_ids': [0],
         'source_names': ['ip_camera']
     }
-    
+    window_name = 'GStreamer Capture'
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+
     try:
-        capture.set_params(params)
+        capture.set_params(**params)
         capture.init()
         
         print(f"Источник открыт: {capture.is_opened()}")
@@ -50,10 +52,9 @@ def test_ip_camera():
             if frames:
                 frame_count += len(frames)
                 for frame in frames:
-                    print(f"Получен кадр {frame.frame.frame_id} от источника {frame.source_name}")
-                    
+                    print(f"Получен кадр {frame.frame_id} от источника {frame.source_id}")
                     # Показать кадр (опционально)
-                    cv2.imshow('GStreamer Capture', frame.frame.image)
+                    cv2.imshow(window_name, frame.image)
                     if cv2.waitKey(1) & 0xFF == ord('q'):
                         break
             
@@ -78,14 +79,17 @@ def test_video_file():
     # Настройка параметров для видео файла
     params = {
         'source': 'VideoFile',
-        'camera': '/path/to/your/video.mp4',  # Замените на путь к вашему видео
+        'camera': '~/EvilEye/videos/planes_sample.mp4',  # Замените на путь к вашему видео
         'desired_fps': 25,
         'source_ids': [0],
         'source_names': ['video_file']
     }
+
+    window_name = 'GStreamer Video File'
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
     
     try:
-        capture.set_params(params)
+        capture.set_params(**params)
         capture.init()
         
         print(f"Источник открыт: {capture.is_opened()}")
@@ -93,19 +97,20 @@ def test_video_file():
         
         # Запуск захвата
         capture.start()
-        
+        run_flag = True
         # Получение кадров
         frame_count = 0
-        while True:
+        while run_flag:
             frames = capture.get()
             if frames:
                 frame_count += len(frames)
                 for frame in frames:
-                    print(f"Получен кадр {frame.frame.frame_id}")
+                    print(f"Получен кадр {frame.frame_id}")
                     
                     # Показать кадр
-                    cv2.imshow('GStreamer Video File', frame.frame.image)
+                    cv2.imshow(window_name, frame.image)
                     if cv2.waitKey(1) & 0xFF == ord('q'):
+                        run_flag = False
                         break
             else:
                 # Если кадров нет, возможно видео закончилось
@@ -139,9 +144,12 @@ def test_usb_camera():
         'source_ids': [0],
         'source_names': ['usb_camera']
     }
-    
+
+    window_name = 'GStreamer USB Camera'
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+
     try:
-        capture.set_params(params)
+        capture.set_params(**params)
         capture.init()
         
         print(f"Источник открыт: {capture.is_opened()}")
@@ -159,10 +167,10 @@ def test_usb_camera():
             if frames:
                 frame_count += len(frames)
                 for frame in frames:
-                    print(f"Получен кадр {frame.frame.frame_id}")
+                    print(f"Получен кадр {frame.frame_id}")
                     
                     # Показать кадр
-                    cv2.imshow('GStreamer USB Camera', frame.frame.image)
+                    cv2.imshow(window_name, frame.image)
                     if cv2.waitKey(1) & 0xFF == ord('q'):
                         break
             
