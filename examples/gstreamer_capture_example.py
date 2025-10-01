@@ -23,10 +23,10 @@ def test_ip_camera():
     # Настройка параметров для IP камеры
     params = {
         'source': 'IpCamera',
-        'camera': 'rtsp://10.245.1.200',  # Замените на ваш RTSP URL
-        'username': 'user',  # Замените на ваши данные
-        'password': 'AutoZloboglaz821',
-        'desired_fps': 15,
+        'camera': 'rtsp://192.168.1.100:554/stream1',  # Замените на ваш RTSP URL
+        'username': 'admin',  # Замените на ваши данные
+        'password': 'password',
+        'desired_fps': 30,
         'source_ids': [0],
         'source_names': ['ip_camera']
     }
