@@ -78,11 +78,12 @@ class ImageWindow(QLabel):
             qp.setPen(QPen(Qt.GlobalColor.red))
             qp.setBrush(QBrush(QColor(255, 0, 0, 64)))
             qp.drawPolygon(coords)
-        pen = QPen(Qt.GlobalColor.green, 2)
-        qp.setPen(pen)
-        qp.setBrush(QBrush())
-        qp.drawRect(int(box[0] * self.pixmap.width()), int(box[1] * self.pixmap.height()),
-                    int((box[2] - box[0]) * self.pixmap.width()), int((box[3] - box[1]) * self.pixmap.height()))
+        if box is not None:
+            pen = QPen(Qt.GlobalColor.green, 2)
+            qp.setPen(pen)
+            qp.setBrush(QBrush())
+            qp.drawRect(int(box[0] * self.pixmap.width()), int(box[1] * self.pixmap.height()),
+                        int((box[2] - box[0]) * self.pixmap.width()), int((box[3] - box[1]) * self.pixmap.height()))
         qp.end()
         self.label.setPixmap(self.pixmap)
         self.layout = QVBoxLayout()
@@ -292,29 +293,36 @@ class EventsJournal(QWidget):
         if not path:
             return
 
-        query = QSqlQuery(QSqlDatabase.database('events_conn'))  # Getting a bounding_box of the current image
-        if 'zone' in path:
-            if 'entered' in path:
-                query.prepare('SELECT box_entered, zone_coords from zone_events WHERE preview_path_entered = :path')
+        # Attribute events: show image without box overlay (box is not stored in DB)
+        is_attribute = ('attribute_' in path)
+        box = None
+        zone_coords = None
+        if not is_attribute:
+            query = QSqlQuery(QSqlDatabase.database('events_conn'))  # Getting a bounding_box of the current image
+            if 'zone' in path:
+                if 'entered' in path:
+                    query.prepare('SELECT box_entered, zone_coords from zone_events WHERE preview_path_entered = :path')
+                else:
+                    query.prepare('SELECT box_left, zone_coords from zone_events WHERE preview_path_left = :path')
             else:
-                query.prepare('SELECT box_left, zone_coords from zone_events WHERE preview_path_left = :path')
-        else:
-            if 'detected' in path:
-                query.prepare('SELECT bounding_box from objects WHERE preview_path = :path')
-            else:
-                query.prepare('SELECT lost_bounding_box from objects WHERE lost_preview_path = :path')
+                if 'detected' in path:
+                    query.prepare('SELECT bounding_box from objects WHERE preview_path = :path')
+                else:
+                    query.prepare('SELECT lost_bounding_box from objects WHERE lost_preview_path = :path')
 
-        query.bindValue(':path', path)
-        query.exec()
-        query.next()
-        box_str = query.value(0).replace('{', '').replace('}', '')  # Qt query returns QString, so converting it to box
-        box = [float(coord) for coord in box_str.split(',')]
-        zone_coords = query.value(1)
-        if zone_coords:
-            zone_coords = query.value(1)[1:-1]
-            points_str = zone_coords.split('},')
-            points_str = [s.strip(' {}').split(',') for s in points_str]
-            zone_coords = [(float(coord[0]), float(coord[1])) for coord in points_str]
+            query.bindValue(':path', path)
+            query.exec()
+            if query.next():
+                value0 = query.value(0)
+                if value0 is not None:
+                    box_str = value0.replace('{', '').replace('}', '')
+                    box = [float(coord) for coord in box_str.split(',')]
+                value1 = query.value(1)
+                if value1:
+                    zone_coords = value1[1:-1]
+                    points_str = zone_coords.split('},')
+                    points_str = [s.strip(' {}').split(',') for s in points_str]
+                    zone_coords = [(float(coord[0]), float(coord[1])) for coord in points_str]
 
         image_path = os.path.join(self.image_dir, path)
         previews_folder_path, file_name = os.path.split(image_path)

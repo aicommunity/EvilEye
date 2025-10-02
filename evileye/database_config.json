@@ -91,7 +91,11 @@
         "time_finished": "timestamp",
         "object_id": "integer",
         "event_name": "text",
-        "attrs": "text"
+        "attrs": "text",
+        "preview_path_found": "text",
+        "frame_path_found": "text",
+        "preview_path_finished": "text",
+        "frame_path_finished": "text"
       }
     },
     "image_dir": "EvilEyeData",
