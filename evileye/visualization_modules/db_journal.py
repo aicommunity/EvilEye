@@ -77,6 +77,19 @@ class DatabaseJournalWindow(QWidget):
         self.zone_events_adapter.set_params(**self.adapter_params['DatabaseAdapterZoneEvents'])
         self.zone_events_adapter.init()
 
+        # Attribute events adapter (optional)
+        try:
+            from .journal_adapters.jadapter_attribute_events import JournalAdapterAttributeEvents
+            self.attr_events_adapter = JournalAdapterAttributeEvents()
+            if 'DatabaseAdapterAttributeEvents' in self.adapter_params:
+                self.attr_events_adapter.set_params(**self.adapter_params['DatabaseAdapterAttributeEvents'])
+            else:
+                # fallback to same params as DB adapter
+                self.attr_events_adapter.set_params(**{'table_name': 'attribute_events'})
+            self.attr_events_adapter.init()
+        except Exception:
+            self.attr_events_adapter = None
+
         self.setWindowTitle('DB Journal')
         self.resize(1600, 600)
 
@@ -86,8 +99,10 @@ class DatabaseJournalWindow(QWidget):
         if self.obj_journal_enabled:
             self.tabs.addTab(handler_journal_view.HandlerJournal(self.db_controller, 'objects', self.params, self.database_params,
                                                                  self.tables['objects'], parent=self), 'Objects journal')
-        self.tabs.addTab(events_journal.EventsJournal([self.cam_events_adapter,
-                                                       self.perimeter_events_adapter, self.zone_events_adapter],
+        adapters = [self.cam_events_adapter, self.perimeter_events_adapter, self.zone_events_adapter]
+        if self.attr_events_adapter:
+            adapters.append(self.attr_events_adapter)
+        self.tabs.addTab(events_journal.EventsJournal(adapters,
                                                       self.db_controller, 'objects', self.params, self.database_params,
                                                       self.tables['objects'], parent=self,
                                                       logger_name="events_journal", parent_logger=self.logger), 'Events journal')

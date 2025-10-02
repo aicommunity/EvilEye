@@ -240,6 +240,13 @@ class ObjectsHandler(EvilEyeBase):
                 else:
                     self.snapshot = None
 
+                # Notify subscribers (events detectors) on each update
+                for subscriber in self.subscribers:
+                    try:
+                        subscriber.update()
+                    except Exception:
+                        pass
+
         for subscriber in self.subscribers:
             subscriber.update()
     

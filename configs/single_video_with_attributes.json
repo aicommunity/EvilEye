@@ -9,7 +9,9 @@
         "num_split": 0,
         "src_coords": [0],
         "source_ids": [0],
-        "source_names": ["Cam1"]
+        "source_names": ["Cam1"],
+        "type": "VideoCaptureGStreamer",
+        "desired_fps": 30
       }
     ],
     "detectors": [
@@ -128,6 +130,12 @@
       "sources": {},
       "event_threshold": 0,
       "zone_left_threshold": 0
+    },
+    "AttributeEventsDetector": {
+      "sources": {
+        "0": { "no_hat": ["no_hard_hat"], "ppe_ok": ["hard_hat"] },
+        "1": { "ppe_ok": ["hard_hat"], "no_hat": ["no_hard_hat"] }
+      }
     }
   },
   "events_processor": {},
