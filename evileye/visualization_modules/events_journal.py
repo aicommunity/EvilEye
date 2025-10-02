@@ -333,6 +333,25 @@ class EventsJournal(QWidget):
         beg = preview_folder_name.find('previews')
         file_folder_name = preview_folder_name[:beg] + 'frames'
         res_image_path = os.path.join(date_folder_path, file_folder_name, new_file_name)
+
+        # For attribute events, fetch normalized box from DB and draw it
+        if is_attribute and box is None:
+            q = QSqlQuery(QSqlDatabase.database('events_conn'))
+            if 'attribute_found' in path:
+                q.prepare('SELECT box_found FROM attribute_events WHERE preview_path_found = :path')
+            else:
+                q.prepare('SELECT box_finished FROM attribute_events WHERE preview_path_finished = :path')
+            q.bindValue(':path', path)
+            q.exec()
+            if q.next():
+                value0 = q.value(0)
+                if value0 is not None:
+                    # value0 is like '{x,y,w,h}' normalized
+                    try:
+                        box_str = value0.replace('{', '').replace('}', '')
+                        box = [float(coord) for coord in box_str.split(',')]
+                    except Exception:
+                        box = None
         self.image_win = ImageWindow(res_image_path, box, zone_coords)
         self.image_win.show()
 
