@@ -405,7 +405,10 @@ class EventsJournalJson(QWidget):
             
             # Force repaint and process events
             self.table.repaint()
-            from PyQt6.QtWidgets import QApplication
+            try:
+                from PyQt6.QtWidgets import QApplication
+            except ImportError:
+                from PyQt5.QtWidgets import QApplication
             QApplication.processEvents()
             
         except Exception as e:

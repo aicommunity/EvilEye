@@ -21,7 +21,7 @@ try:
 except ImportError:
     from PyQt5 import QtGui
     from PyQt5.QtGui import QIcon
-    from PyQt5.QtGui import QAction
+    from PyQt5.QtWidgets import QAction
     from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt
     from PyQt5.QtSql import QSqlDatabase
     from PyQt5.QtWidgets import (

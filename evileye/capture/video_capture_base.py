@@ -15,6 +15,7 @@ class CaptureDeviceType(Enum):
     VideoFile = "VideoFile"
     IpCamera = "IpCamera"
     Device = "Device"
+    ImageSequence = "ImageSequence"
     NotSet = "NotSet"
 
 class VideoCaptureBase(EvilEyeBase):

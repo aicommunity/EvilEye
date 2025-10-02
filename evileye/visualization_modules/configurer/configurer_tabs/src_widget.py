@@ -32,7 +32,7 @@ import os
 from ..db_connection_window import DatabaseConnectionWindow
 from ....capture.video_capture_base import CaptureDeviceType
 from .. import parameters_processing
-from ....capture.video_capture import VideoCapture
+from ....capture.video_capture_opencv import VideoCaptureOpencv
 from urllib.parse import urlparse
 from .. import parameters_processing
 
@@ -172,7 +172,7 @@ class SourceWidget(QWidget):
         self.line_edit_param['camera'] = self.src_link
 
         api = QComboBox()
-        api.addItems([api.name for api in VideoCapture.VideoCaptureAPIs])
+        api.addItems([api.name for api in VideoCaptureOpencv.VideoCaptureAPIs])
         index = api.findText(params['apiPreference'])
         if index != -1:
             api.setCurrentIndex(index)
@@ -276,7 +276,7 @@ class SourceWidget(QWidget):
 
         widget = self.line_edit_param['apiPreference']
         text = widget.currentText()
-        src_params['apiPreference'] = VideoCapture.VideoCaptureAPIs[text].name
+        src_params['apiPreference'] = VideoCaptureOpencv.VideoCaptureAPIs[text].name
 
         widget = self.line_edit_param['split']
         src_params['split'] = True if widget.isChecked() else False
@@ -328,7 +328,7 @@ class SrcThread(QThread):
             self.params["username"] = camera_creds["username"]
             self.params["password"] = camera_creds["password"]
 
-        self.capture = VideoCapture()
+        self.capture = VideoCaptureOpencv()
         self.capture.set_params(**self.params)
         self.capture.init()
 

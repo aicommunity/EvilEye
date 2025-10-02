@@ -3,7 +3,7 @@ import os
 import importlib
 import inspect
 from pathlib import Path
-from evileye.capture import video_capture
+from evileye.capture import video_capture_opencv
 from evileye.object_detector import object_detection_yolo
 from evileye.object_tracker import object_tracking_botsort
 from evileye.object_tracker.trackers.onnx_encoder import OnnxEncoder
