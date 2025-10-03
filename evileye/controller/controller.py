@@ -16,6 +16,11 @@ from evileye.database_controller.db_adapter_cam_events import DatabaseAdapterCam
 from evileye.database_controller.db_adapter_fov_events import DatabaseAdapterFieldOfViewEvents
 from evileye.database_controller.db_adapter_zone_events import DatabaseAdapterZoneEvents
 from evileye.database_controller.db_adapter_attribute_events import DatabaseAdapterAttributeEvents
+from evileye.database_controller.json_adapter_attribute_events import JsonAdapterAttributeEvents
+from evileye.database_controller.json_adapter_fov_events import JsonAdapterFovEvents
+from evileye.database_controller.json_adapter_zone_events import JsonAdapterZoneEvents
+from evileye.database_controller.json_adapter_cam_events import JsonAdapterCamEvents
+from evileye.database_controller.json_adapter_attribute_events import JsonAdapterAttributeEvents
 from evileye.events_control.events_processor import EventsProcessor
 from evileye.database_controller.database_controller_pg import DatabaseControllerPg
 from evileye.events_control.events_controller import EventsDetectorsController
@@ -704,8 +709,19 @@ class Controller:
 
     def _init_events_processor_without_db(self, params):
         """Initialize events processor without database connection."""
-        # Create dummy adapters that don't save to database
-        self.events_processor = EventsProcessor([], None)  # No adapters, no db_controller
+        # Use JSON adapters for events when DB is disabled
+        adapters = []
+        img_dir = self.params.get('database', {}).get('image_dir', 'EvilEyeData')
+        for adapter_cls in (JsonAdapterAttributeEvents, JsonAdapterFovEvents, JsonAdapterZoneEvents, JsonAdapterCamEvents):
+            try:
+                a = adapter_cls(None)
+                a.set_params(image_dir=img_dir)
+                a.init()
+                a.start()
+                adapters.append(a)
+            except Exception:
+                continue
+        self.events_processor = EventsProcessor(adapters, None)
         self.events_processor.set_params(**params)
         self.events_processor.init()
 

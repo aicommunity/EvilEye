@@ -65,11 +65,14 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
         for d in dates:
             if not d:
                 continue
-            found_fp = os.path.join(self.base_dir, 'images', d, 'objects_found.json')
-            lost_fp = os.path.join(self.base_dir, 'images', d, 'objects_lost.json')
-            
-            # Check if files have been modified
-            if self._check_file_changed(found_fp) or self._check_file_changed(lost_fp):
+            base = os.path.join(self.base_dir, 'images', d)
+            fps = [
+                os.path.join(base, 'objects_found.json'),
+                os.path.join(base, 'objects_lost.json'),
+                os.path.join(base, 'attribute_events_found.json'),
+                os.path.join(base, 'attribute_events_finished.json'),
+            ]
+            if any(self._check_file_changed(fp) for fp in fps):
                 files_changed = True
         
         # Only reload if files have changed or cache is empty
@@ -78,10 +81,16 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
             for d in dates:
                 if not d:
                     continue
-                found_fp = os.path.join(self.base_dir, 'images', d, 'objects_found.json')
-                lost_fp = os.path.join(self.base_dir, 'images', d, 'objects_lost.json')
-                self._read_file(found_fp, 'found', d)
-                self._read_file(lost_fp, 'lost', d)
+                base = os.path.join(self.base_dir, 'images', d)
+                self._read_file(os.path.join(base, 'objects_found.json'), 'found', d)
+                self._read_file(os.path.join(base, 'objects_lost.json'), 'lost', d)
+                self._read_file(os.path.join(base, 'attribute_events_found.json'), 'attr_found', d)
+                self._read_file(os.path.join(base, 'attribute_events_finished.json'), 'attr_lost', d)
+                self._read_file(os.path.join(base, 'fov_events_found.json'), 'fov_found', d)
+                self._read_file(os.path.join(base, 'fov_events_lost.json'), 'fov_lost', d)
+                self._read_file(os.path.join(base, 'zone_events_entered.json'), 'zone_entered', d)
+                self._read_file(os.path.join(base, 'zone_events_left.json'), 'zone_left', d)
+                self._read_file(os.path.join(base, 'camera_events.json'), 'cam', d)
             # default sort: ts desc
             self._cache.sort(key=lambda e: e.get('ts', ''), reverse=True)
 
@@ -129,21 +138,68 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
             else:
                 timestamp = item.get('timestamp')
             
-            return {
-                'event_id': f"{date_folder}:{event_type}:{idx}",
-                'event_type': event_type,
-                'ts': timestamp,
-                'source_id': item.get('source_id'),
-                'source_name': item.get('source_name'),
-                'object_id': item.get('object_id'),
-                'class_id': item.get('class_id'),
-                'class_name': item.get('class_name'),
-                'frame_id': item.get('frame_id'),
-                'image_filename': item.get('image_filename'),
-                'bounding_box': bbox_str,
-                'confidence': item.get('confidence'),
-                'date_folder': date_folder,
-            }
+            if event_type in ('found', 'lost'):
+                return {
+                    'event_id': f"{date_folder}:{event_type}:{idx}",
+                    'event_type': event_type,
+                    'ts': timestamp,
+                    'source_id': item.get('source_id'),
+                    'source_name': item.get('source_name'),
+                    'object_id': item.get('object_id'),
+                    'class_id': item.get('class_id'),
+                    'class_name': item.get('class_name'),
+                    'frame_id': item.get('frame_id'),
+                    'image_filename': item.get('image_filename'),
+                    'bounding_box': bbox_str,
+                    'confidence': item.get('confidence'),
+                    'date_folder': date_folder,
+                }
+            elif event_type in ('attr_found', 'attr_lost'):
+                return {
+                    'event_id': f"{date_folder}:{event_type}:{idx}",
+                    'event_type': event_type,
+                    'ts': timestamp,
+                    'source_id': item.get('source_id'),
+                    'object_id': item.get('object_id'),
+                    'class_id': item.get('class_id'),
+                    'class_name': item.get('class_name'),
+                    'image_filename': item.get('preview_path'),
+                    'bounding_box': str(item.get('box')),
+                    'attrs': item.get('attrs', []),
+                    'event_name': item.get('event_name', ''),
+                    'date_folder': date_folder,
+                }
+            elif event_type in ('fov_found', 'fov_lost'):
+                return {
+                    'event_id': f"{date_folder}:{event_type}:{idx}",
+                    'event_type': event_type,
+                    'ts': timestamp,
+                    'source_id': item.get('source_id'),
+                    'object_id': item.get('object_id'),
+                    'image_filename': item.get('preview_path'),
+                    'date_folder': date_folder,
+                }
+            elif event_type in ('zone_entered', 'zone_left'):
+                return {
+                    'event_id': f"{date_folder}:{event_type}:{idx}",
+                    'event_type': event_type,
+                    'ts': timestamp,
+                    'source_id': item.get('source_id'),
+                    'object_id': item.get('object_id'),
+                    'image_filename': item.get('preview_path'),
+                    'bounding_box': str(item.get('box')),
+                    'zone_coords': item.get('zone_coords'),
+                    'date_folder': date_folder,
+                }
+            elif event_type == 'cam':
+                return {
+                    'event_id': f"{date_folder}:{event_type}:{idx}",
+                    'event_type': event_type,
+                    'ts': timestamp,
+                    'camera_full_address': item.get('camera_full_address'),
+                    'connection_status': item.get('connection_status'),
+                    'date_folder': date_folder,
+                }
         except Exception as e:
             self.logger.error(f"Element mapping error: {e}")
             return None

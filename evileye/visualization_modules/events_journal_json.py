@@ -316,17 +316,19 @@ class EventsJournalJson(QWidget):
             # Use empty sort list to avoid sorting errors with None values
             rows = self.ds.fetch(self.page, self.page_size, filters, [])
             
-            # Group events by object_id to show found and lost in same row
+            # Group events by object_id to show found/lost in same row (objects, attributes, fov, zone)
             grouped_events = {}
             for ev in rows:
                 object_id = ev.get('object_id')
-                if object_id not in grouped_events:
-                    grouped_events[object_id] = {'found': None, 'lost': None}
+                key = object_id if object_id is not None else ev.get('camera_full_address') or 'na'
+                if key not in grouped_events:
+                    grouped_events[key] = {'found': None, 'lost': None}
                 
-                if ev.get('event_type') == 'found':
-                    grouped_events[object_id]['found'] = ev
-                elif ev.get('event_type') == 'lost':
-                    grouped_events[object_id]['lost'] = ev
+                et = ev.get('event_type')
+                if et in ('found','attr_found','fov_found','zone_entered'):
+                    grouped_events[key]['found'] = ev
+                elif et in ('lost','attr_lost','fov_lost','zone_left'):
+                    grouped_events[key]['lost'] = ev
             
             # Create table rows from grouped events
             table_rows = []
@@ -340,10 +342,20 @@ class EventsJournalJson(QWidget):
                     continue
                 
                 # Create row data
+                info = 'Event'
+                if base_event.get('event_type','').startswith('attr'):
+                    info = f"AttributeEvent obj={base_event.get('object_id')} attrs={base_event.get('attrs', [])}"
+                elif base_event.get('event_type','').startswith('zone'):
+                    info = f"ZoneEvent obj={base_event.get('object_id')}"
+                elif base_event.get('event_type','').startswith('fov'):
+                    info = f"FOVEvent obj={base_event.get('object_id')}"
+                elif base_event.get('event_type') == 'cam':
+                    info = f"Camera {base_event.get('camera_full_address')} status={base_event.get('connection_status')}"
+
                 row_data = {
                     'name': base_event.get('source_name', 'Unknown'),
-                    'event': 'Event',  # Match database journal format
-                    'information': f"Object Id={object_id}; class: {base_event.get('class_name', base_event.get('class_id', ''))}; conf: {base_event.get('confidence', 0):.2f}",
+                    'event': 'Event',
+                    'information': info,
                     'time': found_event.get('ts') if found_event else (lost_event.get('ts') if lost_event else ''),
                     'time_lost': lost_event.get('ts') if lost_event else '',
                     'preview': found_event.get('image_filename') if found_event else '',
