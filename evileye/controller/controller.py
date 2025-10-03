@@ -700,28 +700,40 @@ class Controller:
         self.events_detectors_controller.init()
 
     def _init_events_processor(self, params):
-        db_adapters = [self.db_adapter_fov_events, self.db_adapter_cam_events, self.db_adapter_zone_events]
-        if self.db_adapter_attr_events:
-            db_adapters.append(self.db_adapter_attr_events)
-        self.events_processor = EventsProcessor(db_adapters, self.db_controller)
-        self.events_processor.set_params(**params)
-        self.events_processor.init()
+        # Backward-compatible: delegate to unified initializer
+        self._init_events_processor_unified(params)
 
     def _init_events_processor_without_db(self, params):
         """Initialize events processor without database connection."""
-        # Use JSON adapters for events when DB is disabled
+        # Backward-compatible: delegate to unified initializer
+        self._init_events_processor_unified(params)
+
+    def _get_event_adapters(self):
+        """Build list of event adapters depending on database mode."""
+        if self.use_database and self.db_controller:
+            adapters = [self.db_adapter_fov_events, self.db_adapter_cam_events, self.db_adapter_zone_events]
+            if self.db_adapter_attr_events:
+                adapters.append(self.db_adapter_attr_events)
+            return adapters
+        # JSON adapters when DB disabled or unavailable
         adapters = []
         img_dir = self.params.get('database', {}).get('image_dir', 'EvilEyeData')
         for adapter_cls in (JsonAdapterAttributeEvents, JsonAdapterFovEvents, JsonAdapterZoneEvents, JsonAdapterCamEvents):
             try:
-                a = adapter_cls(None)
-                a.set_params(image_dir=img_dir)
-                a.init()
-                a.start()
-                adapters.append(a)
+                adapter = adapter_cls(None)
+                adapter.set_params(image_dir=img_dir)
+                adapter.init()
+                adapter.start()
+                adapters.append(adapter)
             except Exception:
                 continue
-        self.events_processor = EventsProcessor(adapters, None)
+        return adapters
+
+    def _init_events_processor_unified(self, params):
+        """Unified initializer for EventsProcessor for both DB and JSON modes."""
+        adapters = self._get_event_adapters()
+        db_ctrl = self.db_controller if (self.use_database and self.db_controller) else None
+        self.events_processor = EventsProcessor(adapters, db_ctrl)
         self.events_processor.set_params(**params)
         self.events_processor.init()
 
