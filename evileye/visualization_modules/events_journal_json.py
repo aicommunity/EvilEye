@@ -163,6 +163,7 @@ class EventsJournalJson(QWidget):
         full_name = f"{base_name}.{logger_name}" if logger_name else base_name
         self.logger = parent_logger or logging.getLogger(full_name)
         self.setWindowTitle('Events journal (JSON)')
+        self.resize(1600, 600)
         self.base_dir = base_dir
         self.ds = JsonLabelJournalDataSource(base_dir)
         self.page = 0
