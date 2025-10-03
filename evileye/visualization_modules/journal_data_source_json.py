@@ -123,12 +123,8 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
 
     def _map_item(self, item: Dict, event_type: str, date_folder: str, idx: int) -> Optional[Dict]:
         try:
-            # Handle bounding box format
-            bbox = item.get('bounding_box', {})
-            if isinstance(bbox, dict):
-                bbox_str = f"[{bbox.get('x', 0)}, {bbox.get('y', 0)}, {bbox.get('width', 0)}, {bbox.get('height', 0)}]"
-            else:
-                bbox_str = str(bbox)
+            # Handle bounding box format (store raw for drawing)
+            bbox = item.get('bounding_box', None)
             
             # Handle different timestamp fields for different event types
             if event_type == 'found':
@@ -150,7 +146,7 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                     'class_name': item.get('class_name'),
                     'frame_id': item.get('frame_id'),
                     'image_filename': item.get('image_filename'),
-                    'bounding_box': bbox_str,
+                    'bounding_box': item.get('bounding_box') or bbox,
                     'confidence': item.get('confidence'),
                     'date_folder': date_folder,
                 }
@@ -164,7 +160,7 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                     'class_id': item.get('class_id'),
                     'class_name': item.get('class_name'),
                     'image_filename': item.get('preview_path'),
-                    'bounding_box': str(item.get('box')),
+                    'bounding_box': item.get('box'),
                     'attrs': item.get('attrs', []),
                     'event_name': item.get('event_name', ''),
                     'date_folder': date_folder,
@@ -187,7 +183,7 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                     'source_id': item.get('source_id'),
                     'object_id': item.get('object_id'),
                     'image_filename': item.get('preview_path'),
-                    'bounding_box': str(item.get('box')),
+                    'bounding_box': item.get('box'),
                     'zone_coords': item.get('zone_coords'),
                     'date_folder': date_folder,
                 }

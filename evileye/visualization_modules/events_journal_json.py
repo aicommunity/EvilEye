@@ -71,17 +71,66 @@ class ImageDelegate(QStyledItemDelegate):
             self.logger.warning(f"Image not found: {img_path}")
             return
             
-        # Load and scale image
+        # Load image
         pixmap = QPixmap(img_path)
         if pixmap.isNull():
             return
-            
-        pixmap = pixmap.scaled(self.preview_width, self.preview_height, 
-                             Qt.AspectRatioMode.KeepAspectRatio, 
-                             Qt.TransformationMode.SmoothTransformation)
-        
-        # Draw image only - no bounding boxes
-        painter.drawPixmap(option.rect, pixmap)
+
+        # Compute target rect inside cell with aspect fit
+        cell_rect = option.rect
+        img_w = pixmap.width()
+        img_h = pixmap.height()
+        if img_w <= 0 or img_h <= 0:
+            return
+        cell_w = cell_rect.width()
+        cell_h = cell_rect.height()
+        scale = min(cell_w / img_w, cell_h / img_h)
+        draw_w = int(img_w * scale)
+        draw_h = int(img_h * scale)
+        draw_x = cell_rect.x() + (cell_w - draw_w) // 2
+        draw_y = cell_rect.y() + (cell_h - draw_h) // 2
+        target_rect = cell_rect.adjusted(0, 0, 0, 0)
+        target_rect.setX(draw_x)
+        target_rect.setY(draw_y)
+        target_rect.setWidth(draw_w)
+        target_rect.setHeight(draw_h)
+
+        # Draw image into target rect
+        painter.drawPixmap(target_rect, pixmap)
+
+        # Try to draw overlay box/zone for preview using target_rect as base
+        ev_item = table.item(row, 5) if index.column() == 5 else table.item(row, 6)
+        ev = ev_item.data(Qt.ItemDataRole.UserRole) if ev_item else None
+        if ev:
+            # Box
+            box = ev.get('bounding_box') or ev.get('box')
+            if box and isinstance(box, (list, tuple)) and len(box) == 4:
+                pen = QPen(QColor(0, 255, 0), 2)
+                painter.setPen(pen)
+                bx, by, bw, bh = box
+                # Assume normalized; map to target_rect
+                x = draw_x + int(bx * draw_w)
+                y = draw_y + int(by * draw_h)
+                w = int(bw * draw_w)
+                h = int(bh * draw_h)
+                painter.drawRect(x, y, w, h)
+            # Zone
+            zc = ev.get('zone_coords')
+            if zc and isinstance(zc, (list, tuple)):
+                pen = QPen(QColor(255, 0, 0), 2)
+                painter.setPen(pen)
+                pts = []
+                for pt in zc:
+                    if isinstance(pt, (list, tuple)) and len(pt) == 2:
+                        px, py = pt
+                        # Assume normalized; map to target_rect
+                        x = draw_x + int(px * draw_w)
+                        y = draw_y + int(py * draw_h)
+                        pts.append((x, y))
+                for i in range(len(pts)):
+                    x1, y1 = pts[i]
+                    x2, y2 = pts[(i+1) % len(pts)]
+                    painter.drawLine(x1, y1, x2, y2)
 
     def sizeHint(self, option, index):
         return QSize(self.preview_width, self.preview_height)
@@ -110,11 +159,12 @@ class DateTimeDelegate(QStyledItemDelegate):
 
 
 class ImageWindow(QLabel):
-    def __init__(self, image_path, box=None, parent=None):
+    def __init__(self, image_path, box=None, zone_coords=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle('Image')
         self.setFixedSize(900, 600)
         self.image_path = image_path
+        self.zone_coords = zone_coords
         
         # Load image
         pixmap = QPixmap(image_path)
@@ -122,29 +172,52 @@ class ImageWindow(QLabel):
             self.logger.error(f"Image loading error: {image_path}")
             return
             
-        # Scale image to fit window
-        pixmap = pixmap.scaled(self.width(), self.height(), 
-                              Qt.AspectRatioMode.KeepAspectRatio, 
-                              Qt.TransformationMode.SmoothTransformation)
-        
-        # Draw bounding box if provided
+        # Compute target rect in window
+        win_w, win_h = self.width(), self.height()
+        img_w, img_h = pixmap.width(), pixmap.height()
+        scale = min(win_w / img_w, win_h / img_h)
+        draw_w = int(img_w * scale)
+        draw_h = int(img_h * scale)
+        draw_x = (win_w - draw_w) // 2
+        draw_y = (win_h - draw_h) // 2
+
+        # Create canvas pixmap sized to window
+        canvas = QPixmap(win_w, win_h)
+        canvas.fill(QColor(0, 0, 0))
+        painter = QPainter(canvas)
+        # Draw image
+        painter.drawPixmap(draw_x, draw_y, draw_w, draw_h, pixmap)
+        # Draw overlays in same mapping
         if box:
-            painter = QPainter(pixmap)
-            pen = QPen(QColor(0, 255, 0), 2)  # Green color
+            pen = QPen(QColor(0, 255, 0), 2)
             painter.setPen(pen)
-            
-            # Convert normalized coordinates to pixel coordinates
-            x = int(box[0] * pixmap.width())
-            y = int(box[1] * pixmap.height())
-            w = int(box[2] * pixmap.width())
-            h = int(box[3] * pixmap.height())
-            
+            bx, by, bw, bh = box
+            if max(bx, by, bw, bh) <= 1.0:
+                x = draw_x + int(bx * draw_w)
+                y = draw_y + int(by * draw_h)
+                w = int(bw * draw_w)
+                h = int(bh * draw_h)
+            else:
+                x, y, w, h = int(bx), int(by), int(bw), int(bh)
             painter.drawRect(x, y, w, h)
-            painter.end()
+        if self.zone_coords:
+            pen = QPen(QColor(255, 0, 0), 2)
+            painter.setPen(pen)
+            pts = []
+            for px, py in self.zone_coords:
+                if max(px, py) <= 1.0:
+                    pts.append((draw_x + int(px * draw_w), draw_y + int(py * draw_h)))
+                else:
+                    pts.append((int(px), int(py)))
+            for i in range(len(pts)):
+                x1, y1 = pts[i]
+                x2, y2 = pts[(i+1) % len(pts)]
+                painter.drawLine(x1, y1, x2, y2)
+        painter.end()
         
         # Create label and set pixmap
         self.label = QLabel()
-        self.label.setPixmap(pixmap)
+        self.label.setPixmap(canvas)
         
         # Setup layout
         self.layout = QVBoxLayout()
@@ -209,7 +282,7 @@ class EventsJournalJson(QWidget):
         h = self.table.horizontalHeader()
         h.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         h.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        h.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        h.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         h.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         h.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
         h.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
@@ -343,14 +416,17 @@ class EventsJournalJson(QWidget):
                     continue
                 
                 # Create row data
+                et = base_event.get('event_type','')
                 info = 'Event'
-                if base_event.get('event_type','').startswith('attr'):
-                    info = f"AttributeEvent obj={base_event.get('object_id')} attrs={base_event.get('attrs', [])}"
-                elif base_event.get('event_type','').startswith('zone'):
-                    info = f"ZoneEvent obj={base_event.get('object_id')}"
-                elif base_event.get('event_type','').startswith('fov'):
+                if et.startswith('attr'):
+                    info = f"AttributeEvent name={base_event.get('event_name','')}; obj={base_event.get('object_id')}; class={base_event.get('class_name', base_event.get('class_id',''))}; attrs={base_event.get('attrs', [])}"
+                elif et.startswith('zone'):
+                    info = f"ZoneEvent obj={base_event.get('object_id')} zone={base_event.get('zone_id','')}"
+                elif et.startswith('fov'):
                     info = f"FOVEvent obj={base_event.get('object_id')}"
-                elif base_event.get('event_type') == 'cam':
+                elif et == 'found' or et == 'lost':
+                    info = f"Object Id={base_event.get('object_id')}; class: {base_event.get('class_name', base_event.get('class_id',''))}; conf: {base_event.get('confidence', 0)}"
+                elif et == 'cam':
                     info = f"Camera {base_event.get('camera_full_address')} status={base_event.get('connection_status')}"
 
                 row_data = {
@@ -386,7 +462,13 @@ class EventsJournalJson(QWidget):
                 # Preview column (found image)
                 if row_data['preview']:
                     date_folder = row_data['found_event'].get('date_folder', '')
-                    img_path = os.path.join(self.base_dir, 'images', date_folder, row_data['preview'])
+                    prev = row_data['preview']
+                    if os.path.isabs(prev):
+                        img_path = prev
+                    elif prev.startswith('images' + os.sep) or prev.startswith('images/'):
+                        img_path = os.path.join(self.base_dir, prev)
+                    else:
+                        img_path = os.path.join(self.base_dir, 'images', date_folder, prev)
                     item = QTableWidgetItem(img_path)
                     # Store event data for double click functionality
                     item.setData(Qt.ItemDataRole.UserRole, row_data['found_event'])
@@ -399,7 +481,13 @@ class EventsJournalJson(QWidget):
                 # Lost preview column
                 if row_data['lost_preview']:
                     date_folder = row_data['lost_event'].get('date_folder', '')
-                    img_path = os.path.join(self.base_dir, 'images', date_folder, row_data['lost_preview'])
+                    prev = row_data['lost_preview']
+                    if os.path.isabs(prev):
+                        img_path = prev
+                    elif prev.startswith('images' + os.sep) or prev.startswith('images/'):
+                        img_path = os.path.join(self.base_dir, prev)
+                    else:
+                        img_path = os.path.join(self.base_dir, 'images', date_folder, prev)
                     item = QTableWidgetItem(img_path)
                     # Store event data for double click functionality
                     item.setData(Qt.ItemDataRole.UserRole, row_data['lost_event'])
@@ -511,14 +599,7 @@ class EventsJournalJson(QWidget):
                     y = bbox_data.get('y', 0)
                     w = bbox_data.get('width', 0)
                     h = bbox_data.get('height', 0)
-                    # Convert to normalized coordinates
-                    if found_event.get('image_width') and found_event.get('image_height'):
-                        img_w = found_event['image_width']
-                        img_h = found_event['image_height']
-                        box = [x / img_w, y / img_h, w / img_w, h / img_h]
-                    else:
-                        # Assume standard dimensions if not available
-                        box = [x / 1920, y / 1080, w / 1920, h / 1080]
+                    box = [x, y, w, h]
                 elif isinstance(bbox_data, list) and len(bbox_data) == 4:
                     box = bbox_data
         elif col == 6 and lost_event:  # Lost preview column
@@ -530,14 +611,7 @@ class EventsJournalJson(QWidget):
                     y = bbox_data.get('y', 0)
                     w = bbox_data.get('width', 0)
                     h = bbox_data.get('height', 0)
-                    # Convert to normalized coordinates
-                    if lost_event.get('image_width') and lost_event.get('image_height'):
-                        img_w = lost_event['image_width']
-                        img_h = lost_event['image_height']
-                        box = [x / img_w, y / img_h, w / img_w, h / img_h]
-                    else:
-                        # Assume standard dimensions if not available
-                        box = [x / 1920, y / 1080, w / 1920, h / 1080]
+                    box = [x, y, w, h]
                 elif isinstance(bbox_data, list) and len(bbox_data) == 4:
                     box = bbox_data
 
@@ -563,8 +637,26 @@ class EventsJournalJson(QWidget):
             self.logger.warning(f"Frame image not found: {image_path}, using preview: {path}")
             image_path = path
 
+        # Zone coords if present
+        zone_coords = None
+        if col == 5 and found_event and found_event.get('zone_coords'):
+            zone_coords = found_event.get('zone_coords')
+        elif col == 6 and lost_event and lost_event.get('zone_coords'):
+            zone_coords = lost_event.get('zone_coords')
+
+        # If box is in absolute pixels (>1), normalize using actual image size for correct scaling
+        if box and max(box) > 1:
+            try:
+                from PyQt6.QtGui import QPixmap as _QPixmap
+            except ImportError:
+                from PyQt5.QtGui import QPixmap as _QPixmap
+            pix = _QPixmap(image_path)
+            if not pix.isNull() and pix.width() > 0 and pix.height() > 0:
+                bx, by, bw, bh = box
+                box = [bx / pix.width(), by / pix.height(), bw / pix.width(), bh / pix.height()]
+
         # Create and show image window
-        self.image_win = ImageWindow(image_path, box)
+        self.image_win = ImageWindow(image_path, box, zone_coords)
         self.image_win.show()
 
 
