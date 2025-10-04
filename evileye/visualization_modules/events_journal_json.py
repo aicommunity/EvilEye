@@ -417,21 +417,27 @@ class EventsJournalJson(QWidget):
                 
                 # Create row data
                 et = base_event.get('event_type','')
+                event_name = 'Event'
                 info = 'Event'
                 if et.startswith('attr'):
+                    event_name = f"AttributeEvent: {base_event.get('event_name','')}"
                     info = f"AttributeEvent name={base_event.get('event_name','')}; obj={base_event.get('object_id')}; class={base_event.get('class_name', base_event.get('class_id',''))}; attrs={base_event.get('attrs', [])}"
                 elif et.startswith('zone'):
+                    event_name = "ZoneEvent"
                     info = f"ZoneEvent obj={base_event.get('object_id')} zone={base_event.get('zone_id','')}"
                 elif et.startswith('fov'):
+                    event_name = "FOVEvent"
                     info = f"FOVEvent obj={base_event.get('object_id')}"
                 elif et == 'found' or et == 'lost':
+                    event_name = "ObjectEvent"
                     info = f"Object Id={base_event.get('object_id')}; class: {base_event.get('class_name', base_event.get('class_id',''))}; conf: {base_event.get('confidence', 0)}"
                 elif et == 'cam':
+                    event_name = "CameraEvent"
                     info = f"Camera {base_event.get('camera_full_address')} status={base_event.get('connection_status')}"
 
                 row_data = {
                     'name': base_event.get('source_name', 'Unknown'),
-                    'event': 'Event',
+                    'event': event_name,
                     'information': info,
                     'time': found_event.get('ts') if found_event else (lost_event.get('ts') if lost_event else ''),
                     'time_lost': lost_event.get('ts') if lost_event else '',

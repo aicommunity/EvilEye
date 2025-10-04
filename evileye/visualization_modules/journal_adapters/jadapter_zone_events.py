@@ -11,7 +11,7 @@ class JournalAdapterZoneEvents(JournalAdapterBase):
         pass
 
     def select_query(self) -> str:
-        query = ('SELECT CAST(\'Alarm\' AS text) AS type, time_entered, time_left, '
+        query = ('SELECT CAST(\'ZoneEvent\' AS text) AS type, time_entered, time_left, '
                  '(\'Intrusion detected in zone on source \' || source_id) AS information, '
                  'preview_path_entered, preview_path_left FROM zone_events')
         return query

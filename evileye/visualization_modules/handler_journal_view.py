@@ -173,7 +173,7 @@ class HandlerJournal(QWidget):
         self.model = QSqlQueryModel()
 
         query = QSqlQuery(QSqlDatabase.database('obj_conn'))
-        query.prepare('SELECT source_name, CAST(\'Event\' AS text) AS event_type, '
+        query.prepare('SELECT source_name, CAST(\'ObjectEvent\' AS text) AS event_type, '
                       '\'Object Id=\' || object_id || \'; class: \' || class_id || \'; conf: \' || ROUND(confidence::numeric, 2)'
                       ' AS information,'
                       'time_stamp, time_lost, preview_path, lost_preview_path FROM objects '
