@@ -330,9 +330,9 @@ class EventsJournal(QWidget):
                 self.logger.error(f"SQL Error: {query.lastError().text()}")
         else:
             self.logger.error(f"SQL Prepare Error: {query.lastError().text()}")
-        self.model.setHeaderData(0, Qt.Orientation.Horizontal, self.tr('Event'))
-        self.model.setHeaderData(1, Qt.Orientation.Horizontal, self.tr('Event Details'))
-        self.model.setHeaderData(2, Qt.Orientation.Horizontal, self.tr('Time'))
+        self.model.setHeaderData(0, Qt.Orientation.Horizontal, self.tr('Time'))
+        self.model.setHeaderData(1, Qt.Orientation.Horizontal, self.tr('Event'))
+        self.model.setHeaderData(2, Qt.Orientation.Horizontal, self.tr('Event Details'))
         self.model.setHeaderData(3, Qt.Orientation.Horizontal, self.tr('Time lost'))
         self.model.setHeaderData(4, Qt.Orientation.Horizontal, self.tr('Information'))
         self.model.setHeaderData(5, Qt.Orientation.Horizontal, self.tr('Preview'))

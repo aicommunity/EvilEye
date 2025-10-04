@@ -101,36 +101,73 @@ class ImageDelegate(QStyledItemDelegate):
         # Try to draw overlay box/zone for preview using target_rect as base
         ev_item = table.item(row, 5) if index.column() == 5 else table.item(row, 6)
         ev = ev_item.data(Qt.ItemDataRole.UserRole) if ev_item else None
+        
+        # Debug: Print event data
         if ev:
-            # Box
+            print(f"DEBUG: Event data: {ev}")
+            print(f"DEBUG: Box data: {ev.get('bounding_box') or ev.get('box')}")
+        else:
+            print(f"DEBUG: No event data for row {row}, column {index.column()}")
+        
+        if ev:
+            # Box - handle both dict and list formats
             box = ev.get('bounding_box') or ev.get('box')
-            if box and isinstance(box, (list, tuple)) and len(box) == 4:
-                pen = QPen(QColor(0, 255, 0), 2)
-                painter.setPen(pen)
-                bx, by, bw, bh = box
-                # Assume normalized; map to target_rect
-                x = draw_x + int(bx * draw_w)
-                y = draw_y + int(by * draw_h)
-                w = int(bw * draw_w)
-                h = int(bh * draw_h)
+            if box:
+                painter.setPen(QPen(QColor(0, 255, 0), 2))  # Green for bbox
+                
+                if isinstance(box, dict):
+                    # Format: {'x': 973, 'y': 368, 'width': 127, 'height': 238}
+                    x1 = box.get('x', 0)
+                    y1 = box.get('y', 0)
+                    w = box.get('width', 0)
+                    h = box.get('height', 0)
+                    x2 = x1 + w
+                    y2 = y1 + h
+                elif isinstance(box, (list, tuple)) and len(box) == 4:
+                    # Format: [x1, y1, x2, y2]
+                    x1, y1, x2, y2 = box
+                else:
+                    print(f"DEBUG: Unknown box format: {box}")
+                    return
+                
+                # Convert to normalized coordinates (0-1) if they look like absolute pixels
+                # Check if coordinates are likely absolute pixels (large values)
+                if x1 > 1 or y1 > 1 or x2 > 1 or y2 > 1:
+                    # Assume these are absolute pixel coordinates, need to normalize
+                    # We need the original image dimensions to normalize properly
+                    # For now, let's assume the image is the same size as the preview
+                    img_w = pixmap.width()
+                    img_h = pixmap.height()
+                    x1_norm = x1 / img_w
+                    y1_norm = y1 / img_h
+                    x2_norm = x2 / img_w
+                    y2_norm = y2 / img_h
+                else:
+                    # Already normalized
+                    x1_norm, y1_norm, x2_norm, y2_norm = x1, y1, x2, y2
+                
+                # Scale to draw area
+                x = draw_x + int(x1_norm * draw_w)
+                y = draw_y + int(y1_norm * draw_h)
+                w = int((x2_norm - x1_norm) * draw_w)
+                h = int((y2_norm - y1_norm) * draw_h)
+                
+                print(f"DEBUG: Drawing box at x={x}, y={y}, w={w}, h={h}")
                 painter.drawRect(x, y, w, h)
-            # Zone
+            # Zone - use same logic as DB journal
             zc = ev.get('zone_coords')
             if zc and isinstance(zc, (list, tuple)):
-                pen = QPen(QColor(255, 0, 0), 2)
-                painter.setPen(pen)
-                pts = []
+                painter.setPen(QPen(QColor(255, 0, 0), 2))  # Red for zone
+                painter.setBrush(QBrush(QColor(255, 0, 0, 64)))  # Semi-transparent red fill
+                polygon = QPolygonF()
                 for pt in zc:
                     if isinstance(pt, (list, tuple)) and len(pt) == 2:
                         px, py = pt
-                        # Assume normalized; map to target_rect
+                        # Use the same logic as bounding box - scale to draw area
                         x = draw_x + int(px * draw_w)
                         y = draw_y + int(py * draw_h)
-                        pts.append((x, y))
-                for i in range(len(pts)):
-                    x1, y1 = pts[i]
-                    x2, y2 = pts[(i+1) % len(pts)]
-                    painter.drawLine(x1, y1, x2, y2)
+                        polygon.append(QPointF(x, y))
+                painter.drawPolygon(polygon)
 
     def sizeHint(self, option, index):
         return QSize(self.preview_width, self.preview_height)
@@ -276,15 +313,15 @@ class EventsJournalJson(QWidget):
 
         self.layout.addLayout(toolbar)
 
-        # Use database journal structure: Name, Event, Information, Time, Time lost, Preview, Lost preview
+        # Use database journal structure: Time, Event, Event Details, Time lost, Information, Preview, Lost preview
         self.table = QTableWidget(0, 7)
-        self.table.setHorizontalHeaderLabels(['Name', 'Event', 'Information', 'Time', 'Time lost', 'Preview', 'Lost preview'])
+        self.table.setHorizontalHeaderLabels(['Time', 'Event', 'Event Details', 'Time lost', 'Information', 'Preview', 'Lost preview'])
         h = self.table.horizontalHeader()
         h.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         h.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        h.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        h.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         h.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        h.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        h.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         h.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
         h.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
         h.setDefaultSectionSize(300)  # Set default size for image columns
@@ -297,8 +334,8 @@ class EventsJournalJson(QWidget):
 
         # Set up datetime delegate for time columns
         self.datetime_delegate = DateTimeDelegate(self.table)
-        self.table.setItemDelegateForColumn(3, self.datetime_delegate)  # Time
-        self.table.setItemDelegateForColumn(4, self.datetime_delegate)  # Time lost
+        self.table.setItemDelegateForColumn(0, self.datetime_delegate)  # Time
+        self.table.setItemDelegateForColumn(3, self.datetime_delegate)  # Time lost
 
         # Connect double click signal - use cellDoubleClicked for QTableWidget
         self.table.cellDoubleClicked.connect(self._display_image)
@@ -450,20 +487,20 @@ class EventsJournalJson(QWidget):
             
             self.table.setRowCount(len(table_rows))
             for r, row_data in enumerate(table_rows):
-                # Name column
-                self.table.setItem(r, 0, QTableWidgetItem(row_data['name']))
+                # Time column (0)
+                self.table.setItem(r, 0, QTableWidgetItem(str(row_data['time'])))
                 
-                # Event column
+                # Event column (1)
                 self.table.setItem(r, 1, QTableWidgetItem(row_data['event']))
                 
-                # Information column
-                self.table.setItem(r, 2, QTableWidgetItem(row_data['information']))
+                # Event Details column (2) - use source name as details
+                self.table.setItem(r, 2, QTableWidgetItem(row_data['name']))
                 
-                # Time column
-                self.table.setItem(r, 3, QTableWidgetItem(str(row_data['time'])))
+                # Time lost column (3)
+                self.table.setItem(r, 3, QTableWidgetItem(str(row_data['time_lost'])))
                 
-                # Time lost column
-                self.table.setItem(r, 4, QTableWidgetItem(str(row_data['time_lost'])))
+                # Information column (4)
+                self.table.setItem(r, 4, QTableWidgetItem(row_data['information']))
                 
                 # Preview column (found image)
                 if row_data['preview']:
