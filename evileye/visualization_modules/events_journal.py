@@ -8,12 +8,12 @@ try:
         QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton,
         QDateTimeEdit, QHeaderView, QComboBox, QTableView, QStyledItemDelegate, QMessageBox
     )
-    from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor, QBrush
+    from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor, QBrush, QPolygonF
     from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QModelIndex, QSize
     from PyQt6.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
     pyqt_version = 6
 except ImportError:
-    from PyQt5.QtCore import QDate, QDateTime, QPointF
+    from PyQt5.QtCore import QDate, QDateTime, QPointF, QPolygonF
     from PyQt5.QtWidgets import (
         QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton,
         QDateTimeEdit, QHeaderView, QComboBox, QTableView, QStyledItemDelegate, QMessageBox
@@ -37,15 +37,109 @@ class ImageDelegate(QStyledItemDelegate):
         self.image_dir = image_dir
 
     def paint(self, painter, option, index):
-        if index.isValid():
-            path = index.data(Qt.ItemDataRole.DisplayRole)
-            path = os.path.join(self.image_dir, path)
-            pixmap = QPixmap()
-            if path:
-                pixmap.load(path)
-                painter.drawPixmap(option.rect, pixmap)
+        if not index.isValid():
+            return
+            
+        path = index.data(Qt.ItemDataRole.DisplayRole)
+        if not path:
+            return
+            
+        full_path = os.path.join(self.image_dir, path)
+        if not os.path.exists(full_path):
+            return
+            
+        # Load image
+        pixmap = QPixmap(full_path)
+        if pixmap.isNull():
+            return
+
+        # Calculate target rect with aspect fit
+        cell_rect = option.rect
+        img_w = pixmap.width()
+        img_h = pixmap.height()
+        if img_w <= 0 or img_h <= 0:
+            return
+            
+        cell_w = cell_rect.width()
+        cell_h = cell_rect.height()
+        scale = min(cell_w / img_w, cell_h / img_h)
+        draw_w = int(img_w * scale)
+        draw_h = int(img_h * scale)
+        draw_x = cell_rect.x() + (cell_w - draw_w) // 2
+        draw_y = cell_rect.y() + (cell_h - draw_h) // 2
+        
+        # Draw image
+        painter.drawPixmap(draw_x, draw_y, draw_w, draw_h, pixmap)
+        
+        # Try to get bounding box from database for this image
+        try:
+            from PyQt6.QtSql import QSqlDatabase, QSqlQuery
+        except ImportError:
+            from PyQt5.QtSql import QSqlDatabase, QSqlQuery
+            
+        box = None
+        zone_coords = None
+        
+        # Query database for bounding box based on image path
+        query = QSqlQuery(QSqlDatabase.database('events_conn'))
+        
+        # Check different event types
+        if 'zone' in path:
+            if 'entered' in path:
+                query.prepare('SELECT box_entered, zone_coords from zone_events WHERE preview_path_entered = :path')
             else:
-                return
+                query.prepare('SELECT box_left, zone_coords from zone_events WHERE preview_path_left = :path')
+        elif 'attribute' in path:
+            if 'found' in path:
+                query.prepare('SELECT box_found FROM attribute_events WHERE preview_path_found = :path')
+            else:
+                query.prepare('SELECT box_finished FROM attribute_events WHERE preview_path_finished = :path')
+        else:
+            # Default to objects table
+            if 'detected' in path:
+                query.prepare('SELECT bounding_box from objects WHERE preview_path = :path')
+            else:
+                query.prepare('SELECT lost_bounding_box from objects WHERE lost_preview_path = :path')
+        
+        query.bindValue(':path', path)
+        if query.exec() and query.next():
+            value0 = query.value(0)
+            if value0 is not None:
+                box_str = value0.replace('{', '').replace('}', '')
+                box = [float(coord) for coord in box_str.split(',')]
+            
+            # Get zone coords for zone events
+            if 'zone' in path and query.record().count() > 1:
+                value1 = query.value(1)
+                if value1:
+                    zone_coords = value1[1:-1]
+                    points_str = zone_coords.split('},')
+                    points_str = [s.strip(' {}').split(',') for s in points_str]
+                    zone_coords = [(float(coord[0]), float(coord[1])) for coord in points_str]
+        
+        # Draw bounding box if available
+        if box and len(box) == 4:
+            painter.setPen(QPen(QColor(0, 255, 0), 2))  # Green for bbox
+            bx, by, bw, bh = box
+            # Assume normalized coordinates, map to draw area
+            x = draw_x + int(bx * draw_w)
+            y = draw_y + int(by * draw_h)
+            w = int(bw * draw_w)
+            h = int(bh * draw_h)
+            painter.drawRect(x, y, w, h)
+        
+        # Draw zone if available
+        if zone_coords:
+            painter.setPen(QPen(QColor(255, 0, 0), 2))  # Red for zone
+            painter.setBrush(QBrush(QColor(255, 0, 0, 64)))  # Semi-transparent red fill
+            polygon = QPolygonF()
+            for point in zone_coords:
+                px, py = point
+                # Assume normalized coordinates, map to draw area
+                x = draw_x + int(px * draw_w)
+                y = draw_y + int(py * draw_h)
+                polygon.append(QPointF(x, y))
+            painter.drawPolygon(polygon)
 
     def sizeHint(self, option, index) -> QSize:
         if index.isValid():

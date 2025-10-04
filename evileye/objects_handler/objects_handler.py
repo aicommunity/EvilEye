@@ -612,24 +612,13 @@ class ObjectsHandler(EvilEyeBase):
             # Create directory if it doesn't exist
             os.makedirs(os.path.dirname(full_img_path), exist_ok=True)
             
-            # Save image using the same logic as database journal
+            # Save clean images without any debug overlays
             if image_type == 'preview':
-                # Create preview with bounding box (same as database journal)
+                # Create clean preview without bounding box
                 preview = cv2.resize(copy.deepcopy(image.image), (self.db_params.get('preview_width', 300), self.db_params.get('preview_height', 150)), cv2.INTER_NEAREST)
-                
-                # Convert bounding box to normalized coordinates (same as database journal)
-                image_height, image_width, _ = image.image.shape
-                normalized_box = [
-                    box[0] / image_width,   # x
-                    box[1] / image_height,  # y
-                    box[2] / image_width,   # width
-                    box[3] / image_height   # height
-                ]
-                
-                preview_boxes = utils.draw_preview_boxes(preview, self.db_params.get('preview_width', 300), self.db_params.get('preview_height', 150), normalized_box)
-                saved = cv2.imwrite(full_img_path, preview_boxes)
+                saved = cv2.imwrite(full_img_path, preview)
             else:
-                # Save original frame without any graphical info (same as database journal)
+                # Save original frame without any graphical info
                 saved = cv2.imwrite(full_img_path, image.image)
             
             if not saved:
