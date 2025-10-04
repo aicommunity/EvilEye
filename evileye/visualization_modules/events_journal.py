@@ -71,6 +71,11 @@ class ImageDelegate(QStyledItemDelegate):
         # Draw image
         painter.drawPixmap(draw_x, draw_y, draw_w, draw_h, pixmap)
         
+        # For preview images, coordinates are normalized relative to the original image size
+        # but we need to scale them to the preview image size
+        # Preview images are typically 320x240 or 300x150, but original images are much larger
+        # So we need to use the preview image dimensions for coordinate conversion
+        
         # Try to get bounding box from database for this image
         try:
             from PyQt6.QtSql import QSqlDatabase, QSqlQuery
@@ -120,12 +125,16 @@ class ImageDelegate(QStyledItemDelegate):
         # Draw bounding box if available
         if box and len(box) == 4:
             painter.setPen(QPen(QColor(0, 255, 0), 2))  # Green for bbox
-            bx, by, bw, bh = box
-            # Assume normalized coordinates, map to draw area
-            x = draw_x + int(bx * draw_w)
-            y = draw_y + int(by * draw_h)
-            w = int(bw * draw_w)
-            h = int(bh * draw_h)
+            # Use the same logic as in objects journal ImageWindow
+            # Coordinates are in format [x1, y1, x2, y2] (top-left and bottom-right)
+            x1, y1, x2, y2 = box
+            
+            # Scale coordinates to draw area (same as ImageWindow logic)
+            x = draw_x + int(x1 * draw_w)
+            y = draw_y + int(y1 * draw_h)
+            w = int((x2 - x1) * draw_w)
+            h = int((y2 - y1) * draw_h)
+            
             painter.drawRect(x, y, w, h)
         
         # Draw zone if available
@@ -135,9 +144,11 @@ class ImageDelegate(QStyledItemDelegate):
             polygon = QPolygonF()
             for point in zone_coords:
                 px, py = point
-                # Assume normalized coordinates, map to draw area
+                
+                # Use the same logic as bounding box - scale to draw area
                 x = draw_x + int(px * draw_w)
                 y = draw_y + int(py * draw_h)
+                
                 polygon.append(QPointF(x, y))
             painter.drawPolygon(polygon)
 
