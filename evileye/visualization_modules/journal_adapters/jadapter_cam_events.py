@@ -21,7 +21,9 @@ class JournalAdapterCamEvents(JournalAdapterBase):
         pass
 
     def select_query(self) -> str:
-        query = ('SELECT CAST(\'Warning\' AS text) AS type, time_stamp, NULL as time_lost, '
+        query = ('SELECT CAST(\'CameraEvent\' AS text) AS type, '
+                 'camera_full_address AS event_details, '
+                 'time_stamp, NULL as time_lost, '
                  '(\'Camera=\' || camera_full_address || \' \' || '
                  'CASE WHEN connection_status then \'reconnect\' ELSE \'disconnect\' END) AS information, '
                  'NULL AS preview_path, NULL AS lost_preview_path FROM camera_events')

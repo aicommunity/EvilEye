@@ -21,7 +21,9 @@ class JournalAdapterFieldOfViewEvents(JournalAdapterBase):
         pass
 
     def select_query(self) -> str:
-        query = ('SELECT CAST(\'FOVEvent\' AS text) AS type, time_stamp, time_lost, '
+        query = ('SELECT CAST(\'FOVEvent\' AS text) AS type, '
+                 'CAST(source_id AS text) AS event_details, '
+                 'time_stamp, time_lost, '
                  '(\'Intrusion detected on source \' || source_id) AS information, '
                  'preview_path, lost_preview_path FROM fov_events')
         return query

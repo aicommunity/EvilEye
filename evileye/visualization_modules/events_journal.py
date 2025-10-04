@@ -252,8 +252,20 @@ class EventsJournal(QWidget):
 
         self.retrieve_data_signal.connect(self._retrieve_data)
         self.table.doubleClicked.connect(self._display_image)
+        
+        # Add automatic data refresh
+        self.refresh_timer = QTimer()
+        self.refresh_timer.timeout.connect(self._auto_refresh_data)
+        self.refresh_timer.start(5000)  # Refresh every 5 seconds
+        
+        # Initial data load
+        self._retrieve_data()
 
     def _connect_to_db(self):
+        # Check if connection already exists
+        if 'events_conn' in QSqlDatabase.connectionNames():
+            return
+            
         db = QSqlDatabase.addDatabase("QPSQL", 'events_conn')
         db.setHostName(self.host)
         db.setDatabaseName(self.db_name)
@@ -266,7 +278,6 @@ class EventsJournal(QWidget):
                 "Events journal - Error!",
                 "Database Error: %s" % db.lastError().databaseText(),
             )
-        self.logger.debug(f"Database connections: {QSqlDatabase.connectionNames()}")
 
     def _setup_table(self):
         self._setup_model()
@@ -285,10 +296,10 @@ class EventsJournal(QWidget):
 
         self.image_delegate = ImageDelegate(None, image_dir=self.image_dir, logger_name="image_delegate", parent_logger=self.logger)
         self.date_delegate = DateTimeDelegate(None)
-        self.table.setItemDelegateForColumn(1, self.date_delegate)
         self.table.setItemDelegateForColumn(2, self.date_delegate)
-        self.table.setItemDelegateForColumn(4, self.image_delegate)
+        self.table.setItemDelegateForColumn(3, self.date_delegate)
         self.table.setItemDelegateForColumn(5, self.image_delegate)
+        self.table.setItemDelegateForColumn(6, self.image_delegate)
 
     def _setup_model(self):
         self.model = QSqlQueryModel()
@@ -298,21 +309,23 @@ class EventsJournal(QWidget):
             adapter_query = adapter.select_query()
             query_string += adapter_query + ' UNION '
         query_string = query_string.removesuffix(' UNION ')
-        query_string += ') AS temp WHERE time_stamp BETWEEN :start AND :finish ORDER BY time_stamp DESC;'
+        query_string += ') AS temp ORDER BY time_stamp DESC;'
+        
         query = QSqlQuery(QSqlDatabase.database('events_conn'))
-        query.prepare(query_string)
-        query.bindValue(":start", self.current_start_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
-        query.bindValue(":finish", self.current_end_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
-        query.exec()
-        # self.logger.debug(query.lastError().text())
-
-        self.model.setQuery(query)
+        if query.prepare(query_string):
+            if query.exec():
+                self.model.setQuery(query)
+            else:
+                self.logger.error(f"SQL Error: {query.lastError().text()}")
+        else:
+            self.logger.error(f"SQL Prepare Error: {query.lastError().text()}")
         self.model.setHeaderData(0, Qt.Orientation.Horizontal, self.tr('Event'))
-        self.model.setHeaderData(1, Qt.Orientation.Horizontal, self.tr('Time'))
-        self.model.setHeaderData(2, Qt.Orientation.Horizontal, self.tr('Time lost'))
-        self.model.setHeaderData(3, Qt.Orientation.Horizontal, self.tr('Information'))
-        self.model.setHeaderData(4, Qt.Orientation.Horizontal, self.tr('Preview'))
-        self.model.setHeaderData(5, Qt.Orientation.Horizontal, self.tr('Lost preview'))
+        self.model.setHeaderData(1, Qt.Orientation.Horizontal, self.tr('Event Details'))
+        self.model.setHeaderData(2, Qt.Orientation.Horizontal, self.tr('Time'))
+        self.model.setHeaderData(3, Qt.Orientation.Horizontal, self.tr('Time lost'))
+        self.model.setHeaderData(4, Qt.Orientation.Horizontal, self.tr('Information'))
+        self.model.setHeaderData(5, Qt.Orientation.Horizontal, self.tr('Preview'))
+        self.model.setHeaderData(6, Qt.Orientation.Horizontal, self.tr('Lost preview'))
 
     def _setup_filter(self):
         self.filters = QComboBox()
@@ -541,30 +554,53 @@ class EventsJournal(QWidget):
         query.exec()
         self.model.setQuery(query)
 
+    def _auto_refresh_data(self):
+        """Automatically refresh data every 5 seconds"""
+        try:
+            self._retrieve_data()
+        except Exception as e:
+            self.logger.error(f"Auto-refresh error: {e}")
+
     def _retrieve_data(self):
-        if not self.isVisible():
-            return
+        try:
+            # Build query string
+            query_string = 'SELECT * FROM ('
+            for adapter in self.journal_adapters:
+                adapter_query = adapter.select_query()
+                query_string += adapter_query + ' UNION '
+            query_string = query_string.removesuffix(' UNION ')
+            query_string += ') AS temp WHERE time_stamp BETWEEN :start AND :finish ORDER BY time_stamp DESC;'
+            
+            # Set time range
+            self.current_start_time = datetime.datetime.combine(datetime.datetime.now()-datetime.timedelta(days=1), datetime.time.min)
+            self.current_end_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.max)
+            
+            # Update filter controls
+            self.start_time.setDateTime(
+                QDateTime.fromString(self.current_start_time.strftime("%H:%M:%S %d-%m-%Y"), "hh:mm:ss dd-MM-yyyy"))
+            self.finish_time.setDateTime(
+                QDateTime.fromString(self.current_end_time.strftime("%H:%M:%S %d-%m-%Y"), "hh:mm:ss dd-MM-yyyy"))
 
-        query = QSqlQuery(QSqlDatabase.database('events_conn'))
-        query_string = 'SELECT * FROM ('
-        for adapter in self.journal_adapters:
-            adapter_query = adapter.select_query()
-            query_string += adapter_query + ' UNION '
-        query_string = query_string.removesuffix(' UNION ')
-        query_string += ') AS temp WHERE time_stamp BETWEEN :start AND :finish ORDER BY time_stamp DESC;'
-        query.prepare(query_string)
-        self.current_start_time = datetime.datetime.combine(datetime.datetime.now()-datetime.timedelta(days=1), datetime.time.min)
-        self.current_end_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.max)
-        # Сбрасываем дату в фильтрах
-        self.start_time.setDateTime(
-            QDateTime.fromString(self.current_start_time.strftime("%H:%M:%S %d-%m-%Y"), "hh:mm:ss dd-MM-yyyy"))
-        self.finish_time.setDateTime(
-            QDateTime.fromString(self.current_end_time.strftime("%H:%M:%S %d-%m-%Y"), "hh:mm:ss dd-MM-yyyy"))
-
-        query.bindValue(":start", self.current_start_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
-        query.bindValue(":finish", self.current_end_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
-        query.exec()
-        self.model.setQuery(query)
+            # Check if database connection exists
+            if 'events_conn' not in QSqlDatabase.connectionNames():
+                self._connect_to_db()
+            
+            # Create and execute query in one go
+            query = QSqlQuery(QSqlDatabase.database('events_conn'))
+            query.prepare(query_string)
+            query.bindValue(":start", self.current_start_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
+            query.bindValue(":finish", self.current_end_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
+            
+            if query.exec():
+                self.model.setQuery(query)
+            else:
+                self.logger.error(f"Events query failed: {query.lastError().text()}")
+                # Check if connection is still valid
+                if 'events_conn' not in QSqlDatabase.connectionNames():
+                    self._connect_to_db()
+                
+        except Exception as e:
+            self.logger.error(f"Retrieve data error: {e}")
 
     @pyqtSlot()
     def _insert_rows(self):
@@ -578,8 +614,15 @@ class EventsJournal(QWidget):
             return
         self.update_timer.start(10000)
 
+    def showEvent(self, event):
+        """Called when the widget is shown"""
+        super().showEvent(event)
+        self._retrieve_data()
+
     def close(self):
         # self._update_job_first_last_records()
+        if hasattr(self, 'refresh_timer'):
+            self.refresh_timer.stop()
         QSqlDatabase.removeDatabase('events_conn')
 
     def _create_dict_source_name_address_id(self):

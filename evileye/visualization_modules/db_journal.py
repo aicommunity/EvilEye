@@ -102,10 +102,17 @@ class DatabaseJournalWindow(QWidget):
         adapters = [self.cam_events_adapter, self.perimeter_events_adapter, self.zone_events_adapter]
         if self.attr_events_adapter:
             adapters.append(self.attr_events_adapter)
-        self.tabs.addTab(events_journal.EventsJournal(adapters,
-                                                      self.db_controller, 'objects', self.params, self.database_params,
-                                                      self.tables['objects'], parent=self,
-                                                      logger_name="events_journal", parent_logger=self.logger), 'Events journal')
+        
+        try:
+            events_journal_widget = events_journal.EventsJournal(adapters,
+                                                               self.db_controller, 'objects', self.params, self.database_params,
+                                                               self.tables['objects'], parent=self,
+                                                               logger_name="events_journal", parent_logger=self.logger)
+            self.tabs.addTab(events_journal_widget, 'Events journal')
+        except Exception as e:
+            self.logger.error(f"Failed to create EventsJournal: {e}")
+            import traceback
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
 
         self.layout = QVBoxLayout()
         self.layout.addWidget(self.tabs)
