@@ -51,7 +51,11 @@ class DateTimeDelegate(QStyledItemDelegate):
         super().__init__(parent)
 
     def displayText(self, value, locale) -> str:
-        return value.toString(Qt.DateFormat.ISODate)
+        if hasattr(value, 'toString'):
+            return value.toString(Qt.DateFormat.ISODate)
+        else:
+            # Value is already a string
+            return str(value)
 
 
 class ImageWindow(QLabel):
@@ -164,7 +168,7 @@ class HandlerJournal(QWidget):
 
         self.image_delegate = ImageDelegate(None, image_dir=self.image_dir)
         self.date_delegate = DateTimeDelegate(None)
-        self.table.setItemDelegateForColumn(3, self.date_delegate)
+        self.table.setItemDelegateForColumn(0, self.date_delegate)
         self.table.setItemDelegateForColumn(4, self.date_delegate)
         self.table.setItemDelegateForColumn(5, self.image_delegate)
         self.table.setItemDelegateForColumn(6, self.image_delegate)

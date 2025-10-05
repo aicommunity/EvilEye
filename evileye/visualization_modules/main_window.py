@@ -370,7 +370,9 @@ class MainWindow(QMainWindow):
         # Check if directory exists before creating journal
         if os.path.exists(images_dir):
             try:
-                self.db_journal_win = EventsJournalJson(images_dir)
+                from . import json_journal
+                self.db_journal_win = json_journal.JsonJournalWindow(self, self.params, images_dir, False,
+                                                                    logger_name="json_journal", parent_logger=self.logger)
                 self.db_journal_win.setVisible(False)
             except Exception as e:
                 self.logger.error(f"JSON journal creation error: {e}")

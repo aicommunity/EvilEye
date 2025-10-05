@@ -165,7 +165,11 @@ class DateTimeDelegate(QStyledItemDelegate):
         super().__init__(parent)
 
     def displayText(self, value, locale) -> str:
-        return value.toString(Qt.DateFormat.ISODate)
+        if hasattr(value, 'toString'):
+            return value.toString(Qt.DateFormat.ISODate)
+        else:
+            # Value is already a string
+            return str(value)
 
 
 class ImageWindow(QLabel):

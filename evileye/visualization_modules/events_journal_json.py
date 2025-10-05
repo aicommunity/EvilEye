@@ -9,8 +9,8 @@ try:
         QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton,
         QHeaderView, QComboBox, QTableWidget, QTableWidgetItem, QFileDialog, QStyledItemDelegate
     )
-    from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor, QBrush
-    from PyQt6.QtCore import QSize, QTimer
+    from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor, QBrush, QPolygonF
+    from PyQt6.QtCore import QSize, QTimer, QPointF
     pyqt_version = 6
 except ImportError:
     from PyQt5.QtCore import Qt, pyqtSlot
@@ -18,8 +18,8 @@ except ImportError:
         QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton,
         QHeaderView, QComboBox, QTableWidget, QTableWidgetItem, QFileDialog, QStyledItemDelegate
     )
-    from PyQt5.QtGui import QPixmap, QPainter, QPen, QColor, QBrush
-    from PyQt5.QtCore import QSize, QTimer
+    from PyQt5.QtGui import QPixmap, QPainter, QPen, QColor, QBrush, QPolygonF
+    from PyQt5.QtCore import QSize, QTimer, QPointF
     pyqt_version = 5
 
 from .journal_data_source_json import JsonLabelJournalDataSource
@@ -102,13 +102,6 @@ class ImageDelegate(QStyledItemDelegate):
         ev_item = table.item(row, 5) if index.column() == 5 else table.item(row, 6)
         ev = ev_item.data(Qt.ItemDataRole.UserRole) if ev_item else None
         
-        # Debug: Print event data
-        if ev:
-            print(f"DEBUG: Event data: {ev}")
-            print(f"DEBUG: Box data: {ev.get('bounding_box') or ev.get('box')}")
-        else:
-            print(f"DEBUG: No event data for row {row}, column {index.column()}")
-        
         if ev:
             # Box - handle both dict and list formats
             box = ev.get('bounding_box') or ev.get('box')
@@ -152,7 +145,6 @@ class ImageDelegate(QStyledItemDelegate):
                 w = int((x2_norm - x1_norm) * draw_w)
                 h = int((y2_norm - y1_norm) * draw_h)
                 
-                print(f"DEBUG: Drawing box at x={x}, y={y}, w={w}, h={h}")
                 painter.drawRect(x, y, w, h)
             # Zone - use same logic as DB journal
             zc = ev.get('zone_coords')
@@ -427,59 +419,57 @@ class EventsJournalJson(QWidget):
             # Use empty sort list to avoid sorting errors with None values
             rows = self.ds.fetch(self.page, self.page_size, filters, [])
             
-            # Group events by object_id to show found/lost in same row (objects, attributes, fov, zone)
-            grouped_events = {}
-            for ev in rows:
-                object_id = ev.get('object_id')
-                key = object_id if object_id is not None else ev.get('camera_full_address') or 'na'
-                if key not in grouped_events:
-                    grouped_events[key] = {'found': None, 'lost': None}
-                
-                et = ev.get('event_type')
-                if et in ('found','attr_found','fov_found','zone_entered'):
-                    grouped_events[key]['found'] = ev
-                elif et in ('lost','attr_lost','fov_lost','zone_left'):
-                    grouped_events[key]['lost'] = ev
-            
-            # Create table rows from grouped events
+            # Show each event separately, like in DB journal
             table_rows = []
-            for object_id, events in grouped_events.items():
-                found_event = events['found']
-                lost_event = events['lost']
-                
-                # Use found event as base, or lost event if no found event
-                base_event = found_event or lost_event
-                if not base_event:
-                    continue
-                
-                # Create row data
-                et = base_event.get('event_type','')
+            for ev in rows:
+                # Create row data for each event
+                et = ev.get('event_type','')
                 event_name = 'Event'
+                event_details = ''
                 info = 'Event'
+                
                 if et.startswith('attr'):
-                    event_name = f"AttributeEvent: {base_event.get('event_name','')}"
-                    info = f"AttributeEvent name={base_event.get('event_name','')}; obj={base_event.get('object_id')}; class={base_event.get('class_name', base_event.get('class_id',''))}; attrs={base_event.get('attrs', [])}"
+                    event_name = "AttributeEvent"
+                    event_details = ev.get('event_name','')
+                    info = f"AttributeEvent name={ev.get('event_name','')}; obj={ev.get('object_id')}; class={ev.get('class_name', ev.get('class_id',''))}; attrs={ev.get('attrs', [])}"
                 elif et.startswith('zone'):
                     event_name = "ZoneEvent"
-                    info = f"ZoneEvent obj={base_event.get('object_id')} zone={base_event.get('zone_id','')}"
+                    event_details = str(ev.get('source_id', ''))
+                    info = f"ZoneEvent obj={ev.get('object_id')} zone={ev.get('zone_id','')}"
                 elif et.startswith('fov'):
                     event_name = "FOVEvent"
-                    info = f"FOVEvent obj={base_event.get('object_id')}"
+                    event_details = str(ev.get('source_id', ''))
+                    info = f"FOVEvent obj={ev.get('object_id')}"
                 elif et == 'found' or et == 'lost':
                     event_name = "ObjectEvent"
-                    info = f"Object Id={base_event.get('object_id')}; class: {base_event.get('class_name', base_event.get('class_id',''))}; conf: {base_event.get('confidence', 0)}"
+                    event_details = ev.get('source_name', 'Unknown')
+                    info = f"Object Id={ev.get('object_id')}; class: {ev.get('class_name', ev.get('class_id',''))}; conf: {ev.get('confidence', 0)}"
                 elif et == 'cam':
                     event_name = "CameraEvent"
-                    info = f"Camera {base_event.get('camera_full_address')} status={base_event.get('connection_status')}"
+                    event_details = ev.get('camera_full_address', '')
+                    info = f"Camera {ev.get('camera_full_address')} status={ev.get('connection_status')}"
+
+                # Determine preview images based on event type
+                preview = ''
+                lost_preview = ''
+                found_event = None
+                lost_event = None
+                
+                if et in ('found', 'attr_found', 'fov_found', 'zone_entered'):
+                    preview = ev.get('image_filename', '')
+                    found_event = ev
+                elif et in ('lost', 'attr_lost', 'fov_lost', 'zone_left'):
+                    lost_preview = ev.get('image_filename', '')
+                    lost_event = ev
 
                 row_data = {
-                    'name': base_event.get('source_name', 'Unknown'),
                     'event': event_name,
+                    'event_details': event_details,
                     'information': info,
-                    'time': found_event.get('ts') if found_event else (lost_event.get('ts') if lost_event else ''),
-                    'time_lost': lost_event.get('ts') if lost_event else '',
-                    'preview': found_event.get('image_filename') if found_event else '',
-                    'lost_preview': lost_event.get('image_filename') if lost_event else '',
+                    'time': ev.get('ts', ''),
+                    'time_lost': '',
+                    'preview': preview,
+                    'lost_preview': lost_preview,
                     'found_event': found_event,
                     'lost_event': lost_event
                 }
@@ -493,8 +483,8 @@ class EventsJournalJson(QWidget):
                 # Event column (1)
                 self.table.setItem(r, 1, QTableWidgetItem(row_data['event']))
                 
-                # Event Details column (2) - use source name as details
-                self.table.setItem(r, 2, QTableWidgetItem(row_data['name']))
+                # Event Details column (2)
+                self.table.setItem(r, 2, QTableWidgetItem(row_data['event_details']))
                 
                 # Time lost column (3)
                 self.table.setItem(r, 3, QTableWidgetItem(str(row_data['time_lost'])))
