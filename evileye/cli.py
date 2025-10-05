@@ -7,6 +7,9 @@ Provides command-line tools for running the EvilEye surveillance system.
 
 import json
 import sys
+import os
+import shutil
+import subprocess
 import logging
 from pathlib import Path
 from typing import Optional
@@ -52,9 +55,6 @@ def run(
         evileye run configs/test_sources_detectors_trackers_mc.json
         evileye run --video /path/to/video.mp4
     """
-    import subprocess
-    import os
-
     # Setup logging
     setup_logging(verbose=verbose)
     logger = get_module_logger("cli")
@@ -118,6 +118,44 @@ def run(
         console.print("[yellow]Launch interrupted by user[/yellow]")
         raise typer.Exit(0)
 
+@app.command("start-api")
+def start_api(
+        host: str = typer.Option("127.0.0.1", "--host", help="Bind host"),
+        port: int = typer.Option(8080, "--port", help="Bind port"),
+        reload: bool = typer.Option(True, "--reload/--no-reload", help="Auto-reload on code changes"),
+        workers: int = typer.Option(1, "--workers", help="Number of worker processes"),
+        verbose: bool = typer.Option(False, "--verbose", help="Enable verbose logging"),
+) -> None:
+    """
+    Start EvilEye FastAPI web server.
+
+    Example:
+        evileye start-api --host 0.0.0.0 --port 8000
+    """
+    
+    setup_logging(verbose=verbose)
+    logger = get_module_logger("cli")
+    log_system_info(logger)
+
+    module_path = "evileye.api.app:app"
+    cmd = [sys.executable, "-m", "uvicorn", module_path, "--host", host, "--port", str(port)]
+    if reload:
+        cmd.append("--reload")
+    if workers and workers > 1 and not reload:
+        cmd.extend(["--workers", str(workers)])
+
+    try:
+        logger.info(f"Starting web server: {' '.join(cmd)}")
+        console.print(f"[green]Starting web server:[/green] {' '.join(cmd)}")
+        subprocess.run(cmd, check=True, cwd=os.getcwd())
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Web server failed: {e}")
+        console.print(f"[red]Web server failed: {e}[/red]")
+        raise typer.Exit(1)
+    except KeyboardInterrupt:
+        logger.info("Web server interrupted by user")
+        console.print("[yellow]Web server interrupted by user[/yellow]")
+        raise typer.Exit(0)
 
 @app.command()
 def validate(
@@ -198,7 +236,6 @@ def deploy() -> None:
     1. Copies credentials_proto.json to credentials.json (if credentials.json doesn't exist)
     2. Creates configs folder if it doesn't exist
     """
-    import shutil
     
     current_dir = Path.cwd()
     console.print(f"[blue]Deploying EvilEye files to: {current_dir}[/blue]")
@@ -249,8 +286,6 @@ def deploy_samples() -> None:
     3. Copies pre-configured sample configurations
     4. Creates documentation for samples
     """
-    import shutil
-    
     current_dir = Path.cwd()
     console.print(f"[blue]Deploying EvilEye sample configurations to: {current_dir}[/blue]")
     
