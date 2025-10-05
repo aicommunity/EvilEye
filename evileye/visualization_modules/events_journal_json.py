@@ -190,7 +190,13 @@ class DateTimeDelegate(QStyledItemDelegate):
 class ImageWindow(QLabel):
     def __init__(self, image_path, box=None, zone_coords=None, parent=None):
         super().__init__(parent)
+        # Показывать как отдельное окно
         self.setWindowTitle('Image')
+        try:
+            self.setWindowFlag(Qt.Window, True)
+            self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        except Exception:
+            pass
         self.setFixedSize(900, 600)
         self.image_path = image_path
         self.zone_coords = zone_coords
@@ -198,7 +204,16 @@ class ImageWindow(QLabel):
         # Load image
         pixmap = QPixmap(image_path)
         if pixmap.isNull():
-            self.logger.error(f"Image loading error: {image_path}")
+            try:
+                self.logger.error(f"Image loading error: {image_path}")
+            except Exception:
+                pass
+            # даже если не удалось загрузить, показываем окно с сообщением
+            self.label = QLabel(f"Image not found:\n{image_path}")
+            self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.layout = QVBoxLayout()
+            self.layout.addWidget(self.label)
+            self.setLayout(self.layout)
             return
             
         # Compute target rect in window
@@ -213,36 +228,54 @@ class ImageWindow(QLabel):
         # Create canvas pixmap sized to window
         canvas = QPixmap(win_w, win_h)
         canvas.fill(QColor(0, 0, 0))
-        painter = QPainter(canvas)
-        # Draw image
-        painter.drawPixmap(draw_x, draw_y, draw_w, draw_h, pixmap)
-        # Draw overlays in same mapping
-        if box:
-            pen = QPen(QColor(0, 255, 0), 2)
-            painter.setPen(pen)
-            bx, by, bw, bh = box
-            if max(bx, by, bw, bh) <= 1.0:
-                x = draw_x + int(bx * draw_w)
-                y = draw_y + int(by * draw_h)
-                w = int(bw * draw_w)
-                h = int(bh * draw_h)
-            else:
-                x, y, w, h = int(bx), int(by), int(bw), int(bh)
-            painter.drawRect(x, y, w, h)
-        if self.zone_coords:
-            pen = QPen(QColor(255, 0, 0), 2)
-            painter.setPen(pen)
-            pts = []
-            for px, py in self.zone_coords:
-                if max(px, py) <= 1.0:
-                    pts.append((draw_x + int(px * draw_w), draw_y + int(py * draw_h)))
-                else:
-                    pts.append((int(px), int(py)))
-            for i in range(len(pts)):
-                x1, y1 = pts[i]
-                x2, y2 = pts[(i+1) % len(pts)]
-                painter.drawLine(x1, y1, x2, y2)
-        painter.end()
+        painter = QPainter()
+        try:
+            painter.begin(canvas)
+            # Draw image
+            painter.drawPixmap(draw_x, draw_y, draw_w, draw_h, pixmap)
+            # Draw overlays in same mapping
+            if box:
+                pen = QPen(QColor(0, 255, 0), 2)
+                painter.setPen(pen)
+                # Поддержка dict {'x','y','width','height'}, [x,y,w,h] и [x1,y1,x2,y2]
+                x1=y1=x2=y2=None
+                if isinstance(box, dict):
+                    bx = box.get('x', 0); by = box.get('y', 0); bw = box.get('width', 0); bh = box.get('height', 0)
+                    if max(bx, by, bw, bh) <= 1.0:
+                        x1 = bx; y1 = by; x2 = bx + bw; y2 = by + bh
+                    else:
+                        # абсолютные пиксели → нормализуем от размера исходного pixmap
+                        x1 = bx / img_w; y1 = by / img_h; x2 = (bx + bw) / img_w; y2 = (by + bh) / img_h
+                elif isinstance(box, (list, tuple)) and len(box) == 4:
+                    a,b,c,d = box
+                    if max(a,b,c,d) <= 1.0:
+                        # это [x1,y1,x2,y2] в нормализованных координатах
+                        x1,y1,x2,y2 = a,b,c,d
+                    else:
+                        # это [x,y,w,h] в пикселях
+                        x1 = a / img_w; y1 = b / img_h; x2 = (a + c) / img_w; y2 = (b + d) / img_h
+                if None not in (x1,y1,x2,y2):
+                    x = draw_x + int(x1 * draw_w)
+                    y = draw_y + int(y1 * draw_h)
+                    w = int((x2 - x1) * draw_w)
+                    h = int((y2 - y1) * draw_h)
+                    painter.drawRect(x, y, w, h)
+            if self.zone_coords:
+                pen = QPen(QColor(255, 0, 0), 2)
+                painter.setPen(pen)
+                pts = []
+                for px, py in self.zone_coords:
+                    if max(px, py) <= 1.0:
+                        pts.append((draw_x + int(px * draw_w), draw_y + int(py * draw_h)))
+                    else:
+                        pts.append((int(px), int(py)))
+                for i in range(len(pts)):
+                    x1, y1 = pts[i]
+                    x2, y2 = pts[(i+1) % len(pts)]
+                    painter.drawLine(x1, y1, x2, y2)
+        finally:
+            if painter.isActive():
+                painter.end()
         
         # Create label and set pixmap
         self.label = QLabel()
@@ -299,7 +332,8 @@ class EventsJournalJson(QWidget):
         toolbar.addWidget(self.cmb_date)
 
         self.cmb_type = QComboBox()
-        self.cmb_type.addItems(['All', 'found', 'lost'])
+        # Добавляем типы для атрибутных/зон/FOV событий, чтобы их можно было явно отфильтровать
+        self.cmb_type.addItems(['All', 'found', 'lost', 'attr_found', 'attr_lost', 'zone_entered', 'zone_left', 'fov_found', 'fov_lost', 'cam'])
         self.cmb_type.currentTextChanged.connect(self._on_filter_changed)
         toolbar.addWidget(self.cmb_type)
 
@@ -418,6 +452,17 @@ class EventsJournalJson(QWidget):
             filters = {k: v for k, v in self.filters.items() if v}
             # Use empty sort list to avoid sorting errors with None values
             rows = self.ds.fetch(self.page, self.page_size, filters, [])
+            # В Events journal не показываем объектные found/lost
+            rows = [ev for ev in rows if ev.get('event_type') not in ('found', 'lost')]
+            # Короткая сводка по типам для диагностики (в логи)
+            try:
+                counts = {}
+                for ev in rows:
+                    et = ev.get('event_type', 'na')
+                    counts[et] = counts.get(et, 0) + 1
+                self.logger.info(f"JSON events summary: {counts}")
+            except Exception:
+                pass
             
             # Show each event separately, like in DB journal
             table_rows = []
@@ -427,12 +472,18 @@ class EventsJournalJson(QWidget):
                 event_name = 'Event'
                 event_details = ''
                 info = 'Event'
-                
-                if et.startswith('attr'):
+
+                # Heuristic first: prefer explicit payload keys over event_type when available
+                if et.startswith('attr') or ('event_name' in ev):
+                    # Attribute event payload
                     event_name = "AttributeEvent"
                     event_details = ev.get('event_name','')
                     info = f"AttributeEvent name={ev.get('event_name','')}; obj={ev.get('object_id')}; class={ev.get('class_name', ev.get('class_id',''))}; attrs={ev.get('attrs', [])}"
-                elif et.startswith('zone'):
+                elif et == 'cam' or ('camera_full_address' in ev):
+                    event_name = "CameraEvent"
+                    event_details = ev.get('camera_full_address', '')
+                    info = f"Camera {ev.get('camera_full_address')} status={ev.get('connection_status')}"
+                elif et.startswith('zone') or ('zone_coords' in ev):
                     event_name = "ZoneEvent"
                     event_details = str(ev.get('source_id', ''))
                     info = f"ZoneEvent obj={ev.get('object_id')} zone={ev.get('zone_id','')}"
@@ -440,14 +491,6 @@ class EventsJournalJson(QWidget):
                     event_name = "FOVEvent"
                     event_details = str(ev.get('source_id', ''))
                     info = f"FOVEvent obj={ev.get('object_id')}"
-                elif et == 'found' or et == 'lost':
-                    event_name = "ObjectEvent"
-                    event_details = ev.get('source_name', 'Unknown')
-                    info = f"Object Id={ev.get('object_id')}; class: {ev.get('class_name', ev.get('class_id',''))}; conf: {ev.get('confidence', 0)}"
-                elif et == 'cam':
-                    event_name = "CameraEvent"
-                    event_details = ev.get('camera_full_address', '')
-                    info = f"Camera {ev.get('camera_full_address')} status={ev.get('connection_status')}"
 
                 # Determine preview images based on event type
                 preview = ''

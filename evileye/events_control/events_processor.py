@@ -32,7 +32,10 @@ class EventsProcessor(EvilEyeBase):
     def init_impl(self):
         self.events_adapters = {adapter.get_event_name(): adapter for adapter in self.db_adapters}
         self.events_tables = {adapter.get_event_name(): adapter.get_table_name() for adapter in self.db_adapters}
-        # print(self.events_adapters)
+        try:
+            self.logger.info(f"EventsProcessor initialized with adapters: {list(self.events_adapters.keys())}")
+        except Exception:
+            pass
 
     def get_last_id(self):  # Функция для получения последнего id события из БД
         # Return 0 if no database controller is available
@@ -139,6 +142,11 @@ class EventsProcessor(EvilEyeBase):
                             self.finished_events[events].append(event)
                         if event.get_name() in self.events_adapters:
                             self.events_adapters[event.get_name()].insert(event)
+                        else:
+                            try:
+                                self.logger.info(f"EventsProcessor: got event {event.get_name()}, but no adapter is registered")
+                            except Exception:
+                                pass
                 # Удаляем завершенные долгосрочные события
                 if events in self.long_term_events:
                     filtered_long_term[events] = [self.long_term_events[events][i] for i

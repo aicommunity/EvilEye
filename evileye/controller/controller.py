@@ -714,6 +714,10 @@ class Controller:
             adapters = [self.db_adapter_fov_events, self.db_adapter_cam_events, self.db_adapter_zone_events]
             if self.db_adapter_attr_events:
                 adapters.append(self.db_adapter_attr_events)
+            try:
+                self.logger.info(f"DB adapters: {[a.get_event_name() for a in adapters if a]}")
+            except Exception:
+                pass
             return adapters
         # JSON adapters when DB disabled or unavailable
         adapters = []
@@ -725,8 +729,15 @@ class Controller:
                 adapter.init()
                 adapter.start()
                 adapters.append(adapter)
-            except Exception:
-                continue
+                try:
+                    self.logger.info(f"JSON adapter started: {adapter.get_event_name()} -> image_dir={img_dir}")
+                except Exception:
+                    pass
+            except Exception as e:
+                try:
+                    self.logger.error(f"Failed to start JSON adapter {adapter_cls.__name__}: {e}")
+                except Exception:
+                    pass
         return adapters
 
     def _init_events_processor_unified(self, params):

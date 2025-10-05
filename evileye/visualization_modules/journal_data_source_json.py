@@ -91,8 +91,8 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                 self._read_file(os.path.join(base, 'zone_events_entered.json'), 'zone_entered', d)
                 self._read_file(os.path.join(base, 'zone_events_left.json'), 'zone_left', d)
                 self._read_file(os.path.join(base, 'camera_events.json'), 'cam', d)
-            # default sort: ts desc
-            self._cache.sort(key=lambda e: e.get('ts', ''), reverse=True)
+            # default sort: ts desc (robust to None)
+            self._cache.sort(key=lambda e: (e.get('ts') or ''), reverse=True)
 
     def _read_file(self, filepath: str, event_type: str, date_folder: str) -> None:
         if not os.path.isfile(filepath):
@@ -128,11 +128,12 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
             
             # Handle different timestamp fields for different event types
             if event_type == 'found':
-                timestamp = item.get('timestamp')
+                timestamp = item.get('timestamp') or item.get('ts')
             elif event_type == 'lost':
-                timestamp = item.get('lost_timestamp')  # Use lost_timestamp for lost events
+                timestamp = item.get('lost_timestamp') or item.get('ts')  # fallback to ts
             else:
-                timestamp = item.get('timestamp')
+                # For attr_*, fov_*, zone_*, cam, prefer 'ts' if present
+                timestamp = item.get('timestamp') or item.get('ts')
             
             if event_type in ('found', 'lost'):
                 return {
@@ -159,7 +160,7 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                     'object_id': item.get('object_id'),
                     'class_id': item.get('class_id'),
                     'class_name': item.get('class_name'),
-                    'image_filename': item.get('preview_path'),
+                    'image_filename': item.get('preview_path') or item.get('image_filename') or '',
                     'bounding_box': item.get('box'),
                     'attrs': item.get('attrs', []),
                     'event_name': item.get('event_name', ''),
