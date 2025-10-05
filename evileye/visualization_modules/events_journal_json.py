@@ -464,59 +464,75 @@ class EventsJournalJson(QWidget):
             except Exception:
                 pass
             
-            # Show each event separately, like in DB journal
-            table_rows = []
+            # Group paired events to show both Preview and Lost preview in one row
+            grouped = {}
+            cam_events = []
             for ev in rows:
-                # Create row data for each event
                 et = ev.get('event_type','')
-                event_name = 'Event'
-                event_details = ''
-                info = 'Event'
-
-                # Heuristic first: prefer explicit payload keys over event_type when available
-                if et.startswith('attr') or ('event_name' in ev):
-                    # Attribute event payload
-                    event_name = "AttributeEvent"
-                    event_details = ev.get('event_name','')
-                    info = f"AttributeEvent name={ev.get('event_name','')}; obj={ev.get('object_id')}; class={ev.get('class_name', ev.get('class_id',''))}; attrs={ev.get('attrs', [])}"
-                elif et == 'cam' or ('camera_full_address' in ev):
-                    event_name = "CameraEvent"
-                    event_details = ev.get('camera_full_address', '')
-                    info = f"Camera {ev.get('camera_full_address')} status={ev.get('connection_status')}"
-                elif et.startswith('zone') or ('zone_coords' in ev):
-                    event_name = "ZoneEvent"
-                    event_details = str(ev.get('source_id', ''))
-                    info = f"ZoneEvent obj={ev.get('object_id')} zone={ev.get('zone_id','')}"
+                if et.startswith('attr'):
+                    key = ('attr', ev.get('object_id'))
+                elif et.startswith('zone'):
+                    key = ('zone', ev.get('source_id'), ev.get('zone_id'))
                 elif et.startswith('fov'):
-                    event_name = "FOVEvent"
-                    event_details = str(ev.get('source_id', ''))
-                    info = f"FOVEvent obj={ev.get('object_id')}"
+                    key = ('fov', ev.get('source_id'), ev.get('object_id'))
+                elif et == 'cam':
+                    cam_events.append(ev)
+                    continue
+                else:
+                    continue
+                bucket = grouped.setdefault(key, {'found': None, 'lost': None})
+                if et in ('attr_found','zone_entered','fov_found'):
+                    bucket['found'] = ev
+                elif et in ('attr_lost','zone_left','fov_lost'):
+                    bucket['lost'] = ev
 
-                # Determine preview images based on event type
-                preview = ''
-                lost_preview = ''
-                found_event = None
-                lost_event = None
-                
-                if et in ('found', 'attr_found', 'fov_found', 'zone_entered'):
-                    preview = ev.get('image_filename', '')
-                    found_event = ev
-                elif et in ('lost', 'attr_lost', 'fov_lost', 'zone_left'):
-                    lost_preview = ev.get('image_filename', '')
-                    lost_event = ev
+            table_rows = []
+            for key, pair in grouped.items():
+                kind = key[0]
+                found_ev = pair['found']
+                lost_ev = pair['lost']
+                base = found_ev or lost_ev
+                if not base:
+                    continue
+                if kind == 'attr':
+                    event_name = 'AttributeEvent'
+                    event_details = base.get('event_name','')
+                    info = f"AttributeEvent name={base.get('event_name','')}; obj={base.get('object_id')}; class={base.get('class_name', base.get('class_id',''))}; attrs={base.get('attrs', [])}"
+                elif kind == 'zone':
+                    event_name = 'ZoneEvent'
+                    event_details = str(base.get('source_id',''))
+                    info = f"ZoneEvent obj={base.get('object_id')} zone={base.get('zone_id','')}"
+                else:
+                    event_name = 'FOVEvent'
+                    event_details = str(base.get('source_id',''))
+                    info = f"FOVEvent obj={base.get('object_id')}"
 
                 row_data = {
                     'event': event_name,
                     'event_details': event_details,
                     'information': info,
-                    'time': ev.get('ts', ''),
-                    'time_lost': '',
-                    'preview': preview,
-                    'lost_preview': lost_preview,
-                    'found_event': found_event,
-                    'lost_event': lost_event
+                    'time': (found_ev.get('ts') if found_ev else base.get('ts','')),
+                    'time_lost': (lost_ev.get('ts') if lost_ev else ''),
+                    'preview': (found_ev.get('image_filename','') if found_ev else ''),
+                    'lost_preview': (lost_ev.get('image_filename','') if lost_ev else ''),
+                    'found_event': found_ev,
+                    'lost_event': lost_ev
                 }
                 table_rows.append(row_data)
+
+            # Add camera events as standalone rows
+            for ev in cam_events:
+                table_rows.append({
+                    'event': 'CameraEvent',
+                    'event_details': ev.get('camera_full_address',''),
+                    'information': f"Camera {ev.get('camera_full_address')} status={ev.get('connection_status')}",
+                    'time': ev.get('ts',''),
+                    'time_lost': '',
+                    'preview': '',
+                    'lost_preview': '',
+                    'found_event': None,
+                    'lost_event': None
+                })
             
             self.table.setRowCount(len(table_rows))
             for r, row_data in enumerate(table_rows):
