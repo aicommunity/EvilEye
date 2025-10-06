@@ -61,8 +61,14 @@ class JsonJournalWindow(QWidget):
         self.setLayout(self.layout)
 
     def _close_tab(self, index):
-        """Handle tab close request"""
-        self.tabs.removeTab(index)
+        """Handle tab close request: hide tab but keep widget for quick restore"""
+        widget = self.tabs.widget(index)
+        if widget:
+            widget.close()
+        try:
+            self.tabs.setTabVisible(index, False)
+        except Exception:
+            self.tabs.removeTab(index)
         if self.tabs.count() == 0:
             self.hide()
 
@@ -93,6 +99,19 @@ class JsonJournalWindow(QWidget):
                 ),
                 'Events journal'
             )
+        # Ensure tabs are visible
+        try:
+            for i in range(self.tabs.count()):
+                try:
+                    self.tabs.setTabVisible(i, True)
+                except Exception:
+                    pass
+            try:
+                self.tabs.tabBar().setVisible(True)
+            except Exception:
+                pass
+        except Exception:
+            pass
         except Exception as e:
             self.logger.error(f"Failed to recreate Events journal: {e}")
 
@@ -101,6 +120,10 @@ class JsonJournalWindow(QWidget):
         # Check existing
         for i in range(self.tabs.count()):
             if self.tabs.tabText(i).lower().startswith(title.lower()):
+                try:
+                    self.tabs.setTabVisible(i, True)
+                except Exception:
+                    pass
                 return i
         # Create if missing
         try:
@@ -113,6 +136,10 @@ class JsonJournalWindow(QWidget):
                 # Force initial load
                 if hasattr(widget, '_reload_table'):
                     widget._reload_table()
+                try:
+                    self.tabs.setTabVisible(idx, True)
+                except Exception:
+                    pass
                 return idx
             if title.lower().startswith('events'):
                 widget = events_journal_json.EventsJournalJson(
@@ -122,6 +149,10 @@ class JsonJournalWindow(QWidget):
                 idx = self.tabs.addTab(widget, 'Events journal')
                 if hasattr(widget, '_reload_table'):
                     widget._reload_table()
+                try:
+                    self.tabs.setTabVisible(idx, True)
+                except Exception:
+                    pass
                 return idx
         except Exception as e:
             self.logger.error(f"Failed to recreate '{title}' tab: {e}")
@@ -132,6 +163,14 @@ class JsonJournalWindow(QWidget):
         super().showEvent(event)
         # If all tabs were closed previously, recreate defaults
         self._ensure_default_tabs()
+        # Make sure tab bar is visible
+        try:
+            self.tabs.tabBar().setVisible(True)
+        except Exception:
+            pass
+        # If there are tabs but no current, set to first
+        if self.tabs.count() > 0 and self.tabs.currentIndex() < 0:
+            self.tabs.setCurrentIndex(0)
         # Refresh data when window is shown
         for i in range(self.tabs.count()):
             widget = self.tabs.widget(i)

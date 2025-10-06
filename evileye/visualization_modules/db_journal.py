@@ -137,7 +137,9 @@ class DatabaseJournalWindow(QWidget):
 
     @pyqtSlot(int)
     def _close_tab(self, idx):
-        tab = self.tabs.widget(idx)
-        self.tabs.setTabVisible(idx, False)
-        tab.close()
+        # Hide tab, keep widget and DB connection alive
+        try:
+            self.tabs.setTabVisible(idx, False)
+        except Exception:
+            pass
 
