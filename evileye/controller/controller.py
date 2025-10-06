@@ -15,12 +15,19 @@ from evileye.database_controller.db_adapter_objects import DatabaseAdapterObject
 from evileye.database_controller.db_adapter_cam_events import DatabaseAdapterCamEvents
 from evileye.database_controller.db_adapter_fov_events import DatabaseAdapterFieldOfViewEvents
 from evileye.database_controller.db_adapter_zone_events import DatabaseAdapterZoneEvents
+from evileye.database_controller.db_adapter_attribute_events import DatabaseAdapterAttributeEvents
+from evileye.database_controller.json_adapter_attribute_events import JsonAdapterAttributeEvents
+from evileye.database_controller.json_adapter_fov_events import JsonAdapterFovEvents
+from evileye.database_controller.json_adapter_zone_events import JsonAdapterZoneEvents
+from evileye.database_controller.json_adapter_cam_events import JsonAdapterCamEvents
+from evileye.database_controller.json_adapter_attribute_events import JsonAdapterAttributeEvents
 from evileye.events_control.events_processor import EventsProcessor
 from evileye.database_controller.database_controller_pg import DatabaseControllerPg
 from evileye.events_control.events_controller import EventsDetectorsController
 from evileye.events_detectors.cam_events_detector import CamEventsDetector
 from evileye.events_detectors.fov_events_detector import FieldOfViewEventsDetector
 from evileye.events_detectors.zone_events_detector import ZoneEventsDetector
+from evileye.events_detectors.attribute_events_detector import AttributeEventsDetector
 import json
 import datetime
 import pprint
@@ -73,12 +80,14 @@ class Controller:
         self.cam_events_detector = None
         self.fov_events_detector = None
         self.zone_events_detector = None
+        self.attr_events_detector = None
 
         self.db_controller = None
         self.db_adapter_obj = None
         self.db_adapter_cam_events = None
         self.db_adapter_fov_events = None
         self.db_adapter_zone_events = None
+        self.db_adapter_attr_events = None
         
         # Initialize centralized class manager
         self.class_manager = ClassManager()
@@ -299,6 +308,8 @@ class Controller:
                 self.db_adapter_zone_events.start()
                 self.db_adapter_fov_events.start()
                 self.db_adapter_cam_events.start()
+                if self.db_adapter_attr_events:
+                    self.db_adapter_attr_events.start()
             except Exception as e:
                 self.logger.warning(f"Database connection error at startup. Disabling database functionality. Reason: {e}")
                 self.use_database = False
@@ -307,6 +318,8 @@ class Controller:
         self.zone_events_detector.start()
         self.cam_events_detector.start()
         self.fov_events_detector.start()
+        if self.attr_events_detector:
+            self.attr_events_detector.start()
         self.events_detectors_controller.start()
         self.events_processor.start()
         self.run_flag = True
@@ -322,6 +335,8 @@ class Controller:
         self.cam_events_detector.stop()
         self.fov_events_detector.stop()
         self.zone_events_detector.stop()
+        if self.attr_events_detector:
+            self.attr_events_detector.stop()
         if self.visualizer:
             self.visualizer.stop()
         self.obj_handler.stop()
@@ -331,6 +346,8 @@ class Controller:
             self.db_adapter_cam_events.stop()
             self.db_adapter_fov_events.stop()
             self.db_adapter_zone_events.stop()
+            if self.db_adapter_attr_events:
+                self.db_adapter_attr_events.stop()
             self.db_adapter_obj.stop()
             self.db_controller.disconnect()
         
@@ -510,6 +527,8 @@ class Controller:
         self.params['events_detectors']['CamEventsDetector'] = self.cam_events_detector.get_params()
         self.params['events_detectors']['FieldOfViewEventsDetector'] = self.fov_events_detector.get_params()
         self.params['events_detectors']['ZoneEventsDetector'] = self.zone_events_detector.get_params()
+        if self.attr_events_detector:
+            self.params['events_detectors']['AttributeEventsDetector'] = self.attr_events_detector.get_params()
 
         self.params['events_processor'] = self.events_processor.get_params()
         
@@ -599,6 +618,12 @@ class Controller:
         self.db_adapter_zone_events.set_params(**params['DatabaseAdapterZoneEvents'])
         self.db_adapter_zone_events.init()
 
+        # Attribute events adapter (optional)
+        if 'DatabaseAdapterAttributeEvents' in params:
+            self.db_adapter_attr_events = DatabaseAdapterAttributeEvents(self.db_controller)
+            self.db_adapter_attr_events.set_params(**params['DatabaseAdapterAttributeEvents'])
+            self.db_adapter_attr_events.init()
+
     def _init_events_detectors(self, params):
         self.cam_events_detector = CamEventsDetector(self.pipeline.get_sources())
         self.cam_events_detector.set_params(**params.get('CamEventsDetector', dict()))
@@ -612,7 +637,12 @@ class Controller:
         self.zone_events_detector.set_params(**params.get('ZoneEventsDetector', dict()))
         self.zone_events_detector.init()
 
-        self.obj_handler.subscribe(self.fov_events_detector, self.zone_events_detector)
+        # Initialize AttributeEventsDetector
+        self.attr_events_detector = AttributeEventsDetector(self.obj_handler)
+        self.attr_events_detector.set_params(**params.get('AttributeEventsDetector', dict()))
+        self.attr_events_detector.init()
+
+        self.obj_handler.subscribe(self.fov_events_detector, self.zone_events_detector, self.attr_events_detector)
         for source in self.pipeline.get_sources():
             source.subscribe(self.cam_events_detector)
         
@@ -652,26 +682,69 @@ class Controller:
         self.zone_events_detector.set_params(**params.get('ZoneEventsDetector', dict()))
         self.zone_events_detector.init()
 
-        self.obj_handler.subscribe(self.fov_events_detector, self.zone_events_detector)
+        # Initialize AttributeEventsDetector
+        self.attr_events_detector = AttributeEventsDetector(self.obj_handler)
+        self.attr_events_detector.set_params(**params.get('AttributeEventsDetector', dict()))
+        self.attr_events_detector.init()
+
+        self.obj_handler.subscribe(self.fov_events_detector, self.zone_events_detector, self.attr_events_detector)
         for source in self.pipeline.get_sources():
             source.subscribe(self.cam_events_detector)
 
     def _init_events_detectors_controller(self, params):
         detectors = [self.cam_events_detector, self.fov_events_detector, self.zone_events_detector]
+        if self.attr_events_detector:
+            detectors.append(self.attr_events_detector)
         self.events_detectors_controller = EventsDetectorsController(detectors)
         self.events_detectors_controller.set_params(**params)
         self.events_detectors_controller.init()
 
     def _init_events_processor(self, params):
-        db_adapters = [self.db_adapter_fov_events, self.db_adapter_cam_events, self.db_adapter_zone_events]
-        self.events_processor = EventsProcessor(db_adapters, self.db_controller)
-        self.events_processor.set_params(**params)
-        self.events_processor.init()
+        # Backward-compatible: delegate to unified initializer
+        self._init_events_processor_unified(params)
 
     def _init_events_processor_without_db(self, params):
         """Initialize events processor without database connection."""
-        # Create dummy adapters that don't save to database
-        self.events_processor = EventsProcessor([], None)  # No adapters, no db_controller
+        # Backward-compatible: delegate to unified initializer
+        self._init_events_processor_unified(params)
+
+    def _get_event_adapters(self):
+        """Build list of event adapters depending on database mode."""
+        if self.use_database and self.db_controller:
+            adapters = [self.db_adapter_fov_events, self.db_adapter_cam_events, self.db_adapter_zone_events]
+            if self.db_adapter_attr_events:
+                adapters.append(self.db_adapter_attr_events)
+            try:
+                self.logger.info(f"DB adapters: {[a.get_event_name() for a in adapters if a]}")
+            except Exception:
+                pass
+            return adapters
+        # JSON adapters when DB disabled or unavailable
+        adapters = []
+        img_dir = self.params.get('database', {}).get('image_dir', 'EvilEyeData')
+        for adapter_cls in (JsonAdapterAttributeEvents, JsonAdapterFovEvents, JsonAdapterZoneEvents, JsonAdapterCamEvents):
+            try:
+                adapter = adapter_cls(None)
+                adapter.set_params(image_dir=img_dir)
+                adapter.init()
+                adapter.start()
+                adapters.append(adapter)
+                try:
+                    self.logger.info(f"JSON adapter started: {adapter.get_event_name()} -> image_dir={img_dir}")
+                except Exception:
+                    pass
+            except Exception as e:
+                try:
+                    self.logger.error(f"Failed to start JSON adapter {adapter_cls.__name__}: {e}")
+                except Exception:
+                    pass
+        return adapters
+
+    def _init_events_processor_unified(self, params):
+        """Unified initializer for EventsProcessor for both DB and JSON modes."""
+        adapters = self._get_event_adapters()
+        db_ctrl = self.db_controller if (self.use_database and self.db_controller) else None
+        self.events_processor = EventsProcessor(adapters, db_ctrl)
         self.events_processor.set_params(**params)
         self.events_processor.init()
 

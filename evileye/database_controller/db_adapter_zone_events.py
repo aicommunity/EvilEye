@@ -133,14 +133,17 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
         cur_date_str = cur_date.strftime('%Y_%m_%d')
 
         current_day_path = os.path.join(img_dir, cur_date_str)
-        obj_type_path = os.path.join(current_day_path, obj_event_type + '_' + image_type + 's')
+        # Unified folders for events: events_found_*/events_lost_* (frames/previews)
+        tag = 'events_found' if obj_event_type == 'zone_entered' else 'events_lost'
+        subdir = f"{tag}_{'previews' if image_type == 'preview' else 'frames'}"
+        obj_type_path = os.path.join(current_day_path, subdir)
 
         if not os.path.exists(img_dir):
-            os.mkdir(img_dir)
+            os.makedirs(img_dir, exist_ok=True)
         if not os.path.exists(current_day_path):
-            os.mkdir(current_day_path)
+            os.makedirs(current_day_path, exist_ok=True)
         if not os.path.exists(obj_type_path):
-            os.mkdir(obj_type_path)
+            os.makedirs(obj_type_path, exist_ok=True)
 
         zone_id = event.zone.get_zone_id()
         obj_id = event.object_id

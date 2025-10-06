@@ -142,12 +142,17 @@ class VideoThread(QThread):
         try:
             frame, track_info, source_name, source_duration_secs, debug_info = self.queue.get()
             begin_it = timer()
-            utils.draw_boxes_tracking(frame, track_info, source_name, source_duration_secs,
+            
+            # Create a copy of the image for display to avoid modifying the original
+            import copy
+            display_frame = copy.deepcopy(frame)
+            
+            utils.draw_boxes_tracking(display_frame, track_info, source_name, source_duration_secs,
                                       self.font_scale, self.font_thickness, self.font_color,
                                       text_config=self.text_config, class_mapping=self.class_mapping)
             if self.show_debug_info:
-                utils.draw_debug_info(frame, debug_info)
-            qt_image = self.convert_cv_qt(frame.image, self.widget_width, self.widget_height)
+                utils.draw_debug_info(display_frame, debug_info)
+            qt_image = self.convert_cv_qt(display_frame.image, self.widget_width, self.widget_height)
             if self.show_zones:
                 self.draw_zones(qt_image, self.zones)
             end_it = timer()
