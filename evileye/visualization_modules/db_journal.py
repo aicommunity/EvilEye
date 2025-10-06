@@ -142,4 +142,21 @@ class DatabaseJournalWindow(QWidget):
             self.tabs.setTabVisible(idx, False)
         except Exception:
             pass
+        # If all tabs are hidden, hide the whole journal window
+        try:
+            any_visible = False
+            bar = self.tabs.tabBar()
+            for i in range(self.tabs.count()):
+                try:
+                    if bar.isTabVisible(i):
+                        any_visible = True
+                        break
+                except Exception:
+                    # Fallback: if API not available, consider count>0 as visible
+                    any_visible = self.tabs.count() > 0
+                    break
+            if not any_visible:
+                self.hide()
+        except Exception:
+            pass
 

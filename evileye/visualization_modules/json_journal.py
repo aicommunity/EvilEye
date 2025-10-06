@@ -69,8 +69,25 @@ class JsonJournalWindow(QWidget):
             self.tabs.setTabVisible(index, False)
         except Exception:
             self.tabs.removeTab(index)
-        if self.tabs.count() == 0:
-            self.hide()
+        # Hide window if all tabs are hidden/not visible
+        try:
+            any_visible = False
+            bar = self.tabs.tabBar()
+            # If tabBar has isTabVisible API
+            if hasattr(bar, 'isTabVisible'):
+                for i in range(self.tabs.count()):
+                    if bar.isTabVisible(i):
+                        any_visible = True
+                        break
+            else:
+                # Fallback: if there are tabs, consider them visible
+                any_visible = self.tabs.count() > 0
+            if not any_visible:
+                self.hide()
+        except Exception:
+            # Final fallback on count
+            if self.tabs.count() == 0:
+                self.hide()
 
     def _ensure_default_tabs(self):
         """Recreate default tabs when none exist (after user closed them)."""
