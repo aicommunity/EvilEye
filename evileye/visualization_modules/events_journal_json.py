@@ -107,9 +107,9 @@ class ImageDelegate(QStyledItemDelegate):
             box = ev.get('bounding_box') or ev.get('box')
             if box:
                 painter.setPen(QPen(QColor(0, 255, 0), 2))  # Green for bbox
-                
+
+                # Extract corners
                 if isinstance(box, dict):
-                    # Format: {'x': 973, 'y': 368, 'width': 127, 'height': 238}
                     x1 = box.get('x', 0)
                     y1 = box.get('y', 0)
                     w = box.get('width', 0)
@@ -117,24 +117,57 @@ class ImageDelegate(QStyledItemDelegate):
                     x2 = x1 + w
                     y2 = y1 + h
                 elif isinstance(box, (list, tuple)) and len(box) == 4:
-                    # Format: [x1, y1, x2, y2]
                     x1, y1, x2, y2 = box
                 else:
-                    print(f"DEBUG: Unknown box format: {box}")
                     return
-                
-                # Convert to normalized coordinates (0-1) if they look like absolute pixels
-                # Check if coordinates are likely absolute pixels (large values)
+
+                # Normalize using full frame size when available
                 if x1 > 1 or y1 > 1 or x2 > 1 or y2 > 1:
-                    # Assume these are absolute pixel coordinates, need to normalize
-                    # We need the original image dimensions to normalize properly
-                    # For now, let's assume the image is the same size as the preview
-                    img_w = pixmap.width()
-                    img_h = pixmap.height()
-                    x1_norm = x1 / img_w
-                    y1_norm = y1 / img_h
-                    x2_norm = x2 / img_w
-                    y2_norm = y2 / img_h
+                    # Try to resolve corresponding full frame path
+                    frame_path = None
+                    try:
+                        # Current cell path
+                        img_filename_item = table.item(row, index.column())
+                        cur_path = img_filename_item.text() if img_filename_item else ''
+                        candidates = []
+                        if cur_path:
+                            candidates.append(cur_path.replace('previews', 'frames').replace('_preview.', '_frame.'))
+                            candidates.append(cur_path.replace('/found_previews/', '/found_frames/').replace('_preview.', '_frame.'))
+                            candidates.append(cur_path.replace('/lost_previews/', '/lost_frames/').replace('_preview.', '_frame.'))
+                            candidates.append(cur_path.replace('detected_previews', 'found_frames').replace('_preview.', '_frame.'))
+                        # Also try constructing from event date_folder
+                        ev = table.item(row, 5).data(Qt.ItemDataRole.UserRole) if index.column() == 5 else table.item(row, 6).data(Qt.ItemDataRole.UserRole)
+                        if ev:
+                            date_folder = ev.get('date_folder', '')
+                            base_name = os.path.basename(cur_path).replace('_preview.', '_frame.')
+                            candidates.append(os.path.join(self.base_dir, 'images', date_folder, 'found_frames', base_name))
+                            candidates.append(os.path.join(self.base_dir, 'images', date_folder, 'lost_frames', base_name))
+                        for cand in candidates:
+                            if cand and os.path.exists(cand):
+                                frame_path = cand
+                                break
+                    except Exception:
+                        frame_path = None
+
+                    if frame_path:
+                        fpix = QPixmap(frame_path)
+                        if not fpix.isNull() and fpix.width() > 0 and fpix.height() > 0:
+                            x1_norm = x1 / fpix.width()
+                            y1_norm = y1 / fpix.height()
+                            x2_norm = x2 / fpix.width()
+                            y2_norm = y2 / fpix.height()
+                        else:
+                            # Fallback to preview size
+                            x1_norm = x1 / pixmap.width()
+                            y1_norm = y1 / pixmap.height()
+                            x2_norm = x2 / pixmap.width()
+                            y2_norm = y2 / pixmap.height()
+                    else:
+                        # Fallback to preview size
+                        x1_norm = x1 / pixmap.width()
+                        y1_norm = y1 / pixmap.height()
+                        x2_norm = x2 / pixmap.width()
+                        y2_norm = y2 / pixmap.height()
                 else:
                     # Already normalized
                     x1_norm, y1_norm, x2_norm, y2_norm = x1, y1, x2, y2

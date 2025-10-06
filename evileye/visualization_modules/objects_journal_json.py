@@ -201,6 +201,20 @@ class ObjectsJournalJson(QWidget):
                         img_path = os.path.join(self.base_dir, prev)
                     else:
                         img_path = os.path.join(self.base_dir, 'images', date_folder, prev)
+                    # Fallbacks for unified folders and preview suffix
+                    if not os.path.exists(img_path):
+                        # replace legacy detected_frames -> found_previews and _frame -> _preview
+                        alt1 = img_path.replace(os.path.join('images', date_folder, 'detected_frames'),
+                                                os.path.join('images', date_folder, 'found_previews'))
+                        alt1 = alt1.replace('_frame.', '_preview.')
+                        if os.path.exists(alt1):
+                            img_path = alt1
+                        else:
+                            # try found_frames (original frame) as last resort
+                            alt2 = img_path.replace(os.path.join('images', date_folder, 'detected_frames'),
+                                                    os.path.join('images', date_folder, 'found_frames'))
+                            if os.path.exists(alt2):
+                                img_path = alt2
                     item = QTableWidgetItem(img_path)
                     # Store event data for double click functionality
                     item.setData(Qt.ItemDataRole.UserRole, row_data['found_event'])
@@ -221,6 +235,14 @@ class ObjectsJournalJson(QWidget):
                         img_path = os.path.join(self.base_dir, lost_prev)
                     else:
                         img_path = os.path.join(self.base_dir, 'images', date_folder, lost_prev)
+                    # Fallbacks for unified folders and preview suffix
+                    if not os.path.exists(img_path):
+                        # replace legacy lost_frames -> lost_previews and _frame -> _preview
+                        alt1 = img_path.replace(os.path.join('images', date_folder, 'lost_frames'),
+                                                os.path.join('images', date_folder, 'lost_previews'))
+                        alt1 = alt1.replace('_frame.', '_preview.')
+                        if os.path.exists(alt1):
+                            img_path = alt1
                     item = QTableWidgetItem(img_path)
                     # Store event data for double click functionality
                     item.setData(Qt.ItemDataRole.UserRole, row_data['lost_event'])
@@ -287,6 +309,29 @@ class ObjectsJournalJson(QWidget):
                     else:
                         self.logger.warning(f"ImageWindow: image not found: {img_path} (checked {img_path_abs} and {alt})")
                         return
+                # Prefer full frame over preview when possible
+                try:
+                    ev = item.data(Qt.ItemDataRole.UserRole)
+                    date_folder = ev.get('date_folder', '') if ev else ''
+                    dir_path, filename = os.path.split(img_path_abs)
+                    candidates = []
+                    # Simple replacements on current resolved path
+                    candidates.append(img_path_abs.replace('previews', 'frames').replace('_preview.', '_frame.'))
+                    # Unified folders replacements
+                    candidates.append(img_path_abs.replace('/found_previews/', '/found_frames/').replace('_preview.', '_frame.'))
+                    candidates.append(img_path_abs.replace('/lost_previews/', '/lost_frames/').replace('_preview.', '_frame.'))
+                    # Legacy detected_previews to found_frames
+                    candidates.append(img_path_abs.replace('detected_previews', 'found_frames').replace('_preview.', '_frame.'))
+                    # Construct by date folder and base name
+                    base_name = filename.replace('_preview.', '_frame.')
+                    candidates.append(os.path.join(self.base_dir, 'images', date_folder, 'found_frames', base_name))
+                    candidates.append(os.path.join(self.base_dir, 'images', date_folder, 'lost_frames', base_name))
+                    for cand in candidates:
+                        if cand and os.path.exists(cand):
+                            img_path_abs = cand
+                            break
+                except Exception:
+                    pass
                 # Get event data for bounding box
                 ev = item.data(Qt.ItemDataRole.UserRole)
                 box = None
