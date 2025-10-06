@@ -124,7 +124,10 @@ class DatabaseAdapterFieldOfViewEvents(DatabaseAdapterBase):
         cur_date_str = cur_date.strftime('%Y_%m_%d')
 
         current_day_path = os.path.join(img_dir, cur_date_str)
-        obj_type_path = os.path.join(current_day_path, obj_event_type + '_' + image_type + 's')
+        # Unified folders for events: events_found_*/events_lost_* (frames/previews)
+        tag = 'events_found' if obj_event_type == 'detected' else 'events_lost'
+        subdir = f"{tag}_{'previews' if image_type == 'preview' else 'frames'}"
+        obj_type_path = os.path.join(current_day_path, subdir)
 
         if obj_event_type == 'detected':
             timestamp = time_stamp.strftime('%Y_%m_%d_%H_%M_%S.%f')

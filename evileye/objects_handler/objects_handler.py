@@ -638,7 +638,15 @@ class ObjectsHandler(EvilEyeBase):
         cur_date_str = cur_date.strftime('%Y_%m_%d')
 
         current_day_path = os.path.join(img_dir, cur_date_str)
-        obj_type_path = os.path.join(current_day_path, obj_event_type + '_' + image_type + 's')
+        # Unified folders for objects: found_*/lost_* (frames/previews)
+        if obj_event_type == 'detected':
+            tag = 'found'
+        elif obj_event_type == 'lost':
+            tag = 'lost'
+        else:
+            tag = obj_event_type  # fallback, should not happen
+        subdir = f"{tag}_{'previews' if image_type == 'preview' else 'frames'}"
+        obj_type_path = os.path.join(current_day_path, subdir)
         # obj_event_path = os.path.join(current_day_path, obj_event_type)
         if not os.path.exists(img_dir):
             os.makedirs(img_dir, exist_ok=True)

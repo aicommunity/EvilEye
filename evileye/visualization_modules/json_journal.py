@@ -116,6 +116,9 @@ class JsonJournalWindow(QWidget):
                 ),
                 'Events journal'
             )
+        except Exception as e:
+            self.logger.error(f"Failed to recreate Events journal: {e}")
+
         # Ensure tabs are visible
         try:
             for i in range(self.tabs.count()):
@@ -129,8 +132,6 @@ class JsonJournalWindow(QWidget):
                 pass
         except Exception:
             pass
-        except Exception as e:
-            self.logger.error(f"Failed to recreate Events journal: {e}")
 
     def ensure_tab(self, title: str):
         """Ensure a tab with given title exists; create if missing and return its index."""

@@ -152,7 +152,15 @@ class DatabaseAdapterAttributeEvents(DatabaseAdapterBase):
         cur_date_str = cur_date.strftime('%Y_%m_%d')
 
         current_day_path = os.path.join(img_dir, cur_date_str)
-        obj_type_path = os.path.join(current_day_path, obj_event_type + '_' + image_type + 's')
+        # Unified folders for events: events_found_*/events_lost_* (frames/previews)
+        if obj_event_type == 'attribute_found':
+            tag = 'events_found'
+        elif obj_event_type == 'attribute_finished':
+            tag = 'events_lost'
+        else:
+            tag = obj_event_type
+        subdir = f"{tag}_{'previews' if image_type == 'preview' else 'frames'}"
+        obj_type_path = os.path.join(current_day_path, subdir)
 
         if not os.path.exists(img_dir):
             os.makedirs(img_dir, exist_ok=True)

@@ -86,7 +86,8 @@ class JsonAdapterZoneEvents(DatabaseAdapterBase):
             json.dump(records, f, ensure_ascii=False, indent=2)
 
     def _save_images(self, day_dir: str, event, is_update: bool):
-        tag = 'zone_left' if is_update else 'zone_entered'
+        # Унифицированные каталоги: events_found_* / events_lost_*
+        tag = 'events_lost' if is_update else 'events_found'
         ts = (event.time_left if is_update else event.time_entered)
         ts_str = ts.strftime('%Y_%m_%d_%H_%M_%S_%f') if is_update else ts.strftime('%Y_%m_%d_%H_%M_%S.%f')
         previews_dir = os.path.join(day_dir, f'{tag}_previews')

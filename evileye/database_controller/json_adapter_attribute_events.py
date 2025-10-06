@@ -84,7 +84,7 @@ class JsonAdapterAttributeEvents(DatabaseAdapterBase):
                 if iw and ih:
                     box = [bx/iw, by/ih, bw/iw, bh/ih]
 
-            # Save preview and full frame images (pure, без оверлеев)
+            # Save preview and full frame images (pure, без оверлеев) в унифицированные папки
             preview_rel, frame_rel = self._save_images(day_dir, event, is_update)
 
             rec = {
@@ -116,7 +116,8 @@ class JsonAdapterAttributeEvents(DatabaseAdapterBase):
 
     def _save_images(self, day_dir: str, event, is_update: bool):
         try:
-            tag = 'finished' if is_update else 'found'
+            # Унифицированные каталоги: events_found_* / events_lost_*
+            tag = 'events_lost' if is_update else 'events_found'
             ts = (event.get_time_finished() if is_update else event.timestamp)
             if ts is None:
                 ts = datetime.datetime.now()

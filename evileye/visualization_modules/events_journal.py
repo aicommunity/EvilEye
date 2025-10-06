@@ -85,42 +85,82 @@ class ImageDelegate(QStyledItemDelegate):
         box = None
         zone_coords = None
         
-        # Query database for bounding box based on image path
+        # Query database for bounding box based on event type and column
         query = QSqlQuery(QSqlDatabase.database('events_conn'))
-        
-        # Check different event types
-        if 'zone' in path:
-            if 'entered' in path:
-                query.prepare('SELECT box_entered, zone_coords from zone_events WHERE preview_path_entered = :path')
+        # Determine event type from model (column 1 holds 'Event') and current column (5 Preview, 6 Lost preview)
+        try:
+            event_type = index.model().index(index.row(), 1).data()
+        except Exception:
+            event_type = None
+        col = index.column()
+        if event_type == 'ZoneEvent':
+            if col == 5:
+                query.prepare('SELECT box_entered, zone_coords FROM zone_events WHERE preview_path_entered = :path')
             else:
-                query.prepare('SELECT box_left, zone_coords from zone_events WHERE preview_path_left = :path')
-        elif 'attribute' in path:
-            if 'found' in path:
+                query.prepare('SELECT box_left, zone_coords FROM zone_events WHERE preview_path_left = :path')
+        elif event_type == 'AttributeEvent':
+            if col == 5:
                 query.prepare('SELECT box_found FROM attribute_events WHERE preview_path_found = :path')
             else:
                 query.prepare('SELECT box_finished FROM attribute_events WHERE preview_path_finished = :path')
-        else:
-            # Default to objects table
-            if 'detected' in path:
-                query.prepare('SELECT bounding_box from objects WHERE preview_path = :path')
+        elif event_type == 'ObjectEvent':
+            if col == 5:
+                query.prepare('SELECT bounding_box FROM objects WHERE preview_path = :path')
             else:
-                query.prepare('SELECT lost_bounding_box from objects WHERE lost_preview_path = :path')
-        
-        query.bindValue(':path', path)
-        if query.exec() and query.next():
-            value0 = query.value(0)
-            if value0 is not None:
-                box_str = value0.replace('{', '').replace('}', '')
-                box = [float(coord) for coord in box_str.split(',')]
-            
-            # Get zone coords for zone events
-            if 'zone' in path and query.record().count() > 1:
-                value1 = query.value(1)
-                if value1:
-                    zone_coords = value1[1:-1]
-                    points_str = zone_coords.split('},')
-                    points_str = [s.strip(' {}').split(',') for s in points_str]
-                    zone_coords = [(float(coord[0]), float(coord[1])) for coord in points_str]
+                query.prepare('SELECT lost_bounding_box FROM objects WHERE lost_preview_path = :path')
+        else:
+            # Fallback by guessing from column name; FOV/Camera have no bbox
+            query = None
+        if query is not None:
+            query.bindValue(':path', path)
+            if query.exec() and query.next():
+                value0 = query.value(0)
+                # Robust parse for box
+                if value0 is not None:
+                    try:
+                        if isinstance(value0, str):
+                            box_str = value0.replace('{', '').replace('}', '')
+                            box = [float(coord) for coord in box_str.split(',')]
+                        elif isinstance(value0, (list, tuple)):
+                            box = [float(v) for v in value0]
+                        elif hasattr(value0, 'toString'):
+                            s = value0.toString()
+                            box_str = str(s).replace('{', '').replace('}', '')
+                            box = [float(coord) for coord in box_str.split(',')]
+                        else:
+                            s = str(value0)
+                            box_str = s.replace('{', '').replace('}', '')
+                            parts = [p for p in box_str.split(',') if p.strip()]
+                            if len(parts) == 4:
+                                box = [float(coord) for coord in parts]
+                    except Exception:
+                        box = None
+                # Zone coords parsing
+                if event_type == 'ZoneEvent' and query.record().count() > 1:
+                    value1 = query.value(1)
+                    try:
+                        if isinstance(value1, str):
+                            s = value1.strip()
+                            # Expect something like "{{x,y},{x,y},...}"
+                            s = s.strip('{}')
+                            points_str = [p.strip('{} ') for p in s.split('},')]
+                            zone_coords = []
+                            for ps in points_str:
+                                parts = [pp for pp in ps.split(',') if pp.strip()]
+                                if len(parts) == 2:
+                                    zone_coords.append((float(parts[0]), float(parts[1])))
+                        elif isinstance(value1, (list, tuple)):
+                            zone_coords = [(float(p[0]), float(p[1])) for p in value1 if isinstance(p, (list, tuple)) and len(p) == 2]
+                        elif hasattr(value1, 'toString'):
+                            s = str(value1.toString()).strip('{}')
+                            points_str = [p.strip('{} ') for p in s.split('},')]
+                            zone_coords = []
+                            for ps in points_str:
+                                parts = [pp for pp in ps.split(',') if pp.strip()]
+                                if len(parts) == 2:
+                                    zone_coords.append((float(parts[0]), float(parts[1])))
+                    except Exception:
+                        zone_coords = None
         
         # Draw bounding box if available
         if box and len(box) == 4:
@@ -179,22 +219,25 @@ class ImageWindow(QLabel):
         self.setFixedSize(900, 600)
         self.image_path = None
         self.label = QLabel()
-        self.pixmap = QPixmap(image)
-        self.pixmap = self.pixmap.scaled(self.width(), self.height(), Qt.AspectRatioMode.KeepAspectRatio)
-        qp = QPainter(self.pixmap)
-        if zone_coords:
-            coords = [QPointF(point[0] * self.pixmap.width(), point[1] * self.pixmap.height()) for point in zone_coords]
-            qp.setPen(QPen(Qt.GlobalColor.red))
-            qp.setBrush(QBrush(QColor(255, 0, 0, 64)))
-            qp.drawPolygon(coords)
-        if box is not None:
-            pen = QPen(Qt.GlobalColor.green, 2)
-            qp.setPen(pen)
-            qp.setBrush(QBrush())
-            qp.drawRect(int(box[0] * self.pixmap.width()), int(box[1] * self.pixmap.height()),
-                        int((box[2] - box[0]) * self.pixmap.width()), int((box[3] - box[1]) * self.pixmap.height()))
-        qp.end()
-        self.label.setPixmap(self.pixmap)
+        base_pixmap = QPixmap(image)
+        scaled = base_pixmap.scaled(self.width(), self.height(), Qt.AspectRatioMode.KeepAspectRatio)
+        qp = QPainter()
+        try:
+            qp.begin(scaled)
+            if zone_coords:
+                coords = [QPointF(point[0] * scaled.width(), point[1] * scaled.height()) for point in zone_coords]
+                qp.setPen(QPen(Qt.GlobalColor.red))
+                qp.setBrush(QBrush(QColor(255, 0, 0, 64)))
+                qp.drawPolygon(coords)
+            if box is not None:
+                pen = QPen(Qt.GlobalColor.green, 2)
+                qp.setPen(pen)
+                qp.setBrush(QBrush())
+                qp.drawRect(int(box[0] * scaled.width()), int(box[1] * scaled.height()),
+                            int((box[2] - box[0]) * scaled.width()), int((box[3] - box[1]) * scaled.height()))
+        finally:
+            qp.end()
+        self.label.setPixmap(scaled)
         self.layout = QVBoxLayout()
         self.layout.addWidget(self.label)
         self.setLayout(self.layout)
@@ -408,43 +451,93 @@ class EventsJournal(QWidget):
     @pyqtSlot(QModelIndex)
     def _display_image(self, index):
         col = index.column()
-        if col != 4 and col != 5:
+        # Allow double click on Preview (5) and Lost preview (6)
+        if col != 5 and col != 6:
             return
 
         path = index.data()
         if not path:
             return
 
-        # Attribute events: show image without box overlay (box is not stored in DB)
-        is_attribute = ('attribute_' in path)
+        # Fetch overlay data using event type column (1)
         box = None
         zone_coords = None
-        if not is_attribute:
-            query = QSqlQuery(QSqlDatabase.database('events_conn'))  # Getting a bounding_box of the current image
-            if 'zone' in path:
-                if 'entered' in path:
-                    query.prepare('SELECT box_entered, zone_coords from zone_events WHERE preview_path_entered = :path')
-                else:
-                    query.prepare('SELECT box_left, zone_coords from zone_events WHERE preview_path_left = :path')
+        query = QSqlQuery(QSqlDatabase.database('events_conn'))
+        try:
+            event_type = index.model().index(index.row(), 1).data()
+        except Exception:
+            event_type = None
+        if event_type == 'ZoneEvent':
+            if col == 5:
+                query.prepare('SELECT box_entered, zone_coords from zone_events WHERE preview_path_entered = :path')
             else:
-                if 'detected' in path:
-                    query.prepare('SELECT bounding_box from objects WHERE preview_path = :path')
+                query.prepare('SELECT box_left, zone_coords from zone_events WHERE preview_path_left = :path')
+        elif event_type == 'AttributeEvent':
+            if col == 5:
+                query.prepare('SELECT box_found FROM attribute_events WHERE preview_path_found = :path')
+            else:
+                query.prepare('SELECT box_finished FROM attribute_events WHERE preview_path_finished = :path')
+        elif event_type == 'ObjectEvent':
+            if col == 5:
+                query.prepare('SELECT bounding_box from objects WHERE preview_path = :path')
+            else:
+                query.prepare('SELECT lost_bounding_box from objects WHERE lost_preview_path = :path')
+        else:
+            # FOV/Camera events have no bbox
+            query = None
+        query.bindValue(':path', path)
+        if query is not None and query.exec() and query.next():
+            # Parse box robustly
+            value0 = query.value(0)
+            try:
+                if isinstance(value0, str):
+                    s = value0.replace('{', '').replace('}', '')
+                    parts = [p for p in s.split(',') if p.strip()]
+                    if len(parts) == 4:
+                        box = [float(p) for p in parts]
+                elif isinstance(value0, (list, tuple)):
+                    if len(value0) == 4:
+                        box = [float(v) for v in value0]
+                elif hasattr(value0, 'toString'):
+                    s = str(value0.toString()).replace('{', '').replace('}', '')
+                    parts = [p for p in s.split(',') if p.strip()]
+                    if len(parts) == 4:
+                        box = [float(p) for p in parts]
                 else:
-                    query.prepare('SELECT lost_bounding_box from objects WHERE lost_preview_path = :path')
-
-            query.bindValue(':path', path)
-            query.exec()
-            if query.next():
-                value0 = query.value(0)
-                if value0 is not None:
-                    box_str = value0.replace('{', '').replace('}', '')
-                    box = [float(coord) for coord in box_str.split(',')]
+                    s = str(value0).replace('{', '').replace('}', '')
+                    parts = [p for p in s.split(',') if p.strip()]
+                    if len(parts) == 4:
+                        box = [float(p) for p in parts]
+            except Exception:
+                box = None
+            # Parse zone coords if available
+            if 'zone' in path and query.record().count() > 1:
                 value1 = query.value(1)
-                if value1:
-                    zone_coords = value1[1:-1]
-                    points_str = zone_coords.split('},')
-                    points_str = [s.strip(' {}').split(',') for s in points_str]
-                    zone_coords = [(float(coord[0]), float(coord[1])) for coord in points_str]
+                try:
+                    if isinstance(value1, str):
+                        s = value1.strip().strip('{}')
+                        pts = [p.strip('{} ') for p in s.split('},')]
+                        tmp = []
+                        for ps in pts:
+                            parts = [pp for pp in ps.split(',') if pp.strip()]
+                            if len(parts) == 2:
+                                tmp.append((float(parts[0]), float(parts[1])))
+                        if tmp:
+                            zone_coords = tmp
+                    elif isinstance(value1, (list, tuple)):
+                        zone_coords = [(float(p[0]), float(p[1])) for p in value1 if isinstance(p, (list, tuple)) and len(p) == 2]
+                    elif hasattr(value1, 'toString'):
+                        s = str(value1.toString()).strip('{}')
+                        pts = [p.strip('{} ') for p in s.split('},')]
+                        tmp = []
+                        for ps in pts:
+                            parts = [pp for pp in ps.split(',') if pp.strip()]
+                            if len(parts) == 2:
+                                tmp.append((float(parts[0]), float(parts[1])))
+                        if tmp:
+                            zone_coords = tmp
+                except Exception:
+                    zone_coords = None
 
         image_path = os.path.join(self.image_dir, path)
         previews_folder_path, file_name = os.path.split(image_path)
@@ -456,24 +549,7 @@ class EventsJournal(QWidget):
         file_folder_name = preview_folder_name[:beg] + 'frames'
         res_image_path = os.path.join(date_folder_path, file_folder_name, new_file_name)
 
-        # For attribute events, fetch normalized box from DB and draw it
-        if is_attribute and box is None:
-            q = QSqlQuery(QSqlDatabase.database('events_conn'))
-            if 'attribute_found' in path:
-                q.prepare('SELECT box_found FROM attribute_events WHERE preview_path_found = :path')
-            else:
-                q.prepare('SELECT box_finished FROM attribute_events WHERE preview_path_finished = :path')
-            q.bindValue(':path', path)
-            q.exec()
-            if q.next():
-                value0 = q.value(0)
-                if value0 is not None:
-                    # value0 is like '{x,y,w,h}' normalized
-                    try:
-                        box_str = value0.replace('{', '').replace('}', '')
-                        box = [float(coord) for coord in box_str.split(',')]
-                    except Exception:
-                        box = None
+        # Attribute events already handled above; no extra fetch needed
         self.image_win = ImageWindow(res_image_path, box, zone_coords)
         self.image_win.show()
 

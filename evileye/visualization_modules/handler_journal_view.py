@@ -35,15 +35,82 @@ class ImageDelegate(QStyledItemDelegate):
         self.image_dir = image_dir
 
     def paint(self, painter, option, index):
-        if index.isValid():
-            path = index.data(Qt.ItemDataRole.DisplayRole)
-            path = os.path.join(self.image_dir, path)
-            pixmap = QPixmap()
-            if path:
-                pixmap.load(path)
-                painter.drawPixmap(option.rect, pixmap)
+        if not index.isValid():
+            return
+
+        rel_path = index.data(Qt.ItemDataRole.DisplayRole)
+        if not rel_path:
+            return
+        full_path = os.path.join(self.image_dir, rel_path)
+
+        pixmap = QPixmap(full_path)
+        if pixmap.isNull():
+            return
+
+        # Aspect-fit target rect
+        cell_rect = option.rect
+        img_w = pixmap.width()
+        img_h = pixmap.height()
+        if img_w <= 0 or img_h <= 0:
+            return
+        cell_w = cell_rect.width()
+        cell_h = cell_rect.height()
+        scale = min(cell_w / img_w, cell_h / img_h)
+        draw_w = int(img_w * scale)
+        draw_h = int(img_h * scale)
+        draw_x = cell_rect.x() + (cell_w - draw_w) // 2
+        draw_y = cell_rect.y() + (cell_h - draw_h) // 2
+
+        # Draw image
+        painter.drawPixmap(draw_x, draw_y, draw_w, draw_h, pixmap)
+
+        # Draw bbox overlay from DB (normalized [x1,y1,x2,y2])
+        try:
+            query = QSqlQuery(QSqlDatabase.database('obj_conn'))
+        except Exception:
+            return
+        col = index.column()
+        if col == 5:
+            query.prepare('SELECT bounding_box from objects WHERE preview_path = :path')
+        elif col == 6:
+            query.prepare('SELECT lost_bounding_box from objects WHERE lost_preview_path = :path')
+        else:
+            return
+        query.bindValue(':path', rel_path)
+        if not (query.exec() and query.next()):
+            return
+        value = query.value(0)
+        box = None
+        try:
+            if isinstance(value, str):
+                s = value.replace('{', '').replace('}', '')
+                parts = [p for p in s.split(',') if p.strip()]
+                if len(parts) == 4:
+                    box = [float(p) for p in parts]
+            elif isinstance(value, (list, tuple)):
+                if len(value) == 4:
+                    box = [float(v) for v in value]
+            elif hasattr(value, 'toString'):
+                s = str(value.toString()).replace('{', '').replace('}', '')
+                parts = [p for p in s.split(',') if p.strip()]
+                if len(parts) == 4:
+                    box = [float(p) for p in parts]
             else:
-                return
+                s = str(value).replace('{', '').replace('}', '')
+                parts = [p for p in s.split(',') if p.strip()]
+                if len(parts) == 4:
+                    box = [float(p) for p in parts]
+        except Exception:
+            box = None
+        if not box or len(box) != 4:
+            return
+        painter.setPen(QPen(Qt.GlobalColor.green, 2))
+        x1, y1, x2, y2 = box
+        x = draw_x + int(x1 * draw_w)
+        y = draw_y + int(y1 * draw_h)
+        w = int((x2 - x1) * draw_w)
+        h = int((y2 - y1) * draw_h)
+        painter.drawRect(x, y, w, h)
 
 
 class DateTimeDelegate(QStyledItemDelegate):
@@ -267,16 +334,38 @@ class HandlerJournal(QWidget):
             return
 
         query = QSqlQuery(QSqlDatabase.database('obj_conn'))  # Getting a bounding_box of the current image
-        if 'detected' in path:
+        if col == 5:
             query.prepare('SELECT bounding_box from objects WHERE preview_path = :path')
             query.bindValue(':path', path)
         else:
             query.prepare('SELECT lost_bounding_box from objects WHERE lost_preview_path = :path')
             query.bindValue(':path', path)
-        query.exec()
-        query.next()
-        box_str = query.value(0).replace('{', '').replace('}', '')  # Qt query returns QString, so converting it to box
-        box = [float(coord) for coord in box_str.split(',')]
+        if not query.exec():
+            return
+        if not query.next():
+            return
+        value = query.value(0)
+        box = [0.0, 0.0, 0.0, 0.0]
+        if value is not None:
+            # Handle array returned as string "{a,b,c,d}" or as list/tuple
+            try:
+                if isinstance(value, str):
+                    box_str = value.replace('{', '').replace('}', '')
+                    box = [float(coord) for coord in box_str.split(',')]
+                elif isinstance(value, (list, tuple)):
+                    box = [float(v) for v in value]
+                elif hasattr(value, 'toString'):
+                    s = value.toString()
+                    box_str = str(s).replace('{', '').replace('}', '')
+                    box = [float(coord) for coord in box_str.split(',')]
+                else:
+                    s = str(value)
+                    box_str = s.replace('{', '').replace('}', '')
+                    parts = [p for p in box_str.split(',') if p.strip()]
+                    if len(parts) == 4:
+                        box = [float(coord) for coord in parts]
+            except Exception:
+                box = [0.0, 0.0, 0.0, 0.0]
 
         image_path = os.path.join(self.image_dir, path)
         previews_folder_path, file_name = os.path.split(image_path)
