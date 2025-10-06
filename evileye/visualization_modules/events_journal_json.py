@@ -76,27 +76,15 @@ class ImageDelegate(QStyledItemDelegate):
         if pixmap.isNull():
             return
 
-        # Compute target rect inside cell with aspect fit
+        # Compute target rect: STRETCH to full cell (match other tables)
         cell_rect = option.rect
-        img_w = pixmap.width()
-        img_h = pixmap.height()
-        if img_w <= 0 or img_h <= 0:
-            return
-        cell_w = cell_rect.width()
-        cell_h = cell_rect.height()
-        scale = min(cell_w / img_w, cell_h / img_h)
-        draw_w = int(img_w * scale)
-        draw_h = int(img_h * scale)
-        draw_x = cell_rect.x() + (cell_w - draw_w) // 2
-        draw_y = cell_rect.y() + (cell_h - draw_h) // 2
-        target_rect = cell_rect.adjusted(0, 0, 0, 0)
-        target_rect.setX(draw_x)
-        target_rect.setY(draw_y)
-        target_rect.setWidth(draw_w)
-        target_rect.setHeight(draw_h)
+        draw_x = cell_rect.x()
+        draw_y = cell_rect.y()
+        draw_w = cell_rect.width()
+        draw_h = cell_rect.height()
 
-        # Draw image into target rect
-        painter.drawPixmap(target_rect, pixmap)
+        # Draw image stretched to cell rect
+        painter.drawPixmap(cell_rect, pixmap)
 
         # Try to draw overlay box/zone for preview using target_rect as base
         ev_item = table.item(row, 5) if index.column() == 5 else table.item(row, 6)
@@ -172,7 +160,7 @@ class ImageDelegate(QStyledItemDelegate):
                     # Already normalized
                     x1_norm, y1_norm, x2_norm, y2_norm = x1, y1, x2, y2
                 
-                # Scale to draw area
+                # Scale to draw area (full cell stretch)
                 x = draw_x + int(x1_norm * draw_w)
                 y = draw_y + int(y1_norm * draw_h)
                 w = int((x2_norm - x1_norm) * draw_w)
@@ -188,7 +176,7 @@ class ImageDelegate(QStyledItemDelegate):
                 for pt in zc:
                     if isinstance(pt, (list, tuple)) and len(pt) == 2:
                         px, py = pt
-                        # Use the same logic as bounding box - scale to draw area
+                        # Scale to full cell area
                         x = draw_x + int(px * draw_w)
                         y = draw_y + int(py * draw_h)
                         polygon.append(QPointF(x, y))
@@ -376,6 +364,7 @@ class EventsJournalJson(QWidget):
         self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels(['Time', 'Event', 'Event Details', 'Time lost', 'Information', 'Preview', 'Lost preview'])
         h = self.table.horizontalHeader()
+        v = self.table.verticalHeader()
         h.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         h.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         h.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
@@ -383,7 +372,16 @@ class EventsJournalJson(QWidget):
         h.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         h.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
         h.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
-        h.setDefaultSectionSize(300)  # Set default size for image columns
+        # Match aspect ratio with other journals: width=300, height=150
+        try:
+            h.resizeSection(5, 300)
+            h.resizeSection(6, 300)
+        except Exception:
+            pass
+        try:
+            v.setDefaultSectionSize(150)
+        except Exception:
+            pass
         self.layout.addWidget(self.table)
 
         # Set up image delegate for image columns (Preview and Lost preview)
