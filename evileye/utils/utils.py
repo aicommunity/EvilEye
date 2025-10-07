@@ -288,7 +288,7 @@ def draw_boxes_from_db(db_controller, table_name, load_folder, save_folder):
             utils_logger.error('Error saving image with boxes')
 
 
-def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_duration_msecs, font_scale, font_thickness, font_color, text_config=None, class_mapping=None):
+def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_duration_msecs, font_scale, font_thickness, font_color, text_config=None, class_mapping=None, event_active_obj_ids=None, event_color=(0, 0, 255)):
     height, width, channels = image.image.shape
     
     # Apply text configuration
@@ -344,6 +344,18 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
 
         cv2.rectangle(image.image, (int(last_info.bounding_box[0]), int(last_info.bounding_box[1])),
                       (int(last_info.bounding_box[2]), int(last_info.bounding_box[3])), (0, 255, 0), thickness=font_thickness)
+
+        # Если объект активен по событию — поверх рисуем такой же bbox цветом события
+        try:
+            if event_active_obj_ids:
+                oid = getattr(obj, 'object_id', None)
+                if oid is not None and oid in event_active_obj_ids:
+                    cv2.rectangle(image.image,
+                                  (int(last_info.bounding_box[0]), int(last_info.bounding_box[1])),
+                                  (int(last_info.bounding_box[2]), int(last_info.bounding_box[3])),
+                                  event_color, thickness=max(2, int(font_thickness * 1.5)))
+        except Exception:
+            pass
         
         # Create tracking text with class name instead of class_id
         if class_mapping:

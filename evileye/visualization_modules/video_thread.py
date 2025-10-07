@@ -54,7 +54,17 @@ class VideoThread(QThread):
         self.thread_num = VideoThread.thread_counter  # Номер потока для определения, какой label обновлять
         self.det_params = None
         self.text_config = text_config or {}  # Text configuration for rendering
+        self.visualizer_ref = None
         self.class_mapping = class_mapping or {}  # Class mapping for displaying class names
+
+        # Event signalization (visual alert) parameters
+        self.signal_enabled = False
+        self.signal_color = QColor(255, 0, 0)
+        # active events per this source: name -> { 'bbox': [x1,y1,x2,y2] (normalized) }
+        self.active_events: dict[str, dict] = {}
+        # Persistent object boxes to bridge short tracker gaps: obj_id -> { 'box': [x1,y1,x2,y2] px, 'ttl': int }
+        self.persist_obj_boxes: dict[int, dict] = {}
+        self.signal_hold_frames = 10
 
         # Таймер для задания fps у видеороликов
         self.timer = QTimer()
@@ -115,6 +125,60 @@ class VideoThread(QThread):
                                             int(widget_height / VideoThread.rows), Qt.AspectRatioMode.KeepAspectRatio)
         return QPixmap.fromImage(scaled_image)
 
+    def _draw_signal_overlay(self, image: QPixmap):
+        if not self.signal_enabled:
+            return
+        # Determine active events for this source; if none, skip overlay entirely
+        active_keys = set()
+        try:
+            if self.visualizer_ref and hasattr(self.visualizer_ref, 'get_active_events'):
+                active_keys = self.visualizer_ref.get_active_events(self.source_id)
+        except Exception:
+            active_keys = set()
+        if not active_keys:
+            return
+        painter = QPainter(image)
+        try:
+            # QPainter ожидает RGB, но текущий источник цвета фактически интерпретируется как BGR —
+            # для一致ности с OpenCV поменяем местами каналы для QPainter
+            qcolor = QColor(self.signal_color.blue(), self.signal_color.green(), self.signal_color.red())
+            pen = QPen(qcolor)
+            pen.setWidth(4)
+            painter.setPen(pen)
+            # Draw border around full pixmap
+            painter.drawRect(0, 0, image.width()-1, image.height()-1)
+            # Draw active events list (top-left)
+            painter.setBrush(QBrush())
+            # Background for list (semi-transparent) с адаптацией контрастности к цвету события
+            # Вычисляем яркость (перцептивная) цвета события и выбираем чёрный/белый фон для лучшего контраста
+            r, g, b = qcolor.red(), qcolor.green(), qcolor.blue()
+            luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+            if luminance > 128:
+                # Яркий цвет события → тёмный фон
+                bg = QColor(0, 0, 0)
+                bg.setAlpha(140)
+            else:
+                # Тёмный цвет события → светлый фон
+                bg = QColor(255, 255, 255)
+                bg.setAlpha(140)
+            # Build text list from visualizer centralized state
+            text_lines = []
+            for (_, obj_id, evt_name) in active_keys:
+                text_lines.append(f"AttributeEvent: {evt_name} [{obj_id}]")
+            if text_lines:
+                pad = 6
+                line_h = 18
+                box_w = max(120, max((painter.fontMetrics().horizontalAdvance(t) for t in text_lines), default=0) + 2*pad)
+                box_h = pad*2 + line_h*len(text_lines)
+                painter.fillRect(0, 0, box_w, box_h, bg)
+                painter.setPen(QPen(qcolor))
+                for i, t in enumerate(text_lines):
+                    painter.drawText(pad, pad + (i+1)*line_h - 4, t)
+            # bbox событий теперь рисуются в utils.draw_boxes_tracking вместе с объектными
+        finally:
+            if painter.isActive():
+                painter.end()
+
     def draw_zones(self, image: QPixmap, zones: dict):
         # self.logger.debug(zones)
         if not zones:
@@ -146,15 +210,59 @@ class VideoThread(QThread):
             # Create a copy of the image for display to avoid modifying the original
             import copy
             display_frame = copy.deepcopy(frame)
+            # Remember original size to normalize pixel bboxes to display size correctly
+            try:
+                ih, iw = display_frame.image.shape[:2]
+                self.last_frame_w = iw
+                self.last_frame_h = ih
+            except Exception:
+                self.last_frame_w = None
+                self.last_frame_h = None
             
+            # Update persistent boxes TTL and merge with latest boxes
+            try:
+                # Decrease TTL
+                for oid in list(self.persist_obj_boxes.keys()):
+                    self.persist_obj_boxes[oid]['ttl'] -= 1
+                    if self.persist_obj_boxes[oid]['ttl'] <= 0:
+                        del self.persist_obj_boxes[oid]
+                # Refresh with latest boxes
+                if isinstance(track_info, list):
+                    for obj in track_info:
+                        oid = getattr(obj, 'object_id', None)
+                        bbox = None
+                        if hasattr(obj, 'track') and hasattr(obj.track, 'bounding_box'):
+                            bbox = obj.track.bounding_box
+                        elif hasattr(obj, 'bounding_box'):
+                            bbox = obj.bounding_box
+                        if oid is not None and bbox is not None and len(bbox) == 4:
+                            self.persist_obj_boxes[oid] = {'box': bbox, 'ttl': self.signal_hold_frames}
+            except Exception:
+                pass
+
+            # Соберём активные obj_id для этого источника, чтобы рисовать красный bbox поверх зелёного
+            active_obj_ids = set()
+            try:
+                if self.visualizer_ref and hasattr(self.visualizer_ref, 'get_active_events'):
+                    active_keys = self.visualizer_ref.get_active_events(self.source_id) or set()
+                    for (_, oid, _evt) in active_keys:
+                        if oid is not None:
+                            active_obj_ids.add(oid)
+            except Exception:
+                active_obj_ids = set()
+
             utils.draw_boxes_tracking(display_frame, track_info, source_name, source_duration_secs,
                                       self.font_scale, self.font_thickness, self.font_color,
-                                      text_config=self.text_config, class_mapping=self.class_mapping)
+                                      text_config=self.text_config, class_mapping=self.class_mapping,
+                                      event_active_obj_ids=active_obj_ids,
+                                      event_color=(self.signal_color.red(), self.signal_color.green(), self.signal_color.blue()))
             if self.show_debug_info:
                 utils.draw_debug_info(display_frame, debug_info)
             qt_image = self.convert_cv_qt(display_frame.image, self.widget_width, self.widget_height)
             if self.show_zones:
                 self.draw_zones(qt_image, self.zones)
+            # Draw event signalization overlay last
+            self._draw_signal_overlay(qt_image)
             end_it = timer()
             elapsed_seconds = end_it - begin_it
             # Сигнал из потока для обновления label на новое изображение
@@ -163,6 +271,12 @@ class VideoThread(QThread):
         except Empty:
             return 0
         except ValueError:
+            return 0
+        except Exception as e:
+            try:
+                self.logger.error(f"VideoThread.process_image error (src={self.source_id}): {e}")
+            except Exception:
+                pass
             return 0
 
     def stop_thread(self):
@@ -181,3 +295,23 @@ class VideoThread(QThread):
     def add_zone_clicked(self, thread_id):
         if self.thread_num == thread_id:
             self.is_add_zone_clicked = True
+
+    @pyqtSlot(bool, tuple)
+    def set_signal_params(self, enabled: bool, color_rgb: tuple[int, int, int] = (255, 0, 0)):
+        self.signal_enabled = enabled
+        try:
+            r, g, b = color_rgb
+            self.signal_color = QColor(int(r), int(g), int(b))
+        except Exception:
+            self.signal_color = QColor(255, 0, 0)
+
+    @pyqtSlot(str, bool, list)
+    def set_event_state(self, event_name: str, is_on: bool, bbox_norm: list[float] | None = None):
+        """Turn ON/OFF event visualization for this source. bbox_norm is [x1,y1,x2,y2] in [0..1]."""
+        if not isinstance(event_name, str) or not event_name:
+            return
+        if is_on:
+            self.active_events[event_name] = {'bbox': bbox_norm if bbox_norm and len(bbox_norm) == 4 else None}
+        else:
+            if event_name in self.active_events:
+                del self.active_events[event_name]

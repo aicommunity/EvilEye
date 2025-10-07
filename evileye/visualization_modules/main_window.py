@@ -79,6 +79,8 @@ class DoubleClickLabel(QLabel):
 class MainWindow(QMainWindow):
     display_zones_signal = pyqtSignal(dict)
     add_zone_signal = pyqtSignal(int)
+    # UI-level signalization controls
+    set_signal_params_signal = pyqtSignal(bool, tuple)
 
     def __init__(self, controller, params_file_path, params, win_width, win_height):
         super().__init__()
@@ -171,6 +173,9 @@ class MainWindow(QMainWindow):
         self.toolbar_width = 0
         self._create_toolbar()
 
+        # Connect signalization params to visualizer
+        self.set_signal_params_signal.connect(self._broadcast_signal_params)
+
     def setup_layout(self):
         self.centralWidget().layout().setContentsMargins(0, 0, 0, 0)
         grid_cols = 0
@@ -192,6 +197,7 @@ class MainWindow(QMainWindow):
             else:
                 self.hlayouts[grid_rows].addWidget(self.labels[-1], alignment=Qt.AlignmentFlag.AlignCenter)
                 grid_cols += 1
+            # Threads are managed by Visualizer; no direct thread creation here
 
     def _create_menu_bar(self):
         menu = self.menuBar()
@@ -201,6 +207,7 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self.objects_journal)
         view_menu.addAction(self.events_journal)
         view_menu.addAction(self.show_zones)
+        view_menu.addAction(self.toggle_signal)
         self.menu_height = view_menu.frameGeometry().height()
 
         edit_menu = QMenu('&Edit', self)
@@ -240,6 +247,10 @@ class MainWindow(QMainWindow):
         icon_path = os.path.join(utils_utils.get_project_root(), 'icons', 'display_zones.svg')
         self.show_zones.setIcon(QIcon(icon_path))
         self.show_zones.setCheckable(True)
+        # Add toggle for event signalization
+        self.toggle_signal = QAction('&Event Signalization', self)
+        self.toggle_signal.setCheckable(True)
+        self.toggle_signal.setChecked(self.params['visualizer'].get('event_signal_enabled', False))
 
         self.add_channel = QAction('&Add Channel', self)
         self.del_channel = QAction('&Del Channel', self)
@@ -249,6 +260,7 @@ class MainWindow(QMainWindow):
         self.events_journal.triggered.connect(self.open_events_journal)
         self.add_zone.triggered.connect(self.select_source)
         self.show_zones.toggled.connect(self.display_zones)
+        self.toggle_signal.toggled.connect(self._toggle_signalization)
         self.add_channel.triggered.connect(self.add_channel_slot)
         self.del_channel.triggered.connect(self.del_channel_slot)
 
@@ -354,7 +366,23 @@ class MainWindow(QMainWindow):
     @pyqtSlot(int, QPixmap)
     def update_image(self, label_id: int, picture: QPixmap):
         # Обновляет label, в котором находится изображение
-        self.labels[label_id].setPixmap(picture)
+        if 0 <= label_id < len(self.labels):
+            self.labels[label_id].setPixmap(picture)
+
+    @pyqtSlot(bool)
+    def _toggle_signalization(self, enabled: bool):
+        color = tuple(self.params['visualizer'].get('event_signal_color', [255, 0, 0]))
+        self._broadcast_signal_params(enabled, color)
+
+    @pyqtSlot(bool, tuple)
+    def _broadcast_signal_params(self, enabled: bool, color: tuple):
+        for t in self.threads:
+            try:
+                t.set_signal_params(enabled, color)
+            except Exception:
+                pass
+
+    # Event state routed directly by Controller → Visualizer now
 
     @pyqtSlot()
     def change_screen_size(self):
