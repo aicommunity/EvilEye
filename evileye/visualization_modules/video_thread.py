@@ -149,13 +149,22 @@ class VideoThread(QThread):
             painter.drawRect(0, 0, image.width()-1, image.height()-1)
             # Draw active events list (top-left)
             painter.setBrush(QBrush())
-            # Background for list (semi-transparent)
-            bg = QColor(qcolor)
-            bg.setAlpha(60)
+            # Background for list (semi-transparent) с адаптацией контрастности к цвету события
+            # Вычисляем яркость (перцептивная) цвета события и выбираем чёрный/белый фон для лучшего контраста
+            r, g, b = qcolor.red(), qcolor.green(), qcolor.blue()
+            luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
+            if luminance > 128:
+                # Яркий цвет события → тёмный фон
+                bg = QColor(0, 0, 0)
+                bg.setAlpha(140)
+            else:
+                # Тёмный цвет события → светлый фон
+                bg = QColor(255, 255, 255)
+                bg.setAlpha(140)
             # Build text list from visualizer centralized state
             text_lines = []
             for (_, obj_id, evt_name) in active_keys:
-                text_lines.append(f"AttributeEvent:{evt_name}:obj{obj_id}")
+                text_lines.append(f"AttributeEvent: {evt_name} [{obj_id}]")
             if text_lines:
                 pad = 6
                 line_h = 18
