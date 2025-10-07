@@ -756,12 +756,17 @@ class Controller:
         except Exception:
             pass
 
-    def _on_event_signalization(self, source_id: int, event_name: str, is_on: bool, bbox_norm: list | None):
+    def _on_event_signalization(self, source_id: int, object_id: int, event_name: str, is_on: bool):
         """Relay event signalization to main window (per source)."""
         try:
-            # Route directly via visualizer to avoid MainWindow thread index mapping issues
+            # Diagnostics: log routing of UI signal
+            try:
+                self.logger.info(f"UI route event: src={source_id} obj={object_id} name={event_name} is_on={is_on}")
+            except Exception:
+                pass
+            # Route directly via visualizer
             if self.visualizer and hasattr(self.visualizer, 'set_event_state'):
-                self.visualizer.set_event_state(source_id, event_name, is_on, bbox_norm or [])
+                self.visualizer.set_event_state(source_id, object_id, event_name, is_on)
         except Exception:
             pass
 

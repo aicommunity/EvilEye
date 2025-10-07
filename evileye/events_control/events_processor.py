@@ -117,9 +117,11 @@ class EventsProcessor(EvilEyeBase):
                                 # Notify UI: event OFF (независимо от наличия адаптера)
                                 try:
                                     if self.ui_callback:
-                                        label_name = f"{event.get_name()}: {getattr(event, 'matched_event_name', '')}: obj{getattr(event, 'object_id', '')}"
-                                        bbox = getattr(event, 'box_finished', None)
-                                        self.ui_callback(event.source_id, label_name, False, bbox)
+                                        # Emit OFF with (source_id, object_id, event_name)
+                                        self.ui_callback(event.source_id,
+                                                         getattr(event, 'object_id', -1),
+                                                         getattr(event, 'matched_event_name', ''),
+                                                         False)
                                 except Exception:
                                     pass
                                     if events not in self.finished_events:
@@ -133,6 +135,15 @@ class EventsProcessor(EvilEyeBase):
                             self.long_term_events[events].append(event)
                             if event.get_name() in self.events_adapters:
                                 self.events_adapters[event.get_name()].insert(event)
+                            # UI: ON для нового долгосрочного события в уже активной группе
+                            try:
+                                if self.ui_callback and not event.is_finished():
+                                    self.ui_callback(event.source_id,
+                                                     getattr(event, 'object_id', -1),
+                                                     getattr(event, 'matched_event_name', ''),
+                                                     True)
+                            except Exception:
+                                pass
                 else:  # Если нет активных долгосрочных событий, анализируем новые
                     for event in new_events[events]:
                         event.set_id(self.id_counter)
@@ -146,14 +157,10 @@ class EventsProcessor(EvilEyeBase):
                                 self.finished_events[events].append(event)
                                 if event.get_name() in self.events_adapters:
                                     self.events_adapters[event.get_name()].insert(event)
-                                # Notify UI: event ON then OFF immediately
+                                # Для long_term события, пришедшего уже завершённым, не шлём ON, только OFF
                                 try:
                                     if self.ui_callback:
-                                        label_name = f"{event.get_name()}: {getattr(event, 'matched_event_name', '')}: obj{getattr(event, 'object_id', '')}"
-                                        bbox = getattr(event, 'box_found', None)
-                                        self.ui_callback(event.source_id, label_name, True, bbox)
-                                        bbox2 = getattr(event, 'box_finished', None)
-                                        self.ui_callback(event.source_id, label_name, False, bbox2)
+                                        self.ui_callback(event.source_id, getattr(event, 'object_id', -1), getattr(event, 'matched_event_name', ''), False)
                                 except Exception:
                                     pass
                             else:
@@ -161,9 +168,7 @@ class EventsProcessor(EvilEyeBase):
                                 # Notify UI: event ON
                                 try:
                                     if self.ui_callback:
-                                        label_name = f"{event.get_name()}: {getattr(event, 'matched_event_name', '')}: obj{getattr(event, 'object_id', '')}"
-                                        bbox = getattr(event, 'box_found', None)
-                                        self.ui_callback(event.source_id, label_name, True, bbox)
+                                        self.ui_callback(event.source_id, getattr(event, 'object_id', -1), getattr(event, 'matched_event_name', ''), True)
                                 except Exception:
                                     pass
                         else:  # Иначе отправляем в завершенные (краткосрочные события)
@@ -175,11 +180,8 @@ class EventsProcessor(EvilEyeBase):
                             # Notify UI for non-long events: ON then OFF
                             try:
                                 if self.ui_callback and not event.is_long_term():
-                                    label_name = f"{event.get_name()}: {getattr(event, 'matched_event_name', '')}: obj{getattr(event, 'object_id', '')}"
-                                    bbox = getattr(event, 'box_found', None)
-                                    self.ui_callback(event.source_id, label_name, True, bbox)
-                                    bbox2 = getattr(event, 'box_finished', None)
-                                    self.ui_callback(event.source_id, label_name, False, bbox2)
+                                    self.ui_callback(event.source_id, getattr(event, 'object_id', -1), getattr(event, 'matched_event_name', ''), True)
+                                    self.ui_callback(event.source_id, getattr(event, 'object_id', -1), getattr(event, 'matched_event_name', ''), False)
                             except Exception:
                                 pass
                 # Удаляем завершенные долгосрочные события

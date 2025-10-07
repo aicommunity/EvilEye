@@ -31,6 +31,8 @@ class Visualizer(EvilEyeBase):
         self.text_config = {}  # Text configuration for rendering
         self.class_mapping = {}  # Class mapping for displaying class names
         self.memory_consumption_detail = dict()
+        # Centralized active events per source: { source_id: set((source_id, object_id, event_name)) }
+        self.active_events: dict[int, set[tuple[int, int, str]]] = {}
         # Signalization params
         self.signal_enabled = False
         self.signal_color = (255, 0, 0)
@@ -49,6 +51,11 @@ class Visualizer(EvilEyeBase):
                                                    self.font_params[i] if self.font_params is not None else None,
                                                    text_config=self.text_config, class_mapping=self.class_mapping,
                                                    logger_name=logger_name, parent_logger=self.logger))
+            # give thread access to visualizer for active events
+            try:
+                self.visual_threads[-1].visualizer_ref = self
+            except Exception:
+                pass
             self.visual_threads[-1].update_image_signal.connect(
                 self.pyqt_slots['update_image'])  # Сигнал из потока для обновления label на новое изображение
             self.visual_threads[-1].add_zone_signal.connect(self.pyqt_slots['open_zone_win'])
@@ -114,11 +121,27 @@ class Visualizer(EvilEyeBase):
         for thr in self.visual_threads:
             thr.set_signal_params(enabled, color_rgb)
 
-    def set_event_state(self, source_id: int, event_name: str, is_on: bool, bbox_norm: list[float] | None):
-        for thr in self.visual_threads:
-            if thr.source_id == source_id:
-                thr.set_event_state(event_name, is_on, bbox_norm or None)
-                break
+    def set_event_state(self, source_id: int, object_id: int, event_name: str, is_on: bool):
+        if source_id not in self.active_events:
+            self.active_events[source_id] = set()
+        key = (source_id, object_id, event_name)
+        if is_on:
+            self.active_events[source_id].add(key)
+            try:
+                self.logger.info(f"Visualizer ADD event: src={source_id} obj={object_id} name={event_name} active={len(self.active_events[source_id])}")
+            except Exception:
+                pass
+        else:
+            if key in self.active_events[source_id]:
+                self.active_events[source_id].remove(key)
+            try:
+                self.logger.info(f"Visualizer REMOVE event: src={source_id} obj={object_id} name={event_name} active={len(self.active_events[source_id])}")
+            except Exception:
+                pass
+        # Do not directly touch threads here; they will read on next frame
+
+    def get_active_events(self, source_id: int) -> set[tuple[int, int, str]]:
+        return set(self.active_events.get(source_id, set()))
 
     def calc_memory_consumption(self):
         super().calc_memory_consumption()

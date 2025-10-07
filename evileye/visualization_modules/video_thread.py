@@ -54,6 +54,7 @@ class VideoThread(QThread):
         self.thread_num = VideoThread.thread_counter  # Номер потока для определения, какой label обновлять
         self.det_params = None
         self.text_config = text_config or {}  # Text configuration for rendering
+        self.visualizer_ref = None
         self.class_mapping = class_mapping or {}  # Class mapping for displaying class names
 
         # Event signalization (visual alert) parameters
@@ -61,6 +62,9 @@ class VideoThread(QThread):
         self.signal_color = QColor(255, 0, 0)
         # active events per this source: name -> { 'bbox': [x1,y1,x2,y2] (normalized) }
         self.active_events: dict[str, dict] = {}
+        # Persistent object boxes to bridge short tracker gaps: obj_id -> { 'box': [x1,y1,x2,y2] px, 'ttl': int }
+        self.persist_obj_boxes: dict[int, dict] = {}
+        self.signal_hold_frames = 10
 
         # Таймер для задания fps у видеороликов
         self.timer = QTimer()
@@ -124,7 +128,14 @@ class VideoThread(QThread):
     def _draw_signal_overlay(self, image: QPixmap):
         if not self.signal_enabled:
             return
-        if not self.active_events:
+        # Determine active events for this source; if none, skip overlay entirely
+        active_keys = set()
+        try:
+            if self.visualizer_ref and hasattr(self.visualizer_ref, 'get_active_events'):
+                active_keys = self.visualizer_ref.get_active_events(self.source_id)
+        except Exception:
+            active_keys = set()
+        if not active_keys:
             return
         painter = QPainter(image)
         try:
@@ -138,10 +149,15 @@ class VideoThread(QThread):
             # Background for list (semi-transparent)
             bg = QColor(self.signal_color)
             bg.setAlpha(60)
-            # Build text list; for AttributeEvent we expect label like "AttributeEvent:NoHardHat"
+            # Build text list from visualizer centralized state
             text_lines = []
-            for name, ev in self.active_events.items():
-                text_lines.append(name)
+            for (_, obj_id, evt_name) in active_keys:
+                text_lines.append(f"AttributeEvent:{evt_name}:obj{obj_id}")
+            # Log what will be shown in the list for this camera
+            try:
+                self.logger.info(f"Signal list (src={self.source_id}): {text_lines}")
+            except Exception:
+                pass
             if text_lines:
                 pad = 6
                 line_h = 18
@@ -154,12 +170,30 @@ class VideoThread(QThread):
             # Highlight event bboxes with signal color (draw after other overlays)
             # Draw event bbox last, to be on top of object boxes
             painter.setPen(QPen(self.signal_color, 4))
-            for name, ev in self.active_events.items():
-                box = ev.get('bbox')
+            # Draw for each active event using tracker bbox from persistent cache
+            for (_, obj_id, evt_name) in active_keys:
+                box = None
+                try:
+                    if hasattr(self, 'persist_obj_boxes') and obj_id in self.persist_obj_boxes:
+                        box = self.persist_obj_boxes[obj_id]['box']
+                except Exception:
+                    box = None
                 if not box or len(box) != 4:
-                    # still draw only border and list
                     continue
                 x1, y1, x2, y2 = box
+                # normalize if pixel coordinates
+                if max(x1, y1, x2, y2) > 1.0:
+                    # Normalize by original frame size, then map to current pixmap size
+                    iw = max(1, self.last_frame_w or image.width())
+                    ih = max(1, self.last_frame_h or image.height())
+                    x1 /= iw; y1 /= ih; x2 /= iw; y2 /= ih
+                # map to pixmap
+                x = int(x1 * image.width())
+                y = int(y1 * image.height())
+                w = int((x2 - x1) * image.width())
+                h = int((y2 - y1) * image.height())
+                if w > 0 and h > 0:
+                    painter.drawRect(x, y, w, h)
                 # normalize if pixel coordinates
                 if max(x1, y1, x2, y2) > 1.0:
                     # Normalize by original frame size, then map to current pixmap size
@@ -217,6 +251,27 @@ class VideoThread(QThread):
                 self.last_frame_w = None
                 self.last_frame_h = None
             
+            # Update persistent boxes TTL and merge with latest boxes
+            try:
+                # Decrease TTL
+                for oid in list(self.persist_obj_boxes.keys()):
+                    self.persist_obj_boxes[oid]['ttl'] -= 1
+                    if self.persist_obj_boxes[oid]['ttl'] <= 0:
+                        del self.persist_obj_boxes[oid]
+                # Refresh with latest boxes
+                if isinstance(track_info, list):
+                    for obj in track_info:
+                        oid = getattr(obj, 'object_id', None)
+                        bbox = None
+                        if hasattr(obj, 'track') and hasattr(obj.track, 'bounding_box'):
+                            bbox = obj.track.bounding_box
+                        elif hasattr(obj, 'bounding_box'):
+                            bbox = obj.bounding_box
+                        if oid is not None and bbox is not None and len(bbox) == 4:
+                            self.persist_obj_boxes[oid] = {'box': bbox, 'ttl': self.signal_hold_frames}
+            except Exception:
+                pass
+
             utils.draw_boxes_tracking(display_frame, track_info, source_name, source_duration_secs,
                                       self.font_scale, self.font_thickness, self.font_color,
                                       text_config=self.text_config, class_mapping=self.class_mapping)
@@ -235,6 +290,12 @@ class VideoThread(QThread):
         except Empty:
             return 0
         except ValueError:
+            return 0
+        except Exception as e:
+            try:
+                self.logger.error(f"VideoThread.process_image error (src={self.source_id}): {e}")
+            except Exception:
+                pass
             return 0
 
     def stop_thread(self):
