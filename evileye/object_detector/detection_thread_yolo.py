@@ -38,7 +38,8 @@ class DetectionThreadYolo(DetectionThreadBase):
             self._update_model_class_mapping_from_model()
 
     def predict(self, images: list):
-        return self.model.predict(source=images, classes=self.classes, verbose=False, **self.inf_params)
+        # Defer classes filtering to base; avoid passing names to model
+        return self.model.predict(source=images, classes=self._get_classes_arg_for_model(), verbose=False, **self.inf_params)
 
     def get_bboxes(self, result, roi):
         bboxes_coords = []
@@ -50,8 +51,6 @@ class DetectionThreadYolo(DetectionThreadBase):
         class_ids = boxes.cls
         
         for coord, class_id, conf in zip(coords, class_ids, confs):
-            if int(class_id) not in self.classes:
-                continue
             utils_module = get_utils()
             abs_coords = utils_module.roi_to_image(coord, roi[1][0], roi[1][1])  # Получаем координаты рамки в СК всего изображения
             bboxes_coords.append(abs_coords)

@@ -74,6 +74,8 @@ class Controller:
         self.show_memory_usage = False
         self.auto_restart = True
         self.use_database = True  # Default to True for backward compatibility
+        # Timeout for late model loading/class mapping propagation (seconds)
+        self.model_loading_timeout_sec = 60
 
         self.events_detectors_controller = None
         self.events_processor = None
@@ -218,9 +220,12 @@ class Controller:
             pipeline_results = self.pipeline.peek_latest_result()
 
             #mc_tracking_results = pipeline_results.get("mc_trackers", [])
-            mc_tracking_results = pipeline_results.get(self.pipeline.get_final_results_name(), [])
+            if self.pipeline is not None and pipeline_results is not None:
+                mc_tracking_results = pipeline_results.get(self.pipeline.get_final_results_name(), [])
+            else:
+                mc_tracking_results = []
 
-            # Insert debug info from pipeline components
+                # Insert debug info from pipeline components
             self.pipeline.insert_debug_info_by_id(self.debug_info)
 
             if self.autoclose and all_sources_finished:
@@ -379,6 +384,8 @@ class Controller:
             else:
                 # Keep default class_mapping if neither is specified
                 pass
+            # Optional: override late model loading timeout
+            self.model_loading_timeout_sec = self.params['controller'].get("model_loading_timeout_sec", self.model_loading_timeout_sec)
             self.memory_periodic_check_sec = self.params['controller'].get("memory_periodic_check_sec", self.memory_periodic_check_sec)
             self.show_memory_usage = self.params['controller'].get("show_memory_usage", self.show_memory_usage)
             self.max_memory_usage_mb = self.params['controller'].get("max_memory_usage_mb", self.max_memory_usage_mb)
@@ -411,6 +418,25 @@ class Controller:
         self.pipeline.set_params(**pipeline_params)
         self.pipeline.init()
         
+        # Preload controller's class mapping into centralized ClassManager
+        # This allows detectors to convert class names to IDs immediately if provided
+        try:
+            if self.class_mapping:
+                self.class_manager.add_class_mapping(self.class_mapping, 'controller_default')
+        except Exception:
+            pass
+
+        # Set ClassManager for all detectors ASAP (before class mapping update)
+        try:
+            if hasattr(self.pipeline, 'processors'):
+                for processor in self.pipeline.processors:
+                    if hasattr(processor, 'get_processors'):
+                        for proc in processor.get_processors():
+                            if hasattr(proc, 'set_class_manager'):
+                                proc.set_class_manager(self.class_manager)
+        except Exception:
+            pass
+
         # Update class_mapping from detectors after pipeline initialization
         self.update_class_mapping_from_detectors()
 
@@ -496,7 +522,7 @@ class Controller:
         self.main_window = main_window
         self.pyqt_slots = pyqt_slots
         self.pyqt_signals = pyqt_signals
-        self._init_visualizer(self.params['visualizer'])
+        self._init_visualizer(self.params.get('visualizer', dict()))
 
     def release(self):
         self.stop()
@@ -968,7 +994,8 @@ class Controller:
         
         def periodic_check():
             """Periodically check and update classes"""
-            max_attempts = 10  # Check for 10 seconds
+            # Check once per second up to configured timeout
+            max_attempts = max(1, int(self.model_loading_timeout_sec))
             attempt = 0
             
             while attempt < max_attempts:

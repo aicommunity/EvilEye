@@ -113,7 +113,9 @@ class DetectionThreadBase:
         images = []
         for img in split_image:
             images.append(img[0].image)
-        predict_results = self.predict(images)
+        # Pass sensible classes to model (IDs only) to avoid Ultralytics errors
+        classes_arg = self._get_classes_arg_for_model()
+        predict_results = self.predict(images) if classes_arg is None else self.predict(images)
 
         for i in range(len(split_image)):
             roi_bboxes, roi_confs, roi_ids = self.get_bboxes(predict_results[i], split_image[i])
@@ -124,6 +126,9 @@ class DetectionThreadBase:
         utils_module = get_utils()
         bboxes_coords, confidences, class_ids = utils_module.merge_roi_boxes(self.roi[0], bboxes_coords, confidences, class_ids)  # Объединение рамок из разных ROI
         bboxes_coords, confidences, class_ids = utils_module.non_max_sup(bboxes_coords, confidences, class_ids)
+
+        # Centralized filtering by classes (IDs or names via model_class_mapping)
+        bboxes_coords, confidences, class_ids = self._filter_detections(bboxes_coords, confidences, class_ids)
 
         detection_result_list.source_id = split_image[0][0].source_id
         detection_result_list.time_stamp = time.time()
@@ -136,6 +141,50 @@ class DetectionThreadBase:
             detection_result.confidence = conf
             detection_result_list.detections.append(detection_result)
         return detection_result_list
+
+    def _get_classes_arg_for_model(self):
+        """Return list of class IDs to pass into model or None if not applicable.
+        Avoid passing string names into Ultralytics models.
+        """
+        try:
+            if isinstance(self.classes, list) and self.classes and all(isinstance(c, int) for c in self.classes):
+                return self.classes
+            # If classes are names, we don't pass them to model to avoid errors
+            return None
+        except Exception:
+            return None
+
+    def _filter_detections(self, bboxes_coords, confidences, class_ids):
+        """Apply class filtering by IDs or names using model_class_mapping.
+        - If self.classes is list[int]: filter by IDs
+        - If self.classes is list[str] and model_class_mapping is available: map names->IDs and filter
+        - Otherwise: no filtering
+        """
+        try:
+            if not isinstance(self.classes, list) or not self.classes:
+                return bboxes_coords, confidences, class_ids
+
+            # Filter by IDs directly
+            if all(isinstance(c, int) for c in self.classes):
+                desired_ids = set(self.classes)
+            # Filter by names via mapping
+            elif all(isinstance(c, str) for c in self.classes) and isinstance(self.model_class_mapping, dict) and self.model_class_mapping:
+                desired_ids = {cid for name, cid in self.model_class_mapping.items() if name in self.classes}
+                if not desired_ids:
+                    return [], [], []
+            else:
+                return bboxes_coords, confidences, class_ids
+
+            fb, fc, fi = [], [], []
+            for b, c, i in zip(bboxes_coords, confidences, class_ids):
+                cid = int(i)
+                if cid in desired_ids:
+                    fb.append(b)
+                    fc.append(c)
+                    fi.append(cid)
+            return fb, fc, fi
+        except Exception:
+            return bboxes_coords, confidences, class_ids
 
     @abstractmethod
     def init_detection_implementation(self):
