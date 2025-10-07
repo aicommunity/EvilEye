@@ -168,7 +168,11 @@ class EventsProcessor(EvilEyeBase):
                                 # Notify UI: event ON
                                 try:
                                     if self.ui_callback:
-                                        self.ui_callback(event.source_id, getattr(event, 'object_id', -1), getattr(event, 'matched_event_name', ''), True)
+                                        self.ui_callback(event.source_id,
+                                                         getattr(event, 'object_id', -1),
+                                                         getattr(event, 'matched_event_name', ''),
+                                                         True,
+                                                         getattr(event, 'box_found', None))
                                 except Exception:
                                     pass
                         else:  # Иначе отправляем в завершенные (краткосрочные события)
@@ -180,8 +184,16 @@ class EventsProcessor(EvilEyeBase):
                             # Notify UI for non-long events: ON then OFF
                             try:
                                 if self.ui_callback and not event.is_long_term():
-                                    self.ui_callback(event.source_id, getattr(event, 'object_id', -1), getattr(event, 'matched_event_name', ''), True)
-                                    self.ui_callback(event.source_id, getattr(event, 'object_id', -1), getattr(event, 'matched_event_name', ''), False)
+                                    self.ui_callback(event.source_id,
+                                                     getattr(event, 'object_id', -1),
+                                                     getattr(event, 'matched_event_name', ''),
+                                                     True,
+                                                     getattr(event, 'box_found', None))
+                                    self.ui_callback(event.source_id,
+                                                     getattr(event, 'object_id', -1),
+                                                     getattr(event, 'matched_event_name', ''),
+                                                     False,
+                                                     None)
                             except Exception:
                                 pass
                 # Удаляем завершенные долгосрочные события

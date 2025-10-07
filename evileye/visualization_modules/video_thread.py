@@ -139,7 +139,10 @@ class VideoThread(QThread):
             return
         painter = QPainter(image)
         try:
-            pen = QPen(self.signal_color)
+            # QPainter ожидает RGB, но текущий источник цвета фактически интерпретируется как BGR —
+            # для一致ности с OpenCV поменяем местами каналы для QPainter
+            qcolor = QColor(self.signal_color.blue(), self.signal_color.green(), self.signal_color.red())
+            pen = QPen(qcolor)
             pen.setWidth(4)
             painter.setPen(pen)
             # Draw border around full pixmap
@@ -147,66 +150,22 @@ class VideoThread(QThread):
             # Draw active events list (top-left)
             painter.setBrush(QBrush())
             # Background for list (semi-transparent)
-            bg = QColor(self.signal_color)
+            bg = QColor(qcolor)
             bg.setAlpha(60)
             # Build text list from visualizer centralized state
             text_lines = []
             for (_, obj_id, evt_name) in active_keys:
                 text_lines.append(f"AttributeEvent:{evt_name}:obj{obj_id}")
-            # Log what will be shown in the list for this camera
-            try:
-                self.logger.info(f"Signal list (src={self.source_id}): {text_lines}")
-            except Exception:
-                pass
             if text_lines:
                 pad = 6
                 line_h = 18
                 box_w = max(120, max((painter.fontMetrics().horizontalAdvance(t) for t in text_lines), default=0) + 2*pad)
                 box_h = pad*2 + line_h*len(text_lines)
                 painter.fillRect(0, 0, box_w, box_h, bg)
-                painter.setPen(QPen(self.signal_color))
+                painter.setPen(QPen(qcolor))
                 for i, t in enumerate(text_lines):
                     painter.drawText(pad, pad + (i+1)*line_h - 4, t)
-            # Highlight event bboxes with signal color (draw after other overlays)
-            # Draw event bbox last, to be on top of object boxes
-            painter.setPen(QPen(self.signal_color, 4))
-            # Draw for each active event using tracker bbox from persistent cache
-            for (_, obj_id, evt_name) in active_keys:
-                box = None
-                try:
-                    if hasattr(self, 'persist_obj_boxes') and obj_id in self.persist_obj_boxes:
-                        box = self.persist_obj_boxes[obj_id]['box']
-                except Exception:
-                    box = None
-                if not box or len(box) != 4:
-                    continue
-                x1, y1, x2, y2 = box
-                # normalize if pixel coordinates
-                if max(x1, y1, x2, y2) > 1.0:
-                    # Normalize by original frame size, then map to current pixmap size
-                    iw = max(1, self.last_frame_w or image.width())
-                    ih = max(1, self.last_frame_h or image.height())
-                    x1 /= iw; y1 /= ih; x2 /= iw; y2 /= ih
-                # map to pixmap
-                x = int(x1 * image.width())
-                y = int(y1 * image.height())
-                w = int((x2 - x1) * image.width())
-                h = int((y2 - y1) * image.height())
-                if w > 0 and h > 0:
-                    painter.drawRect(x, y, w, h)
-                # normalize if pixel coordinates
-                if max(x1, y1, x2, y2) > 1.0:
-                    # Normalize by original frame size, then map to current pixmap size
-                    iw = max(1, self.last_frame_w or image.width())
-                    ih = max(1, self.last_frame_h or image.height())
-                    x1 /= iw; y1 /= ih; x2 /= iw; y2 /= ih
-                # treat as normalized [0..1]
-                x = int(x1 * image.width())
-                y = int(y1 * image.height())
-                w = int((x2 - x1) * image.width())
-                h = int((y2 - y1) * image.height())
-                if w > 0 and h > 0:
-                    painter.drawRect(x, y, w, h)
+            # bbox событий теперь рисуются в utils.draw_boxes_tracking вместе с объектными
         finally:
             if painter.isActive():
                 painter.end()
@@ -272,9 +231,22 @@ class VideoThread(QThread):
             except Exception:
                 pass
 
+            # Соберём активные obj_id для этого источника, чтобы рисовать красный bbox поверх зелёного
+            active_obj_ids = set()
+            try:
+                if self.visualizer_ref and hasattr(self.visualizer_ref, 'get_active_events'):
+                    active_keys = self.visualizer_ref.get_active_events(self.source_id) or set()
+                    for (_, oid, _evt) in active_keys:
+                        if oid is not None:
+                            active_obj_ids.add(oid)
+            except Exception:
+                active_obj_ids = set()
+
             utils.draw_boxes_tracking(display_frame, track_info, source_name, source_duration_secs,
                                       self.font_scale, self.font_thickness, self.font_color,
-                                      text_config=self.text_config, class_mapping=self.class_mapping)
+                                      text_config=self.text_config, class_mapping=self.class_mapping,
+                                      event_active_obj_ids=active_obj_ids,
+                                      event_color=(self.signal_color.red(), self.signal_color.green(), self.signal_color.blue()))
             if self.show_debug_info:
                 utils.draw_debug_info(display_frame, debug_info)
             qt_image = self.convert_cv_qt(display_frame.image, self.widget_width, self.widget_height)

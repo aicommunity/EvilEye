@@ -121,23 +121,16 @@ class Visualizer(EvilEyeBase):
         for thr in self.visual_threads:
             thr.set_signal_params(enabled, color_rgb)
 
-    def set_event_state(self, source_id: int, object_id: int, event_name: str, is_on: bool):
+    def set_event_state(self, source_id: int, object_id: int, event_name: str, is_on: bool, bbox_px: list | None = None):
         if source_id not in self.active_events:
             self.active_events[source_id] = set()
         key = (source_id, object_id, event_name)
         if is_on:
             self.active_events[source_id].add(key)
-            try:
-                self.logger.info(f"Visualizer ADD event: src={source_id} obj={object_id} name={event_name} active={len(self.active_events[source_id])}")
-            except Exception:
-                pass
         else:
             if key in self.active_events[source_id]:
                 self.active_events[source_id].remove(key)
-            try:
-                self.logger.info(f"Visualizer REMOVE event: src={source_id} obj={object_id} name={event_name} active={len(self.active_events[source_id])}")
-            except Exception:
-                pass
+        
         # Do not directly touch threads here; they will read on next frame
 
     def get_active_events(self, source_id: int) -> set[tuple[int, int, str]]:
