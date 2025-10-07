@@ -117,12 +117,8 @@ class EventsProcessor(EvilEyeBase):
                                 # Notify UI: event OFF (независимо от наличия адаптера)
                                 try:
                                     if self.ui_callback:
-                                        label_name = f"{event.get_name()}:{getattr(event, 'matched_event_name', '')}"
+                                        label_name = f"{event.get_name()}: {getattr(event, 'matched_event_name', '')}: obj{getattr(event, 'object_id', '')}"
                                         bbox = getattr(event, 'box_finished', None)
-                                        try:
-                                            self.logger.info(f"UI signal OFF: src={event.source_id} name={label_name} bbox={(bbox if bbox else 'None')}")
-                                        except Exception:
-                                            pass
                                         self.ui_callback(event.source_id, label_name, False, bbox)
                                 except Exception:
                                     pass
@@ -153,18 +149,10 @@ class EventsProcessor(EvilEyeBase):
                                 # Notify UI: event ON then OFF immediately
                                 try:
                                     if self.ui_callback:
-                                        label_name = f"{event.get_name()}:{getattr(event, 'matched_event_name', '')}"
+                                        label_name = f"{event.get_name()}: {getattr(event, 'matched_event_name', '')}: obj{getattr(event, 'object_id', '')}"
                                         bbox = getattr(event, 'box_found', None)
-                                        try:
-                                            self.logger.info(f"UI signal ON: src={event.source_id} name={label_name} bbox={(bbox if bbox else 'None')}")
-                                        except Exception:
-                                            pass
                                         self.ui_callback(event.source_id, label_name, True, bbox)
                                         bbox2 = getattr(event, 'box_finished', None)
-                                        try:
-                                            self.logger.info(f"UI signal OFF: src={event.source_id} name={label_name} bbox={(bbox2 if bbox2 else 'None')}")
-                                        except Exception:
-                                            pass
                                         self.ui_callback(event.source_id, label_name, False, bbox2)
                                 except Exception:
                                     pass
@@ -173,12 +161,8 @@ class EventsProcessor(EvilEyeBase):
                                 # Notify UI: event ON
                                 try:
                                     if self.ui_callback:
-                                        label_name = f"{event.get_name()}:{getattr(event, 'matched_event_name', '')}"
+                                        label_name = f"{event.get_name()}: {getattr(event, 'matched_event_name', '')}: obj{getattr(event, 'object_id', '')}"
                                         bbox = getattr(event, 'box_found', None)
-                                        try:
-                                            self.logger.info(f"UI signal ON: src={event.source_id} name={label_name} bbox={(bbox if bbox else 'None')}")
-                                        except Exception:
-                                            pass
                                         self.ui_callback(event.source_id, label_name, True, bbox)
                                 except Exception:
                                     pass
@@ -191,25 +175,16 @@ class EventsProcessor(EvilEyeBase):
                             # Notify UI for non-long events: ON then OFF
                             try:
                                 if self.ui_callback and not event.is_long_term():
-                                    label_name = f"{event.get_name()}:{getattr(event, 'matched_event_name', '')}"
+                                    label_name = f"{event.get_name()}: {getattr(event, 'matched_event_name', '')}: obj{getattr(event, 'object_id', '')}"
                                     bbox = getattr(event, 'box_found', None)
-                                    try:
-                                        self.logger.info(f"UI signal ON: src={event.source_id} name={label_name} bbox={(bbox if bbox else 'None')}")
-                                    except Exception:
-                                        pass
                                     self.ui_callback(event.source_id, label_name, True, bbox)
                                     bbox2 = getattr(event, 'box_finished', None)
-                                    try:
-                                        self.logger.info(f"UI signal OFF: src={event.source_id} name={label_name} bbox={(bbox2 if bbox2 else 'None')}")
-                                    except Exception:
-                                        pass
                                     self.ui_callback(event.source_id, label_name, False, bbox2)
                             except Exception:
                                 pass
                 # Удаляем завершенные долгосрочные события
                 if events in self.long_term_events:
-                    filtered_long_term[events] = [self.long_term_events[events][i] for i
-                                                  in range(len(self.long_term_events[events])) if i not in finished_idxs]
+                    filtered_long_term[events] = [self.long_term_events[events][i] for i in range(len(self.long_term_events[events])) if i not in finished_idxs]
                     self.long_term_events[events] = filtered_long_term[events]
 
             for events in self.finished_events:

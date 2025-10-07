@@ -158,10 +158,6 @@ class VideoThread(QThread):
                 box = ev.get('bbox')
                 if not box or len(box) != 4:
                     # still draw only border and list
-                    try:
-                        self.logger.info(f"Signal bbox skipped (no box) src={self.source_id} name={name} img=({image.width()}x{image.height()})")
-                    except Exception:
-                        pass
                     continue
                 x1, y1, x2, y2 = box
                 # normalize if pixel coordinates
@@ -177,10 +173,6 @@ class VideoThread(QThread):
                 h = int((y2 - y1) * image.height())
                 if w > 0 and h > 0:
                     painter.drawRect(x, y, w, h)
-                    try:
-                        self.logger.info(f"Signal bbox draw src={self.source_id} name={name} rect_px=({x},{y},{w},{h}) img=({image.width()}x{image.height()}) norm=({x1:.4f},{y1:.4f},{x2:.4f},{y2:.4f})")
-                    except Exception:
-                        pass
         finally:
             if painter.isActive():
                 painter.end()
