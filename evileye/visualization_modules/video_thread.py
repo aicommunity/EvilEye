@@ -56,6 +56,12 @@ class VideoThread(QThread):
         self.text_config = text_config or {}  # Text configuration for rendering
         self.class_mapping = class_mapping or {}  # Class mapping for displaying class names
 
+        # Event signalization (visual alert) parameters
+        self.signal_enabled = False
+        self.signal_color = QColor(255, 0, 0)
+        # active events per this source: name -> { 'bbox': [x1,y1,x2,y2] (normalized) }
+        self.active_events: dict[str, dict] = {}
+
         # Таймер для задания fps у видеороликов
         self.timer = QTimer()
         self.timer.moveToThread(self)
@@ -115,6 +121,70 @@ class VideoThread(QThread):
                                             int(widget_height / VideoThread.rows), Qt.AspectRatioMode.KeepAspectRatio)
         return QPixmap.fromImage(scaled_image)
 
+    def _draw_signal_overlay(self, image: QPixmap):
+        if not self.signal_enabled:
+            return
+        if not self.active_events:
+            return
+        painter = QPainter(image)
+        try:
+            pen = QPen(self.signal_color)
+            pen.setWidth(4)
+            painter.setPen(pen)
+            # Draw border around full pixmap
+            painter.drawRect(0, 0, image.width()-1, image.height()-1)
+            # Draw active events list (top-left)
+            painter.setBrush(QBrush())
+            # Background for list (semi-transparent)
+            bg = QColor(self.signal_color)
+            bg.setAlpha(60)
+            # Build text list; for AttributeEvent we expect label like "AttributeEvent:NoHardHat"
+            text_lines = []
+            for name, ev in self.active_events.items():
+                text_lines.append(name)
+            if text_lines:
+                pad = 6
+                line_h = 18
+                box_w = max(120, max((painter.fontMetrics().horizontalAdvance(t) for t in text_lines), default=0) + 2*pad)
+                box_h = pad*2 + line_h*len(text_lines)
+                painter.fillRect(0, 0, box_w, box_h, bg)
+                painter.setPen(QPen(self.signal_color))
+                for i, t in enumerate(text_lines):
+                    painter.drawText(pad, pad + (i+1)*line_h - 4, t)
+            # Highlight event bboxes with signal color (draw after other overlays)
+            # Draw event bbox last, to be on top of object boxes
+            painter.setPen(QPen(self.signal_color, 4))
+            for name, ev in self.active_events.items():
+                box = ev.get('bbox')
+                if not box or len(box) != 4:
+                    # still draw only border and list
+                    try:
+                        self.logger.info(f"Signal bbox skipped (no box) src={self.source_id} name={name} img=({image.width()}x{image.height()})")
+                    except Exception:
+                        pass
+                    continue
+                x1, y1, x2, y2 = box
+                # normalize if pixel coordinates
+                if max(x1, y1, x2, y2) > 1.0:
+                    # Normalize by original frame size, then map to current pixmap size
+                    iw = max(1, self.last_frame_w or image.width())
+                    ih = max(1, self.last_frame_h or image.height())
+                    x1 /= iw; y1 /= ih; x2 /= iw; y2 /= ih
+                # treat as normalized [0..1]
+                x = int(x1 * image.width())
+                y = int(y1 * image.height())
+                w = int((x2 - x1) * image.width())
+                h = int((y2 - y1) * image.height())
+                if w > 0 and h > 0:
+                    painter.drawRect(x, y, w, h)
+                    try:
+                        self.logger.info(f"Signal bbox draw src={self.source_id} name={name} rect_px=({x},{y},{w},{h}) img=({image.width()}x{image.height()}) norm=({x1:.4f},{y1:.4f},{x2:.4f},{y2:.4f})")
+                    except Exception:
+                        pass
+        finally:
+            if painter.isActive():
+                painter.end()
+
     def draw_zones(self, image: QPixmap, zones: dict):
         # self.logger.debug(zones)
         if not zones:
@@ -146,6 +216,14 @@ class VideoThread(QThread):
             # Create a copy of the image for display to avoid modifying the original
             import copy
             display_frame = copy.deepcopy(frame)
+            # Remember original size to normalize pixel bboxes to display size correctly
+            try:
+                ih, iw = display_frame.image.shape[:2]
+                self.last_frame_w = iw
+                self.last_frame_h = ih
+            except Exception:
+                self.last_frame_w = None
+                self.last_frame_h = None
             
             utils.draw_boxes_tracking(display_frame, track_info, source_name, source_duration_secs,
                                       self.font_scale, self.font_thickness, self.font_color,
@@ -155,6 +233,8 @@ class VideoThread(QThread):
             qt_image = self.convert_cv_qt(display_frame.image, self.widget_width, self.widget_height)
             if self.show_zones:
                 self.draw_zones(qt_image, self.zones)
+            # Draw event signalization overlay last
+            self._draw_signal_overlay(qt_image)
             end_it = timer()
             elapsed_seconds = end_it - begin_it
             # Сигнал из потока для обновления label на новое изображение
@@ -181,3 +261,23 @@ class VideoThread(QThread):
     def add_zone_clicked(self, thread_id):
         if self.thread_num == thread_id:
             self.is_add_zone_clicked = True
+
+    @pyqtSlot(bool, tuple)
+    def set_signal_params(self, enabled: bool, color_rgb: tuple[int, int, int] = (255, 0, 0)):
+        self.signal_enabled = enabled
+        try:
+            r, g, b = color_rgb
+            self.signal_color = QColor(int(r), int(g), int(b))
+        except Exception:
+            self.signal_color = QColor(255, 0, 0)
+
+    @pyqtSlot(str, bool, list)
+    def set_event_state(self, event_name: str, is_on: bool, bbox_norm: list[float] | None = None):
+        """Turn ON/OFF event visualization for this source. bbox_norm is [x1,y1,x2,y2] in [0..1]."""
+        if not isinstance(event_name, str) or not event_name:
+            return
+        if is_on:
+            self.active_events[event_name] = {'bbox': bbox_norm if bbox_norm and len(bbox_norm) == 4 else None}
+        else:
+            if event_name in self.active_events:
+                del self.active_events[event_name]

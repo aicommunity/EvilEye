@@ -41,7 +41,7 @@ class AttributeEventsDetector(EventsDetector):
                             key = (source_id, obj.object_id, event_name)
                             if current_attrs == expected_set and key not in self.active_events:
                                 ts = datetime.now()
-                                event = AttributeEvent(ts, 'Alarm', source_id, obj.object_id, event_name, sorted(list(expected_set)), is_finished=False, obj=obj)
+                                event = AttributeEvent(ts, 'AttributeEvent', source_id, obj.object_id, event_name, sorted(list(expected_set)), is_finished=False, obj=obj)
                                 events.append(event)
                                 self.active_events.add(key)
                                 # Log start of attribute event
@@ -55,7 +55,7 @@ class AttributeEventsDetector(EventsDetector):
                             key = (source_id, obj.object_id, event_name)
                             if key in self.active_events:
                                 ts = datetime.now()
-                                event = AttributeEvent(ts, 'Alarm', source_id, obj.object_id, event_name, sorted(list(expected_map[event_name])), is_finished=True, obj=obj)
+                                event = AttributeEvent(ts, 'AttributeEvent', source_id, obj.object_id, event_name, sorted(list(expected_map[event_name])), is_finished=True, obj=obj)
                                 events.append(event)
                                 self.active_events.remove(key)
                                 # Log finish of attribute event

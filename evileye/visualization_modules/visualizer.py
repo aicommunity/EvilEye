@@ -31,6 +31,9 @@ class Visualizer(EvilEyeBase):
         self.text_config = {}  # Text configuration for rendering
         self.class_mapping = {}  # Class mapping for displaying class names
         self.memory_consumption_detail = dict()
+        # Signalization params
+        self.signal_enabled = False
+        self.signal_color = (255, 0, 0)
 
 
     def default(self):
@@ -49,7 +52,7 @@ class Visualizer(EvilEyeBase):
             self.visual_threads[-1].update_image_signal.connect(
                 self.pyqt_slots['update_image'])  # Сигнал из потока для обновления label на новое изображение
             self.visual_threads[-1].add_zone_signal.connect(self.pyqt_slots['open_zone_win'])
-            self.pyqt_signals['display_zones_signal'].connect(self.visual_threads[-1].display_zones_signal)
+            self.pyqt_signals['display_zones_signal'].connect(self.visual_threads[-1].display_zones)
             self.pyqt_signals['add_zone_signal'].connect(self.visual_threads[-1].add_zone_clicked)
 
     def release_impl(self):
@@ -73,6 +76,8 @@ class Visualizer(EvilEyeBase):
         self.num_width = self.params.get('num_width', self.num_width)
         self.visual_buffer_num_frames = self.params.get('visual_buffer_num_frames', 50)
         self.text_config = self.params.get('text_config', {})
+        self.signal_enabled = self.params.get('event_signal_enabled', False)
+        self.signal_color = tuple(self.params.get('event_signal_color', [255, 0, 0]))
 
     def get_params_impl(self):
         params = dict()
@@ -88,6 +93,8 @@ class Visualizer(EvilEyeBase):
 
     def start(self):
         for thr in self.visual_threads:
+            # Apply initial signalization params
+            thr.set_signal_params(self.signal_enabled, self.signal_color)
             thr.start_thread()
 
     def stop(self):
@@ -99,6 +106,19 @@ class Visualizer(EvilEyeBase):
     def set_current_main_widget_size(self, width, height):
         for j in range(len(self.visual_threads)):
             self.visual_threads[j].set_main_widget_size(width, height)
+
+    # ==== Online event signalization API for Controller/MainWindow ====
+    def set_signal_params(self, enabled: bool, color_rgb: tuple[int, int, int]):
+        self.signal_enabled = enabled
+        self.signal_color = color_rgb
+        for thr in self.visual_threads:
+            thr.set_signal_params(enabled, color_rgb)
+
+    def set_event_state(self, source_id: int, event_name: str, is_on: bool, bbox_norm: list[float] | None):
+        for thr in self.visual_threads:
+            if thr.source_id == source_id:
+                thr.set_event_state(event_name, is_on, bbox_norm or None)
+                break
 
     def calc_memory_consumption(self):
         super().calc_memory_consumption()

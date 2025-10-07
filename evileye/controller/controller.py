@@ -187,6 +187,9 @@ class Controller:
 
         self.debug_info = dict()
 
+    def get_fps(self) -> int:
+        return self.fps
+
     def get_params(self):
         return self.params
 
@@ -747,6 +750,20 @@ class Controller:
         self.events_processor = EventsProcessor(adapters, db_ctrl)
         self.events_processor.set_params(**params)
         self.events_processor.init()
+        # Wire UI callback for online signalization
+        try:
+            self.events_processor.set_ui_callback(self._on_event_signalization)
+        except Exception:
+            pass
+
+    def _on_event_signalization(self, source_id: int, event_name: str, is_on: bool, bbox_norm: list | None):
+        """Relay event signalization to main window (per source)."""
+        try:
+            # Route directly via visualizer to avoid MainWindow thread index mapping issues
+            if self.visualizer and hasattr(self.visualizer, 'set_event_state'):
+                self.visualizer.set_event_state(source_id, event_name, is_on, bbox_norm or [])
+        except Exception:
+            pass
 
     def _init_visualizer(self, params):
         self.visualizer = Visualizer(self.pyqt_slots, self.pyqt_signals)
