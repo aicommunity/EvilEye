@@ -364,9 +364,9 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
             class_name = f"class_{last_info.class_id}"
             
         if obj.global_id is not None:
-            tracking_text = 'g' + str(obj.global_id) + ' ' + class_name + " " + "{:.2f}".format(last_info.confidence)
+            tracking_text = f'G{obj.global_id} {class_name} [{last_info.track_id}:{"{:.2f}".format(last_info.confidence)}]'
         else:
-            tracking_text = str(last_info.track_id) + ' ' + class_name + " " + "{:.2f}".format(last_info.confidence)
+            tracking_text = f'{class_name} [{last_info.track_id}:{"{:.2f}".format(last_info.confidence)}]'
 
         # Calculate font scale based on image resolution
         font_scale_method = config.get('font_scale_method', 'resolution_based')
