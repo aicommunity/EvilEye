@@ -79,6 +79,8 @@ class DoubleClickLabel(QLabel):
 class MainWindow(QMainWindow):
     display_zones_signal = pyqtSignal(dict)
     add_zone_signal = pyqtSignal(int)
+    # UI-level signalization controls
+    set_signal_params_signal = pyqtSignal(bool, tuple)
 
     def __init__(self, controller, params_file_path, params, win_width, win_height):
         super().__init__()
@@ -136,7 +138,9 @@ class MainWindow(QMainWindow):
             # Check if directory exists before creating journal
             if os.path.exists(images_dir):
                 try:
-                    self.db_journal_win = EventsJournalJson(images_dir, logger_name="json_journal", parent_logger=self.logger)
+                    from . import json_journal
+                    self.db_journal_win = json_journal.JsonJournalWindow(self, self.params, images_dir, close_app,
+                                                                        logger_name="json_journal", parent_logger=self.logger)
                     self.db_journal_win.setVisible(False)
                 except Exception as e:
                     self.logger.error(f"JSON journal creation error: {e}")
@@ -169,6 +173,9 @@ class MainWindow(QMainWindow):
         self.toolbar_width = 0
         self._create_toolbar()
 
+        # Connect signalization params to visualizer
+        self.set_signal_params_signal.connect(self._broadcast_signal_params)
+
     def setup_layout(self):
         self.centralWidget().layout().setContentsMargins(0, 0, 0, 0)
         grid_cols = 0
@@ -190,14 +197,17 @@ class MainWindow(QMainWindow):
             else:
                 self.hlayouts[grid_rows].addWidget(self.labels[-1], alignment=Qt.AlignmentFlag.AlignCenter)
                 grid_cols += 1
+            # Threads are managed by Visualizer; no direct thread creation here
 
     def _create_menu_bar(self):
         menu = self.menuBar()
 
         view_menu = QMenu('&View', self)
         menu.addMenu(view_menu)
-        view_menu.addAction(self.db_journal)
+        view_menu.addAction(self.objects_journal)
+        view_menu.addAction(self.events_journal)
         view_menu.addAction(self.show_zones)
+        view_menu.addAction(self.toggle_signal)
         self.menu_height = view_menu.frameGeometry().height()
 
         edit_menu = QMenu('&Edit', self)
@@ -212,7 +222,8 @@ class MainWindow(QMainWindow):
     def _create_toolbar(self):
         view_toolbar = QToolBar('View', self)
         self.addToolBar(Qt.ToolBarArea.RightToolBarArea, view_toolbar)
-        view_toolbar.addAction(self.db_journal)
+        view_toolbar.addAction(self.objects_journal)
+        view_toolbar.addAction(self.events_journal)
         self.toolbar_width = view_toolbar.frameGeometry().width()
 
         edit_toolbar = QToolBar('Edit', self)
@@ -222,10 +233,12 @@ class MainWindow(QMainWindow):
         self.toolbar_width = edit_toolbar.frameGeometry().width()
 
     def _create_actions(self):  # Создание кнопок-действий
-        self.db_journal = QAction('&DB journal', self)
+        # Journal actions (Objects / Events)
         icon_path = os.path.join(utils_utils.get_project_root(), 'icons', 'journal.svg')
-        self.db_journal.setIcon(QIcon(icon_path))
-        # Journal button configuration will be done after journal window creation
+        self.objects_journal = QAction('&Objects Journal', self)
+        self.objects_journal.setIcon(QIcon(icon_path))
+        self.events_journal = QAction('&Events Journal', self)
+        self.events_journal.setIcon(QIcon(icon_path))
 
         self.add_zone = QAction('&Add zone', self)
         icon_path = os.path.join(utils_utils.get_project_root(), 'icons', 'add_zone.svg')
@@ -234,35 +247,30 @@ class MainWindow(QMainWindow):
         icon_path = os.path.join(utils_utils.get_project_root(), 'icons', 'display_zones.svg')
         self.show_zones.setIcon(QIcon(icon_path))
         self.show_zones.setCheckable(True)
+        # Add toggle for event signalization
+        self.toggle_signal = QAction('&Event Signalization', self)
+        self.toggle_signal.setCheckable(True)
+        self.toggle_signal.setChecked(self.params['visualizer'].get('event_signal_enabled', False))
 
         self.add_channel = QAction('&Add Channel', self)
         self.del_channel = QAction('&Del Channel', self)
 
     def _connect_actions(self):
-        self.db_journal.triggered.connect(self.open_journal)
+        self.objects_journal.triggered.connect(self.open_objects_journal)
+        self.events_journal.triggered.connect(self.open_events_journal)
         self.add_zone.triggered.connect(self.select_source)
         self.show_zones.toggled.connect(self.display_zones)
+        self.toggle_signal.toggled.connect(self._toggle_signalization)
         self.add_channel.triggered.connect(self.add_channel_slot)
         self.del_channel.triggered.connect(self.del_channel_slot)
 
     def _configure_journal_button(self):
-        """Configure journal button based on database mode and availability"""
-        if hasattr(self.controller, 'use_database') and self.controller.use_database:
-            # Database mode - use original DB journal
-            self.db_journal.setEnabled(True)
-            self.db_journal.setText('&DB journal')
-            self.db_journal.setToolTip("Open database events journal")
-        else:
-            # JSON mode - check if journal was created successfully
-            if self.db_journal_win is not None:
-                self.db_journal.setEnabled(True)
-                self.db_journal.setText('&Journal')
-                self.db_journal.setToolTip("Open events journal (JSON mode)")
-            else:
-                # Disable button if no journal is available (directory doesn't exist or creation failed)
-                self.db_journal.setEnabled(False)
-                self.db_journal.setText('&Journal')
-                self.db_journal.setToolTip("Journal is not available (images directory not found)")
+        """Configure journal actions based on database mode and availability"""
+        available = self.db_journal_win is not None
+        self.objects_journal.setEnabled(available)
+        self.events_journal.setEnabled(available)
+        self.objects_journal.setToolTip("Open Objects journal" if available else "Journal is not available")
+        self.events_journal.setToolTip("Open Events journal" if available else "Journal is not available")
 
     @pyqtSlot()
     def display_zones(self):  # Включение отображения зон
@@ -280,14 +288,70 @@ class MainWindow(QMainWindow):
             label.add_zone_clicked(True)
 
     @pyqtSlot()
-    def open_journal(self):
+    def _ensure_journal_window(self):
         if self.db_journal_win is None:
             self.logger.warning("Journal unavailable (database disabled or initialization failed)")
+            return False
+        return True
+
+    @pyqtSlot()
+    def open_objects_journal(self):
+        if not self._ensure_journal_window():
             return
-        if self.db_journal_win.isVisible():
-            self.db_journal_win.setVisible(False)
-        else:
-            self.db_journal_win.setVisible(True)
+        # Ensure window is shown and focused on each click
+        self.db_journal_win.show()
+        try:
+            self.db_journal_win.raise_()
+            self.db_journal_win.activateWindow()
+        except Exception:
+            pass
+        try:
+            # Ensure default tabs restored if user closed them
+            if hasattr(self.db_journal_win, '_ensure_default_tabs'):
+                self.db_journal_win._ensure_default_tabs()
+            # JSON journal has ensure_tab; DB journal does not
+            if hasattr(self.db_journal_win, 'ensure_tab'):
+                idx = self.db_journal_win.ensure_tab('Objects')
+                if idx >= 0:
+                    self.db_journal_win.tabs.setCurrentIndex(idx)
+            elif hasattr(self.db_journal_win, 'tabs'):
+                tabs = self.db_journal_win.tabs
+                for i in range(tabs.count()):
+                    if tabs.tabText(i).lower().startswith('objects'):
+                        tabs.setCurrentIndex(i)
+                        tabs.widget(i).setVisible(True)
+                        tabs.tabBar().setTabVisible(i, True)
+                        break
+        except Exception:
+            pass
+
+    @pyqtSlot()
+    def open_events_journal(self):
+        if not self._ensure_journal_window():
+            return
+        self.db_journal_win.show()
+        try:
+            self.db_journal_win.raise_()
+            self.db_journal_win.activateWindow()
+        except Exception:
+            pass
+        try:
+            if hasattr(self.db_journal_win, '_ensure_default_tabs'):
+                self.db_journal_win._ensure_default_tabs()
+            if hasattr(self.db_journal_win, 'ensure_tab'):
+                idx = self.db_journal_win.ensure_tab('Events')
+                if idx >= 0:
+                    self.db_journal_win.tabs.setCurrentIndex(idx)
+            elif hasattr(self.db_journal_win, 'tabs'):
+                tabs = self.db_journal_win.tabs
+                for i in range(tabs.count()):
+                    if tabs.tabText(i).lower().startswith('events'):
+                        tabs.setCurrentIndex(i)
+                        tabs.widget(i).setVisible(True)
+                        tabs.tabBar().setTabVisible(i, True)
+                        break
+        except Exception:
+            pass
 
     @pyqtSlot(int, QPixmap)
     def open_zone_win(self, label_id: int, pixmap: QPixmap):
@@ -302,7 +366,23 @@ class MainWindow(QMainWindow):
     @pyqtSlot(int, QPixmap)
     def update_image(self, label_id: int, picture: QPixmap):
         # Обновляет label, в котором находится изображение
-        self.labels[label_id].setPixmap(picture)
+        if 0 <= label_id < len(self.labels):
+            self.labels[label_id].setPixmap(picture)
+
+    @pyqtSlot(bool)
+    def _toggle_signalization(self, enabled: bool):
+        color = tuple(self.params['visualizer'].get('event_signal_color', [255, 0, 0]))
+        self._broadcast_signal_params(enabled, color)
+
+    @pyqtSlot(bool, tuple)
+    def _broadcast_signal_params(self, enabled: bool, color: tuple):
+        for t in self.threads:
+            try:
+                t.set_signal_params(enabled, color)
+            except Exception:
+                pass
+
+    # Event state routed directly by Controller → Visualizer now
 
     @pyqtSlot()
     def change_screen_size(self):
@@ -368,7 +448,9 @@ class MainWindow(QMainWindow):
         # Check if directory exists before creating journal
         if os.path.exists(images_dir):
             try:
-                self.db_journal_win = EventsJournalJson(images_dir)
+                from . import json_journal
+                self.db_journal_win = json_journal.JsonJournalWindow(self, self.params, images_dir, False,
+                                                                    logger_name="json_journal", parent_logger=self.logger)
                 self.db_journal_win.setVisible(False)
             except Exception as e:
                 self.logger.error(f"JSON journal creation error: {e}")

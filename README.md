@@ -28,7 +28,7 @@ pip install evileye
 
 ```bash
 # Clone the repository
-git clone https://github.com/evileye/evileye.git
+git clone https://github.com/aicommunity/EvilEye.git
 cd EvilEye
 
 # Install in development mode

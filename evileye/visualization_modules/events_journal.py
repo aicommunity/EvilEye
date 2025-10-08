@@ -8,12 +8,12 @@ try:
         QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton,
         QDateTimeEdit, QHeaderView, QComboBox, QTableView, QStyledItemDelegate, QMessageBox
     )
-    from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor, QBrush
+    from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor, QBrush, QPolygonF
     from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QModelIndex, QSize
     from PyQt6.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
     pyqt_version = 6
 except ImportError:
-    from PyQt5.QtCore import QDate, QDateTime, QPointF
+    from PyQt5.QtCore import QDate, QDateTime, QPointF, QPolygonF
     from PyQt5.QtWidgets import (
         QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton,
         QDateTimeEdit, QHeaderView, QComboBox, QTableView, QStyledItemDelegate, QMessageBox
@@ -37,15 +37,160 @@ class ImageDelegate(QStyledItemDelegate):
         self.image_dir = image_dir
 
     def paint(self, painter, option, index):
-        if index.isValid():
-            path = index.data(Qt.ItemDataRole.DisplayRole)
-            path = os.path.join(self.image_dir, path)
-            pixmap = QPixmap()
-            if path:
-                pixmap.load(path)
-                painter.drawPixmap(option.rect, pixmap)
+        if not index.isValid():
+            return
+            
+        path = index.data(Qt.ItemDataRole.DisplayRole)
+        if not path:
+            return
+            
+        full_path = os.path.join(self.image_dir, path)
+        if not os.path.exists(full_path):
+            return
+            
+        # Load image
+        pixmap = QPixmap(full_path)
+        if pixmap.isNull():
+            return
+
+        # Calculate target rect with aspect fit
+        cell_rect = option.rect
+        img_w = pixmap.width()
+        img_h = pixmap.height()
+        if img_w <= 0 or img_h <= 0:
+            return
+            
+        cell_w = cell_rect.width()
+        cell_h = cell_rect.height()
+        scale = min(cell_w / img_w, cell_h / img_h)
+        draw_w = int(img_w * scale)
+        draw_h = int(img_h * scale)
+        draw_x = cell_rect.x() + (cell_w - draw_w) // 2
+        draw_y = cell_rect.y() + (cell_h - draw_h) // 2
+        
+        # Draw image
+        painter.drawPixmap(draw_x, draw_y, draw_w, draw_h, pixmap)
+        
+        # For preview images, coordinates are normalized relative to the original image size
+        # but we need to scale them to the preview image size
+        # Preview images are typically 320x240 or 300x150, but original images are much larger
+        # So we need to use the preview image dimensions for coordinate conversion
+        
+        # Try to get bounding box from database for this image
+        try:
+            from PyQt6.QtSql import QSqlDatabase, QSqlQuery
+        except ImportError:
+            from PyQt5.QtSql import QSqlDatabase, QSqlQuery
+            
+        box = None
+        zone_coords = None
+        
+        # Query database for bounding box based on event type and column
+        query = QSqlQuery(QSqlDatabase.database('events_conn'))
+        # Determine event type from model (column 1 holds 'Event') and current column (5 Preview, 6 Lost preview)
+        try:
+            event_type = index.model().index(index.row(), 1).data()
+        except Exception:
+            event_type = None
+        col = index.column()
+        if event_type == 'ZoneEvent':
+            if col == 5:
+                query.prepare('SELECT box_entered, zone_coords FROM zone_events WHERE preview_path_entered = :path')
             else:
-                return
+                query.prepare('SELECT box_left, zone_coords FROM zone_events WHERE preview_path_left = :path')
+        elif event_type == 'AttributeEvent':
+            if col == 5:
+                query.prepare('SELECT box_found FROM attribute_events WHERE preview_path_found = :path')
+            else:
+                query.prepare('SELECT box_finished FROM attribute_events WHERE preview_path_finished = :path')
+        elif event_type == 'ObjectEvent':
+            if col == 5:
+                query.prepare('SELECT bounding_box FROM objects WHERE preview_path = :path')
+            else:
+                query.prepare('SELECT lost_bounding_box FROM objects WHERE lost_preview_path = :path')
+        else:
+            # Fallback by guessing from column name; FOV/Camera have no bbox
+            query = None
+        if query is not None:
+            query.bindValue(':path', path)
+            if query.exec() and query.next():
+                value0 = query.value(0)
+                # Robust parse for box
+                if value0 is not None:
+                    try:
+                        if isinstance(value0, str):
+                            box_str = value0.replace('{', '').replace('}', '')
+                            box = [float(coord) for coord in box_str.split(',')]
+                        elif isinstance(value0, (list, tuple)):
+                            box = [float(v) for v in value0]
+                        elif hasattr(value0, 'toString'):
+                            s = value0.toString()
+                            box_str = str(s).replace('{', '').replace('}', '')
+                            box = [float(coord) for coord in box_str.split(',')]
+                        else:
+                            s = str(value0)
+                            box_str = s.replace('{', '').replace('}', '')
+                            parts = [p for p in box_str.split(',') if p.strip()]
+                            if len(parts) == 4:
+                                box = [float(coord) for coord in parts]
+                    except Exception:
+                        box = None
+                # Zone coords parsing
+                if event_type == 'ZoneEvent' and query.record().count() > 1:
+                    value1 = query.value(1)
+                    try:
+                        if isinstance(value1, str):
+                            s = value1.strip()
+                            # Expect something like "{{x,y},{x,y},...}"
+                            s = s.strip('{}')
+                            points_str = [p.strip('{} ') for p in s.split('},')]
+                            zone_coords = []
+                            for ps in points_str:
+                                parts = [pp for pp in ps.split(',') if pp.strip()]
+                                if len(parts) == 2:
+                                    zone_coords.append((float(parts[0]), float(parts[1])))
+                        elif isinstance(value1, (list, tuple)):
+                            zone_coords = [(float(p[0]), float(p[1])) for p in value1 if isinstance(p, (list, tuple)) and len(p) == 2]
+                        elif hasattr(value1, 'toString'):
+                            s = str(value1.toString()).strip('{}')
+                            points_str = [p.strip('{} ') for p in s.split('},')]
+                            zone_coords = []
+                            for ps in points_str:
+                                parts = [pp for pp in ps.split(',') if pp.strip()]
+                                if len(parts) == 2:
+                                    zone_coords.append((float(parts[0]), float(parts[1])))
+                    except Exception:
+                        zone_coords = None
+        
+        # Draw bounding box if available
+        if box and len(box) == 4:
+            painter.setPen(QPen(QColor(0, 255, 0), 2))  # Green for bbox
+            # Use the same logic as in objects journal ImageWindow
+            # Coordinates are in format [x1, y1, x2, y2] (top-left and bottom-right)
+            x1, y1, x2, y2 = box
+            
+            # Scale coordinates to draw area (same as ImageWindow logic)
+            x = draw_x + int(x1 * draw_w)
+            y = draw_y + int(y1 * draw_h)
+            w = int((x2 - x1) * draw_w)
+            h = int((y2 - y1) * draw_h)
+            
+            painter.drawRect(x, y, w, h)
+        
+        # Draw zone if available
+        if zone_coords:
+            painter.setPen(QPen(QColor(255, 0, 0), 2))  # Red for zone
+            painter.setBrush(QBrush(QColor(255, 0, 0, 64)))  # Semi-transparent red fill
+            polygon = QPolygonF()
+            for point in zone_coords:
+                px, py = point
+                
+                # Use the same logic as bounding box - scale to draw area
+                x = draw_x + int(px * draw_w)
+                y = draw_y + int(py * draw_h)
+                
+                polygon.append(QPointF(x, y))
+            painter.drawPolygon(polygon)
 
     def sizeHint(self, option, index) -> QSize:
         if index.isValid():
@@ -60,7 +205,11 @@ class DateTimeDelegate(QStyledItemDelegate):
         super().__init__(parent)
 
     def displayText(self, value, locale) -> str:
-        return value.toString(Qt.DateFormat.ISODate)
+        if hasattr(value, 'toString'):
+            return value.toString(Qt.DateFormat.ISODate)
+        else:
+            # Value is already a string
+            return str(value)
 
 
 class ImageWindow(QLabel):
@@ -70,21 +219,25 @@ class ImageWindow(QLabel):
         self.setFixedSize(900, 600)
         self.image_path = None
         self.label = QLabel()
-        self.pixmap = QPixmap(image)
-        self.pixmap = self.pixmap.scaled(self.width(), self.height(), Qt.AspectRatioMode.KeepAspectRatio)
-        qp = QPainter(self.pixmap)
-        if zone_coords:
-            coords = [QPointF(point[0] * self.pixmap.width(), point[1] * self.pixmap.height()) for point in zone_coords]
-            qp.setPen(QPen(Qt.GlobalColor.red))
-            qp.setBrush(QBrush(QColor(255, 0, 0, 64)))
-            qp.drawPolygon(coords)
-        pen = QPen(Qt.GlobalColor.green, 2)
-        qp.setPen(pen)
-        qp.setBrush(QBrush())
-        qp.drawRect(int(box[0] * self.pixmap.width()), int(box[1] * self.pixmap.height()),
-                    int((box[2] - box[0]) * self.pixmap.width()), int((box[3] - box[1]) * self.pixmap.height()))
-        qp.end()
-        self.label.setPixmap(self.pixmap)
+        base_pixmap = QPixmap(image)
+        scaled = base_pixmap.scaled(self.width(), self.height(), Qt.AspectRatioMode.KeepAspectRatio)
+        qp = QPainter()
+        try:
+            qp.begin(scaled)
+            if zone_coords:
+                coords = [QPointF(point[0] * scaled.width(), point[1] * scaled.height()) for point in zone_coords]
+                qp.setPen(QPen(Qt.GlobalColor.red))
+                qp.setBrush(QBrush(QColor(255, 0, 0, 64)))
+                qp.drawPolygon(coords)
+            if box is not None:
+                pen = QPen(Qt.GlobalColor.green, 2)
+                qp.setPen(pen)
+                qp.setBrush(QBrush())
+                qp.drawRect(int(box[0] * scaled.width()), int(box[1] * scaled.height()),
+                            int((box[2] - box[0]) * scaled.width()), int((box[3] - box[1]) * scaled.height()))
+        finally:
+            qp.end()
+        self.label.setPixmap(scaled)
         self.layout = QVBoxLayout()
         self.layout.addWidget(self.label)
         self.setLayout(self.layout)
@@ -157,8 +310,20 @@ class EventsJournal(QWidget):
 
         self.retrieve_data_signal.connect(self._retrieve_data)
         self.table.doubleClicked.connect(self._display_image)
+        
+        # Add automatic data refresh
+        self.refresh_timer = QTimer()
+        self.refresh_timer.timeout.connect(self._auto_refresh_data)
+        self.refresh_timer.start(5000)  # Refresh every 5 seconds
+        
+        # Initial data load
+        self._retrieve_data()
 
     def _connect_to_db(self):
+        # Check if connection already exists
+        if 'events_conn' in QSqlDatabase.connectionNames():
+            return
+            
         db = QSqlDatabase.addDatabase("QPSQL", 'events_conn')
         db.setHostName(self.host)
         db.setDatabaseName(self.db_name)
@@ -171,7 +336,6 @@ class EventsJournal(QWidget):
                 "Events journal - Error!",
                 "Database Error: %s" % db.lastError().databaseText(),
             )
-        self.logger.debug(f"Database connections: {QSqlDatabase.connectionNames()}")
 
     def _setup_table(self):
         self._setup_model()
@@ -190,10 +354,10 @@ class EventsJournal(QWidget):
 
         self.image_delegate = ImageDelegate(None, image_dir=self.image_dir, logger_name="image_delegate", parent_logger=self.logger)
         self.date_delegate = DateTimeDelegate(None)
-        self.table.setItemDelegateForColumn(1, self.date_delegate)
         self.table.setItemDelegateForColumn(2, self.date_delegate)
-        self.table.setItemDelegateForColumn(4, self.image_delegate)
+        self.table.setItemDelegateForColumn(3, self.date_delegate)
         self.table.setItemDelegateForColumn(5, self.image_delegate)
+        self.table.setItemDelegateForColumn(6, self.image_delegate)
 
     def _setup_model(self):
         self.model = QSqlQueryModel()
@@ -203,21 +367,23 @@ class EventsJournal(QWidget):
             adapter_query = adapter.select_query()
             query_string += adapter_query + ' UNION '
         query_string = query_string.removesuffix(' UNION ')
-        query_string += ') AS temp WHERE time_stamp BETWEEN :start AND :finish ORDER BY time_stamp DESC;'
+        query_string += ') AS temp ORDER BY time_stamp DESC;'
+        
         query = QSqlQuery(QSqlDatabase.database('events_conn'))
-        query.prepare(query_string)
-        query.bindValue(":start", self.current_start_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
-        query.bindValue(":finish", self.current_end_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
-        query.exec()
-        # self.logger.debug(query.lastError().text())
-
-        self.model.setQuery(query)
-        self.model.setHeaderData(0, Qt.Orientation.Horizontal, self.tr('Event'))
-        self.model.setHeaderData(1, Qt.Orientation.Horizontal, self.tr('Time'))
-        self.model.setHeaderData(2, Qt.Orientation.Horizontal, self.tr('Time lost'))
-        self.model.setHeaderData(3, Qt.Orientation.Horizontal, self.tr('Information'))
-        self.model.setHeaderData(4, Qt.Orientation.Horizontal, self.tr('Preview'))
-        self.model.setHeaderData(5, Qt.Orientation.Horizontal, self.tr('Lost preview'))
+        if query.prepare(query_string):
+            if query.exec():
+                self.model.setQuery(query)
+            else:
+                self.logger.error(f"SQL Error: {query.lastError().text()}")
+        else:
+            self.logger.error(f"SQL Prepare Error: {query.lastError().text()}")
+        self.model.setHeaderData(0, Qt.Orientation.Horizontal, self.tr('Time'))
+        self.model.setHeaderData(1, Qt.Orientation.Horizontal, self.tr('Event'))
+        self.model.setHeaderData(2, Qt.Orientation.Horizontal, self.tr('Event Details'))
+        self.model.setHeaderData(3, Qt.Orientation.Horizontal, self.tr('Time lost'))
+        self.model.setHeaderData(4, Qt.Orientation.Horizontal, self.tr('Information'))
+        self.model.setHeaderData(5, Qt.Orientation.Horizontal, self.tr('Preview'))
+        self.model.setHeaderData(6, Qt.Orientation.Horizontal, self.tr('Lost preview'))
 
     def _setup_filter(self):
         self.filters = QComboBox()
@@ -285,36 +451,93 @@ class EventsJournal(QWidget):
     @pyqtSlot(QModelIndex)
     def _display_image(self, index):
         col = index.column()
-        if col != 4 and col != 5:
+        # Allow double click on Preview (5) and Lost preview (6)
+        if col != 5 and col != 6:
             return
 
         path = index.data()
         if not path:
             return
 
-        query = QSqlQuery(QSqlDatabase.database('events_conn'))  # Getting a bounding_box of the current image
-        if 'zone' in path:
-            if 'entered' in path:
+        # Fetch overlay data using event type column (1)
+        box = None
+        zone_coords = None
+        query = QSqlQuery(QSqlDatabase.database('events_conn'))
+        try:
+            event_type = index.model().index(index.row(), 1).data()
+        except Exception:
+            event_type = None
+        if event_type == 'ZoneEvent':
+            if col == 5:
                 query.prepare('SELECT box_entered, zone_coords from zone_events WHERE preview_path_entered = :path')
             else:
                 query.prepare('SELECT box_left, zone_coords from zone_events WHERE preview_path_left = :path')
-        else:
-            if 'detected' in path:
+        elif event_type == 'AttributeEvent':
+            if col == 5:
+                query.prepare('SELECT box_found FROM attribute_events WHERE preview_path_found = :path')
+            else:
+                query.prepare('SELECT box_finished FROM attribute_events WHERE preview_path_finished = :path')
+        elif event_type == 'ObjectEvent':
+            if col == 5:
                 query.prepare('SELECT bounding_box from objects WHERE preview_path = :path')
             else:
                 query.prepare('SELECT lost_bounding_box from objects WHERE lost_preview_path = :path')
-
+        else:
+            # FOV/Camera events have no bbox
+            query = None
         query.bindValue(':path', path)
-        query.exec()
-        query.next()
-        box_str = query.value(0).replace('{', '').replace('}', '')  # Qt query returns QString, so converting it to box
-        box = [float(coord) for coord in box_str.split(',')]
-        zone_coords = query.value(1)
-        if zone_coords:
-            zone_coords = query.value(1)[1:-1]
-            points_str = zone_coords.split('},')
-            points_str = [s.strip(' {}').split(',') for s in points_str]
-            zone_coords = [(float(coord[0]), float(coord[1])) for coord in points_str]
+        if query is not None and query.exec() and query.next():
+            # Parse box robustly
+            value0 = query.value(0)
+            try:
+                if isinstance(value0, str):
+                    s = value0.replace('{', '').replace('}', '')
+                    parts = [p for p in s.split(',') if p.strip()]
+                    if len(parts) == 4:
+                        box = [float(p) for p in parts]
+                elif isinstance(value0, (list, tuple)):
+                    if len(value0) == 4:
+                        box = [float(v) for v in value0]
+                elif hasattr(value0, 'toString'):
+                    s = str(value0.toString()).replace('{', '').replace('}', '')
+                    parts = [p for p in s.split(',') if p.strip()]
+                    if len(parts) == 4:
+                        box = [float(p) for p in parts]
+                else:
+                    s = str(value0).replace('{', '').replace('}', '')
+                    parts = [p for p in s.split(',') if p.strip()]
+                    if len(parts) == 4:
+                        box = [float(p) for p in parts]
+            except Exception:
+                box = None
+            # Parse zone coords if available
+            if 'zone' in path and query.record().count() > 1:
+                value1 = query.value(1)
+                try:
+                    if isinstance(value1, str):
+                        s = value1.strip().strip('{}')
+                        pts = [p.strip('{} ') for p in s.split('},')]
+                        tmp = []
+                        for ps in pts:
+                            parts = [pp for pp in ps.split(',') if pp.strip()]
+                            if len(parts) == 2:
+                                tmp.append((float(parts[0]), float(parts[1])))
+                        if tmp:
+                            zone_coords = tmp
+                    elif isinstance(value1, (list, tuple)):
+                        zone_coords = [(float(p[0]), float(p[1])) for p in value1 if isinstance(p, (list, tuple)) and len(p) == 2]
+                    elif hasattr(value1, 'toString'):
+                        s = str(value1.toString()).strip('{}')
+                        pts = [p.strip('{} ') for p in s.split('},')]
+                        tmp = []
+                        for ps in pts:
+                            parts = [pp for pp in ps.split(',') if pp.strip()]
+                            if len(parts) == 2:
+                                tmp.append((float(parts[0]), float(parts[1])))
+                        if tmp:
+                            zone_coords = tmp
+                except Exception:
+                    zone_coords = None
 
         image_path = os.path.join(self.image_dir, path)
         previews_folder_path, file_name = os.path.split(image_path)
@@ -325,6 +548,8 @@ class EventsJournal(QWidget):
         beg = preview_folder_name.find('previews')
         file_folder_name = preview_folder_name[:beg] + 'frames'
         res_image_path = os.path.join(date_folder_path, file_folder_name, new_file_name)
+
+        # Attribute events already handled above; no extra fetch needed
         self.image_win = ImageWindow(res_image_path, box, zone_coords)
         self.image_win.show()
 
@@ -420,30 +645,53 @@ class EventsJournal(QWidget):
         query.exec()
         self.model.setQuery(query)
 
+    def _auto_refresh_data(self):
+        """Automatically refresh data every 5 seconds"""
+        try:
+            self._retrieve_data()
+        except Exception as e:
+            self.logger.error(f"Auto-refresh error: {e}")
+
     def _retrieve_data(self):
-        if not self.isVisible():
-            return
+        try:
+            # Build query string
+            query_string = 'SELECT * FROM ('
+            for adapter in self.journal_adapters:
+                adapter_query = adapter.select_query()
+                query_string += adapter_query + ' UNION '
+            query_string = query_string.removesuffix(' UNION ')
+            query_string += ') AS temp WHERE time_stamp BETWEEN :start AND :finish ORDER BY time_stamp DESC;'
+            
+            # Set time range
+            self.current_start_time = datetime.datetime.combine(datetime.datetime.now()-datetime.timedelta(days=1), datetime.time.min)
+            self.current_end_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.max)
+            
+            # Update filter controls
+            self.start_time.setDateTime(
+                QDateTime.fromString(self.current_start_time.strftime("%H:%M:%S %d-%m-%Y"), "hh:mm:ss dd-MM-yyyy"))
+            self.finish_time.setDateTime(
+                QDateTime.fromString(self.current_end_time.strftime("%H:%M:%S %d-%m-%Y"), "hh:mm:ss dd-MM-yyyy"))
 
-        query = QSqlQuery(QSqlDatabase.database('events_conn'))
-        query_string = 'SELECT * FROM ('
-        for adapter in self.journal_adapters:
-            adapter_query = adapter.select_query()
-            query_string += adapter_query + ' UNION '
-        query_string = query_string.removesuffix(' UNION ')
-        query_string += ') AS temp WHERE time_stamp BETWEEN :start AND :finish ORDER BY time_stamp DESC;'
-        query.prepare(query_string)
-        self.current_start_time = datetime.datetime.combine(datetime.datetime.now()-datetime.timedelta(days=1), datetime.time.min)
-        self.current_end_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.max)
-        # Сбрасываем дату в фильтрах
-        self.start_time.setDateTime(
-            QDateTime.fromString(self.current_start_time.strftime("%H:%M:%S %d-%m-%Y"), "hh:mm:ss dd-MM-yyyy"))
-        self.finish_time.setDateTime(
-            QDateTime.fromString(self.current_end_time.strftime("%H:%M:%S %d-%m-%Y"), "hh:mm:ss dd-MM-yyyy"))
-
-        query.bindValue(":start", self.current_start_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
-        query.bindValue(":finish", self.current_end_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
-        query.exec()
-        self.model.setQuery(query)
+            # Check if database connection exists
+            if 'events_conn' not in QSqlDatabase.connectionNames():
+                self._connect_to_db()
+            
+            # Create and execute query in one go
+            query = QSqlQuery(QSqlDatabase.database('events_conn'))
+            query.prepare(query_string)
+            query.bindValue(":start", self.current_start_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
+            query.bindValue(":finish", self.current_end_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
+            
+            if query.exec():
+                self.model.setQuery(query)
+            else:
+                self.logger.error(f"Events query failed: {query.lastError().text()}")
+                # Check if connection is still valid
+                if 'events_conn' not in QSqlDatabase.connectionNames():
+                    self._connect_to_db()
+                
+        except Exception as e:
+            self.logger.error(f"Retrieve data error: {e}")
 
     @pyqtSlot()
     def _insert_rows(self):
@@ -457,8 +705,15 @@ class EventsJournal(QWidget):
             return
         self.update_timer.start(10000)
 
+    def showEvent(self, event):
+        """Called when the widget is shown"""
+        super().showEvent(event)
+        self._retrieve_data()
+
     def close(self):
         # self._update_job_first_last_records()
+        if hasattr(self, 'refresh_timer'):
+            self.refresh_timer.stop()
         QSqlDatabase.removeDatabase('events_conn')
 
     def _create_dict_source_name_address_id(self):

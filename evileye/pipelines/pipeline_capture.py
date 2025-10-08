@@ -3,7 +3,7 @@ import os
 from typing import Dict, Any, Optional
 from ..core.pipeline_simple import PipelineSimple
 from ..capture.video_capture_base import CaptureImage
-from ..capture.video_capture import VideoCapture
+from ..capture.video_capture_opencv import VideoCaptureOpencv
 from ..object_tracker.tracking_results import TrackingResultList
 
 
@@ -41,8 +41,8 @@ class PipelineCapture(PipelineSimple):
             self.logger.error(f"Error: Video file not found: {video_path}")
             return False
         
-        # Create VideoCapture and use source config directly
-        self.video_capture = VideoCapture()
+        # Create VideoCaptureOpencv and use source config directly
+        self.video_capture = VideoCaptureOpencv()
         #self.video_capture.params = self.source_config
         
         # Set parameters and initialize video capture
@@ -83,7 +83,7 @@ class PipelineCapture(PipelineSimple):
 
     def process_logic(self) -> Dict[str, Any]:
         """
-        Capture and return next frame from video using VideoCapture.get() method.
+        Capture and return next frame from video using VideoCaptureOpencv.get() method.
         
         Returns:
             Dictionary with frame data and metadata
@@ -95,7 +95,7 @@ class PipelineCapture(PipelineSimple):
         if not self.video_capture or not self.video_capture.is_opened():
             return results
         
-        # Get frames from VideoCapture using the get() method
+        # Get frames from VideoCaptureOpencv using the get() method
         captured_images = self.video_capture.get()
         
         if not captured_images:

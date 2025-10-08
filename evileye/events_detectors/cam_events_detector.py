@@ -17,8 +17,8 @@ class CamEventsDetector(EventsDetector):
             time.sleep(0.2)
             events = []
             discon_iter, recon_iter = self.queue_in.get()
-            if discon_iter is None or recon_iter is None:
-                continue
+            if discon_iter is None and recon_iter is None:
+                break
             # По каждому отключению получаем адрес камеры, время и состояние камеры
             for disconnect in discon_iter:
                 address, timestamp, is_connected = disconnect
@@ -41,7 +41,11 @@ class CamEventsDetector(EventsDetector):
             disconnects_iter = itertools.chain(disconnects_iter, source.get_disconnects_info())
             reconnects_iter = itertools.chain(reconnects_iter, source.get_reconnects_info())
 
-        self.queue_in.put((disconnects_iter, reconnects_iter))
+        try:
+            self.queue_in.put((disconnects_iter, reconnects_iter), timeout=0.1)
+        except Exception:
+            # Queue full or blocked; drop this update to avoid deadlock
+            pass
 
     def set_params_impl(self):
         pass
@@ -62,7 +66,7 @@ class CamEventsDetector(EventsDetector):
         pass
 
     def stop(self):
-        self.run_flag = False
+        # self.run_flag = False
         self.queue_in.put((None, None))
         if self.processing_thread.is_alive():
             self.processing_thread.join()

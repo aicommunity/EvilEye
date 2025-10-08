@@ -83,6 +83,23 @@
         "job_id": "integer REFERENCES jobs (job_id) ON DELETE CASCADE",
         "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE"
       }
+      ,
+      "attribute_events": {
+        "event_id": "integer PRIMARY KEY",
+        "source_id": "integer",
+        "time_stamp": "timestamp",
+        "time_finished": "timestamp",
+        "object_id": "integer",
+        "event_name": "text",
+        "attrs": "text",
+        "class_id": "integer",
+        "box_found": "real ARRAY[4]",
+        "box_finished": "real ARRAY[4]",
+        "preview_path_found": "text",
+        "frame_path_found": "text",
+        "preview_path_finished": "text",
+        "frame_path_finished": "text"
+      }
     },
     "image_dir": "EvilEyeData",
     "create_new_project": false,
@@ -105,6 +122,10 @@
     "DatabaseAdapterZoneEvents": {
       "table_name": "zone_events",
       "event_name": "ZoneEvent"
+    },
+    "DatabaseAdapterAttributeEvents": {
+      "table_name": "attribute_events",
+      "event_name": "AttributeEvent"
     }
   }
 }

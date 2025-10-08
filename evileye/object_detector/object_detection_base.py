@@ -105,8 +105,9 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
                     if len(self.classes) != len([cls for cls in original_classes if isinstance(cls, str)]):
                         self.logger.warning(f"Warning: Some class names not found in model mapping: {original_classes}")
                 else:
-                    self.logger.warning(f"Warning: Class names provided but model_class_mapping unavailable: {self.classes}")
-                    self.classes = []  # Clear classes if no mapping available
+                    # Keep names temporarily; they will be converted later when mapping arrives
+                    # This prevents dropping all detections before mapping becomes available
+                    self.logger.warning(f"Warning: Class names provided but model_class_mapping unavailable yet: {self.classes}")
             elif all(isinstance(cls, int) for cls in self.classes):
                 # Classes are IDs - keep as is
                 pass

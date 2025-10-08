@@ -10,8 +10,8 @@ from enum import IntEnum
 from ..core.base_class import EvilEyeBase
 
 
-@EvilEyeBase.register("VideoCapture")
-class VideoCapture(VideoCaptureBase):
+@EvilEyeBase.register("VideoCaptureOpencv")
+class VideoCaptureOpencv(VideoCaptureBase):
     class VideoCaptureAPIs(IntEnum):
         CAP_ANY = 0
         CAP_GSTREAMER = 1800
@@ -48,14 +48,14 @@ class VideoCapture(VideoCaptureBase):
 
                 pos = self.source_address.find('rtsp')
                 source = str1 + self.source_address[pos:] + str_h265
-                self.capture.open(source, VideoCapture.VideoCaptureAPIs[api_pref])
+                self.capture.open(source, VideoCaptureOpencv.VideoCaptureAPIs[api_pref])
                 if not self.is_opened():  # Если h265 не подойдет, используем h264
                     source = str1 + self.source_address + str_h264
-                    self.capture.open(source, VideoCapture.VideoCaptureAPIs[api_pref])
+                    self.capture.open(source, VideoCaptureOpencv.VideoCaptureAPIs[api_pref])
             else:
-                self.capture.open(self.source_address, VideoCapture.VideoCaptureAPIs[api_pref])
+                self.capture.open(self.source_address, VideoCaptureOpencv.VideoCaptureAPIs[api_pref])
         else:
-            self.capture.open(self.source_address, VideoCapture.VideoCaptureAPIs[api_pref])
+            self.capture.open(self.source_address, VideoCaptureOpencv.VideoCaptureAPIs[api_pref])
 
         self.source_fps = None
         if self.capture.isOpened():

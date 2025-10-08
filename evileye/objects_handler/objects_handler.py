@@ -240,6 +240,13 @@ class ObjectsHandler(EvilEyeBase):
                 else:
                     self.snapshot = None
 
+                # Notify subscribers (events detectors) on each update
+                for subscriber in self.subscribers:
+                    try:
+                        subscriber.update()
+                    except Exception:
+                        pass
+
         for subscriber in self.subscribers:
             subscriber.update()
     
@@ -605,24 +612,13 @@ class ObjectsHandler(EvilEyeBase):
             # Create directory if it doesn't exist
             os.makedirs(os.path.dirname(full_img_path), exist_ok=True)
             
-            # Save image using the same logic as database journal
+            # Save clean images without any debug overlays
             if image_type == 'preview':
-                # Create preview with bounding box (same as database journal)
+                # Create clean preview without bounding box
                 preview = cv2.resize(copy.deepcopy(image.image), (self.db_params.get('preview_width', 300), self.db_params.get('preview_height', 150)), cv2.INTER_NEAREST)
-                
-                # Convert bounding box to normalized coordinates (same as database journal)
-                image_height, image_width, _ = image.image.shape
-                normalized_box = [
-                    box[0] / image_width,   # x
-                    box[1] / image_height,  # y
-                    box[2] / image_width,   # width
-                    box[3] / image_height   # height
-                ]
-                
-                preview_boxes = utils.draw_preview_boxes(preview, self.db_params.get('preview_width', 300), self.db_params.get('preview_height', 150), normalized_box)
-                saved = cv2.imwrite(full_img_path, preview_boxes)
+                saved = cv2.imwrite(full_img_path, preview)
             else:
-                # Save original frame without any graphical info (same as database journal)
+                # Save original frame without any graphical info
                 saved = cv2.imwrite(full_img_path, image.image)
             
             if not saved:
@@ -642,7 +638,15 @@ class ObjectsHandler(EvilEyeBase):
         cur_date_str = cur_date.strftime('%Y_%m_%d')
 
         current_day_path = os.path.join(img_dir, cur_date_str)
-        obj_type_path = os.path.join(current_day_path, obj_event_type + '_' + image_type + 's')
+        # Unified folders for objects: found_*/lost_* (frames/previews)
+        if obj_event_type == 'detected':
+            tag = 'found'
+        elif obj_event_type == 'lost':
+            tag = 'lost'
+        else:
+            tag = obj_event_type  # fallback, should not happen
+        subdir = f"{tag}_{'previews' if image_type == 'preview' else 'frames'}"
+        obj_type_path = os.path.join(current_day_path, subdir)
         # obj_event_path = os.path.join(current_day_path, obj_event_type)
         if not os.path.exists(img_dir):
             os.makedirs(img_dir, exist_ok=True)

@@ -38,9 +38,9 @@ class DetectionThreadRtdetr(DetectionThreadBase):
             # Update model_class_mapping from model
             self._update_model_class_mapping_from_model()
 
-
     def predict(self, images: list):
-        return self.model.predict(source=images, classes=self.classes, verbose=False, **self.inf_params)
+        # Defer classes filtering to base; avoid passing names to model
+        return self.model.predict(source=images, classes=self._get_classes_arg_for_model(), verbose=False, **self.inf_params)
 
     def get_bboxes(self, result, roi):
         bboxes_coords = []
@@ -56,9 +56,6 @@ class DetectionThreadRtdetr(DetectionThreadBase):
         img_height = result.orig_img.shape[0]
         
         for coord, class_id, conf in zip(coords, class_ids, confs):
-            if int(class_id) not in self.classes:
-                continue
-            
             # Преобразуем координаты в целые числа
             x1, y1, x2, y2 = coord
             x1 = int(round(x1))

@@ -1,13 +1,25 @@
-from PyQt6.QtWidgets import (
+try:
+    from PyQt6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton,
     QDateTimeEdit, QHeaderView, QLineEdit, QTableView, QStyledItemDelegate,
     QMessageBox, QTextEdit, QFormLayout, QSizePolicy
-)
-from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QModelIndex
-from . import parameters_processing
-from PyQt6.QtSql import QSqlDatabase
-from ...core.logger import get_module_logger
-
+    )
+    from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QModelIndex
+    from . import parameters_processing
+    from PyQt6.QtSql import QSqlDatabase
+    from ...core.logger import get_module_logger
+    pyqt_version = 6
+except ImportError:
+    from PyQt5.QtWidgets import (
+    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton,
+    QDateTimeEdit, QHeaderView, QLineEdit, QTableView, QStyledItemDelegate,
+    QMessageBox, QTextEdit, QFormLayout, QSizePolicy
+    )
+    from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QModelIndex
+    from . import parameters_processing
+    from PyQt5.QtSql import QSqlDatabase
+    from ...core.logger import get_module_logger
+    pyqt_version = 5
 
 class DatabaseConnectionWindow(QWidget):
     database_connection_signal = pyqtSignal()
