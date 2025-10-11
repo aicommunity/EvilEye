@@ -53,7 +53,10 @@ class Controller:
         # self.application = application
         self.control_thread = threading.Thread(target=self.run)
         self.params = None
+        self.loaded_config = dict()
         self.credentials = dict()
+        self.credentials_loaded = False
+        self.params_path = None
         self.database_config = dict()
         self.source_id_name_table = dict()
         self.source_video_duration = dict()
@@ -365,6 +368,12 @@ class Controller:
 
     def init(self, params):
         self.params = params
+        # Сохраняем исходный конфиг для правил частичного сохранения
+        try:
+            import copy as _copy
+            self.loaded_config = _copy.deepcopy(params) if isinstance(params, dict) else dict()
+        except Exception:
+            self.loaded_config = dict()
 
         if 'controller' in self.params.keys():
             self.autoclose = self.params['controller'].get("autoclose", self.autoclose)
@@ -395,8 +404,9 @@ class Controller:
         try:
             with open("credentials.json") as creds_file:
                 self.credentials = json.load(creds_file)
+                self.credentials_loaded = True
         except FileNotFoundError as ex:
-            pass
+            self.credentials_loaded = False
 
         # Initialize processing pipeline (sources, preprocessors, detectors, trackers)
         pipeline_params = self.params.get("pipeline", {})
@@ -496,7 +506,7 @@ class Controller:
             try:
                 self._init_db_controller(self.database_config['database'], system_params=self.params)
                 self._init_db_adapters(self.database_config['database_adapters'])
-                self._init_object_handler(self.db_controller, params.get('objects_handler', dict()))
+                self._init_object_handler(self.db_controller, params.get('objects_handler') or dict())
                 self._init_events_detectors(self.params.get('events_detectors', dict()))
                 self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
                 self._init_events_processor(self.params.get('events_processor', dict()))
@@ -506,14 +516,14 @@ class Controller:
                 self.use_database = False
                 self.db_controller = None
                 self.database_config = {"database": {}, "database_adapters": {}}
-                self._init_object_handler_without_db(params.get('objects_handler', dict()))
+                self._init_object_handler_without_db(params.get('objects_handler') or dict())
                 self._init_events_detectors_without_db(self.params.get('events_detectors', dict()))
                 self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
                 self._init_events_processor_without_db(self.params.get('events_processor', dict()))
         else:
             self.logger.info("Database functionality disabled. Working without database connection.")
             # Initialize minimal components for operation without database
-            self._init_object_handler_without_db(params.get('objects_handler', dict()))
+            self._init_object_handler_without_db(params.get('objects_handler') or dict())
             self._init_events_detectors_without_db(self.params.get('events_detectors', dict()))
             self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
             self._init_events_processor_without_db(self.params.get('events_processor', dict()))
@@ -550,7 +560,19 @@ class Controller:
         pipeline_params = self.pipeline.get_params()
         self.params['pipeline'] = pipeline_params
 
-        self.params['objects_handler'] = self.obj_handler.get_params()
+        # Collect objects_handler params with safe fallback to existing/loaded config
+        try:
+            if hasattr(self, 'obj_handler') and self.obj_handler and hasattr(self.obj_handler, 'get_params'):
+                oh_params = self.obj_handler.get_params()
+            else:
+                oh_params = None
+        except Exception:
+            oh_params = None
+        if not isinstance(oh_params, dict) or not oh_params:
+            # Fallback to previously stored or originally loaded config
+            oh_params = (self.params.get('objects_handler') if isinstance(self.params, dict) else None) or \
+                        ((self.loaded_config or {}).get('objects_handler') if isinstance(self.loaded_config, dict) else None) or {}
+        self.params['objects_handler'] = oh_params
 
         self.params['events_detectors'] = dict()
         self.params['events_detectors']['CamEventsDetector'] = self.cam_events_detector.get_params()
@@ -578,13 +600,215 @@ class Controller:
             # Set empty database config when database is disabled
             self.params['database'] = {}
 
-        if self.visualizer:
-            self.params['visualizer'] = self.visualizer.get_params()
-        else:
-            self.params['visualizer'] = dict()
+        # Collect visualizer params with safe fallback
+        vis_params = None
+        try:
+            if hasattr(self, 'visualizer') and self.visualizer and hasattr(self.visualizer, 'get_params'):
+                vis_params = self.visualizer.get_params()
+        except Exception:
+            vis_params = None
+        if not isinstance(vis_params, dict) or not vis_params:
+            vis_params = (self.params.get('visualizer') if isinstance(self.params, dict) else None) or \
+                         ((self.loaded_config or {}).get('visualizer') if isinstance(self.loaded_config, dict) else None) or {}
+        self.params['visualizer'] = vis_params
 
         # Text configuration is now part of visualizer section
         # No need to add separate text_config here
+
+    def _atomic_json_dump(self, path: str, data: dict) -> bool:
+        try:
+            if not path:
+                self.logger.error("No config file path specified for saving")
+                return False
+            import tempfile
+            dir_name = os.path.dirname(path) or "."
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, dir=dir_name, prefix=".tmp_") as tf:
+                json.dump(data, tf, indent=4, ensure_ascii=False)
+                temp_path = tf.name
+            os.replace(temp_path, path)
+            return True
+        except Exception as e:
+            try:
+                self.logger.error(f"Failed to save configuration atomically: {e}")
+            except Exception:
+                pass
+            return False
+
+    def _restrict_database_keys(self, params: dict, loaded_config: dict) -> None:
+        try:
+            orig_db = (loaded_config or {}).get('database', {}) or {}
+            if not isinstance(orig_db, dict):
+                return
+            current_db = params.get('database', {}) or {}
+            if not isinstance(current_db, dict):
+                params['database'] = {}
+                return
+            allowed_keys = set(orig_db.keys())
+            params['database'] = {k: current_db[k] for k in current_db.keys() if k in allowed_keys}
+        except Exception:
+            # В случае ошибки не модифицируем секцию
+            pass
+
+    def _reconcile_credentials_fields(self, params: dict, loaded_config: dict, credentials_loaded: bool) -> None:
+        try:
+            pipeline = params.get('pipeline', {}) if isinstance(params, dict) else {}
+            sources = pipeline.get('sources', []) if isinstance(pipeline, dict) else []
+            if not isinstance(sources, list) or not sources:
+                return
+
+            try:
+                orig_pipeline = (loaded_config or {}).get('pipeline', {})
+                orig_sources = orig_pipeline.get('sources', []) if isinstance(orig_pipeline, dict) else []
+            except Exception:
+                orig_sources = []
+
+            CRED_KEYS = {
+                'user_name', 'username', 'password', 'pwd', 'login', 'token',
+                'rtsp_user', 'rtsp_password', 'auth', 'api_key', 'camera_login', 'camera_password'
+            }
+
+            def _strip_userinfo_from_url(url: str) -> str:
+                try:
+                    from urllib.parse import urlsplit, urlunsplit
+                    parts = urlsplit(url)
+                    netloc = parts.netloc
+                    if '@' in netloc:
+                        # remove userinfo
+                        hostport = netloc.split('@', 1)[1]
+                        new_parts = (parts.scheme, hostport, parts.path, parts.query, parts.fragment)
+                        return urlunsplit(new_parts)
+                    return url
+                except Exception:
+                    return url
+
+            def _has_userinfo(url: str) -> bool:
+                try:
+                    from urllib.parse import urlsplit
+                    parts = urlsplit(url)
+                    return ('@' in parts.netloc)
+                except Exception:
+                    return ('@' in (url or ''))
+
+            for idx, src in enumerate(sources):
+                if not isinstance(src, dict):
+                    continue
+                orig_src = orig_sources[idx] if idx < len(orig_sources) and isinstance(orig_sources[idx], dict) else {}
+                orig_cred_keys = {k for k in (orig_src.keys() if isinstance(orig_src, dict) else []) if k in CRED_KEYS}
+                keys_to_remove = set()
+                for k in list(src.keys()):
+                    if k in CRED_KEYS and k not in orig_cred_keys:
+                        keys_to_remove.add(k)
+                for k in keys_to_remove:
+                    try:
+                        del src[k]
+                    except Exception:
+                        pass
+
+                # Additionally: handle embedded credentials in camera URL
+                try:
+                    cam_now = src.get('camera')
+                    cam_orig = orig_src.get('camera') if isinstance(orig_src, dict) else None
+                    if isinstance(cam_now, str):
+                        # If original didn't have userinfo in URL, strip userinfo from current
+                        if not isinstance(cam_orig, str) or not _has_userinfo(cam_orig):
+                            src['camera'] = _strip_userinfo_from_url(cam_now)
+                        else:
+                            # original had userinfo -> keep presence allowed; do not alter
+                            pass
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def _ensure_api_preference(self, params: dict, loaded_config: dict) -> None:
+        try:
+            pipeline = params.get('pipeline', {}) if isinstance(params, dict) else {}
+            sources = pipeline.get('sources', []) if isinstance(pipeline, dict) else []
+            if not isinstance(sources, list) or not sources:
+                return
+            try:
+                orig_pipeline = (loaded_config or {}).get('pipeline', {})
+                orig_sources = orig_pipeline.get('sources', []) if isinstance(orig_pipeline, dict) else []
+            except Exception:
+                orig_sources = []
+            for idx, src in enumerate(sources):
+                if not isinstance(src, dict):
+                    continue
+                orig_src = orig_sources[idx] if idx < len(orig_sources) and isinstance(orig_sources[idx], dict) else {}
+                if isinstance(orig_src, dict) and ('apiPreference' in orig_src):
+                    src['apiPreference'] = orig_src.get('apiPreference')
+        except Exception:
+            pass
+
+    def _filter_model_class_mapping(self, params: dict, loaded_config: dict) -> None:
+        try:
+            pipeline = params.get('pipeline', {}) if isinstance(params, dict) else {}
+            detectors = pipeline.get('detectors', []) if isinstance(pipeline, dict) else []
+            if not isinstance(detectors, list) or not detectors:
+                return
+            try:
+                orig_pipeline = (loaded_config or {}).get('pipeline', {})
+                orig_detectors = orig_pipeline.get('detectors', []) if isinstance(orig_pipeline, dict) else []
+            except Exception:
+                orig_detectors = []
+            for idx, det in enumerate(detectors):
+                if not isinstance(det, dict):
+                    continue
+                orig_det = orig_detectors[idx] if idx < len(orig_detectors) and isinstance(orig_detectors[idx], dict) else {}
+                if 'model_class_mapping' in det and ('model_class_mapping' not in orig_det):
+                    try:
+                        del det['model_class_mapping']
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    def save_config(self, file_path: str | None = None) -> bool:
+        try:
+            self.update_params()
+        except Exception:
+            pass
+
+        try:
+            import copy as _copy
+            final_params = _copy.deepcopy(self.params) if isinstance(self.params, dict) else {}
+        except Exception:
+            final_params = self.params if isinstance(self.params, dict) else {}
+
+        try:
+            self._reconcile_credentials_fields(final_params, self.loaded_config, self.credentials_loaded)
+        except Exception:
+            pass
+
+        try:
+            if isinstance(self.loaded_config, dict) and self.loaded_config:
+                self._restrict_database_keys(final_params, self.loaded_config)
+        except Exception:
+            pass
+
+        # Отфильтровать model_class_mapping перед записью
+        try:
+            self._filter_model_class_mapping(final_params, self.loaded_config)
+        except Exception:
+            pass
+
+        path = file_path or getattr(self, 'params_path', None)
+        ok = self._atomic_json_dump(path, final_params)
+        if ok:
+            try:
+                self.logger.info(f"Configuration saved by controller to: {path}")
+            except Exception:
+                pass
+
+        if ok and self.use_database and hasattr(self, 'db_controller') and self.db_controller:
+            try:
+                self.db_controller.save_job_configuration_info(final_params)
+            except Exception as e:
+                try:
+                    self.logger.warning(f"Failed to update job config in DB: {e}")
+                except Exception:
+                    pass
+        return ok
 
     def set_current_main_widget_size(self, width, height):
         self.current_main_widget_size = [width, height]
@@ -592,7 +816,8 @@ class Controller:
 
     def _init_object_handler(self, db_controller, params):
         self.obj_handler = objects_handler.ObjectsHandler(db_controller=db_controller, db_adapter=self.db_adapter_obj)
-        self.obj_handler.set_params(**params)
+        safe_params = params or {}
+        self.obj_handler.set_params(**safe_params)
         # Set class manager for ObjectsHandler
         if hasattr(self.obj_handler, 'class_manager'):
             self.obj_handler.class_manager = self.class_manager
@@ -619,7 +844,8 @@ class Controller:
                 # Set cameras params in obj_handler
                 self.obj_handler.cameras_params = cameras_params
         
-        self.obj_handler.set_params(**params)
+        safe_params = params or {}
+        self.obj_handler.set_params(**safe_params)
         # Set class manager for ObjectsHandler
         if hasattr(self.obj_handler, 'class_manager'):
             self.obj_handler.class_manager = self.class_manager
@@ -799,6 +1025,33 @@ class Controller:
         self.visualizer.source_video_duration = self.source_video_duration
         self.visualizer.class_mapping = self.class_mapping  # Pass class mapping to visualizer
         self.visualizer.init()
+        # If persistent zones display requested, push existing zones to threads immediately
+        try:
+            vis_wants_zones = bool(self.visualizer.get_params().get('display_zones', False))
+        except Exception:
+            vis_wants_zones = False
+        if vis_wants_zones:
+            try:
+                zones_cfg = (((self.params or {}).get('events_detectors', {}) or {}).get('ZoneEventsDetector', {}) or {}).get('sources', {})
+                sources_zones = {}
+                if isinstance(zones_cfg, dict):
+                    for k, zone_list in zones_cfg.items():
+                        try:
+                            sid = int(k)
+                        except Exception:
+                            continue
+                        sources_zones[sid] = []
+                        for coords in (zone_list or []):
+                            # expected: ['poly', coords, None]
+                            if isinstance(coords, list) and coords:
+                                sources_zones[sid].append(['poly', coords, None])
+                if sources_zones:
+                    try:
+                        self.pyqt_signals['display_zones_signal'].emit(sources_zones)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
     def collect_memory_consumption(self):
         total_memory_usage = 0

@@ -557,10 +557,22 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         super().set_params_impl()
     
     def get_params_impl(self):
+        """Return capture parameters including GStreamer-specific fields.
+
+        Adds 'apiPreference' to ensure persistence in configs and propagates desired_fps.
         """
-        Implementation of EvilEyeBase get_params_impl.
-        """
-        return super().get_params_impl()
+        params = super().get_params_impl()
+        try:
+            params['apiPreference'] = self.params.get('apiPreference', 'CAP_GSTREAMER')
+            params['gstreamer_available'] = self.gstreamer_available
+            params['source_fps'] = self.source_fps
+            params['loop_play'] = self.loop_play
+            params['split'] = self.split_stream
+            params['num_split'] = self.num_split
+            params['src_coords'] = self.src_coords
+        except Exception:
+            params['apiPreference'] = 'CAP_GSTREAMER'
+        return params
     
     def calc_memory_consumption(self):
         """

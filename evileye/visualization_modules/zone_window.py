@@ -6,8 +6,7 @@ try:
         QGraphicsPolygonItem
     )
     from PyQt6.QtGui import QPixmap, QIcon, QAction, QPainter, QBrush, QPen, QColor, QPolygonF
-    from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QPointF, QPoint, QSize, QRectF, QSizeF
-    from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QPointF, QPoint, QSize, QRectF, QSizeF
+    from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QPointF, QPoint, QSize, QRectF, QSizeF, QTimer
 
 
     pyqt_version = 6
@@ -19,9 +18,8 @@ except ImportError:
         QGraphicsPolygonItem
     )
     from PyQt5.QtGui import QPixmap, QIcon, QPainter, QBrush, QPen, QColor, QPolygonF
-    from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt, QPointF, QPoint, QSize, QRectF, QSizeF
+    from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt, QPointF, QPoint, QSize, QRectF, QSizeF, QTimer
     from PyQt5.QtWidgets import QAction
-    from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt, QPointF, QPoint, QSize, QRectF, QSizeF
 
     pyqt_version = 5
 
@@ -100,6 +98,7 @@ class GraphicsView(QGraphicsView):
         self.pix.setPos(view_origin)
         self.scene.setSceneRect(view_origin.x(), view_origin.y(),
                                 self.pix.boundingRect().width(), self.pix.boundingRect().height())
+        # Масштабируем изображение чтобы оно заполняло все доступное пространство
         self.fitInView(self.pix, Qt.AspectRatioMode.KeepAspectRatio)
         self.centerOn(self.pix.pos())
 
@@ -269,6 +268,20 @@ class GraphicsView(QGraphicsView):
     def del_rect_clicked(self, flag):
         self.is_rect_clicked_del = flag
 
+    def resizeEvent(self, event):
+        """Автоматически подстраивать масштаб при изменении размера окна"""
+        super().resizeEvent(event)
+        if self.pix is not None:
+            # Используем QTimer для отложенного вызова fitInView
+            # Это решает проблему с неправильным размером view при resizeEvent
+            QTimer.singleShot(0, self._delayed_fit_in_view)
+    
+    def _delayed_fit_in_view(self):
+        """Отложенное масштабирование изображения на все доступное пространство"""
+        if self.pix is not None:
+            self.fitInView(self.pix, Qt.AspectRatioMode.KeepAspectRatio)
+            self.centerOn(self.pix.pos())
+
     def closeEvent(self, event):
         super().closeEvent(event)
         self.pix = None
@@ -279,6 +292,9 @@ class GraphicsView(QGraphicsView):
 
 
 class ZoneWindow(QWidget):
+    # Сигналы для уведомления о событиях
+    zones_updated = pyqtSignal(list)  # zones
+    
     def __init__(self, params):
         super().__init__()
         self.logger = get_module_logger("zone_window")
@@ -306,12 +322,66 @@ class ZoneWindow(QWidget):
         self.layout.addWidget(self.view)
         self.setLayout(self.layout)
 
-    def set_pixmap(self, source_id, pixmap):
-        self.resize(QSize(pixmap.width() + 10, pixmap.height() + 10))
+    def set_cv_image(self, source_id, cv_image):
+        """
+        Устанавливает OpenCV изображение для отображения в ZoneWindow.
+        Принимает только OpenCV изображение (numpy array).
+        """
+        import cv2
+        import numpy as np
+        
+        # Проверяем, что это OpenCV изображение
+        if not isinstance(cv_image, np.ndarray):
+            raise TypeError(f"Expected OpenCV image (numpy array), got {type(cv_image)}")
+        
+        height, width = cv_image.shape[:2]
+        
+        # Конвертируем BGR в RGB для Qt
+        if len(cv_image.shape) == 3:
+            rgb_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
+        else:
+            rgb_image = cv_image
+        
+        # Создаем QPixmap из OpenCV изображения
+        try:
+            from PyQt6.QtGui import QImage
+        except ImportError:
+            from PyQt5.QtGui import QImage
+        
+        h, w, ch = rgb_image.shape
+        bytes_per_line = ch * w
+        qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
+        pixmap = QPixmap.fromImage(qt_image)
+        
+        self.logger.info(f"Converted OpenCV image {width}x{height} to QPixmap for ZoneWindow")
+        
+        # Устанавливаем минимальный размер окна, но позволяем ему быть больше
+        min_width = max(800, width + 50)  # Минимум 800px или размер изображения + отступы
+        min_height = max(600, height + 100)  # Минимум 600px или размер изображения + отступы для тулбара
+        self.resize(QSize(min_width, min_height))
         self.view.add_pixmap(source_id, pixmap)
 
     def set_src_id(self, src_id):
         self.view.set_source_id(src_id)
+
+    def load_zones_from_config(self, params, source_id):
+        """Загрузить зоны из конфигурации для указанного источника"""
+        try:
+            zone_params = params.get('events_detectors', {}).get('ZoneEventsDetector', {}).get('sources', {})
+            if str(source_id) in zone_params:
+                zones_data = zone_params[str(source_id)]
+                self.logger.info(f"Loaded {len(zones_data)} zones for source {source_id}")
+                return zones_data
+            else:
+                self.logger.info(f"No zones found for source {source_id}")
+                return []
+        except Exception as e:
+            self.logger.error(f"Error loading zones from config: {e}")
+            return []
+
+    def get_zones_for_source(self, source_id):
+        """Получить зоны для указанного источника из текущей конфигурации"""
+        return self.load_zones_from_config(self.params, source_id)
 
     def close(self):
         self.logger.info('Events journal closed')
@@ -361,6 +431,13 @@ class ZoneWindow(QWidget):
     def closeEvent(self, event) -> None:
         super().closeEvent(event)
         self.view.close()
+
+    def resizeEvent(self, event):
+        """Обработка изменения размера окна"""
+        super().resizeEvent(event)
+        # Уведомляем GraphicsView об изменении размера
+        if hasattr(self.view, 'resizeEvent'):
+            self.view.resizeEvent(event)
 
     def showEvent(self, event):
         super().showEvent(event)
