@@ -23,8 +23,11 @@ class FrameBroker:
         with self._lock:
             item = self._frames.get(pipeline_id)
             if not item:
-                self.logger.debug(f"No frame available for pipeline '{pipeline_id}'")
+                available_pipelines = list(self._frames.keys())
+                self.logger.debug(f"No frame available for pipeline '{pipeline_id}'. Available pipelines: {available_pipelines}")
                 return None
-            return item[0]
+            jpeg_data, timestamp = item
+            self.logger.debug(f"Retrieved frame for pipeline '{pipeline_id}', size: {len(jpeg_data)} bytes, age: {time.time() - timestamp:.2f}s")
+            return jpeg_data
 
 
