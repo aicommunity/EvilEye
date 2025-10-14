@@ -210,7 +210,9 @@ class ROIEditorWindow(QWidget):
     def set_context(self, source_id: int, detector_index: int):
         self.current_source_id = source_id
         self.current_detector_index = detector_index
+        # Новый контекст — сбрасываем флаги и снимок исходных ROI
         self.has_unsaved_changes = False
+        self.saved_rois_data = None
 
     def set_rois_from_detector(self, rois_xywh: list):
         """Принять ROI из детектора (формат [x,y,w,h]) и установить в canvas (xyxy)."""
@@ -239,6 +241,11 @@ class ROIEditorWindow(QWidget):
             self.roi_canvas.update()
             if self.roi_canvas.roi_data:
                 self.roi_canvas.ensure_rois_visible()
+            # Сохраняем снимок исходного состояния для корректной проверки изменений
+            try:
+                self.saved_rois_data = [entry.get("coords", []) for entry in (self.roi_canvas.get_rois() or [])]
+            except Exception:
+                self.saved_rois_data = [entry.get("coords", []) for entry in self.roi_canvas.roi_data]
             self.has_unsaved_changes = False
         except Exception:
             pass
@@ -265,6 +272,12 @@ class ROIEditorWindow(QWidget):
             self.roi_canvas.update()
             if len(self.roi_canvas.roi_data) > 0:
                 self.roi_canvas.ensure_rois_visible()
+            # Сохраняем снимок исходного состояния для корректной проверки изменений
+            try:
+                self.saved_rois_data = [entry.get("coords", []) for entry in (self.roi_canvas.get_rois() or [])]
+            except Exception:
+                self.saved_rois_data = [entry.get("coords", []) for entry in self.roi_canvas.roi_data]
+            self.has_unsaved_changes = False
         except Exception as e:
             self.logger.error(f"Error setting ROI from config: {e}")
 
@@ -367,11 +380,16 @@ class ROIEditorWindow(QWidget):
             pass
 
     def _on_roi_added(self, coords):
+        # Игнорируем события, возникающие при загрузке из конфигурации
+        if getattr(self.roi_canvas, '_loading_from_config', False):
+            return
         self._update_roi_list()
         self._emit_rois_updated()
         self.has_unsaved_changes = True
 
     def _on_roi_removed(self, index):
+        if getattr(self.roi_canvas, '_loading_from_config', False):
+            return
         self._update_roi_list()
         self.modify_roi_btn.setEnabled(False)
         self.delete_roi_btn.setEnabled(False)
@@ -379,6 +397,8 @@ class ROIEditorWindow(QWidget):
         self.has_unsaved_changes = True
 
     def _on_roi_updated(self, index, coords):
+        if getattr(self.roi_canvas, '_loading_from_config', False):
+            return
         self._update_roi_list()
         self._emit_rois_updated()
         self.has_unsaved_changes = True
@@ -439,7 +459,16 @@ class ROIEditorWindow(QWidget):
         self._delete_roi_mode()
 
     def closeEvent(self, event):
-        if self.has_unsaved_changes:
+        # Определяем, были ли реальные изменения списка/координат ROI по сравнению с исходным снимком
+        def _snapshot_current_rois():
+            try:
+                return [entry.get("coords", []) for entry in self.roi_canvas.get_rois()]
+            except Exception:
+                return []
+
+        has_real_changes = self.has_unsaved_changes
+
+        if has_real_changes:
             try:
                 if pyqt_version == 6:
                     from PyQt6.QtWidgets import QMessageBox as _QMB
