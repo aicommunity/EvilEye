@@ -63,6 +63,10 @@ class CustomPixmapItem(QGraphicsPixmapItem):
 
 
 class GraphicsView(QGraphicsView):
+    # Сигналы для уведомления об изменениях зон
+    zone_added = pyqtSignal()
+    zone_removed = pyqtSignal()
+    
     def __init__(self, parent=None, sources_zones=None, params=None):
         super().__init__(parent)
         self.scene = QGraphicsScene(self)
@@ -164,6 +168,8 @@ class GraphicsView(QGraphicsView):
                 self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.source_id)].append(self.polygon_coords)
             # Оповещаем о добавлении зоны
             threading_events.notify('new zone', self.source_id, self.polygon_coords, 'poly')
+            # Отправляем сигнал об изменении
+            self.zone_added.emit()
             self.polygon_coords = []
             self.polygon = QGraphicsPolygonItem(self.pix)
             self.polygon.setPen(self.red_pen)
@@ -207,6 +213,8 @@ class GraphicsView(QGraphicsView):
                         threading_events.notify('zone deleted', self.source_id, zone_coords)
             self.sources_zones[self.source_id] = filtered_zones
             self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.source_id)] = filtered_coords
+            # Отправляем сигнал об изменении
+            self.zone_removed.emit()
         event.accept()
 
     def mouseReleaseEvent(self, event):
@@ -243,6 +251,8 @@ class GraphicsView(QGraphicsView):
             self.sources_zones[self.source_id].append(['rect', norm_zone_coords, self.rectangle.boundingRect()])
             # Оповещаем о добавлении зоны
             threading_events.notify('new zone', self.source_id, norm_zone_coords, 'rect')
+            # Отправляем сигнал об изменении
+            self.zone_added.emit()
         self.rectangle = None
         self.is_rect_clicked = False
         event.accept()
@@ -294,6 +304,7 @@ class GraphicsView(QGraphicsView):
 class ZoneWindow(QWidget):
     # Сигналы для уведомления о событиях
     zones_updated = pyqtSignal(list)  # zones
+    zone_editor_closed = pyqtSignal(dict, int, bool)  # zones_data, source_id, accepted
     
     def __init__(self, params):
         super().__init__()
@@ -311,8 +322,13 @@ class ZoneWindow(QWidget):
         self.pixmap = None
 
         self.is_rect_clicked = False
+        
+        # Добавляем флаги для отслеживания изменений
+        self.current_source_id = None
+        self.saved_zones_data = None
+        self.has_unsaved_changes = False
 
-        self.setWindowTitle('Add Zone')
+        self.setWindowTitle('Zone Editor')
 
         self._create_actions()
         self._create_toolbar()
@@ -360,6 +376,10 @@ class ZoneWindow(QWidget):
         min_height = max(600, height + 100)  # Минимум 600px или размер изображения + отступы для тулбара
         self.resize(QSize(min_width, min_height))
         self.view.add_pixmap(source_id, pixmap)
+        
+        # Сохраняем текущий источник и исходное состояние зон
+        self.current_source_id = source_id
+        self._save_initial_zones_state()
 
     def set_src_id(self, src_id):
         self.view.set_source_id(src_id)
@@ -406,6 +426,7 @@ class ZoneWindow(QWidget):
         self.drawing_toolbar.addAction(self.polygon_zone)
         self.drawing_toolbar.addAction(self.delete_zone)
         self.toolbar_width = self.drawing_toolbar.frameGeometry().width()
+    
 
     def get_zone_info(self):
         return self.view.get_zone_info()
@@ -415,20 +436,82 @@ class ZoneWindow(QWidget):
         self.view.rect_clicked(True)
         self.view.polygon_clicked(False)
         self.view.del_rect_clicked(False)
+        # Подключаем обработчик для отслеживания изменений
+        self.view.zone_added.connect(self._on_zone_changed)
 
     @pyqtSlot()
     def draw_polygon(self):
         self.view.polygon_clicked(True)
         self.view.rect_clicked(False)
         self.view.del_rect_clicked(False)
+        # Подключаем обработчик для отслеживания изменений
+        self.view.zone_added.connect(self._on_zone_changed)
 
     @pyqtSlot()
     def remove_zone(self):
         self.view.del_rect_clicked(True)
         self.view.rect_clicked(False)
         self.view.polygon_clicked(False)
+        # Подключаем обработчик для отслеживания изменений
+        self.view.zone_removed.connect(self._on_zone_changed)
+    
+    def _on_zone_changed(self):
+        """Обработчик изменений зон"""
+        self.has_unsaved_changes = True
 
     def closeEvent(self, event) -> None:
+        # Проверяем, были ли изменения
+        if self.has_unsaved_changes or self._check_zones_changes():
+            try:
+                if pyqt_version == 6:
+                    from PyQt6.QtWidgets import QMessageBox as _QMB
+                    StdBtn = _QMB.StandardButton
+                    buttons = StdBtn.Yes | StdBtn.No | StdBtn.Cancel
+                else:
+                    from PyQt5.QtWidgets import QMessageBox as _QMB
+                    StdBtn = _QMB
+                    buttons = _QMB.Yes | _QMB.No | _QMB.Cancel
+            except Exception:
+                from PyQt5.QtWidgets import QMessageBox as _QMB
+                StdBtn = _QMB
+                buttons = _QMB.Yes | _QMB.No | _QMB.Cancel
+            
+            mb = _QMB()
+            mb.setWindowTitle("Сохранить изменения?")
+            mb.setText("Зоны были изменены. Сохранить изменения?")
+            mb.setStandardButtons(buttons)
+            res = mb.exec()
+            yes = StdBtn.Yes
+            no = StdBtn.No
+            cancel = StdBtn.Cancel
+            
+            if res == yes:
+                # Принимаем изменения
+                if self.current_source_id is not None:
+                    zones_data = self.get_zones_for_source(self.current_source_id)
+                    zones_dict = {str(self.current_source_id): zones_data}
+                    self.zone_editor_closed.emit(zones_dict, self.current_source_id, True)
+                event.accept()
+            elif res == no:
+                # Отклоняем изменения
+                if self.current_source_id is not None:
+                    self._restore_initial_zones_state()
+                    zones_data = self.get_zones_for_source(self.current_source_id)
+                    zones_dict = {str(self.current_source_id): zones_data}
+                    self.zone_editor_closed.emit(zones_dict, self.current_source_id, False)
+                event.accept()
+            else:
+                # Отменяем закрытие
+                event.ignore()
+                return
+        else:
+            # Нет изменений, просто закрываем
+            if self.current_source_id is not None:
+                zones_data = self.get_zones_for_source(self.current_source_id)
+                zones_dict = {str(self.current_source_id): zones_data}
+                self.zone_editor_closed.emit(zones_dict, self.current_source_id, False)
+            event.accept()
+        
         super().closeEvent(event)
         self.view.close()
 
@@ -442,3 +525,50 @@ class ZoneWindow(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         self.view.setVisible(True)
+    
+    def _save_initial_zones_state(self):
+        """Сохраняет исходное состояние зон для сравнения изменений"""
+        if self.current_source_id is not None:
+            zones_data = self.get_zones_for_source(self.current_source_id)
+            self.saved_zones_data = zones_data.copy() if zones_data else []
+            self.has_unsaved_changes = False
+    
+    
+    def _check_zones_changes(self):
+        """Проверяет, были ли изменены зоны по сравнению с исходным состоянием"""
+        if self.current_source_id is None or self.saved_zones_data is None:
+            return False
+        
+        current_zones = self.get_zones_for_source(self.current_source_id)
+        current_zones = current_zones if current_zones else []
+        
+        # Сравниваем количество зон
+        if len(current_zones) != len(self.saved_zones_data):
+            return True
+        
+        # Сравниваем содержимое зон
+        for i, (current_zone, saved_zone) in enumerate(zip(current_zones, self.saved_zones_data)):
+            if current_zone != saved_zone:
+                return True
+        
+        return False
+    
+    
+    def _restore_initial_zones_state(self):
+        """Восстанавливает исходное состояние зон"""
+        if self.current_source_id is not None and self.saved_zones_data is not None:
+            # Очищаем текущие зоны
+            if str(self.current_source_id) in self.params['events_detectors']['ZoneEventsDetector']['sources']:
+                del self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.current_source_id)]
+            
+            # Восстанавливаем исходные зоны
+            if self.saved_zones_data:
+                self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.current_source_id)] = self.saved_zones_data
+            
+            # Обновляем внутреннее состояние view
+            if self.current_source_id in self.view.sources_zones:
+                self.view.sources_zones[self.current_source_id] = []
+                for zone_coords in self.saved_zones_data:
+                    self.view.sources_zones[self.current_source_id].append(['poly', zone_coords, None])
+            
+            self.has_unsaved_changes = False

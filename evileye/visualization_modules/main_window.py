@@ -186,6 +186,7 @@ class MainWindow(QMainWindow):
                 self.db_journal_win = None
         self.zone_window = ZoneWindow(self.params)
         self.zone_window.zones_updated.connect(self._on_zones_updated)
+        self.zone_window.zone_editor_closed.connect(self._on_zone_editor_closed)
         self.zone_window.setVisible(False)
 
         # ROI Editor window (new non-modal window)
@@ -1587,6 +1588,36 @@ class MainWindow(QMainWindow):
                 self._save_config_to_file()
         except Exception as e:
             self.logger.error(f"Error updating zones: {e}")
+    
+    @pyqtSlot(dict, int, bool)
+    def _on_zone_editor_closed(self, zones_dict, source_id, accepted):
+        """Обработка закрытия редактора зон"""
+        try:
+            self.logger.info(f"Zone editor closed for source {source_id}, accepted: {accepted}")
+            
+            if accepted:
+                # Пользователь принял изменения - сохраняем зоны
+                # zones_dict содержит {source_id: zones_data}
+                zones_data = zones_dict.get(str(source_id), [])
+                self._save_zones_to_config(zones_data, source_id)
+                self._save_config_to_file()
+                self.logger.info(f"Zones saved for source {source_id}")
+            else:
+                # Пользователь отклонил изменения - зоны уже восстановлены в ZoneWindow
+                self.logger.info(f"Zone changes rejected for source {source_id}")
+            
+            # Обновляем отображение зон
+            if hasattr(self, 'toggle_zones') and self.toggle_zones.isChecked():
+                zones = {}
+                if hasattr(self, 'zone_window') and self.zone_window:
+                    try:
+                        zones = self.zone_window.get_zone_info()
+                    except Exception:
+                        zones = {}
+                self.display_zones_signal.emit(zones)
+                
+        except Exception as e:
+            self.logger.error(f"Error handling zone editor close: {e}")
 
     @pyqtSlot(dict)
     def _on_class_mapping_updated(self, class_mapping):
@@ -1640,7 +1671,7 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.logger.error(f"Error saving ROI to config: {e}")
 
-    def _save_zones_to_config(self, zones, source_id):
+    def _save_zones_to_config(self, zones_data, source_id):
         """Сохранить зоны в конфигурацию для указанного источника"""
         try:
             # Инициализируем структуру если её нет
@@ -1651,24 +1682,11 @@ class MainWindow(QMainWindow):
             if 'sources' not in self.params['events_detectors']['ZoneEventsDetector']:
                 self.params['events_detectors']['ZoneEventsDetector']['sources'] = {}
             
-            # Конвертируем зоны в формат конфигурации
-            zone_coords = []
-            for zone in zones:
-                points = zone.get("points", [])
-                if points:
-                    # Нормализуем координаты (предполагаем, что они уже в пикселях)
-                    normalized_points = []
-                    for point in points:
-                        if len(point) >= 2:
-                            # Здесь нужно получить размеры изображения для нормализации
-                            # Пока сохраняем как есть, нормализация будет в ZoneWindow
-                            normalized_points.append([point[0], point[1]])
-                    if normalized_points:
-                        zone_coords.append(normalized_points)
+            # zones_data уже в правильном формате (список координат зон)
+            # Просто сохраняем их в конфигурацию
+            self.params['events_detectors']['ZoneEventsDetector']['sources'][str(source_id)] = zones_data
+            self.logger.info(f"Saved {len(zones_data)} zones for source {source_id}")
             
-            # Обновляем зоны в конфигурации
-            self.params['events_detectors']['ZoneEventsDetector']['sources'][str(source_id)] = zone_coords
-            self.logger.info(f"Saved {len(zone_coords)} zones for source {source_id}")
             # Централизованное сохранение через контроллер
             try:
                 if hasattr(self, 'controller') and hasattr(self.controller, 'save_config'):
