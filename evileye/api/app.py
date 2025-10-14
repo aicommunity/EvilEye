@@ -1,4 +1,5 @@
 import os
+import atexit
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -11,18 +12,38 @@ from evileye import __version__
 
 logger = get_module_logger("api.app")
 
+def cleanup_pipelines():
+    """Cleanup function for atexit handler"""
+    try:
+        logger.info("API shutdown sequence initiated (atexit)")
+        get_manager().shutdown()
+        logger.info("All pipelines stopped successfully (atexit)")
+    except Exception as e:
+        logger.error(f"Pipelines shutdown error (atexit): {e}")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("API startup sequence initiated")
+    
+    atexit.register(cleanup_pipelines)
+    
     try:
         yield
     finally:
-        logger.info("API shutdown sequence initiated")
+        logger.info("API shutdown sequence initiated (lifespan)")
         try:
             get_manager().shutdown()
-            logger.info("All pipelines stopped successfully")
+            logger.info("All pipelines stopped successfully (lifespan)")
         except Exception as e:
-            logger.error(f"Pipelines shutdown error: {e}")
+            logger.error(f"Pipelines shutdown error (lifespan): {e}")        
+        try:
+            atexit.unregister(cleanup_pipelines)
+        except ValueError as e:
+            logger.debug(f"Handler not registered or already unregistered: {e}")
+        except Exception as e:
+            logger.error(f"Unregister atexit handler error (lifespan): {e}")      
+        
+        logger.info("API shutdown sequence completed")
 
 
 def create_app() -> FastAPI:
