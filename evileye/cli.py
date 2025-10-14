@@ -125,6 +125,8 @@ def start_api(
         reload: bool = typer.Option(True, "--reload/--no-reload", help="Auto-reload on code changes"),
         workers: int = typer.Option(1, "--workers", help="Number of worker processes"),
         verbose: bool = typer.Option(False, "--verbose", help="Enable verbose logging"),
+        log_level: str = typer.Option("info", "--log-level", help="Logging level"),
+
 ) -> None:
     """
     Start EvilEye FastAPI web server.
@@ -139,6 +141,10 @@ def start_api(
 
     module_path = "evileye.api.app:app"
     cmd = [sys.executable, "-m", "uvicorn", module_path, "--host", host, "--port", str(port)]
+    
+    if log_level:
+        cmd.extend(["--log-level", log_level])
+
     if reload:
         cmd.append("--reload")
     if workers and workers > 1 and not reload:
