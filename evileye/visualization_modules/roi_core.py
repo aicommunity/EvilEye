@@ -243,9 +243,30 @@ class ROIGraphicsView(QGraphicsView):
             self.temp_rect = None
         rect = QRectF(self.start_point, scene_pos).normalized()
         if rect.width() > 10 and rect.height() > 10:
-            source_coords = self._convert_display_to_source_coords([
-                int(rect.x()), int(rect.y()), int(rect.x() + rect.width()), int(rect.y() + rect.height())
-            ])
+            # Преобразуем координаты сцены в координаты отображения (с учётом смещения pixmap)
+            if self.pixmap_item is not None:
+                pixmap_pos = self.pixmap_item.pos()
+                display_x1 = int(rect.x() - pixmap_pos.x())
+                display_y1 = int(rect.y() - pixmap_pos.y())
+                # Qt прямоугольник: правая/нижняя граница включительно => x + width - 1
+                display_x2 = int(rect.x() + rect.width() - 1 - pixmap_pos.x())
+                display_y2 = int(rect.y() + rect.height() - 1 - pixmap_pos.y())
+            else:
+                display_x1 = int(rect.x())
+                display_y1 = int(rect.y())
+                display_x2 = int(rect.x() + rect.width() - 1)
+                display_y2 = int(rect.y() + rect.height() - 1)
+
+            # Ограничим координаты размером изображения, если известен
+            if self.original_size:
+                image_width, image_height = self.original_size
+                display_x1 = max(0, min(display_x1, image_width))
+                display_y1 = max(0, min(display_y1, image_height))
+                display_x2 = max(0, min(display_x2, image_width))
+                display_y2 = max(0, min(display_y2, image_height))
+
+            display_coords = [display_x1, display_y1, display_x2, display_y2]
+            source_coords = self._convert_display_to_source_coords(display_coords) or display_coords
             if source_coords:
                 roi_item = self.add_roi(source_coords, (255, 0, 0))
                 if roi_item:
