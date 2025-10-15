@@ -15,6 +15,7 @@ from evileye.database_controller.db_adapter_objects import DatabaseAdapterObject
 from evileye.database_controller.db_adapter_cam_events import DatabaseAdapterCamEvents
 from evileye.database_controller.db_adapter_fov_events import DatabaseAdapterFieldOfViewEvents
 from evileye.database_controller.db_adapter_zone_events import DatabaseAdapterZoneEvents
+from evileye.database_controller.db_adapter_system_events import DatabaseAdapterSystemEvents
 from evileye.database_controller.db_adapter_attribute_events import DatabaseAdapterAttributeEvents
 from evileye.database_controller.json_adapter_attribute_events import JsonAdapterAttributeEvents
 from evileye.database_controller.json_adapter_fov_events import JsonAdapterFovEvents
@@ -28,6 +29,7 @@ from evileye.events_detectors.cam_events_detector import CamEventsDetector
 from evileye.events_detectors.fov_events_detector import FieldOfViewEventsDetector
 from evileye.events_detectors.zone_events_detector import ZoneEventsDetector
 from evileye.events_detectors.attribute_events_detector import AttributeEventsDetector
+from evileye.events_detectors.event_system import SystemEvent
 import json
 import datetime
 import pprint
@@ -93,6 +95,7 @@ class Controller:
         self.db_adapter_fov_events = None
         self.db_adapter_zone_events = None
         self.db_adapter_attr_events = None
+        self.db_adapter_system_events = None
         
         # Initialize centralized class manager
         self.class_manager = ClassManager()
@@ -321,6 +324,8 @@ class Controller:
                 self.db_adapter_cam_events.start()
                 if self.db_adapter_attr_events:
                     self.db_adapter_attr_events.start()
+                if self.db_adapter_system_events:
+                    self.db_adapter_system_events.start()
             except Exception as e:
                 self.logger.warning(f"Database connection error at startup. Disabling database functionality. Reason: {e}")
                 self.use_database = False
@@ -333,11 +338,43 @@ class Controller:
             self.attr_events_detector.start()
         self.events_detectors_controller.start()
         self.events_processor.start()
+        # Emit system started event if DB available
+        try:
+            if self.events_processor and self.db_adapter_system_events:
+                evt = SystemEvent(datetime.datetime.now(), 'SystemStart')
+                self.events_processor.put({'SystemEventsDetector': [evt]})
+        except Exception:
+            pass
         self.run_flag = True
         self.control_thread.start()
 
     def stop(self):
         # self._save_video_duration()
+        # Emit system stop event BEFORE stopping events processor/adapters
+        try:
+            if self.use_database and self.db_controller and self.db_adapter_system_events:
+                # Obtain next event id via events_processor if available
+                next_id = None
+                if hasattr(self, 'events_processor') and self.events_processor:
+                    try:
+                        next_id = self.events_processor.get_last_id()
+                    except Exception:
+                        next_id = None
+                evt = SystemEvent(datetime.datetime.now(), 'SystemStop')
+                if next_id is not None:
+                    try:
+                        evt.set_id(next_id)
+                    except Exception:
+                        pass
+                # Insert directly via system events adapter to avoid dependency on stopped processor
+                try:
+                    self.db_adapter_system_events.insert(evt)
+                    time.sleep(0.05)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         self.run_flag = False
         if self.control_thread.is_alive():
             self.control_thread.join()
@@ -354,11 +391,21 @@ class Controller:
         
         # Stop database components only if database is enabled
         if self.use_database and self.db_controller:
+            # Emit system stop event before closing adapters
+            try:
+                if self.events_processor and self.db_adapter_system_events:
+                    evt = SystemEvent(datetime.datetime.now(), 'SystemStop')
+                    self.events_processor.put({'SystemEventsDetector': [evt]})
+                    time.sleep(0.05)
+            except Exception:
+                pass
             self.db_adapter_cam_events.stop()
             self.db_adapter_fov_events.stop()
             self.db_adapter_zone_events.stop()
             if self.db_adapter_attr_events:
                 self.db_adapter_attr_events.stop()
+            if self.db_adapter_system_events:
+                self.db_adapter_system_events.stop()
             self.db_adapter_obj.stop()
             self.db_controller.disconnect()
         
@@ -879,6 +926,12 @@ class Controller:
             self.db_adapter_attr_events.set_params(**params['DatabaseAdapterAttributeEvents'])
             self.db_adapter_attr_events.init()
 
+        # System events adapter (optional)
+        if 'DatabaseAdapterSystemEvents' in params:
+            self.db_adapter_system_events = DatabaseAdapterSystemEvents(self.db_controller)
+            self.db_adapter_system_events.set_params(**params['DatabaseAdapterSystemEvents'])
+            self.db_adapter_system_events.init()
+
     def _init_events_detectors(self, params):
         self.cam_events_detector = CamEventsDetector(self.pipeline.get_sources())
         self.cam_events_detector.set_params(**params.get('CamEventsDetector', dict()))
@@ -969,6 +1022,8 @@ class Controller:
             adapters = [self.db_adapter_fov_events, self.db_adapter_cam_events, self.db_adapter_zone_events]
             if self.db_adapter_attr_events:
                 adapters.append(self.db_adapter_attr_events)
+            if self.db_adapter_system_events:
+                adapters.append(self.db_adapter_system_events)
             try:
                 self.logger.info(f"DB adapters: {[a.get_event_name() for a in adapters if a]}")
             except Exception:

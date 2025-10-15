@@ -1,0 +1,57 @@
+import time
+from datetime import datetime
+from .events_detector import EventsDetector
+from .event_system import SystemEvent
+
+
+class SystemEventsDetector(EventsDetector):
+    def __init__(self):
+        super().__init__()
+        self.pending_events = []
+
+    def emit_started(self):
+        # Called by Controller on start
+        self.pending_events.append(SystemEvent(datetime.now(), 'SystemStart'))
+        # nudge processing thread
+        try:
+            self.queue_in.put('tick', timeout=0.01)
+        except Exception:
+            pass
+
+    def emit_stopped(self):
+        # Called by Controller on stop
+        self.pending_events.append(SystemEvent(datetime.now(), 'SystemStop'))
+        try:
+            self.queue_in.put('tick', timeout=0.01)
+        except Exception:
+            pass
+
+    def process(self):
+        while self.run_flag:
+            time.sleep(0.01)
+            _ = self.queue_in.get()
+            if _ is None:
+                break
+            if self.pending_events:
+                self.queue_out.put(self.pending_events[:])
+                self.pending_events.clear()
+
+    def update(self):
+        # No periodic updates required
+        pass
+
+    def set_params_impl(self):
+        pass
+
+    def get_params_impl(self):
+        return dict()
+
+    def init_impl(self):
+        pass
+
+    def stop(self):
+        self.queue_in.put(None)
+        if self.processing_thread.is_alive():
+            self.processing_thread.join()
+
+

@@ -410,7 +410,10 @@
         "DatabaseAdapterZoneEvents": {
             "table_name": "zone_events",
             "event_name": "ZoneEvent"
-        }
+        },
+      "DatabaseAdapterSystemEvents": {
+        "table_name": "system_events"
+      }
     },
     "visualizer": {
         "source_ids": [
