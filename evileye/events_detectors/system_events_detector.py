@@ -54,4 +54,19 @@ class SystemEventsDetector(EventsDetector):
         if self.processing_thread.is_alive():
             self.processing_thread.join()
 
+    def reset_impl(self):
+        # Очистка внутреннего буфера событий
+        try:
+            self.pending_events.clear()
+        except Exception:
+            pass
+
+    def release_impl(self):
+        # Нечего освобождать явно
+        pass
+
+    def default(self):
+        # Значения по умолчанию отсутствуют
+        pass
+
 

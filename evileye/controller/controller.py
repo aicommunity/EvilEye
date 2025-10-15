@@ -3,6 +3,8 @@ import os
 import importlib
 import inspect
 from pathlib import Path
+from time import sleep
+
 from evileye.capture import video_capture_opencv
 from evileye.object_detector import object_detection_yolo
 from evileye.object_tracker import object_tracking_botsort
@@ -22,6 +24,7 @@ from evileye.database_controller.json_adapter_fov_events import JsonAdapterFovEv
 from evileye.database_controller.json_adapter_zone_events import JsonAdapterZoneEvents
 from evileye.database_controller.json_adapter_cam_events import JsonAdapterCamEvents
 from evileye.database_controller.json_adapter_attribute_events import JsonAdapterAttributeEvents
+from evileye.database_controller.json_adapter_system_events import JsonAdapterSystemEvents
 from evileye.events_control.events_processor import EventsProcessor
 from evileye.database_controller.database_controller_pg import DatabaseControllerPg
 from evileye.events_control.events_controller import EventsDetectorsController
@@ -30,6 +33,7 @@ from evileye.events_detectors.fov_events_detector import FieldOfViewEventsDetect
 from evileye.events_detectors.zone_events_detector import ZoneEventsDetector
 from evileye.events_detectors.attribute_events_detector import AttributeEventsDetector
 from evileye.events_detectors.event_system import SystemEvent
+from evileye.events_detectors.system_events_detector import SystemEventsDetector
 import json
 import datetime
 import pprint
@@ -88,6 +92,7 @@ class Controller:
         self.fov_events_detector = None
         self.zone_events_detector = None
         self.attr_events_detector = None
+        self.system_events_detector = None
 
         self.db_controller = None
         self.db_adapter_obj = None
@@ -336,13 +341,14 @@ class Controller:
         self.fov_events_detector.start()
         if self.attr_events_detector:
             self.attr_events_detector.start()
+        if hasattr(self, 'system_events_detector') and self.system_events_detector:
+            self.system_events_detector.start()
         self.events_detectors_controller.start()
         self.events_processor.start()
-        # Emit system started event if DB available
+        # Emit system started via detector (unified path)
         try:
-            if self.events_processor and self.db_adapter_system_events:
-                evt = SystemEvent(datetime.datetime.now(), 'SystemStart')
-                self.events_processor.put({'SystemEventsDetector': [evt]})
+            if self.system_events_detector:
+                self.system_events_detector.emit_started()
         except Exception:
             pass
         self.run_flag = True
@@ -352,43 +358,31 @@ class Controller:
         # self._save_video_duration()
         # Emit system stop event BEFORE stopping events processor/adapters
         try:
-            if self.use_database and self.db_controller and self.db_adapter_system_events:
-                # Obtain next event id via events_processor if available
-                next_id = None
-                if hasattr(self, 'events_processor') and self.events_processor:
-                    try:
-                        next_id = self.events_processor.get_last_id()
-                    except Exception:
-                        next_id = None
-                evt = SystemEvent(datetime.datetime.now(), 'SystemStop')
-                if next_id is not None:
-                    try:
-                        evt.set_id(next_id)
-                    except Exception:
-                        pass
-                # Insert directly via system events adapter to avoid dependency on stopped processor
-                try:
-                    self.db_adapter_system_events.insert(evt)
-                    time.sleep(0.05)
-                except Exception:
-                    pass
+            try:
+                if self.system_events_detector:
+                    self.system_events_detector.emit_stopped()
+            except Exception:
+                pass
         except Exception:
             pass
 
         self.run_flag = False
         if self.control_thread.is_alive():
             self.control_thread.join()
-        self.events_processor.stop()
-        self.events_detectors_controller.stop()
+        if self.visualizer:
+            self.visualizer.stop()
+        self.obj_handler.stop()
+
         self.cam_events_detector.stop()
         self.fov_events_detector.stop()
         self.zone_events_detector.stop()
         if self.attr_events_detector:
             self.attr_events_detector.stop()
-        if self.visualizer:
-            self.visualizer.stop()
-        self.obj_handler.stop()
-        
+        if hasattr(self, 'system_events_detector') and self.system_events_detector:
+            self.system_events_detector.stop()
+        self.events_detectors_controller.stop()
+        self.events_processor.stop()
+
         # Stop database components only if database is enabled
         if self.use_database and self.db_controller:
             # Emit system stop event before closing adapters
@@ -950,6 +944,11 @@ class Controller:
         self.attr_events_detector.set_params(**params.get('AttributeEventsDetector', dict()))
         self.attr_events_detector.init()
 
+        # Initialize SystemEventsDetector
+        self.system_events_detector = SystemEventsDetector()
+        self.system_events_detector.set_params(**params.get('SystemEventsDetector', dict()))
+        self.system_events_detector.init()
+
         self.obj_handler.subscribe(self.fov_events_detector, self.zone_events_detector, self.attr_events_detector)
         for source in self.pipeline.get_sources():
             source.subscribe(self.cam_events_detector)
@@ -995,6 +994,11 @@ class Controller:
         self.attr_events_detector.set_params(**params.get('AttributeEventsDetector', dict()))
         self.attr_events_detector.init()
 
+        # Initialize SystemEventsDetector
+        self.system_events_detector = SystemEventsDetector()
+        self.system_events_detector.set_params(**params.get('SystemEventsDetector', dict()))
+        self.system_events_detector.init()
+
         self.obj_handler.subscribe(self.fov_events_detector, self.zone_events_detector, self.attr_events_detector)
         for source in self.pipeline.get_sources():
             source.subscribe(self.cam_events_detector)
@@ -1003,6 +1007,8 @@ class Controller:
         detectors = [self.cam_events_detector, self.fov_events_detector, self.zone_events_detector]
         if self.attr_events_detector:
             detectors.append(self.attr_events_detector)
+        if self.system_events_detector:
+            detectors.append(self.system_events_detector)
         self.events_detectors_controller = EventsDetectorsController(detectors)
         self.events_detectors_controller.set_params(**params)
         self.events_detectors_controller.init()
@@ -1032,7 +1038,7 @@ class Controller:
         # JSON adapters when DB disabled or unavailable
         adapters = []
         img_dir = self.params.get('database', {}).get('image_dir', 'EvilEyeData')
-        for adapter_cls in (JsonAdapterAttributeEvents, JsonAdapterFovEvents, JsonAdapterZoneEvents, JsonAdapterCamEvents):
+        for adapter_cls in (JsonAdapterAttributeEvents, JsonAdapterFovEvents, JsonAdapterZoneEvents, JsonAdapterCamEvents, JsonAdapterSystemEvents):
             try:
                 adapter = adapter_cls(None)
                 adapter.set_params(image_dir=img_dir)
