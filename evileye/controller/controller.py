@@ -372,6 +372,23 @@ class Controller:
             self.visualizer.stop()
         self.obj_handler.stop()
 
+        # Flush pending detector events to processor after run thread emitted SystemStop
+        try:
+            for _ in range(50):  # ~0.5s max
+                events = self.events_detectors_controller.get() if self.events_detectors_controller else {}
+                if events:
+                    try:
+                        self.events_processor.put(events)
+                    except Exception:
+                        pass
+                else:
+                    break
+                time.sleep(0.01)
+            # Give processor time to write
+            time.sleep(0.1)
+        except Exception:
+            pass
+
         self.cam_events_detector.stop()
         self.fov_events_detector.stop()
         self.zone_events_detector.stop()
