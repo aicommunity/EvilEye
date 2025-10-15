@@ -206,6 +206,12 @@ class Controller:
     def get_params(self):
         return self.params
 
+    def system_event(self, type: str, message: str):
+        if self.system_events_detector:
+            self.system_events_detector.emit_message(type, message)
+
+        self.logger.info(f"System message [{type}]: {message}")
+
     def add_pipeline(self, pipeline_type):
         pass
 
@@ -222,6 +228,9 @@ class Controller:
         return self.run_flag
 
     def run(self):
+        # Emit system started via detector (unified path)
+        if self.system_events_detector:
+            self.system_events_detector.emit_started()
         while self.run_flag:
             begin_it = timer()
             # Process pipeline: sources -> preprocessors -> detectors -> trackers -> mc_trackers
@@ -310,6 +319,10 @@ class Controller:
             #       f"read=[{complete_read_objects_it-complete_processing_it}], vis[{end_it-complete_read_objects_it}] = {end_it-begin_it} secs, sleep {sleep_seconds} secs")
             time.sleep(sleep_seconds)
 
+        if self.system_events_detector:
+            self.system_events_detector.emit_stopped()
+            time.sleep(0.2)
+
     def start(self):
         # Start pipeline components
         self.pipeline.start()
@@ -341,30 +354,16 @@ class Controller:
         self.fov_events_detector.start()
         if self.attr_events_detector:
             self.attr_events_detector.start()
-        if hasattr(self, 'system_events_detector') and self.system_events_detector:
+        if self.system_events_detector:
             self.system_events_detector.start()
         self.events_detectors_controller.start()
         self.events_processor.start()
-        # Emit system started via detector (unified path)
-        try:
-            if self.system_events_detector:
-                self.system_events_detector.emit_started()
-        except Exception:
-            pass
+
         self.run_flag = True
         self.control_thread.start()
 
     def stop(self):
         # self._save_video_duration()
-        # Emit system stop event BEFORE stopping events processor/adapters
-        try:
-            try:
-                if self.system_events_detector:
-                    self.system_events_detector.emit_stopped()
-            except Exception:
-                pass
-        except Exception:
-            pass
 
         self.run_flag = False
         if self.control_thread.is_alive():
@@ -378,7 +377,7 @@ class Controller:
         self.zone_events_detector.stop()
         if self.attr_events_detector:
             self.attr_events_detector.stop()
-        if hasattr(self, 'system_events_detector') and self.system_events_detector:
+        if self.system_events_detector:
             self.system_events_detector.stop()
         self.events_detectors_controller.stop()
         self.events_processor.stop()

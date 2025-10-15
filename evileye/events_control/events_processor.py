@@ -95,7 +95,7 @@ class EventsProcessor(EvilEyeBase):
     def process(self):
         filtered_long_term = {key: None for key in self.long_term_events}
         while self.run_flag:
-            time.sleep(0.01)
+            #time.sleep(0.01)
             new_events = self.queue.get()
             if new_events is None:
                 continue

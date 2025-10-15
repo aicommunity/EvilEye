@@ -9,26 +9,24 @@ class SystemEventsDetector(EventsDetector):
         super().__init__()
         self.pending_events = []
 
-    def emit_started(self):
-        # Called by Controller on start
-        self.pending_events.append(SystemEvent(datetime.now(), 'SystemStart'))
+    def emit_message(self, type: str, message: str):
+        self.pending_events.append(SystemEvent(datetime.now(), type, message))
         # nudge processing thread
         try:
             self.queue_in.put('tick', timeout=0.01)
         except Exception:
             pass
 
+    def emit_started(self):
+        # Called by Controller on start
+        self.emit_message('SystemStart', '')
+
     def emit_stopped(self):
         # Called by Controller on stop
-        self.pending_events.append(SystemEvent(datetime.now(), 'SystemStop'))
-        try:
-            self.queue_in.put('tick', timeout=0.01)
-        except Exception:
-            pass
+        self.emit_message('SystemStop', '')
 
     def process(self):
         while self.run_flag:
-            time.sleep(0.01)
             _ = self.queue_in.get()
             if _ is None:
                 break
