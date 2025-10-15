@@ -63,9 +63,25 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
             if query_string is None:
                 continue
 
-            record = self.db_controller.query(query_string, data)
+            try:
+                record = self.db_controller.query(query_string, data)
+            except Exception as e:
+                self.logger.error(f'DB: ZoneEvents query failed: {e}')
+                continue
+
+            # Безопасные проверки результата RETURNING
+            if not record or not isinstance(record, list) or not record[0] or len(record[0]) < 2:
+                self.logger.warning('DB: ZoneEvents query returned no data; skipping image save')
+                continue
+
             box = record[0][0]
             zone_coords = record[0][1]
+
+            # Проверка на None перед отрисовкой
+            if box is None or zone_coords is None:
+                self.logger.warning('DB: Missing box/zone_coords in RETURNING; skipping image save')
+                continue
+
             self._save_image(preview_path, frame_path, image, box, zone_coords)
 
             if query_type == 'insert':
