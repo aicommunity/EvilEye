@@ -61,7 +61,37 @@ class EventsDetectorsController(EvilEyeBase):
         self.control_thread.start()
 
     def stop(self):
+        # Try to flush one more batch of events before stopping
+        try:
+            self.flush_once()
+        except Exception:
+            pass
         self.run_flag = False
+        # Join control thread to ensure pending processing completed
+        try:
+            if self.control_thread.is_alive():
+                self.control_thread.join(timeout=0.3)
+        except Exception:
+            pass
+
+    def flush_once(self):
+        """Collect events from detectors once and push to queue if any."""
+        try:
+            self.any_events = False
+            # небольшая задержка чтобы детекторы успели выложить события
+            time.sleep(0.01)
+            for detector in self.detectors:
+                events = detector.get()
+                if events:
+                    self.events_detectors[detector.get_name()] = events
+                    self.any_events = True
+                else:
+                    self.events_detectors[detector.get_name()] = []
+            if self.any_events:
+                self.queue_out.put(copy.deepcopy(self.events_detectors))
+            return self.any_events
+        except Exception:
+            return False
         if self.control_thread.is_alive():
             self.control_thread.join()
         self.logger.info('Everything in controller stopped')

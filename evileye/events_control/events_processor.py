@@ -87,10 +87,30 @@ class EventsProcessor(EvilEyeBase):
         self.processing_thread.start()
 
     def stop(self):
+        # Gracefully flush pending events before stopping
+        try:
+            # Wait up to ~0.5s for queue to drain
+            max_wait_secs = 0.5
+            waited = 0.0
+            while not self.queue.empty() and waited < max_wait_secs:
+                time.sleep(0.01)
+                waited += 0.01
+        except Exception:
+            pass
+
+        # Signal processing thread to exit
         self.run_flag = False
-        self.queue.put(None)
+        try:
+            self.queue.put(None)
+        except Exception:
+            pass
+
+        # Join processing thread
         if self.processing_thread.is_alive():
-            self.processing_thread.join()
+            try:
+                self.processing_thread.join(timeout=0.5)
+            except Exception:
+                pass
 
     def process(self):
         filtered_long_term = {key: None for key in self.long_term_events}
