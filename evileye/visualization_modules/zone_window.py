@@ -477,8 +477,8 @@ class ZoneWindow(QWidget):
                 buttons = _QMB.Yes | _QMB.No | _QMB.Cancel
             
             mb = _QMB()
-            mb.setWindowTitle("Сохранить изменения?")
-            mb.setText("Зоны были изменены. Сохранить изменения?")
+            mb.setWindowTitle("Save changes?")
+            mb.setText("Zones have changed. Save changes?")
             mb.setStandardButtons(buttons)
             res = mb.exec()
             yes = StdBtn.Yes
