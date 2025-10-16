@@ -384,20 +384,11 @@ class Controller:
         events = self.events_detectors_controller.get()
         if events:
             self.events_processor.put(events)
-            time.sleep(0.05)
         self.events_detectors_controller.stop()
         self.events_processor.stop()
 
         # Stop database components only if database is enabled
         if self.use_database and self.db_controller:
-            # Emit system stop event before closing adapters
-            try:
-                if self.events_processor and self.db_adapter_system_events:
-                    evt = SystemEvent(datetime.datetime.now(), 'SystemStop')
-                    self.events_processor.put({'SystemEventsDetector': [evt]})
-                    time.sleep(0.05)
-            except Exception:
-                pass
             self.db_adapter_cam_events.stop()
             self.db_adapter_fov_events.stop()
             self.db_adapter_zone_events.stop()
@@ -608,7 +599,7 @@ class Controller:
 
         # Collect objects_handler params with safe fallback to existing/loaded config
         try:
-            if hasattr(self, 'obj_handler') and self.obj_handler and hasattr(self.obj_handler, 'get_params'):
+            if self.obj_handler:
                 oh_params = self.obj_handler.get_params()
             else:
                 oh_params = None
@@ -649,7 +640,7 @@ class Controller:
         # Collect visualizer params with safe fallback
         vis_params = None
         try:
-            if hasattr(self, 'visualizer') and self.visualizer and hasattr(self.visualizer, 'get_params'):
+            if self.visualizer:
                 vis_params = self.visualizer.get_params()
         except Exception:
             vis_params = None
@@ -919,17 +910,13 @@ class Controller:
         self.db_adapter_zone_events.set_params(**params['DatabaseAdapterZoneEvents'])
         self.db_adapter_zone_events.init()
 
-        # Attribute events adapter (optional)
-        if 'DatabaseAdapterAttributeEvents' in params:
-            self.db_adapter_attr_events = DatabaseAdapterAttributeEvents(self.db_controller)
-            self.db_adapter_attr_events.set_params(**params['DatabaseAdapterAttributeEvents'])
-            self.db_adapter_attr_events.init()
+        self.db_adapter_attr_events = DatabaseAdapterAttributeEvents(self.db_controller)
+        self.db_adapter_attr_events.set_params(**params['DatabaseAdapterAttributeEvents'])
+        self.db_adapter_attr_events.init()
 
-        # System events adapter (optional)
-        if 'DatabaseAdapterSystemEvents' in params:
-            self.db_adapter_system_events = DatabaseAdapterSystemEvents(self.db_controller)
-            self.db_adapter_system_events.set_params(**params['DatabaseAdapterSystemEvents'])
-            self.db_adapter_system_events.init()
+        self.db_adapter_system_events = DatabaseAdapterSystemEvents(self.db_controller)
+        self.db_adapter_system_events.set_params(**params['DatabaseAdapterSystemEvents'])
+        self.db_adapter_system_events.init()
 
     def _init_events_detectors(self, params):
         self.cam_events_detector = CamEventsDetector(self.pipeline.get_sources())
