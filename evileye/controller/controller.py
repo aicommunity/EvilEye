@@ -585,7 +585,14 @@ class Controller:
         self.params['controller']["gui_enabled"] = self.gui_enabled
         self.params['controller']["show_journal"] = self.show_journal
         self.params['controller']["enable_close_from_gui"] = self.enable_close_from_gui
-        self.params['controller']["class_mapping"] = self.class_mapping
+        # Сохраняем class_mapping только если он присутствовал в исходной конфигурации
+        try:
+            orig_ctrl = (self.loaded_config or {}).get('controller', {})
+            had_class_mapping = isinstance(orig_ctrl, dict) and (('class_mapping' in orig_ctrl) or ('class_names' in orig_ctrl))
+        except Exception:
+            had_class_mapping = True
+        if had_class_mapping:
+            self.params['controller']["class_mapping"] = self.class_mapping
         self.params['controller']["memory_periodic_check_sec"] = self.memory_periodic_check_sec
         self.params['controller']["show_memory_usage"] = self.show_memory_usage
 
@@ -651,6 +658,22 @@ class Controller:
 
         # Text configuration is now part of visualizer section
         # No need to add separate text_config here
+
+        # Дополнительная защита: сразу после обновления параметров удаляем чувствительные поля,
+        # model_class_mapping и ограничиваем секцию database ключами исходной конфигурации
+        try:
+            self._reconcile_credentials_fields(self.params, self.loaded_config, self.credentials_loaded)
+        except Exception:
+            pass
+        try:
+            self._filter_model_class_mapping(self.params, self.loaded_config)
+        except Exception:
+            pass
+        try:
+            if isinstance(self.loaded_config, dict) and self.loaded_config:
+                self._restrict_database_keys(self.params, self.loaded_config)
+        except Exception:
+            pass
 
     def _atomic_json_dump(self, path: str, data: dict) -> bool:
         try:
