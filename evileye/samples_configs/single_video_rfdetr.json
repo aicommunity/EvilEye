@@ -65,7 +65,7 @@
     "max_lost_objects": 100,
     "lost_thresh": 5,
     "lost_store_time_secs": 60,
-    "history_len": 1
+    "history_len": 30
   },
   "events_detectors": {
     "CamEventsDetector": {},
