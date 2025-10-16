@@ -483,8 +483,12 @@ class EventsJournalJson(QWidget):
             filters = {k: v for k, v in self.filters.items() if v}
             # Use empty sort list to avoid sorting errors with None values
             rows = self.ds.fetch(self.page, self.page_size, filters, [])
-            # В Events journal не показываем объектные found/lost
-            rows = [ev for ev in rows if ev.get('event_type') not in ('found', 'lost')]
+            # Показываем события детекторов и системные: attr_*, zone_*, fov_*, cam, sys
+            rows = [ev for ev in rows if (
+                (et := ev.get('event_type', '')) and (
+                    et.startswith('attr') or et.startswith('zone') or et.startswith('fov') or et == 'cam' or et == 'sys'
+                )
+            )]
             # Короткая сводка по типам для диагностики (в логи)
             try:
                 counts = {}
@@ -498,6 +502,7 @@ class EventsJournalJson(QWidget):
             # Group paired events to show both Preview and Lost preview in one row
             grouped = {}
             cam_events = []
+            sys_events = []
             for ev in rows:
                 et = ev.get('event_type','')
                 if et.startswith('attr'):
@@ -508,6 +513,9 @@ class EventsJournalJson(QWidget):
                     key = ('fov', ev.get('source_id'), ev.get('object_id'))
                 elif et == 'cam':
                     cam_events.append(ev)
+                    continue
+                elif et == 'sys':
+                    sys_events.append(ev)
                     continue
                 else:
                     continue
@@ -564,6 +572,26 @@ class EventsJournalJson(QWidget):
                     'found_event': None,
                     'lost_event': None
                 })
+
+            # Добавляем системные события отдельными строками
+            for ev in sys_events:
+                table_rows.append({
+                    'event': 'SystemEvent',
+                    'event_details': ev.get('system_event',''),
+                    'information': f"System {ev.get('system_event','')}",
+                    'time': ev.get('ts',''),
+                    'time_lost': '',
+                    'preview': '',
+                    'lost_preview': '',
+                    'found_event': None,
+                    'lost_event': None
+                })
+
+            # Sort all rows by time desc to ensure recent System/Zone/etc are visible on first page
+            try:
+                table_rows.sort(key=lambda r: (r.get('time') or ''), reverse=True)
+            except Exception:
+                pass
             
             self.table.setRowCount(len(table_rows))
             for r, row_data in enumerate(table_rows):
