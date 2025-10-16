@@ -95,25 +95,7 @@ class ConfigurerMainWindow(QDialog):
         with open(full_path, 'r+') as params_file:
             config_params = json.load(params_file)
         
-        # Если секции находятся внутри pipeline, извлекаем их
-        if 'pipeline' in config_params and 'sources' not in config_params:
-            pipeline = config_params['pipeline']
-            if 'sources' in pipeline:
-                config_params['sources'] = pipeline['sources']
-            if 'detectors' in pipeline:
-                config_params['detectors'] = pipeline['detectors']
-            if 'trackers' in pipeline:
-                config_params['trackers'] = pipeline['trackers']
-            if 'mc_trackers' in pipeline:
-                config_params['mc_trackers'] = pipeline['mc_trackers']
-            if 'handlers' in pipeline:
-                config_params['handlers'] = pipeline['handlers']
-            if 'visualizers' in pipeline:
-                config_params['visualizers'] = pipeline['visualizers']
-            if 'events' in pipeline:
-                config_params['events'] = pipeline['events']
-            if 'events_detectors' in pipeline:
-                config_params['events_detectors'] = pipeline['events_detectors']
+        # Больше не распаковываем секции пайплайна на корневой уровень
 
         with open(os.path.join(utils.get_project_root(), "database_config.json"), 'r+') as database_config_file:
             database_params = json.load(database_config_file)
@@ -524,10 +506,32 @@ class ConfigurerMainWindow(QDialog):
         self._create_resulting_config(configs, self.params)
 
     def _create_resulting_config(self, configs, default_config):
+        # Секции, которые относятся к пайплайну
+        pipeline_sections = {
+            'sources', 'preprocessors', 'detectors', 'trackers', 'mc_trackers',
+            'attributes_roi', 'attributes_classifier'
+        }
+
+        # Обеспечим наличие секции pipeline
+        if 'pipeline' not in self.config_result or not isinstance(self.config_result['pipeline'], dict):
+            self.config_result['pipeline'] = {}
+
+        # Сначала очистим возможные дубли секций пайплайна на корневом уровне
+        for key in list(self.config_result.keys()):
+            if key in pipeline_sections:
+                try:
+                    del self.config_result[key]
+                except Exception:
+                    pass
+
+        # Запишем актуальные параметры в нужные разделы
         for section_config in configs:
             section_name = section_config[0]
             section_params = section_config[1]
-            self.config_result[section_name] = section_params
+            if section_name in pipeline_sections:
+                self.config_result['pipeline'][section_name] = section_params
+            else:
+                self.config_result[section_name] = section_params
 
     def _connect_to_db(self):
         db_params = self.database_config['database']

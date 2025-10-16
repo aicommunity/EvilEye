@@ -604,6 +604,21 @@ class Controller:
         pipeline_params = self.pipeline.get_params()
         self.params['pipeline'] = pipeline_params
 
+        # Очистка корня параметров от секций пайплайна (не дублируем их вне 'pipeline')
+        try:
+            pipeline_section_names = [
+                'sources', 'preprocessors', 'detectors', 'trackers', 'mc_trackers',
+                'attributes_roi', 'attributes_classifier'
+            ]
+            for key in pipeline_section_names:
+                if key in self.params:
+                    try:
+                        del self.params[key]
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
         # Collect objects_handler params with safe fallback to existing/loaded config
         try:
             if self.obj_handler:
@@ -849,6 +864,21 @@ class Controller:
         # Отфильтровать model_class_mapping перед записью
         try:
             self._filter_model_class_mapping(final_params, self.loaded_config)
+        except Exception:
+            pass
+
+        # Финальная защита: убрать любые секции пайплайна с корня перед записью
+        try:
+            pipe_keys = [
+                'sources', 'preprocessors', 'detectors', 'trackers', 'mc_trackers',
+                'attributes_roi', 'attributes_classifier'
+            ]
+            for k in pipe_keys:
+                if k in final_params:
+                    try:
+                        del final_params[k]
+                    except Exception:
+                        pass
         except Exception:
             pass
 
