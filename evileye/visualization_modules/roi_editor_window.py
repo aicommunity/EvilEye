@@ -67,29 +67,29 @@ class ROIEditorWindow(QWidget):
         # Правая панель - управление
         right_panel = QVBoxLayout()
 
-        drawing_group = QGroupBox("Настройки рисования")
+        drawing_group = QGroupBox("Drawing Settings")
         drawing_layout = QFormLayout(drawing_group)
         right_panel.addWidget(drawing_group)
 
-        roi_group = QGroupBox("Управление ROI")
+        roi_group = QGroupBox("ROI Controls")
         roi_layout = QVBoxLayout(roi_group)
-        help_label = QLabel("Инструкции:\n• Кликните и перетащите мышь для создания ROI\n• Кликните по ROI для выбора\n• Выберите ROI в списке для редактирования")
+        help_label = QLabel("Instructions:\n• Click and drag to create an ROI\n• Click an ROI to select it\n• Select an ROI in the list to edit it")
         help_label.setWordWrap(True)
         roi_layout.addWidget(help_label)
 
         self.roi_list = QListWidget()
         self.roi_list.setMaximumHeight(220)
         self.roi_list.itemSelectionChanged.connect(self._on_roi_selection_changed)
-        roi_layout.addWidget(QLabel("ROI список:"))
+        roi_layout.addWidget(QLabel("ROI List:"))
         roi_layout.addWidget(self.roi_list)
 
         roi_buttons = QHBoxLayout()
-        self.modify_roi_btn = QPushButton("Изменить")
+        self.modify_roi_btn = QPushButton("Edit")
         self.modify_roi_btn.clicked.connect(self._modify_roi)
         self.modify_roi_btn.setEnabled(False)
         roi_buttons.addWidget(self.modify_roi_btn)
 
-        self.delete_roi_btn = QPushButton("Удалить")
+        self.delete_roi_btn = QPushButton("Delete")
         self.delete_roi_btn.clicked.connect(self._delete_roi_mode)
         self.delete_roi_btn.setEnabled(False)
         roi_buttons.addWidget(self.delete_roi_btn)
@@ -97,9 +97,9 @@ class ROIEditorWindow(QWidget):
 
         right_panel.addWidget(roi_group)
 
-        settings_group = QGroupBox("Настройки")
+        settings_group = QGroupBox("Settings")
         settings_layout = QFormLayout(settings_group)
-        self.show_numbers_check = QCheckBox("Показывать номера")
+        self.show_numbers_check = QCheckBox("Show numbers")
         self.show_numbers_check.setChecked(True)
         settings_layout.addRow("", self.show_numbers_check)
         right_panel.addWidget(settings_group)
@@ -346,13 +346,13 @@ class ROIEditorWindow(QWidget):
     def _draw_roi_mode(self):
         # В текущей реализации рисование включается нажатием ЛКМ на сцене,
         # поэтому просто показываем подсказку.
-        QMessageBox.information(self, "Режим рисования", "Кликните и перетащите по изображению для создания ROI.")
+        QMessageBox.information(self, "Drawing Mode", "Click and drag over the image to create an ROI.")
 
     @pyqtSlot()
     def _delete_roi_mode(self):
         current_item = self.roi_list.currentItem()
         if current_item is None:
-            QMessageBox.information(self, "Удаление ROI", "Выберите ROI в списке справа.")
+            QMessageBox.information(self, "Delete ROI", "Select an ROI in the list on the right.")
             return
         index = self.roi_list.row(current_item)
         self.roi_canvas.remove_roi(index)
@@ -483,8 +483,8 @@ class ROIEditorWindow(QWidget):
                 StdBtn = _QMB
                 buttons = _QMB.Yes | _QMB.No | _QMB.Cancel
             mb = _QMB()
-            mb.setWindowTitle("Сохранить изменения?")
-            mb.setText("ROI были изменены. Сохранить изменения?")
+            mb.setWindowTitle("Save changes?")
+            mb.setText("ROIs have changed. Save changes?")
             mb.setStandardButtons(buttons)
             res = mb.exec()
             yes = StdBtn.Yes

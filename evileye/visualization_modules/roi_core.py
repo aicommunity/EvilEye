@@ -584,7 +584,7 @@ class ROIGraphicsView(QGraphicsView):
 class ROICoordsDialog(QDialog):
     def __init__(self, parent: Optional[object] = None, coords: Optional[List[int]] = None):
         super().__init__(parent)
-        self.setWindowTitle("Изменить ROI")
+        self.setWindowTitle("Edit ROI")
         self.setModal(True)
         self.resize(300, 200)
         self.logger = get_module_logger("roi_coords_dialog")
@@ -606,7 +606,7 @@ class ROICoordsDialog(QDialog):
     def get_coords(self) -> Optional[List[int]]:
         x1 = self.x1_spin.value(); y1 = self.y1_spin.value(); x2 = self.x2_spin.value(); y2 = self.y2_spin.value()
         if x1 >= x2 or y1 >= y2:
-            self.logger.warning("Некорректные координаты ROI")
+            self.logger.warning("Invalid ROI coordinates")
             return None
         return [x1, y1, x2, y2]
 
