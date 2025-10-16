@@ -234,8 +234,6 @@ def deploy() -> None:
             raise typer.Exit(1)
     
     console.print("[green]Deployment completed successfully![/green]")
-    console.print(f"[blue]You can now create configurations with:[/blue]")
-    console.print(f"[yellow]  evileye-create my_config --sources 1[/yellow]")
 
 
 @app.command()
