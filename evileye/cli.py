@@ -547,7 +547,12 @@ def create(
     
     database_params = {}
     if db_enabled is not None:
-        database_params['use_database'] = db_enabled
+        # Only pass safe database parameters (no credentials)
+        database_params = {
+            "image_dir": "EvilEyeData",
+            "preview_width": 300,
+            "preview_height": 150
+        }
     
     # Create configuration
     console.print(f"[blue]Creating configuration:[/blue]")

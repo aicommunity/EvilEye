@@ -1461,12 +1461,37 @@ class Controller:
         # Get parameters safely, avoiding non-serializable objects
         config_data = self.get_params()
 
-        # Apply database parameters if provided
+        # Apply database parameters (only safe parameters, no credentials)
         if database_params:
-            if 'database' not in config_data:
-                config_data['database'] = {}
-            config_data['database'].update(database_params)
-            self.logger.info(f"Applied database parameters: {database_params}")
+            # Only store safe database parameters (no credentials)
+            safe_db_params = {}
+            safe_keys = ['image_dir', 'preview_width', 'preview_height']
+            for key in safe_keys:
+                if key in database_params:
+                    safe_db_params[key] = database_params[key]
+            
+            # Set default safe values if not provided
+            if not safe_db_params:
+                safe_db_params = {
+                    "image_dir": "EvilEyeData",
+                    "preview_width": 300,
+                    "preview_height": 150
+                }
+            
+            # Replace entire database section with only safe parameters
+            config_data['database'] = safe_db_params
+            self.logger.info(f"Applied safe database parameters: {safe_db_params}")
+        else:
+            # If no database_params provided, ensure database section contains only safe parameters
+            if 'database' in config_data:
+                # Keep only safe parameters, remove credentials
+                safe_db_params = {
+                    "image_dir": "EvilEyeData",
+                    "preview_width": 300,
+                    "preview_height": 150
+                }
+                config_data['database'] = safe_db_params
+                self.logger.info(f"Removed database credentials, kept only safe parameters: {safe_db_params}")
 
         config_data['visualizer'] = {}
         if num_sources and num_sources > 0:
