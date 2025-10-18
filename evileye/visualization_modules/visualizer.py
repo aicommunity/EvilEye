@@ -36,6 +36,8 @@ class Visualizer(EvilEyeBase):
         # Signalization params
         self.signal_enabled = False
         self.signal_color = (255, 0, 0)
+        # Zones display toggle
+        self.display_zones = False
 
 
     def default(self):
@@ -58,9 +60,15 @@ class Visualizer(EvilEyeBase):
                 pass
             self.visual_threads[-1].update_image_signal.connect(
                 self.pyqt_slots['update_image'])  # Сигнал из потока для обновления label на новое изображение
+            self.visual_threads[-1].update_original_cv_image_signal.connect(
+                self.pyqt_slots['update_original_cv_image'])  # Сигнал с оригинальным OpenCV изображением для ROI Editor
+            self.visual_threads[-1].clean_image_available_signal.connect(
+                self.pyqt_slots['clean_image_available'])  # Сигнал с чистым OpenCV изображением для ROI Editor
             self.visual_threads[-1].add_zone_signal.connect(self.pyqt_slots['open_zone_win'])
+            self.visual_threads[-1].add_roi_signal.connect(self.pyqt_slots['open_roi_win'])
             self.pyqt_signals['display_zones_signal'].connect(self.visual_threads[-1].display_zones)
             self.pyqt_signals['add_zone_signal'].connect(self.visual_threads[-1].add_zone_clicked)
+            self.pyqt_signals['add_roi_signal'].connect(self.visual_threads[-1].add_roi_clicked)
 
     def release_impl(self):
         for thr in self.visual_threads:
@@ -85,6 +93,7 @@ class Visualizer(EvilEyeBase):
         self.text_config = self.params.get('text_config', {})
         self.signal_enabled = self.params.get('event_signal_enabled', False)
         self.signal_color = tuple(self.params.get('event_signal_color', [255, 0, 0]))
+        self.display_zones = self.params.get('display_zones', False)
 
     def get_params_impl(self):
         params = dict()
@@ -96,6 +105,7 @@ class Visualizer(EvilEyeBase):
         params['num_width'] = self.num_width
         params['visual_buffer_num_frames'] = self.visual_buffer_num_frames
         params['text_config'] = self.text_config
+        params['display_zones'] = self.display_zones
         return params
 
     def start(self):

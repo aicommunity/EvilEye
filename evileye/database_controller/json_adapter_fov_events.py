@@ -26,6 +26,8 @@ class JsonAdapterFovEvents(DatabaseAdapterBase):
         cfg = self.params or {}
         self.image_dir = cfg.get('image_dir', 'EvilEyeData')
         self.base_dir = os.path.join(self.image_dir, 'images')
+        self.event_name = 'FieldOfViewEvent'
+        self.table_name = 'fov_events_json'
 
     def init_impl(self):
         os.makedirs(self.base_dir, exist_ok=True)

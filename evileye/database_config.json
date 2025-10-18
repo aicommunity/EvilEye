@@ -84,6 +84,14 @@
         "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE"
       }
       ,
+      "system_events": {
+        "event_id": "integer PRIMARY KEY",
+        "time_stamp": "timestamp NOT NULL",
+        "event_type": "text NOT NULL",
+        "job_id": "integer REFERENCES jobs (job_id) ON DELETE CASCADE",
+        "project_id": "integer REFERENCES projects (project_id) ON DELETE CASCADE"
+      }
+      ,
       "attribute_events": {
         "event_id": "integer PRIMARY KEY",
         "source_id": "integer",
@@ -126,6 +134,9 @@
     "DatabaseAdapterAttributeEvents": {
       "table_name": "attribute_events",
       "event_name": "AttributeEvent"
+    },
+    "DatabaseAdapterSystemEvents": {
+      "table_name": "system_events"
     }
   }
 }

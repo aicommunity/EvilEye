@@ -71,6 +71,7 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                 os.path.join(base, 'objects_lost.json'),
                 os.path.join(base, 'attribute_events_found.json'),
                 os.path.join(base, 'attribute_events_finished.json'),
+                os.path.join(base, 'system_events.json'),
             ]
             if any(self._check_file_changed(fp) for fp in fps):
                 files_changed = True
@@ -91,6 +92,7 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                 self._read_file(os.path.join(base, 'zone_events_entered.json'), 'zone_entered', d)
                 self._read_file(os.path.join(base, 'zone_events_left.json'), 'zone_left', d)
                 self._read_file(os.path.join(base, 'camera_events.json'), 'cam', d)
+                self._read_file(os.path.join(base, 'system_events.json'), 'sys', d)
             # default sort: ts desc (robust to None)
             self._cache.sort(key=lambda e: (e.get('ts') or ''), reverse=True)
 
@@ -195,6 +197,14 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                     'ts': timestamp,
                     'camera_full_address': item.get('camera_full_address'),
                     'connection_status': item.get('connection_status'),
+                    'date_folder': date_folder,
+                }
+            elif event_type == 'sys':
+                return {
+                    'event_id': f"{date_folder}:{event_type}:{idx}",
+                    'event_type': event_type,
+                    'ts': timestamp,
+                    'system_event': item.get('event_type'),
                     'date_folder': date_folder,
                 }
         except Exception as e:

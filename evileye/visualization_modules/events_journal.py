@@ -13,12 +13,12 @@ try:
     from PyQt6.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
     pyqt_version = 6
 except ImportError:
-    from PyQt5.QtCore import QDate, QDateTime, QPointF, QPolygonF
+    from PyQt5.QtCore import QDate, QDateTime, QPointF
     from PyQt5.QtWidgets import (
         QWidget, QLabel, QVBoxLayout, QHBoxLayout, QPushButton,
         QDateTimeEdit, QHeaderView, QComboBox, QTableView, QStyledItemDelegate, QMessageBox
     )
-    from PyQt5.QtGui import QPixmap, QPainter, QPen, QColor, QBrush
+    from PyQt5.QtGui import QPixmap, QPainter, QPen, QColor, QBrush, QPolygonF
     from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QModelIndex, QSize
     from PyQt5.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
     pyqt_version = 5
