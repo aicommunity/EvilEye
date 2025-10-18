@@ -234,8 +234,6 @@ def deploy() -> None:
             raise typer.Exit(1)
     
     console.print("[green]Deployment completed successfully![/green]")
-    console.print(f"[blue]You can now create configurations with:[/blue]")
-    console.print(f"[yellow]  evileye-create my_config --sources 1[/yellow]")
 
 
 @app.command()
@@ -461,6 +459,130 @@ For more information, see the main README.md file.
             console.print(f"  [green]{video_name}[/green]")
         else:
             console.print(f"  [yellow]{video_name} (not downloaded)[/yellow]")
+
+
+@app.command()
+def create(
+    config_name: str = typer.Argument(None, help="Configuration name"),
+    sources: int = typer.Option(0, "--sources", help="Number of sources"),
+    pipeline: str = typer.Option("PipelineSurveillance", "--pipeline", help="Pipeline class"),
+    source_type: str = typer.Option("video_file", "--source-type", help="Source type"),
+    output_dir: str = typer.Option("configs", "--output-dir", help="Output directory"),
+    force: bool = typer.Option(False, "--force", help="Overwrite existing file"),
+    list_pipelines: bool = typer.Option(False, "--list-pipelines", help="List available pipelines"),
+    detector_model: Optional[str] = typer.Option(None, "--detector-model", help="Detector model path"),
+    tracker_type: Optional[str] = typer.Option(None, "--tracker-type", help="Tracker type"),
+    db_enabled: Optional[bool] = typer.Option(None, "--db/--no-db", help="Enable/disable database"),
+) -> None:
+    """
+    Create new EvilEye configuration file.
+    
+    Examples:
+        evileye create my_config --sources 2
+        evileye create my_config --sources 1 --source-type ip_camera
+        evileye create test --pipeline PipelineSurveillance --sources 3
+        evileye create --list-pipelines
+    """
+    import os
+    import json
+    from pathlib import Path
+    from evileye.controller.controller import Controller
+    
+    # Handle list pipelines
+    if list_pipelines:
+        try:
+            controller_instance = Controller()
+            pipeline_classes = controller_instance.get_available_pipeline_classes()
+            
+            if not pipeline_classes:
+                console.print("[yellow]No pipeline classes found.[/yellow]")
+                return
+            
+            table = Table(title="Available Pipeline Classes")
+            table.add_column("Index", style="cyan")
+            table.add_column("Class Name", style="green")
+            
+            for i, class_name in enumerate(pipeline_classes, 1):
+                table.add_row(str(i), class_name)
+            
+            console.print(table)
+            console.print(f"\n[blue]Total: {len(pipeline_classes)} pipeline class(es)[/blue]")
+            console.print("[blue]Use --pipeline <class_name> to specify a pipeline when creating a configuration.[/blue]")
+            return
+            
+        except Exception as e:
+            console.print(f"[red]Error listing pipeline classes: {e}[/red]")
+            raise typer.Exit(1)
+    
+    # Validate config_name is provided when not listing pipelines
+    if not config_name:
+        console.print("[red]Configuration name is required![/red]")
+        console.print("[yellow]Usage: evileye create <config_name>[/yellow]")
+        console.print("[yellow]Use --help for more information.[/yellow]")
+        raise typer.Exit(1)
+    
+    # Ensure output directory exists
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Determine output file path
+    if not config_name.endswith('.json'):
+        config_name += '.json'
+    
+    output_path = os.path.join(output_dir, config_name)
+    
+    # Check if file already exists
+    if os.path.exists(output_path) and not force:
+        console.print(f"[red]Configuration file '{output_path}' already exists![/red]")
+        console.print("[yellow]Use --force to overwrite or choose a different name.[/yellow]")
+        raise typer.Exit(1)
+    
+    # Build optional parameters
+    detector_params = {}
+    if detector_model:
+        detector_params['model_path'] = detector_model
+    
+    tracker_params = {}
+    if tracker_type:
+        tracker_params['tracker_type'] = tracker_type
+    
+    database_params = {}
+    if db_enabled is not None:
+        # Only pass safe database parameters (no credentials)
+        database_params = {
+            "image_dir": "EvilEyeData",
+            "preview_width": 300,
+            "preview_height": 150
+        }
+    
+    # Create configuration
+    console.print(f"[blue]Creating configuration:[/blue]")
+    console.print(f"   Pipeline: {pipeline}")
+    console.print(f"   Sources: {sources}")
+    console.print(f"   Source type: {source_type}")
+    console.print(f"   Output: {output_path}")
+    
+    try:
+        controller_instance = Controller()
+        config_data = controller_instance.create_config(
+            num_sources=sources,
+            pipeline_class=pipeline,
+            source_type=source_type,
+            detector_params=detector_params if detector_params else None,
+            tracker_params=tracker_params if tracker_params else None,
+            database_params=database_params if database_params else None
+        )
+        
+        # Write configuration to file
+        with open(output_path, 'w') as f:
+            json.dump(config_data, f, indent=4)
+        
+        console.print(f"[green]Configuration created successfully![/green]")
+        console.print(f"   File: {output_path}")
+        console.print(f"   Size: {os.path.getsize(output_path)} bytes")
+        
+    except Exception as e:
+        console.print(f"[red]Error creating configuration: {e}[/red]")
+        raise typer.Exit(1)
 
 
 @app.command()

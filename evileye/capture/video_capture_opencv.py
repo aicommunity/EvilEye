@@ -214,6 +214,25 @@ class VideoCaptureOpencv(VideoCaptureBase):
     def default(self):
         pass
 
+    def get_params_impl(self):
+        """Return capture parameters including OpenCV-specific fields.
+
+        Adds 'apiPreference' to the base parameters to ensure it is persisted in configs.
+        """
+        params = super().get_params_impl()
+        try:
+            # Prefer the explicitly set parameter; default aligns with init_impl default
+            params['apiPreference'] = self.params.get('apiPreference', 'CAP_FFMPEG')
+            # Дополнительно отражаем текущий детектированный FPS источника (если есть)
+            params['source_fps'] = self.source_fps
+            params['loop_play'] = self.loop_play
+            params['split'] = self.split_stream
+            params['num_split'] = self.num_split
+            params['src_coords'] = self.src_coords
+        except Exception:
+            params['apiPreference'] = 'CAP_FFMPEG'
+        return params
+
     def test_disconnect(self):
         with self.conn_mutex:
             timestamp = datetime.datetime.now()

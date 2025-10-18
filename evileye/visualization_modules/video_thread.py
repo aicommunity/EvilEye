@@ -29,8 +29,13 @@ class VideoThread(QThread):
     cols = 0
     # Сигнал, отвечающий за обновление label, в котором отображается изображение из потока
     update_image_signal = pyqtSignal(int, QPixmap)
+    # Сигнал с оригинальным OpenCV изображением для ROI Editor
+    update_original_cv_image_signal = pyqtSignal(int, object)  # object = cv2 image
+    # Сигнал с чистым OpenCV изображением без нарисованных элементов для ROI Editor
+    clean_image_available_signal = pyqtSignal(int, object)  # object = clean cv2 image
     display_zones_signal = pyqtSignal(dict)
     add_zone_signal = pyqtSignal(int, QPixmap)
+    add_roi_signal = pyqtSignal(int, QPixmap)
 
     def __init__(self, source_id, fps, rows, cols, show_debug_info, font_params, text_config=None, class_mapping=None, logger_name: str | None = None, parent_logger: logging.Logger | None = None):
         super().__init__()
@@ -47,6 +52,7 @@ class VideoThread(QThread):
         self.zones = None
         self.show_zones = False
         self.is_add_zone_clicked = False
+        self.is_add_roi_clicked = False
 
         self.run_flag = False
         self.show_debug_info = show_debug_info
@@ -65,6 +71,10 @@ class VideoThread(QThread):
         # Persistent object boxes to bridge short tracker gaps: obj_id -> { 'box': [x1,y1,x2,y2] px, 'ttl': int }
         self.persist_obj_boxes: dict[int, dict] = {}
         self.signal_hold_frames = 10
+        
+        # Thread-safe storage for clean images (before any drawing)
+        self.last_clean_image = None
+        self.clean_image_mutex = QMutex()
 
         # Таймер для задания fps у видеороликов
         self.timer = QTimer()
@@ -120,10 +130,17 @@ class VideoThread(QThread):
                                                       Qt.AspectRatioMode.KeepAspectRatio)
             self.is_add_zone_clicked = False
             self.add_zone_signal.emit(self.thread_num, QPixmap.fromImage(zones_window_image))
+        
+        if self.is_add_roi_clicked:
+            roi_window_image = convert_to_qt.scaled(int(widget_width), int(widget_height),
+                                                    Qt.AspectRatioMode.KeepAspectRatio)
+            self.is_add_roi_clicked = False
+            self.add_roi_signal.emit(self.thread_num, QPixmap.fromImage(roi_window_image))
         # Подгоняем под указанный размер, но сохраняем пропорции
         scaled_image = convert_to_qt.scaled(int(widget_width / VideoThread.cols),
                                             int(widget_height / VideoThread.rows), Qt.AspectRatioMode.KeepAspectRatio)
         return QPixmap.fromImage(scaled_image)
+    
 
     def _draw_signal_overlay(self, image: QPixmap):
         if not self.signal_enabled:
@@ -210,6 +227,11 @@ class VideoThread(QThread):
             # Create a copy of the image for display to avoid modifying the original
             import copy
             display_frame = copy.deepcopy(frame)
+            
+            # Store clean image in thread-safe storage (before any drawing)
+            self.clean_image_mutex.lock()
+            self.last_clean_image = copy.deepcopy(frame.image)
+            self.clean_image_mutex.unlock()
             # Remember original size to normalize pixel bboxes to display size correctly
             try:
                 ih, iw = display_frame.image.shape[:2]
@@ -259,6 +281,7 @@ class VideoThread(QThread):
             if self.show_debug_info:
                 utils.draw_debug_info(display_frame, debug_info)
             qt_image = self.convert_cv_qt(display_frame.image, self.widget_width, self.widget_height)
+            
             if self.show_zones:
                 self.draw_zones(qt_image, self.zones)
             # Draw event signalization overlay last
@@ -267,6 +290,10 @@ class VideoThread(QThread):
             elapsed_seconds = end_it - begin_it
             # Сигнал из потока для обновления label на новое изображение
             self.update_image_signal.emit(self.thread_num, qt_image)
+            # Сигнал с оригинальным OpenCV изображением для ROI Editor (до любых отрисовок)
+            self.update_original_cv_image_signal.emit(self.thread_num, frame.image)
+            # Сигнал с чистым OpenCV изображением без нарисованных элементов для ROI Editor (до любых отрисовок)
+            self.clean_image_available_signal.emit(self.thread_num, frame.image)
             return elapsed_seconds
         except Empty:
             return 0
@@ -295,6 +322,11 @@ class VideoThread(QThread):
     def add_zone_clicked(self, thread_id):
         if self.thread_num == thread_id:
             self.is_add_zone_clicked = True
+    
+    @pyqtSlot(int)
+    def add_roi_clicked(self, thread_id):
+        if self.thread_num == thread_id:
+            self.is_add_roi_clicked = True
 
     @pyqtSlot(bool, tuple)
     def set_signal_params(self, enabled: bool, color_rgb: tuple[int, int, int] = (255, 0, 0)):
@@ -315,3 +347,10 @@ class VideoThread(QThread):
         else:
             if event_name in self.active_events:
                 del self.active_events[event_name]
+    
+    def get_clean_image(self):
+        """Получить чистое изображение (до любых отрисовок) thread-safe способом"""
+        self.clean_image_mutex.lock()
+        clean_image = copy.deepcopy(self.last_clean_image) if self.last_clean_image is not None else None
+        self.clean_image_mutex.unlock()
+        return clean_image

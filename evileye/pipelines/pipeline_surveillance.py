@@ -108,6 +108,12 @@ class PipelineSurveillance(PipelineProcessors):
         detectors_proc.set_params(params)
         detectors_proc.init()
         self._add_processor(detectors_proc)
+        # Сохраняем прямые ссылки на инициализированные детекторы для внешнего доступа
+        try:
+            self.detectors = list(getattr(detectors_proc, 'processors', []))
+            self.logger.info(f"PipelineSurveillance: initialized {len(self.detectors)} detectors")
+        except Exception:
+            self.detectors = []
 
     def _init_trackers(self, params: List[Dict]):
         """Initialize tracker processors for surveillance"""
@@ -226,3 +232,30 @@ class PipelineSurveillance(PipelineProcessors):
 
         self.set_params(**params)
         self.init()
+
+    # === ROI Editor integration helpers ===
+    def get_detectors(self):
+        """Возвращает список инстансов детекторов, если они инициализированы."""
+        try:
+            if hasattr(self, 'detectors') and isinstance(self.detectors, list):
+                return self.detectors
+            # Попробуем получить из внутренних процессоров
+            if hasattr(self, '_processors'):
+                for proc in self._processors:
+                    try:
+                        if getattr(proc, 'processor_name', '') == 'detectors' and hasattr(proc, 'processors'):
+                            return proc.processors
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+        return []
+
+    def get_detector_by_index(self, idx: int):
+        try:
+            dets = self.get_detectors()
+            if 0 <= idx < len(dets):
+                return dets[idx]
+        except Exception:
+            pass
+        return None

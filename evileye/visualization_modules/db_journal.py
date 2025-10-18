@@ -25,6 +25,7 @@ from . import events_journal
 from .journal_adapters.jadapter_fov_events import JournalAdapterFieldOfViewEvents
 from .journal_adapters.jadapter_cam_events import JournalAdapterCamEvents
 from .journal_adapters.jadapter_zone_events import JournalAdapterZoneEvents
+from .journal_adapters.jadapter_system_events import JournalAdapterSystemEvents
 from ..core.logger import get_module_logger
 import logging
 
@@ -102,6 +103,17 @@ class DatabaseJournalWindow(QWidget):
         adapters = [self.cam_events_adapter, self.perimeter_events_adapter, self.zone_events_adapter]
         if self.attr_events_adapter:
             adapters.append(self.attr_events_adapter)
+        # System events (optional)
+        try:
+            self.system_events_adapter = JournalAdapterSystemEvents()
+            if 'DatabaseAdapterSystemEvents' in self.adapter_params:
+                self.system_events_adapter.set_params(**self.adapter_params['DatabaseAdapterSystemEvents'])
+            else:
+                self.system_events_adapter.set_params(**{'table_name': 'system_events'})
+            self.system_events_adapter.init()
+            adapters.append(self.system_events_adapter)
+        except Exception:
+            self.system_events_adapter = None
         
         try:
             events_journal_widget = events_journal.EventsJournal(adapters,

@@ -37,14 +37,36 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
         fields, data, preview_path, frame_path = self._prepare_for_updating(event)
 
         query_type = 'update'
-        data.append(event.event_id)
-        data = tuple(data)
-        update_query = sql.SQL('UPDATE {table} SET {data} WHERE event_id=({selected}) RETURNING box_left, zone_coords').format(
+        # Надёжный поиск последней незавершённой записи события зоны
+        # Ключ: (project_id, job_id, source_id, object_id, zone_coords), сортировка по time_entered DESC
+        project_id = self.db_controller.get_project_id()
+        job_id = self.db_controller.get_job_id()
+        where_query = sql.SQL(
+            'SELECT event_id FROM {table} '
+            'WHERE project_id = %s AND job_id = %s AND source_id = %s AND object_id = %s '
+            'ORDER BY (zone_coords = %s::real[][]) DESC, time_entered DESC NULLS LAST LIMIT 1'
+        ).format(table=sql.Identifier(self.table_name))
+
+        # Параметры WHERE идут после данных SET
+        # Координаты для сравнения в ORDER BY приводим к тому же округлению
+        zone_coords_param = [[round(p[0], 4), round(p[1], 4)] for p in event.zone.get_coords()]
+        data = tuple(data) + (
+            project_id,
+            job_id,
+            event.source_id,
+            event.object_id,
+            zone_coords_param,
+        )
+
+        update_query = sql.SQL(
+            'UPDATE {table} SET {data} WHERE event_id = ({selected}) RETURNING box_left, zone_coords'
+        ).format(
             table=sql.Identifier(self.table_name),
             data=sql.SQL(', ').join(
-                sql.Composed([sql.Identifier(field), sql.SQL(" = "), sql.Placeholder()]) for field in fields),
-            selected=sql.Placeholder(),
-            fields=sql.SQL(",").join(map(sql.Identifier, fields)))
+                sql.Composed([sql.Identifier(field), sql.SQL(' = '), sql.Placeholder()]) for field in fields
+            ),
+            selected=where_query
+        )
         self.queue_in.put((query_type, update_query, data, preview_path, frame_path, event.img_left))
 
     def _execute_query(self):
@@ -63,9 +85,25 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
             if query_string is None:
                 continue
 
-            record = self.db_controller.query(query_string, data)
+            try:
+                record = self.db_controller.query(query_string, data)
+            except Exception as e:
+                self.logger.error(f'DB: ZoneEvents query failed: {e}')
+                continue
+
+            # Безопасные проверки результата RETURNING
+            if not record or not isinstance(record, list) or not record[0] or len(record[0]) < 2:
+                self.logger.warning('DB: ZoneEvents query returned no data; skipping image save')
+                continue
+
             box = record[0][0]
             zone_coords = record[0][1]
+
+            # Проверка на None перед отрисовкой
+            if box is None or zone_coords is None:
+                self.logger.warning('DB: Missing box/zone_coords in RETURNING; skipping image save')
+                continue
+
             self._save_image(preview_path, frame_path, image, box, zone_coords)
 
             if query_type == 'insert':
@@ -114,8 +152,10 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
                              'project_id': self.db_controller.get_project_id(),
                              'job_id': self.db_controller.get_job_id()}
 
+        # Нормализуем координаты зоны, чтобы избежать ошибок сравнения float
         coords = [list(point) for point in event.zone.get_coords()]
-        fields_for_saving['zone_coords'] = coords
+        coords_rounded = [[round(p[0], 4), round(p[1], 4)] for p in coords]
+        fields_for_saving['zone_coords'] = coords_rounded
 
         image_height, image_width, _ = event.img_entered.image.shape
         fields_for_saving['box_entered'] = copy.deepcopy(fields_for_saving['box_entered'])

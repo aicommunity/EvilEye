@@ -30,6 +30,7 @@ except ImportError:
 
 from evileye.controller import controller
 from evileye.visualization_modules.main_window import MainWindow
+from evileye.visualization_modules.unified_launcher import UnifiedLauncherWindow
 from evileye.utils.utils import normalize_config_path
 from evileye.core.logging_config import setup_evileye_logging, log_system_info
 from evileye.core.logger import get_module_logger
@@ -473,9 +474,16 @@ def main():
     app.setApplicationName("EvilEye")
     app.setApplicationVersion("1.0.0")
     
-    logger.info("Creating main GUI window")
-    # Create and show main window
-    window = EvilEyeGUI()
+    # Проверяем аргументы командной строки для выбора лаунчера
+    use_unified_launcher = "--unified" in sys.argv or "-u" in sys.argv
+    
+    if use_unified_launcher:
+        logger.info("Creating unified launcher window")
+        window = UnifiedLauncherWindow()
+    else:
+        logger.info("Creating legacy GUI window")
+        window = EvilEyeGUI()
+    
     window.show()
     logger.info("Main window displayed")
     
