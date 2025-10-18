@@ -1393,8 +1393,10 @@ class Controller:
         check_thread = threading.Thread(target=periodic_check, daemon=True)
         check_thread.start()
     
-    def create_config(self, num_sources: int, pipeline_class: str | None):
-        """Create configuration with specified pipeline class"""
+    def create_config(self, num_sources: int, pipeline_class: str | None, 
+                     source_type: str = 'video_file', detector_params: dict | None = None,
+                     tracker_params: dict | None = None, database_params: dict | None = None):
+        """Create configuration with specified pipeline class and optional parameters"""
         self.init({})
 
         # Create pipeline instance if class name is provided
@@ -1413,11 +1415,58 @@ class Controller:
         if self.pipeline:
             self.pipeline.generate_default_structure(num_sources)
 
+        # Apply source type configuration
+        if num_sources > 0 and hasattr(self.pipeline, 'sources') and self.pipeline.sources:
+            source_type_mapping = {
+                'video_file': {'source': 'video_file', 'camera': 'path/to/video.mp4'},
+                'ip_camera': {'source': 'ip_camera', 'camera': 'rtsp://user:password@ip:port/stream'},
+                'device': {'source': 'device', 'camera': 0}
+            }
+            
+            if source_type in source_type_mapping:
+                source_config = source_type_mapping[source_type]
+                for source in self.pipeline.sources:
+                    if hasattr(source, 'source') and hasattr(source, 'camera'):
+                        source.source = source_config['source']
+                        source.camera = source_config['camera']
+                        self.logger.info(f"Applied source type '{source_type}' to source")
+
+        # Apply detector parameters if provided
+        if detector_params and hasattr(self.pipeline, 'processors'):
+            for processor in self.pipeline.processors:
+                if hasattr(processor, 'get_processors'):
+                    for proc in processor.get_processors():
+                        if hasattr(proc, 'get_name') and 'detector' in proc.get_name().lower():
+                            try:
+                                proc.set_params(**detector_params)
+                                self.logger.info(f"Applied detector parameters: {detector_params}")
+                            except Exception as e:
+                                self.logger.warning(f"Failed to apply detector parameters: {e}")
+
+        # Apply tracker parameters if provided
+        if tracker_params and hasattr(self.pipeline, 'processors'):
+            for processor in self.pipeline.processors:
+                if hasattr(processor, 'get_processors'):
+                    for proc in processor.get_processors():
+                        if hasattr(proc, 'get_name') and 'tracker' in proc.get_name().lower():
+                            try:
+                                proc.set_params(**tracker_params)
+                                self.logger.info(f"Applied tracker parameters: {tracker_params}")
+                            except Exception as e:
+                                self.logger.warning(f"Failed to apply tracker parameters: {e}")
+
         config_data = {}
         self.update_params()
         
         # Get parameters safely, avoiding non-serializable objects
         config_data = self.get_params()
+
+        # Apply database parameters if provided
+        if database_params:
+            if 'database' not in config_data:
+                config_data['database'] = {}
+            config_data['database'].update(database_params)
+            self.logger.info(f"Applied database parameters: {database_params}")
 
         config_data['visualizer'] = {}
         if num_sources and num_sources > 0:

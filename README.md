@@ -59,7 +59,7 @@ evileye list-configs
 evileye run configs/my_config.json
 
 # Create new configuration
-evileye-create my_config --sources 2 --source-type video_file
+evileye create my_config --sources 2 --source-type video_file
 
 # Launch main application with GUI
 evileye-launch
@@ -542,7 +542,7 @@ EvilEye provides several command-line entry points for different operations:
 | `evileye-process` | Direct process launcher with GUI | `evileye-process [OPTIONS]` |
 | `evileye-configure` | Configuration editor GUI | `evileye-configure [CONFIG_FILE]` |
 | `evileye-launch` | Main application launcher GUI | `evileye-launch [CONFIG_FILE]` |
-| `evileye-create` | Configuration file creator | `evileye-create [NAME] [OPTIONS]` |
+| `evileye create` | Configuration file creator | `evileye create [NAME] [OPTIONS]` |
 
 ### Main CLI Commands (`evileye`)
 
@@ -556,7 +556,7 @@ evileye deploy
 evileye deploy-samples
 
 # Create new configuration
-evileye-create my_config --sources 2 --source-type video_file
+evileye create my_config --sources 2 --source-type video_file
 
 # Run with configuration
 evileye run configs/my_config.json
@@ -636,28 +636,28 @@ evileye-launch configs/my_config.json
 - Log display and management
 - Tabbed interface for different functions
 
-### Configuration Creator (`evileye-create`)
+### Configuration Creator (`evileye create`)
 
 Command-line tool for creating new configuration files:
 
 ```bash
 # Create basic configuration
-evileye-create my_config
+evileye create my_config
 
 # Create configuration with specific number of sources
-evileye-create my_config --sources 3
+evileye create my_config --sources 3
 
 # Create configuration with specific source type
-evileye-create my_config --sources 2 --source-type ip_camera
+evileye create my_config --sources 2 --source-type ip_camera
 
 # Create configuration with specific pipeline
-evileye-create my_config --pipeline PipelineSurveillance
+evileye create my_config --pipeline PipelineSurveillance
 
 # List available pipeline classes
-evileye-create --list-pipelines
+evileye create --list-pipelines
 
 # Create configuration in specific directory
-evileye-create /path/to/custom_config
+evileye create /path/to/custom_config
 ```
 
 **Options:**
@@ -687,17 +687,17 @@ The `evileye deploy` command:
 
 **Next Steps After Deploy:**
 1. Edit `credentials.json` with your actual credentials
-2. Create configurations using `evileye-create`
+2. Create configurations using `evileye create`
 3. Run the system with `evileye run`
 
 ### Configuration Management
 
 ```bash
 # List available pipeline classes
-evileye-create --list-pipelines
+evileye create --list-pipelines
 
 # Create configuration with specific pipeline
-evileye-create my_config --sources 2 --pipeline PipelineSurveillance
+evileye create my_config --sources 2 --pipeline PipelineSurveillance
 
 # Available source types:
 # - video_file: Video files (.mp4, .avi, etc.)
@@ -724,7 +724,7 @@ evileye deploy
 #    - Configure database connection
 
 # 3. Create configuration for 2 IP cameras
-evileye-create surveillance_config --sources 2 --source-type ip_camera
+evileye create surveillance_config --sources 2 --source-type ip_camera
 
 # 4. Edit configs/surveillance_config.json with your camera URLs
 #    - Replace "rtsp://url" with actual camera URLs
@@ -763,7 +763,7 @@ evileye-process --config configs/my_config.json --no-gui --autoclose
 **For Configuration Management:**
 ```bash
 # Create new configurations
-evileye-create my_config --sources 3 --source-type ip_camera
+evileye create my_config --sources 3 --source-type ip_camera
 
 # Edit existing configurations
 evileye-configure configs/my_config.json
@@ -837,7 +837,7 @@ Pipeline classes are automatically discovered from:
 
 ```bash
 # List available pipeline classes
-evileye-create --list-pipelines
+evileye create --list-pipelines
 ```
 
 #### Creating Custom Pipelines
