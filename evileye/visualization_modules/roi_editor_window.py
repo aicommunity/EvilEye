@@ -4,7 +4,7 @@ try:
         QGroupBox, QListWidget, QListWidgetItem, QPushButton, QCheckBox, QMessageBox
     )
     from PyQt6.QtGui import QIcon, QAction
-    from PyQt6.QtCore import pyqtSignal, pyqtSlot
+    from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
     pyqt_version = 6
 except ImportError:
     from PyQt5.QtWidgets import (
@@ -12,7 +12,7 @@ except ImportError:
         QGroupBox, QListWidget, QListWidgetItem, QPushButton, QCheckBox, QMessageBox
     )
     from PyQt5.QtGui import QIcon
-    from PyQt5.QtCore import pyqtSignal, pyqtSlot
+    from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt
     pyqt_version = 5
 
 import os
@@ -38,6 +38,10 @@ class ROIEditorWindow(QWidget):
 
         self.setWindowTitle("ROI Editor")
         self.resize(1200, 800)
+        
+        # Устанавливаем флаги для независимого окна
+        self.setWindowFlags(Qt.WindowType.Window)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
 
         self.current_source_id = None
         self.current_detector_index = None
@@ -62,14 +66,14 @@ class ROIEditorWindow(QWidget):
         self.roi_canvas.roi_added.connect(self._on_roi_added)
         self.roi_canvas.roi_removed.connect(self._on_roi_removed)
         self.roi_canvas.roi_updated.connect(self._on_roi_updated)
-        main_layout.addWidget(self.roi_canvas, 2)
+        main_layout.addWidget(self.roi_canvas, 4)
 
         # Правая панель - управление
         right_panel = QVBoxLayout()
 
-        drawing_group = QGroupBox("Drawing Settings")
-        drawing_layout = QFormLayout(drawing_group)
-        right_panel.addWidget(drawing_group)
+        #drawing_group = QGroupBox("Drawing Settings")
+        #drawing_layout = QFormLayout(drawing_group)
+        #right_panel.addWidget(drawing_group)
 
         roi_group = QGroupBox("ROI Controls")
         roi_layout = QVBoxLayout(roi_group)
@@ -78,7 +82,7 @@ class ROIEditorWindow(QWidget):
         roi_layout.addWidget(help_label)
 
         self.roi_list = QListWidget()
-        self.roi_list.setMaximumHeight(220)
+        self.roi_list.setMaximumHeight(120)
         self.roi_list.itemSelectionChanged.connect(self._on_roi_selection_changed)
         roi_layout.addWidget(QLabel("ROI List:"))
         roi_layout.addWidget(self.roi_list)
@@ -217,6 +221,7 @@ class ROIEditorWindow(QWidget):
     def set_rois_from_detector(self, rois_xywh: list):
         """Принять ROI из детектора (формат [x,y,w,h]) и установить в canvas (xyxy)."""
         try:
+            self.logger.info(f"set_rois_from_detector called with {len(rois_xywh)} ROI")
             self.roi_canvas.clear_rois()
             converted = []
             for item in rois_xywh:
@@ -230,17 +235,33 @@ class ROIEditorWindow(QWidget):
                     converted.append([x, y, x2, y2])
             # Установим напрямую в roi_data и отрисуем
             self.roi_canvas.roi_data = [{"coords": coords, "color": (255, 0, 0)} for coords in converted]
+            self.logger.info(f"Set roi_data with {len(self.roi_canvas.roi_data)} entries")
             setattr(self.roi_canvas, '_loading_from_config', True)
-            for entry in self.roi_canvas.roi_data:
-                self.roi_canvas.add_roi_direct(entry["coords"], entry.get("color", (255, 0, 0)))
+            for i, entry in enumerate(self.roi_canvas.roi_data):
+                self.logger.info(f"Adding ROI {i+1}/{len(self.roi_canvas.roi_data)}: {entry['coords']}")
+                # Временно отключаем обновление сцены для каждого ROI
+                roi_item = self.roi_canvas._create_roi_item(entry["coords"], entry.get("color", (255, 0, 0)))
+                if roi_item:
+                    self.roi_canvas.rois.append(roi_item)
+                self.logger.info(f"ROI {i+1} added successfully")
             setattr(self.roi_canvas, '_loading_from_config', False)
-            # Перерисуем сцену из roi_data, чтобы обеспечить синхронизацию элементов с данными
-            self.roi_canvas.draw_scene()
+            # Обновляем сцену один раз в конце
+            self.roi_canvas.scene.update()
+            self.logger.info("Finished adding ROI to canvas")
+            # Обновляем список ROI и перерисовываем сцену
             self._update_roi_list()
+            self.logger.info("Updated ROI list")
+            # Принудительно обновляем canvas
             self.roi_canvas.scene.update()
             self.roi_canvas.update()
+            self.roi_canvas.repaint()
+            self.logger.info("Updated canvas scene")
             if self.roi_canvas.roi_data:
                 self.roi_canvas.ensure_rois_visible()
+                self.logger.info("Ensured ROI visibility")
+            # Принудительно обновляем все окно
+            self.update()
+            self.repaint()
             # Сохраняем снимок исходного состояния для корректной проверки изменений
             try:
                 self.saved_rois_data = [entry.get("coords", []) for entry in (self.roi_canvas.get_rois() or [])]

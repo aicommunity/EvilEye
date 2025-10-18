@@ -317,13 +317,26 @@ class ROIGraphicsView(QGraphicsView):
         return None
 
     def add_roi_direct(self, coords: List[int], color: Tuple[int, int, int] = (255, 0, 0)):
-        roi_item = self._create_roi_item(coords, color)
-        if roi_item:
-            self.rois.append(roi_item)
-            self.scene.update()
-            self.roi_added.emit(coords)
-            return roi_item
-        return None
+        try:
+            roi_item = self._create_roi_item(coords, color)
+            if roi_item:
+                self.rois.append(roi_item)
+                # Добавляем в roi_data только если это не загрузка из конфига
+                if not hasattr(self, '_loading_from_config') or not self._loading_from_config:
+                    self.roi_data.append({"coords": coords, "color": color})
+                # Безопасное обновление сцены
+                try:
+                    self.scene.update()
+                except Exception as e:
+                    self.logger.error(f"Error updating scene: {e}")
+                # Испускаем сигнал для обновления списка (только если это не загрузка из конфига)
+                if not hasattr(self, '_loading_from_config') or not self._loading_from_config:
+                    self.roi_added.emit(coords)
+                return roi_item
+            return None
+        except Exception as e:
+            self.logger.error(f"Error in add_roi_direct: {e}")
+            return None
 
     def remove_roi(self, index: int):
         if 0 <= index < len(self.rois):
@@ -377,9 +390,13 @@ class ROIGraphicsView(QGraphicsView):
                 pen = QPen(QColor(*color), pen_width) if isinstance(color, tuple) and len(color) == 3 else QPen(Qt.GlobalColor.red, pen_width)
                 roi_area = rect.width() * rect.height()
                 z_value = 1000 - int(roi_area / 1000)
-                rect_item = self.scene.addRect(rect, pen)
-                rect_item.setZValue(z_value)
-                return rect_item
+                try:
+                    rect_item = self.scene.addRect(rect, pen)
+                    rect_item.setZValue(z_value)
+                    return rect_item
+                except Exception as e:
+                    self.logger.error(f"Error creating ROI item: {e}")
+                    return None
         return None
 
     def _get_scaled_pen_width(self, base_width=None):

@@ -1179,10 +1179,23 @@ class MainWindow(QMainWindow):
 
             # Контекст окна
             self.roi_editor_window.set_context(source_id, detector_index if detector_index is not None else -1)
+            self.logger.info("Setting ROI editor window visible")
+            # Убираем родительское окно для независимого отображения
+            self.roi_editor_window.setParent(None)
+            # Устанавливаем как независимое окно
+            self.roi_editor_window.setWindowFlags(self.roi_editor_window.windowFlags() | Qt.WindowType.Window)
+            # Принудительно устанавливаем размер и позицию
+            self.roi_editor_window.resize(1200, 800)
+            self.roi_editor_window.move(100, 100)
             self.roi_editor_window.setVisible(True)
             self.roi_editor_window.raise_()
             self.roi_editor_window.activateWindow()
+            # Принудительно обновляем окно
+            self.roi_editor_window.update()
+            self.roi_editor_window.repaint()
+            self.logger.info("ROI editor window activated")
             self.roi_editor_window.set_cv_image(source_id, clean_cv_image)
+            self.logger.info("CV image set in ROI editor")
 
             # ROI читаем только из живого детектора
             try:
@@ -1197,8 +1210,24 @@ class MainWindow(QMainWindow):
             for r in rois_xywh or []:
                 if isinstance(r, (list, tuple)) and len(r) == 4:
                     norm.append([int(r[0]), int(r[1]), int(r[2]), int(r[3])])
+            self.logger.info(f"Setting {len(norm)} ROI from detector")
             self.roi_editor_window.set_rois_from_detector(norm)
+            self.logger.info("ROI set successfully")
             self.current_roi_source_id = source_id
+            self.logger.info("ROI Editor window setup completed")
+            # Проверяем, что окно действительно видимо
+            if self.roi_editor_window.isVisible():
+                self.logger.info("ROI Editor window is visible")
+                # Принудительно показываем окно
+                self.roi_editor_window.show()
+                self.roi_editor_window.raise_()
+                self.roi_editor_window.activateWindow()
+            else:
+                self.logger.warning("ROI Editor window is not visible")
+                # Пытаемся принудительно показать
+                self.roi_editor_window.show()
+                self.roi_editor_window.raise_()
+                self.roi_editor_window.activateWindow()
         except Exception as e:
             self.logger.error(f"Error opening ROI Editor window: {e}")
 
