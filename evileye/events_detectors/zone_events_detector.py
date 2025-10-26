@@ -89,7 +89,9 @@ class ZoneEventsDetector(EventsDetector):
                             if hist_obj.object_id not in self.obj_ids_zone:
                                 self.obj_ids_zone[hist_obj.object_id] = {}
                             self.obj_ids_zone[hist_obj.object_id][zone_id] = cur_zone
-                            event = ZoneEvent(hist_obj.time_stamp, 'Alarm', hist_obj, cur_zone)
+                            # Передаём текущий объект (с актуальным изображением),
+                            # а метку времени берём из истории попадания в зону
+                            event = ZoneEvent(hist_obj.time_stamp, 'Alarm', obj, cur_zone)
                             self.zone_id_people[zone_id] += 1
                             # print(f'New event: {obj.last_image.frame_id}, Event: {event}')
                             events.append(event)
@@ -109,7 +111,9 @@ class ZoneEventsDetector(EventsDetector):
                                 if return_idx != -1:
                                     self.entered_frame_id[source_id][obj.object_id][zone_id] = obj.history[return_idx].frame_id
                                 continue
-                            event = ZoneEvent(hist_obj.time_stamp, 'Alarm', hist_obj, zone, is_finished=True)
+                            # Передаём текущий объект (с актуальным изображением),
+                            # а метку времени выхода берём из истории
+                            event = ZoneEvent(hist_obj.time_stamp, 'Alarm', obj, zone, is_finished=True)
                             if obj.object_id not in self.left_frame_id[source_id]:
                                 self.left_frame_id[source_id][obj.object_id] = {}
                             self.left_frame_id[source_id][obj.object_id][zone_id] = hist_obj.frame_id

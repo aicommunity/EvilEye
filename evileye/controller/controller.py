@@ -3,6 +3,8 @@ import os
 import importlib
 import inspect
 from pathlib import Path
+from time import sleep
+
 from evileye.capture import video_capture_opencv
 from evileye.object_detector import object_detection_yolo
 from evileye.object_tracker import object_tracking_botsort
@@ -15,12 +17,23 @@ from evileye.database_controller.db_adapter_objects import DatabaseAdapterObject
 from evileye.database_controller.db_adapter_cam_events import DatabaseAdapterCamEvents
 from evileye.database_controller.db_adapter_fov_events import DatabaseAdapterFieldOfViewEvents
 from evileye.database_controller.db_adapter_zone_events import DatabaseAdapterZoneEvents
+from evileye.database_controller.db_adapter_system_events import DatabaseAdapterSystemEvents
+from evileye.database_controller.db_adapter_attribute_events import DatabaseAdapterAttributeEvents
+from evileye.database_controller.json_adapter_attribute_events import JsonAdapterAttributeEvents
+from evileye.database_controller.json_adapter_fov_events import JsonAdapterFovEvents
+from evileye.database_controller.json_adapter_zone_events import JsonAdapterZoneEvents
+from evileye.database_controller.json_adapter_cam_events import JsonAdapterCamEvents
+from evileye.database_controller.json_adapter_attribute_events import JsonAdapterAttributeEvents
+from evileye.database_controller.json_adapter_system_events import JsonAdapterSystemEvents
 from evileye.events_control.events_processor import EventsProcessor
 from evileye.database_controller.database_controller_pg import DatabaseControllerPg
 from evileye.events_control.events_controller import EventsDetectorsController
 from evileye.events_detectors.cam_events_detector import CamEventsDetector
 from evileye.events_detectors.fov_events_detector import FieldOfViewEventsDetector
 from evileye.events_detectors.zone_events_detector import ZoneEventsDetector
+from evileye.events_detectors.attribute_events_detector import AttributeEventsDetector
+from evileye.events_detectors.event_system import SystemEvent
+from evileye.events_detectors.system_events_detector import SystemEventsDetector
 import json
 import datetime
 import pprint
@@ -47,7 +60,10 @@ class Controller:
         # self.application = application
         self.control_thread = threading.Thread(target=self.run)
         self.params = None
+        self.loaded_config = dict()
         self.credentials = dict()
+        self.credentials_loaded = False
+        self.params_path = None
         self.database_config = dict()
         self.source_id_name_table = dict()
         self.source_video_duration = dict()
@@ -68,18 +84,24 @@ class Controller:
         self.show_memory_usage = False
         self.auto_restart = True
         self.use_database = True  # Default to True for backward compatibility
+        # Timeout for late model loading/class mapping propagation (seconds)
+        self.model_loading_timeout_sec = 60
 
         self.events_detectors_controller = None
         self.events_processor = None
         self.cam_events_detector = None
         self.fov_events_detector = None
         self.zone_events_detector = None
+        self.attr_events_detector = None
+        self.system_events_detector = None
 
         self.db_controller = None
         self.db_adapter_obj = None
         self.db_adapter_cam_events = None
         self.db_adapter_fov_events = None
         self.db_adapter_zone_events = None
+        self.db_adapter_attr_events = None
+        self.db_adapter_system_events = None
         
         # Initialize centralized class manager
         self.class_manager = ClassManager()
@@ -181,9 +203,18 @@ class Controller:
 
         self.stream_pipeline_id = os.getenv('EVILEYE_PIPELINE_ID', 'default')
         self.logger.info(f"Controller initialized with stream pipeline id: {self.stream_pipeline_id}")
+    
+        def get_fps(self) -> int:
+        return self.fps
 
     def get_params(self):
         return self.params
+
+    def system_event(self, type: str, message: str):
+        if self.system_events_detector:
+            self.system_events_detector.emit_message(type, message)
+
+        self.logger.info(f"System message [{type}]: {message}")
 
     def add_pipeline(self, pipeline_type):
         pass
@@ -202,6 +233,9 @@ class Controller:
 
     def run(self):
         self.logger.info(f"Controller main loop started, stream_pipeline_id: {self.stream_pipeline_id}")
+        # Emit system started via detector (unified path)
+        if self.system_events_detector:
+            self.system_events_detector.emit_started()
         while self.run_flag:
             begin_it = timer()
             # Process pipeline: sources -> preprocessors -> detectors -> trackers -> mc_trackers
@@ -216,8 +250,12 @@ class Controller:
             self.logger.debug(f"Final results name: {final_results_name}")
             mc_tracking_results = pipeline_results.get(final_results_name, [])
             self.logger.debug(f"MC tracking results count: {len(mc_tracking_results)}")
+            if self.pipeline is not None and pipeline_results is not None:
+                mc_tracking_results = pipeline_results.get(self.pipeline.get_final_results_name(), [])
+            else:
+                mc_tracking_results = []
 
-            # Insert debug info from pipeline components
+                # Insert debug info from pipeline components
             self.pipeline.insert_debug_info_by_id(self.debug_info)
 
             if self.autoclose and all_sources_finished:
@@ -314,6 +352,10 @@ class Controller:
             #       f"read=[{complete_read_objects_it-complete_processing_it}], vis[{end_it-complete_read_objects_it}] = {end_it-begin_it} secs, sleep {sleep_seconds} secs")
             time.sleep(sleep_seconds)
 
+        if self.system_events_detector:
+            self.system_events_detector.emit_stopped()
+            time.sleep(0.2)
+
     def start(self):
         # Start pipeline components
         self.pipeline.start()
@@ -331,6 +373,10 @@ class Controller:
                 self.db_adapter_zone_events.start()
                 self.db_adapter_fov_events.start()
                 self.db_adapter_cam_events.start()
+                if self.db_adapter_attr_events:
+                    self.db_adapter_attr_events.start()
+                if self.db_adapter_system_events:
+                    self.db_adapter_system_events.start()
             except Exception as e:
                 self.logger.warning(f"Database connection error at startup. Disabling database functionality. Reason: {e}")
                 self.use_database = False
@@ -339,8 +385,13 @@ class Controller:
         self.zone_events_detector.start()
         self.cam_events_detector.start()
         self.fov_events_detector.start()
+        if self.attr_events_detector:
+            self.attr_events_detector.start()
+        if self.system_events_detector:
+            self.system_events_detector.start()
         self.events_detectors_controller.start()
         self.events_processor.start()
+
         self.run_flag = True
         self.logger.info(f"Starting control thread for stream_pipeline_id: {self.stream_pipeline_id}")
         self.control_thread.start()
@@ -348,23 +399,38 @@ class Controller:
 
     def stop(self):
         # self._save_video_duration()
+
         self.run_flag = False
         if self.control_thread.is_alive():
             self.control_thread.join()
-        self.events_processor.stop()
-        self.events_detectors_controller.stop()
-        self.cam_events_detector.stop()
-        self.fov_events_detector.stop()
-        self.zone_events_detector.stop()
         if self.visualizer:
             self.visualizer.stop()
         self.obj_handler.stop()
-        
+
+        self.cam_events_detector.stop()
+        self.fov_events_detector.stop()
+        self.zone_events_detector.stop()
+        if self.attr_events_detector:
+            self.attr_events_detector.stop()
+        if self.system_events_detector:
+            self.system_events_detector.stop()
+        # Flush events controller once before stopping and forward to processor
+        self.events_detectors_controller.flush_once()
+        events = self.events_detectors_controller.get()
+        if events:
+            self.events_processor.put(events)
+        self.events_detectors_controller.stop()
+        self.events_processor.stop()
+
         # Stop database components only if database is enabled
         if self.use_database and self.db_controller:
             self.db_adapter_cam_events.stop()
             self.db_adapter_fov_events.stop()
             self.db_adapter_zone_events.stop()
+            if self.db_adapter_attr_events:
+                self.db_adapter_attr_events.stop()
+            if self.db_adapter_system_events:
+                self.db_adapter_system_events.stop()
             self.db_adapter_obj.stop()
             self.db_controller.disconnect()
         
@@ -374,6 +440,12 @@ class Controller:
 
     def init(self, params):
         self.params = params
+        # Сохраняем исходный конфиг для правил частичного сохранения
+        try:
+            import copy as _copy
+            self.loaded_config = _copy.deepcopy(params) if isinstance(params, dict) else dict()
+        except Exception:
+            self.loaded_config = dict()
 
         if 'controller' in self.params.keys():
             self.autoclose = self.params['controller'].get("autoclose", self.autoclose)
@@ -393,6 +465,8 @@ class Controller:
             else:
                 # Keep default class_mapping if neither is specified
                 pass
+            # Optional: override late model loading timeout
+            self.model_loading_timeout_sec = self.params['controller'].get("model_loading_timeout_sec", self.model_loading_timeout_sec)
             self.memory_periodic_check_sec = self.params['controller'].get("memory_periodic_check_sec", self.memory_periodic_check_sec)
             self.show_memory_usage = self.params['controller'].get("show_memory_usage", self.show_memory_usage)
             self.max_memory_usage_mb = self.params['controller'].get("max_memory_usage_mb", self.max_memory_usage_mb)
@@ -402,8 +476,9 @@ class Controller:
         try:
             with open("credentials.json") as creds_file:
                 self.credentials = json.load(creds_file)
+                self.credentials_loaded = True
         except FileNotFoundError as ex:
-            pass
+            self.credentials_loaded = False
 
         # Initialize processing pipeline (sources, preprocessors, detectors, trackers)
         pipeline_params = self.params.get("pipeline", {})
@@ -426,6 +501,25 @@ class Controller:
         self.pipeline.set_params(**pipeline_params)
         self.pipeline.init()
         
+        # Preload controller's class mapping into centralized ClassManager
+        # This allows detectors to convert class names to IDs immediately if provided
+        try:
+            if self.class_mapping:
+                self.class_manager.add_class_mapping(self.class_mapping, 'controller_default')
+        except Exception:
+            pass
+
+        # Set ClassManager for all detectors ASAP (before class mapping update)
+        try:
+            if hasattr(self.pipeline, 'processors'):
+                for processor in self.pipeline.processors:
+                    if hasattr(processor, 'get_processors'):
+                        for proc in processor.get_processors():
+                            if hasattr(proc, 'set_class_manager'):
+                                proc.set_class_manager(self.class_manager)
+        except Exception:
+            pass
+
         # Update class_mapping from detectors after pipeline initialization
         self.update_class_mapping_from_detectors()
 
@@ -485,7 +579,7 @@ class Controller:
             try:
                 self._init_db_controller(self.database_config['database'], system_params=self.params)
                 self._init_db_adapters(self.database_config['database_adapters'])
-                self._init_object_handler(self.db_controller, params.get('objects_handler', dict()))
+                self._init_object_handler(self.db_controller, params.get('objects_handler') or dict())
                 self._init_events_detectors(self.params.get('events_detectors', dict()))
                 self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
                 self._init_events_processor(self.params.get('events_processor', dict()))
@@ -495,14 +589,14 @@ class Controller:
                 self.use_database = False
                 self.db_controller = None
                 self.database_config = {"database": {}, "database_adapters": {}}
-                self._init_object_handler_without_db(params.get('objects_handler', dict()))
+                self._init_object_handler_without_db(params.get('objects_handler') or dict())
                 self._init_events_detectors_without_db(self.params.get('events_detectors', dict()))
                 self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
                 self._init_events_processor_without_db(self.params.get('events_processor', dict()))
         else:
             self.logger.info("Database functionality disabled. Working without database connection.")
             # Initialize minimal components for operation without database
-            self._init_object_handler_without_db(params.get('objects_handler', dict()))
+            self._init_object_handler_without_db(params.get('objects_handler') or dict())
             self._init_events_detectors_without_db(self.params.get('events_detectors', dict()))
             self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
             self._init_events_processor_without_db(self.params.get('events_processor', dict()))
@@ -511,7 +605,7 @@ class Controller:
         self.main_window = main_window
         self.pyqt_slots = pyqt_slots
         self.pyqt_signals = pyqt_signals
-        self._init_visualizer(self.params['visualizer'])
+        self._init_visualizer(self.params.get('visualizer', dict()))
 
     def release(self):
         self.stop()
@@ -527,7 +621,14 @@ class Controller:
         self.params['controller']["gui_enabled"] = self.gui_enabled
         self.params['controller']["show_journal"] = self.show_journal
         self.params['controller']["enable_close_from_gui"] = self.enable_close_from_gui
-        self.params['controller']["class_mapping"] = self.class_mapping
+        # Сохраняем class_mapping только если он присутствовал в исходной конфигурации
+        try:
+            orig_ctrl = (self.loaded_config or {}).get('controller', {})
+            had_class_mapping = isinstance(orig_ctrl, dict) and (('class_mapping' in orig_ctrl) or ('class_names' in orig_ctrl))
+        except Exception:
+            had_class_mapping = True
+        if had_class_mapping:
+            self.params['controller']["class_mapping"] = self.class_mapping
         self.params['controller']["memory_periodic_check_sec"] = self.memory_periodic_check_sec
         self.params['controller']["show_memory_usage"] = self.show_memory_usage
 
@@ -539,12 +640,41 @@ class Controller:
         pipeline_params = self.pipeline.get_params()
         self.params['pipeline'] = pipeline_params
 
-        self.params['objects_handler'] = self.obj_handler.get_params()
+        # Очистка корня параметров от секций пайплайна (не дублируем их вне 'pipeline')
+        try:
+            pipeline_section_names = [
+                'sources', 'preprocessors', 'detectors', 'trackers', 'mc_trackers',
+                'attributes_roi', 'attributes_classifier'
+            ]
+            for key in pipeline_section_names:
+                if key in self.params:
+                    try:
+                        del self.params[key]
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        # Collect objects_handler params with safe fallback to existing/loaded config
+        try:
+            if self.obj_handler:
+                oh_params = self.obj_handler.get_params()
+            else:
+                oh_params = None
+        except Exception:
+            oh_params = None
+        if not isinstance(oh_params, dict) or not oh_params:
+            # Fallback to previously stored or originally loaded config
+            oh_params = (self.params.get('objects_handler') if isinstance(self.params, dict) else None) or \
+                        ((self.loaded_config or {}).get('objects_handler') if isinstance(self.loaded_config, dict) else None) or {}
+        self.params['objects_handler'] = oh_params
 
         self.params['events_detectors'] = dict()
         self.params['events_detectors']['CamEventsDetector'] = self.cam_events_detector.get_params()
         self.params['events_detectors']['FieldOfViewEventsDetector'] = self.fov_events_detector.get_params()
         self.params['events_detectors']['ZoneEventsDetector'] = self.zone_events_detector.get_params()
+        if self.attr_events_detector:
+            self.params['events_detectors']['AttributeEventsDetector'] = self.attr_events_detector.get_params()
 
         self.params['events_processor'] = self.events_processor.get_params()
         
@@ -565,13 +695,246 @@ class Controller:
             # Set empty database config when database is disabled
             self.params['database'] = {}
 
-        if self.visualizer:
-            self.params['visualizer'] = self.visualizer.get_params()
-        else:
-            self.params['visualizer'] = dict()
+        # Collect visualizer params with safe fallback
+        vis_params = None
+        try:
+            if self.visualizer:
+                vis_params = self.visualizer.get_params()
+        except Exception:
+            vis_params = None
+        if not isinstance(vis_params, dict) or not vis_params:
+            vis_params = (self.params.get('visualizer') if isinstance(self.params, dict) else None) or \
+                         ((self.loaded_config or {}).get('visualizer') if isinstance(self.loaded_config, dict) else None) or {}
+        self.params['visualizer'] = vis_params
 
         # Text configuration is now part of visualizer section
         # No need to add separate text_config here
+
+        # Дополнительная защита: сразу после обновления параметров удаляем чувствительные поля,
+        # model_class_mapping и ограничиваем секцию database ключами исходной конфигурации
+        try:
+            self._reconcile_credentials_fields(self.params, self.loaded_config, self.credentials_loaded)
+        except Exception:
+            pass
+        try:
+            self._filter_model_class_mapping(self.params, self.loaded_config)
+        except Exception:
+            pass
+        try:
+            if isinstance(self.loaded_config, dict) and self.loaded_config:
+                self._restrict_database_keys(self.params, self.loaded_config)
+        except Exception:
+            pass
+
+    def _atomic_json_dump(self, path: str, data: dict) -> bool:
+        try:
+            if not path:
+                self.logger.error("No config file path specified for saving")
+                return False
+            import tempfile
+            dir_name = os.path.dirname(path) or "."
+            with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, dir=dir_name, prefix=".tmp_") as tf:
+                json.dump(data, tf, indent=4, ensure_ascii=False)
+                temp_path = tf.name
+            os.replace(temp_path, path)
+            return True
+        except Exception as e:
+            try:
+                self.logger.error(f"Failed to save configuration atomically: {e}")
+            except Exception:
+                pass
+            return False
+
+    def _restrict_database_keys(self, params: dict, loaded_config: dict) -> None:
+        try:
+            orig_db = (loaded_config or {}).get('database', {}) or {}
+            if not isinstance(orig_db, dict):
+                return
+            current_db = params.get('database', {}) or {}
+            if not isinstance(current_db, dict):
+                params['database'] = {}
+                return
+            allowed_keys = set(orig_db.keys())
+            params['database'] = {k: current_db[k] for k in current_db.keys() if k in allowed_keys}
+        except Exception:
+            # В случае ошибки не модифицируем секцию
+            pass
+
+    def _reconcile_credentials_fields(self, params: dict, loaded_config: dict, credentials_loaded: bool) -> None:
+        try:
+            pipeline = params.get('pipeline', {}) if isinstance(params, dict) else {}
+            sources = pipeline.get('sources', []) if isinstance(pipeline, dict) else []
+            if not isinstance(sources, list) or not sources:
+                return
+
+            try:
+                orig_pipeline = (loaded_config or {}).get('pipeline', {})
+                orig_sources = orig_pipeline.get('sources', []) if isinstance(orig_pipeline, dict) else []
+            except Exception:
+                orig_sources = []
+
+            CRED_KEYS = {
+                'user_name', 'username', 'password', 'pwd', 'login', 'token',
+                'rtsp_user', 'rtsp_password', 'auth', 'api_key', 'camera_login', 'camera_password'
+            }
+
+            def _strip_userinfo_from_url(url: str) -> str:
+                try:
+                    from urllib.parse import urlsplit, urlunsplit
+                    parts = urlsplit(url)
+                    netloc = parts.netloc
+                    if '@' in netloc:
+                        # remove userinfo
+                        hostport = netloc.split('@', 1)[1]
+                        new_parts = (parts.scheme, hostport, parts.path, parts.query, parts.fragment)
+                        return urlunsplit(new_parts)
+                    return url
+                except Exception:
+                    return url
+
+            def _has_userinfo(url: str) -> bool:
+                try:
+                    from urllib.parse import urlsplit
+                    parts = urlsplit(url)
+                    return ('@' in parts.netloc)
+                except Exception:
+                    return ('@' in (url or ''))
+
+            for idx, src in enumerate(sources):
+                if not isinstance(src, dict):
+                    continue
+                orig_src = orig_sources[idx] if idx < len(orig_sources) and isinstance(orig_sources[idx], dict) else {}
+                orig_cred_keys = {k for k in (orig_src.keys() if isinstance(orig_src, dict) else []) if k in CRED_KEYS}
+                keys_to_remove = set()
+                for k in list(src.keys()):
+                    if k in CRED_KEYS and k not in orig_cred_keys:
+                        keys_to_remove.add(k)
+                for k in keys_to_remove:
+                    try:
+                        del src[k]
+                    except Exception:
+                        pass
+
+                # Additionally: handle embedded credentials in camera URL
+                try:
+                    cam_now = src.get('camera')
+                    cam_orig = orig_src.get('camera') if isinstance(orig_src, dict) else None
+                    if isinstance(cam_now, str):
+                        # If original didn't have userinfo in URL, strip userinfo from current
+                        if not isinstance(cam_orig, str) or not _has_userinfo(cam_orig):
+                            src['camera'] = _strip_userinfo_from_url(cam_now)
+                        else:
+                            # original had userinfo -> keep presence allowed; do not alter
+                            pass
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def _ensure_api_preference(self, params: dict, loaded_config: dict) -> None:
+        try:
+            pipeline = params.get('pipeline', {}) if isinstance(params, dict) else {}
+            sources = pipeline.get('sources', []) if isinstance(pipeline, dict) else []
+            if not isinstance(sources, list) or not sources:
+                return
+            try:
+                orig_pipeline = (loaded_config or {}).get('pipeline', {})
+                orig_sources = orig_pipeline.get('sources', []) if isinstance(orig_pipeline, dict) else []
+            except Exception:
+                orig_sources = []
+            for idx, src in enumerate(sources):
+                if not isinstance(src, dict):
+                    continue
+                orig_src = orig_sources[idx] if idx < len(orig_sources) and isinstance(orig_sources[idx], dict) else {}
+                if isinstance(orig_src, dict) and ('apiPreference' in orig_src):
+                    src['apiPreference'] = orig_src.get('apiPreference')
+        except Exception:
+            pass
+
+    def _filter_model_class_mapping(self, params: dict, loaded_config: dict) -> None:
+        try:
+            pipeline = params.get('pipeline', {}) if isinstance(params, dict) else {}
+            detectors = pipeline.get('detectors', []) if isinstance(pipeline, dict) else []
+            if not isinstance(detectors, list) or not detectors:
+                return
+            try:
+                orig_pipeline = (loaded_config or {}).get('pipeline', {})
+                orig_detectors = orig_pipeline.get('detectors', []) if isinstance(orig_pipeline, dict) else []
+            except Exception:
+                orig_detectors = []
+            for idx, det in enumerate(detectors):
+                if not isinstance(det, dict):
+                    continue
+                orig_det = orig_detectors[idx] if idx < len(orig_detectors) and isinstance(orig_detectors[idx], dict) else {}
+                if 'model_class_mapping' in det and ('model_class_mapping' not in orig_det):
+                    try:
+                        del det['model_class_mapping']
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    def save_config(self, file_path: str | None = None) -> bool:
+        try:
+            self.update_params()
+        except Exception:
+            pass
+
+        try:
+            import copy as _copy
+            final_params = _copy.deepcopy(self.params) if isinstance(self.params, dict) else {}
+        except Exception:
+            final_params = self.params if isinstance(self.params, dict) else {}
+
+        try:
+            self._reconcile_credentials_fields(final_params, self.loaded_config, self.credentials_loaded)
+        except Exception:
+            pass
+
+        try:
+            if isinstance(self.loaded_config, dict) and self.loaded_config:
+                self._restrict_database_keys(final_params, self.loaded_config)
+        except Exception:
+            pass
+
+        # Отфильтровать model_class_mapping перед записью
+        try:
+            self._filter_model_class_mapping(final_params, self.loaded_config)
+        except Exception:
+            pass
+
+        # Финальная защита: убрать любые секции пайплайна с корня перед записью
+        try:
+            pipe_keys = [
+                'sources', 'preprocessors', 'detectors', 'trackers', 'mc_trackers',
+                'attributes_roi', 'attributes_classifier'
+            ]
+            for k in pipe_keys:
+                if k in final_params:
+                    try:
+                        del final_params[k]
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        path = file_path or getattr(self, 'params_path', None)
+        ok = self._atomic_json_dump(path, final_params)
+        if ok:
+            try:
+                self.logger.info(f"Configuration saved by controller to: {path}")
+            except Exception:
+                pass
+
+        if ok and self.use_database and hasattr(self, 'db_controller') and self.db_controller:
+            try:
+                self.db_controller.save_job_configuration_info(final_params)
+            except Exception as e:
+                try:
+                    self.logger.warning(f"Failed to update job config in DB: {e}")
+                except Exception:
+                    pass
+        return ok
 
     def set_current_main_widget_size(self, width, height):
         self.current_main_widget_size = [width, height]
@@ -579,7 +942,8 @@ class Controller:
 
     def _init_object_handler(self, db_controller, params):
         self.obj_handler = objects_handler.ObjectsHandler(db_controller=db_controller, db_adapter=self.db_adapter_obj)
-        self.obj_handler.set_params(**params)
+        safe_params = params or {}
+        self.obj_handler.set_params(**safe_params)
         # Set class manager for ObjectsHandler
         if hasattr(self.obj_handler, 'class_manager'):
             self.obj_handler.class_manager = self.class_manager
@@ -606,7 +970,8 @@ class Controller:
                 # Set cameras params in obj_handler
                 self.obj_handler.cameras_params = cameras_params
         
-        self.obj_handler.set_params(**params)
+        safe_params = params or {}
+        self.obj_handler.set_params(**safe_params)
         # Set class manager for ObjectsHandler
         if hasattr(self.obj_handler, 'class_manager'):
             self.obj_handler.class_manager = self.class_manager
@@ -634,6 +999,14 @@ class Controller:
         self.db_adapter_zone_events.set_params(**params['DatabaseAdapterZoneEvents'])
         self.db_adapter_zone_events.init()
 
+        self.db_adapter_attr_events = DatabaseAdapterAttributeEvents(self.db_controller)
+        self.db_adapter_attr_events.set_params(**params['DatabaseAdapterAttributeEvents'])
+        self.db_adapter_attr_events.init()
+
+        self.db_adapter_system_events = DatabaseAdapterSystemEvents(self.db_controller)
+        self.db_adapter_system_events.set_params(**params['DatabaseAdapterSystemEvents'])
+        self.db_adapter_system_events.init()
+
     def _init_events_detectors(self, params):
         self.cam_events_detector = CamEventsDetector(self.pipeline.get_sources())
         self.cam_events_detector.set_params(**params.get('CamEventsDetector', dict()))
@@ -647,7 +1020,17 @@ class Controller:
         self.zone_events_detector.set_params(**params.get('ZoneEventsDetector', dict()))
         self.zone_events_detector.init()
 
-        self.obj_handler.subscribe(self.fov_events_detector, self.zone_events_detector)
+        # Initialize AttributeEventsDetector
+        self.attr_events_detector = AttributeEventsDetector(self.obj_handler)
+        self.attr_events_detector.set_params(**params.get('AttributeEventsDetector', dict()))
+        self.attr_events_detector.init()
+
+        # Initialize SystemEventsDetector
+        self.system_events_detector = SystemEventsDetector()
+        self.system_events_detector.set_params(**params.get('SystemEventsDetector', dict()))
+        self.system_events_detector.init()
+
+        self.obj_handler.subscribe(self.fov_events_detector, self.zone_events_detector, self.attr_events_detector)
         for source in self.pipeline.get_sources():
             source.subscribe(self.cam_events_detector)
         
@@ -687,28 +1070,95 @@ class Controller:
         self.zone_events_detector.set_params(**params.get('ZoneEventsDetector', dict()))
         self.zone_events_detector.init()
 
-        self.obj_handler.subscribe(self.fov_events_detector, self.zone_events_detector)
+        # Initialize AttributeEventsDetector
+        self.attr_events_detector = AttributeEventsDetector(self.obj_handler)
+        self.attr_events_detector.set_params(**params.get('AttributeEventsDetector', dict()))
+        self.attr_events_detector.init()
+
+        # Initialize SystemEventsDetector
+        self.system_events_detector = SystemEventsDetector()
+        self.system_events_detector.set_params(**params.get('SystemEventsDetector', dict()))
+        self.system_events_detector.init()
+
+        self.obj_handler.subscribe(self.fov_events_detector, self.zone_events_detector, self.attr_events_detector)
         for source in self.pipeline.get_sources():
             source.subscribe(self.cam_events_detector)
 
     def _init_events_detectors_controller(self, params):
         detectors = [self.cam_events_detector, self.fov_events_detector, self.zone_events_detector]
+        if self.attr_events_detector:
+            detectors.append(self.attr_events_detector)
+        if self.system_events_detector:
+            detectors.append(self.system_events_detector)
         self.events_detectors_controller = EventsDetectorsController(detectors)
         self.events_detectors_controller.set_params(**params)
         self.events_detectors_controller.init()
 
     def _init_events_processor(self, params):
-        db_adapters = [self.db_adapter_fov_events, self.db_adapter_cam_events, self.db_adapter_zone_events]
-        self.events_processor = EventsProcessor(db_adapters, self.db_controller)
-        self.events_processor.set_params(**params)
-        self.events_processor.init()
+        # Backward-compatible: delegate to unified initializer
+        self._init_events_processor_unified(params)
 
     def _init_events_processor_without_db(self, params):
         """Initialize events processor without database connection."""
-        # Create dummy adapters that don't save to database
-        self.events_processor = EventsProcessor([], None)  # No adapters, no db_controller
+        # Backward-compatible: delegate to unified initializer
+        self._init_events_processor_unified(params)
+
+    def _get_event_adapters(self):
+        """Build list of event adapters depending on database mode."""
+        if self.use_database and self.db_controller:
+            adapters = [self.db_adapter_fov_events, self.db_adapter_cam_events, self.db_adapter_zone_events]
+            if self.db_adapter_attr_events:
+                adapters.append(self.db_adapter_attr_events)
+            if self.db_adapter_system_events:
+                adapters.append(self.db_adapter_system_events)
+            try:
+                self.logger.info(f"DB adapters: {[a.get_event_name() for a in adapters if a]}")
+            except Exception:
+                pass
+            return adapters
+        # JSON adapters when DB disabled or unavailable
+        adapters = []
+        img_dir = self.params.get('database', {}).get('image_dir', 'EvilEyeData')
+        for adapter_cls in (JsonAdapterAttributeEvents, JsonAdapterFovEvents, JsonAdapterZoneEvents, JsonAdapterCamEvents, JsonAdapterSystemEvents):
+            try:
+                adapter = adapter_cls(None)
+                adapter.set_params(image_dir=img_dir)
+                adapter.init()
+                adapter.start()
+                adapters.append(adapter)
+                try:
+                    self.logger.info(f"JSON adapter started: {adapter.get_event_name()} -> image_dir={img_dir}")
+                except Exception:
+                    pass
+            except Exception as e:
+                try:
+                    self.logger.error(f"Failed to start JSON adapter {adapter_cls.__name__}: {e}")
+                except Exception:
+                    pass
+        return adapters
+
+    def _init_events_processor_unified(self, params):
+        """Unified initializer for EventsProcessor for both DB and JSON modes."""
+        adapters = self._get_event_adapters()
+        db_ctrl = self.db_controller if (self.use_database and self.db_controller) else None
+        self.events_processor = EventsProcessor(adapters, db_ctrl)
         self.events_processor.set_params(**params)
         self.events_processor.init()
+        # Wire UI callback for online signalization
+        try:
+            self.events_processor.set_ui_callback(self._on_event_signalization)
+        except Exception:
+            pass
+
+    def _on_event_signalization(self, source_id: int, object_id: int, event_name: str, is_on: bool, bbox_px: list | None = None):
+        """Relay event signalization to main window (per source)."""
+        try:
+            # Diagnostics logging removed
+            # Route directly via visualizer
+            if self.visualizer and hasattr(self.visualizer, 'set_event_state'):
+                self.visualizer.set_event_state(source_id, object_id, event_name, is_on, bbox_px)
+        except Exception:
+            pass
 
     def _init_visualizer(self, params):
         self.visualizer = Visualizer(self.pyqt_slots, self.pyqt_signals)
@@ -717,6 +1167,33 @@ class Controller:
         self.visualizer.source_video_duration = self.source_video_duration
         self.visualizer.class_mapping = self.class_mapping  # Pass class mapping to visualizer
         self.visualizer.init()
+        # If persistent zones display requested, push existing zones to threads immediately
+        try:
+            vis_wants_zones = bool(self.visualizer.get_params().get('display_zones', False))
+        except Exception:
+            vis_wants_zones = False
+        if vis_wants_zones:
+            try:
+                zones_cfg = (((self.params or {}).get('events_detectors', {}) or {}).get('ZoneEventsDetector', {}) or {}).get('sources', {})
+                sources_zones = {}
+                if isinstance(zones_cfg, dict):
+                    for k, zone_list in zones_cfg.items():
+                        try:
+                            sid = int(k)
+                        except Exception:
+                            continue
+                        sources_zones[sid] = []
+                        for coords in (zone_list or []):
+                            # expected: ['poly', coords, None]
+                            if isinstance(coords, list) and coords:
+                                sources_zones[sid].append(['poly', coords, None])
+                if sources_zones:
+                    try:
+                        self.pyqt_signals['display_zones_signal'].emit(sources_zones)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
     def collect_memory_consumption(self):
         total_memory_usage = 0
@@ -913,7 +1390,8 @@ class Controller:
         
         def periodic_check():
             """Periodically check and update classes"""
-            max_attempts = 10  # Check for 10 seconds
+            # Check once per second up to configured timeout
+            max_attempts = max(1, int(self.model_loading_timeout_sec))
             attempt = 0
             
             while attempt < max_attempts:
@@ -952,8 +1430,10 @@ class Controller:
         check_thread = threading.Thread(target=periodic_check, daemon=True)
         check_thread.start()
     
-    def create_config(self, num_sources: int, pipeline_class: str | None):
-        """Create configuration with specified pipeline class"""
+    def create_config(self, num_sources: int, pipeline_class: str | None, 
+                     source_type: str = 'video_file', detector_params: dict | None = None,
+                     tracker_params: dict | None = None, database_params: dict | None = None):
+        """Create configuration with specified pipeline class and optional parameters"""
         self.init({})
 
         # Create pipeline instance if class name is provided
@@ -972,11 +1452,83 @@ class Controller:
         if self.pipeline:
             self.pipeline.generate_default_structure(num_sources)
 
+        # Apply source type configuration
+        if num_sources > 0 and hasattr(self.pipeline, 'sources') and self.pipeline.sources:
+            source_type_mapping = {
+                'video_file': {'source': 'video_file', 'camera': 'path/to/video.mp4'},
+                'ip_camera': {'source': 'ip_camera', 'camera': 'rtsp://user:password@ip:port/stream'},
+                'device': {'source': 'device', 'camera': 0}
+            }
+            
+            if source_type in source_type_mapping:
+                source_config = source_type_mapping[source_type]
+                for source in self.pipeline.sources:
+                    if hasattr(source, 'source') and hasattr(source, 'camera'):
+                        source.source = source_config['source']
+                        source.camera = source_config['camera']
+                        self.logger.info(f"Applied source type '{source_type}' to source")
+
+        # Apply detector parameters if provided
+        if detector_params and hasattr(self.pipeline, 'processors'):
+            for processor in self.pipeline.processors:
+                if hasattr(processor, 'get_processors'):
+                    for proc in processor.get_processors():
+                        if hasattr(proc, 'get_name') and 'detector' in proc.get_name().lower():
+                            try:
+                                proc.set_params(**detector_params)
+                                self.logger.info(f"Applied detector parameters: {detector_params}")
+                            except Exception as e:
+                                self.logger.warning(f"Failed to apply detector parameters: {e}")
+
+        # Apply tracker parameters if provided
+        if tracker_params and hasattr(self.pipeline, 'processors'):
+            for processor in self.pipeline.processors:
+                if hasattr(processor, 'get_processors'):
+                    for proc in processor.get_processors():
+                        if hasattr(proc, 'get_name') and 'tracker' in proc.get_name().lower():
+                            try:
+                                proc.set_params(**tracker_params)
+                                self.logger.info(f"Applied tracker parameters: {tracker_params}")
+                            except Exception as e:
+                                self.logger.warning(f"Failed to apply tracker parameters: {e}")
+
         config_data = {}
         self.update_params()
         
         # Get parameters safely, avoiding non-serializable objects
         config_data = self.get_params()
+
+        # Apply database parameters (only safe parameters, no credentials)
+        if database_params:
+            # Only store safe database parameters (no credentials)
+            safe_db_params = {}
+            safe_keys = ['image_dir', 'preview_width', 'preview_height']
+            for key in safe_keys:
+                if key in database_params:
+                    safe_db_params[key] = database_params[key]
+            
+            # Set default safe values if not provided
+            if not safe_db_params:
+                safe_db_params = {
+                    "image_dir": "EvilEyeData",
+                    "preview_width": 300,
+                    "preview_height": 150
+                }
+            
+            # Replace entire database section with only safe parameters
+            config_data['database'] = safe_db_params
+            self.logger.info(f"Applied safe database parameters: {safe_db_params}")
+        else:
+            # If no database_params provided, ensure database section contains only safe parameters
+            if 'database' in config_data:
+                # Keep only safe parameters, remove credentials
+                safe_db_params = {
+                    "image_dir": "EvilEyeData",
+                    "preview_width": 300,
+                    "preview_height": 150
+                }
+                config_data['database'] = safe_db_params
+                self.logger.info(f"Removed database credentials, kept only safe parameters: {safe_db_params}")
 
         config_data['visualizer'] = {}
         if num_sources and num_sources > 0:

@@ -48,6 +48,8 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         
         self.bus = None
         self._fps_times = []  # rolling timestamps to estimate FPS as fallback
+
+    # Debug stack dump removed
     
     def _gst_has(self, element_name: str) -> bool:
         """Check if GStreamer element factory exists."""
@@ -83,7 +85,8 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 )
             else:
                 # Fallback: generic software decode supporting many containers/codecs
-                pipeline = f"filesrc location={self.source_address} ! decodebin ! videoconvert"
+                # Add queues to decouple threads and avoid teardown stalls
+                pipeline = f"filesrc location={self.source_address} ! decodebin name=dec ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 ! videoconvert ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0"
                    
             
         elif self.source_type == CaptureDeviceType.Device:
@@ -122,7 +125,8 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 # If anything goes wrong, skip forcing fps
                 pass
         # Use sync=true to play according to timestamps (real-time). Keep drop to avoid backlog.
-        pipeline += " ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true sync=true max-buffers=1 drop=true"
+        # Add final queue before sink to isolate sink during shutdown
+        pipeline += " ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync=true max-buffers=1 drop=true"
         
         return pipeline
     
@@ -131,6 +135,8 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         Callback for new frame from GStreamer pipeline.
         """
         try:
+            if not self.is_working:
+                return Gst.FlowReturn.EOS
             sample = appsink.emit("pull-sample")
             if sample:
                 buffer = sample.get_buffer()
@@ -206,21 +212,23 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                         self.last_frame = capture_image
                         self.frame_id_counter += 1
                     
-                    # Notify subscribers
-                    for subscriber in self.subscribers:
+                    # Notify subscribers asynchronously to avoid blocking appsink thread
+                    def _notify(sub):
                         try:
-                            if callable(subscriber):
-                                subscriber(capture_image)
+                            if callable(sub):
+                                sub(capture_image)
                             else:
-                                # If subscriber is an object, try to call a method
-                                if hasattr(subscriber, 'process_frame'):
-                                    subscriber.process_frame(capture_image)
-                                elif hasattr(subscriber, 'update'):
-                                    subscriber.update()  # update() doesn't take parameters
-                                else:
-                                    self.logger.debug(f"Subscriber {type(subscriber)} has no callable methods")
-                        except Exception as e:
-                            self.logger.error(f"Error notifying subscriber {type(subscriber)}: {e}")
+                                if hasattr(sub, 'process_frame'):
+                                    sub.process_frame(capture_image)
+                                elif hasattr(sub, 'update'):
+                                    sub.update()
+                        except Exception as ex:
+                            try:
+                                self.logger.error(f"Error notifying subscriber {type(sub)}: {ex}")
+                            except Exception:
+                                pass
+                    for subscriber in self.subscribers:
+                        threading.Thread(target=_notify, args=(subscriber,), daemon=True).start()
                     
                     buffer.unmap(map_info)
                     return Gst.FlowReturn.OK
@@ -264,7 +272,10 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     raise RuntimeError("Failed to get appsink element")
                 
                 # Connect callback
-                self.appsink.connect("new-sample", self._on_new_sample)
+                try:
+                    self._appsink_handler_id = self.appsink.connect("new-sample", self._on_new_sample)
+                except Exception:
+                    self._appsink_handler_id = None
                 
                 # Set pipeline to playing state
                 ret = self.pipeline.set_state(Gst.State.PLAYING)
@@ -381,18 +392,103 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         Release resources and stop pipeline.
         """
         try:
+            # Debug stack dump disabled
+            # Detach pipeline under lock to avoid races
+            pipeline = None
             with self.pipeline_lock:
-                if self.pipeline:
-                    self.pipeline.set_state(Gst.State.NULL)
-                    self.pipeline = None
-
-                self._stop_main_loop()
-
-                with self.frame_lock:
-                    self.last_frame = None
-
+                pipeline = self.pipeline
+                self.pipeline = None
+                # Stop appsink signals and disconnect handler
+                try:
+                    if self.appsink is not None:
+                        try:
+                            self.appsink.set_property("emit-signals", False)
+                        except Exception:
+                            pass
+                        try:
+                            if hasattr(self, '_appsink_handler_id') and self._appsink_handler_id is not None:
+                                self.appsink.disconnect(self._appsink_handler_id)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
                 self.is_working = False
-                self.logger.info("GStreamer video capture released")
+
+            # Try graceful EOS to unblock internal threads
+            if pipeline is not None:
+                try:
+                    pipeline.send_event(Gst.Event.new_eos())
+                    bus = pipeline.get_bus()
+                    if bus is not None:
+                        # Remove any signal watch and start flushing to unblock waits
+                        try:
+                            bus.remove_signal_watch()
+                        except Exception:
+                            pass
+                        try:
+                            bus.set_flushing(True)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
+            # Stop GLib main loop first to avoid deadlock on set_state
+            self._stop_main_loop()
+
+            # Now set pipeline to NULL outside locks, with staged states and timeout
+            if pipeline is not None:
+                try:
+                    # Try staged state changes to avoid hangs
+                    try:
+                        pipeline.set_state(Gst.State.PAUSED)
+                        pipeline.get_state(0.5 * Gst.SECOND)
+                    except Exception:
+                        pass
+                    try:
+                        pipeline.set_state(Gst.State.READY)
+                        pipeline.get_state(0.5 * Gst.SECOND)
+                    except Exception:
+                        pass
+                    # As a last resort, force elements to NULL individually
+                    try:
+                        it = pipeline.iterate_elements()
+                        elements = []
+                        while True:
+                            res, elem = it.next()
+                            if res != Gst.IteratorResult.OK:
+                                break
+                            elements.append(elem)
+                    except Exception:
+                        elements = []
+                    # Reverse to attempt sinks first
+                    for elem in reversed(elements):
+                        try:
+                            elem.set_state(Gst.State.NULL)
+                        except Exception:
+                            pass
+                    # Call NULL in background to avoid blocking
+                    import threading as _thr
+                    set_done = _thr.Event()
+                    def _set_null():
+                        try:
+                            pipeline.set_state(Gst.State.NULL)
+                        finally:
+                            set_done.set()
+                    t = _thr.Thread(target=_set_null, daemon=True)
+                    t.start()
+                    # Wait up to 1.5s
+                    set_done.wait(1.5)
+                    if t.is_alive():
+                        self.logger.warning("Timeout setting GStreamer pipeline to NULL; continuing release")
+                except Exception:
+                    pass
+
+            # Clean frames and flags
+            with self.frame_lock:
+                self.last_frame = None
+
+            self.is_working = False
+            self.logger.info("GStreamer video capture released")
 
         except Exception as e:
             self.logger.error(f"Error releasing GStreamer capture: {e}")
@@ -461,10 +557,22 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         super().set_params_impl()
     
     def get_params_impl(self):
+        """Return capture parameters including GStreamer-specific fields.
+
+        Adds 'apiPreference' to ensure persistence in configs and propagates desired_fps.
         """
-        Implementation of EvilEyeBase get_params_impl.
-        """
-        return super().get_params_impl()
+        params = super().get_params_impl()
+        try:
+            params['apiPreference'] = self.params.get('apiPreference', 'CAP_GSTREAMER')
+            params['gstreamer_available'] = self.gstreamer_available
+            params['source_fps'] = self.source_fps
+            params['loop_play'] = self.loop_play
+            params['split'] = self.split_stream
+            params['num_split'] = self.num_split
+            params['src_coords'] = self.src_coords
+        except Exception:
+            params['apiPreference'] = 'CAP_GSTREAMER'
+        return params
     
     def calc_memory_consumption(self):
         """

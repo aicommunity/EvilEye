@@ -25,6 +25,7 @@ from . import events_journal
 from .journal_adapters.jadapter_fov_events import JournalAdapterFieldOfViewEvents
 from .journal_adapters.jadapter_cam_events import JournalAdapterCamEvents
 from .journal_adapters.jadapter_zone_events import JournalAdapterZoneEvents
+from .journal_adapters.jadapter_system_events import JournalAdapterSystemEvents
 from ..core.logger import get_module_logger
 import logging
 
@@ -77,6 +78,19 @@ class DatabaseJournalWindow(QWidget):
         self.zone_events_adapter.set_params(**self.adapter_params['DatabaseAdapterZoneEvents'])
         self.zone_events_adapter.init()
 
+        # Attribute events adapter (optional)
+        try:
+            from .journal_adapters.jadapter_attribute_events import JournalAdapterAttributeEvents
+            self.attr_events_adapter = JournalAdapterAttributeEvents()
+            if 'DatabaseAdapterAttributeEvents' in self.adapter_params:
+                self.attr_events_adapter.set_params(**self.adapter_params['DatabaseAdapterAttributeEvents'])
+            else:
+                # fallback to same params as DB adapter
+                self.attr_events_adapter.set_params(**{'table_name': 'attribute_events'})
+            self.attr_events_adapter.init()
+        except Exception:
+            self.attr_events_adapter = None
+
         self.setWindowTitle('DB Journal')
         self.resize(1600, 600)
 
@@ -86,11 +100,31 @@ class DatabaseJournalWindow(QWidget):
         if self.obj_journal_enabled:
             self.tabs.addTab(handler_journal_view.HandlerJournal(self.db_controller, 'objects', self.params, self.database_params,
                                                                  self.tables['objects'], parent=self), 'Objects journal')
-        self.tabs.addTab(events_journal.EventsJournal([self.cam_events_adapter,
-                                                       self.perimeter_events_adapter, self.zone_events_adapter],
-                                                      self.db_controller, 'objects', self.params, self.database_params,
-                                                      self.tables['objects'], parent=self,
-                                                      logger_name="events_journal", parent_logger=self.logger), 'Events journal')
+        adapters = [self.cam_events_adapter, self.perimeter_events_adapter, self.zone_events_adapter]
+        if self.attr_events_adapter:
+            adapters.append(self.attr_events_adapter)
+        # System events (optional)
+        try:
+            self.system_events_adapter = JournalAdapterSystemEvents()
+            if 'DatabaseAdapterSystemEvents' in self.adapter_params:
+                self.system_events_adapter.set_params(**self.adapter_params['DatabaseAdapterSystemEvents'])
+            else:
+                self.system_events_adapter.set_params(**{'table_name': 'system_events'})
+            self.system_events_adapter.init()
+            adapters.append(self.system_events_adapter)
+        except Exception:
+            self.system_events_adapter = None
+        
+        try:
+            events_journal_widget = events_journal.EventsJournal(adapters,
+                                                               self.db_controller, 'objects', self.params, self.database_params,
+                                                               self.tables['objects'], parent=self,
+                                                               logger_name="events_journal", parent_logger=self.logger)
+            self.tabs.addTab(events_journal_widget, 'Events journal')
+        except Exception as e:
+            self.logger.error(f"Failed to create EventsJournal: {e}")
+            import traceback
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
 
         self.layout = QVBoxLayout()
         self.layout.addWidget(self.tabs)
@@ -115,7 +149,26 @@ class DatabaseJournalWindow(QWidget):
 
     @pyqtSlot(int)
     def _close_tab(self, idx):
-        tab = self.tabs.widget(idx)
-        self.tabs.setTabVisible(idx, False)
-        tab.close()
+        # Hide tab, keep widget and DB connection alive
+        try:
+            self.tabs.setTabVisible(idx, False)
+        except Exception:
+            pass
+        # If all tabs are hidden, hide the whole journal window
+        try:
+            any_visible = False
+            bar = self.tabs.tabBar()
+            for i in range(self.tabs.count()):
+                try:
+                    if bar.isTabVisible(i):
+                        any_visible = True
+                        break
+                except Exception:
+                    # Fallback: if API not available, consider count>0 as visible
+                    any_visible = self.tabs.count() > 0
+                    break
+            if not any_visible:
+                self.hide()
+        except Exception:
+            pass
 

@@ -38,7 +38,7 @@ class DatabaseControllerPg(DatabaseControllerBase):
         self.admin_user_name = ""
         self.admin_password = ""
         self.create_new_project = False
-        self.image_dir = None
+        self.image_dir = "EvilEyeData"
         self.tables = None
         self.preview_height = 0
         self.preview_width = 0
@@ -52,7 +52,7 @@ class DatabaseControllerPg(DatabaseControllerBase):
         self.port = self.params['port']
         self.admin_user_name = self.params.get('admin_user_name', 'postgres')
         self.admin_password = self.params.get('admin_password', '')
-        self.image_dir = self.params['image_dir']
+        self.image_dir = self.params.get('image_dir', self.image_dir)
         self.create_new_project = self.params['create_new_project']
         self.tables = copy.deepcopy(self.params['tables'])
         self.preview_width = self.params.get('preview_width', 150)
@@ -131,6 +131,10 @@ class DatabaseControllerPg(DatabaseControllerBase):
         if self.conn_pool:
             self.conn_pool.closeall()
             self.conn_pool = None
+    
+    def is_connected(self):
+        """Проверяет, подключена ли база данных."""
+        return self.conn_pool is not None
 
     def query_impl(self, query_string, data=None):
         if self.conn_pool is None:
@@ -417,6 +421,195 @@ class DatabaseControllerPg(DatabaseControllerBase):
     @staticmethod
     def get_job_id():
         return DatabaseControllerPg.cur_job_id
+
+    def get_config_by_job_id(self, job_id: int) -> dict:
+        """
+        Получить конфигурацию по ID задания.
+        
+        Args:
+            job_id: ID задания
+            
+        Returns:
+            Словарь с информацией о конфигурации
+        """
+        try:
+            query = sql.SQL("""
+                SELECT j.job_id, j.project_id, j.configuration_id, j.creation_time,
+                       j.finish_time, j.is_terminated, j.configuration_info
+                FROM jobs j
+                WHERE j.job_id = %s AND j.configuration_info IS NOT NULL
+            """)
+            
+            records = self.query(query, (job_id,))
+            
+            if not records:
+                self.logger.warning(f"No configuration found for job_id: {job_id}")
+                return {}
+                
+            record = records[0]
+            job_id, proj_id, config_id, creation_time, finish_time, is_terminated, config_info = record
+            
+            # Определяем статус
+            status = "Running"
+            if is_terminated:
+                if finish_time:
+                    status = "Completed"
+                else:
+                    status = "Terminated"
+            elif finish_time:
+                status = "Completed"
+            
+            result = {
+                'job_id': job_id,
+                'project_id': proj_id,
+                'configuration_id': config_id,
+                'creation_time': creation_time,
+                'finish_time': finish_time,
+                'status': status,
+                'configuration_info': json.loads(config_info) if config_info else None
+            }
+            
+            self.logger.info(f"Retrieved configuration for job_id: {job_id}")
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Error retrieving config for job_id {job_id}: {e}")
+            return {}
+
+    def get_unique_configurations(self, limit: int = 50) -> list:
+        """
+        Получить список уникальных конфигураций.
+        
+        Args:
+            limit: Максимальное количество уникальных конфигураций
+            
+        Returns:
+            Список уникальных конфигураций с метаданными
+        """
+        try:
+            query = sql.SQL("""
+                SELECT DISTINCT ON (j.configuration_id) 
+                    j.configuration_id,
+                    j.job_id,
+                    j.project_id,
+                    j.creation_time,
+                    j.finish_time,
+                    j.is_terminated,
+                    j.configuration_info,
+                    COUNT(*) OVER (PARTITION BY j.configuration_id) as usage_count
+                FROM jobs j
+                WHERE j.configuration_info IS NOT NULL
+                ORDER BY j.configuration_id, j.creation_time DESC
+                LIMIT %s
+            """)
+            
+            records = self.query(query, (limit,))
+            
+            result = []
+            for record in records:
+                config_id, job_id, proj_id, creation_time, finish_time, is_terminated, config_info, usage_count = record
+                
+                # Определяем статус
+                status = "Running"
+                if is_terminated:
+                    if finish_time:
+                        status = "Completed"
+                    else:
+                        status = "Terminated"
+                elif finish_time:
+                    status = "Completed"
+                
+                result.append({
+                    'configuration_id': config_id,
+                    'job_id': job_id,
+                    'project_id': proj_id,
+                    'creation_time': creation_time,
+                    'finish_time': finish_time,
+                    'status': status,
+                    'usage_count': usage_count,
+                    'configuration_info': json.loads(config_info) if config_info else None
+                })
+                
+            self.logger.info(f"Retrieved {len(result)} unique configurations")
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Error retrieving unique configurations: {e}")
+            return []
+
+    def get_config_history(self, start_date=None, end_date=None, project_id=None, limit=100) -> list:
+        """
+        Получить историю конфигураций с фильтрацией.
+        
+        Args:
+            start_date: Начальная дата для фильтрации
+            end_date: Конечная дата для фильтрации
+            project_id: ID проекта для фильтрации
+            limit: Максимальное количество записей
+            
+        Returns:
+            Список словарей с информацией о конфигурациях
+        """
+        try:
+            query_parts = [
+                "SELECT j.job_id, j.project_id, j.configuration_id, j.creation_time,",
+                "j.finish_time, j.is_terminated, j.configuration_info",
+                "FROM jobs j",
+                "WHERE j.configuration_info IS NOT NULL"
+            ]
+            
+            params = []
+            
+            if start_date:
+                query_parts.append("AND j.creation_time >= %s")
+                params.append(start_date)
+                
+            if end_date:
+                query_parts.append("AND j.creation_time <= %s")
+                params.append(end_date)
+                
+            if project_id is not None:
+                query_parts.append("AND j.project_id = %s")
+                params.append(project_id)
+                
+            query_parts.append("ORDER BY j.creation_time DESC")
+            query_parts.append("LIMIT %s")
+            params.append(limit)
+            
+            query = sql.SQL(" ".join(query_parts))
+            
+            records = self.query(query, params)
+            
+            result = []
+            for record in records:
+                job_id, proj_id, config_id, creation_time, finish_time, is_terminated, config_info = record
+                
+                # Определяем статус
+                status = "Running"
+                if is_terminated:
+                    if finish_time:
+                        status = "Completed"
+                    else:
+                        status = "Terminated"
+                elif finish_time:
+                    status = "Completed"
+                
+                result.append({
+                    'job_id': job_id,
+                    'project_id': proj_id,
+                    'configuration_id': config_id,
+                    'creation_time': creation_time,
+                    'finish_time': finish_time,
+                    'status': status,
+                    'configuration_info': json.loads(config_info) if config_info else None
+                })
+                
+            self.logger.info(f"Retrieved {len(result)} configuration history records")
+            return result
+            
+        except Exception as e:
+            self.logger.error(f"Error retrieving config history: {e}")
+            return []
 
 
 if __name__ == '__main__':

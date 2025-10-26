@@ -84,9 +84,10 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
     def _save_image(self, preview_path, frame_path, image, box):
         preview_save_dir = os.path.join(self.image_dir, preview_path)
         frame_save_dir = os.path.join(self.image_dir, frame_path)
+        # Save clean preview without overlays
         preview = cv2.resize(copy.deepcopy(image.image), self.preview_size, cv2.INTER_NEAREST)
-        preview_boxes = utils.draw_preview_boxes(preview, self.preview_width, self.preview_height, box)
-        preview_saved = cv2.imwrite(preview_save_dir, preview_boxes)
+        preview_saved = cv2.imwrite(preview_save_dir, preview)
+        # Save original frame without overlays
         frame_saved = cv2.imwrite(frame_save_dir, image.image)
         if not preview_saved or not frame_saved:
             self.logger.error(f'ERROR: can\'t save image file {frame_save_dir}')
@@ -164,7 +165,10 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
         cur_date_str = cur_date.strftime('%Y_%m_%d')
 
         current_day_path = os.path.join(img_dir, cur_date_str)
-        obj_type_path = os.path.join(current_day_path, obj_event_type + '_' + image_type + 's')
+        # Unified folders for objects: found_*/lost_* (frames/previews)
+        tag = 'found' if obj_event_type == 'detected' else 'lost'
+        subdir = f"{tag}_{'previews' if image_type == 'preview' else 'frames'}"
+        obj_type_path = os.path.join(current_day_path, subdir)
         # obj_event_path = os.path.join(current_day_path, obj_event_type)
         os.makedirs(img_dir, exist_ok=True)
         os.makedirs(current_day_path, exist_ok=True)

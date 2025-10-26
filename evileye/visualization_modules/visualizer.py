@@ -31,6 +31,13 @@ class Visualizer(EvilEyeBase):
         self.text_config = {}  # Text configuration for rendering
         self.class_mapping = {}  # Class mapping for displaying class names
         self.memory_consumption_detail = dict()
+        # Centralized active events per source: { source_id: set((source_id, object_id, event_name)) }
+        self.active_events: dict[int, set[tuple[int, int, str]]] = {}
+        # Signalization params
+        self.signal_enabled = False
+        self.signal_color = (255, 0, 0)
+        # Zones display toggle
+        self.display_zones = False
 
 
     def default(self):
@@ -46,11 +53,22 @@ class Visualizer(EvilEyeBase):
                                                    self.font_params[i] if self.font_params is not None else None,
                                                    text_config=self.text_config, class_mapping=self.class_mapping,
                                                    logger_name=logger_name, parent_logger=self.logger))
+            # give thread access to visualizer for active events
+            try:
+                self.visual_threads[-1].visualizer_ref = self
+            except Exception:
+                pass
             self.visual_threads[-1].update_image_signal.connect(
                 self.pyqt_slots['update_image'])  # Сигнал из потока для обновления label на новое изображение
+            self.visual_threads[-1].update_original_cv_image_signal.connect(
+                self.pyqt_slots['update_original_cv_image'])  # Сигнал с оригинальным OpenCV изображением для ROI Editor
+            self.visual_threads[-1].clean_image_available_signal.connect(
+                self.pyqt_slots['clean_image_available'])  # Сигнал с чистым OpenCV изображением для ROI Editor
             self.visual_threads[-1].add_zone_signal.connect(self.pyqt_slots['open_zone_win'])
-            self.pyqt_signals['display_zones_signal'].connect(self.visual_threads[-1].display_zones_signal)
+            self.visual_threads[-1].add_roi_signal.connect(self.pyqt_slots['open_roi_win'])
+            self.pyqt_signals['display_zones_signal'].connect(self.visual_threads[-1].display_zones)
             self.pyqt_signals['add_zone_signal'].connect(self.visual_threads[-1].add_zone_clicked)
+            self.pyqt_signals['add_roi_signal'].connect(self.visual_threads[-1].add_roi_clicked)
 
     def release_impl(self):
         for thr in self.visual_threads:
@@ -73,6 +91,9 @@ class Visualizer(EvilEyeBase):
         self.num_width = self.params.get('num_width', self.num_width)
         self.visual_buffer_num_frames = self.params.get('visual_buffer_num_frames', 50)
         self.text_config = self.params.get('text_config', {})
+        self.signal_enabled = self.params.get('event_signal_enabled', False)
+        self.signal_color = tuple(self.params.get('event_signal_color', [255, 0, 0]))
+        self.display_zones = self.params.get('display_zones', False)
 
     def get_params_impl(self):
         params = dict()
@@ -84,10 +105,13 @@ class Visualizer(EvilEyeBase):
         params['num_width'] = self.num_width
         params['visual_buffer_num_frames'] = self.visual_buffer_num_frames
         params['text_config'] = self.text_config
+        params['display_zones'] = self.display_zones
         return params
 
     def start(self):
         for thr in self.visual_threads:
+            # Apply initial signalization params
+            thr.set_signal_params(self.signal_enabled, self.signal_color)
             thr.start_thread()
 
     def stop(self):
@@ -99,6 +123,28 @@ class Visualizer(EvilEyeBase):
     def set_current_main_widget_size(self, width, height):
         for j in range(len(self.visual_threads)):
             self.visual_threads[j].set_main_widget_size(width, height)
+
+    # ==== Online event signalization API for Controller/MainWindow ====
+    def set_signal_params(self, enabled: bool, color_rgb: tuple[int, int, int]):
+        self.signal_enabled = enabled
+        self.signal_color = color_rgb
+        for thr in self.visual_threads:
+            thr.set_signal_params(enabled, color_rgb)
+
+    def set_event_state(self, source_id: int, object_id: int, event_name: str, is_on: bool, bbox_px: list | None = None):
+        if source_id not in self.active_events:
+            self.active_events[source_id] = set()
+        key = (source_id, object_id, event_name)
+        if is_on:
+            self.active_events[source_id].add(key)
+        else:
+            if key in self.active_events[source_id]:
+                self.active_events[source_id].remove(key)
+        
+        # Do not directly touch threads here; they will read on next frame
+
+    def get_active_events(self, source_id: int) -> set[tuple[int, int, str]]:
+        return set(self.active_events.get(source_id, set()))
 
     def calc_memory_consumption(self):
         super().calc_memory_consumption()

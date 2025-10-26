@@ -22,6 +22,7 @@ class EventsProcessor(EvilEyeBase):
 
         self.long_term_events = {}
         self.finished_events = {}
+        self.ui_callback = None  # callback: (source_id, event_name, is_on, bbox_norm)
 
     def set_params_impl(self):
         pass
@@ -32,7 +33,13 @@ class EventsProcessor(EvilEyeBase):
     def init_impl(self):
         self.events_adapters = {adapter.get_event_name(): adapter for adapter in self.db_adapters}
         self.events_tables = {adapter.get_event_name(): adapter.get_table_name() for adapter in self.db_adapters}
-        # print(self.events_adapters)
+        try:
+            self.logger.info(f"EventsProcessor initialized with adapters: {list(self.events_adapters.keys())}")
+        except Exception:
+            pass
+
+    def set_ui_callback(self, cb):
+        self.ui_callback = cb
 
     def get_last_id(self):  # Функция для получения последнего id события из БД
         # Return 0 if no database controller is available
@@ -80,15 +87,35 @@ class EventsProcessor(EvilEyeBase):
         self.processing_thread.start()
 
     def stop(self):
+        # Gracefully flush pending events before stopping
+        try:
+            # Wait up to ~0.5s for queue to drain
+            max_wait_secs = 0.5
+            waited = 0.0
+            while not self.queue.empty() and waited < max_wait_secs:
+                time.sleep(0.01)
+                waited += 0.01
+        except Exception:
+            pass
+
+        # Signal processing thread to exit
         self.run_flag = False
-        self.queue.put(None)
+        try:
+            self.queue.put(None)
+        except Exception:
+            pass
+
+        # Join processing thread
         if self.processing_thread.is_alive():
-            self.processing_thread.join()
+            try:
+                self.processing_thread.join(timeout=0.5)
+            except Exception:
+                pass
 
     def process(self):
         filtered_long_term = {key: None for key in self.long_term_events}
         while self.run_flag:
-            time.sleep(0.01)
+            #time.sleep(0.01)
             new_events = self.queue.get()
             if new_events is None:
                 continue
@@ -105,8 +132,18 @@ class EventsProcessor(EvilEyeBase):
                                 if event.is_finished():  # Обновляем запись о долгосрочном событии, если оно закончилось
                                     long_term[i].update_on_finished(
                                         event)  # Обновляем информацию о событии по его завершении
-                                    if event.get_name() in self.events_adapters:
+                                if event.get_name() in self.events_adapters:
                                         self.events_adapters[event.get_name()].update(long_term[i])  # Получаем адаптер по имени события, отправляем в него завершенное
+                                # Notify UI: event OFF (независимо от наличия адаптера)
+                                try:
+                                    if self.ui_callback:
+                                        # Emit OFF with (source_id, object_id, event_name)
+                                        self.ui_callback(event.source_id,
+                                                         getattr(event, 'object_id', -1),
+                                                         getattr(event, 'matched_event_name', ''),
+                                                         False)
+                                except Exception:
+                                    pass
                                     if events not in self.finished_events:
                                         self.finished_events[events] = []
                                     self.finished_events[events].append(event)
@@ -118,6 +155,15 @@ class EventsProcessor(EvilEyeBase):
                             self.long_term_events[events].append(event)
                             if event.get_name() in self.events_adapters:
                                 self.events_adapters[event.get_name()].insert(event)
+                            # UI: ON для нового долгосрочного события в уже активной группе
+                            try:
+                                if self.ui_callback and not event.is_finished():
+                                    self.ui_callback(event.source_id,
+                                                     getattr(event, 'object_id', -1),
+                                                     getattr(event, 'matched_event_name', ''),
+                                                     True)
+                            except Exception:
+                                pass
                 else:  # Если нет активных долгосрочных событий, анализируем новые
                     for event in new_events[events]:
                         event.set_id(self.id_counter)
@@ -131,18 +177,48 @@ class EventsProcessor(EvilEyeBase):
                                 self.finished_events[events].append(event)
                                 if event.get_name() in self.events_adapters:
                                     self.events_adapters[event.get_name()].insert(event)
+                                # Для long_term события, пришедшего уже завершённым, не шлём ON, только OFF
+                                try:
+                                    if self.ui_callback:
+                                        self.ui_callback(event.source_id, getattr(event, 'object_id', -1), getattr(event, 'matched_event_name', ''), False)
+                                except Exception:
+                                    pass
                             else:
                                 self.long_term_events[events].append(event)
-                        else:  # Иначе отправляем в завершенные
+                                # Notify UI: event ON
+                                try:
+                                    if self.ui_callback:
+                                        self.ui_callback(event.source_id,
+                                                         getattr(event, 'object_id', -1),
+                                                         getattr(event, 'matched_event_name', ''),
+                                                         True,
+                                                         getattr(event, 'box_found', None))
+                                except Exception:
+                                    pass
+                        else:  # Иначе отправляем в завершенные (краткосрочные события)
                             if events not in self.finished_events:
                                 self.finished_events[events] = []
                             self.finished_events[events].append(event)
-                        if event.get_name() in self.events_adapters:
-                            self.events_adapters[event.get_name()].insert(event)
+                            if event.get_name() in self.events_adapters:
+                                self.events_adapters[event.get_name()].insert(event)
+                            # Notify UI for non-long events: ON then OFF
+                            try:
+                                if self.ui_callback and not event.is_long_term():
+                                    self.ui_callback(event.source_id,
+                                                     getattr(event, 'object_id', -1),
+                                                     getattr(event, 'matched_event_name', ''),
+                                                     True,
+                                                     getattr(event, 'box_found', None))
+                                    self.ui_callback(event.source_id,
+                                                     getattr(event, 'object_id', -1),
+                                                     getattr(event, 'matched_event_name', ''),
+                                                     False,
+                                                     None)
+                            except Exception:
+                                pass
                 # Удаляем завершенные долгосрочные события
                 if events in self.long_term_events:
-                    filtered_long_term[events] = [self.long_term_events[events][i] for i
-                                                  in range(len(self.long_term_events[events])) if i not in finished_idxs]
+                    filtered_long_term[events] = [self.long_term_events[events][i] for i in range(len(self.long_term_events[events])) if i not in finished_idxs]
                     self.long_term_events[events] = filtered_long_term[events]
 
             for events in self.finished_events:

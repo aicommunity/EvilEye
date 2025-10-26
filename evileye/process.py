@@ -146,6 +146,8 @@ def run_pipeline(config_path: str, gui: bool = True, autoclose: bool = False) ->
 
     logger.info("Configuration loaded successfully")
 
+    if not "controller" in config_data.keys():
+        config_data["controller"] = dict()
     if not gui:
         config_data["controller"]["gui_enabled"] = False
         config_data["controller"]["show_main_gui"] = False

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "evileye"
-version = "0.0.6"
+version = "0.0.7"
 description = "Intelligence video surveillance system"
 readme = "README.md"
 license = "MIT"
@@ -41,7 +41,7 @@ dependencies = [
     "pympler>=0.9.0",
     "opencv-python>=4.8.0",
     "opencv-contrib-python>=4.8.0",
-    "numpy>=1.24.0,<2.0.0",
+    "numpy>=1.24.0",
     "pillow>=10.0.0",
     "pyyaml>=6.0",
     "matplotlib>=3.7.0",
@@ -100,7 +100,6 @@ evileye = "evileye.cli_wrapper:main"
 evileye-launch = "evileye.launch_wrapper:main"
 evileye-process = "evileye.process_wrapper:main"
 evileye-configure = "evileye.configure_wrapper:start_configurer"
-evileye-create = "evileye.create_wrapper:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

@@ -105,8 +105,9 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
                     if len(self.classes) != len([cls for cls in original_classes if isinstance(cls, str)]):
                         self.logger.warning(f"Warning: Some class names not found in model mapping: {original_classes}")
                 else:
-                    self.logger.warning(f"Warning: Class names provided but model_class_mapping unavailable: {self.classes}")
-                    self.classes = []  # Clear classes if no mapping available
+                    # Keep names temporarily; they will be converted later when mapping arrives
+                    # This prevents dropping all detections before mapping becomes available
+                    self.logger.warning(f"Warning: Class names provided but model_class_mapping unavailable yet: {self.classes}")
             elif all(isinstance(cls, int) for cls in self.classes):
                 # Classes are IDs - keep as is
                 pass
@@ -217,6 +218,82 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         
         # Process classes parameter - support both class IDs and class names
         self._process_classes_parameter()
+
+    # ===== ROI Editor API (can be overridden by derived detectors) =====
+    def get_rois_for_source(self, source_id: int) -> list[list[int]]:
+        """
+        Return ROI list for source in [x, y, w, h] format.
+        Default: try to read from self.roi structure like [[... for src0], [... for src1], ...]
+        """
+        try:
+            if not isinstance(self.roi, list) or len(self.roi) == 0:
+                return []
+            # Heuristic: if roi structure is per-source list, pick first list
+            # Otherwise, try to find by index of source_id in self.source_ids
+            # Если структура ROI пер-источник и указаны source_ids — выбрать по индексу
+            if isinstance(self.source_ids, list) and source_id in self.source_ids:
+                idx = self.source_ids.index(source_id)
+                if isinstance(self.roi, list) and idx < len(self.roi) and isinstance(self.roi[idx], list):
+                    return [list(map(int, r)) for r in self.roi[idx]]
+            # Если ROI едины для всех источников (список списков), берём первый
+            if len(self.roi) > 0 and isinstance(self.roi[0], list):
+                return [list(map(int, r)) for r in self.roi[0]]
+        except Exception:
+            pass
+        return []
+
+    def set_rois_for_source(self, source_id: int, rois_xyxy: list[list[int]]) -> None:
+        """
+        Update ROI for source. Input in [x1, y1, x2, y2]; convert to [x, y, w, h] for storage.
+        Default: write back to self.roi keeping per-source structure if possible.
+        """
+        try:
+            rois_xywh = []
+            for r in rois_xyxy:
+                if len(r) == 4:
+                    x1, y1, x2, y2 = map(int, r)
+                    # Интерпретируем вход как включительные границы: width = x2 - x1 + 1
+                    w = max(0, x2 - x1 + 1)
+                    h = max(0, y2 - y1 + 1)
+                    if w <= 0 or h <= 0:
+                        continue
+                    rois_xywh.append([x1, y1, w, h])
+            if source_id in self.source_ids:
+                idx = self.source_ids.index(source_id)
+                # Ensure structure large enough
+                if not isinstance(self.roi, list):
+                    self.roi = []
+                while len(self.roi) <= idx:
+                    self.roi.append([])
+                self.roi[idx] = rois_xywh
+            else:
+                # Fallback to first
+                if not isinstance(self.roi, list) or len(self.roi) == 0:
+                    self.roi = [rois_xywh]
+                else:
+                    self.roi[0] = rois_xywh
+            # Уведомляем рабочие потоки/детектор о смене ROI
+            self._on_rois_updated_for_source(source_id)
+        except Exception:
+            pass
+
+    def _on_rois_updated_for_source(self, source_id: int) -> None:
+        """Переопределяемый хук: оповестить рабочие потоки или внутренние компоненты о смене ROI."""
+        try:
+            # Попытка обновить в потоках, если они поддерживают соответствующий метод
+            for t in getattr(self, 'detection_threads', []) or []:
+                try:
+                    if hasattr(t, 'set_rois_for_source'):
+                        # Передадим текущие ROI для source_id в формате xywh
+                        rois = self.get_rois_for_source(source_id)
+                        t.set_rois_for_source(source_id, rois)
+                    elif hasattr(t, 'roi'):
+                        # Глобальное обновление
+                        t.roi = self.roi
+                except Exception:
+                    continue
+        except Exception:
+            pass
 
     def get_params_impl(self):
         params = dict()

@@ -41,7 +41,11 @@ class CamEventsDetector(EventsDetector):
             disconnects_iter = itertools.chain(disconnects_iter, source.get_disconnects_info())
             reconnects_iter = itertools.chain(reconnects_iter, source.get_reconnects_info())
 
-        self.queue_in.put((disconnects_iter, reconnects_iter))
+        try:
+            self.queue_in.put((disconnects_iter, reconnects_iter), timeout=0.1)
+        except Exception:
+            # Queue full or blocked; drop this update to avoid deadlock
+            pass
 
     def set_params_impl(self):
         pass
