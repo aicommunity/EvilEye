@@ -6,6 +6,7 @@ from pathlib import Path
 import onnxruntime as ort
 import uvicorn
 import atexit
+import signal
 
 try:
     from PyQt6 import QtCore
@@ -67,16 +68,29 @@ def run_api_server(host: str = '127.0.0.1', port: int = 8080, reload: bool = Tru
     manager = get_manager()
     logger.info("PipelineManager initialized")
     
-    def cleanup():
-        try:
-            logger.info("API cleanup sequence initiated (atexit)")
-            manager.shutdown()
-            logger.info("API cleanup completed (atexit)")
-        except Exception as e:
-            logger.error(f"API cleanup error (atexit): {e}")
+    cleanup_called = False
     
+    def cleanup():
+        nonlocal cleanup_called
+        if cleanup_called:
+            return
+        cleanup_called = True
+        try:
+            logger.info("API cleanup sequence initiated")
+            manager.shutdown()
+            logger.info("API cleanup completed")
+        except Exception as e:
+            logger.error(f"API cleanup error: {e}")
+    
+    def signal_handler(signum, frame):
+        logger.info(f"Received signal {signum}, initiating shutdown...")
+        cleanup()
+        sys.exit(0)
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
     atexit.register(cleanup)
-    logger.info("Registered atexit cleanup handler")
+    logger.info("Registered signal handlers and atexit cleanup")
     
     logger.info("Creating FastAPI application...")
     app = create_app()
@@ -86,18 +100,26 @@ def run_api_server(host: str = '127.0.0.1', port: int = 8080, reload: bool = Tru
     logger.info("Starting uvicorn server...")
     logger.info("="*60)
     
-    config = uvicorn.Config(
-        app,
-        host=host,
-        port=port,
-        log_level=log_level
-    )
-    
-    if reload:
-        logger.warning("Reload mode is not supported when passing app instance directly")
-    
-    server = uvicorn.Server(config)
-    server.run()
+    try:
+        config = uvicorn.Config(
+            app,
+            host=host,
+            port=port,
+            log_level=log_level
+        )
+        
+        if reload:
+            logger.warning("Reload mode is not supported when passing app instance directly")
+        
+        server = uvicorn.Server(config)
+        server.run()
+    except KeyboardInterrupt:
+        logger.info("Keyboard interrupt received")
+        cleanup()
+    except Exception as e:
+        logger.error(f"Server error: {e}")
+        cleanup()
+        raise
 
 
 def run_pipeline(config_path: str, gui: bool = True, autoclose: bool = False) -> int:
