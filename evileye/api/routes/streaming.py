@@ -59,7 +59,7 @@ async def _mjpeg_generator(pid: int, fps: int, stop_event: threading.Event) -> A
 @router.get("/pipelines/{pid}/stream.mjpg")
 async def mjpeg_stream(
     pid: int,
-    fps: int = Query(10, ge=1, le=60, description="Frames per second (1–60)")
+    fps: int = Query(5, ge=1, le=60, description="Frames per second (1–60)")
 ):
     """
     MJPEG streaming endpoint.
@@ -79,6 +79,12 @@ async def mjpeg_stream(
     return StreamingResponse(
         _mjpeg_generator(pid, fps, stop_event),
         media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={
+            "X-Accel-Buffering": "no",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        }
     )
 
 
