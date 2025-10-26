@@ -139,20 +139,15 @@ def start_api(
     logger = get_module_logger("cli")
     log_system_info(logger)
 
-    module_path = "evileye.api.app:app"
-    cmd = [sys.executable, "-m", "uvicorn", module_path, "--host", host, "--port", str(port)]
+    cmd = [sys.executable, str(Path(__file__).parent / "process.py")]
+    cmd.extend(["--mode", "api", "--host", host, "--port", str(port), "--log-level", log_level])
     
-    if log_level:
-        cmd.extend(["--log-level", log_level])
-
-    if reload:
-        cmd.append("--reload")
-    if workers and workers > 1 and not reload:
-        cmd.extend(["--workers", str(workers)])
+    if not reload:
+        cmd.append("--no-reload")
 
     try:
         logger.info(f"Starting web server: {' '.join(cmd)}")
-        console.print(f"[green]Starting web server:[/green] {' '.join(cmd)}")
+        console.print(f"[green]Starting web server on {host}:{port}[/green]")
         subprocess.run(cmd, check=True, cwd=os.getcwd())
     except subprocess.CalledProcessError as e:
         logger.error(f"Web server failed: {e}")

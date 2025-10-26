@@ -4,6 +4,8 @@ import sys
 import os
 from pathlib import Path
 import onnxruntime as ort
+import uvicorn
+import atexit
 
 try:
     from PyQt6 import QtCore
@@ -22,6 +24,7 @@ from evileye.visualization_modules.main_window import MainWindow
 from evileye.utils.utils import normalize_config_path
 from evileye.core.logging_config import setup_evileye_logging, log_system_info
 from evileye.core.logger import get_module_logger
+from evileye.api.app import create_app
 
 def create_args_parser():
     pars = argparse.ArgumentParser()
@@ -33,9 +36,68 @@ def create_args_parser():
                       help="Automatic close application when video ends")
     pars.add_argument('--sources_preset', nargs='?', const="", type=str,
                       help="Use preset for multiple video sources")
+    pars.add_argument('--mode', type=str, choices=['gui', 'api'], default='gui',
+                      help="Run mode: 'gui' for GUI application or 'api' for web API server")
+    pars.add_argument('--host', type=str, default='127.0.0.1',
+                      help="API server host (default: 127.0.0.1)")
+    pars.add_argument('--port', type=int, default=8080,
+                      help="API server port (default: 8080)")
+    pars.add_argument('--reload', action=argparse.BooleanOptionalAction, default=True,
+                      help="Enable auto-reload for API server")
+    pars.add_argument('--log-level', type=str, default='info', choices=['critical', 'error', 'warning', 'info', 'debug', 'trace'],
+                      help="Log level for uvicorn (default: info)")
 
     result = pars.parse_args()
     return result
+
+
+def run_api_server(host: str = '127.0.0.1', port: int = 8080, reload: bool = True, log_level: str = 'info'):
+    """Run EvilEye FastAPI web server."""
+    logger = get_module_logger("process")
+    logger.info("="*60)
+    logger.info("EvilEye API Server Initialization")
+    logger.info("="*60)
+    
+    logger.info(f"Starting EvilEye API server on {host}:{port}")
+    logger.info(f"API documentation will be available at http://{host}:{port}/docs")
+    
+    from evileye.api.core.manager_access import get_manager
+    
+    logger.info("Initializing PipelineManager...")
+    manager = get_manager()
+    logger.info("PipelineManager initialized")
+    
+    def cleanup():
+        try:
+            logger.info("API cleanup sequence initiated (atexit)")
+            manager.shutdown()
+            logger.info("API cleanup completed (atexit)")
+        except Exception as e:
+            logger.error(f"API cleanup error (atexit): {e}")
+    
+    atexit.register(cleanup)
+    logger.info("Registered atexit cleanup handler")
+    
+    logger.info("Creating FastAPI application...")
+    app = create_app()
+    logger.info("FastAPI application created successfully")
+    
+    logger.info("="*60)
+    logger.info("Starting uvicorn server...")
+    logger.info("="*60)
+    
+    config = uvicorn.Config(
+        app,
+        host=host,
+        port=port,
+        log_level=log_level
+    )
+    
+    if reload:
+        logger.warning("Reload mode is not supported when passing app instance directly")
+    
+    server = uvicorn.Server(config)
+    server.run()
 
 
 def run_pipeline(config_path: str, gui: bool = True, autoclose: bool = False) -> int:
@@ -113,6 +175,16 @@ def main():
 
     logger.info(f"Starting system with CLI arguments: {args}")
     log_system_info(logger)
+
+    if args.mode == 'api':
+        logger.info("Running in API mode")
+        run_api_server(
+            host=args.host,
+            port=args.port,
+            reload=args.reload,
+            log_level=getattr(args, 'log_level', 'info')
+        )
+        return 0
 
     if args.config is None:
         logger.error("Configuration file not specified")
