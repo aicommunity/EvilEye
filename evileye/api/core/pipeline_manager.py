@@ -5,6 +5,7 @@ import multiprocessing
 from typing import Optional, Dict
 from evileye.core.logger import get_module_logger
 from evileye.controller.controller import Controller
+from evileye.api.core.broker_access import get_broker
 
 """ Module for managing pipelines """
 
@@ -107,6 +108,12 @@ class PipelineRunner:
                             self.logger.error(f"Error killing process {process.pid}: {e}")
             else:
                 self.logger.info(f"No child processes found for pipeline '{self.pipeline_id}'")
+            
+            try:
+                if get_broker().stop_stream(str(self.pipeline_id)):
+                    self.logger.info(f"Stopped stream for pipeline '{self.pipeline_id}'")
+            except Exception as e:
+                self.logger.error(f"Error stopping stream for pipeline '{self.pipeline_id}': {e}")
             
             self.state = PipelineState.STOPPED
             self.logger.info(f"Pipeline '{self.pipeline_id}' stopped successfully")
