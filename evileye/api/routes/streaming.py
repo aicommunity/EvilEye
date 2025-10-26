@@ -2,6 +2,7 @@ import asyncio
 from fastapi import APIRouter, HTTPException, Response, Query
 from fastapi.responses import StreamingResponse
 from typing import AsyncGenerator
+import threading
 
 from evileye.api.core.broker_access import get_broker
 from evileye.api.core.manager_access import get_manager
@@ -28,14 +29,17 @@ async def snapshot(pid: int):
     return Response(content=data, media_type="image/jpeg")
 
 
-async def _mjpeg_generator(pid: int, fps: int) -> AsyncGenerator[bytes, None]:
+async def _mjpeg_generator(pid: int, fps: int, stop_event: threading.Event) -> AsyncGenerator[bytes, None]:
     """
     Asynchronous generator that yields MJPEG frames for streaming.
+    Stops when stop_event is set.
     """
     boundary = b"--frame"
     delay = 1.0 / max(1, fps)
-    while True:
-        data = get_broker().latest_jpeg(str(pid))
+    pipeline_id_str = str(pid)
+    
+    while not stop_event.is_set():
+        data = get_broker().latest_jpeg(pipeline_id_str)
         if data:
             yield (
                 boundary
@@ -44,7 +48,12 @@ async def _mjpeg_generator(pid: int, fps: int) -> AsyncGenerator[bytes, None]:
                 + data
                 + b"\r\n"
             )
-        await asyncio.sleep(delay)
+        
+        elapsed = 0
+        check_interval = 0.1
+        while elapsed < delay and not stop_event.is_set():
+            await asyncio.sleep(min(check_interval, delay - elapsed))
+            elapsed += check_interval
 
 
 @router.get("/pipelines/{pid}/stream.mjpg")
@@ -65,7 +74,55 @@ async def mjpeg_stream(
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Pipeline '{pid}' not found")
     
+    stop_event = get_broker().start_stream(str(pid))
+    
     return StreamingResponse(
-        _mjpeg_generator(pid, fps),
+        _mjpeg_generator(pid, fps, stop_event),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )
+
+
+@router.post("/pipelines/{pid}/stream:stop")
+async def stop_stream(pid: int):
+    """
+    Stop the active MJPEG stream for the given pipeline.
+    This will cause the stream generator to exit gracefully.
+    """
+    try:
+        pipeline_info = get_manager().describe(pid)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Pipeline '{pid}' not found")
+    
+    stopped = get_broker().stop_stream(str(pid))
+    
+    if stopped:
+        return {
+            "pipeline_id": pid,
+            "status": "stopped",
+            "message": f"Stream for pipeline '{pid}' has been stopped"
+        }
+    else:
+        return {
+            "pipeline_id": pid,
+            "status": "not_found",
+            "message": f"No active stream found for pipeline '{pid}'"
+        }
+
+
+@router.get("/pipelines/{pid}/stream:status")
+async def stream_status(pid: int):
+    """
+    Get the status of the stream for the given pipeline.
+    """
+    try:
+        pipeline_info = get_manager().describe(pid)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Pipeline '{pid}' not found")
+    
+    is_active = get_broker().is_stream_active(str(pid))
+    
+    return {
+        "pipeline_id": pid,
+        "stream_active": is_active,
+        "pipeline_state": pipeline_info["state"]
+    }
