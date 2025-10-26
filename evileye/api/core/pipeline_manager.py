@@ -193,6 +193,11 @@ class PipelineManager:
                 raise KeyError("Pipeline not found")
             return self._describe_locked(pid, runner)
 
+    def _get_runner(self, pid: int) -> Optional[PipelineRunner]:
+        """Get runner for a specific pipeline (thread-safe)."""
+        with self._lock:
+            return self._items.get(pid)
+    
     def _describe_locked(self, pid: int, runner: PipelineRunner) -> Dict:
         return {
             "id": pid,
