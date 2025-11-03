@@ -4,7 +4,6 @@ import sys
 import os
 from pathlib import Path
 import onnxruntime as ort
-import uvicorn
 import atexit
 import signal
 
@@ -25,7 +24,6 @@ from evileye.visualization_modules.main_window import MainWindow
 from evileye.utils.utils import normalize_config_path
 from evileye.core.logging_config import setup_evileye_logging, log_system_info
 from evileye.core.logger import get_module_logger
-from evileye.api.app import create_app
 
 def create_args_parser():
     pars = argparse.ArgumentParser()
@@ -37,157 +35,16 @@ def create_args_parser():
                       help="Automatic close application when video ends")
     pars.add_argument('--sources_preset', nargs='?', const="", type=str,
                       help="Use preset for multiple video sources")
-    pars.add_argument('--mode', type=str, choices=['gui', 'api'], default='gui',
-                      help="Run mode: 'gui' for GUI application or 'api' for web API server")
-    pars.add_argument('--host', type=str, default='127.0.0.1',
-                      help="API server host (default: 127.0.0.1)")
-    pars.add_argument('--port', type=int, default=8080,
-                      help="API server port (default: 8080)")
-    pars.add_argument('--reload', action=argparse.BooleanOptionalAction, default=True,
-                      help="Enable auto-reload for API server")
-    pars.add_argument('--log-level', type=str, default='info', choices=['critical', 'error', 'warning', 'info', 'debug', 'trace'],
-                      help="Log level for uvicorn (default: info)")
 
     result = pars.parse_args()
     return result
 
 
-def run_api_server(host: str = '127.0.0.1', port: int = 8080, reload: bool = True, log_level: str = 'info'):
-    """Run EvilEye FastAPI web server."""
-    logger = get_module_logger("process")
-    logger.info("="*60)
-    logger.info("EvilEye API Server Initialization")
-    logger.info("="*60)
-    
-    logger.info(f"Starting EvilEye API server on {host}:{port}")
-    logger.info(f"API documentation will be available at http://{host}:{port}/docs")
-    
-    from evileye.api.core.manager_access import get_manager
-    
-    logger.info("Initializing PipelineManager...")
-    manager = get_manager()
-    logger.info("PipelineManager initialized")
-    
-    cleanup_called = False
-    
-    def cleanup():
-        nonlocal cleanup_called
-        if cleanup_called:
-            return
-        cleanup_called = True
-        try:
-            logger.info("API cleanup sequence initiated")
-            manager.shutdown()
-            logger.info("API cleanup completed")
-        except Exception as e:
-            logger.error(f"API cleanup error: {e}")
-    
-    def signal_handler(signum, frame):
-        logger.info(f"Received signal {signum}, initiating shutdown...")
-        cleanup()
-        sys.exit(0)
-    
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-    atexit.register(cleanup)
-    logger.info("Registered signal handlers and atexit cleanup")
-    
-    logger.info("Creating FastAPI application...")
-    app = create_app()
-    logger.info("FastAPI application created successfully")
-    
-    logger.info("="*60)
-    logger.info("Starting uvicorn server...")
-    logger.info("="*60)
-    
-    try:
-        config = uvicorn.Config(
-            app,
-            host=host,
-            port=port,
-            log_level=log_level
-        )
-        
-        if reload:
-            logger.warning("Reload mode is not supported when passing app instance directly")
-        
-        server = uvicorn.Server(config)
-        server.run()
-    except KeyboardInterrupt:
-        logger.info("Keyboard interrupt received")
-        cleanup()
-    except Exception as e:
-        logger.error(f"Server error: {e}")
-        cleanup()
-        raise
 
 
-def run_pipeline(config_path: str, gui: bool = True, autoclose: bool = False) -> int:
-    """Run EvilEye pipeline using provided configuration.
-
-    Returns Qt application exit code.
-    """
-    logger = get_module_logger("process")
-
-    # Change working directory to the parent directory of configs folder
-    config_file_name = normalize_config_path(config_path)
-    config_dir = os.path.dirname(os.path.abspath(config_file_name))
-    if config_dir:
-        if os.path.basename(config_dir) == 'configs':
-            parent_dir = os.path.dirname(config_dir)
-            os.chdir(parent_dir)
-            logger.info(f"Changed working directory to parent of configs folder: {parent_dir}")
-        else:
-            os.chdir(config_dir)
-            logger.info(f"Changed working directory to: {config_dir}")
-
-    with open(config_file_name) as config_file:
-        config_data = json.load(config_file)
-
-    logger.info("Configuration loaded successfully")
-
-    if not "controller" in config_data.keys():
-        config_data["controller"] = dict()
-    if not gui:
-        config_data["controller"]["gui_enabled"] = False
-        config_data["controller"]["show_main_gui"] = False
-        logger.info("GUI disabled")
-    else:
-        config_data["controller"]["gui_enabled"] = True
-        logger.info("GUI enabled")
-
-    if autoclose:
-        sources = config_data.get("pipeline", {}).get("sources", [])
-        for source in sources:
-            source["loop_play"] = False
-        config_data["autoclose"] = True
-        logger.info("Auto-close enabled")
-
-    logger.info("Initializing PyQt application")
-    qt_app = QApplication.instance() or QApplication(sys.argv)
-
-    logger.info("Creating controller")
-    controller_instance = controller.Controller()
-    controller_instance.init(config_data)
-
-    logger.info("Creating main window")
-    a = MainWindow(controller_instance, config_file_name, config_data, 1600, 720)
-    controller_instance.init_main_window(a, a.slots, a.signals)
-    if controller_instance.show_main_gui:
-        a.show()
-        logger.info("Main window displayed")
-
-    if controller_instance.show_journal:
-        a.open_journal()
-        logger.info("Journal opened")
-
-    logger.info("Starting controller")
-    controller_instance.start()
-
-    logger.info("Starting main application loop")
-    ret = qt_app.exec()
-    logger.info(f"Application finished with code: {ret}")
-    return ret
+def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> int:
+    from evileye.run_config_helper import run_config as _run
+    return _run(config_path=config_path, gui=gui, autoclose=autoclose)
 
 
 def main():
@@ -200,21 +57,11 @@ def main():
     logger.info(f"Starting system with CLI arguments: {args}")
     log_system_info(logger)
 
-    if args.mode == 'api':
-        logger.info("Running in API mode")
-        run_api_server(
-            host=args.host,
-            port=args.port,
-            reload=args.reload,
-            log_level=getattr(args, 'log_level', 'info')
-        )
-        return 0
-
     if args.config is None:
         logger.error("Configuration file not specified")
         sys.exit(1)
 
-    ret = run_pipeline(args.config, gui=args.gui, autoclose=args.autoclose)
+    ret = run_config(args.config, gui=args.gui, autoclose=args.autoclose)
     sys.exit(ret)
 
 

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from typing import List
+from typing import List, Dict, Optional
 from pathlib import Path
 import json
 
@@ -80,3 +80,70 @@ async def delete_config(name: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete config: {e}")
 
+from evileye.api.core.config_run_access import get_config_run_manager
+
+
+class ConfigRunCreate(BaseModel):
+    name: Optional[str] = Field(None, description="Human-readable name (auto-generated if not provided)")
+    config_name: Optional[str] = Field(None, description="Configuration name from the configs folder")
+    config_body: Optional[dict] = Field(None, description="Configuration body, if file name not used")
+
+
+@router.get("/runs")
+async def list_config_runs() -> Dict[int, Dict]:
+    return get_config_run_manager().list()
+
+
+@router.post("/runs")
+async def create_config_run(payload: ConfigRunCreate) -> Dict:
+    data = payload.model_dump()
+    rid = len(get_config_run_manager().list()) + 1
+    try:
+        return get_config_run_manager().create(
+            rid,
+            data.get("name"),
+            config_name=data.get("config_name"),
+            config_body=data.get("config_body"),
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Config file not found")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/runs/{rid}")
+async def get_config_run(rid: int) -> Dict:
+    try:
+        return get_config_run_manager().describe(rid)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Config run not found")
+
+
+@router.post("/runs/{rid}:start")
+async def start_config_run(rid: int) -> Dict:
+    try:
+        return get_config_run_manager().start(rid)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Config run not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/runs/{rid}:stop")
+async def stop_config_run(rid: int) -> Dict:
+    try:
+        return get_config_run_manager().stop(rid)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Config run not found")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/runs/{rid}")
+async def delete_config_run(rid: int) -> Dict:
+    try:
+        return get_config_run_manager().delete(rid)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Config run not found")
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
