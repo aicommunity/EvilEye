@@ -19,7 +19,7 @@ async def list_pipelines() -> Dict[int, Dict]:
     return get_manager().list()
 
 
-@router.post("")
+@router.post("/create")
 async def create_pipeline(pipeline: PipelineCreate) -> Dict:
     data = pipeline.model_dump()
     # Always generate integer ID
@@ -47,24 +47,7 @@ async def get_pipeline(pid: int) -> Dict:
         raise HTTPException(status_code=404, detail="Pipeline not found")
 
 
-@router.post("/{pid}:start")
-async def start_pipeline(pid: int) -> Dict:
-    try:
-        return get_manager().start(pid)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="Pipeline not found")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/{pid}:stop")
-async def stop_pipeline(pid: int) -> Dict:
-    try:
-        return get_manager().stop(pid)
-    except KeyError:
-        raise HTTPException(status_code=404, detail="Pipeline not found")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+## start/stop endpoints removed per new API design
 
 
 @router.delete("/{pid}")
