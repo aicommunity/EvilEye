@@ -153,105 +153,21 @@ def start_api(
     if not reload:
         cmd.append("--no-reload")
 
-    # If no auto-run config requested, behave as before and block
-    if not config:
-        try:
+    if config:
+        cmd.extend(["--config", config])
+
+    try:
         logger.info(f"Starting web server (server.py): {' '.join(cmd)}")
-            console.print(f"[green]Starting web server on {host}:{port}[/green]")
-            subprocess.run(cmd, check=True, cwd=os.getcwd())
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Web server failed: {e}")
-            console.print(f"[red]Web server failed: {e}[/red]")
-            raise typer.Exit(1)
-        except KeyboardInterrupt:
-            logger.info("Web server interrupted by user")
-            console.print("[yellow]Web server interrupted by user[/yellow]")
-            raise typer.Exit(0)
-        return
-
-    # Auto-run: start server in background, then create & start config run via API
-    try:
-        logger.info(f"Starting web server (background, server.py): {' '.join(cmd)}")
-        console.print(f"[green]Starting web server on {host}:{port} (background)[/green]")
-        proc = subprocess.Popen(cmd, cwd=os.getcwd())
-    except Exception as e:
-        logger.error(f"Failed to start web server: {e}")
-        console.print(f"[red]Failed to start web server: {e}[/red]")
+        console.print(f"[green]Starting web server on {host}:{port}[/green]")
+        subprocess.run(cmd, check=True, cwd=os.getcwd())
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Web server failed: {e}")
+        console.print(f"[red]Web server failed: {e}[/red]")
         raise typer.Exit(1)
-
-    # Wait for readiness
-    base = f"http://{host}:{port}"
-    ready_ok = False
-    for _ in range(60):  # up to ~30s
-        try:
-            with urllib.request.urlopen(f"{base}/ready", timeout=0.5) as resp:
-                if resp.status == 200:
-                    ready_ok = True
-                    break
-        except Exception:
-            time.sleep(0.5)
-    if not ready_ok:
-        console.print("[red]Server didn't become ready in time[/red]")
-        raise typer.Exit(1)
-
-    # Prepare payload: prefer file body if path exists; otherwise use config_name
-    payload: Dict[str, object] = {"name": Path(config).stem if config else None}
-    cfg_path = Path(config) if config else None
-    if cfg_path and cfg_path.exists():
-        try:
-            with open(cfg_path, "r", encoding="utf-8") as f:
-                cfg_body = json.load(f)
-            payload = {"name": Path(config).stem, "config_body": cfg_body}
-        except Exception as e:
-            console.print(f"[yellow]Failed to read config file, falling back to config_name: {e}[/yellow]")
-            payload = {"name": Path(config).stem, "config_name": cfg_path.name}
-    else:
-        payload = {"name": (Path(config).stem if config else None), "config_name": config}
-
-    # Create config run
-    try:
-        req = urllib.request.Request(
-            f"{base}/api/v1/configs/runs",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            body = json.loads(resp.read().decode("utf-8") or "{}")
-        run_id = body.get("id")
-        if not run_id:
-            console.print(f"[red]Failed to create config run: {body}[/red]")
-            raise typer.Exit(1)
-        console.print(f"[green]Created config run id={run_id}[/green]")
-    except urllib.error.HTTPError as e:
-        text = e.read().decode("utf-8", errors="ignore")
-        console.print(f"[red]Create run failed: {e.code} {text}[/red]")
-        raise typer.Exit(1)
-    except Exception as e:
-        console.print(f"[red]Create run failed: {e}[/red]")
-        raise typer.Exit(1)
-
-    # Start config run
-    try:
-        req = urllib.request.Request(
-            f"{base}/api/v1/configs/runs/{run_id}:start",
-            data=b"",
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            body = json.loads(resp.read().decode("utf-8") or "{}")
-        state = body.get("state")
-        console.print(f"[green]Run {run_id} state: {state}[/green]")
-        logger.info(f"Auto-run started: id={run_id}, state={state}")
-    except urllib.error.HTTPError as e:
-        text = e.read().decode("utf-8", errors="ignore")
-        console.print(f"[red]Start run failed: {e.code} {text}[/red]")
-        raise typer.Exit(1)
-    except Exception as e:
-        console.print(f"[red]Start run failed: {e}[/red]")
-        raise typer.Exit(1)
-
-    console.print("[green]Server is running in background. Use API to manage the run.[/green]")
+    except KeyboardInterrupt:
+        logger.info("Web server interrupted by user")
+        console.print("[yellow]Web server interrupted by user[/yellow]")
+        raise typer.Exit(0)
 
 @app.command()
 def validate(
