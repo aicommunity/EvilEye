@@ -118,7 +118,7 @@ def run(
         console.print("[yellow]Launch interrupted by user[/yellow]")
         raise typer.Exit(0)
 
-@app.command("start-api")
+@app.command("server")
 def start_api(
         host: str = typer.Option("127.0.0.1", "--host", help="Bind host"),
         port: int = typer.Option(8080, "--port", help="Bind port"),
@@ -133,9 +133,9 @@ def start_api(
     Start EvilEye FastAPI web server.
 
     Examples:
-        evileye start-api --host 0.0.0.0 --port 8000
-        evileye start-api --config poly-videos.json
-        evileye start-api --config ./configs/poly-videos.json
+        evileye server --host 0.0.0.0 --port 8000
+        evileye server --config poly-videos.json
+        evileye server --config ./configs/poly-videos.json
     """
     
     import time
