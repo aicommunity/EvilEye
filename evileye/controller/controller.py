@@ -204,7 +204,7 @@ class Controller:
         self.stream_pipeline_id = os.getenv('EVILEYE_PIPELINE_ID', 'default')
         self.logger.info(f"Controller initialized with stream pipeline id: {self.stream_pipeline_id}")
     
-        def get_fps(self) -> int:
+    def get_fps(self) -> int:
         return self.fps
 
     def get_params(self):
