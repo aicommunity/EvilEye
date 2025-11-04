@@ -35,7 +35,12 @@ class GStreamerRecorder(VideoRecorderBase):
         # Create daily subfolder YYYY-MM-DD inside out_dir
         date_dir = start_time.strftime("%Y-%m-%d")
         out_dir = Path(self.params.out_dir) / date_dir if self.params.out_dir else Path(".") / date_dir
-        out_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            out_dir.mkdir(parents=True, exist_ok=True)
+            self.logger.info(f"Recording directory created/verified: {out_dir}")
+        except Exception as e:
+            self.logger.error(f"Failed to create recording directory {out_dir}: {e}")
+            raise
         ts = start_time.strftime("%Y%m%d_%H%M%S")
         name = self.params.filename_tmpl.format(
             source_name=self.source.source_name if self.source else "source",
@@ -44,41 +49,47 @@ class GStreamerRecorder(VideoRecorderBase):
             ext=self.params.container,
         )
         stem = (out_dir / name).with_suffix("")
-        return str(stem) + "_%05d." + self.params.container
+        location = str(stem) + "_%05d." + self.params.container
+        self.logger.info(f"Recording location pattern: {location}")
+        return location
 
     def _build_rtsp_branch(self) -> str:
-        # Choose codec depay/parse elements; prefer h264; allow h265 fallback
-        # This branch keeps encoded bitstream and remuxes only.
-        # Note: many IP cams are h264; for h265 use h265 elements.
-        # Using splitmuxsink with muxer-factory and muxer-properties.
+        # Use uridecodebin which handles RTSP better and automatically connects pads
+        # Then re-encode to H264 for MP4 compatibility
         mux_factory = "mp4mux" if self.params.container.lower() == "mp4" else "matroskamux"
-        mux_props = "faststart=true" if mux_factory == "mp4mux" else ""
-        # Let splitmuxsink handle segmentation by time
         location = self._next_location(_dt.datetime.now(), 0)
-        # location is template; splitmuxsink will append increment if pattern contains %
-        # we will provide numeric-increment style with splitmuxsink's "location"
-        # Use key-unit interval by default
-        muxer_props_str = f" muxer-properties=\"{mux_props}\"" if mux_props else ""
+        
+        # Build RTSP URI with authentication if provided
+        rtsp_uri = self.source.source_address
+        if self.source.username and self.source.password:
+            # Insert credentials into URI if not already present
+            if "@" not in rtsp_uri.split("://")[1]:
+                protocol = rtsp_uri.split("://")[0]
+                rest = rtsp_uri.split("://")[1]
+                rtsp_uri = f"{protocol}://{self.source.username}:{self.source.password}@{rest}"
+        
+        # Use uridecodebin which handles RTSP authentication and decoding better
+        # Note: uridecodebin automatically handles H264/H265 and connects pads correctly
+        # uridecodebin doesn't support latency property, so we skip it
         branch = (
-            f"rtspsrc location=\"{self.source.source_address}\" latency=200 ! rtpjitterbuffer ! "
-            "rtph264depay ! h264parse config-interval=1 ! queue ! video/x-h264,stream-format=avc,alignment=au ! "
+            f"uridecodebin uri=\"{rtsp_uri}\" ! "
+            "videoconvert ! x264enc tune=zerolatency speed-preset=ultrafast bitrate=2000 ! h264parse ! queue ! "
             f"splitmuxsink max-size-time={self.params.segment_length_sec * 1000000000} "
-            f"location=\"{location}\" muxer-factory={mux_factory}{muxer_props_str} async-finalize=true"
+            f"location=\"{location}\" muxer-factory={mux_factory} async-finalize=true"
         )
         return branch
 
     def _build_file_branch(self) -> str:
         mux_factory = "mp4mux" if self.params.container.lower() == "mp4" else "matroskamux"
-        mux_props = "faststart=true" if mux_factory == "mp4mux" else ""
         location = self._next_location(_dt.datetime.now(), 0)
         src = str(self.source.source_address)
-        muxer_props_str = f" muxer-properties=\"{mux_props}\"" if mux_props else ""
+        # Note: muxer-properties cannot be set via parse_launch string, so we skip faststart
         if src.lower().endswith('.mp4') and self.params.container.lower() == 'mp4':
             # Remux mp4 h264 stream without re-encoding (best-effort)
             branch = (
                 f"filesrc location=\"{src}\" ! qtdemux name=demux demux.video_0 ! h264parse ! queue ! video/x-h264,stream-format=avc,alignment=au ! "
                 f"splitmuxsink max-size-time={self.params.segment_length_sec * 1000000000} "
-                f"location=\"{location}\" muxer-factory={mux_factory}{muxer_props_str} async-finalize=true"
+                f"location=\"{location}\" muxer-factory={mux_factory} async-finalize=true"
             )
         else:
             # Fallback: decode and re-encode to h264
@@ -86,7 +97,7 @@ class GStreamerRecorder(VideoRecorderBase):
                 f"filesrc location=\"{src}\" ! decodebin name=dec ! queue ! "
                 "x264enc tune=zerolatency byte-stream=true speed-preset=ultrafast ! h264parse ! queue ! video/x-h264,stream-format=avc,alignment=au ! "
                 f"splitmuxsink max-size-time={self.params.segment_length_sec * 1000000000} "
-                f"location=\"{location}\" muxer-factory={mux_factory}{muxer_props_str} async-finalize=true"
+                f"location=\"{location}\" muxer-factory={mux_factory} async-finalize=true"
             )
         return branch
 
@@ -99,6 +110,27 @@ class GStreamerRecorder(VideoRecorderBase):
         else:
             return self._build_file_branch()
 
+    def _on_bus_message(self, bus, message):
+        """Handle GStreamer bus messages for recording pipeline."""
+        try:
+            msg_type = message.type
+            if msg_type == Gst.MessageType.ERROR:
+                err, debug = message.parse_error()
+                self.logger.error(f"GStreamer recording ERROR: {err}, debug: {debug}")
+                self.is_running = False
+            elif msg_type == Gst.MessageType.EOS:
+                self.logger.info("GStreamer recording EOS received")
+                self.is_running = False
+            elif msg_type == Gst.MessageType.WARNING:
+                warn, debug = message.parse_warning()
+                self.logger.warning(f"GStreamer recording WARNING: {warn}, debug: {debug}")
+            elif msg_type == Gst.MessageType.STATE_CHANGED:
+                if message.src == self._pipeline:
+                    old_state, new_state, pending_state = message.parse_state_changed()
+                    self.logger.debug(f"Recording pipeline state: {old_state.value_nick} -> {new_state.value_nick}")
+        except Exception as e:
+            self.logger.error(f"Error handling recording bus message: {e}")
+
     def start(self, source_meta: SourceMeta, params: RecordingParams) -> None:
         if not _GST_OK:
             raise RuntimeError("GStreamer not available")
@@ -107,10 +139,29 @@ class GStreamerRecorder(VideoRecorderBase):
         pipeline_desc = self._build_pipeline()
         self.logger.info(f"Starting GStreamer recording pipeline: {pipeline_desc}")
         self._pipeline = Gst.parse_launch(pipeline_desc)
-        # Avoid running a separate GLib main loop to prevent conflicts with Qt main loop
-        # GStreamer internal threads will handle streaming; we just set state
-        self._pipeline.set_state(Gst.State.PLAYING)
+        if not self._pipeline:
+            raise RuntimeError("Failed to create GStreamer recording pipeline")
+        
+        # Setup bus to handle errors
+        bus = self._pipeline.get_bus()
+        if bus:
+            bus.add_signal_watch()
+            bus.connect("message", self._on_bus_message)
+        
+        # Set state to playing
+        ret = self._pipeline.set_state(Gst.State.PLAYING)
+        if ret == Gst.StateChangeReturn.FAILURE:
+            self.logger.error("Failed to start GStreamer recording pipeline")
+            raise RuntimeError("Failed to start recording pipeline")
+        elif ret == Gst.StateChangeReturn.ASYNC:
+            # Wait for state change
+            ret = self._pipeline.get_state(Gst.CLOCK_TIME_NONE)
+            if ret[0] == Gst.StateChangeReturn.FAILURE:
+                self.logger.error("Failed to start GStreamer recording pipeline (async)")
+                raise RuntimeError("Failed to start recording pipeline")
+        
         self.is_running = True
+        self.logger.info(f"Recording pipeline started successfully for {source_meta.source_name}")
 
     def rotate_segment(self) -> None:
         # splitmuxsink can be told to split by sending a force-key-unit or property tweak,

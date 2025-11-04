@@ -15,6 +15,8 @@ class SourceMeta:
     width: Optional[int] = None
     height: Optional[int] = None
     fps: Optional[float] = None
+    username: Optional[str] = None
+    password: Optional[str] = None
 
 
 class VideoRecorderBase(ABC):

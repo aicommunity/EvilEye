@@ -87,28 +87,45 @@ class VideoCaptureBase(EvilEyeBase):
         self.grab_thread.start()
         self.retrieve_thread.start()
         # Start recording if configured
+        # For GStreamer backend, recording is integrated into capture pipeline via tee
+        # For OpenCV backend, use separate recorder
         try:
+            self.logger.debug(f"Checking recording: params={self.recording_params is not None}, enabled={self.recording_params.enabled if self.recording_params else False}")
             if self.recording_params and self.recording_params.enabled:
-                # Determine backend by class name
-                backend = "gstreamer" if 'gstreamer' in self.__class__.__name__.lower() else "opencv"
-                from ..video_recorder.recorder_base import SourceMeta
-                meta = SourceMeta(
-                    source_name=(self.source_names[0] if self.source_names else "source"),
-                    source_address=self.source_address,
-                    source_type=str(self.source_type.value) if hasattr(self.source_type, 'value') else str(self.source_type),
-                    width=None,
-                    height=None,
-                    fps=self.source_fps,
-                )
-                try:
-                    self.logger.info(f"Starting recording: backend={backend} name={meta.source_name} url={meta.source_address} out_dir={getattr(self.recording_params,'out_dir',None)}")
-                except Exception:
-                    pass
-                self.recorder_manager = self.recorder_manager or RecorderManager()
-                self.recorder_manager.configure(self.recording_params)
-                self.recorder_manager.start(backend, meta)
-        except Exception:
-            pass
+                # Check if recording is integrated in pipeline (GStreamer) or separate (OpenCV)
+                is_gstreamer = 'gstreamer' in self.__class__.__name__.lower()
+                if is_gstreamer:
+                    # GStreamer: recording is integrated in capture pipeline via tee
+                    self.logger.info(f"Recording integrated in GStreamer capture pipeline for {self.source_names}")
+                else:
+                    # OpenCV: use separate recorder
+                    backend = "opencv"
+                    from ..video_recorder.recorder_base import SourceMeta
+                    meta = SourceMeta(
+                        source_name=(self.source_names[0] if self.source_names else "source"),
+                        source_address=self.source_address,
+                        source_type=str(self.source_type.value) if hasattr(self.source_type, 'value') else str(self.source_type),
+                        width=None,
+                        height=None,
+                        fps=self.source_fps,
+                        username=getattr(self, 'username', None),
+                        password=getattr(self, 'password', None),
+                    )
+                    try:
+                        self.logger.info(f"Starting recording: backend={backend} name={meta.source_name} url={meta.source_address} out_dir={getattr(self.recording_params,'out_dir',None)}")
+                    except Exception as e:
+                        self.logger.error(f"Error logging recording start: {e}")
+                    try:
+                        self.recorder_manager = self.recorder_manager or RecorderManager()
+                        self.recorder_manager.configure(self.recording_params)
+                        self.recorder_manager.start(backend, meta)
+                        self.logger.info(f"Recording started successfully for {meta.source_name}")
+                    except Exception as e:
+                        self.logger.error(f"Failed to start recording for {meta.source_name}: {e}", exc_info=True)
+            else:
+                self.logger.debug(f"Recording not enabled or params missing: params={self.recording_params is not None}, enabled={self.recording_params.enabled if self.recording_params else False}")
+        except Exception as e:
+            self.logger.error(f"Error starting recording: {e}", exc_info=True)
 
     def stop(self):
         self.run_flag = False

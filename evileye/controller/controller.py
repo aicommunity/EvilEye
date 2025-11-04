@@ -504,7 +504,8 @@ class Controller:
                     if not merged.get('out_dir'):
                         merged['out_dir'] = default_out_dir
                     # Apply enabled per source if list provided
-                    if enabled_list:
+                    if enabled_list and len(enabled_list) > 0:
+                        # If enabled_sources list is provided, only enable matching sources
                         enabled = False
                         # Match by numeric source id (first in source_ids) or by source_names
                         try:
@@ -524,6 +525,10 @@ class Controller:
                                 enabled = True
                                 break
                         merged['enabled'] = enabled
+                    else:
+                        # If enabled_sources is empty/None, use root enabled flag (default True)
+                        if 'enabled' not in merged:
+                            merged['enabled'] = record_cfg.get('enabled', True)
                     s['record'] = merged
                     try:
                         sid_log = (s.get('source_ids') or [idx])[0]

@@ -126,9 +126,18 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             except Exception:
                 # If anything goes wrong, skip forcing fps
                 pass
-        # Use sync=true to play according to timestamps (real-time). Keep drop to avoid backlog.
-        # Add final queue before sink to isolate sink during shutdown
-        pipeline += " ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync=true max-buffers=1 drop=true"
+        
+        # If recording is enabled, use tee to split stream: one to appsink, one to recording
+        if self.recording_params and self.recording_params.enabled:
+            # Use tee to split stream
+            pipeline += " ! tee name=t"
+            # Branch 1: to appsink for capture (with queue for isolation)
+            pipeline += " t. ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync=true max-buffers=1 drop=true"
+            # Branch 2: to recording (will be connected after pipeline creation)
+            pipeline += " t. ! queue name=recording_queue"
+        else:
+            # No recording - direct to appsink
+            pipeline += " ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync=true max-buffers=1 drop=true"
         
         return pipeline
     
@@ -294,14 +303,40 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 except Exception:
                     self._appsink_handler_id = None
                 
+                # Setup recording branch if enabled
+                if self.recording_params and self.recording_params.enabled:
+                    try:
+                        self._setup_recording_branch()
+                    except Exception as e:
+                        self.logger.error(f"Failed to setup recording branch: {e}", exc_info=True)
+                        # Continue without recording
+                
                 # Set pipeline to playing state
                 ret = self.pipeline.set_state(Gst.State.PLAYING)
                 if ret == Gst.StateChangeReturn.FAILURE:
+                    # Get error message from bus
+                    msg = self.bus.pop_filtered(Gst.MessageType.ERROR | Gst.MessageType.WARNING)
+                    if msg:
+                        if msg.type == Gst.MessageType.ERROR:
+                            err, debug = msg.parse_error()
+                            self.logger.error(f"GStreamer pipeline ERROR: {err}, debug: {debug}")
+                        elif msg.type == Gst.MessageType.WARNING:
+                            warn, debug = msg.parse_warning()
+                            self.logger.warning(f"GStreamer pipeline WARNING: {warn}, debug: {debug}")
                     raise RuntimeError("Failed to start GStreamer pipeline")
                 elif ret == Gst.StateChangeReturn.ASYNC:
                     # Wait for state change to complete
                     ret = self.pipeline.get_state(Gst.CLOCK_TIME_NONE)
                     if ret[0] == Gst.StateChangeReturn.FAILURE:
+                        # Get error message from bus
+                        msg = self.bus.pop_filtered(Gst.MessageType.ERROR | Gst.MessageType.WARNING)
+                        if msg:
+                            if msg.type == Gst.MessageType.ERROR:
+                                err, debug = msg.parse_error()
+                                self.logger.error(f"GStreamer pipeline ERROR (async): {err}, debug: {debug}")
+                            elif msg.type == Gst.MessageType.WARNING:
+                                warn, debug = msg.parse_warning()
+                                self.logger.warning(f"GStreamer pipeline WARNING (async): {warn}, debug: {debug}")
                         raise RuntimeError("Failed to start GStreamer pipeline")
                 
                 # Query duration for VideoFile
@@ -337,8 +372,9 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     self.disconnects.append((self.source_address, timestamp, self.is_working))
                     for sub in self.subscribers:
                         sub.update()
-                    # Schedule reconnect
-                    threading.Thread(target=self._reconnect_loop, daemon=True).start()
+                    # Schedule reconnect (only if not already reconnecting)
+                    if not (hasattr(self, '_reconnecting') and self._reconnecting):
+                        threading.Thread(target=self._reconnect_loop, daemon=True).start()
                 else:
                     self.finished = True
                     self.is_working = False
@@ -352,8 +388,9 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     self.disconnects.append((self.source_address, timestamp, self.is_working))
                     for sub in self.subscribers:
                         sub.update()
-                    # Schedule reconnect
-                    threading.Thread(target=self._reconnect_loop, daemon=True).start()
+                    # Schedule reconnect (only if not already reconnecting)
+                    if not (hasattr(self, '_reconnecting') and self._reconnecting):
+                        threading.Thread(target=self._reconnect_loop, daemon=True).start()
         except Exception as e:
             self.logger.error(f"Error handling bus message: {e}")
     
@@ -361,33 +398,117 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         """Reconnect loop for IP cameras (similar to OpenCV _grab_frames reconnect logic)"""
         if not self.run_flag:
             return
-        max_attempts = 10
-        attempt = 0
-        while self.run_flag and attempt < max_attempts:
-            time.sleep(2.0)  # Wait before retry
-            attempt += 1
-            if not self.is_working:
-                try:
-                    self.logger.info(f"Reconnecting to source {self.source_names} (attempt {attempt}/{max_attempts})")
-                    # Release old pipeline
-                    self.release()
-                    # Wait a bit
-                    time.sleep(1.0)
-                    # Try to reinitialize
-                    if self.init():
-                        timestamp = datetime.datetime.now()
-                        self.logger.info(f"Reconnected to source: {self.source_names}")
-                        self.reconnects.append((self.source_address, timestamp, self.is_working))
-                        for sub in self.subscribers:
-                            sub.update()
-                        break
-                    else:
-                        self.logger.warning(f"Reconnection attempt {attempt} failed")
-                except Exception as e:
-                    self.logger.error(f"Reconnection error: {e}")
-        if attempt >= max_attempts:
-            self.logger.error(f"Failed to reconnect after {max_attempts} attempts")
+        # Prevent multiple simultaneous reconnect attempts
+        if hasattr(self, '_reconnecting') and self._reconnecting:
+            return
+        self._reconnecting = True
+        try:
+            max_attempts = 10
+            attempt = 0
+            while self.run_flag and attempt < max_attempts:
+                # Progressive backoff: wait longer between attempts
+                wait_time = min(2.0 + attempt * 0.5, 10.0)
+                time.sleep(wait_time)
+                attempt += 1
+                if not self.is_working and self.run_flag:
+                    try:
+                        self.logger.info(f"Reconnecting to source {self.source_names} (attempt {attempt}/{max_attempts})")
+                        # Release old pipeline
+                        self.release()
+                        # Wait a bit before retry
+                        time.sleep(2.0)
+                        # Try to reinitialize
+                        if self.init():
+                            timestamp = datetime.datetime.now()
+                            self.logger.info(f"Reconnected to source: {self.source_names}")
+                            self.reconnects.append((self.source_address, timestamp, self.is_working))
+                            for sub in self.subscribers:
+                                sub.update()
+                            break
+                        else:
+                            self.logger.warning(f"Reconnection attempt {attempt} failed")
+                    except Exception as e:
+                        self.logger.error(f"Reconnection error: {e}")
+            if attempt >= max_attempts:
+                self.logger.error(f"Failed to reconnect after {max_attempts} attempts")
+        finally:
+            self._reconnecting = False
 
+    def _setup_recording_branch(self):
+        """Setup recording branch using tee output - encode and record to splitmuxsink"""
+        if not self.recording_params or not self.recording_params.enabled:
+            return
+        
+        try:
+            from pathlib import Path
+            import datetime as _dt
+            
+            # Get recording queue element
+            recording_queue = self.pipeline.get_by_name("recording_queue")
+            if not recording_queue:
+                raise RuntimeError("Failed to get recording_queue element")
+            
+            # Create recording elements
+            videoconvert = Gst.ElementFactory.make("videoconvert", "recording_videoconvert")
+            x264enc = Gst.ElementFactory.make("x264enc", "recording_x264enc")
+            x264enc.set_property("tune", "zerolatency")
+            x264enc.set_property("speed-preset", "ultrafast")
+            x264enc.set_property("bitrate", 2000)
+            
+            h264parse = Gst.ElementFactory.make("h264parse", "recording_h264parse")
+            queue_before_mux = Gst.ElementFactory.make("queue", "recording_queue_before_mux")
+            
+            # Create splitmuxsink
+            splitmuxsink = Gst.ElementFactory.make("splitmuxsink", "recording_splitmuxsink")
+            splitmuxsink.set_property("max-size-time", self.recording_params.segment_length_sec * 1000000000)
+            splitmuxsink.set_property("muxer-factory", "mp4mux" if self.recording_params.container.lower() == "mp4" else "matroskamux")
+            splitmuxsink.set_property("async-finalize", True)
+            
+            # Build output path
+            date_dir = _dt.datetime.now().strftime("%Y-%m-%d")
+            out_dir = Path(self.recording_params.out_dir) / date_dir if self.recording_params.out_dir else Path(".") / date_dir
+            out_dir.mkdir(parents=True, exist_ok=True)
+            ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+            source_name = (self.source_names[0] if self.source_names else "source")
+            name = self.recording_params.filename_tmpl.format(
+                source_name=source_name,
+                start_time=ts,
+                seq=0,
+                ext=self.recording_params.container,
+            )
+            stem = (out_dir / name).with_suffix("")
+            location = str(stem) + "_%05d." + self.recording_params.container
+            splitmuxsink.set_property("location", location)
+            
+            self.logger.info(f"Recording branch location: {location}")
+            
+            # Add elements to pipeline
+            self.pipeline.add(videoconvert)
+            self.pipeline.add(x264enc)
+            self.pipeline.add(h264parse)
+            self.pipeline.add(queue_before_mux)
+            self.pipeline.add(splitmuxsink)
+            
+            # Link elements
+            recording_queue.link(videoconvert)
+            videoconvert.link(x264enc)
+            x264enc.link(h264parse)
+            h264parse.link(queue_before_mux)
+            queue_before_mux.link(splitmuxsink)
+            
+            # Sync elements
+            videoconvert.sync_state_with_parent()
+            x264enc.sync_state_with_parent()
+            h264parse.sync_state_with_parent()
+            queue_before_mux.sync_state_with_parent()
+            splitmuxsink.sync_state_with_parent()
+            
+            self.logger.info("Recording branch setup successfully")
+            
+        except Exception as e:
+            self.logger.error(f"Error setting up recording branch: {e}", exc_info=True)
+            raise
+    
     def _seek_to_start(self):
         try:
             with self.pipeline_lock:
@@ -629,22 +750,11 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             
             # Check if pipeline is still working
             if not self.is_working and self.source_type == CaptureDeviceType.IpCamera:
-                # Try to reconnect
-                if self.run_flag:
-                    try:
-                        self.logger.warning(f"Pipeline not working, attempting reconnect for {self.source_names}")
-                        self.release()
-                        time.sleep(2.0)
-                        if self.run_flag and self.init():
-                            timestamp = datetime.datetime.now()
-                            self.logger.info(f"Reconnected to source: {self.source_names}")
-                            self.reconnects.append((self.source_address, timestamp, self.is_working))
-                            for sub in self.subscribers:
-                                sub.update()
-                    except Exception as e:
-                        self.logger.error(f"Reconnection failed: {e}")
+                # Try to reconnect (but don't create multiple threads)
+                if self.run_flag and not (hasattr(self, '_reconnecting') and self._reconnecting):
+                    threading.Thread(target=self._reconnect_loop, daemon=True).start()
             
-            time.sleep(1.0)  # Check every second
+            time.sleep(5.0)  # Check every 5 seconds (less aggressive)
     
     def _retrieve_frames(self):
         """
