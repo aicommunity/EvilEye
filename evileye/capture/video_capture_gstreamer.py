@@ -5,6 +5,7 @@ import time
 from typing import Optional, List
 from queue import Queue, Empty
 from .video_capture_base import VideoCaptureBase, CaptureDeviceType
+from ..video_recorder.recording_params import RecordingParams
 from ..core.frame import CaptureImage, Frame
 from ..core.base_class import EvilEyeBase
 
@@ -166,39 +167,35 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     # Make array writable for OpenCV operations
                     frame_data = frame_data.copy()
                     
-                    # Create CaptureImage
-                    capture_image = CaptureImage()
-                    capture_image.image = frame_data
-                    capture_image.frame_id = self.frame_id_counter
-                    capture_image.time_stamp = time.time()
-                    capture_image.source_id = self.source_ids[0] if self.source_ids else 0
                     # Update current video position/frame for GUI like OpenCV implementation
+                    current_video_frame = None
+                    current_video_position = None
                     if self.source_type == CaptureDeviceType.VideoFile:
                         try:
                             # Prefer buffer PTS for accurate position
                             pts_ns = buffer.pts
                             if pts_ns is not None and pts_ns != Gst.CLOCK_TIME_NONE and pts_ns >= 0:
-                                self.video_current_position = float(pts_ns) / 1e6  # ms
+                                current_video_position = float(pts_ns) / 1e6  # ms
                             else:
                                 ok, pos_ns = self.pipeline.query_position(Gst.Format.TIME)
                                 if ok and pos_ns is not None and pos_ns >= 0:
-                                    self.video_current_position = float(pos_ns) / 1e6  # milliseconds
+                                    current_video_position = float(pos_ns) / 1e6  # milliseconds
                                 else:
-                                    self.video_current_position = None
+                                    current_video_position = None
                         except Exception:
-                            self.video_current_position = None
+                            current_video_position = None
                         # Approximate current frame if fps is known
-                        if self.source_fps and self.video_current_position is not None:
-                            self.video_current_frame = int((self.video_current_position / 1000.0) * self.source_fps)
+                        if self.source_fps and current_video_position is not None:
+                            current_video_frame = int((current_video_position / 1000.0) * self.source_fps)
                         else:
                             if self.video_current_frame is None:
-                                self.video_current_frame = 0
+                                current_video_frame = 0
                             else:
-                                self.video_current_frame += 1
-                        capture_image.current_video_frame = self.video_current_frame
-                        capture_image.current_video_position = self.video_current_position
+                                current_video_frame = self.video_current_frame + 1
+                        self.video_current_frame = current_video_frame
+                        self.video_current_position = current_video_position
                     # Maintain rolling FPS estimate as fallback
-                    now = capture_image.time_stamp
+                    now = time.time()
                     self._fps_times.append(now)
                     if len(self._fps_times) > 30:
                         self._fps_times.pop(0)
@@ -207,19 +204,38 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                         if dt > 0:
                             self.source_fps = (len(self._fps_times) - 1) / dt
                     
-                    # Store frame
+                    # Create CaptureImage(s), support split like OpenCV implementation
+                    def _make_capture(img, sid):
+                        ci = CaptureImage()
+                        ci.image = img
+                        ci.frame_id = self.frame_id_counter
+                        ci.time_stamp = now
+                        ci.source_id = sid
+                        if self.source_type == CaptureDeviceType.VideoFile:
+                            ci.current_video_frame = current_video_frame
+                            ci.current_video_position = current_video_position
+                        return ci
+                    
+                    # Store single frame in buffer (split will be done in get_frames_impl like OpenCV)
+                    capture_image = _make_capture(frame_data, (self.source_ids[0] if self.source_ids else 0))
+                    if self.frame_buffer.full():
+                        try:
+                            self.frame_buffer.get_nowait()
+                        except Exception:
+                            pass
+                    self.frame_buffer.put(capture_image)
                     with self.frame_lock:
                         self.last_frame = capture_image
                         self.frame_id_counter += 1
                     
                     # Notify subscribers asynchronously to avoid blocking appsink thread
-                    def _notify(sub):
+                    def _notify(sub, frame):
                         try:
                             if callable(sub):
-                                sub(capture_image)
+                                sub(frame)
                             else:
                                 if hasattr(sub, 'process_frame'):
-                                    sub.process_frame(capture_image)
+                                    sub.process_frame(frame)
                                 elif hasattr(sub, 'update'):
                                     sub.update()
                         except Exception as ex:
@@ -228,7 +244,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                             except Exception:
                                 pass
                     for subscriber in self.subscribers:
-                        threading.Thread(target=_notify, args=(subscriber,), daemon=True).start()
+                        threading.Thread(target=_notify, args=(subscriber, capture_image), daemon=True).start()
                     
                     buffer.unmap(map_info)
                     return Gst.FlowReturn.OK
@@ -501,14 +517,46 @@ class VideoCaptureGStreamer(VideoCaptureBase):
     
     def get_frames_impl(self) -> List[CaptureImage]:
         """
-        Get latest captured frames.
+        Get latest captured frames (supports split like OpenCV implementation).
         """
-        frames = []
-        if self.is_working and self.last_frame:
-            with self.frame_lock:
-                if self.last_frame:
-                    frames.append(self.last_frame)
-        return frames
+        captured_images: List[CaptureImage] = []
+        if not self.is_working or self.frame_buffer.empty():
+            return captured_images
+        
+        try:
+            # Get one frame from buffer (like OpenCV does)
+            capture_image = self.frame_buffer.get_nowait()
+            if not capture_image:
+                return captured_images
+            
+            # If split, return list with parts, otherwise return original image
+            if self.split_stream and self.src_coords and isinstance(self.src_coords, list):
+                for stream_cnt in range(self.num_split):
+                    if stream_cnt >= len(self.src_coords):
+                        continue
+                    try:
+                        coords = self.src_coords[stream_cnt]
+                        if not isinstance(coords, list) or len(coords) < 4:
+                            continue
+                        x, y, w, h = int(coords[0]), int(coords[1]), int(coords[2]), int(coords[3])
+                    except Exception:
+                        continue
+                    
+                    ci = CaptureImage()
+                    ci.source_id = self.source_ids[stream_cnt] if (self.source_ids and stream_cnt < len(self.source_ids)) else 0
+                    ci.time_stamp = capture_image.time_stamp
+                    ci.frame_id = capture_image.frame_id
+                    ci.current_video_frame = capture_image.current_video_frame if hasattr(capture_image, 'current_video_frame') else None
+                    ci.current_video_position = capture_image.current_video_position if hasattr(capture_image, 'current_video_position') else None
+                    ci.image = capture_image.image[y:y+h, x:x+w].copy()
+                    captured_images.append(ci)
+            else:
+                # No split - return original frame
+                captured_images.append(capture_image)
+        except Exception:
+            pass
+        
+        return captured_images
     
     def _grab_frames(self):
         """

@@ -8,6 +8,7 @@ from .video_capture_base import VideoCaptureBase, CaptureImage, CaptureDeviceTyp
 from enum import IntEnum
 
 from ..core.base_class import EvilEyeBase
+from ..video_recorder.recording_params import RecordingParams
 
 
 @EvilEyeBase.register("VideoCaptureOpencv")
@@ -29,6 +30,12 @@ class VideoCaptureOpencv(VideoCaptureBase):
 
     def set_params_impl(self):
         super().set_params_impl()
+        try:
+            rec_cfg = self.params.get('record', None)
+            if isinstance(rec_cfg, dict):
+                self.recording_params = RecordingParams.from_config({'record': rec_cfg})
+        except Exception:
+            pass
 
     def init_impl(self):
         api_pref = self.params.get('apiPreference','CAP_FFMPEG')
@@ -162,6 +169,15 @@ class VideoCaptureOpencv(VideoCaptureBase):
                     self.last_frame_time = datetime.datetime.now()
                 self.frames_queue.put([is_read, src_image, self.frame_id_counter, self.video_current_frame, self.video_current_position])
                 self.frame_id_counter += 1
+                # Feed OpenCV recorder if present
+                try:
+                    if self.recorder_manager and getattr(self.recorder_manager, 'recorder', None):
+                        rec = self.recorder_manager.recorder
+                        on_frame = getattr(rec, 'on_frame', None)
+                        if callable(on_frame):
+                            on_frame(src_image)
+                except Exception:
+                    pass
 
             end_it = timer()
             elapsed_seconds = end_it - begin_it

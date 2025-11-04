@@ -482,6 +482,57 @@ class Controller:
 
         # Initialize processing pipeline (sources, preprocessors, detectors, trackers)
         pipeline_params = self.params.get("pipeline", {})
+        # Propagate global recording config into each source (so capture can access it)
+        try:
+            record_cfg = (self.params or {}).get("record", {}) or {}
+            if isinstance(record_cfg, dict) and record_cfg:
+                # Default recordings base dir from database.image_dir if out_dir not specified
+                db_image_dir = (((self.params or {}).get('database', {}) or {}).get('image_dir')) or 'EvilEyeData'
+                import datetime as _dt
+                today = _dt.datetime.now().strftime('%Y-%m-%d')
+                default_out_dir = str(Path(db_image_dir) / 'Recording' / today)
+
+                srcs = pipeline_params.get("sources", []) or []
+                enabled_list = record_cfg.get("enabled_sources")
+                for idx, s in enumerate(srcs):
+                    if not isinstance(s, dict):
+                        continue
+                    # Merge: keep per-source overrides, fill missing from root
+                    per = dict(s.get("record", {})) if isinstance(s.get("record", {}), dict) else {}
+                    merged = {**record_cfg, **per}
+                    # Ensure out_dir present -> base/Recording/YYYY-MM-DD when missing
+                    if not merged.get('out_dir'):
+                        merged['out_dir'] = default_out_dir
+                    # Apply enabled per source if list provided
+                    if enabled_list:
+                        enabled = False
+                        # Match by numeric source id (first in source_ids) or by source_names
+                        try:
+                            sid = (s.get('source_ids') or [idx])[0]
+                        except Exception:
+                            sid = idx
+                        sname = None
+                        try:
+                            sname = (s.get('source_names') or [None])[0]
+                        except Exception:
+                            sname = None
+                        for it in enabled_list:
+                            if isinstance(it, int) and it == sid:
+                                enabled = True
+                                break
+                            if isinstance(it, str) and sname and it == sname:
+                                enabled = True
+                                break
+                        merged['enabled'] = enabled
+                    s['record'] = merged
+                    try:
+                        sid_log = (s.get('source_ids') or [idx])[0]
+                        sname_log = (s.get('source_names') or [None])[0]
+                        self.logger.info(f"Record config for source id={sid_log} name={sname_log}: enabled={merged.get('enabled')} out_dir={merged.get('out_dir')} container={merged.get('container')}")
+                    except Exception:
+                        pass
+        except Exception:
+            pass
         pipeline_class_name = pipeline_params.get("pipeline_class")
         self.logger.info(f"Using EVILEYE_PIPELINE_ID for streaming: {self.stream_pipeline_id}")
         

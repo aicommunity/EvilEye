@@ -54,11 +54,19 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
         config_data["autoclose"] = True
         logger.info("Auto-close enabled")
 
+    # No CLI recording overrides; use only config
+
     logger.info("Creating controller")
     controller_instance = controller.Controller()
     controller_instance.init(config_data)
 
     logger.info("Initializing PyQt application (headless-safe)")
+    # Mitigate Qt↔GLib dispatcher conflicts (QBasicTimer warnings)
+    try:
+        import os as _os
+        _os.environ.setdefault("QT_NO_GLIB", "1")
+    except Exception:
+        pass
     qt_app = QApplication.instance() or QApplication(sys.argv)
 
     logger.info("Creating main window (no-show in headless mode)")

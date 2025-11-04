@@ -103,6 +103,8 @@ def run(
         cmd.append("--no-autoclose")
         logger.info("Auto-close disabled")
 
+    # Recording is configured only via config file; no CLI flags
+
     try:
         logger.info(f"Launching command: {' '.join(cmd)}")
         console.print(f"[green]Launching with command:[/green] {' '.join(cmd)}")
