@@ -17,6 +17,8 @@ class SourceMeta:
     fps: Optional[float] = None
     username: Optional[str] = None
     password: Optional[str] = None
+    source_names: Optional[list[str]] = None  # All source names (for split sources)
+    source_ids: Optional[list[int]] = None  # All source IDs (for split sources)
 
 
 class VideoRecorderBase(ABC):

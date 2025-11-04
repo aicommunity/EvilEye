@@ -110,6 +110,8 @@ class VideoCaptureBase(EvilEyeBase):
                         fps=self.source_fps,
                         username=getattr(self, 'username', None),
                         password=getattr(self, 'password', None),
+                        source_names=getattr(self, 'source_names', None),
+                        source_ids=getattr(self, 'source_ids', None),
                     )
                     try:
                         self.logger.info(f"Starting recording: backend={backend} name={meta.source_name} url={meta.source_address} out_dir={getattr(self.recording_params,'out_dir',None)}")

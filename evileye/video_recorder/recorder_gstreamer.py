@@ -32,9 +32,23 @@ class GStreamerRecorder(VideoRecorderBase):
             Gst.init(None)
 
     def _next_location(self, start_time: _dt.datetime, seq: int) -> str:
-        # Create daily subfolder YYYY-MM-DD inside out_dir
+        # Create daily subfolder YYYY-MM-DD inside out_dir, then camera name subfolder
         date_dir = start_time.strftime("%Y-%m-%d")
-        out_dir = Path(self.params.out_dir) / date_dir if self.params.out_dir else Path(".") / date_dir
+        
+        # Get camera folder name from source metadata
+        # Compose from all source_names or source_ids (for split sources)
+        if self.source and self.source.source_names and len(self.source.source_names) > 0:
+            camera_folder = "-".join(self.source.source_names)
+        elif self.source and self.source.source_ids and len(self.source.source_ids) > 0:
+            camera_folder = "-".join(str(sid) for sid in self.source.source_ids)
+        elif self.source:
+            camera_folder = self.source.source_name
+        else:
+            camera_folder = "source"
+        
+        # Create path: out_dir/YYYY-MM-DD/CameraName/
+        base_out_dir = Path(self.params.out_dir) if self.params.out_dir else Path(".")
+        out_dir = base_out_dir / date_dir / camera_folder
         try:
             out_dir.mkdir(parents=True, exist_ok=True)
             self.logger.info(f"Recording directory created/verified: {out_dir}")

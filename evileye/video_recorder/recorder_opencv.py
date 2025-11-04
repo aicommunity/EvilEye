@@ -31,13 +31,29 @@ class OpenCVRecorder(VideoRecorderBase):
         return ["XVID", "MJPG", "mp4v", "H264"]
 
     def _next_path(self) -> str:
-        # Daily subfolder YYYY-MM-DD inside out_dir
+        # Daily subfolder YYYY-MM-DD inside out_dir, then camera name subfolder
         date_dir = time.strftime("%Y-%m-%d", time.localtime(self._segment_started_ts))
-        out_dir = Path(self.params.out_dir) / date_dir if self.params.out_dir else Path(".") / date_dir
+        
+        # Compose camera folder name from all source_names or source_ids
+        if self.source and self.source.source_names and len(self.source.source_names) > 0:
+            camera_folder = "-".join(self.source.source_names)
+        elif self.source and self.source.source_ids and len(self.source.source_ids) > 0:
+            camera_folder = "-".join(str(sid) for sid in self.source.source_ids)
+        elif self.source:
+            camera_folder = self.source.source_name
+        else:
+            camera_folder = "source"
+        
+        # Create path: out_dir/YYYY-MM-DD/CameraName/
+        base_out_dir = Path(self.params.out_dir) if self.params.out_dir else Path(".")
+        out_dir = base_out_dir / date_dir / camera_folder
         out_dir.mkdir(parents=True, exist_ok=True)
+        
         ts = time.strftime("%Y%m%d_%H%M%S", time.localtime(self._segment_started_ts))
+        source_name = (self.source.source_names[0] if self.source and self.source.source_names else 
+                       (self.source.source_name if self.source else "source"))
         name = self.params.filename_tmpl.format(
-            source_name=self.source.source_name if self.source else "source",
+            source_name=source_name,
             start_time=ts,
             seq=self._seq,
             ext=self.params.container,
