@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import threading
 import time
+import datetime
 from typing import Optional, List
 from queue import Queue, Empty
 from .video_capture_base import VideoCaptureBase, CaptureDeviceType
@@ -328,6 +329,16 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 self.logger.info("GStreamer EOS received")
                 if self.source_type == CaptureDeviceType.VideoFile and self.loop_play:
                     self._seek_to_start()
+                elif self.source_type == CaptureDeviceType.IpCamera:
+                    # For IP cameras, EOS means disconnect - try to reconnect
+                    self.logger.warning(f"GStreamer EOS for IP camera - attempting reconnect")
+                    self.is_working = False
+                    timestamp = datetime.datetime.now()
+                    self.disconnects.append((self.source_address, timestamp, self.is_working))
+                    for sub in self.subscribers:
+                        sub.update()
+                    # Schedule reconnect
+                    threading.Thread(target=self._reconnect_loop, daemon=True).start()
                 else:
                     self.finished = True
                     self.is_working = False
@@ -335,8 +346,47 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 err, debug = message.parse_error()
                 self.logger.error(f"GStreamer ERROR: {err}, debug: {debug}")
                 self.is_working = False
+                # For IP cameras, try to reconnect on error
+                if self.source_type == CaptureDeviceType.IpCamera and self.run_flag:
+                    timestamp = datetime.datetime.now()
+                    self.disconnects.append((self.source_address, timestamp, self.is_working))
+                    for sub in self.subscribers:
+                        sub.update()
+                    # Schedule reconnect
+                    threading.Thread(target=self._reconnect_loop, daemon=True).start()
         except Exception as e:
             self.logger.error(f"Error handling bus message: {e}")
+    
+    def _reconnect_loop(self):
+        """Reconnect loop for IP cameras (similar to OpenCV _grab_frames reconnect logic)"""
+        if not self.run_flag:
+            return
+        max_attempts = 10
+        attempt = 0
+        while self.run_flag and attempt < max_attempts:
+            time.sleep(2.0)  # Wait before retry
+            attempt += 1
+            if not self.is_working:
+                try:
+                    self.logger.info(f"Reconnecting to source {self.source_names} (attempt {attempt}/{max_attempts})")
+                    # Release old pipeline
+                    self.release()
+                    # Wait a bit
+                    time.sleep(1.0)
+                    # Try to reinitialize
+                    if self.init():
+                        timestamp = datetime.datetime.now()
+                        self.logger.info(f"Reconnected to source: {self.source_names}")
+                        self.reconnects.append((self.source_address, timestamp, self.is_working))
+                        for sub in self.subscribers:
+                            sub.update()
+                        break
+                    else:
+                        self.logger.warning(f"Reconnection attempt {attempt} failed")
+                except Exception as e:
+                    self.logger.error(f"Reconnection error: {e}")
+        if attempt >= max_attempts:
+            self.logger.error(f"Failed to reconnect after {max_attempts} attempts")
 
     def _seek_to_start(self):
         try:
@@ -560,10 +610,41 @@ class VideoCaptureGStreamer(VideoCaptureBase):
     
     def _grab_frames(self):
         """
-        Grab frames from GStreamer pipeline (not used in this implementation).
+        Monitor pipeline state and reconnect if needed (similar to OpenCV reconnect logic).
         """
-        # GStreamer handles frame grabbing automatically via callbacks
-        pass
+        while self.run_flag:
+            if not self.is_inited or self.pipeline is None:
+                time.sleep(0.1)
+                if self.run_flag:
+                    try:
+                        if self.init():
+                            timestamp = datetime.datetime.now()
+                            self.logger.info(f"Reconnected to source: {self.source_names}")
+                            self.reconnects.append((self.source_address, timestamp, self.is_working))
+                            for sub in self.subscribers:
+                                sub.update()
+                    except Exception as e:
+                        self.logger.error(f"Reconnection failed: {e}")
+                continue
+            
+            # Check if pipeline is still working
+            if not self.is_working and self.source_type == CaptureDeviceType.IpCamera:
+                # Try to reconnect
+                if self.run_flag:
+                    try:
+                        self.logger.warning(f"Pipeline not working, attempting reconnect for {self.source_names}")
+                        self.release()
+                        time.sleep(2.0)
+                        if self.run_flag and self.init():
+                            timestamp = datetime.datetime.now()
+                            self.logger.info(f"Reconnected to source: {self.source_names}")
+                            self.reconnects.append((self.source_address, timestamp, self.is_working))
+                            for sub in self.subscribers:
+                                sub.update()
+                    except Exception as e:
+                        self.logger.error(f"Reconnection failed: {e}")
+            
+            time.sleep(1.0)  # Check every second
     
     def _retrieve_frames(self):
         """
