@@ -65,11 +65,17 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         Build GStreamer pipeline based on source type and parameters.
         """
         if self.source_type == CaptureDeviceType.IpCamera:
-            # IP Camera pipeline
+            # IP Camera pipeline (force UDP, add jitterbuffer, increase latency for stability)
             if self.username and self.password:
-                pipeline = f"rtspsrc location={self.source_address} user-id={self.username} user-pw={self.password} ! rtph265depay ! h265parse ! avdec_h265 ! videoconvert"
+                pipeline = (
+                    f"rtspsrc location={self.source_address} user-id={self.username} user-pw={self.password} protocols=udp latency=300 ! "
+                    "rtpjitterbuffer ! rtph265depay ! h265parse ! avdec_h265 ! videoconvert"
+                )
             else:
-                pipeline = f"rtspsrc location={self.source_address} ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert"
+                pipeline = (
+                    f"rtspsrc location={self.source_address} protocols=udp latency=300 ! "
+                    "rtpjitterbuffer ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert"
+                )
             
         elif self.source_type == CaptureDeviceType.VideoFile:
             # Video file pipeline
@@ -276,7 +282,23 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     self.pipeline = None
                 
                 pipeline_str = self._build_pipeline()
-                self.logger.info(f"GStreamer pipeline: {pipeline_str}")
+                # Sanitize credentials in logs
+                def _sanitize(text: str) -> str:
+                    try:
+                        import re
+                        # Mask rtsp://user:pass@host → rtsp://****:****@host
+                        text = re.sub(r"rtsp:\/\/[^:@\/]+:[^@]+@", "rtsp://****:****@", text)
+                        # Mask rtsp://user@host → rtsp://****@host
+                        text = re.sub(r"rtsp:\/\/[^:@\/]+@", "rtsp://****@", text)
+                        # Mask user-id / user-pw (with or without quotes)
+                        text = re.sub(r"user-id=\"[^\"]*\"", "user-id=\"****\"", text)
+                        text = re.sub(r"user-pw=\"[^\"]*\"", "user-pw=\"****\"", text)
+                        text = re.sub(r"user-id=[^\s]+", "user-id=****", text)
+                        text = re.sub(r"user-pw=[^\s]+", "user-pw=****", text)
+                        return text
+                    except Exception:
+                        return text
+                self.logger.info(f"GStreamer pipeline: {_sanitize(pipeline_str)}")
                 
                 # Parse and create pipeline
                 self.pipeline = Gst.parse_launch(pipeline_str)
@@ -363,18 +385,28 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             if msg_type == Gst.MessageType.EOS:
                 self.logger.info("GStreamer EOS received")
                 if self.source_type == CaptureDeviceType.VideoFile and self.loop_play:
-                    self._seek_to_start()
+                    try:
+                        # Restart pipeline instead of seek to avoid TIME/BYTES format mismatch
+                        with self.pipeline_lock:
+                            try:
+                                if self.pipeline is not None:
+                                    self.pipeline.set_state(Gst.State.NULL)
+                            except Exception:
+                                pass
+                            self.pipeline = None
+                        time.sleep(0.1)
+                        self._init_pipeline()
+                        self.logger.info("Looping video: pipeline restarted")
+                    except Exception as e:
+                        self.logger.error(f"Loop restart failed: {e}")
                 elif self.source_type == CaptureDeviceType.IpCamera:
-                    # For IP cameras, EOS means disconnect - try to reconnect
-                    self.logger.warning(f"GStreamer EOS for IP camera - attempting reconnect")
+                    # For IP cameras, EOS means disconnect - mark not working; monitor thread handles reconnect
+                    self.logger.warning("GStreamer EOS for IP camera")
                     self.is_working = False
                     timestamp = datetime.datetime.now()
                     self.disconnects.append((self.source_address, timestamp, self.is_working))
                     for sub in self.subscribers:
                         sub.update()
-                    # Schedule reconnect (only if not already reconnecting)
-                    if not (hasattr(self, '_reconnecting') and self._reconnecting):
-                        threading.Thread(target=self._reconnect_loop, daemon=True).start()
                 else:
                     self.finished = True
                     self.is_working = False
@@ -382,15 +414,12 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 err, debug = message.parse_error()
                 self.logger.error(f"GStreamer ERROR: {err}, debug: {debug}")
                 self.is_working = False
-                # For IP cameras, try to reconnect on error
+                # For IP cameras, just mark not working; monitor thread handles reconnect
                 if self.source_type == CaptureDeviceType.IpCamera and self.run_flag:
                     timestamp = datetime.datetime.now()
                     self.disconnects.append((self.source_address, timestamp, self.is_working))
                     for sub in self.subscribers:
                         sub.update()
-                    # Schedule reconnect (only if not already reconnecting)
-                    if not (hasattr(self, '_reconnecting') and self._reconnecting):
-                        threading.Thread(target=self._reconnect_loop, daemon=True).start()
         except Exception as e:
             self.logger.error(f"Error handling bus message: {e}")
     
@@ -403,16 +432,27 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             return
         self._reconnecting = True
         try:
-            max_attempts = 10
+            # Read reconnect settings from params if provided
+            try:
+                cfg = (self.params or {}).get('reconnect', {}) if hasattr(self, 'params') else {}
+            except Exception:
+                cfg = {}
+            max_attempts = int(cfg.get('max_attempts', 0))  # 0 => infinite by default
+            initial_delay_sec = float(cfg.get('initial_delay_sec', 8.0))
+            max_delay_sec = float(cfg.get('max_delay_sec', 60.0))
+            backoff_step_sec = float(cfg.get('backoff_step_sec', 6.0))
             attempt = 0
-            while self.run_flag and attempt < max_attempts:
+            while self.run_flag and (max_attempts == 0 or attempt < max_attempts):
                 # Progressive backoff: wait longer between attempts
-                wait_time = min(2.0 + attempt * 0.5, 10.0)
+                wait_time = initial_delay_sec + attempt * backoff_step_sec
+                if wait_time > max_delay_sec:
+                    wait_time = max_delay_sec
                 time.sleep(wait_time)
                 attempt += 1
                 if not self.is_working and self.run_flag:
                     try:
-                        self.logger.info(f"Reconnecting to source {self.source_names} (attempt {attempt}/{max_attempts})")
+                        total_str = ("∞" if max_attempts == 0 else str(max_attempts))
+                        self.logger.info(f"Reconnecting to source {self.source_names} (attempt {attempt}/{total_str}), backoff={wait_time:.1f}s")
                         # Release old pipeline
                         self.release()
                         # Wait a bit before retry
@@ -429,7 +469,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                             self.logger.warning(f"Reconnection attempt {attempt} failed")
                     except Exception as e:
                         self.logger.error(f"Reconnection error: {e}")
-            if attempt >= max_attempts:
+            if max_attempts and attempt >= max_attempts:
                 self.logger.error(f"Failed to reconnect after {max_attempts} attempts")
         finally:
             self._reconnecting = False
@@ -811,7 +851,13 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 if self.run_flag and not (hasattr(self, '_reconnecting') and self._reconnecting):
                     threading.Thread(target=self._reconnect_loop, daemon=True).start()
             
-            time.sleep(5.0)  # Check every 5 seconds (less aggressive)
+            # Sleep according to initial backoff for responsiveness but not aggressive
+            try:
+                cfg = (self.params or {}).get('reconnect', {}) if hasattr(self, 'params') else {}
+                monitor_sleep = float(cfg.get('monitor_interval_sec', 5.0))
+            except Exception:
+                monitor_sleep = 5.0
+            time.sleep(monitor_sleep)
     
     def _retrieve_frames(self):
         """

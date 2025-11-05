@@ -151,7 +151,22 @@ class GStreamerRecorder(VideoRecorderBase):
         self.source = source_meta
         self.params = params
         pipeline_desc = self._build_pipeline()
-        self.logger.info(f"Starting GStreamer recording pipeline: {pipeline_desc}")
+        # Sanitize credentials before logging
+        try:
+            import re
+            sanitized = pipeline_desc
+            # Mask rtsp://user:pass@host → rtsp://****:****@host
+            sanitized = re.sub(r"rtsp:\/\/[^:@\/]+:[^@]+@", "rtsp://****:****@", sanitized)
+            # Mask rtsp://user@host → rtsp://****@host
+            sanitized = re.sub(r"rtsp:\/\/[^:@\/]+@", "rtsp://****@", sanitized)
+            # Mask user-id / user-pw (with or without quotes)
+            sanitized = re.sub(r"user-id=\"[^\"]*\"", "user-id=\"****\"", sanitized)
+            sanitized = re.sub(r"user-pw=\"[^\"]*\"", "user-pw=\"****\"", sanitized)
+            sanitized = re.sub(r"user-id=[^\s]+", "user-id=****", sanitized)
+            sanitized = re.sub(r"user-pw=[^\s]+", "user-pw=****", sanitized)
+        except Exception:
+            sanitized = pipeline_desc
+        self.logger.info(f"Starting GStreamer recording pipeline: {sanitized}")
         self._pipeline = Gst.parse_launch(pipeline_desc)
         if not self._pipeline:
             raise RuntimeError("Failed to create GStreamer recording pipeline")

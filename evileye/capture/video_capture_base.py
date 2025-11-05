@@ -114,7 +114,17 @@ class VideoCaptureBase(EvilEyeBase):
                         source_ids=getattr(self, 'source_ids', None),
                     )
                     try:
-                        self.logger.info(f"Starting recording: backend={backend} name={meta.source_name} url={meta.source_address} out_dir={getattr(self.recording_params,'out_dir',None)}")
+                        # Sanitize credentials in URL for logs
+                        url = str(meta.source_address)
+                        try:
+                            import re
+                            # Mask rtsp://user:pass@host → rtsp://****:****@host
+                            url = re.sub(r"rtsp:\/\/[^:@\/]+:[^@]+@", "rtsp://****:****@", url)
+                            # Mask rtsp://user@host → rtsp://****@host
+                            url = re.sub(r"rtsp:\/\/[^:@\/]+@", "rtsp://****@", url)
+                        except Exception:
+                            pass
+                        self.logger.info(f"Starting recording: backend={backend} name={meta.source_name} url={url} out_dir={getattr(self.recording_params,'out_dir',None)}")
                     except Exception as e:
                         self.logger.error(f"Error logging recording start: {e}")
                     try:
