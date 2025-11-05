@@ -17,6 +17,7 @@ class RecordingParams:
     segment_length_sec: int = 300
     retention_days: int = 3
     min_free_space_pct: int = 80
+    min_file_size_kb: int = 500  # Minimum file size in KB, files smaller will be deleted
     out_dir: str = "videos/recordings"
     filename_tmpl: str = "{source_name}_{start_time}_{seq}.{ext}"
 
@@ -32,6 +33,7 @@ class RecordingParams:
                 segment_length_sec=int(record_cfg.get("segment_length_sec", 300)),
                 retention_days=int(record_cfg.get("retention_days", 3)),
                 min_free_space_pct=int(record_cfg.get("min_free_space_pct", 80)),
+                min_file_size_kb=int(record_cfg.get("min_file_size_kb", 500)),
                 out_dir=str(record_cfg.get("out_dir", "videos/recordings")),
                 filename_tmpl=str(record_cfg.get("filename_tmpl", "{source_name}_{start_time}_{seq}.{ext}")),
             )
@@ -43,6 +45,7 @@ class RecordingParams:
             segment_length_sec=int(cfg.get("segment_length_sec", 300)),
             retention_days=int(cfg.get("retention_days", 3)),
             min_free_space_pct=int(cfg.get("min_free_space_pct", 80)),
+            min_file_size_kb=int(cfg.get("min_file_size_kb", 500)),
             out_dir=str(cfg.get("out_dir", "videos/recordings")),
             filename_tmpl=str(cfg.get("filename_tmpl", "{source_name}_{start_time}_{seq}.{ext}")),
         )
@@ -56,6 +59,7 @@ class RecordingParams:
             segment_length_sec=int(overrides.get("segment_length_sec", self.segment_length_sec)),
             retention_days=int(overrides.get("retention_days", self.retention_days)),
             min_free_space_pct=int(overrides.get("min_free_space_pct", self.min_free_space_pct)),
+            min_file_size_kb=int(overrides.get("min_file_size_kb", self.min_file_size_kb)),
             out_dir=str(overrides.get("out_dir", self.out_dir)),
             filename_tmpl=str(overrides.get("filename_tmpl", self.filename_tmpl)),
         )

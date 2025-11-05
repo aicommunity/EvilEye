@@ -492,6 +492,51 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             location = str(stem) + "_%05d." + self.recording_params.container
             splitmuxsink.set_property("location", location)
             
+            # Store recording directory and min_file_size_kb for periodic file checking
+            self._recording_out_dir = out_dir
+            self._recording_min_file_size_kb = self.recording_params.min_file_size_kb
+            self._recording_location_pattern = location
+            self._recording_container = self.recording_params.container
+            self._recording_checked_files = set()  # Track already checked files
+            
+            # Start periodic thread to check for new small files
+            def check_small_files_periodically():
+                """Periodically check for newly created small files and delete them"""
+                while self.is_working and self.run_flag:
+                    try:
+                        if not self._recording_out_dir.exists():
+                            time.sleep(5.0)
+                            continue
+                        
+                        # Get all video files in recording directory
+                        from evileye.video_recorder.utils import check_and_delete_small_files
+                        for file_path in self._recording_out_dir.glob(f"*.{self._recording_container}"):
+                            if file_path in self._recording_checked_files:
+                                continue
+                            
+                            # Try to delete small/invalid files (only if not active per util's min_age rule)
+                            deleted = check_and_delete_small_files(file_path, self._recording_min_file_size_kb)
+                            if deleted:
+                                reason = "invalid name pattern" if '%' in file_path.name else f"size < {self._recording_min_file_size_kb} KB"
+                                self.logger.info(f"Deleted recording file: {file_path} ({reason})")
+                                continue
+                            
+                            # If not deleted, add to checked only if file is mature (avoid skipping future checks when still active)
+                            try:
+                                stat = file_path.stat()
+                                file_age = time.time() - stat.st_mtime
+                                if file_age >= 60.0:  # consider mature after 60s
+                                    self._recording_checked_files.add(file_path)
+                            except Exception:
+                                pass
+                    except Exception as e:
+                        self.logger.error(f"Error checking small files: {e}")
+                    
+                    time.sleep(5.0)  # Check every 5 seconds
+            
+            # Start periodic checking thread
+            threading.Thread(target=check_small_files_periodically, daemon=True).start()
+            
             self.logger.info(f"Recording branch location: {location}")
             
             # Add elements to pipeline

@@ -9,6 +9,7 @@ from typing import Optional
 from evileye.core.logger import get_module_logger
 from evileye.video_recorder.recording_params import RecordingParams
 from evileye.video_recorder.recorder_base import VideoRecorderBase, SourceMeta
+from evileye.video_recorder.utils import check_and_delete_small_files
 
 
 class OpenCVRecorder(VideoRecorderBase):
@@ -21,6 +22,7 @@ class OpenCVRecorder(VideoRecorderBase):
         self._lock = threading.Lock()
         self._frame_size = (0, 0)
         self._fps = 25.0
+        self._current_file_path: Optional[Path] = None
 
     def _fourcc_candidates(self, container: str) -> list[str]:
         c = container.lower()
@@ -83,6 +85,7 @@ class OpenCVRecorder(VideoRecorderBase):
                         # Commit chosen container and writer
                         self.params.container = cont
                         self._writer = writer
+                        self._current_file_path = Path(path)
                         self.logger.info(f"VideoWriter opened successfully fourcc={fourcc_code} container={cont}")
                         return
                     else:
@@ -132,8 +135,17 @@ class OpenCVRecorder(VideoRecorderBase):
     def rotate_segment(self) -> None:
         with self._lock:
             if self._writer is not None:
+                # Get path to current file before closing
+                current_path = self._current_file_path
                 self._writer.release()
                 self._writer = None
+                self._current_file_path = None
+                
+                # Check and delete if file is too small
+                if current_path and current_path.exists():
+                    if check_and_delete_small_files(current_path, self.params.min_file_size_kb):
+                        self.logger.info(f"Deleted small file: {current_path} (size < {self.params.min_file_size_kb} KB)")
+                
             self._seq += 1
             self._segment_started_ts = time.time()
             # Will reopen on next frame
@@ -141,8 +153,15 @@ class OpenCVRecorder(VideoRecorderBase):
     def stop(self) -> None:
         with self._lock:
             if self._writer is not None:
+                # Check and delete last file if too small
+                current_path = self._current_file_path
                 self._writer.release()
                 self._writer = None
+                self._current_file_path = None
+                
+                if current_path and current_path.exists():
+                    if check_and_delete_small_files(current_path, self.params.min_file_size_kb):
+                        self.logger.info(f"Deleted small file: {current_path} (size < {self.params.min_file_size_kb} KB)")
             self.is_running = False
 
 
