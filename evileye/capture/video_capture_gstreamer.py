@@ -57,7 +57,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         self._recording_out_dir = None
         self._recording_checked_files = set()
         self._reconnecting = False
-        self._rtsp_protocol = 'tcp'  # Default to TCP for RTSP (like api-refactoring) to avoid UDP errors
+        self._rtsp_protocol = 'udp+tcp'  # Default: try UDP first, then TCP if UDP fails (GStreamer handles fallback)
         self._last_init_error = None
         self._init_time = None  # Track when pipeline was initialized to ignore early EOS
 
@@ -77,8 +77,9 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         if self.source_type == CaptureDeviceType.IpCamera:
             # IP Camera pipeline - use explicit codec paths like in api-refactoring
             # Try H265 first, then H264 as fallback (handled by pipeline candidates in _init_pipeline)
-            # Use TCP protocol by default to avoid UDP errors
-            protocol = getattr(self, '_rtsp_protocol', 'tcp')  # Default to TCP like api-refactoring
+            # Use UDP protocol by default, but allow TCP fallback if UDP fails (protocols=udp+tcp)
+            # This allows GStreamer to try UDP first, then fallback to TCP if UDP doesn't work
+            protocol = getattr(self, '_rtsp_protocol', 'udp+tcp')  # Try UDP first, then TCP if UDP fails
             if self.username and self.password:
                 # Try H265 first (more common for modern cameras)
                 pipeline = f"rtspsrc location={self.source_address} user-id={self.username} user-pw={self.password} protocols={protocol} ! rtph265depay ! h265parse ! avdec_h265 ! videoconvert"
@@ -333,17 +334,16 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         """
         Build multiple pipeline candidates for IP cameras (H265, H264).
         Returns list of pipeline strings to try in order.
-        Uses TCP protocol by default (like api-refactoring) since UDP causes errors.
+        Uses UDP protocol by default, never switches to TCP automatically.
         """
         if self.source_type != CaptureDeviceType.IpCamera:
             return [self._build_pipeline()]
         
         candidates = []
         
-        # Build base RTSP part - use TCP protocol by default (like api-refactoring)
-        # GStreamer uses TCP by default if protocols is not specified, but we explicitly set it to TCP
-        # to avoid UDP errors like "Error sending UDP packets"
-        protocol = getattr(self, '_rtsp_protocol', 'tcp')  # Default to TCP like api-refactoring
+        # Build base RTSP part - use UDP protocol by default, but allow TCP fallback
+        # protocols=udp+tcp allows GStreamer to try UDP first, then fallback to TCP if UDP fails
+        protocol = getattr(self, '_rtsp_protocol', 'udp+tcp')  # Try UDP first, then TCP if UDP fails
         if self.username and self.password:
             base_rtsp = f"rtspsrc location={self.source_address} user-id={self.username} user-pw={self.password} protocols={protocol}"
         else:
@@ -1042,7 +1042,6 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             max_delay_sec = float(cfg.get('max_delay_sec', 60.0))
             backoff_step_sec = float(cfg.get('backoff_step_sec', 6.0))
             attempt = 0
-            last_protocol_switch_attempt = -1
             while self.run_flag and (max_attempts == 0 or attempt < max_attempts):
                 # First attempt immediately; subsequent attempts with backoff
                 if attempt == 0:
@@ -1152,30 +1151,9 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                         else:
                             # Log failure and continue to next attempt - THIS MUST BE REACHED
                             self.logger.warning(f"Reconnection attempt {attempt} failed for {self.source_names}; will retry (init_ok={init_ok}, is_inited={self.is_inited}, is_working={self.is_working})")
-                            # Switch RTSP protocol to tcp if udp fails, then back to udp on next cycle
-                            # Also check for UDP errors in the last attempt
-                            try:
-                                if self.source_type == CaptureDeviceType.IpCamera:
-                                    # Check if last error was UDP-related
-                                    udp_error = False
-                                    try:
-                                        if hasattr(self, '_last_init_error'):
-                                            err_text = str(self._last_init_error)
-                                            if "UDP" in err_text or "udp" in err_text.lower() or "Error sending" in err_text:
-                                                udp_error = True
-                                    except Exception:
-                                        pass
-                                    
-                                    # Protocol switching logic - TCP is default, only switch if explicitly needed
-                                    if udp_error and self._rtsp_protocol == 'udp' and last_protocol_switch_attempt != attempt:
-                                        # Switch to TCP if UDP error detected
-                                        self._rtsp_protocol = 'tcp'
-                                        last_protocol_switch_attempt = attempt
-                                        self.logger.warning("Switching RTSP protocol to TCP due to UDP error")
-                                    # Note: TCP is default, so we don't switch back to UDP automatically
-                                    # If TCP fails, it's likely a network/camera issue, not a protocol issue
-                            except Exception:
-                                pass
+                            # Protocol switching logic removed - always use UDP, never switch to TCP automatically
+                            # If UDP fails, it's likely a network/camera issue, not a protocol issue
+                            # User can manually configure TCP if needed, but we never switch automatically
                             # Continue loop - this is critical to ensure retries happen
                             continue
                     except Exception as e:
