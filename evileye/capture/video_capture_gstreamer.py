@@ -4,7 +4,7 @@ import threading
 import time
 import datetime
 from typing import Optional, List
-from queue import Queue, Empty
+from queue import Queue, Empty, Full
 from .video_capture_base import VideoCaptureBase, CaptureDeviceType
 from ..core.frame import CaptureImage, Frame
 from ..core.base_class import EvilEyeBase
@@ -288,7 +288,18 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                         # Store all frames in frame_buffer
                         with self.frame_lock:
                             for img in capture_images:
-                                self.frame_buffer.put(img, block=False)
+                                try:
+                                    self.frame_buffer.put(img, block=False)
+                                except Full:
+                                    try:
+                                        _ = self.frame_buffer.get_nowait()
+                                    except Empty:
+                                        pass
+                                    finally:
+                                        try:
+                                            self.frame_buffer.put_nowait(img)
+                                        except Full:
+                                            pass
                             # Store first frame as last_frame for compatibility
                             if capture_images:
                                 self.last_frame = capture_images[0]
