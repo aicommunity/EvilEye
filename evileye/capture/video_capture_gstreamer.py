@@ -63,6 +63,28 @@ class VideoCaptureGStreamer(VideoCaptureBase):
 
     # Debug stack dump removed
     
+    def _mask_credentials_in_pipeline(self, pipeline_str: str) -> str:
+        """
+        Mask credentials (username and password) in pipeline string for logging.
+        Replaces user-id=... and user-pw=... with user-id=**** and user-pw=****
+        Also masks credentials in RTSP URLs (rtsp://user:pass@host → rtsp://****:****@host)
+        """
+        if not pipeline_str:
+            return pipeline_str
+        try:
+            import re
+            # Mask user-id="username" or user-id=username
+            pipeline_str = re.sub(r'user-id=["\']?([^"\'\s]+)["\']?', r'user-id="****"', pipeline_str)
+            # Mask user-pw="password" or user-pw=password
+            pipeline_str = re.sub(r'user-pw=["\']?([^"\'\s]+)["\']?', r'user-pw="****"', pipeline_str)
+            # Mask credentials in RTSP URL: rtsp://user:pass@host → rtsp://****:****@host
+            pipeline_str = re.sub(r'rtsp://[^:@/]+:[^@]+@', 'rtsp://****:****@', pipeline_str)
+            # Mask credentials in RTSP URL without password: rtsp://user@host → rtsp://****@host
+            pipeline_str = re.sub(r'rtsp://[^:@/]+@', 'rtsp://****@', pipeline_str)
+        except Exception:
+            pass
+        return pipeline_str
+    
     def _gst_has(self, element_name: str) -> bool:
         """Check if GStreamer element factory exists."""
         try:
@@ -394,9 +416,9 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                         try:
                             if i > 1:
                                 self.logger.info(f"Trying pipeline candidate {i}/{len(candidates)}")
-                                self.logger.debug(f"GStreamer pipeline (candidate): {candidate_str}")
+                                self.logger.debug(f"GStreamer pipeline (candidate): {self._mask_credentials_in_pipeline(candidate_str)}")
                             else:
-                                self.logger.info(f"GStreamer pipeline: {candidate_str}")
+                                self.logger.info(f"GStreamer pipeline: {self._mask_credentials_in_pipeline(candidate_str)}")
                             
                             # Clean up previous pipeline if any
                             if self.pipeline:
@@ -490,7 +512,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 else:
                     # For non-IP cameras, use single pipeline
                     pipeline_str = self._build_pipeline()
-                    self.logger.info(f"GStreamer pipeline: {pipeline_str}")
+                    self.logger.info(f"GStreamer pipeline: {self._mask_credentials_in_pipeline(pipeline_str)}")
                     
                     # Parse and create pipeline
                     self.pipeline = Gst.parse_launch(pipeline_str)
@@ -553,7 +575,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         except Exception as e:
             self.logger.error(f"Failed to initialize GStreamer pipeline: {e}")
             if pipeline_str:
-                self.logger.error(f"Pipeline string was: {pipeline_str}")
+                self.logger.error(f"Pipeline string was: {self._mask_credentials_in_pipeline(pipeline_str)}")
             raise
 
     def _on_bus_message(self, bus, message):
@@ -613,11 +635,15 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                         threading.Thread(target=self._reconnect_loop, daemon=True).start()
             elif msg_type == Gst.MessageType.WARNING:
                 warn, debug = message.parse_warning()
-                # Check for UDP-related warnings
-                if "UDP" in str(warn) or "udp" in str(warn).lower() or "Error sending" in str(warn):
-                    self.logger.warning(f"GStreamer pipeline WARNING: {warn}, debug: {debug}")
+                # Check for UDP-related warnings - hide them from logs as they are common and not critical
+                if "UDP" in str(warn) or "udp" in str(warn).lower() or "Error sending" in str(warn) or "Error sending UDP packets" in str(warn):
+                    # Don't log UDP errors - they are common when UDP is blocked or not supported
+                    # Still store error for internal use if needed
                     if self.source_type == CaptureDeviceType.IpCamera:
                         self._last_init_error = RuntimeError(f"UDP connection error: {warn}: {debug}")
+                else:
+                    # Log other warnings normally
+                    self.logger.warning(f"GStreamer pipeline WARNING: {warn}, debug: {debug}")
         except Exception as e:
             self.logger.error(f"Error handling bus message: {e}")
 

@@ -700,7 +700,7 @@ class MainWindow(QMainWindow):
         if label_id in self.labels_sources_ids:
             self.last_active_source_id = self.labels_sources_ids[label_id]
             self.highlight_selected_source(label_id)
-            self.logger.info(f"Updated last active source to: {self.last_active_source_id}")
+            self.logger.debug(f"Updated last active source to: {self.last_active_source_id}")
 
     def highlight_selected_source(self, label_id):
         """Визуально выделить выбранный источник"""
