@@ -72,8 +72,10 @@ class PipelineSurveillance(PipelineProcessors):
 
         sources_proc.set_params(params)
         init_result = sources_proc.init()
+        # Don't raise exception on init failure - let reconnect logic handle it
+        # Sources will be initialized later by reconnect loop if init fails
         if not init_result:
-            raise Exception(f"Failed to initialize sources processor: {sources_proc}")
+            self.logger.warning(f"Initial sources processor init failed: {sources_proc}; reconnect logic will retry")
         self._add_processor(sources_proc)
         self.sources_proc = sources_proc
 

@@ -6,7 +6,6 @@ import datetime
 from typing import Optional, List
 from queue import Queue, Empty
 from .video_capture_base import VideoCaptureBase, CaptureDeviceType
-from ..video_recorder.recording_params import RecordingParams
 from ..core.frame import CaptureImage, Frame
 from ..core.base_class import EvilEyeBase
 
@@ -50,6 +49,17 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         
         self.bus = None
         self._fps_times = []  # rolling timestamps to estimate FPS as fallback
+        
+        # Recording-related attributes
+        self._recording_elements = None
+        self._recording_check_thread = None
+        self._recording_check_stop = False
+        self._recording_out_dir = None
+        self._recording_checked_files = set()
+        self._reconnecting = False
+        self._rtsp_protocol = 'tcp'  # Default to TCP for RTSP (like api-refactoring) to avoid UDP errors
+        self._last_init_error = None
+        self._init_time = None  # Track when pipeline was initialized to ignore early EOS
 
     # Debug stack dump removed
     
@@ -65,17 +75,16 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         Build GStreamer pipeline based on source type and parameters.
         """
         if self.source_type == CaptureDeviceType.IpCamera:
-            # IP Camera pipeline (force UDP, add jitterbuffer, increase latency for stability)
+            # IP Camera pipeline - use explicit codec paths like in api-refactoring
+            # Try H265 first, then H264 as fallback (handled by pipeline candidates in _init_pipeline)
+            # Use TCP protocol by default to avoid UDP errors
+            protocol = getattr(self, '_rtsp_protocol', 'tcp')  # Default to TCP like api-refactoring
             if self.username and self.password:
-                pipeline = (
-                    f"rtspsrc location={self.source_address} user-id={self.username} user-pw={self.password} protocols=udp latency=300 ! "
-                    "rtpjitterbuffer ! rtph265depay ! h265parse ! avdec_h265 ! videoconvert"
-                )
+                # Try H265 first (more common for modern cameras)
+                pipeline = f"rtspsrc location={self.source_address} user-id={self.username} user-pw={self.password} protocols={protocol} ! rtph265depay ! h265parse ! avdec_h265 ! videoconvert"
             else:
-                pipeline = (
-                    f"rtspsrc location={self.source_address} protocols=udp latency=300 ! "
-                    "rtpjitterbuffer ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert"
-                )
+                # Try H264 first (more compatible)
+                pipeline = f"rtspsrc location={self.source_address} protocols={protocol} ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert"
             
         elif self.source_type == CaptureDeviceType.VideoFile:
             # Video file pipeline
@@ -132,7 +141,6 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             except Exception:
                 # If anything goes wrong, skip forcing fps
                 pass
-        
         # If recording is enabled, use tee to split stream: one to appsink, one to recording
         if self.recording_params and self.recording_params.enabled:
             # Use tee to split stream
@@ -152,10 +160,20 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         Callback for new frame from GStreamer pipeline.
         """
         try:
-            if not self.is_working:
-                return Gst.FlowReturn.EOS
             sample = appsink.emit("pull-sample")
             if sample:
+                # Mark as working when we receive first frame after init
+                # Allow processing frames even if is_working is False (within 5 seconds of init)
+                if self._init_time and not self.is_working:
+                    now = time.time()
+                    if (now - self._init_time) < 5.0:  # Within 5 seconds of init
+                        self.logger.debug(f"First frame received {(now - self._init_time):.1f}s after init - marking as working")
+                        self.is_working = True
+                
+                # If still not working after init grace period, skip frame
+                if not self.is_working:
+                    return Gst.FlowReturn.OK  # Return OK to continue, but don't process frame
+                
                 buffer = sample.get_buffer()
                 caps = sample.get_caps()
                 
@@ -183,35 +201,39 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     # Make array writable for OpenCV operations
                     frame_data = frame_data.copy()
                     
+                    # Create CaptureImage
+                    capture_image = CaptureImage()
+                    capture_image.image = frame_data
+                    capture_image.frame_id = self.frame_id_counter
+                    capture_image.time_stamp = time.time()
+                    capture_image.source_id = self.source_ids[0] if self.source_ids else 0
                     # Update current video position/frame for GUI like OpenCV implementation
-                    current_video_frame = None
-                    current_video_position = None
                     if self.source_type == CaptureDeviceType.VideoFile:
                         try:
                             # Prefer buffer PTS for accurate position
                             pts_ns = buffer.pts
                             if pts_ns is not None and pts_ns != Gst.CLOCK_TIME_NONE and pts_ns >= 0:
-                                current_video_position = float(pts_ns) / 1e6  # ms
+                                self.video_current_position = float(pts_ns) / 1e6  # ms
                             else:
                                 ok, pos_ns = self.pipeline.query_position(Gst.Format.TIME)
                                 if ok and pos_ns is not None and pos_ns >= 0:
-                                    current_video_position = float(pos_ns) / 1e6  # milliseconds
+                                    self.video_current_position = float(pos_ns) / 1e6  # milliseconds
                                 else:
-                                    current_video_position = None
+                                    self.video_current_position = None
                         except Exception:
-                            current_video_position = None
+                            self.video_current_position = None
                         # Approximate current frame if fps is known
-                        if self.source_fps and current_video_position is not None:
-                            current_video_frame = int((current_video_position / 1000.0) * self.source_fps)
+                        if self.source_fps and self.video_current_position is not None:
+                            self.video_current_frame = int((self.video_current_position / 1000.0) * self.source_fps)
                         else:
                             if self.video_current_frame is None:
-                                current_video_frame = 0
+                                self.video_current_frame = 0
                             else:
-                                current_video_frame = self.video_current_frame + 1
-                        self.video_current_frame = current_video_frame
-                        self.video_current_position = current_video_position
+                                self.video_current_frame += 1
+                        capture_image.current_video_frame = self.video_current_frame
+                        capture_image.current_video_position = self.video_current_position
                     # Maintain rolling FPS estimate as fallback
-                    now = time.time()
+                    now = capture_image.time_stamp
                     self._fps_times.append(now)
                     if len(self._fps_times) > 30:
                         self._fps_times.pop(0)
@@ -220,38 +242,19 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                         if dt > 0:
                             self.source_fps = (len(self._fps_times) - 1) / dt
                     
-                    # Create CaptureImage(s), support split like OpenCV implementation
-                    def _make_capture(img, sid):
-                        ci = CaptureImage()
-                        ci.image = img
-                        ci.frame_id = self.frame_id_counter
-                        ci.time_stamp = now
-                        ci.source_id = sid
-                        if self.source_type == CaptureDeviceType.VideoFile:
-                            ci.current_video_frame = current_video_frame
-                            ci.current_video_position = current_video_position
-                        return ci
-                    
-                    # Store single frame in buffer (split will be done in get_frames_impl like OpenCV)
-                    capture_image = _make_capture(frame_data, (self.source_ids[0] if self.source_ids else 0))
-                    if self.frame_buffer.full():
-                        try:
-                            self.frame_buffer.get_nowait()
-                        except Exception:
-                            pass
-                    self.frame_buffer.put(capture_image)
+                    # Store frame
                     with self.frame_lock:
                         self.last_frame = capture_image
                         self.frame_id_counter += 1
                     
                     # Notify subscribers asynchronously to avoid blocking appsink thread
-                    def _notify(sub, frame):
+                    def _notify(sub):
                         try:
                             if callable(sub):
-                                sub(frame)
+                                sub(capture_image)
                             else:
                                 if hasattr(sub, 'process_frame'):
-                                    sub.process_frame(frame)
+                                    sub.process_frame(capture_image)
                                 elif hasattr(sub, 'update'):
                                     sub.update()
                         except Exception as ex:
@@ -260,7 +263,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                             except Exception:
                                 pass
                     for subscriber in self.subscribers:
-                        threading.Thread(target=_notify, args=(subscriber, capture_image), daemon=True).start()
+                        threading.Thread(target=_notify, args=(subscriber,), daemon=True).start()
                     
                     buffer.unmap(map_info)
                     return Gst.FlowReturn.OK
@@ -271,95 +274,211 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             self.logger.error(f"Error processing frame: {e}")
             return Gst.FlowReturn.ERROR
     
+    def _build_pipeline_candidates(self) -> List[str]:
+        """
+        Build multiple pipeline candidates for IP cameras (H265, H264).
+        Returns list of pipeline strings to try in order.
+        Uses TCP protocol by default (like api-refactoring) since UDP causes errors.
+        """
+        if self.source_type != CaptureDeviceType.IpCamera:
+            return [self._build_pipeline()]
+        
+        candidates = []
+        
+        # Build base RTSP part - use TCP protocol by default (like api-refactoring)
+        # GStreamer uses TCP by default if protocols is not specified, but we explicitly set it to TCP
+        # to avoid UDP errors like "Error sending UDP packets"
+        protocol = getattr(self, '_rtsp_protocol', 'tcp')  # Default to TCP like api-refactoring
+        if self.username and self.password:
+            base_rtsp = f"rtspsrc location={self.source_address} user-id={self.username} user-pw={self.password} protocols={protocol}"
+        else:
+            base_rtsp = f"rtspsrc location={self.source_address} protocols={protocol}"
+        
+        # Build common tail (videoconvert + queue + appsink/tee)
+        common_tail = " ! videoconvert"
+        if self.recording_params and self.recording_params.enabled:
+            common_tail += " ! tee name=t"
+            common_tail += " t. ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync=true max-buffers=1 drop=true"
+            common_tail += " t. ! queue name=recording_queue"
+        else:
+            common_tail += " ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync=true max-buffers=1 drop=true"
+        
+        # Candidate 1: H265 (if username/password provided, try H265 first)
+        if self.username and self.password:
+            candidates.append(f"{base_rtsp} ! rtph265depay ! h265parse ! avdec_h265{common_tail}")
+        
+        # Candidate 2: H264 (always try H264)
+        candidates.append(f"{base_rtsp} ! rtph264depay ! h264parse ! avdec_h264{common_tail}")
+        
+        # Candidate 3: H265 without auth (if no username/password, try H265)
+        if not self.username or not self.password:
+            candidates.insert(0, f"{base_rtsp} ! rtph265depay ! h265parse ! avdec_h265{common_tail}")
+        
+        return candidates
+    
     def _init_pipeline(self):
         """
         Initialize GStreamer pipeline.
+        For IP cameras, tries multiple pipeline candidates (H265, H264) until one works.
+        Uses simple approach from api-refactoring with get_state(Gst.CLOCK_TIME_NONE).
         """
+        pipeline_str = None
         try:
             with self.pipeline_lock:
                 if self.pipeline:
                     self.pipeline.set_state(Gst.State.NULL)
                     self.pipeline = None
                 
-                pipeline_str = self._build_pipeline()
-                # Sanitize credentials in logs
-                def _sanitize(text: str) -> str:
-                    try:
-                        import re
-                        # Mask rtsp://user:pass@host → rtsp://****:****@host
-                        text = re.sub(r"rtsp:\/\/[^:@\/]+:[^@]+@", "rtsp://****:****@", text)
-                        # Mask rtsp://user@host → rtsp://****@host
-                        text = re.sub(r"rtsp:\/\/[^:@\/]+@", "rtsp://****@", text)
-                        # Mask user-id / user-pw (with or without quotes)
-                        text = re.sub(r"user-id=\"[^\"]*\"", "user-id=\"****\"", text)
-                        text = re.sub(r"user-pw=\"[^\"]*\"", "user-pw=\"****\"", text)
-                        text = re.sub(r"user-id=[^\s]+", "user-id=****", text)
-                        text = re.sub(r"user-pw=[^\s]+", "user-pw=****", text)
-                        return text
-                    except Exception:
-                        return text
-                self.logger.info(f"GStreamer pipeline: {_sanitize(pipeline_str)}")
-                
-                # Parse and create pipeline
-                self.pipeline = Gst.parse_launch(pipeline_str)
-                if not self.pipeline:
-                    raise RuntimeError("Failed to create GStreamer pipeline")
-                
-                # Setup bus to handle EOS/ERROR
-                self.bus = self.pipeline.get_bus()
-                if self.bus is not None:
-                    try:
-                        self.bus.add_signal_watch()
-                        self.bus.connect("message", self._on_bus_message)
-                    except Exception:
-                        pass
+                # For IP cameras, try multiple pipeline candidates
+                if self.source_type == CaptureDeviceType.IpCamera:
+                    candidates = self._build_pipeline_candidates()
+                    pipeline_str = None
+                    last_error = None
+                    
+                    for i, candidate_str in enumerate(candidates, 1):
+                        try:
+                            if i > 1:
+                                self.logger.info(f"Trying pipeline candidate {i}/{len(candidates)}")
+                                self.logger.debug(f"GStreamer pipeline (candidate): {candidate_str}")
+                            else:
+                                self.logger.info(f"GStreamer pipeline: {candidate_str}")
+                            
+                            # Clean up previous pipeline if any
+                            if self.pipeline:
+                                try:
+                                    self.pipeline.set_state(Gst.State.NULL)
+                                except Exception:
+                                    pass
+                                self.pipeline = None
+                            
+                            # Parse and create pipeline
+                            self.pipeline = Gst.parse_launch(candidate_str)
+                            if not self.pipeline:
+                                self.logger.warning(f"Failed to create pipeline candidate {i}")
+                                last_error = f"Failed to create pipeline candidate {i}"
+                                continue
+                            
+                            # Setup bus
+                            self.bus = self.pipeline.get_bus()
+                            if self.bus is not None:
+                                try:
+                                    self.bus.add_signal_watch()
+                                    self.bus.connect("message", self._on_bus_message)
+                                except Exception:
+                                    pass
+                            
+                            # Get appsink element
+                            self.appsink = self.pipeline.get_by_name("sink")
+                            if not self.appsink:
+                                self.logger.warning(f"Failed to get appsink from candidate {i}")
+                                last_error = f"Failed to get appsink from candidate {i}"
+                                continue
+                            
+                            # Connect callback
+                            try:
+                                self._appsink_handler_id = self.appsink.connect("new-sample", self._on_new_sample)
+                            except Exception:
+                                self._appsink_handler_id = None
+                            
+                            # Setup recording branch if enabled
+                            if self.recording_params and self.recording_params.enabled:
+                                try:
+                                    self._setup_recording_branch()
+                                except Exception as e:
+                                    self.logger.error(f"Failed to setup recording branch: {e}", exc_info=True)
+                                    # Continue without recording
+                            
+                            # Set pipeline to playing state - simple approach from api-refactoring
+                            ret = self.pipeline.set_state(Gst.State.PLAYING)
+                            if ret == Gst.StateChangeReturn.FAILURE:
+                                # Get error message from bus
+                                msg = self.bus.pop_filtered(Gst.MessageType.ERROR | Gst.MessageType.WARNING)
+                                if msg:
+                                    if msg.type == Gst.MessageType.ERROR:
+                                        err, debug = msg.parse_error()
+                                        self.logger.warning(f"GStreamer pipeline ERROR (candidate {i}): {err}, debug: {debug}")
+                                    elif msg.type == Gst.MessageType.WARNING:
+                                        warn, debug = msg.parse_warning()
+                                        self.logger.warning(f"GStreamer pipeline WARNING (candidate {i}): {warn}, debug: {debug}")
+                                last_error = f"Failed to start pipeline candidate {i}"
+                                continue
+                            elif ret == Gst.StateChangeReturn.ASYNC:
+                                # Wait for state change to complete - use CLOCK_TIME_NONE like api-refactoring
+                                ret = self.pipeline.get_state(Gst.CLOCK_TIME_NONE)
+                                if ret[0] == Gst.StateChangeReturn.FAILURE:
+                                    # Get error message from bus
+                                    msg = self.bus.pop_filtered(Gst.MessageType.ERROR | Gst.MessageType.WARNING)
+                                    if msg:
+                                        if msg.type == Gst.MessageType.ERROR:
+                                            err, debug = msg.parse_error()
+                                            self.logger.warning(f"GStreamer pipeline ERROR (candidate {i} async): {err}, debug: {debug}")
+                                        elif msg.type == Gst.MessageType.WARNING:
+                                            warn, debug = msg.parse_warning()
+                                            self.logger.warning(f"GStreamer pipeline WARNING (candidate {i} async): {warn}, debug: {debug}")
+                                    last_error = f"Failed to start pipeline candidate {i} (async)"
+                                    continue
+                            
+                            # Success! This candidate works
+                            pipeline_str = candidate_str
+                            if i > 1:
+                                self.logger.info(f"Pipeline candidate {i} succeeded!")
+                            break
+                                
+                        except Exception as e:
+                            self.logger.warning(f"Error with pipeline candidate {i}: {e}")
+                            last_error = str(e)
+                            continue
+                    
+                    if not pipeline_str:
+                        # All candidates failed
+                        raise RuntimeError(f"All pipeline candidates failed. Last error: {last_error}")
+                else:
+                    # For non-IP cameras, use single pipeline
+                    pipeline_str = self._build_pipeline()
+                    self.logger.info(f"GStreamer pipeline: {pipeline_str}")
+                    
+                    # Parse and create pipeline
+                    self.pipeline = Gst.parse_launch(pipeline_str)
+                    if not self.pipeline:
+                        raise RuntimeError("Failed to create GStreamer pipeline")
+                    
+                    # Setup bus to handle EOS/ERROR
+                    self.bus = self.pipeline.get_bus()
+                    if self.bus is not None:
+                        try:
+                            self.bus.add_signal_watch()
+                            self.bus.connect("message", self._on_bus_message)
+                        except Exception:
+                            pass
 
-                # Get appsink element
-                self.appsink = self.pipeline.get_by_name("sink")
-                if not self.appsink:
-                    raise RuntimeError("Failed to get appsink element")
-                
-                # Connect callback
-                try:
-                    self._appsink_handler_id = self.appsink.connect("new-sample", self._on_new_sample)
-                except Exception:
-                    self._appsink_handler_id = None
-                
-                # Setup recording branch if enabled
-                if self.recording_params and self.recording_params.enabled:
+                    # Get appsink element
+                    self.appsink = self.pipeline.get_by_name("sink")
+                    if not self.appsink:
+                        raise RuntimeError("Failed to get appsink element")
+                    
+                    # Connect callback
                     try:
-                        self._setup_recording_branch()
-                    except Exception as e:
-                        self.logger.error(f"Failed to setup recording branch: {e}", exc_info=True)
-                        # Continue without recording
-                
-                # Set pipeline to playing state
-                ret = self.pipeline.set_state(Gst.State.PLAYING)
-                if ret == Gst.StateChangeReturn.FAILURE:
-                    # Get error message from bus
-                    msg = self.bus.pop_filtered(Gst.MessageType.ERROR | Gst.MessageType.WARNING)
-                    if msg:
-                        if msg.type == Gst.MessageType.ERROR:
-                            err, debug = msg.parse_error()
-                            self.logger.error(f"GStreamer pipeline ERROR: {err}, debug: {debug}")
-                        elif msg.type == Gst.MessageType.WARNING:
-                            warn, debug = msg.parse_warning()
-                            self.logger.warning(f"GStreamer pipeline WARNING: {warn}, debug: {debug}")
-                    raise RuntimeError("Failed to start GStreamer pipeline")
-                elif ret == Gst.StateChangeReturn.ASYNC:
-                    # Wait for state change to complete
-                    ret = self.pipeline.get_state(Gst.CLOCK_TIME_NONE)
-                    if ret[0] == Gst.StateChangeReturn.FAILURE:
-                        # Get error message from bus
-                        msg = self.bus.pop_filtered(Gst.MessageType.ERROR | Gst.MessageType.WARNING)
-                        if msg:
-                            if msg.type == Gst.MessageType.ERROR:
-                                err, debug = msg.parse_error()
-                                self.logger.error(f"GStreamer pipeline ERROR (async): {err}, debug: {debug}")
-                            elif msg.type == Gst.MessageType.WARNING:
-                                warn, debug = msg.parse_warning()
-                                self.logger.warning(f"GStreamer pipeline WARNING (async): {warn}, debug: {debug}")
+                        self._appsink_handler_id = self.appsink.connect("new-sample", self._on_new_sample)
+                    except Exception:
+                        self._appsink_handler_id = None
+                    
+                    # Setup recording branch if enabled
+                    if self.recording_params and self.recording_params.enabled:
+                        try:
+                            self._setup_recording_branch()
+                        except Exception as e:
+                            self.logger.error(f"Failed to setup recording branch: {e}", exc_info=True)
+                            # Continue without recording
+                    
+                    # Set pipeline to playing state - simple approach from api-refactoring
+                    ret = self.pipeline.set_state(Gst.State.PLAYING)
+                    if ret == Gst.StateChangeReturn.FAILURE:
                         raise RuntimeError("Failed to start GStreamer pipeline")
+                    elif ret == Gst.StateChangeReturn.ASYNC:
+                        # Wait for state change to complete - use CLOCK_TIME_NONE like api-refactoring
+                        ret = self.pipeline.get_state(Gst.CLOCK_TIME_NONE)
+                        if ret[0] == Gst.StateChangeReturn.FAILURE:
+                            raise RuntimeError("Failed to start GStreamer pipeline")
                 
                 # Query duration for VideoFile
                 if self.source_type == CaptureDeviceType.VideoFile:
@@ -373,10 +492,13 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                         pass
 
                 self.logger.info("GStreamer pipeline initialized successfully")
+                # Track initialization time to ignore early EOS messages
+                self._init_time = time.time()
                 
         except Exception as e:
             self.logger.error(f"Failed to initialize GStreamer pipeline: {e}")
-            self.logger.error(f"Pipeline string was: {pipeline_str}")
+            if pipeline_str:
+                self.logger.error(f"Pipeline string was: {pipeline_str}")
             raise
 
     def _on_bus_message(self, bus, message):
@@ -400,6 +522,12 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     except Exception as e:
                         self.logger.error(f"Loop restart failed: {e}")
                 elif self.source_type == CaptureDeviceType.IpCamera:
+                    # For IP cameras, EOS means disconnect - but ignore early EOS (within 5 seconds of init)
+                    # This prevents false positives when pipeline is still initializing
+                    now = time.time()
+                    if self._init_time and (now - self._init_time) < 5.0:
+                        self.logger.debug(f"Ignoring early EOS ({(now - self._init_time):.1f}s after init) - pipeline may still be initializing")
+                        return
                     # For IP cameras, EOS means disconnect - mark not working; monitor thread handles reconnect
                     self.logger.warning("GStreamer EOS for IP camera")
                     self.is_working = False
@@ -407,6 +535,9 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     self.disconnects.append((self.source_address, timestamp, self.is_working))
                     for sub in self.subscribers:
                         sub.update()
+                    # Trigger reconnect loop if not already running
+                    if self.run_flag and not (hasattr(self, '_reconnecting') and self._reconnecting):
+                        threading.Thread(target=self._reconnect_loop, daemon=True).start()
                 else:
                     self.finished = True
                     self.is_working = False
@@ -420,192 +551,21 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     self.disconnects.append((self.source_address, timestamp, self.is_working))
                     for sub in self.subscribers:
                         sub.update()
+                    # Store error for protocol switching logic
+                    self._last_init_error = RuntimeError(f"{err}: {debug}")
+                    # Trigger reconnect loop if not already running
+                    if not (hasattr(self, '_reconnecting') and self._reconnecting):
+                        threading.Thread(target=self._reconnect_loop, daemon=True).start()
+            elif msg_type == Gst.MessageType.WARNING:
+                warn, debug = message.parse_warning()
+                # Check for UDP-related warnings
+                if "UDP" in str(warn) or "udp" in str(warn).lower() or "Error sending" in str(warn):
+                    self.logger.warning(f"GStreamer pipeline WARNING: {warn}, debug: {debug}")
+                    if self.source_type == CaptureDeviceType.IpCamera:
+                        self._last_init_error = RuntimeError(f"UDP connection error: {warn}: {debug}")
         except Exception as e:
             self.logger.error(f"Error handling bus message: {e}")
-    
-    def _reconnect_loop(self):
-        """Reconnect loop for IP cameras (similar to OpenCV _grab_frames reconnect logic)"""
-        if not self.run_flag:
-            return
-        # Prevent multiple simultaneous reconnect attempts
-        if hasattr(self, '_reconnecting') and self._reconnecting:
-            return
-        self._reconnecting = True
-        try:
-            # Read reconnect settings from params if provided
-            try:
-                cfg = (self.params or {}).get('reconnect', {}) if hasattr(self, 'params') else {}
-            except Exception:
-                cfg = {}
-            max_attempts = int(cfg.get('max_attempts', 0))  # 0 => infinite by default
-            initial_delay_sec = float(cfg.get('initial_delay_sec', 8.0))
-            max_delay_sec = float(cfg.get('max_delay_sec', 60.0))
-            backoff_step_sec = float(cfg.get('backoff_step_sec', 6.0))
-            attempt = 0
-            while self.run_flag and (max_attempts == 0 or attempt < max_attempts):
-                # Progressive backoff: wait longer between attempts
-                wait_time = initial_delay_sec + attempt * backoff_step_sec
-                if wait_time > max_delay_sec:
-                    wait_time = max_delay_sec
-                time.sleep(wait_time)
-                attempt += 1
-                if not self.is_working and self.run_flag:
-                    try:
-                        total_str = ("∞" if max_attempts == 0 else str(max_attempts))
-                        self.logger.info(f"Reconnecting to source {self.source_names} (attempt {attempt}/{total_str}), backoff={wait_time:.1f}s")
-                        # Release old pipeline
-                        self.release()
-                        # Wait a bit before retry
-                        time.sleep(2.0)
-                        # Try to reinitialize
-                        if self.init():
-                            timestamp = datetime.datetime.now()
-                            self.logger.info(f"Reconnected to source: {self.source_names}")
-                            self.reconnects.append((self.source_address, timestamp, self.is_working))
-                            for sub in self.subscribers:
-                                sub.update()
-                            break
-                        else:
-                            self.logger.warning(f"Reconnection attempt {attempt} failed")
-                    except Exception as e:
-                        self.logger.error(f"Reconnection error: {e}")
-            if max_attempts and attempt >= max_attempts:
-                self.logger.error(f"Failed to reconnect after {max_attempts} attempts")
-        finally:
-            self._reconnecting = False
 
-    def _setup_recording_branch(self):
-        """Setup recording branch using tee output - encode and record to splitmuxsink"""
-        if not self.recording_params or not self.recording_params.enabled:
-            return
-        
-        try:
-            from pathlib import Path
-            import datetime as _dt
-            
-            # Get recording queue element
-            recording_queue = self.pipeline.get_by_name("recording_queue")
-            if not recording_queue:
-                raise RuntimeError("Failed to get recording_queue element")
-            
-            # Create recording elements
-            videoconvert = Gst.ElementFactory.make("videoconvert", "recording_videoconvert")
-            x264enc = Gst.ElementFactory.make("x264enc", "recording_x264enc")
-            x264enc.set_property("tune", "zerolatency")
-            x264enc.set_property("speed-preset", "ultrafast")
-            x264enc.set_property("bitrate", 2000)
-            
-            h264parse = Gst.ElementFactory.make("h264parse", "recording_h264parse")
-            queue_before_mux = Gst.ElementFactory.make("queue", "recording_queue_before_mux")
-            
-            # Create splitmuxsink
-            splitmuxsink = Gst.ElementFactory.make("splitmuxsink", "recording_splitmuxsink")
-            splitmuxsink.set_property("max-size-time", self.recording_params.segment_length_sec * 1000000000)
-            splitmuxsink.set_property("muxer-factory", "mp4mux" if self.recording_params.container.lower() == "mp4" else "matroskamux")
-            splitmuxsink.set_property("async-finalize", True)
-            
-            # Build output path with camera name subfolder
-            date_dir = _dt.datetime.now().strftime("%Y-%m-%d")
-            
-            # Compose camera folder name from all source_names or source_ids
-            if self.source_names and len(self.source_names) > 0:
-                camera_folder = "-".join(self.source_names)
-            elif self.source_ids and len(self.source_ids) > 0:
-                camera_folder = "-".join(str(sid) for sid in self.source_ids)
-            else:
-                camera_folder = "source"
-            
-            # Create path: out_dir/YYYY-MM-DD/CameraName/
-            base_out_dir = Path(self.recording_params.out_dir) if self.recording_params.out_dir else Path(".")
-            out_dir = base_out_dir / date_dir / camera_folder
-            out_dir.mkdir(parents=True, exist_ok=True)
-            
-            ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-            source_name = (self.source_names[0] if self.source_names else camera_folder)
-            name = self.recording_params.filename_tmpl.format(
-                source_name=source_name,
-                start_time=ts,
-                seq=0,
-                ext=self.recording_params.container,
-            )
-            stem = (out_dir / name).with_suffix("")
-            location = str(stem) + "_%05d." + self.recording_params.container
-            splitmuxsink.set_property("location", location)
-            
-            # Store recording directory and min_file_size_kb for periodic file checking
-            self._recording_out_dir = out_dir
-            self._recording_min_file_size_kb = self.recording_params.min_file_size_kb
-            self._recording_location_pattern = location
-            self._recording_container = self.recording_params.container
-            self._recording_checked_files = set()  # Track already checked files
-            
-            # Start periodic thread to check for new small files
-            def check_small_files_periodically():
-                """Periodically check for newly created small files and delete them"""
-                while self.is_working and self.run_flag:
-                    try:
-                        if not self._recording_out_dir.exists():
-                            time.sleep(5.0)
-                            continue
-                        
-                        # Get all video files in recording directory
-                        from evileye.video_recorder.utils import check_and_delete_small_files
-                        for file_path in self._recording_out_dir.glob(f"*.{self._recording_container}"):
-                            if file_path in self._recording_checked_files:
-                                continue
-                            
-                            # Try to delete small/invalid files (only if not active per util's min_age rule)
-                            deleted = check_and_delete_small_files(file_path, self._recording_min_file_size_kb)
-                            if deleted:
-                                reason = "invalid name pattern" if '%' in file_path.name else f"size < {self._recording_min_file_size_kb} KB"
-                                self.logger.info(f"Deleted recording file: {file_path} ({reason})")
-                                continue
-                            
-                            # If not deleted, add to checked only if file is mature (avoid skipping future checks when still active)
-                            try:
-                                stat = file_path.stat()
-                                file_age = time.time() - stat.st_mtime
-                                if file_age >= 60.0:  # consider mature after 60s
-                                    self._recording_checked_files.add(file_path)
-                            except Exception:
-                                pass
-                    except Exception as e:
-                        self.logger.error(f"Error checking small files: {e}")
-                    
-                    time.sleep(5.0)  # Check every 5 seconds
-            
-            # Start periodic checking thread
-            threading.Thread(target=check_small_files_periodically, daemon=True).start()
-            
-            self.logger.info(f"Recording branch location: {location}")
-            
-            # Add elements to pipeline
-            self.pipeline.add(videoconvert)
-            self.pipeline.add(x264enc)
-            self.pipeline.add(h264parse)
-            self.pipeline.add(queue_before_mux)
-            self.pipeline.add(splitmuxsink)
-            
-            # Link elements
-            recording_queue.link(videoconvert)
-            videoconvert.link(x264enc)
-            x264enc.link(h264parse)
-            h264parse.link(queue_before_mux)
-            queue_before_mux.link(splitmuxsink)
-            
-            # Sync elements
-            videoconvert.sync_state_with_parent()
-            x264enc.sync_state_with_parent()
-            h264parse.sync_state_with_parent()
-            queue_before_mux.sync_state_with_parent()
-            splitmuxsink.sync_state_with_parent()
-            
-            self.logger.info("Recording branch setup successfully")
-            
-        except Exception as e:
-            self.logger.error(f"Error setting up recording branch: {e}", exc_info=True)
-            raise
-    
     def _seek_to_start(self):
         try:
             with self.pipeline_lock:
@@ -652,25 +612,142 @@ class VideoCaptureGStreamer(VideoCaptureBase):
     def init(self):
         """
         Initialize the GStreamer capture.
+        Returns True on success, False on failure.
+        For IP cameras, uses simple approach from api-refactoring without timeout.
         """
         if not self.gstreamer_available:
             self.logger.error("GStreamer not available, cannot initialize")
             self.is_inited = False
             self.is_working = False
-            raise RuntimeError("GStreamer not available")
+            return False
         
-        try:
-            self._init_pipeline()
-            self._start_main_loop()
-            self.is_inited = True
-            self.is_working = True
-            self.logger.info("GStreamer video capture initialized successfully")
-        except Exception as e:
-            self.logger.error(f"Failed to initialize GStreamer capture: {e}")
-            self.is_inited = False
-            self.is_working = False
-            raise
+        # For IP cameras, use simple approach from api-refactoring without timeout
+        # get_state(Gst.CLOCK_TIME_NONE) will block until state change completes
+        if self.source_type == CaptureDeviceType.IpCamera:
+            try:
+                self._init_pipeline()
+                self._start_main_loop()
+                self.is_inited = True
+                # Set is_working = True initially to allow frames to be processed
+                # We'll verify it's actually working by checking for frames in _grab_frames
+                self.is_working = True
+                self.logger.info("GStreamer video capture initialized successfully")
+                
+                # Start recording check thread after pipeline is PLAYING
+                if hasattr(self, '_recording_check_thread') and self._recording_check_thread and not self._recording_check_thread.is_alive():
+                    self._recording_check_thread.start()
+                
+                return True
+            except Exception as e:
+                self.logger.error(f"Failed to initialize GStreamer capture: {e}")
+                self.is_inited = False
+                self.is_working = False
+                # Store error for protocol switching logic
+                self._last_init_error = e
+                return False
+        else:
+            # For non-IP cameras, use timeout to prevent hanging
+            import threading as _thr_init
+            init_done = _thr_init.Event()
+            init_ok = False
+            init_err = None
+            
+            def _init_worker():
+                nonlocal init_ok, init_err
+                try:
+                    self._init_pipeline()
+                    self._start_main_loop()
+                    init_ok = True
+                except Exception as e:
+                    init_err = e
+                    init_ok = False
+                finally:
+                    init_done.set()
+            
+            init_thread = _thr_init.Thread(target=_init_worker, daemon=True)
+            init_thread.start()
+            
+            # Wait up to 6 seconds for init
+            if not init_done.wait(6.0):
+                self.logger.error(f"GStreamer init timeout after 6s for {self.source_names}; pipeline may be stuck")
+                # Force aggressive cleanup
+                try:
+                    with self.pipeline_lock:
+                        if self.pipeline is not None:
+                            try:
+                                self.pipeline.set_state(Gst.State.NULL)
+                            except Exception:
+                                pass
+                            self.pipeline = None
+                        self.bus = None
+                        self.appsink = None
+                except Exception:
+                    pass
+                self.is_inited = False
+                self.is_working = False
+                return False
+            
+            if init_err is not None:
+                self.logger.error(f"Failed to initialize GStreamer capture: {init_err}")
+                self.is_inited = False
+                self.is_working = False
+                return False
+            
+            if init_ok:
+                self.is_inited = True
+                self.is_working = True
+                self.logger.info("GStreamer video capture initialized successfully")
+                return True
+            else:
+                self.is_inited = False
+                self.is_working = False
+                return False
 
+    def start(self):
+        """
+        Override start() to always launch grab/retrieve threads, even if init() failed.
+        This allows reconnect logic to work from the start.
+        """
+        self.run_flag = True
+        # Always start threads, even if not initialized - reconnect logic will handle it
+        self.grab_thread = threading.Thread(target=self._grab_frames, daemon=True)
+        self.retrieve_thread = threading.Thread(target=self._retrieve_frames, daemon=True)
+        self.grab_thread.start()
+        self.retrieve_thread.start()
+        # Start recording if configured (for OpenCV backend, not GStreamer - GStreamer uses tee)
+        # For GStreamer, recording is integrated in pipeline via tee
+        try:
+            self.logger.debug(f"Checking recording: params={self.recording_params is not None}, enabled={self.recording_params.enabled if self.recording_params else False}")
+            if self.recording_params and self.recording_params.enabled:
+                # Check if recording is integrated in pipeline (GStreamer) or separate (OpenCV)
+                is_gstreamer = 'gstreamer' in self.__class__.__name__.lower()
+                if is_gstreamer:
+                    # GStreamer: recording is integrated in capture pipeline via tee
+                    self.logger.info(f"Recording integrated in GStreamer capture pipeline for {self.source_names}")
+                else:
+                    # OpenCV: use separate recorder
+                    backend = "opencv"
+                    from ..video_recorder.recorder_base import SourceMeta
+                    meta = SourceMeta(
+                        source_name=(self.source_names[0] if self.source_names else "source"),
+                        source_address=self.source_address,
+                        source_type=str(self.source_type.value) if hasattr(self.source_type, 'value') else str(self.source_type),
+                        width=None,
+                        height=None,
+                        fps=self.source_fps,
+                        username=getattr(self, 'username', None),
+                        password=getattr(self, 'password', None),
+                        source_names=getattr(self, 'source_names', None),
+                        source_ids=getattr(self, 'source_ids', None),
+                    )
+                    try:
+                        if self.recorder_manager:
+                            self.recorder_manager.start_recording(meta, self.recording_params)
+                    except Exception as e:
+                        self.logger.error(f"Failed to start recording: {e}")
+        except Exception as e:
+            self.logger.debug(f"Error starting recording: {e}")
+    
     def release(self):
         """
         Release resources and stop pipeline.
@@ -716,6 +793,12 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 except Exception:
                     pass
 
+            # Clean up recording branch before stopping pipeline
+            try:
+                self._cleanup_recording_branch()
+            except Exception as e:
+                self.logger.debug(f"Error cleaning up recording branch in release: {e}")
+            
             # Stop GLib main loop first to avoid deadlock on set_state
             self._stop_main_loop()
 
@@ -785,46 +868,14 @@ class VideoCaptureGStreamer(VideoCaptureBase):
     
     def get_frames_impl(self) -> List[CaptureImage]:
         """
-        Get latest captured frames (supports split like OpenCV implementation).
+        Get latest captured frames.
         """
-        captured_images: List[CaptureImage] = []
-        if not self.is_working or self.frame_buffer.empty():
-            return captured_images
-        
-        try:
-            # Get one frame from buffer (like OpenCV does)
-            capture_image = self.frame_buffer.get_nowait()
-            if not capture_image:
-                return captured_images
-            
-            # If split, return list with parts, otherwise return original image
-            if self.split_stream and self.src_coords and isinstance(self.src_coords, list):
-                for stream_cnt in range(self.num_split):
-                    if stream_cnt >= len(self.src_coords):
-                        continue
-                    try:
-                        coords = self.src_coords[stream_cnt]
-                        if not isinstance(coords, list) or len(coords) < 4:
-                            continue
-                        x, y, w, h = int(coords[0]), int(coords[1]), int(coords[2]), int(coords[3])
-                    except Exception:
-                        continue
-                    
-                    ci = CaptureImage()
-                    ci.source_id = self.source_ids[stream_cnt] if (self.source_ids and stream_cnt < len(self.source_ids)) else 0
-                    ci.time_stamp = capture_image.time_stamp
-                    ci.frame_id = capture_image.frame_id
-                    ci.current_video_frame = capture_image.current_video_frame if hasattr(capture_image, 'current_video_frame') else None
-                    ci.current_video_position = capture_image.current_video_position if hasattr(capture_image, 'current_video_position') else None
-                    ci.image = capture_image.image[y:y+h, x:x+w].copy()
-                    captured_images.append(ci)
-            else:
-                # No split - return original frame
-                captured_images.append(capture_image)
-        except Exception:
-            pass
-        
-        return captured_images
+        frames = []
+        if self.is_working and self.last_frame:
+            with self.frame_lock:
+                if self.last_frame:
+                    frames.append(self.last_frame)
+        return frames
     
     def _grab_frames(self):
         """
@@ -832,32 +883,416 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         """
         while self.run_flag:
             if not self.is_inited or self.pipeline is None:
-                time.sleep(0.1)
-                if self.run_flag:
-                    try:
-                        if self.init():
-                            timestamp = datetime.datetime.now()
-                            self.logger.info(f"Reconnected to source: {self.source_names}")
-                            self.reconnects.append((self.source_address, timestamp, self.is_working))
-                            for sub in self.subscribers:
-                                sub.update()
-                    except Exception as e:
-                        self.logger.error(f"Reconnection failed: {e}")
+                # For IP cameras, use reconnect loop instead of direct init()
+                if self.source_type == CaptureDeviceType.IpCamera:
+                    if not (hasattr(self, '_reconnecting') and self._reconnecting):
+                        self.logger.info(f"Source {self.source_names} not initialized, starting reconnect loop")
+                        threading.Thread(target=self._reconnect_loop, daemon=True).start()
+                    # Wait a bit before checking again
+                    time.sleep(2.0)
+                else:
+                    # For video files, try direct init
+                    time.sleep(0.1)
+                    if self.run_flag:
+                        try:
+                            if self.init():
+                                timestamp = datetime.datetime.now()
+                                self.logger.info(f"Reconnected to source: {self.source_names}")
+                                self.reconnects.append((self.source_address, timestamp, self.is_working))
+                                for sub in self.subscribers:
+                                    sub.update()
+                        except Exception as e:
+                            self.logger.error(f"Reconnection failed: {e}")
                 continue
+            
+            # Poll bus for messages (no GLib MainLoop running)
+            try:
+                if self.bus:
+                    msg = self.bus.timed_pop_filtered(0.1 * Gst.SECOND, Gst.MessageType.ERROR | Gst.MessageType.EOS | Gst.MessageType.WARNING)
+                    if msg:
+                        self._on_bus_message(msg)
+            except Exception as e:
+                self.logger.debug(f"Error polling bus: {e}")
+            
+            # Active pipeline state check
+            try:
+                if self.pipeline:
+                    ret, state, pending = self.pipeline.get_state(0)
+                    if ret == Gst.StateChangeReturn.SUCCESS:
+                        if state == Gst.State.PLAYING:
+                            # Check if we're actually receiving frames
+                            with self.frame_lock:
+                                last_frame_time = getattr(self.last_frame, 'time_stamp', 0) if self.last_frame else 0
+                            now = time.time()
+                            if last_frame_time > 0 and (now - last_frame_time) > 15.0:
+                                # No frames for 15 seconds - mark as not working
+                                if self.is_working:
+                                    self.logger.warning(f"Pipeline PLAYING but no frames received after 10s, marking as not working")
+                                    self.is_working = False
+                        else:
+                            self.is_working = False
+            except Exception as e:
+                self.logger.debug(f"Error checking pipeline state: {e}")
             
             # Check if pipeline is still working
             if not self.is_working and self.source_type == CaptureDeviceType.IpCamera:
                 # Try to reconnect (but don't create multiple threads)
                 if self.run_flag and not (hasattr(self, '_reconnecting') and self._reconnecting):
+                    self.logger.info(f"Pipeline not working, starting reconnect loop for {self.source_names}")
                     threading.Thread(target=self._reconnect_loop, daemon=True).start()
             
-            # Sleep according to initial backoff for responsiveness but not aggressive
+            # Sleep according to monitor interval
             try:
                 cfg = (self.params or {}).get('reconnect', {}) if hasattr(self, 'params') else {}
-                monitor_sleep = float(cfg.get('monitor_interval_sec', 5.0))
+                monitor_sleep = float(cfg.get('monitor_interval_sec', 2.0))
             except Exception:
-                monitor_sleep = 5.0
+                monitor_sleep = 2.0
             time.sleep(monitor_sleep)
+    
+    def _reconnect_loop(self):
+        """Reconnect loop for IP cameras (similar to OpenCV _grab_frames reconnect logic)"""
+        if not self.run_flag:
+            return
+        # Prevent multiple simultaneous reconnect attempts
+        if hasattr(self, '_reconnecting') and self._reconnecting:
+            return
+        self._reconnecting = True
+        try:
+            # Prevent races with monitor thread and force not working state
+            self.is_inited = False
+            self.is_working = False
+            # Read reconnect settings from params if provided
+            try:
+                cfg = (self.params or {}).get('reconnect', {}) if hasattr(self, 'params') else {}
+            except Exception:
+                cfg = {}
+            max_attempts = int(cfg.get('max_attempts', 0))  # 0 => infinite by default
+            initial_delay_sec = float(cfg.get('initial_delay_sec', 8.0))
+            max_delay_sec = float(cfg.get('max_delay_sec', 60.0))
+            backoff_step_sec = float(cfg.get('backoff_step_sec', 6.0))
+            attempt = 0
+            last_protocol_switch_attempt = -1
+            while self.run_flag and (max_attempts == 0 or attempt < max_attempts):
+                # First attempt immediately; subsequent attempts with backoff
+                if attempt == 0:
+                    wait_time = 0.0
+                else:
+                    wait_time = initial_delay_sec + (attempt - 1) * backoff_step_sec
+                    if wait_time > max_delay_sec:
+                        wait_time = max_delay_sec
+                if wait_time > 0:
+                    self.logger.debug(f"Waiting {wait_time:.1f}s before reconnect attempt {attempt + 1} for {self.source_names}")
+                    time.sleep(wait_time)
+                attempt += 1
+                if not self.is_working and self.run_flag:
+                    try:
+                        total_str = ("∞" if max_attempts == 0 else str(max_attempts))
+                        self.logger.info(f"Reconnecting to source {self.source_names} (attempt {attempt}/{total_str}), backoff={wait_time:.1f}s")
+                        # Release old pipeline (with timeout to prevent blocking)
+                        try:
+                            import threading as _thr_rel
+                            release_done = _thr_rel.Event()
+                            def _release_worker():
+                                try:
+                                    self.release()
+                                except Exception as e:
+                                    self.logger.debug(f"Error in release during reconnect: {e}")
+                                finally:
+                                    release_done.set()
+                            release_thread = _thr_rel.Thread(target=_release_worker, daemon=True)
+                            release_thread.start()
+                            # Wait up to 2 seconds for release
+                            if not release_done.wait(2.0):
+                                self.logger.warning(f"Release timeout after 2s for {self.source_names}; continuing anyway")
+                        except Exception as e:
+                            self.logger.debug(f"Error starting release thread: {e}")
+                        # Wait a bit before retry
+                        time.sleep(2.0)
+                        # Try to reinitialize with timeout and protocol fallback
+                        init_ok = False
+                        init_err = None
+                        import threading as _thr
+                        done_evt = _thr.Event()
+                        init_thread = None
+                        def _try_init():
+                            nonlocal init_ok, init_err
+                            try:
+                                # Call init() which now has its own internal timeout
+                                # init() returns False on failure, True on success
+                                self.logger.debug(f"Calling init() for {self.source_names} (attempt {attempt})")
+                                result = self.init()
+                                init_ok = (result is True)
+                                if not init_ok:
+                                    init_err = RuntimeError("init() returned False")
+                                    self.logger.debug(f"init() returned False for {self.source_names}")
+                                else:
+                                    self.logger.debug(f"init() returned True for {self.source_names}")
+                            except Exception as e:
+                                init_err = e
+                                init_ok = False
+                                self.logger.debug(f"init() raised exception for {self.source_names}: {e}")
+                            finally:
+                                done_evt.set()
+                        init_thread = _thr.Thread(target=_try_init, daemon=True)
+                        init_thread.start()
+                        # Wait up to 8s for init (init() itself has 6s timeout, so total ~8s to allow for thread overhead)
+                        if not done_evt.wait(8.0):
+                            self.logger.warning(f"Reconnect init timeout after 8s for {self.source_names}; forcing cleanup and retry")
+                            # Force aggressive cleanup (don't call release() here - it's already called at the start of the attempt)
+                            try:
+                                with self.pipeline_lock:
+                                    if self.pipeline is not None:
+                                        try:
+                                            self.logger.debug(f"Force setting pipeline to NULL for {self.source_names}")
+                                            self.pipeline.set_state(Gst.State.NULL)
+                                        except Exception as e:
+                                            self.logger.debug(f"Error setting pipeline to NULL: {e}")
+                                        self.pipeline = None
+                                    self.bus = None
+                                    self.appsink = None
+                            except Exception as e:
+                                self.logger.debug(f"Error in aggressive cleanup: {e}")
+                            # Mark as not initialized
+                            self.is_inited = False
+                            self.is_working = False
+                            init_ok = False
+                            # Log current state for debugging
+                            self.logger.debug(f"After timeout cleanup: is_inited={self.is_inited}, is_working={self.is_working}, pipeline={self.pipeline is not None}")
+                            # Continue to the retry logic below - don't call release() here as it may block
+                        elif init_err is not None:
+                            self.logger.error(f"Reconnect init error: {init_err}")
+                            # Store error for protocol switching logic
+                            self._last_init_error = init_err
+                            init_ok = False
+                        else:
+                            # Check if init actually succeeded
+                            init_ok = self.is_inited and self.is_working
+                            if not init_ok:
+                                self.logger.debug(f"init() completed but is_inited={self.is_inited}, is_working={self.is_working} for {self.source_names}")
+
+                        # CRITICAL: Always check init_ok and log failure if needed, then continue loop
+                        if init_ok:
+                            timestamp = datetime.datetime.now()
+                            self.logger.info(f"Reconnected to source: {self.source_names}")
+                            self.reconnects.append((self.source_address, timestamp, self.is_working))
+                            for sub in self.subscribers:
+                                sub.update()
+                            break
+                        else:
+                            # Log failure and continue to next attempt - THIS MUST BE REACHED
+                            self.logger.warning(f"Reconnection attempt {attempt} failed for {self.source_names}; will retry (init_ok={init_ok}, is_inited={self.is_inited}, is_working={self.is_working})")
+                            # Switch RTSP protocol to tcp if udp fails, then back to udp on next cycle
+                            # Also check for UDP errors in the last attempt
+                            try:
+                                if self.source_type == CaptureDeviceType.IpCamera:
+                                    # Check if last error was UDP-related
+                                    udp_error = False
+                                    try:
+                                        if hasattr(self, '_last_init_error'):
+                                            err_text = str(self._last_init_error)
+                                            if "UDP" in err_text or "udp" in err_text.lower() or "Error sending" in err_text:
+                                                udp_error = True
+                                    except Exception:
+                                        pass
+                                    
+                                    # Protocol switching logic - TCP is default, only switch if explicitly needed
+                                    if udp_error and self._rtsp_protocol == 'udp' and last_protocol_switch_attempt != attempt:
+                                        # Switch to TCP if UDP error detected
+                                        self._rtsp_protocol = 'tcp'
+                                        last_protocol_switch_attempt = attempt
+                                        self.logger.warning("Switching RTSP protocol to TCP due to UDP error")
+                                    # Note: TCP is default, so we don't switch back to UDP automatically
+                                    # If TCP fails, it's likely a network/camera issue, not a protocol issue
+                            except Exception:
+                                pass
+                            # Continue loop - this is critical to ensure retries happen
+                            continue
+                    except Exception as e:
+                        self.logger.error(f"Reconnection error: {e}")
+                        # Continue loop even on exception
+                        continue
+            if max_attempts and attempt >= max_attempts:
+                self.logger.error(f"Failed to reconnect after {max_attempts} attempts")
+        finally:
+            self._reconnecting = False
+    
+    def _setup_recording_branch(self):
+        """Setup recording branch using tee output - encode and record to splitmuxsink"""
+        if not self.recording_params or not self.recording_params.enabled:
+            return
+        
+        try:
+            self.logger.debug("Setting up recording branch...")
+            # Clean up existing recording branch if any (prevent duplicates)
+            if hasattr(self, '_recording_elements') and self._recording_elements:
+                self.logger.debug("Cleaning up existing recording branch...")
+                self._cleanup_recording_branch()
+            
+            from pathlib import Path
+            import datetime as _dt
+            
+            # Get recording queue element
+            self.logger.debug("Getting recording_queue element...")
+            recording_queue = self.pipeline.get_by_name("recording_queue")
+            if not recording_queue:
+                raise RuntimeError("Failed to get recording_queue element")
+            
+            # Create recording elements
+            self.logger.debug("Creating recording elements...")
+            videoconvert = Gst.ElementFactory.make("videoconvert", "recording_videoconvert")
+            if not videoconvert:
+                raise RuntimeError("Failed to create videoconvert element")
+            x264enc = Gst.ElementFactory.make("x264enc", "recording_x264enc")
+            if not x264enc:
+                raise RuntimeError("Failed to create x264enc element")
+            x264enc.set_property("tune", "zerolatency")
+            x264enc.set_property("speed-preset", "ultrafast")
+            x264enc.set_property("bitrate", 2000)
+            
+            h264parse = Gst.ElementFactory.make("h264parse", "recording_h264parse")
+            if not h264parse:
+                raise RuntimeError("Failed to create h264parse element")
+            queue_before_mux = Gst.ElementFactory.make("queue", "recording_queue_before_mux")
+            if not queue_before_mux:
+                raise RuntimeError("Failed to create queue element")
+            
+            # Create splitmuxsink
+            splitmuxsink = Gst.ElementFactory.make("splitmuxsink", "recording_splitmuxsink")
+            if not splitmuxsink:
+                raise RuntimeError("Failed to create splitmuxsink element")
+            splitmuxsink.set_property("max-size-time", self.recording_params.segment_length_sec * 1000000000)
+            splitmuxsink.set_property("muxer-factory", "mp4mux" if self.recording_params.container.lower() == "mp4" else "matroskamux")
+            splitmuxsink.set_property("async-finalize", True)
+            
+            # Build output path with camera name subfolder
+            date_dir = _dt.datetime.now().strftime("%Y-%m-%d")
+            
+            # Compose camera folder name from all source_names or source_ids
+            if self.source_names and len(self.source_names) > 0:
+                camera_folder = "-".join(self.source_names)
+            elif self.source_ids and len(self.source_ids) > 0:
+                camera_folder = "-".join(str(sid) for sid in self.source_ids)
+            else:
+                camera_folder = "source"
+            
+            # Create path: out_dir/YYYY-MM-DD/CameraName/
+            base_out_dir = Path(self.recording_params.out_dir) if self.recording_params.out_dir else Path(".")
+            out_dir = base_out_dir / date_dir / camera_folder
+            out_dir.mkdir(parents=True, exist_ok=True)
+            
+            ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+            source_name = (self.source_names[0] if self.source_names else camera_folder)
+            name = self.recording_params.filename_tmpl.format(
+                source_name=source_name,
+                start_time=ts,
+                seq=0,
+                ext=self.recording_params.container,
+            )
+            stem = (out_dir / name).with_suffix("")
+            location = str(stem) + "_%05d." + self.recording_params.container
+            splitmuxsink.set_property("location", location)
+            
+            # Store recording directory and min_file_size_kb for periodic file checking
+            self._recording_out_dir = out_dir
+            self._recording_min_file_size_kb = self.recording_params.min_file_size_kb
+            self._recording_location_pattern = location
+            self._recording_container = self.recording_params.container
+            self._recording_checked_files = set()  # Track already checked files
+            self._recording_elements = [videoconvert, x264enc, h264parse, queue_before_mux, splitmuxsink]
+            self._recording_check_thread = None
+            self._recording_check_stop = False
+            
+            # Start periodic thread to check for new small files (only after pipeline is PLAYING)
+            def check_small_files_periodically():
+                """Periodically check for newly created small files and delete them"""
+                while not self._recording_check_stop and self.run_flag:
+                    try:
+                        if not hasattr(self, '_recording_out_dir') or not self._recording_out_dir or not self._recording_out_dir.exists():
+                            time.sleep(5.0)
+                            continue
+                        
+                        # Get all video files in recording directory
+                        from evileye.video_recorder.utils import check_and_delete_small_files
+                        for file_path in self._recording_out_dir.glob(f"*.{self._recording_container}"):
+                            if file_path in self._recording_checked_files:
+                                continue
+                            
+                            # Try to delete small/invalid files (only if not active per util's min_age rule)
+                            deleted = check_and_delete_small_files(file_path, self._recording_min_file_size_kb)
+                            if deleted:
+                                reason = "invalid name pattern" if '%' in file_path.name else f"size < {self._recording_min_file_size_kb} KB"
+                                self.logger.info(f"Deleted recording file: {file_path} ({reason})")
+                                continue
+                            
+                            # If not deleted, add to checked only if file is mature (avoid skipping future checks when still active)
+                            try:
+                                stat = file_path.stat()
+                                file_age = time.time() - stat.st_mtime
+                                if file_age >= 60.0:  # consider mature after 60s
+                                    self._recording_checked_files.add(file_path)
+                            except Exception:
+                                pass
+                    except Exception as e:
+                        self.logger.error(f"Error checking small files: {e}")
+                    
+                    time.sleep(5.0)  # Check every 5 seconds
+            
+            # Store thread reference (will be started after pipeline is PLAYING)
+            self._recording_check_thread = threading.Thread(target=check_small_files_periodically, daemon=True)
+            
+            self.logger.info(f"Recording branch location: {location}")
+            
+            # Add elements to pipeline
+            self.pipeline.add(videoconvert)
+            self.pipeline.add(x264enc)
+            self.pipeline.add(h264parse)
+            self.pipeline.add(queue_before_mux)
+            self.pipeline.add(splitmuxsink)
+            
+            # Link elements
+            recording_queue.link(videoconvert)
+            videoconvert.link(x264enc)
+            x264enc.link(h264parse)
+            h264parse.link(queue_before_mux)
+            queue_before_mux.link(splitmuxsink)
+            
+            # Elements will sync state automatically when pipeline state changes
+            # Don't call sync_state_with_parent() here to avoid deadlocks
+            
+            self.logger.info("Recording branch setup successfully")
+            
+        except Exception as e:
+            self.logger.error(f"Error setting up recording branch: {e}", exc_info=True)
+            raise
+    
+    def _cleanup_recording_branch(self):
+        """Clean up recording branch elements"""
+        try:
+            # Stop periodic check thread
+            if hasattr(self, '_recording_check_thread') and self._recording_check_thread:
+                self._recording_check_stop = True
+                if self._recording_check_thread.is_alive():
+                    self._recording_check_thread.join(timeout=2.0)
+                self._recording_check_thread = None
+            
+            # Clean up recording elements
+            if hasattr(self, '_recording_elements') and self._recording_elements:
+                for elem in self._recording_elements:
+                    try:
+                        if elem:
+                            elem.set_state(Gst.State.NULL)
+                            if self.pipeline:
+                                self.pipeline.remove(elem)
+                    except Exception as e:
+                        self.logger.debug(f"Error removing recording element: {e}")
+                self._recording_elements = []
+            
+            # Clear recording-related attributes
+            self._recording_out_dir = None
+            self._recording_checked_files = set()
+            self._recording_check_stop = False
+        except Exception as e:
+            self.logger.debug(f"Error cleaning up recording branch: {e}")
     
     def _retrieve_frames(self):
         """
