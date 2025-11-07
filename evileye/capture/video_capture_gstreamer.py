@@ -201,13 +201,9 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     # Make array writable for OpenCV operations
                     frame_data = frame_data.copy()
                     
-                    # Create CaptureImage
-                    capture_image = CaptureImage()
-                    capture_image.image = frame_data
-                    capture_image.frame_id = self.frame_id_counter
-                    capture_image.time_stamp = time.time()
-                    capture_image.source_id = self.source_ids[0] if self.source_ids else 0
-                    # Update current video position/frame for GUI like OpenCV implementation
+                    # Get current video position/frame for GUI like OpenCV implementation
+                    current_video_frame = None
+                    current_video_position = None
                     if self.source_type == CaptureDeviceType.VideoFile:
                         try:
                             # Prefer buffer PTS for accurate position
@@ -230,10 +226,11 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                                 self.video_current_frame = 0
                             else:
                                 self.video_current_frame += 1
-                        capture_image.current_video_frame = self.video_current_frame
-                        capture_image.current_video_position = self.video_current_position
+                        current_video_frame = self.video_current_frame
+                        current_video_position = self.video_current_position
+                    
                     # Maintain rolling FPS estimate as fallback
-                    now = capture_image.time_stamp
+                    now = time.time()
                     self._fps_times.append(now)
                     if len(self._fps_times) > 30:
                         self._fps_times.pop(0)
@@ -242,28 +239,86 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                         if dt > 0:
                             self.source_fps = (len(self._fps_times) - 1) / dt
                     
-                    # Store frame
-                    with self.frame_lock:
-                        self.last_frame = capture_image
-                        self.frame_id_counter += 1
-                    
-                    # Notify subscribers asynchronously to avoid blocking appsink thread
-                    def _notify(sub):
-                        try:
-                            if callable(sub):
-                                sub(capture_image)
-                            else:
-                                if hasattr(sub, 'process_frame'):
-                                    sub.process_frame(capture_image)
-                                elif hasattr(sub, 'update'):
-                                    sub.update()
-                        except Exception as ex:
+                    # Handle split_stream - create multiple CaptureImage objects from single frame
+                    if self.split_stream and self.src_coords and self.num_split > 0:
+                        # Create multiple CaptureImage objects for split streams
+                        capture_images = []
+                        for stream_cnt in range(self.num_split):
+                            if stream_cnt < len(self.src_coords):
+                                # Extract region from frame using src_coords
+                                x, y, w, h = self.src_coords[stream_cnt]
+                                # Ensure coordinates are integers
+                                x, y, w, h = int(x), int(y), int(w), int(h)
+                                # Extract region: [y:y+h, x:x+w]
+                                region = frame_data[y:y+h, x:x+w].copy()
+                                
+                                # Create CaptureImage for this split region
+                                capture_image = CaptureImage()
+                                capture_image.image = region
+                                capture_image.frame_id = self.frame_id_counter
+                                capture_image.time_stamp = now
+                                capture_image.source_id = self.source_ids[stream_cnt] if self.source_ids and stream_cnt < len(self.source_ids) else stream_cnt
+                                capture_image.current_video_frame = current_video_frame
+                                capture_image.current_video_position = current_video_position
+                                capture_images.append(capture_image)
+                        
+                        # Store all frames in frame_buffer
+                        with self.frame_lock:
+                            for img in capture_images:
+                                self.frame_buffer.put(img, block=False)
+                            # Store first frame as last_frame for compatibility
+                            if capture_images:
+                                self.last_frame = capture_images[0]
+                            self.frame_id_counter += 1
+                        
+                        # Notify subscribers asynchronously for each split frame
+                        for capture_image in capture_images:
+                            def _notify(sub, img=capture_image):
+                                try:
+                                    if callable(sub):
+                                        sub(img)
+                                    else:
+                                        if hasattr(sub, 'process_frame'):
+                                            sub.process_frame(img)
+                                except Exception as ex:
+                                    try:
+                                        self.logger.error(f"Error notifying subscriber {type(sub)}: {ex}")
+                                    except Exception:
+                                        pass
+                            for sub in self.subscribers:
+                                threading.Thread(target=_notify, args=(sub,), daemon=True).start()
+                    else:
+                        # Single stream - create one CaptureImage
+                        capture_image = CaptureImage()
+                        capture_image.image = frame_data
+                        capture_image.frame_id = self.frame_id_counter
+                        capture_image.time_stamp = now
+                        capture_image.source_id = self.source_ids[0] if self.source_ids else 0
+                        capture_image.current_video_frame = current_video_frame
+                        capture_image.current_video_position = current_video_position
+                        
+                        # Store frame
+                        with self.frame_lock:
+                            self.last_frame = capture_image
+                            self.frame_id_counter += 1
+                        
+                        # Notify subscribers asynchronously to avoid blocking appsink thread
+                        def _notify(sub):
                             try:
-                                self.logger.error(f"Error notifying subscriber {type(sub)}: {ex}")
-                            except Exception:
-                                pass
-                    for subscriber in self.subscribers:
-                        threading.Thread(target=_notify, args=(subscriber,), daemon=True).start()
+                                if callable(sub):
+                                    sub(capture_image)
+                                else:
+                                    if hasattr(sub, 'process_frame'):
+                                        sub.process_frame(capture_image)
+                                    elif hasattr(sub, 'update'):
+                                        sub.update()
+                            except Exception as ex:
+                                try:
+                                    self.logger.error(f"Error notifying subscriber {type(sub)}: {ex}")
+                                except Exception:
+                                    pass
+                        for subscriber in self.subscribers:
+                            threading.Thread(target=_notify, args=(subscriber,), daemon=True).start()
                     
                     buffer.unmap(map_info)
                     return Gst.FlowReturn.OK
@@ -869,12 +924,28 @@ class VideoCaptureGStreamer(VideoCaptureBase):
     def get_frames_impl(self) -> List[CaptureImage]:
         """
         Get latest captured frames.
+        For split_stream, returns all split frames from frame_buffer.
+        For single stream, returns last_frame.
         """
         frames = []
-        if self.is_working and self.last_frame:
+        if not self.is_working:
+            return frames
+        
+        if self.split_stream:
+            # For split streams, get all frames from frame_buffer
+            with self.frame_lock:
+                while not self.frame_buffer.empty():
+                    try:
+                        frame = self.frame_buffer.get_nowait()
+                        frames.append(frame)
+                    except Empty:
+                        break
+        else:
+            # For single stream, return last_frame
             with self.frame_lock:
                 if self.last_frame:
                     frames.append(self.last_frame)
+        
         return frames
     
     def _grab_frames(self):
