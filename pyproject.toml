@@ -100,6 +100,7 @@ evileye = "evileye.cli_wrapper:main"
 evileye-launch = "evileye.launch_wrapper:main"
 evileye-process = "evileye.process_wrapper:main"
 evileye-configure = "evileye.configure_wrapper:start_configurer"
+evileye-srv = "evileye.server_wrapper:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -118,14 +119,14 @@ line-length = 88
 target-version = ["py38"]
 include = "\\.pyi?$"
 extend-exclude = '''
-/(
+/( 
   # directories
-  \\.eggs
-  | \\.git
-  | \\.hg
-  | \\.mypy_cache
-  | \\.tox
-  | \\.venv
+  \\ .eggs
+  | \\ .git
+  | \\ .hg
+  | \\ .mypy_cache
+  | \\ .tox
+  | \\ .venv
   | build
   | dist
 )/

@@ -40,9 +40,9 @@ class EventInfo(BaseModel):
     metadata: Dict[str, Any] = {}
 
 
-@router.get("/pipelines/{pid}/objects")
+@router.get("/pipelines/{rid}/objects")
 async def get_objects(
-    pid: int,
+    rid: int,
     object_type: str = Query("active", description="Object type: 'active', 'lost', 'all'")
 ) -> List[ObjectInfo]:
     """
@@ -52,20 +52,20 @@ async def get_objects(
     - pid: Pipeline ID
     - object_type: Type of objects to retrieve ('active', 'lost', 'all')
     """
-    logger.info(f"GET /pipelines/{pid}/objects: object_type={object_type}")
+    logger.info(f"GET /pipelines/{rid}/objects: object_type={object_type}")
     try:
-        pipeline_info = get_manager().describe(pid)
+        pipeline_info = get_manager().describe(rid)
         if pipeline_info["state"] != PipelineState.RUNNING:
-            logger.warning(f"Pipeline '{pid}' is not running (state: {pipeline_info['state']})")
-            raise HTTPException(status_code=400, detail=f"Pipeline '{pid}' is not running")
+            logger.warning(f"Pipeline '{rid}' is not running (state: {pipeline_info['state']})")
+            raise HTTPException(status_code=400, detail=f"Pipeline '{rid}' is not running")
     except KeyError:
-        logger.error(f"Pipeline '{pid}' not found")
-        raise HTTPException(status_code=404, detail=f"Pipeline '{pid}' not found")
+        logger.error(f"Pipeline '{rid}' not found")
+        raise HTTPException(status_code=404, detail=f"Pipeline '{rid}' not found")
     
     try:
-        runner = get_manager()._get_runner(pid)
+        runner = get_manager()._get_runner(rid)
         if runner.controller is None:
-            logger.warning(f"Controller is None for pipeline '{pid}'")
+            logger.warning(f"Controller is None for pipeline '{rid}'")
             return []
         
         obj_handler = runner.controller.obj_handler
@@ -106,18 +106,18 @@ async def get_objects(
                 }
                 objects.append(ObjectInfo(**obj_data))
         
-        logger.info(f"Retrieved {len(objects)} objects for pipeline '{pid}'")
+        logger.info(f"Retrieved {len(objects)} objects for pipeline '{rid}'")
         return objects
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to retrieve objects for pipeline '{pid}': {e}")
+        logger.error(f"Failed to retrieve objects for pipeline '{rid}': {e}")
         raise HTTPException(status_code=500, detail=f"Failed to retrieve objects: {str(e)}")
 
 
-@router.get("/pipelines/{pid}/events")
+@router.get("/pipelines/{rid}/events")
 async def get_events(
-    pid: int,
+    rid: int,
     event_type: Optional[str] = Query(None, description="Filter by event type")
 ) -> List[EventInfo]:
     """
@@ -127,25 +127,25 @@ async def get_events(
     - pid: Pipeline ID
     - event_type: Optional filter by event type
     """
-    logger.info(f"GET /pipelines/{pid}/events: event_type={event_type}")
+    logger.info(f"GET /pipelines/{rid}/events: event_type={event_type}")
     try:
-        pipeline_info = get_manager().describe(pid)
+        pipeline_info = get_manager().describe(rid)
         if pipeline_info["state"] != PipelineState.RUNNING:
-            logger.warning(f"Pipeline '{pid}' is not running for WebSocket (state: {pipeline_info['state']})")
-            raise HTTPException(status_code=400, detail=f"Pipeline '{pid}' is not running")
+            logger.warning(f"Pipeline '{rid}' is not running for WebSocket (state: {pipeline_info['state']})")
+            raise HTTPException(status_code=400, detail=f"Pipeline '{rid}' is not running")
     except KeyError:
-        logger.error(f"Pipeline '{pid}' not found for WebSocket")
-        raise HTTPException(status_code=404, detail=f"Pipeline '{pid}' not found")
+        logger.error(f"Pipeline '{rid}' not found for WebSocket")
+        raise HTTPException(status_code=404, detail=f"Pipeline '{rid}' not found")
     
     try:
-        runner = get_manager()._get_runner(pid)
+        runner = get_manager()._get_runner(rid)
         if runner.controller is None:
-            logger.warning(f"Controller is None for pipeline '{pid}'")
+            logger.warning(f"Controller is None for pipeline '{rid}'")
             return []
         
         events_detector = runner.controller.events_detectors_controller
         if events_detector is None:
-            logger.warning(f"Events detector is None for pipeline '{pid}'")
+            logger.warning(f"Events detector is None for pipeline '{rid}'")
             return []
         
         events_list = []
@@ -172,34 +172,34 @@ async def get_events(
         except Exception as e:
             logger.debug(f"Error accessing events: {e}")
         
-        logger.info(f"Retrieved {len(events_list)} events for pipeline '{pid}'")
+        logger.info(f"Retrieved {len(events_list)} events for pipeline '{rid}'")
         return events_list
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to retrieve events for pipeline '{pid}': {e}")
+        logger.error(f"Failed to retrieve events for pipeline '{rid}': {e}")
         raise HTTPException(status_code=500, detail=f"Failed to retrieve events: {str(e)}")
 
 
-@router.get("/pipelines/{pid}/metadata")
-async def get_metadata(pid: int) -> Dict[str, Any]:
+@router.get("/pipelines/{rid}/metadata")
+async def get_metadata(rid: int) -> Dict[str, Any]:
     """
     Get pipeline metadata including statistics and configuration.
     
     Parameters:
     - pid: Pipeline ID
     """
-    logger.info(f"GET /pipelines/{pid}/metadata")
+    logger.info(f"GET /pipelines/{rid}/metadata")
     try:
-        pipeline_info = get_manager().describe(pid)
+        pipeline_info = get_manager().describe(rid)
     except KeyError:
-        logger.error(f"Pipeline '{pid}' not found")
-        raise HTTPException(status_code=404, detail=f"Pipeline '{pid}' not found")
+        logger.error(f"Pipeline '{rid}' not found")
+        raise HTTPException(status_code=404, detail=f"Pipeline '{rid}' not found")
     
     try:
-        runner = get_manager()._get_runner(pid)
+        runner = get_manager()._get_runner(rid)
         metadata = {
-            "pipeline_id": pid,
+            "pipeline_id": rid,
             "pipeline_name": pipeline_info.get("name"),
             "state": pipeline_info.get("state"),
             "statistics": {}
@@ -225,12 +225,12 @@ async def get_metadata(pid: int) -> Dict[str, Any]:
                     for src in sources
                 ]
         
-        logger.info(f"Retrieved metadata for pipeline '{pid}'")
+        logger.info(f"Retrieved metadata for pipeline '{rid}'")
         return metadata
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to retrieve metadata for pipeline '{pid}': {e}")
+        logger.error(f"Failed to retrieve metadata for pipeline '{rid}': {e}")
         raise HTTPException(status_code=500, detail=f"Failed to retrieve metadata: {str(e)}")
 
 
@@ -279,10 +279,10 @@ def _get_objects_data(runner, object_type: str = "active") -> List[dict]:
     return objects
 
 
-@router.websocket("/pipelines/{pid}/stream/data")
+@router.websocket("/pipelines/{rid}/stream/data")
 async def websocket_data_stream(
     websocket: WebSocket,
-    pid: int,
+    rid: int,
     update_interval: float = 0.1,
     include_objects: bool = True,
     include_events: bool = True
@@ -296,23 +296,23 @@ async def websocket_data_stream(
     - include_objects: Include objects in stream (default: true)
     - include_events: Include events in stream (default: true)
     """
-    logger.info(f"WebSocket connection established for pipeline '{pid}'")
+    logger.info(f"WebSocket connection established for pipeline '{rid}'")
     await websocket.accept()
     
     try:
-        pipeline_info = get_manager().describe(pid)
+        pipeline_info = get_manager().describe(rid)
         if pipeline_info["state"] != PipelineState.RUNNING:
-            logger.warning(f"Pipeline '{pid}' is not running for WebSocket (state: {pipeline_info['state']})")
+            logger.warning(f"Pipeline '{rid}' is not running for WebSocket (state: {pipeline_info['state']})")
             await websocket.send_json({"error": f"Pipeline '{pid}' is not running"})
             return
     except KeyError:
-        logger.error(f"Pipeline '{pid}' not found for WebSocket")
+        logger.error(f"Pipeline '{rid}' not found for WebSocket")
         await websocket.send_json({"error": f"Pipeline '{pid}' not found"})
         return
     
     try:
-        runner = get_manager()._get_runner(pid)
-        logger.info(f"WebSocket stream started for pipeline '{pid}', update_interval={update_interval}s")
+        runner = get_manager()._get_runner(rid)
+        logger.info(f"WebSocket stream started for pipeline '{rid}', update_interval={update_interval}s")
         
         while True:
             data = {}
@@ -344,7 +344,7 @@ async def websocket_data_stream(
                         data["events"] = []
             
             data["metadata"] = {
-                "pipeline_id": pid,
+                "pipeline_id": rid,
                 "timestamp": str(asyncio.get_event_loop().time())
             }
             
@@ -352,8 +352,8 @@ async def websocket_data_stream(
             await asyncio.sleep(update_interval)
             
     except WebSocketDisconnect:
-        logger.info(f"WebSocket disconnected for pipeline '{pid}'")
+        logger.info(f"WebSocket disconnected for pipeline '{rid}'")
         pass
     except Exception as e:
-        logger.error(f"WebSocket error for pipeline '{pid}': {e}")
+        logger.error(f"WebSocket error for pipeline '{rid}': {e}")
         await websocket.send_json({"error": str(e)})

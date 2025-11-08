@@ -7,6 +7,7 @@ from evileye.api.routes.configs import router as configs_router
 from evileye.api.routes.pipelines import router as pipelines_router
 from evileye.api.routes.streaming import router as streaming_router
 from evileye.api.routes.events import router as events_router
+from evileye.api.core.config_run_access import get_config_run_manager
 from evileye.api.core.manager_access import get_manager
 from evileye import __version__
 
@@ -20,6 +21,10 @@ async def lifespan(_app: FastAPI):
         yield
     finally:
         logger.info("FastAPI lifespan shutdown")
+        try:
+            get_config_run_manager().shutdown()
+        except Exception as e:
+            logger.error(f"Error during ConfigRunManager shutdown: {e}")
 
 
 def create_app() -> FastAPI:

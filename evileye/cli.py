@@ -118,7 +118,7 @@ def run(
         console.print("[yellow]Launch interrupted by user[/yellow]")
         raise typer.Exit(0)
 
-@app.command("start-api")
+@app.command("server")
 def start_api(
         host: str = typer.Option("127.0.0.1", "--host", help="Bind host"),
         port: int = typer.Option(8080, "--port", help="Bind port"),
@@ -126,27 +126,38 @@ def start_api(
         workers: int = typer.Option(1, "--workers", help="Number of worker processes"),
         verbose: bool = typer.Option(False, "--verbose", help="Enable verbose logging"),
         log_level: str = typer.Option("info", "--log-level", help="Logging level"),
+        config: Optional[str] = typer.Option(None, "--config", help="Auto-run selected config after server starts (name or file path)")
 
 ) -> None:
     """
     Start EvilEye FastAPI web server.
 
-    Example:
-        evileye start-api --host 0.0.0.0 --port 8000
+    Examples:
+        evileye server --host 0.0.0.0 --port 8000
+        evileye server --config poly-videos.json
+        evileye server --config ./configs/poly-videos.json
     """
     
+    import time
+    import urllib.request
+    import urllib.error
+
     setup_logging(verbose=verbose)
     logger = get_module_logger("cli")
     log_system_info(logger)
 
-    cmd = [sys.executable, str(Path(__file__).parent / "process.py")]
-    cmd.extend(["--mode", "api", "--host", host, "--port", str(port), "--log-level", log_level])
+    # Use server.py instead of process.py for API server
+    cmd = [sys.executable, str(Path(__file__).parent / "server.py")]
+    cmd.extend(["--host", host, "--port", str(port), "--log-level", log_level])
     
     if not reload:
         cmd.append("--no-reload")
 
+    if config:
+        cmd.extend(["--config", config])
+
     try:
-        logger.info(f"Starting web server: {' '.join(cmd)}")
+        logger.info(f"Starting web server (server.py): {' '.join(cmd)}")
         console.print(f"[green]Starting web server on {host}:{port}[/green]")
         subprocess.run(cmd, check=True, cwd=os.getcwd())
     except subprocess.CalledProcessError as e:

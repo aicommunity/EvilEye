@@ -11,25 +11,25 @@ from evileye.api.core.pipeline_manager import PipelineState
 router = APIRouter(prefix="/api/v1", tags=["streaming"])
 
 
-@router.get("/pipelines/{pid}/snapshot")
-async def snapshot(pid: int):
+@router.get("/pipelines/{rid}/snapshot")
+async def snapshot(rid: int):
     """
     Return the latest available JPEG snapshot for the given pipeline.
     """
     try:
-        pipeline_info = get_manager().describe(pid)
+        pipeline_info = get_manager().describe(rid)
         if pipeline_info["state"] not in [PipelineState.RUNNING, PipelineState.STARTING]:
-            raise HTTPException(status_code=400, detail=f"Pipeline '{pid}' is not running (state: {pipeline_info['state']})")
+            raise HTTPException(status_code=400, detail=f"Pipeline '{rid}' is not running (state: {pipeline_info['state']})")
     except KeyError:
         raise HTTPException(status_code=404, detail=f"Pipeline '{pid}' not found")
     
-    data = get_broker().latest_jpeg(str(pid))
+    data = get_broker().latest_jpeg(str(rid))
     if not data:
         raise HTTPException(status_code=404, detail="No frame available")
     return Response(content=data, media_type="image/jpeg")
 
 
-async def _mjpeg_generator(pid: int, fps: int, stop_event: threading.Event) -> AsyncGenerator[bytes, None]:
+async def _mjpeg_generator(rid: int, fps: int, stop_event: threading.Event) -> AsyncGenerator[bytes, None]:
     """
     Asynchronous generator that yields MJPEG frames for streaming.
     Stops when stop_event is set.
@@ -56,9 +56,9 @@ async def _mjpeg_generator(pid: int, fps: int, stop_event: threading.Event) -> A
             elapsed += check_interval
 
 
-@router.get("/pipelines/{pid}/stream.mjpg")
+@router.get("/pipelines/{rid}/stream.mjpg")
 async def mjpeg_stream(
-    pid: int,
+    rid: int,
     fps: int = Query(5, ge=1, le=60, description="Frames per second (1–60)")
 ):
     """
@@ -88,8 +88,8 @@ async def mjpeg_stream(
     )
 
 
-@router.post("/pipelines/{pid}/stream:stop")
-async def stop_stream(pid: int):
+@router.post("/pipelines/{rid}/stream:stop")
+async def stop_stream(rid: int):
     """
     Stop the active MJPEG stream for the given pipeline.
     This will cause the stream generator to exit gracefully.
@@ -115,8 +115,8 @@ async def stop_stream(pid: int):
         }
 
 
-@router.get("/pipelines/{pid}/stream:status")
-async def stream_status(pid: int):
+@router.get("/pipelines/{rid}/stream:status")
+async def stream_status(rid: int):
     """
     Get the status of the stream for the given pipeline.
     """
