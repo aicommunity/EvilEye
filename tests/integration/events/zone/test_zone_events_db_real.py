@@ -34,10 +34,26 @@ class DummyObj:
 
 
 def _load_db_config():
-    cfg_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'evileye', 'database_config.json')
-    # Fallback to project root config path
-    if not os.path.exists(cfg_path):
-        cfg_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'evileye', 'database_config.json')
+    # Try to find database_config.json in project root
+    from pathlib import Path
+    # Go up from tests/integration/events/zone to project root (EvilEye)
+    current = Path(__file__).parent
+    while current.name != 'EvilEye' and current.parent != current:
+        current = current.parent
+    if current.name == 'EvilEye':
+        project_root = current
+    else:
+        # Fallback: assume we're in tests/integration/events/zone
+        project_root = Path(__file__).parent.parent.parent.parent
+    
+    # Try evileye/database_config.json first
+    cfg_path = project_root / 'evileye' / 'database_config.json'
+    # Fallback to project root
+    if not cfg_path.exists():
+        cfg_path = project_root / 'database_config.json'
+    
+    if not cfg_path.exists():
+        pytest.skip(f"database_config.json not found. Tried: {project_root / 'evileye' / 'database_config.json'}, {project_root / 'database_config.json'}")
     with open(cfg_path, 'r') as f:
         return json.load(f)
 

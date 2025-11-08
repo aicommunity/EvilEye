@@ -31,7 +31,14 @@ class DummyObj:
         self.source_id = source_id
         self.object_id = object_id
         self.history = history
-        self.last_image = history[-1].last_image
+        self.last_image = history[-1].last_image if history else None
+        # Add track attribute for compatibility with ZoneEvent
+        if history:
+            self.track = DummyTrack(history[-1].track.bounding_box)
+            self.time_stamp = history[-1].time_stamp
+        else:
+            self.track = DummyTrack([0, 0, 100, 100])
+            self.time_stamp = datetime.now()
 
 
 class DummyList:

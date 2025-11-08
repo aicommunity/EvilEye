@@ -106,7 +106,9 @@ def test_text_rendering():
             
             # Draw text with bbox
             put_text_with_bbox(image, f"Object {i+1}", bbox, 
-                              font_size_pt=12, color=(255, 255, 255), 
+                              font_face=cv2.FONT_HERSHEY_SIMPLEX, 
+                              font_scale=0.5, thickness=1,
+                              color=(255, 255, 255), 
                               background_color=(0, 0, 0))
         
         # Test 3: Different font sizes

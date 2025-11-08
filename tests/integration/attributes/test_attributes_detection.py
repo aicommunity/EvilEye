@@ -228,19 +228,27 @@ def test_roi_feeder_creation(roi_feeder):
 def test_roi_feeder_interface(roi_feeder):
     """Тест интерфейса ProcessorFrame."""
     # Тест put/get
+    # RoiFeeder.put() ожидает кортеж (tracking_data, frame)
+    # где tracking_data - объект с атрибутом tracks
+    from evileye.object_tracker.tracking_results import TrackingResultList
+    
+    tracking_data = TrackingResultList()
     frame = Frame()
     frame.source_id = 0
     frame.frame_id = 1
     
-    result = roi_feeder.put(frame)
+    # Передаем кортеж (tracking_data, frame)
+    result = roi_feeder.put((tracking_data, frame))
     assert result
     
     # Запуск обработки
     roi_feeder.start()
     time.sleep(0.1)  # Даём время на обработку
     
-    output_frame = roi_feeder.get()
-    if output_frame:
+    # get() возвращает кортеж (tracking_data, frame)
+    output_data = roi_feeder.get()
+    if output_data:
+        output_tracking_data, output_frame = output_data
         assert output_frame.source_id == 0
         assert output_frame.frame_id == 1
 

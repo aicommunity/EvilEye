@@ -161,6 +161,17 @@ def test_journal_button_behavior():
         app.quit()
     
     QTimer.singleShot(100, close_all)
-    app.processEvents()
+    # Даем время на закрытие окон
+    import time
+    time.sleep(0.2)
+    
+    # Явно закрываем все окна на случай, если таймер не сработал
+    try:
+        for widget in app.allWidgets():
+            if widget.isWindow():
+                widget.close()
+        app.quit()
+    except Exception:
+        pass
     
     test_logger.info("\n=== Test completed ===")

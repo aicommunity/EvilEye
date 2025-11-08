@@ -174,6 +174,11 @@ def test_base_window_creation(qapp):
     assert window.window_id == "test_window"
     assert window.window_type == "test"
     assert window.config_file == "test.json"
+    
+    # Сбрасываем флаг несохраненных изменений перед закрытием,
+    # чтобы избежать показа диалога подтверждения в тестах
+    window.set_unsaved_changes(False)
+    window.close()
 
 
 def test_unsaved_changes_tracking_base_window(qapp):
@@ -200,6 +205,10 @@ def test_unsaved_changes_tracking_base_window(qapp):
         
         # Проверяем, что заголовок обновился
         assert window.windowTitle().endswith('*')
+        
+        # Сбрасываем флаг несохраненных изменений перед закрытием,
+        # чтобы избежать показа диалога подтверждения в тестах
+        window.set_unsaved_changes(False)
     finally:
         # Очищаем окно
         window.close()
@@ -242,7 +251,19 @@ def test_config_save_load(qapp):
         assert result
         assert new_window.data == {"modified": "value"}
         
+        # Сбрасываем флаг несохраненных изменений перед закрытием,
+        # чтобы избежать показа диалога подтверждения в тестах
+        new_window.set_unsaved_changes(False)
+        window.set_unsaved_changes(False)
+        
     finally:
+        # Закрываем окна перед удалением файла
+        if 'window' in locals():
+            window.set_unsaved_changes(False)
+            window.close()
+        if 'new_window' in locals():
+            new_window.set_unsaved_changes(False)
+            new_window.close()
         # Удаляем временный файл
         if os.path.exists(temp_file):
             os.unlink(temp_file)
@@ -289,6 +310,11 @@ def test_window_manager_integration(qapp):
     window_info = manager.get_window("test_window")
     assert window_info is not None
     assert window_info.window_type == "test"
+    
+    # Сбрасываем флаг несохраненных изменений перед закрытием,
+    # чтобы избежать показа диалога подтверждения в тестах
+    window.set_unsaved_changes(False)
+    window.close()
 
 
 def test_global_window_manager(qapp):

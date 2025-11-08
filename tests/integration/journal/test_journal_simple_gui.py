@@ -85,12 +85,27 @@ def test_journal_simple_gui():
         
         # Автоматически закрываем окно через 100ms
         def close_window():
+            # Закрываем окно
             window.close()
-            ds.close()
+            # Закрываем data source
+            if ds:
+                ds.close()
+            # Выходим из приложения
             app.quit()
         
         QTimer.singleShot(100, close_window)
-        app.processEvents()
+        # Даем время на закрытие окна
+        import time
+        time.sleep(0.2)
+        
+        # Явно закрываем окно на случай, если таймер не сработал
+        try:
+            window.close()
+            if ds:
+                ds.close()
+            app.quit()
+        except Exception:
+            pass
         
     except Exception as e:
         test_logger.error(f"❌ Error: {e}")

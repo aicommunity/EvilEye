@@ -33,7 +33,7 @@ class MockDetector:
         self._rois_xywh = [[5, 5, 10, 10]]
 
     def get_source_ids(self):
-        return self.source_ids
+        return self.source_ids if isinstance(self.source_ids, list) else [self.source_ids]
 
     def get_rois_for_source(self, source_id):
         return self._rois_xywh
@@ -60,6 +60,8 @@ def make_minimal_main_window(qapp):
     mw.controller = SimpleNamespace(pipeline=None)
     mw.params = {}
     mw.logger = DummyLogger()
+    # Add _roi_editor_detector attribute that might be used
+    mw._roi_editor_detector = None
     return mw
 
 
@@ -86,7 +88,9 @@ def test_apply_roi_to_detector_by_source_match(qapp):
     mw.controller.pipeline = pipeline
 
     rois_xyxy = [[1, 2, 3, 4]]
-    mw._on_roi_editor_closed(rois_xyxy, source_id=2, detector_index=99, accepted=True)
+    # Передаем -1 для невалидного индекса, чтобы метод искал по source_id
+    # Метод проверяет detector_index >= 0, поэтому -1 не пройдет проверку и метод будет искать по source_id
+    mw._on_roi_editor_closed(rois_xyxy, source_id=2, detector_index=-1, accepted=True)
 
     assert det.last_set is not None
     src, rois = det.last_set

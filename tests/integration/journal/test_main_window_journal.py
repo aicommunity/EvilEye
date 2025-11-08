@@ -73,8 +73,19 @@ def test_main_window_journal():
     
     # Автоматически закрываем окно через 100ms
     def close_window():
+        # Закрываем главное окно
         main_window.close()
+        # Выходим из приложения
         app.quit()
     
     QTimer.singleShot(100, close_window)
-    app.processEvents()
+    # Даем время на закрытие окна
+    import time
+    time.sleep(0.2)
+    
+    # Явно закрываем окно на случай, если таймер не сработал
+    try:
+        main_window.close()
+        # Не вызываем app.quit() здесь, так как он уже вызван в close_window()
+    except Exception:
+        pass

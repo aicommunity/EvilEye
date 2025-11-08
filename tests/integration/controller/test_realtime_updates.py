@@ -161,13 +161,33 @@ def test_realtime_updates():
             # Закрываем data source
             if hasattr(journal, 'ds') and journal.ds:
                 journal.ds.close()
-            # Обрабатываем события для корректного закрытия
-            app.processEvents()
             # Выходим из приложения
             app.quit()
         
         QTimer.singleShot(500, close_window)
-        app.processEvents()
+        # Даем время на закрытие окна
+        import time
+        time.sleep(0.6)
+        
+        # Явно закрываем окно на случай, если таймер не сработал
+        try:
+            # Останавливаем фоновый поток
+            stop_thread.set()
+            # Ждем завершения потока (максимум 1 секунда)
+            update_thread.join(timeout=1.0)
+            
+            # Останавливаем таймер перед закрытием
+            if hasattr(journal, 'update_timer'):
+                journal.update_timer.stop()
+            # Закрываем виджет
+            journal.close()
+            # Закрываем data source
+            if hasattr(journal, 'ds') and journal.ds:
+                journal.ds.close()
+            # Выходим из приложения
+            app.quit()
+        except Exception:
+            pass
         
     except KeyboardInterrupt:
         test_logger.info("\n✅ Test interrupted by user")

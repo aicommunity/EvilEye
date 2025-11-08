@@ -70,17 +70,58 @@ def test_journal_final_structure():
     # Test 3: Test journal widget
     test_logger.info("\n3. Journal Widget Test:")
     try:
+        try:
+            from PyQt6.QtWidgets import QApplication
+            from PyQt6.QtCore import QTimer
+        except ImportError:
+            from PyQt5.QtWidgets import QApplication
+            from PyQt5.QtCore import QTimer
+        
         from evileye.visualization_modules.events_journal_json import EventsJournalJson
+        
+        # Create QApplication if it doesn't exist
+        app = QApplication.instance()
+        if app is None:
+            app = QApplication(sys.argv if hasattr(sys, 'argv') else [])
         
         journal = EventsJournalJson(base_dir)
         test_logger.info(f"   ✅ Journal widget created successfully")
         test_logger.info(f"   Available dates: {journal.ds.list_available_dates()}")
         test_logger.info(f"   Total events: {journal.ds.get_total({})}")
         
-        journal.ds.close()
+        # Автоматически закрываем окно через 100ms
+        def close_window():
+            # Останавливаем таймер перед закрытием
+            if hasattr(journal, 'update_timer'):
+                journal.update_timer.stop()
+            # Закрываем виджет
+            journal.close()
+            # Закрываем data source
+            if hasattr(journal, 'ds') and journal.ds:
+                journal.ds.close()
+            # Выходим из приложения
+            app.quit()
+        
+        QTimer.singleShot(100, close_window)
+        # Даем время на закрытие окна
+        import time
+        time.sleep(0.2)
+        
+        # Явно закрываем окно на случай, если таймер не сработал
+        try:
+            if hasattr(journal, 'update_timer'):
+                journal.update_timer.stop()
+            journal.close()
+            if hasattr(journal, 'ds') and journal.ds:
+                journal.ds.close()
+            app.quit()
+        except Exception:
+            pass
         
     except Exception as e:
         test_logger.info(f"   ❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
     
     # Test 4: Configuration test
     test_logger.info("\n4. Configuration Test:")

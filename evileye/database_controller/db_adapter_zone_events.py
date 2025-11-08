@@ -6,6 +6,7 @@ import datetime
 import os
 from timeit import default_timer as timer
 import cv2
+import numpy as np
 from ..utils import threading_events
 from ..utils import utils
 from psycopg2 import sql
@@ -102,6 +103,16 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
             # Проверка на None перед отрисовкой
             if box is None or zone_coords is None:
                 self.logger.warning('DB: Missing box/zone_coords in RETURNING; skipping image save')
+                continue
+            
+            # Проверка типа box - должен быть списком/массивом, а не datetime
+            if not isinstance(box, (list, tuple, np.ndarray)):
+                self.logger.warning(f'DB: Invalid box type in RETURNING: {type(box)}, expected list/tuple/array; skipping image save')
+                continue
+            
+            # Проверка, что box имеет правильный формат [x1, y1, x2, y2]
+            if len(box) < 4:
+                self.logger.warning(f'DB: Invalid box format in RETURNING: {box}, expected [x1, y1, x2, y2]; skipping image save')
                 continue
 
             self._save_image(preview_path, frame_path, image, box, zone_coords)

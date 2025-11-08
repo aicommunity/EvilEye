@@ -329,6 +329,7 @@ class EventsJournalJson(QWidget):
         # Store last data hash for efficient updates
         self.last_data_hash = None
         self.is_visible = False
+        self._is_closing = False  # Flag to prevent operations during closing
         
         # Real-time update timer
         self.update_timer = QTimer()
@@ -451,6 +452,15 @@ class EventsJournalJson(QWidget):
     def _check_for_updates(self):
         """Check if data has changed and reload if necessary"""
         try:
+            # Check if widget is closing or destroyed
+            if self._is_closing:
+                return
+            # Check if widget still exists and is valid
+            if not hasattr(self, 'table') or self.table is None:
+                return
+            if not hasattr(self, 'ds') or self.ds is None:
+                return
+            
             # Get current data hash
             filters = {k: v for k, v in self.filters.items() if v}
             current_data = self.ds.fetch(self.page, self.page_size, filters, [])
@@ -472,14 +482,24 @@ class EventsJournalJson(QWidget):
                 #    self.logger.debug(f"🔄 Forcing update for visible window. Hash: {current_hash}")
                 
                 self._reload_table()
-                # Force widget repaint
-                self.table.viewport().update()
-                self.table.repaint()
+                # Force widget repaint only if widget still exists
+                if hasattr(self, 'table') and self.table is not None:
+                    self.table.viewport().update()
+                    self.table.repaint()
         except Exception as e:
             self.logger.error(f"Update check error: {e}")
 
     def _reload_table(self):
         try:
+            # Check if widget is closing or destroyed
+            if self._is_closing:
+                return
+            # Check if widget still exists and is valid
+            if not hasattr(self, 'table') or self.table is None:
+                return
+            if not hasattr(self, 'ds') or self.ds is None:
+                return
+            
             filters = {k: v for k, v in self.filters.items() if v}
             # Use empty sort list to avoid sorting errors with None values
             rows = self.ds.fetch(self.page, self.page_size, filters, [])
@@ -652,16 +672,19 @@ class EventsJournalJson(QWidget):
                 self.table.setRowHeight(r, 150)
             
             # Force widget update to ensure changes are visible
-            self.table.viewport().update()
-            self.table.update()
-            
-            # Force repaint and process events
-            self.table.repaint()
-            try:
-                from PyQt6.QtWidgets import QApplication
-            except ImportError:
-                from PyQt5.QtWidgets import QApplication
-            QApplication.processEvents()
+            # Only update if widget still exists and is not closing
+            if not self._is_closing and hasattr(self, 'table') and self.table is not None:
+                try:
+                    self.table.viewport().update()
+                    self.table.update()
+                    
+                    # Force repaint
+                    self.table.repaint()
+                    # Don't call processEvents() here as it can cause segfault
+                    # Events will be processed naturally by the event loop
+                except (RuntimeError, AttributeError):
+                    # Widget may have been destroyed
+                    pass
             
         except Exception as e:
             self.logger.error(f"Table data loading error: {e}")
@@ -703,9 +726,19 @@ class EventsJournalJson(QWidget):
             self.update_timer.stop()
 
     def closeEvent(self, event):
+        # Устанавливаем флаг закрытия перед остановкой таймера
+        self._is_closing = True
+        
+        # Останавливаем таймер перед закрытием
         if hasattr(self, 'update_timer'):
             self.update_timer.stop()
-        self.ds.close()
+            # Не вызываем processEvents() здесь, так как это может вызвать segfault
+        # Закрываем data source
+        if hasattr(self, 'ds') and self.ds:
+            try:
+                self.ds.close()
+            except Exception:
+                pass
         super().closeEvent(event)
 
     @pyqtSlot(int, int)

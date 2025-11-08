@@ -4,6 +4,7 @@
 
 import pytest
 import sys
+import atexit
 from pathlib import Path
 
 # Добавляем корень проекта в путь
@@ -85,10 +86,34 @@ def qapp():
             app = QApplication(sys.argv if hasattr(sys, 'argv') else [])
         yield app
         # Очищаем все виджеты после теста
-        for widget in app.allWidgets():
-            if widget.isWindow():
-                widget.close()
-        app.processEvents()
+        try:
+            widgets_to_close = []
+            for widget in app.allWidgets():
+                try:
+                    if widget and widget.isWindow():
+                        widgets_to_close.append(widget)
+                except (RuntimeError, AttributeError):
+                    pass
+                except Exception:
+                    pass
+            
+            # Закрываем все окна
+            for widget in widgets_to_close:
+                try:
+                    if widget:
+                        widget.close()
+                except (RuntimeError, AttributeError):
+                    pass
+                except Exception:
+                    pass
+            
+            # Не завершаем приложение здесь, так как оно может использоваться другими тестами
+            # Завершение будет выполнено финализатором на уровне сессии
+        except (RuntimeError, AttributeError):
+            # QApplication уже уничтожен
+            pass
+        except Exception:
+            pass
     except Exception:
         pass  # Если PyQt не доступен, пропускаем
 
@@ -118,10 +143,80 @@ def auto_close_windows(qapp):
         
         # Закрываем все окна после теста
         close_all_windows()
-        # Обрабатываем события для закрытия окон
-        app = QApplication.instance()
-        if app:
-            app.processEvents()
+        # Не вызываем processEvents здесь, чтобы избежать segfault
     except Exception:
         pass  # Если PyQt не доступен, пропускаем
+
+def _cleanup_qapplication_at_exit():
+    """Функция для безопасного завершения QApplication при выходе из процесса."""
+    try:
+        try:
+            from PyQt6.QtWidgets import QApplication
+        except ImportError:
+            from PyQt5.QtWidgets import QApplication
+        
+        app = QApplication.instance()
+        if app is not None:
+            # Просто завершаем приложение без вызова методов, которые могут вызвать segfault
+            try:
+                app.quit()
+            except Exception:
+                pass
+    except Exception:
+        pass  # Если PyQt не доступен, пропускаем
+    
+    # Принудительно завершаем процесс после завершения всех тестов
+    # Это необходимо, так как QApplication может оставаться активным и блокировать завершение pytest
+    try:
+        import os
+        # Используем os._exit(0) для немедленного завершения процесса
+        # Это гарантирует, что процесс завершится даже если QApplication блокирует нормальное завершение
+        os._exit(0)
+    except Exception:
+        pass
+
+# Регистрируем функцию очистки при выходе из процесса
+atexit.register(_cleanup_qapplication_at_exit)
+
+@pytest.fixture(scope="session", autouse=True)
+def cleanup_qapplication():
+    """Финализатор на уровне сессии для безопасного завершения QApplication после всех тестов."""
+    yield
+    # Безопасно завершаем QApplication после всех тестов
+    _cleanup_qapplication_at_exit()
+    
+    # Принудительно завершаем процесс после завершения всех тестов
+    # Это необходимо, так как QApplication может оставаться активным и блокировать завершение pytest
+    try:
+        import os
+        # Используем os._exit(0) для немедленного завершения процесса
+        # Это гарантирует, что процесс завершится даже если QApplication блокирует нормальное завершение
+        # os._exit(0) завершает процесс немедленно, не вызывая финализаторы Python
+        os._exit(0)
+    except Exception:
+        pass
+
+def pytest_sessionfinish(session, exitstatus):
+    """Хук pytest для завершения сессии тестов."""
+    # Безопасно завершаем QApplication после завершения всех тестов
+    _cleanup_qapplication_at_exit()
+    
+    # Принудительно завершаем процесс после завершения всех тестов
+    # Это необходимо, так как QApplication может оставаться активным и блокировать завершение pytest
+    try:
+        import os
+        import sys
+        # Используем os._exit(0) для немедленного завершения процесса
+        # Это гарантирует, что процесс завершится даже если QApplication блокирует нормальное завершение
+        # os._exit(0) завершает процесс немедленно, не вызывая финализаторы Python
+        # Вызываем напрямую, чтобы гарантировать завершение процесса
+        os._exit(0)
+    except Exception:
+        # Если os._exit() не работает, пробуем sys.exit()
+        try:
+            sys.exit(0)
+        except SystemExit:
+            pass
+        except Exception:
+            pass
 

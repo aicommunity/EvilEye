@@ -78,7 +78,16 @@ def test_main_window_without_db():
             app.quit()
         
         QTimer.singleShot(100, close_window)
-        app.processEvents()
+        # Даем время на закрытие окна
+        import time
+        time.sleep(0.2)
+        
+        # Явно закрываем окно на случай, если таймер не сработал
+        try:
+            main_window.close()
+            app.quit()
+        except Exception:
+            pass
             
         test_logger.info("✅ MainWindow test completed successfully")
         
@@ -156,7 +165,16 @@ def test_main_window_with_db():
             app.quit()
         
         QTimer.singleShot(100, close_window)
-        app.processEvents()
+        # Даем время на закрытие окна
+        import time
+        time.sleep(0.2)
+        
+        # Явно закрываем окно на случай, если таймер не сработал
+        try:
+            main_window.close()
+            app.quit()
+        except Exception:
+            pass
             
         test_logger.info("✅ MainWindow test completed successfully")
         

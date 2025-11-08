@@ -163,13 +163,24 @@ def test_journal_columns_compatibility():
             # Закрываем data source
             if hasattr(journal, 'ds') and journal.ds:
                 journal.ds.close()
-            # Обрабатываем события для корректного закрытия
-            app.processEvents()
             # Выходим из приложения
             app.quit()
         
         QTimer.singleShot(100, close_window)
-        app.processEvents()
+        # Даем время на закрытие окна
+        import time
+        time.sleep(0.2)
+        
+        # Явно закрываем окно на случай, если таймер не сработал
+        try:
+            if hasattr(journal, 'update_timer'):
+                journal.update_timer.stop()
+            journal.close()
+            if hasattr(journal, 'ds') and journal.ds:
+                journal.ds.close()
+            app.quit()
+        except Exception:
+            pass
         
         test_logger.info("\n✅ Journal columns compatibility test completed")
         test_logger.info("\n📋 Summary:")

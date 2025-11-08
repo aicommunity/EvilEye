@@ -78,13 +78,28 @@ def test_image_fixes():
             # Закрываем data source
             if hasattr(journal, 'ds') and journal.ds:
                 journal.ds.close()
-            # Обрабатываем события для корректного закрытия
-            app.processEvents()
             # Выходим из приложения
             app.quit()
         
         QTimer.singleShot(100, close_window)
-        app.processEvents()
+        # Даем время на закрытие окна
+        import time
+        time.sleep(0.2)
+        
+        # Явно закрываем окно на случай, если таймер не сработал
+        try:
+            # Останавливаем таймер перед закрытием
+            if hasattr(journal, 'update_timer'):
+                journal.update_timer.stop()
+            # Закрываем виджет
+            journal.close()
+            # Закрываем data source
+            if hasattr(journal, 'ds') and journal.ds:
+                journal.ds.close()
+            # Выходим из приложения
+            app.quit()
+        except Exception:
+            pass
         
     except Exception as e:
         test_logger.error(f"❌ Error: {e}")
