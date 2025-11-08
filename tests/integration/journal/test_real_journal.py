@@ -20,8 +20,8 @@ from evileye.visualization_modules.events_journal_json import EventsJournalJson
 logger = setup_evileye_logging(log_level="INFO", log_to_console=True, log_to_file=True)
 test_logger = get_module_logger("test")
 
-def test_real_journal():
-    app = QApplication(sys.argv)
+def test_real_journal(qapp):
+    app = qapp
     
     test_logger.info("Testing JSON journal with real data...")
     
@@ -72,7 +72,6 @@ def test_real_journal():
         journal.close()
         if hasattr(journal, 'ds') and journal.ds:
             journal.ds.close()
-        # Не вызываем app.quit() здесь, так как он уже вызван в close_window()
         # Не вызываем app.quit() здесь, так как он уже вызван в close_window()
     except Exception:
         pass

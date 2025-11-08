@@ -9,23 +9,21 @@ from evileye.core.logger import get_module_logger
 logger = setup_evileye_logging(log_level="INFO", log_to_console=True, log_to_file=True)
 test_logger = get_module_logger("test")
 
-def test_journal_complete():
+def test_journal_complete(qapp):
     """Complete journal test"""
     
     test_logger.info("=== Complete Journal Test ===")
     
     try:
         try:
-            from PyQt6.QtWidgets import QApplication
             from PyQt6.QtCore import QTimer
         except ImportError:
-            from PyQt5.QtWidgets import QApplication
             from PyQt5.QtCore import QTimer
         
         from evileye.visualization_modules.events_journal_json import EventsJournalJson
         
-        # Create QApplication
-        app = QApplication(sys.argv)
+        # Use QApplication from fixture
+        app = qapp
         
         # Create journal widget
         journal = EventsJournalJson('EvilEyeData')

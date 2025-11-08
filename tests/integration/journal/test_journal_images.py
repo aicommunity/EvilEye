@@ -20,8 +20,8 @@ from evileye.visualization_modules.events_journal_json import EventsJournalJson
 logger = setup_evileye_logging(log_level="INFO", log_to_console=True, log_to_file=True)
 test_logger = get_module_logger("test")
 
-def test_journal_images():
-    app = QApplication(sys.argv)
+def test_journal_images(qapp):
+    app = qapp
     
     test_logger.info("Testing JSON journal with image display...")
     

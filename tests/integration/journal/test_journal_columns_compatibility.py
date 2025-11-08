@@ -9,20 +9,19 @@ from evileye.core.logger import get_module_logger
 logger = setup_evileye_logging(log_level="INFO", log_to_console=True, log_to_file=True)
 test_logger = get_module_logger("test")
 
-def test_journal_columns_compatibility():
+def test_journal_columns_compatibility(qapp):
     """Test that JSON journal columns match database journal structure"""
     
     test_logger.info("=== Test Journal Columns Compatibility ===")
     
     try:
-        from PyQt6.QtWidgets import QApplication
         from evileye.visualization_modules.events_journal_json import EventsJournalJson
         import cv2
         import numpy as np
         import datetime
         
-        # Create a simple test application
-        app = QApplication([])
+        # Use QApplication from fixture
+        app = qapp
         
         # Create test directory structure
         base_dir = 'EvilEyeData'

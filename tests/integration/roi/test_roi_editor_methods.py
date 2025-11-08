@@ -12,7 +12,8 @@ from PyQt6.QtCore import Qt, QTimer, QPointF, QRectF
 from PyQt6.QtGui import QPen, QColor
 
 # Импортируем классы ROI редактора
-from evileye.visualization_modules.roi_core import ROIGraphicsView
+from evileye.visualization_modules.roi_core import ROIGraphicsView, ResizeHandle
+from evileye.visualization_modules.roi_editor_window import ROIEditorWindow
 
 class TestROIGraphicsView(unittest.TestCase):
     """Тесты для класса ROIGraphicsView"""
@@ -290,7 +291,7 @@ class TestROIEditorDialog(unittest.TestCase):
     
     def test_load_rois_from_config(self):
         """Тест загрузки ROI из конфигурации"""
-        dialog = ROIEditorDialog()
+        dialog = ROIEditorWindow({})
         
         # Мокаем roi_canvas
         dialog.roi_canvas = Mock()
@@ -310,7 +311,7 @@ class TestROIEditorDialog(unittest.TestCase):
     
     def test_set_rois_from_config(self):
         """Тест установки ROI из конфигурации"""
-        dialog = ROIEditorDialog()
+        dialog = ROIEditorWindow({})
         
         # Мокаем roi_canvas
         dialog.roi_canvas = Mock()

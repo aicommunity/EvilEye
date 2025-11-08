@@ -13,20 +13,19 @@ import threading
 logger = setup_evileye_logging(log_level="INFO", log_to_console=True, log_to_file=True)
 test_logger = get_module_logger("test")
 
-def test_journal_updates_when_open():
+def test_journal_updates_when_open(qapp):
     """Test journal updates when window is open"""
     
     test_logger.info("=== Test Journal Updates When Open ===")
     
     try:
-        from PyQt6.QtWidgets import QApplication
         from PyQt6.QtCore import QTimer
         from evileye.visualization_modules.events_journal_json import EventsJournalJson
         import cv2
         import numpy as np
         
-        # Create a simple test application
-        app = QApplication([])
+        # Use QApplication from fixture
+        app = qapp
         
         # Create test directory structure
         base_dir = 'EvilEyeData'
@@ -168,19 +167,9 @@ def test_journal_updates_when_open():
         QTimer.singleShot(500, close_window)
         # Даем время на закрытие окна и обработку событий (ДО app.quit())
         import time
-        # Даем время на закрытие окна и обработку событий (ДО app.quit())
-        import time
-        # Обрабатываем события несколько раз с проверками
-        for _ in range(min(12, 5)):  # Ограничиваем количество итераций
-            try:
-                app = QApplication.instance()
-                if app is not None:
-                    app.processEvents()
-            except (RuntimeError, AttributeError):
-                break  # QApplication уничтожен, выходим из цикла
-            except Exception:
-                pass
-            time.sleep(0.1)  # Увеличиваем задержку
+        # Просто ждем, чтобы QTimer.singleShot успел выполниться
+        # Не вызываем app.processEvents() в цикле, чтобы избежать segfault
+        time.sleep(0.5)
         
         # Явно закрываем окно на случай, если таймер не сработал
         try:
@@ -195,7 +184,6 @@ def test_journal_updates_when_open():
             if hasattr(journal, 'ds') and journal.ds:
                 journal.ds.close()
             # Не вызываем app.quit() здесь, так как он уже вызван в close_window()
-        # Не вызываем app.quit() здесь, так как он уже вызван в close_window()
         except Exception:
             pass
         

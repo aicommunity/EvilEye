@@ -68,7 +68,8 @@ def test_font_scaling():
         print(f"Основной font_scale: {main_font_scale:.3f}")
         
         # Нарисовать атрибуты
-        draw_object_attributes(image, obj, bbox, config, main_font_scale)
+        # draw_object_attributes(image, obj, bbox, font_face, font_scale, thickness)
+        draw_object_attributes(image, obj, bbox, config['font_face'], main_font_scale, config['thickness'])
         
         # Сохранить результат
         output_filename = f"test_attributes_{width}x{height}.jpg"

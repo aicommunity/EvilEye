@@ -25,7 +25,7 @@ class TestROISelectionRepaint(unittest.TestCase):
             self.app = QApplication([])
         
         # Создаем mock для логгера
-        with patch('evileye.visualization_modules.dialogs.roi_editor_dialog.get_module_logger') as mock_logger:
+        with patch('evileye.visualization_modules.roi_core.get_module_logger') as mock_logger:
             mock_logger.return_value = Mock()
             self.roi_view = ROIGraphicsView()
         

@@ -142,32 +142,37 @@ def test_realtime_updates():
         timer.timeout.connect(check_updates)
         timer.start(10000)  # Check every 10 seconds
         
-        # Автоматически закрываем окно через 500ms (после первой проверки)
+        # Автоматически закрываем окно через 200ms
         def close_window():
-            # Останавливаем фоновый поток
-            stop_thread.set()
-            # Ждем завершения потока (максимум 1 секунда)
-            update_thread.join(timeout=1.0)
-            
-            # Останавливаем таймер перед закрытием
-            if hasattr(journal, 'update_timer'):
-                journal.update_timer.stop()
-            # Останавливаем проверочный таймер
-            if hasattr(timer, 'stop'):
-                timer.stop()
-            
-            # Закрываем виджет
-            journal.close()
-            # Закрываем data source
-            if hasattr(journal, 'ds') and journal.ds:
-                journal.ds.close()
-            # Выходим из приложения
-            app.quit()
+            try:
+                # Останавливаем фоновый поток
+                stop_thread.set()
+                # Ждем завершения потока (максимум 1 секунда)
+                update_thread.join(timeout=1.0)
+                
+                # Останавливаем проверочный таймер
+                if hasattr(timer, 'stop'):
+                    timer.stop()
+                
+                # Останавливаем таймер перед закрытием
+                if hasattr(journal, 'update_timer'):
+                    journal.update_timer.stop()
+                
+                # Закрываем виджет
+                journal.close()
+                # Закрываем data source
+                if hasattr(journal, 'ds') and journal.ds:
+                    journal.ds.close()
+                # Выходим из приложения
+                app.quit()
+            except Exception:
+                pass
         
-        QTimer.singleShot(500, close_window)
-        # Даем время на закрытие окна
-        import time
-        time.sleep(0.6)
+        QTimer.singleShot(200, close_window)
+        # Даем время на закрытие окна и обработку событий (ДО app.quit())
+        # Просто ждем, чтобы QTimer.singleShot успел выполниться
+        # Не вызываем app.processEvents() в цикле, чтобы избежать segfault
+        time.sleep(0.3)  # Увеличиваем задержку
         
         # Явно закрываем окно на случай, если таймер не сработал
         try:
@@ -176,16 +181,20 @@ def test_realtime_updates():
             # Ждем завершения потока (максимум 1 секунда)
             update_thread.join(timeout=1.0)
             
+            # Останавливаем проверочный таймер
+            if hasattr(timer, 'stop'):
+                timer.stop()
+            
             # Останавливаем таймер перед закрытием
             if hasattr(journal, 'update_timer'):
                 journal.update_timer.stop()
+            
             # Закрываем виджет
             journal.close()
             # Закрываем data source
             if hasattr(journal, 'ds') and journal.ds:
                 journal.ds.close()
-            # Выходим из приложения
-            app.quit()
+            # Не вызываем app.quit() здесь, так как он уже вызван в close_window()
         except Exception:
             pass
         

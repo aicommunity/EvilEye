@@ -9,7 +9,7 @@ from evileye.core.logger import get_module_logger
 logger = setup_evileye_logging(log_level="INFO", log_to_console=True, log_to_file=True)
 test_logger = get_module_logger("test")
 
-def test_journal_final_structure():
+def test_journal_final_structure(qapp):
     """Test journal with correct folder structure"""
     
     test_logger.info("=== Final Journal Structure Test ===")
@@ -71,18 +71,14 @@ def test_journal_final_structure():
     test_logger.info("\n3. Journal Widget Test:")
     try:
         try:
-            from PyQt6.QtWidgets import QApplication
             from PyQt6.QtCore import QTimer
         except ImportError:
-            from PyQt5.QtWidgets import QApplication
             from PyQt5.QtCore import QTimer
         
         from evileye.visualization_modules.events_journal_json import EventsJournalJson
         
-        # Create QApplication if it doesn't exist
-        app = QApplication.instance()
-        if app is None:
-            app = QApplication(sys.argv if hasattr(sys, 'argv') else [])
+        # Use QApplication from fixture
+        app = qapp
         
         journal = EventsJournalJson(base_dir)
         test_logger.info(f"   ✅ Journal widget created successfully")

@@ -97,10 +97,23 @@ def qapp():
                 except Exception:
                     pass
             
-            # Закрываем все окна
+            # Останавливаем таймеры перед закрытием виджетов
             for widget in widgets_to_close:
                 try:
                     if widget:
+                        # Останавливаем update_timer, если он есть
+                        if hasattr(widget, 'update_timer'):
+                            try:
+                                widget.update_timer.stop()
+                            except (RuntimeError, AttributeError):
+                                pass
+                        # Закрываем data source, если он есть
+                        if hasattr(widget, 'ds') and widget.ds:
+                            try:
+                                widget.ds.close()
+                            except (RuntimeError, AttributeError):
+                                pass
+                        # Закрываем виджет
                         widget.close()
                 except (RuntimeError, AttributeError):
                     pass

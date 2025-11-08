@@ -67,17 +67,20 @@ def test_roi_editor_creation():
         except Exception:
             pass
         
-        return True
+        # Test functions should return None, not True/False
+        # Use assert statements instead of return values
         
     except Exception as e:
         print(f"   ❌ Ошибка: {e}")
-        return False
+        import traceback
+        traceback.print_exc()
+        raise  # Re-raise exception for pytest to catch
 
 if __name__ == '__main__':
-    success = test_roi_editor_creation()
-    if success:
+    try:
+        test_roi_editor_creation()
         print("\n🎉 Все тесты прошли успешно!")
-    else:
-        print("\n💥 Тесты не прошли!")
+    except Exception as e:
+        print(f"\n💥 Тесты не прошли: {e}")
         sys.exit(1)
 

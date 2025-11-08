@@ -131,17 +131,13 @@ def test_real_double_click():
         
         # Явно закрываем окно на случай, если таймер не сработал
         try:
-            # Останавливаем фоновый поток
-            stop_thread.set()
-            # Ждем завершения потока (максимум 1 секунда)
-            update_thread.join(timeout=1.0)
+            # Останавливаем проверочный таймер
+            if hasattr(timer, 'stop'):
+                timer.stop()
             
             # Останавливаем таймер перед закрытием
             if hasattr(journal, 'update_timer'):
                 journal.update_timer.stop()
-            # Останавливаем проверочный таймер
-            if hasattr(timer, 'stop'):
-                timer.stop()
             
             # Закрываем виджет
             journal.close()
