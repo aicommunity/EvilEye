@@ -101,8 +101,7 @@ def test_rtsp_connection_specific_camera_tcp(tmp_path):
                     print(f"\n=== Video Fragment Saved ===")
                     print(f"Path: {latest_file.absolute()}")
                     print(f"Size: {latest_file.stat().st_size / 1024:.2f} KB")
-                    return str(latest_file.absolute())
-        return None
+                    # Test functions should return None, not values
     else:
         print("\n=== Connection Failed ===")
         if hasattr(cap, '_last_init_error') and cap._last_init_error:
@@ -271,7 +270,7 @@ def test_rtsp_connection_specific_camera(tmp_path):
                     print(f"Size: {latest_file.stat().st_size / 1024:.2f} KB")
                     print(f"\nTo read the video file, use:")
                     print(f"  {latest_file.absolute()}")
-                    return str(latest_file.absolute())
+                    # Test functions should return None, not values
     
     # Note: This test may fail if camera is not accessible
     # It's primarily for debugging connection issues

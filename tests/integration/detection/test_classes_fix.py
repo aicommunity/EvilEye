@@ -24,7 +24,7 @@ def test_classes_with_ids():
         detector.get_model_class_mapping()
         print(f"   Classes after model loading: {detector.classes}")
     
-    return detector.classes
+    # Test functions should return None, not values
 
 def test_classes_with_names():
     """Test classes parameter with names (new behavior)"""
@@ -42,7 +42,7 @@ def test_classes_with_names():
         detector.get_model_class_mapping()
         print(f"   Classes after model loading: {detector.classes}")
     
-    return detector.classes
+    # Test functions should return None, not values
 
 def test_class_manager():
     """Test ClassManager functionality"""
@@ -60,7 +60,7 @@ def test_class_manager():
     classes_ids = class_manager.convert_classes_to_ids(["person", "car"])
     print(f"   Converted classes: {classes_ids}")
     
-    return classes_ids
+    # Test functions should return None, not values
 
 if __name__ == "__main__":
     print("🚀 Testing classes parameter fix...")

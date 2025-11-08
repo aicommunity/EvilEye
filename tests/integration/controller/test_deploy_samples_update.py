@@ -48,11 +48,11 @@ def test_sample_videos_config():
             else:
                 test_logger.info(f"  ❌ {filename} (missing)")
         
-        return True
+        # Test functions should return None, not values
         
     except Exception as e:
         test_logger.error(f"❌ Error testing sample videos config: {e}")
-        return False
+        raise  # Re-raise exception for pytest to catch
 
 def test_sample_configs():
     """Test the updated sample configuration files."""
@@ -94,7 +94,7 @@ def test_sample_configs():
         else:
             test_logger.info(f"\n⚠️  File not found: {config_file}")
     
-    return True
+    # Test functions should return None, not values
 
 def test_cli_deploy_samples():
     """Test the CLI deploy-samples command structure."""
@@ -113,11 +113,11 @@ def test_cli_deploy_samples():
         else:
             test_logger.info("❌ deploy_samples is not callable")
         
-        return True
+        # Test functions should return None, not values
         
     except Exception as e:
         test_logger.error(f"❌ Error testing CLI command: {e}")
-        return False
+        raise  # Re-raise exception for pytest to catch
 
 def test_download_function():
     """Test the download function with new video names."""
@@ -139,11 +139,11 @@ def test_download_function():
             # (since we're not providing real URLs in test)
             test_logger.info("✅ Download function structure is correct")
         
-        return True
+        # Test functions should return None, not values
         
     except Exception as e:
         test_logger.error(f"❌ Error testing download function: {e}")
-        return False
+        raise  # Re-raise exception for pytest to catch
 
 def test_configuration_consistency():
     """Test that configurations are consistent with video files."""
@@ -195,7 +195,7 @@ def test_configuration_consistency():
         else:
             test_logger.info(f"\n⚠️  Config not found: {config_name}")
     
-    return True
+    # Test functions should return None, not values
 
 def main():
     """Main test function."""

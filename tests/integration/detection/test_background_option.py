@@ -142,7 +142,7 @@ def test_background_options():
     cv2.imwrite(output_filename, image)
     test_logger.info(f"\n💾 Saved test image: {output_filename}")
     
-    return output_filename
+    # Test functions should return None, not values
 
 def test_config_file_background_settings():
     """Test background settings from configuration files."""

@@ -12,15 +12,16 @@ import time
 from pathlib import Path
 
 try:
-    from PyQt6.QtWidgets import QApplication
+    from PyQt6.QtWidgets import QApplication, QMessageBox
     from PyQt6.QtCore import Qt, QTimer
     pyqt_version = 6
 except ImportError:
-    from PyQt5.QtWidgets import QApplication
+    from PyQt5.QtWidgets import QApplication, QMessageBox
     from PyQt5.QtCore import Qt, QTimer
     pyqt_version = 5
 
 from evileye.visualization_modules.configurer.configurer_window import ConfigurerMainWindow
+from unittest.mock import patch, Mock
 
 
 def test_configurer_simple():
@@ -107,12 +108,11 @@ def test_configurer_simple():
                 "type": "EventsProcessor"
             }
         ],
-        "events_detectors": [
-            {
-                "type": "ZoneEventsDetector",
+        "events_detectors": {
+            "ZoneEventsDetector": {
                 "sources": []
             }
-        ],
+        },
         "visualizer": {
             "num_height": 1,
             "num_width": 1,
@@ -143,11 +143,28 @@ def test_configurer_simple():
         relative_path = os.path.relpath(temp_config.name, project_root)
         print(f"📂 Относительный путь: {relative_path}")
         
-        configurer = ConfigurerMainWindow(
-            config_file_name=relative_path,
-            win_width=1280,
-            win_height=720
-        )
+        # Мокируем QMessageBox, чтобы диалоги ошибок не появлялись
+        # Определяем возвращаемое значение для question в зависимости от версии PyQt
+        if pyqt_version == 6:
+            question_return_value = QMessageBox.StandardButton.Discard
+        else:
+            question_return_value = QMessageBox.Discard
+        
+        with patch('evileye.visualization_modules.configurer.configurer_window.QMessageBox') as mock_msgbox:
+            # Мокируем методы QMessageBox
+            mock_msgbox.critical = Mock()
+            mock_msgbox.warning = Mock()
+            mock_msgbox.information = Mock()
+            mock_msgbox.question = Mock(return_value=question_return_value)
+            
+            # Мокируем стандартные кнопки
+            mock_msgbox.StandardButton = QMessageBox.StandardButton
+            
+            configurer = ConfigurerMainWindow(
+                config_file_name=relative_path,
+                win_width=1280,
+                win_height=720
+            )
         
         print("✅ ConfigurerMainWindow создан успешно")
         
@@ -176,16 +193,16 @@ def test_configurer_simple():
             print("✅ Окно ConfigurerMainWindow закрыто")
         else:
             print("❌ Окно ConfigurerMainWindow не создано")
-            return False
+            raise AssertionError("Окно ConfigurerMainWindow не создано")
         
         print("🎉 Тест прошел успешно!")
-        return True
+        # Test functions should return None, not values
         
     except Exception as e:
         print(f"❌ Ошибка во время тестирования: {e}")
         import traceback
         traceback.print_exc()
-        return False
+        raise  # Re-raise exception for pytest to catch
     
     finally:
         # Очищаем временный файл

@@ -66,34 +66,33 @@ class TestSimpleROISelection(unittest.TestCase):
             pass
 
     def test_highlight_selected_roi(self):
-        """Тест выделения ROI"""
+        """Тест выделения ROI (используем _select_roi вместо _highlight_selected_roi)"""
         print("\n=== ДЕМОНСТРАЦИЯ ВЫДЕЛЕНИЯ ROI ===")
         
-        # Создаем mock ROI
-        roi = Mock(spec=QGraphicsRectItem)
-        roi.setPen = Mock()
+        # Метод _highlight_selected_roi не существует, используем _select_roi
+        # Создаем реальный ROI
+        roi = self.roi_view.add_roi([100, 100, 200, 200], (255, 0, 0))
+        self.assertIsNotNone(roi)
         
-        # Настраиваем mock для _get_scaled_pen_width
-        self.roi_view._get_scaled_pen_width = Mock(return_value=4)
+        print("1. Вызываем _select_roi...")
+        self.roi_view._select_roi(roi)
         
-        print("1. Вызываем _highlight_selected_roi...")
-        self.roi_view._highlight_selected_roi(roi)
+        # Проверяем, что ROI выделен
+        self.assertEqual(self.roi_view.selected_roi, roi)
+        self.assertEqual(self.roi_view.selected_roi_id, 0)
         
-        # Проверяем вызов setPen
-        roi.setPen.assert_called_once()
-        pen = roi.setPen.call_args[0][0]
-        
+        # Проверяем, что перо установлено
+        pen = roi.pen()
         print(f"   ✅ setPen вызван с цветом: RGB({pen.color().red()}, {pen.color().green()}, {pen.color().blue()})")
         print(f"   ✅ Толщина пера: {pen.width()}")
-        print(f"   ✅ Цвет выделения: ярко-красный (255, 100, 100)")
         print(f"   ✅ Множитель толщины: {self.roi_view.selected_line_multiplier}")
         
         # Объясняем, что происходит
         print("\n2. Что происходит внутри PyQt6:")
-        print("   - setPen() изменяет визуальные свойства элемента")
+        print("   - _select_roi() вызывает setPen() для изменения визуальных свойств элемента")
         print("   - Qt автоматически помечает элемент для перерисовки")
         print("   - Сцена автоматически обновляет отображение")
-        print("   - ROI становится ярко-красным на экране")
+        print("   - ROI становится выделенным на экране")
         
         print("\n3. Почему нет явного repaint():")
         print("   - PyQt6 автоматически перерисовывает при изменении свойств")

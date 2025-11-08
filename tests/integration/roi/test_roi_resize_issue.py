@@ -193,8 +193,10 @@ class TestROIResizeIssue(unittest.TestCase):
             
             print(f"2. Имитируем движение маркера в позицию (1800, 10)")
             
-            # Вызываем mouseMoveEvent на маркере
-            handle.mouseMoveEvent(mock_event)
+            # Мокаем super().mouseMoveEvent, чтобы избежать TypeError
+            with patch('evileye.visualization_modules.roi_core.QGraphicsRectItem.mouseMoveEvent') as mock_super:
+                # Вызываем mouseMoveEvent на маркере
+                handle.mouseMoveEvent(mock_event)
             
             # Проверяем, что _update_roi_size был вызван
             # (это проверяется через mock parent_view)

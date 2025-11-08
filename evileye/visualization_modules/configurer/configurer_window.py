@@ -104,7 +104,7 @@ class ConfigurerMainWindow(QDialog):
             with open("credentials.json") as creds_file:
                 self.credentials = json.load(creds_file)
         except FileNotFoundError as ex:
-            pass
+            self.credentials = {}
 
         database_creds = self.credentials.get("database", None)
         if not database_creds:

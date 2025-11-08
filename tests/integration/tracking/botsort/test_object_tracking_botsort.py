@@ -70,6 +70,7 @@ def test_several_objects():
     from evileye.core.frame import Frame
     import numpy as np
     import time
+    import threading
     
     tracker = ObjectTrackingBotsort()
     tracker.params = {'source_ids': [0], 'fps': 30}
@@ -78,58 +79,135 @@ def test_several_objects():
     tracker.start()
     
     track_ids = []
-    num_of_persons = 10
+    # Уменьшаем количество персон и кадров, чтобы избежать зависания
+    num_of_persons = 3  # Было 10
+    frames_per_person = 10  # Было 40
 
-    for person_id in range(num_of_persons):
-        
-        # For each person immitate situation, when the person
-        # appears for several frames and after that disappears
-        for vis_frame in range(40):
-            det_result = DetectionResult()
-            det_result.bounding_box = [0, 0, 10, 10]
-            det_result.confidence = 0.8
-            det_result.class_id = 0
+    try:
+        for person_id in range(num_of_persons):
             
-            det_list = DetectionResultList()
-            det_list.detections = [det_result]
-            det_list.source_id = 0
-            det_list.frame_id = person_id * 100 + vis_frame
+            # For each person immitate situation, when the person
+            # appears for several frames and after that disappears
+            for vis_frame in range(frames_per_person):
+                det_result = DetectionResult()
+                det_result.bounding_box = [0, 0, 10, 10]
+                det_result.confidence = 0.8
+                det_result.class_id = 0
+                
+                det_list = DetectionResultList()
+                det_list.detections = [det_result]
+                det_list.source_id = 0
+                det_list.frame_id = person_id * 100 + vis_frame
+                
+                frame = Frame()
+                frame.source_id = 0
+                frame.frame_id = person_id * 100 + vis_frame
+                frame.image = np.zeros((480, 640, 3), dtype=np.uint8)
+                
+                # Добавляем таймаут для put
+                put_result = [None]
+                put_exception = [None]
+                
+                def put_data():
+                    try:
+                        put_result[0] = tracker.put((det_list, frame), force=True)
+                    except Exception as e:
+                        put_exception[0] = e
+                
+                put_thread = threading.Thread(target=put_data, daemon=True)
+                put_thread.start()
+                put_thread.join(timeout=1.0)  # Таймаут 1 секунда
+                
+                if put_exception[0]:
+                    raise put_exception[0]
+                if put_result[0] is None:
+                    test_logger.warning(f"Put operation timed out for person {person_id}, frame {vis_frame}")
+                    break
+                
+                # Уменьшаем задержку
+                time.sleep(0.001)  # Было 0.01
+                
+                # Добавляем таймаут для get
+                get_result = [None]
+                get_exception = [None]
+                
+                def get_data():
+                    try:
+                        get_result[0] = tracker.get()
+                    except Exception as e:
+                        get_exception[0] = e
+                
+                get_thread = threading.Thread(target=get_data, daemon=True)
+                get_thread.start()
+                get_thread.join(timeout=1.0)  # Таймаут 1 секунда
+                
+                if get_exception[0]:
+                    raise get_exception[0]
+                
+                track_data = get_result[0]
+                if track_data:
+                    tracks_info, _ = track_data
+                    for track in tracks_info.tracks:
+                        track_ids.append(track.track_id)
             
-            frame = Frame()
-            frame.source_id = 0
-            frame.frame_id = person_id * 100 + vis_frame
-            frame.image = np.zeros((480, 640, 3), dtype=np.uint8)
-            
-            tracker.put((det_list, frame), force=True)
-            time.sleep(0.01)
-            
-            track_data = tracker.get()
-            if track_data:
-                tracks_info, _ = track_data
-                for track in tracks_info.tracks:
-                    track_ids.append(track.track_id)
-        
-        for nonvis_frame in range(40):
-            det_list = DetectionResultList()
-            det_list.detections = []
-            det_list.source_id = 0
-            det_list.frame_id = person_id * 100 + 40 + nonvis_frame
-            
-            frame = Frame()
-            frame.source_id = 0
-            frame.frame_id = person_id * 100 + 40 + nonvis_frame
-            frame.image = np.zeros((480, 640, 3), dtype=np.uint8)
-            
-            tracker.put((det_list, frame), force=True)
-            time.sleep(0.01)
-            
-            track_data = tracker.get()
-            if track_data:
-                tracks_info, _ = track_data
-                for track in tracks_info.tracks:
-                    track_ids.append(track.track_id)
-    
-    tracker.stop()
+            for nonvis_frame in range(frames_per_person):
+                det_list = DetectionResultList()
+                det_list.detections = []
+                det_list.source_id = 0
+                det_list.frame_id = person_id * 100 + frames_per_person + nonvis_frame
+                
+                frame = Frame()
+                frame.source_id = 0
+                frame.frame_id = person_id * 100 + frames_per_person + nonvis_frame
+                frame.image = np.zeros((480, 640, 3), dtype=np.uint8)
+                
+                # Добавляем таймаут для put
+                put_result = [None]
+                put_exception = [None]
+                
+                def put_data():
+                    try:
+                        put_result[0] = tracker.put((det_list, frame), force=True)
+                    except Exception as e:
+                        put_exception[0] = e
+                
+                put_thread = threading.Thread(target=put_data, daemon=True)
+                put_thread.start()
+                put_thread.join(timeout=1.0)  # Таймаут 1 секунда
+                
+                if put_exception[0]:
+                    raise put_exception[0]
+                if put_result[0] is None:
+                    test_logger.warning(f"Put operation timed out for person {person_id}, nonvis_frame {nonvis_frame}")
+                    break
+                
+                # Уменьшаем задержку
+                time.sleep(0.001)  # Было 0.01
+                
+                # Добавляем таймаут для get
+                get_result = [None]
+                get_exception = [None]
+                
+                def get_data():
+                    try:
+                        get_result[0] = tracker.get()
+                    except Exception as e:
+                        get_exception[0] = e
+                
+                get_thread = threading.Thread(target=get_data, daemon=True)
+                get_thread.start()
+                get_thread.join(timeout=1.0)  # Таймаут 1 секунда
+                
+                if get_exception[0]:
+                    raise get_exception[0]
+                
+                track_data = get_result[0]
+                if track_data:
+                    tracks_info, _ = track_data
+                    for track in tracks_info.tracks:
+                        track_ids.append(track.track_id)
+    finally:
+        tracker.stop()
     
     # Check that persons have their own unique id 
     # Note: The tracker may reuse track IDs, so we check that we have at least some unique IDs

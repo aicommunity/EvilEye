@@ -52,7 +52,8 @@ def test_record_video_fragment():
     if not init_result:
         print("Failed to initialize camera connection")
         print("This may be due to network issues or camera being unavailable")
-        return None
+        # Test functions should return None, not values
+        return
     
     print("Camera connected successfully!")
     print("Starting capture and recording...")
@@ -88,10 +89,8 @@ def test_record_video_fragment():
             print(f"Size: {latest_file.stat().st_size / 1024:.2f} KB")
             print(f"\nTo read the video file, use:")
             print(f"  {latest_file.absolute()}")
-            return str(latest_file.absolute())
+            # Test functions should return None, not values
         else:
             print("No video files found in recording directory")
     else:
         print(f"Recording directory does not exist: {date_dir}")
-    
-    return None
