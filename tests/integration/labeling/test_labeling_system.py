@@ -24,7 +24,8 @@ def test_labeling_manager():
         from evileye.objects_handler.labeling_manager import LabelingManager
         
         # Create labeling manager with test directory
-        test_dir = "test_labeling_data"
+        from pathlib import Path
+        test_dir = str(Path(__file__).parent.parent.parent / "data" / "test_labeling_data")
         labeling_manager = LabelingManager(base_dir=test_dir)
         test_logger.info("✅ LabelingManager created")
         
@@ -51,6 +52,7 @@ def test_labeling_manager():
         mock_obj.class_id = 0
         mock_obj.source_id = 0
         mock_obj.global_id = None
+        mock_obj.attributes = {}  # Initialize attributes as empty dict
         
         object_data = labeling_manager.create_found_object_data(
             mock_obj, 1920, 1080, "test_frame.jpeg", "test_preview.jpeg"
@@ -169,7 +171,8 @@ def test_labeling_format():
         from evileye.objects_handler.labeling_manager import LabelingManager
         
         # Create labeling manager
-        test_dir = "test_labeling_format"
+        from pathlib import Path
+        test_dir = str(Path(__file__).parent.parent.parent / "data" / "test_labeling_format")
         labeling_manager = LabelingManager(base_dir=test_dir)
         
         # Create sample object data
@@ -187,6 +190,7 @@ def test_labeling_format():
         mock_obj.source_id = 0
         mock_obj.global_id = None
         mock_obj.lost_frames = 5
+        mock_obj.attributes = {}  # Initialize attributes as empty dict
         
         # Test found object format
         found_data = labeling_manager.create_found_object_data(

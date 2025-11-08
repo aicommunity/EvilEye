@@ -135,7 +135,10 @@ def test_background_options():
     )
     
     # Save test image
-    output_filename = "background_options_test.jpg"
+    from pathlib import Path
+    output_dir = Path(__file__).parent.parent.parent / "data" / "images"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_filename = str(output_dir / "background_options_test.jpg")
     cv2.imwrite(output_filename, image)
     test_logger.info(f"\n💾 Saved test image: {output_filename}")
     

@@ -123,7 +123,10 @@ def test_text_rendering():
                              background_color=(0, 0, 0))
         
         # Save test image
-        output_filename = f"test_text_rendering_{width}x{height}.jpg"
+        from pathlib import Path
+        output_dir = Path(__file__).parent.parent.parent / "data" / "images"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_filename = str(output_dir / f"test_text_rendering_{width}x{height}.jpg")
         cv2.imwrite(output_filename, image)
         test_logger.info(f"  💾 Saved: {output_filename}")
 
@@ -169,10 +172,14 @@ def test_edge_cases():
     test_logger.info("=" * 60)
     
     # Test very small image
+    from pathlib import Path
+    output_dir = Path(__file__).parent.parent.parent / "data" / "images"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
     small_image = create_test_image(320, 240)
     put_text_adaptive(small_image, "Small Image Test", (50, 50), 
                      font_size_pt=8, color=(255, 255, 255))
-    cv2.imwrite("test_small_image.jpg", small_image)
+    cv2.imwrite(str(output_dir / "test_small_image.jpg"), small_image)
     test_logger.info("  ✓ Small image test completed")
     
     # Test very large text
@@ -180,7 +187,7 @@ def test_edge_cases():
     put_text_adaptive(large_image, "Large Text", (50, 50), 
                      font_size_pt=48, color=(255, 255, 255), 
                      background_color=(0, 0, 0))
-    cv2.imwrite("test_large_text.jpg", large_image)
+    cv2.imwrite(str(output_dir / "test_large_text.jpg"), large_image)
     test_logger.info("  ✓ Large text test completed")
     
     # Test text that would overflow
@@ -188,7 +195,7 @@ def test_edge_cases():
     put_text_adaptive(overflow_image, "This is a very long text that should be handled properly", (90, 10), 
                      font_size_pt=16, color=(255, 255, 255), 
                      background_color=(0, 0, 0))
-    cv2.imwrite("test_text_overflow.jpg", overflow_image)
+    cv2.imwrite(str(output_dir / "test_text_overflow.jpg"), overflow_image)
     test_logger.info("  ✓ Text overflow test completed")
 
 def main():

@@ -75,7 +75,8 @@ def test_pixel_coordinates():
         from evileye.objects_handler.labeling_manager import LabelingManager
         
         # Create labeling manager
-        test_dir = "test_pixel_coords"
+        from pathlib import Path
+        test_dir = str(Path(__file__).parent.parent.parent / "data" / "test_pixel_coords")
         labeling_manager = LabelingManager(base_dir=test_dir)
         
         # Create mock object with pixel coordinates
@@ -90,6 +91,7 @@ def test_pixel_coordinates():
         mock_obj.class_id = 0
         mock_obj.source_id = 0
         mock_obj.global_id = None
+        mock_obj.attributes = {}  # Initialize attributes as empty dict
         
         # Test found object data
         found_data = labeling_manager.create_found_object_data(
@@ -152,7 +154,8 @@ def test_buffering():
         from evileye.objects_handler.labeling_manager import LabelingManager
         
         # Create labeling manager with small buffer for testing
-        test_dir = "test_buffering"
+        from pathlib import Path
+        test_dir = str(Path(__file__).parent.parent.parent / "data" / "test_buffering")
         labeling_manager = LabelingManager(base_dir=test_dir)
         labeling_manager.buffer_size = 3  # Small buffer for testing
         labeling_manager.save_interval = 5  # Short interval for testing
@@ -171,6 +174,7 @@ def test_buffering():
             mock_obj.class_id = 0
             mock_obj.source_id = 0
             mock_obj.global_id = None
+            mock_obj.attributes = {}  # Initialize attributes as empty dict
             mock_objects.append(mock_obj)
         
         # Add objects to buffer
@@ -229,7 +233,8 @@ def test_performance():
         import time
         
         # Create labeling manager
-        test_dir = "test_performance"
+        from pathlib import Path
+        test_dir = str(Path(__file__).parent.parent.parent / "data" / "test_performance")
         labeling_manager = LabelingManager(base_dir=test_dir)
         labeling_manager.buffer_size = 50  # Medium buffer
         
@@ -250,6 +255,7 @@ def test_performance():
             mock_obj.class_id = 0
             mock_obj.source_id = 0
             mock_obj.global_id = None
+            mock_obj.attributes = {}  # Initialize attributes as empty dict
             mock_objects.append(mock_obj)
         
         # Test buffered adding

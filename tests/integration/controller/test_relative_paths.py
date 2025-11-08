@@ -155,7 +155,8 @@ def test_relative_paths():
         from evileye.objects_handler.labeling_manager import LabelingManager
         
         # Create labeling manager
-        test_dir = "test_relative_paths"
+        from pathlib import Path
+        test_dir = str(Path(__file__).parent.parent.parent / "data" / "test_relative_paths")
         cameras_params = [
             {
                 'source_ids': [0, 1],
@@ -179,6 +180,7 @@ def test_relative_paths():
         mock_obj.source_id = 0
         mock_obj.global_id = None
         mock_obj.lost_frames = 5
+        mock_obj.attributes = {}  # Initialize attributes as empty dict
         
         # Test found object data with relative paths
         found_data = labeling_manager.create_found_object_data(

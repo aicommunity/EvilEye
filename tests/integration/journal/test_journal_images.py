@@ -49,23 +49,28 @@ def test_journal_images():
         test_logger.info(f"    Image exists: {os.path.exists(img_path)}")
         test_logger.info(f"    BBox: {bbox}")
     
-    # Автоматически закрываем окно через 100ms
+    # Автоматически закрываем окно через 200ms
     def close_window():
-        # Останавливаем таймер перед закрытием
-        if hasattr(journal, 'update_timer'):
-            journal.update_timer.stop()
-        # Закрываем виджет
-        journal.close()
-        # Закрываем data source
-        if hasattr(journal, 'ds') and journal.ds:
-            journal.ds.close()
-        # Выходим из приложения
-        app.quit()
+        try:
+            # Останавливаем таймер перед закрытием
+            if hasattr(journal, 'update_timer'):
+                journal.update_timer.stop()
+            # Закрываем виджет
+            journal.close()
+            # Закрываем data source
+            if hasattr(journal, 'ds') and journal.ds:
+                journal.ds.close()
+            # Выходим из приложения
+            app.quit()
+        except Exception:
+            pass
     
-    QTimer.singleShot(100, close_window)
-    # Даем время на закрытие окна
+    QTimer.singleShot(200, close_window)
+    # Даем время на закрытие окна и обработку событий (ДО app.quit())
     import time
-    time.sleep(0.2)
+    # Просто ждем, чтобы QTimer.singleShot успел выполниться
+    # Не вызываем app.processEvents() в цикле, чтобы избежать segfault
+    time.sleep(0.3)  # Увеличиваем задержку
     
     # Явно закрываем окно на случай, если таймер не сработал
     try:
@@ -74,6 +79,6 @@ def test_journal_images():
         journal.close()
         if hasattr(journal, 'ds') and journal.ds:
             journal.ds.close()
-        app.quit()
+        # Не вызываем app.quit() здесь, так как он уже вызван в close_window()
     except Exception:
         pass

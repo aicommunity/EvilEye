@@ -153,11 +153,23 @@ def test_double_click_functionality():
             # Выходим из приложения
             app.quit()
         
-        QTimer.singleShot(100, close_window)
-        # Даем время на закрытие окна
+        QTimer.singleShot(200, close_window)
+        # Даем время на закрытие окна и обработку событий (ДО app.quit())
         import time
-        time.sleep(0.2)
-        
+        # Даем время на закрытие окна и обработку событий (ДО app.quit())
+        import time
+        # Обрабатываем события несколько раз с проверками
+        for _ in range(min(10, 5)):  # Ограничиваем количество итераций
+            try:
+                app = QApplication.instance()
+                if app is not None:
+                    app.processEvents()
+            except (RuntimeError, AttributeError):
+                break  # QApplication уничтожен, выходим из цикла
+            except Exception:
+                pass
+            time.sleep(0.1)  # Увеличиваем задержку
+    
         # Явно закрываем окно на случай, если таймер не сработал
         try:
             # Останавливаем таймер перед закрытием
@@ -170,6 +182,7 @@ def test_double_click_functionality():
                 journal.ds.close()
             # Выходим из приложения
             app.quit()
+        # Не вызываем app.quit() здесь, так как он уже вызван в close_window()
         except Exception:
             pass
         

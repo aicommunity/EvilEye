@@ -166,18 +166,36 @@ def test_journal_updates_when_open():
             app.quit()
         
         QTimer.singleShot(500, close_window)
-        # Даем время на закрытие окна
+        # Даем время на закрытие окна и обработку событий (ДО app.quit())
         import time
-        time.sleep(0.6)
+        # Даем время на закрытие окна и обработку событий (ДО app.quit())
+        import time
+        # Обрабатываем события несколько раз с проверками
+        for _ in range(min(12, 5)):  # Ограничиваем количество итераций
+            try:
+                app = QApplication.instance()
+                if app is not None:
+                    app.processEvents()
+            except (RuntimeError, AttributeError):
+                break  # QApplication уничтожен, выходим из цикла
+            except Exception:
+                pass
+            time.sleep(0.1)  # Увеличиваем задержку
         
         # Явно закрываем окно на случай, если таймер не сработал
         try:
+            # Останавливаем фоновый поток
+            stop_thread.set()
+            update_thread.join(timeout=1.0)
             if hasattr(journal, 'update_timer'):
                 journal.update_timer.stop()
+            if hasattr(timer, 'stop'):
+                timer.stop()
             journal.close()
             if hasattr(journal, 'ds') and journal.ds:
                 journal.ds.close()
-            app.quit()
+            # Не вызываем app.quit() здесь, так как он уже вызван в close_window()
+        # Не вызываем app.quit() здесь, так как он уже вызван в close_window()
         except Exception:
             pass
         

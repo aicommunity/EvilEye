@@ -42,10 +42,12 @@ def test_json_journal():
         # Выходим из приложения
         app.quit()
     
-    QTimer.singleShot(100, close_window)
-    # Даем время на закрытие окна
+    QTimer.singleShot(200, close_window)
+    # Даем время на закрытие окна и обработку событий (ДО app.quit())
     import time
-    time.sleep(0.2)
+    # Просто ждем, чтобы QTimer.singleShot успел выполниться
+    # Не вызываем app.processEvents() в цикле, чтобы избежать segfault
+    time.sleep(0.3)  # Увеличиваем задержку
     
     # Явно закрываем окно на случай, если таймер не сработал
     try:
@@ -54,6 +56,7 @@ def test_json_journal():
         journal.close()
         if hasattr(journal, 'ds') and journal.ds:
             journal.ds.close()
-        # Не вызываем app.quit() здесь, так как он уже вызван в close_window()
+        # Не вызываем app.quit()
+        # Не вызываем app.quit() здесь, так как он уже вызван в close_window() здесь, так как он уже вызван в close_window()
     except Exception:
         pass

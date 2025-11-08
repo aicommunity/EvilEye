@@ -113,7 +113,10 @@ def test_visual_comparison():
                                 font_scale_method=method)
         
         # Save test image
-        output_filename = f"font_scaling_comparison_{width}x{height}.jpg"
+        from pathlib import Path
+        output_dir = Path(__file__).parent.parent.parent / "data" / "images"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_filename = str(output_dir / f"font_scaling_comparison_{width}x{height}.jpg")
         cv2.imwrite(output_filename, image)
         test_logger.info(f"  💾 Saved: {output_filename}")
 
@@ -159,7 +162,10 @@ def test_resolution_independence():
                         font_scale_method="simple")
         
         # Save test image
-        output_filename = f"resolution_independence_{width}x{height}.jpg"
+        from pathlib import Path
+        output_dir = Path(__file__).parent.parent.parent / "data" / "images"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_filename = str(output_dir / f"resolution_independence_{width}x{height}.jpg")
         cv2.imwrite(output_filename, image)
         test_logger.info(f"  💾 Saved: {output_filename}")
 
@@ -195,7 +201,10 @@ def test_edge_cases():
                 test_logger.info(f"  ❌ {method}: Failed - {e}")
         
         # Save test image
-        output_filename = f"edge_case_{width}x{height}.jpg"
+        from pathlib import Path
+        output_dir = Path(__file__).parent.parent.parent / "data" / "images"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_filename = str(output_dir / f"edge_case_{width}x{height}.jpg")
         cv2.imwrite(output_filename, image)
         test_logger.info(f"  💾 Saved: {output_filename}")
 

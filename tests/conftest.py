@@ -157,23 +157,33 @@ def _cleanup_qapplication_at_exit():
         
         app = QApplication.instance()
         if app is not None:
-            # Просто завершаем приложение без вызова методов, которые могут вызвать segfault
+            # Закрываем все виджеты перед завершением
             try:
-                app.quit()
+                for widget in app.allWidgets():
+                    try:
+                        if widget and widget.isWindow():
+                            widget.close()
+                    except (RuntimeError, AttributeError):
+                        pass
+                    except Exception:
+                        pass
+            except (RuntimeError, AttributeError):
+                pass
+            except Exception:
+                pass
+            
+            # Просто завершаем приложение без вызова методов, которые могут вызвать segfault
+            # Не вызываем app.quit() здесь, так как это может вызвать segfault
+            # Вместо этого просто позволяем процессу завершиться естественным образом
+            try:
+                # Только если приложение еще активно
+                if hasattr(app, 'quit'):
+                    # Не вызываем quit(), так как это может вызвать segfault
+                    pass
             except Exception:
                 pass
     except Exception:
         pass  # Если PyQt не доступен, пропускаем
-    
-    # Принудительно завершаем процесс после завершения всех тестов
-    # Это необходимо, так как QApplication может оставаться активным и блокировать завершение pytest
-    try:
-        import os
-        # Используем os._exit(0) для немедленного завершения процесса
-        # Это гарантирует, что процесс завершится даже если QApplication блокирует нормальное завершение
-        os._exit(0)
-    except Exception:
-        pass
 
 # Регистрируем функцию очистки при выходе из процесса
 atexit.register(_cleanup_qapplication_at_exit)
@@ -184,39 +194,9 @@ def cleanup_qapplication():
     yield
     # Безопасно завершаем QApplication после всех тестов
     _cleanup_qapplication_at_exit()
-    
-    # Принудительно завершаем процесс после завершения всех тестов
-    # Это необходимо, так как QApplication может оставаться активным и блокировать завершение pytest
-    try:
-        import os
-        # Используем os._exit(0) для немедленного завершения процесса
-        # Это гарантирует, что процесс завершится даже если QApplication блокирует нормальное завершение
-        # os._exit(0) завершает процесс немедленно, не вызывая финализаторы Python
-        os._exit(0)
-    except Exception:
-        pass
 
 def pytest_sessionfinish(session, exitstatus):
     """Хук pytest для завершения сессии тестов."""
     # Безопасно завершаем QApplication после завершения всех тестов
     _cleanup_qapplication_at_exit()
-    
-    # Принудительно завершаем процесс после завершения всех тестов
-    # Это необходимо, так как QApplication может оставаться активным и блокировать завершение pytest
-    try:
-        import os
-        import sys
-        # Используем os._exit(0) для немедленного завершения процесса
-        # Это гарантирует, что процесс завершится даже если QApplication блокирует нормальное завершение
-        # os._exit(0) завершает процесс немедленно, не вызывая финализаторы Python
-        # Вызываем напрямую, чтобы гарантировать завершение процесса
-        os._exit(0)
-    except Exception:
-        # Если os._exit() не работает, пробуем sys.exit()
-        try:
-            sys.exit(0)
-        except SystemExit:
-            pass
-        except Exception:
-            pass
 
