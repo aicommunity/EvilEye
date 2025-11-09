@@ -15,7 +15,8 @@ def test_gstreamer_reconnect_recording(tmp_path: Path):
     """
     from evileye.run_config_helper import run_config
     
-    repo_root = Path(__file__).resolve().parents[1]
+    # Get project root (go up from tests/integration/capture/gstreamer/ to project root)
+    repo_root = Path(__file__).resolve().parents[4]
     config_path = repo_root / "configs" / "poly-cameras-gstreamer.json"
     
     if not config_path.exists():

@@ -36,10 +36,42 @@ def evil_eye_data_dir(project_root_path):
 def setup_logging():
     """Настраивает логирование для тестов."""
     try:
+        import logging
         from evileye.core.logging_config import setup_evileye_logging
         setup_evileye_logging(log_level="INFO", log_to_console=False, log_to_file=False)
+        # Устанавливаем уровень ERROR для controller логгера, чтобы скрыть warning сообщения
+        controller_logger = logging.getLogger("evileye.controller")
+        controller_logger.setLevel(logging.ERROR)
     except Exception:
         pass  # Логирование не критично для тестов
+
+@pytest.fixture(autouse=True)
+def setup_controller_timeout(monkeypatch):
+    """Устанавливает короткий таймаут для model_loading_timeout_sec в тестах."""
+    # Monkeypatch для установки короткого таймаута через параметры controller
+    # Это предотвращает задержку завершения pytest из-за фонового потока periodic_check
+    # Фоновый поток periodic_check работает до model_loading_timeout_sec секунд,
+    # поэтому устанавливаем короткий таймаут (1 секунда) для быстрого завершения
+    try:
+        from evileye.controller import controller
+        
+        original_init = controller.Controller.init
+        
+        def patched_init(self, params):
+            # Устанавливаем короткий таймаут для тестов
+            if not isinstance(params, dict):
+                params = {}
+            if 'controller' not in params:
+                params['controller'] = {}
+            # Устанавливаем короткий таймаут (1 секунда) вместо 60 секунд по умолчанию
+            params['controller']['model_loading_timeout_sec'] = 1
+            return original_init(self, params)
+        
+        monkeypatch.setattr(controller.Controller, 'init', patched_init)
+    except Exception:
+        pass  # Если Controller не доступен, пропускаем
+    yield
+    # Cleanup выполняется автоматически через monkeypatch
 
 @pytest.fixture
 def mock_db_controller():
