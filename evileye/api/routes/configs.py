@@ -145,7 +145,7 @@ async def stop_config_run(rid: int) -> Dict:
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/runs/{rid}/remove")
+@router.delete("/runs/{rid}/delete")
 async def delete_config_run(rid: int) -> Dict:
     try:
         return get_config_run_manager().delete(rid)
