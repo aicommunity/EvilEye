@@ -7,6 +7,9 @@ Provides command-line tools for running the EvilEye surveillance system.
 
 import json
 import sys
+import os
+import shutil
+import subprocess
 import logging
 from pathlib import Path
 from typing import Optional
@@ -52,9 +55,6 @@ def run(
         evileye run configs/test_sources_detectors_trackers_mc.json
         evileye run --video /path/to/video.mp4
     """
-    import subprocess
-    import os
-
     # Setup logging
     setup_logging(verbose=verbose)
     logger = get_module_logger("cli")
@@ -118,6 +118,56 @@ def run(
         console.print("[yellow]Launch interrupted by user[/yellow]")
         raise typer.Exit(0)
 
+@app.command("server")
+def start_api(
+        host: str = typer.Option("127.0.0.1", "--host", help="Bind host"),
+        port: int = typer.Option(8080, "--port", help="Bind port"),
+        reload: bool = typer.Option(True, "--reload/--no-reload", help="Auto-reload on code changes"),
+        workers: int = typer.Option(1, "--workers", help="Number of worker processes"),
+        verbose: bool = typer.Option(False, "--verbose", help="Enable verbose logging"),
+        log_level: str = typer.Option("info", "--log-level", help="Logging level"),
+        config: Optional[str] = typer.Option(None, "--config", help="Auto-run selected config after server starts (name or file path)")
+
+) -> None:
+    """
+    Start EvilEye FastAPI web server.
+
+    Examples:
+        evileye server --host 0.0.0.0 --port 8000
+        evileye server --config poly-videos.json
+        evileye server --config ./configs/poly-videos.json
+    """
+    
+    import time
+    import urllib.request
+    import urllib.error
+
+    setup_logging(verbose=verbose)
+    logger = get_module_logger("cli")
+    log_system_info(logger)
+
+    # Use server.py instead of process.py for API server
+    cmd = [sys.executable, str(Path(__file__).parent / "server.py")]
+    cmd.extend(["--host", host, "--port", str(port), "--log-level", log_level])
+    
+    if not reload:
+        cmd.append("--no-reload")
+
+    if config:
+        cmd.extend(["--config", config])
+
+    try:
+        logger.info(f"Starting web server (server.py): {' '.join(cmd)}")
+        console.print(f"[green]Starting web server on {host}:{port}[/green]")
+        subprocess.run(cmd, check=True, cwd=os.getcwd())
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Web server failed: {e}")
+        console.print(f"[red]Web server failed: {e}[/red]")
+        raise typer.Exit(1)
+    except KeyboardInterrupt:
+        logger.info("Web server interrupted by user")
+        console.print("[yellow]Web server interrupted by user[/yellow]")
+        raise typer.Exit(0)
 
 @app.command()
 def validate(
@@ -198,7 +248,6 @@ def deploy() -> None:
     1. Copies credentials_proto.json to credentials.json (if credentials.json doesn't exist)
     2. Creates configs folder if it doesn't exist
     """
-    import shutil
     
     current_dir = Path.cwd()
     console.print(f"[blue]Deploying EvilEye files to: {current_dir}[/blue]")
@@ -247,8 +296,6 @@ def deploy_samples() -> None:
     3. Copies pre-configured sample configurations
     4. Creates documentation for samples
     """
-    import shutil
-    
     current_dir = Path.cwd()
     console.print(f"[blue]Deploying EvilEye sample configurations to: {current_dir}[/blue]")
     

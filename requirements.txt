@@ -4,13 +4,11 @@ ultralytics
 psycopg2-binary
 lapx
 albumentations
-shapely
 scikit-learn
 onnxruntime
 tqdm
 shapely
 pympler
-tdqm
 PyQt6
 rfdetr>=0.1.0
 supervision>=0.16.0

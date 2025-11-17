@@ -5,7 +5,7 @@ A comprehensive video surveillance system with object detection, tracking,
 and multi-camera support.
 """
 
-__version__ = "1.0.0"
+__version__ = "5.0.0"
 __author__ = "EvilEye Team"
 __email__ = "team@evileye.com"
 

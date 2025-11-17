@@ -43,6 +43,7 @@ from evileye.core import ProcessorSource, ProcessorStep, ProcessorFrame
 from evileye.core.class_manager import ClassManager
 from evileye.pipelines import PipelineSurveillance
 from evileye.core.logger import get_module_logger
+import cv2
 
 
 try:
@@ -200,6 +201,9 @@ class Controller:
 
         self.debug_info = dict()
 
+        self.stream_pipeline_id = os.getenv('EVILEYE_PIPELINE_ID', 'default')
+        self.logger.info(f"Controller initialized with stream pipeline id: {self.stream_pipeline_id}")
+    
     def get_fps(self) -> int:
         return self.fps
 
@@ -228,6 +232,7 @@ class Controller:
         return self.run_flag
 
     def run(self):
+        self.logger.info(f"Controller main loop started, stream_pipeline_id: {self.stream_pipeline_id}")
         # Emit system started via detector (unified path)
         if self.system_events_detector:
             self.system_events_detector.emit_started()
@@ -238,8 +243,13 @@ class Controller:
             all_sources_finished = self.pipeline.check_all_sources_finished()
 
             pipeline_results = self.pipeline.peek_latest_result()
+            self.logger.debug(f"Pipeline results keys: {list(pipeline_results.keys()) if pipeline_results else 'None'}")
 
             #mc_tracking_results = pipeline_results.get("mc_trackers", [])
+            final_results_name = self.pipeline.get_final_results_name()
+            self.logger.debug(f"Final results name: {final_results_name}")
+            mc_tracking_results = pipeline_results.get(final_results_name, [])
+            self.logger.debug(f"MC tracking results count: {len(mc_tracking_results)}")
             if self.pipeline is not None and pipeline_results is not None:
                 mc_tracking_results = pipeline_results.get(self.pipeline.get_final_results_name(), [])
             else:
@@ -257,6 +267,7 @@ class Controller:
 
             # Process tracking results
             processing_frames = []
+            self.logger.debug(f"Processing {len(mc_tracking_results)} tracking results")
             for track_info in mc_tracking_results:
                 # Handle both tuples [tracking_result, image] and Frame objects
                 if isinstance(track_info, (tuple, list)) and len(track_info) == 2:
@@ -269,6 +280,8 @@ class Controller:
                 self.obj_handler.put(track_info)
                 processing_frames.append(image)
                 self.source_last_processed_frame_id[image.source_id] = image.frame_id
+            
+            self.logger.debug(f"Collected {len(processing_frames)} frames for processing")
 
             events = dict()
             events = self.events_detectors_controller.get()
@@ -279,6 +292,26 @@ class Controller:
 
             # Get all dropped images from pipeline
             dropped_frames = self.pipeline.get_dropped_ids()
+
+            # Publish latest frame to web streaming broker (if available)
+            try:
+                if processing_frames:
+                    last_frame = processing_frames[-1]
+                    if hasattr(last_frame, 'image') and last_frame.image is not None:
+                        ok, buf = cv2.imencode('.jpg', last_frame.image)
+                        if ok:
+                            from evileye.api.core.broker_access import get_broker
+                            get_broker().publish_jpeg(self.stream_pipeline_id, buf.tobytes())
+                            self.logger.debug(f"Published frame to broker for pipeline '{self.stream_pipeline_id}', size: {len(buf.tobytes())} bytes")
+                        else:
+                            self.logger.debug("JPEG encode returned false")
+                    else:
+                        self.logger.debug(f"Last frame has no image or image is None")
+                else:
+                    self.logger.debug("No processing frames available for publishing")
+            except Exception as e:
+                # Do not break controller loop if streaming is not initialized
+                self.logger.debug(f"Frame publish failed: {e}")
 
             if not self.debug_info.get("controller", None) or not self.debug_info["controller"].get("timestamp", None) or ((datetime.datetime.now() - self.debug_info["controller"]["timestamp"]).total_seconds() > self.memory_periodic_check_sec):
                 self.collect_memory_consumption()
@@ -360,7 +393,9 @@ class Controller:
         self.events_processor.start()
 
         self.run_flag = True
+        self.logger.info(f"Starting control thread for stream_pipeline_id: {self.stream_pipeline_id}")
         self.control_thread.start()
+        self.logger.info(f"Control thread started successfully")
 
     def stop(self):
         # self._save_video_duration()
@@ -448,6 +483,7 @@ class Controller:
         # Initialize processing pipeline (sources, preprocessors, detectors, trackers)
         pipeline_params = self.params.get("pipeline", {})
         pipeline_class_name = pipeline_params.get("pipeline_class")
+        self.logger.info(f"Using EVILEYE_PIPELINE_ID for streaming: {self.stream_pipeline_id}")
         
         if pipeline_class_name:
             try:
@@ -1189,9 +1225,10 @@ class Controller:
         comp_debug_info = self.zone_events_detector.insert_debug_info_by_id(self.debug_info.setdefault("zone_events_detector", {}))
         total_memory_usage += comp_debug_info["memory_measure_results"]
 
-        self.visualizer.calc_memory_consumption()
-        comp_debug_info = self.visualizer.insert_debug_info_by_id(self.debug_info.setdefault("visualizer", {}))
-        total_memory_usage += comp_debug_info["memory_measure_results"]
+        if self.visualizer:
+            self.visualizer.calc_memory_consumption()
+            comp_debug_info = self.visualizer.insert_debug_info_by_id(self.debug_info.setdefault("visualizer", {}))
+            total_memory_usage += comp_debug_info["memory_measure_results"]
 
         # Only collect database memory if database is enabled
         if self.use_database and self.db_controller:
