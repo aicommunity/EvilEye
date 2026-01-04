@@ -1229,8 +1229,11 @@ class Controller:
 
     def _get_event_adapters(self):
         """Build list of event adapters depending on database mode."""
+        adapters = []
+        
+        # DB adapters if database enabled
         if self.use_database and self.db_controller:
-            adapters = [self.db_adapter_fov_events, self.db_adapter_cam_events, self.db_adapter_zone_events]
+            adapters.extend([self.db_adapter_fov_events, self.db_adapter_cam_events, self.db_adapter_zone_events])
             if self.db_adapter_attr_events:
                 adapters.append(self.db_adapter_attr_events)
             if self.db_adapter_system_events:
@@ -1239,9 +1242,8 @@ class Controller:
                 self.logger.info(f"DB adapters: {[a.get_event_name() for a in adapters if a]}")
             except Exception:
                 pass
-            return adapters
-        # JSON adapters when DB disabled or unavailable
-        adapters = []
+        
+        # JSON adapters - always add for JSON metadata backup (parallel to DB)
         img_dir = self.params.get('database', {}).get('image_dir', 'EvilEyeData')
         for adapter_cls in (JsonAdapterAttributeEvents, JsonAdapterFovEvents, JsonAdapterZoneEvents, JsonAdapterCamEvents, JsonAdapterSystemEvents):
             try:
@@ -1259,6 +1261,7 @@ class Controller:
                     self.logger.error(f"Failed to start JSON adapter {adapter_cls.__name__}: {e}")
                 except Exception:
                     pass
+        
         return adapters
 
     def _init_events_processor_unified(self, params):

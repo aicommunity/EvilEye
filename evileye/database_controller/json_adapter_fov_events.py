@@ -80,12 +80,18 @@ class JsonAdapterFovEvents(DatabaseAdapterBase):
             json.dump(records, f, ensure_ascii=False, indent=2)
 
     def _save_images(self, day_dir: str, event, is_update: bool):
-        # Новые каталоги: Events/.../Images/Frames и Previews
+        # Новые каталоги: Events/.../Images/FoundFrames/FoundPreviews/LostFrames/LostPreviews
         ts = (event.time_lost if is_update else (event.time_obj_detected or event.timestamp))
         ts_str = ts.strftime('%Y-%m-%d_%H-%M-%S-%f') if is_update else ts.strftime('%Y-%m-%d_%H-%M-%S.%f')
         images_dir = os.path.join(day_dir, 'Images')
-        previews_dir = os.path.join(images_dir, 'Previews')
-        frames_dir = os.path.join(images_dir, 'Frames')
+        if is_update:
+            # Lost event
+            previews_dir = os.path.join(images_dir, 'LostPreviews')
+            frames_dir = os.path.join(images_dir, 'LostFrames')
+        else:
+            # Found event (detected)
+            previews_dir = os.path.join(images_dir, 'FoundPreviews')
+            frames_dir = os.path.join(images_dir, 'FoundFrames')
         os.makedirs(previews_dir, exist_ok=True)
         os.makedirs(frames_dir, exist_ok=True)
 

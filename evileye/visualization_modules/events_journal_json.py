@@ -119,15 +119,22 @@ class ImageDelegate(QStyledItemDelegate):
                         cur_path = img_filename_item.text() if img_filename_item else ''
                         candidates = []
                         if cur_path:
+                            # New structure: FoundPreviews/FoundFrames/LostPreviews/LostFrames
+                            candidates.append(cur_path.replace('FoundPreviews', 'FoundFrames').replace('_preview.', '_frame.'))
+                            candidates.append(cur_path.replace('LostPreviews', 'LostFrames').replace('_preview.', '_frame.'))
+                            # Legacy support
                             candidates.append(cur_path.replace('previews', 'frames').replace('_preview.', '_frame.'))
                             candidates.append(cur_path.replace('/found_previews/', '/found_frames/').replace('_preview.', '_frame.'))
                             candidates.append(cur_path.replace('/lost_previews/', '/lost_frames/').replace('_preview.', '_frame.'))
-                            candidates.append(cur_path.replace('detected_previews', 'found_frames').replace('_preview.', '_frame.'))
                         # Also try constructing from event date_folder
                         ev = table.item(row, 5).data(Qt.ItemDataRole.UserRole) if index.column() == 5 else table.item(row, 6).data(Qt.ItemDataRole.UserRole)
                         if ev:
                             date_folder = ev.get('date_folder', '')
                             base_name = os.path.basename(cur_path).replace('_preview.', '_frame.')
+                            # New structure: Events/YYYY-MM-DD/Images/FoundFrames or LostFrames
+                            candidates.append(os.path.join(self.base_dir, 'Events', date_folder, 'Images', 'FoundFrames', base_name))
+                            candidates.append(os.path.join(self.base_dir, 'Events', date_folder, 'Images', 'LostFrames', base_name))
+                            # Legacy support
                             candidates.append(os.path.join(self.base_dir, 'images', date_folder, 'found_frames', base_name))
                             candidates.append(os.path.join(self.base_dir, 'images', date_folder, 'lost_frames', base_name))
                         for cand in candidates:
@@ -808,8 +815,15 @@ class EventsJournalJson(QWidget):
                 # Replace 'preview' with 'frame' in filename
                 new_filename = filename.replace('preview', 'frame')
                 
-                # Convert directory path from 'previews' to 'frames'
-                if 'previews' in dir_path:
+                # Convert directory path: new structure FoundPreviews->FoundFrames, LostPreviews->LostFrames
+                if 'FoundPreviews' in dir_path:
+                    new_dir_path = dir_path.replace('FoundPreviews', 'FoundFrames')
+                    image_path = os.path.join(new_dir_path, new_filename)
+                elif 'LostPreviews' in dir_path:
+                    new_dir_path = dir_path.replace('LostPreviews', 'LostFrames')
+                    image_path = os.path.join(new_dir_path, new_filename)
+                elif 'previews' in dir_path:
+                    # Legacy support
                     new_dir_path = dir_path.replace('previews', 'frames')
                     image_path = os.path.join(new_dir_path, new_filename)
                 else:

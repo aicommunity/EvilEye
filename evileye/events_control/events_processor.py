@@ -32,8 +32,27 @@ class EventsProcessor(EvilEyeBase):
         return dict()
 
     def init_impl(self):
-        self.events_adapters = {adapter.get_event_name(): adapter for adapter in self.db_adapters}
-        self.events_tables = {adapter.get_event_name(): adapter.get_table_name() for adapter in self.db_adapters}
+        # Create list of adapters for each event name (to support multiple adapters per event, e.g., DB + JSON)
+        self.events_adapters = {}
+        for adapter in self.db_adapters:
+            event_name = adapter.get_event_name()
+            if event_name not in self.events_adapters:
+                self.events_adapters[event_name] = []
+            self.events_adapters[event_name].append(adapter)
+        
+        # For table names, use first adapter's table name (DB adapters only)
+        self.events_tables = {}
+        for adapter in self.db_adapters:
+            event_name = adapter.get_event_name()
+            if event_name not in self.events_tables:
+                # Only store table name if adapter has it (DB adapters)
+                if hasattr(adapter, 'get_table_name'):
+                    try:
+                        table_name = adapter.get_table_name()
+                        if table_name:
+                            self.events_tables[event_name] = table_name
+                    except Exception:
+                        pass
         try:
             self.logger.info(f"EventsProcessor initialized with adapters: {list(self.events_adapters.keys())}")
         except Exception:
@@ -60,7 +79,8 @@ class EventsProcessor(EvilEyeBase):
         if self.db_controller is None:
             return 0
             
-        table_names = list(self.events_tables.values())
+        # Only use DB adapters for table names (filter out JSON adapters)
+        table_names = [name for name in self.events_tables.values() if name]
         if not table_names:  # No tables available
             return 0
             
@@ -147,7 +167,12 @@ class EventsProcessor(EvilEyeBase):
                                     long_term[i].update_on_finished(
                                         event)  # Обновляем информацию о событии по его завершении
                                 if event.get_name() in self.events_adapters:
-                                        self.events_adapters[event.get_name()].update(long_term[i])  # Получаем адаптер по имени события, отправляем в него завершенное
+                                    # Call update on all adapters for this event name
+                                    for adapter in self.events_adapters[event.get_name()]:
+                                        try:
+                                            adapter.update(long_term[i])
+                                        except Exception as e:
+                                            self.logger.error(f"Error updating event in adapter {adapter.__class__.__name__}: {e}")
                                 # Notify UI: event OFF (независимо от наличия адаптера)
                                 try:
                                     if self.ui_callback:
@@ -189,7 +214,12 @@ class EventsProcessor(EvilEyeBase):
                             self.id_counter += 1
                             self.long_term_events[events].append(event)
                             if event.get_name() in self.events_adapters:
-                                self.events_adapters[event.get_name()].insert(event)
+                                # Call insert on all adapters for this event name
+                                for adapter in self.events_adapters[event.get_name()]:
+                                    try:
+                                        adapter.insert(event)
+                                    except Exception as e:
+                                        self.logger.error(f"Error inserting event in adapter {adapter.__class__.__name__}: {e}")
                             # UI: ON для нового долгосрочного события в уже активной группе
                             try:
                                 if self.ui_callback and not event.is_finished():
@@ -232,7 +262,12 @@ class EventsProcessor(EvilEyeBase):
                                     self.finished_events[events] = []
                                 self.finished_events[events].append(event)
                                 if event.get_name() in self.events_adapters:
-                                    self.events_adapters[event.get_name()].insert(event)
+                                    # Call insert on all adapters for this event name
+                                    for adapter in self.events_adapters[event.get_name()]:
+                                        try:
+                                            adapter.insert(event)
+                                        except Exception as e:
+                                            self.logger.error(f"Error inserting event in adapter {adapter.__class__.__name__}: {e}")
                                 # Для long_term события, пришедшего уже завершённым, не шлём ON, только OFF
                                 try:
                                     if self.ui_callback:
@@ -277,7 +312,12 @@ class EventsProcessor(EvilEyeBase):
                                 self.finished_events[events] = []
                             self.finished_events[events].append(event)
                             if event.get_name() in self.events_adapters:
-                                self.events_adapters[event.get_name()].insert(event)
+                                # Call insert on all adapters for this event name
+                                for adapter in self.events_adapters[event.get_name()]:
+                                    try:
+                                        adapter.insert(event)
+                                    except Exception as e:
+                                        self.logger.error(f"Error inserting event in adapter {adapter.__class__.__name__}: {e}")
                             # Notify UI for non-long events: ON then OFF
                             try:
                                 if self.ui_callback and not event.is_long_term():

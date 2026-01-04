@@ -73,17 +73,18 @@ class EventRecorder:
             camera_folder = self.source.source_name
         
         # Create path: Events/YYYY-MM-DD/Videos/CameraName/
-        # Get base directory from out_dir (extract parent if it contains Streams/date)
+        # Get base directory from out_dir (extract parent if it contains Streams)
         base_out_dir = Path(self.params.out_dir) if self.params.out_dir else Path(".")
+        # If out_dir ends with Streams, extract base (EvilEyeData)
         # If out_dir contains Streams/YYYY-MM-DD, extract base (EvilEyeData)
         # Otherwise assume out_dir is already the base
-        if 'Streams' in str(base_out_dir):
-            # Extract base: EvilEyeData/Streams/YYYY-MM-DD -> EvilEyeData
-            parts = base_out_dir.parts
-            if len(parts) >= 2 and parts[-2] == 'Streams':
-                base_dir = Path(*parts[:-2]) if len(parts) > 2 else Path('EvilEyeData')
-            else:
-                base_dir = base_out_dir.parent if base_out_dir.parent != Path('.') else Path('EvilEyeData')
+        parts = base_out_dir.parts
+        if len(parts) >= 1 and parts[-1] == 'Streams':
+            # out_dir = "EvilEyeData/Streams" -> base = "EvilEyeData"
+            base_dir = Path(*parts[:-1]) if len(parts) > 1 else Path('EvilEyeData')
+        elif len(parts) >= 2 and parts[-2] == 'Streams':
+            # out_dir = "EvilEyeData/Streams/2026-01-04" -> base = "EvilEyeData"
+            base_dir = Path(*parts[:-2]) if len(parts) > 2 else Path('EvilEyeData')
         else:
             base_dir = base_out_dir.parent if base_out_dir.parent != Path('.') else Path('EvilEyeData')
         out_dir = base_dir / "Events" / event_date / "Videos" / camera_folder
@@ -292,8 +293,23 @@ class EventRecorder:
             elif self.source.width and self.source.height:
                 frame_size = (int(self.source.width), int(self.source.height))
             else:
-                self.logger.error(f"Cannot determine frame size for event {event_id}")
-                return False
+                # Try to get frame size from buffer (any frame, not just pre-event)
+                # This handles case when event happens before buffer is filled
+                try:
+                    with self.event_buffer.lock:
+                        if len(self.event_buffer.buffer) > 0:
+                            # Get any frame from buffer to determine size
+                            any_frame, _ = self.event_buffer.buffer[-1]  # Get most recent frame
+                            h, w = any_frame.shape[:2]
+                            frame_size = (w, h)
+                            self.logger.debug(f"Using frame size from buffer: {frame_size}")
+                except Exception as e:
+                    self.logger.debug(f"Could not get frame size from buffer: {e}")
+            
+            if frame_size is None:
+                self.logger.warning(f"Cannot determine frame size for event {event_id}, will try to determine from first post-event frame")
+                # Set a temporary size, will be updated when first frame arrives
+                frame_size = (1920, 1080)  # Default fallback, will be corrected by first frame
             
             # Generate output path
             output_path = self._get_event_output_path(event_id, event_name, event_timestamp)
@@ -362,8 +378,17 @@ class EventRecorder:
         # Validate frame size (store for later use in worker)
         h, w = frame.shape[:2]
         with self._lock:
-            if self._frame_size == (0, 0):
+            if self._frame_size == (0, 0) or self._frame_size == (1920, 1080):  # Fallback size
+                # Update frame size and reopen writer if needed
+                old_size = self._frame_size
                 self._frame_size = (w, h)
+                if old_size == (1920, 1080) and self._writer and self._current_file_path:
+                    # Reopen writer with correct size
+                    self.logger.info(f"Reopening writer with correct frame size: {self._frame_size}")
+                    self._writer.release()
+                    if not self._open_writer(self._current_file_path, self._frame_size):
+                        self.logger.error("Failed to reopen writer with correct size")
+                        return False
         
         # Add frame to queue (non-blocking)
         try:

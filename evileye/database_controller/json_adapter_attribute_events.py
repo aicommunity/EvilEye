@@ -117,15 +117,21 @@ class JsonAdapterAttributeEvents(DatabaseAdapterBase):
 
     def _save_images(self, day_dir: str, event, is_update: bool):
         try:
-            # Новые каталоги: Events/.../Images/Frames и Previews
+            # Новые каталоги: Events/.../Images/FoundFrames/FoundPreviews/LostFrames/LostPreviews
             ts = (event.get_time_finished() if is_update else event.timestamp)
             if ts is None:
                 ts = datetime.datetime.now()
             # Имя с новым форматом без подчеркиваний в дате
             ts_str = ts.strftime('%Y-%m-%d_%H-%M-%S-%f') if is_update else ts.strftime('%Y-%m-%d_%H-%M-%S.%f')
             images_dir = os.path.join(day_dir, 'Images')
-            previews_dir = os.path.join(images_dir, 'Previews')
-            frames_dir = os.path.join(images_dir, 'Frames')
+            if is_update:
+                # Lost event (finished)
+                previews_dir = os.path.join(images_dir, 'LostPreviews')
+                frames_dir = os.path.join(images_dir, 'LostFrames')
+            else:
+                # Found event
+                previews_dir = os.path.join(images_dir, 'FoundPreviews')
+                frames_dir = os.path.join(images_dir, 'FoundFrames')
             os.makedirs(previews_dir, exist_ok=True)
             os.makedirs(frames_dir, exist_ok=True)
 
