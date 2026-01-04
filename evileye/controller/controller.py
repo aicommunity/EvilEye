@@ -546,7 +546,7 @@ class Controller:
                 db_image_dir = (((self.params or {}).get('database', {}) or {}).get('image_dir')) or 'EvilEyeData'
                 import datetime as _dt
                 today = _dt.datetime.now().strftime('%Y-%m-%d')
-                default_out_dir = str(Path(db_image_dir) / 'Recording' / today)
+                default_out_dir = str(Path(db_image_dir) / 'Streams' / today)
 
                 srcs = pipeline_params.get("sources", []) or []
                 enabled_list = record_cfg.get("enabled_sources")
@@ -556,7 +556,7 @@ class Controller:
                     # Merge: keep per-source overrides, fill missing from root
                     per = dict(s.get("record", {})) if isinstance(s.get("record", {}), dict) else {}
                     merged = {**record_cfg, **per}
-                    # Ensure out_dir present -> base/Recording/YYYY-MM-DD when missing
+                    # Ensure out_dir present -> base/Streams/YYYY-MM-DD when missing
                     if not merged.get('out_dir'):
                         merged['out_dir'] = default_out_dir
                     # Apply enabled per source if list provided

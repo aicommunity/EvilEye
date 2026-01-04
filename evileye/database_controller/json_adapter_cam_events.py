@@ -21,7 +21,7 @@ class JsonAdapterCamEvents(DatabaseAdapterBase):
     def set_params_impl(self):
         cfg = self.params or {}
         self.image_dir = cfg.get('image_dir', 'EvilEyeData')
-        self.base_dir = os.path.join(self.image_dir, 'images')
+        self.base_dir = os.path.join(self.image_dir, 'Events')
         self.event_name = 'CameraEvent'
         self.table_name = 'camera_events_json'
 
@@ -38,8 +38,8 @@ class JsonAdapterCamEvents(DatabaseAdapterBase):
         pass
 
     def _insert_impl(self, event):
-        date_folder = datetime.date.today().strftime('%Y_%m_%d')
-        day_dir = os.path.join(self.base_dir, date_folder)
+        date_folder = datetime.date.today().strftime('%Y-%m-%d')
+        day_dir = os.path.join(self.base_dir, date_folder, 'Metadata')
         os.makedirs(day_dir, exist_ok=True)
         file_path = os.path.join(day_dir, 'camera_events.json')
 

@@ -8,7 +8,8 @@ from ..core.logger import get_module_logger
 class JsonLabelJournalDataSource(EventJournalDataSource):
     """
     Data source that reads events from objects_found.json and objects_lost.json
-    stored under base_dir/YYYY_MM_DD/.
+    stored under base_dir/Detections/YYYY-MM-DD/Metadata/ and events under
+    base_dir/Events/YYYY-MM-DD/Metadata/.
     """
 
     def __init__(self, base_dir: str):
@@ -34,11 +35,17 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
     def list_available_dates(self) -> List[str]:
         if not os.path.isdir(self.base_dir):
             return []
-        images_dir = os.path.join(self.base_dir, 'images')
-        if not os.path.isdir(images_dir):
-            return []
-        return sorted([d for d in os.listdir(images_dir)
-                       if os.path.isdir(os.path.join(images_dir, d)) and d[:4].isdigit()])
+        # Check both Detections and Events directories for dates
+        detections_dir = os.path.join(self.base_dir, 'Detections')
+        events_dir = os.path.join(self.base_dir, 'Events')
+        dates = set()
+        if os.path.isdir(detections_dir):
+            dates.update([d for d in os.listdir(detections_dir)
+                         if os.path.isdir(os.path.join(detections_dir, d)) and d[:4].isdigit()])
+        if os.path.isdir(events_dir):
+            dates.update([d for d in os.listdir(events_dir)
+                         if os.path.isdir(os.path.join(events_dir, d)) and d[:4].isdigit()])
+        return sorted(list(dates))
 
     def _check_file_changed(self, filepath: str) -> bool:
         """Check if file has been modified since last check"""
@@ -65,13 +72,16 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
         for d in dates:
             if not d:
                 continue
-            base = os.path.join(self.base_dir, 'images', d)
+            # Detections metadata
+            detections_metadata = os.path.join(self.base_dir, 'Detections', d, 'Metadata')
+            # Events metadata
+            events_metadata = os.path.join(self.base_dir, 'Events', d, 'Metadata')
             fps = [
-                os.path.join(base, 'objects_found.json'),
-                os.path.join(base, 'objects_lost.json'),
-                os.path.join(base, 'attribute_events_found.json'),
-                os.path.join(base, 'attribute_events_finished.json'),
-                os.path.join(base, 'system_events.json'),
+                os.path.join(detections_metadata, 'objects_found.json'),
+                os.path.join(detections_metadata, 'objects_lost.json'),
+                os.path.join(events_metadata, 'attribute_events_found.json'),
+                os.path.join(events_metadata, 'attribute_events_finished.json'),
+                os.path.join(events_metadata, 'system_events.json'),
             ]
             if any(self._check_file_changed(fp) for fp in fps):
                 files_changed = True
@@ -82,17 +92,20 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
             for d in dates:
                 if not d:
                     continue
-                base = os.path.join(self.base_dir, 'images', d)
-                self._read_file(os.path.join(base, 'objects_found.json'), 'found', d)
-                self._read_file(os.path.join(base, 'objects_lost.json'), 'lost', d)
-                self._read_file(os.path.join(base, 'attribute_events_found.json'), 'attr_found', d)
-                self._read_file(os.path.join(base, 'attribute_events_finished.json'), 'attr_lost', d)
-                self._read_file(os.path.join(base, 'fov_events_found.json'), 'fov_found', d)
-                self._read_file(os.path.join(base, 'fov_events_lost.json'), 'fov_lost', d)
-                self._read_file(os.path.join(base, 'zone_events_entered.json'), 'zone_entered', d)
-                self._read_file(os.path.join(base, 'zone_events_left.json'), 'zone_left', d)
-                self._read_file(os.path.join(base, 'camera_events.json'), 'cam', d)
-                self._read_file(os.path.join(base, 'system_events.json'), 'sys', d)
+                # Detections metadata
+                detections_metadata = os.path.join(self.base_dir, 'Detections', d, 'Metadata')
+                # Events metadata
+                events_metadata = os.path.join(self.base_dir, 'Events', d, 'Metadata')
+                self._read_file(os.path.join(detections_metadata, 'objects_found.json'), 'found', d)
+                self._read_file(os.path.join(detections_metadata, 'objects_lost.json'), 'lost', d)
+                self._read_file(os.path.join(events_metadata, 'attribute_events_found.json'), 'attr_found', d)
+                self._read_file(os.path.join(events_metadata, 'attribute_events_finished.json'), 'attr_lost', d)
+                self._read_file(os.path.join(events_metadata, 'fov_events_found.json'), 'fov_found', d)
+                self._read_file(os.path.join(events_metadata, 'fov_events_lost.json'), 'fov_lost', d)
+                self._read_file(os.path.join(events_metadata, 'zone_events_entered.json'), 'zone_entered', d)
+                self._read_file(os.path.join(events_metadata, 'zone_events_left.json'), 'zone_left', d)
+                self._read_file(os.path.join(events_metadata, 'camera_events.json'), 'cam', d)
+                self._read_file(os.path.join(events_metadata, 'system_events.json'), 'sys', d)
             # default sort: ts desc (robust to None)
             self._cache.sort(key=lambda e: (e.get('ts') or ''), reverse=True)
 

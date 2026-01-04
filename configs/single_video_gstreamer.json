@@ -86,7 +86,7 @@
     "segment_length_sec": 300,
     "retention_days": 3,
     "min_free_space_pct": 80,
-    "out_dir": "EvilEyeData/Recording",
+    "out_dir": "EvilEyeData/Streams",
     "filename_tmpl": "{source_name}_{start_time}_{seq}.{ext}"
   },
   "database": {

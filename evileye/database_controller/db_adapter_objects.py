@@ -160,26 +160,36 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
 
     def _get_img_path(self, image_type, obj_event_type, src_name, obj):
         save_dir = self.db_params['image_dir']
-        img_dir = os.path.join(save_dir, 'images')
+        detections_dir = os.path.join(save_dir, 'Detections')
         cur_date = datetime.date.today()
-        cur_date_str = cur_date.strftime('%Y_%m_%d')
+        cur_date_str = cur_date.strftime('%Y-%m-%d')
 
-        current_day_path = os.path.join(img_dir, cur_date_str)
-        # Unified folders for objects: found_*/lost_* (frames/previews)
-        tag = 'found' if obj_event_type == 'detected' else 'lost'
-        subdir = f"{tag}_{'previews' if image_type == 'preview' else 'frames'}"
-        obj_type_path = os.path.join(current_day_path, subdir)
+        current_day_path = os.path.join(detections_dir, cur_date_str)
+        images_dir = os.path.join(current_day_path, 'Images')
+        # New folders for objects: FoundFrames/FoundPreviews/LostFrames/LostPreviews
+        if obj_event_type == 'detected':
+            if image_type == 'preview':
+                subdir = 'FoundPreviews'
+            else:
+                subdir = 'FoundFrames'
+        else:  # lost
+            if image_type == 'preview':
+                subdir = 'LostPreviews'
+            else:
+                subdir = 'LostFrames'
+        obj_type_path = os.path.join(images_dir, subdir)
         # obj_event_path = os.path.join(current_day_path, obj_event_type)
-        os.makedirs(img_dir, exist_ok=True)
+        os.makedirs(detections_dir, exist_ok=True)
         os.makedirs(current_day_path, exist_ok=True)
+        os.makedirs(images_dir, exist_ok=True)
         os.makedirs(obj_type_path, exist_ok=True)
         # if not os.path.exists(obj_event_path):
         #     os.mkdir(obj_event_path)
 
         if obj_event_type == 'detected':
-            timestamp = obj.time_detected.strftime('%Y_%m_%d_%H_%M_%S.%f')
+            timestamp = obj.time_detected.strftime('%Y-%m-%d_%H-%M-%S.%f')
             img_path = os.path.join(obj_type_path, f'{timestamp}_{src_name}_{image_type}.jpeg')
         elif obj_event_type == 'lost':
-            timestamp = obj.time_lost.strftime('%Y_%m_%d_%H_%M_%S_%f')
+            timestamp = obj.time_lost.strftime('%Y-%m-%d_%H-%M-%S-%f')
             img_path = os.path.join(obj_type_path, f'{timestamp}_{src_name}_{image_type}.jpeg')
         return os.path.relpath(img_path, save_dir)

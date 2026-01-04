@@ -633,25 +633,35 @@ class ObjectsHandler(EvilEyeBase):
             save_dir = self.db_params['image_dir']
         else:
             save_dir = 'EvilEyeData'  # Default directory
-        img_dir = os.path.join(save_dir, 'images')
+        detections_dir = os.path.join(save_dir, 'Detections')
         cur_date = datetime.date.today()
-        cur_date_str = cur_date.strftime('%Y_%m_%d')
+        cur_date_str = cur_date.strftime('%Y-%m-%d')
 
-        current_day_path = os.path.join(img_dir, cur_date_str)
-        # Unified folders for objects: found_*/lost_* (frames/previews)
+        current_day_path = os.path.join(detections_dir, cur_date_str)
+        images_dir = os.path.join(current_day_path, 'Images')
+        # New folders for objects: FoundFrames/FoundPreviews/LostFrames/LostPreviews
         if obj_event_type == 'detected':
-            tag = 'found'
+            if image_type == 'preview':
+                subdir = 'FoundPreviews'
+            else:
+                subdir = 'FoundFrames'
         elif obj_event_type == 'lost':
-            tag = 'lost'
+            if image_type == 'preview':
+                subdir = 'LostPreviews'
+            else:
+                subdir = 'LostFrames'
         else:
-            tag = obj_event_type  # fallback, should not happen
-        subdir = f"{tag}_{'previews' if image_type == 'preview' else 'frames'}"
-        obj_type_path = os.path.join(current_day_path, subdir)
+            # Fallback for other types
+            tag = obj_event_type
+            subdir = f"{tag}{'Previews' if image_type == 'preview' else 'Frames'}"
+        obj_type_path = os.path.join(images_dir, subdir)
         # obj_event_path = os.path.join(current_day_path, obj_event_type)
-        if not os.path.exists(img_dir):
-            os.makedirs(img_dir, exist_ok=True)
+        if not os.path.exists(detections_dir):
+            os.makedirs(detections_dir, exist_ok=True)
         if not os.path.exists(current_day_path):
             os.makedirs(current_day_path, exist_ok=True)
+        if not os.path.exists(images_dir):
+            os.makedirs(images_dir, exist_ok=True)
         if not os.path.exists(obj_type_path):
             os.makedirs(obj_type_path, exist_ok=True)
         # if not os.path.exists(obj_event_path):
@@ -666,9 +676,9 @@ class ObjectsHandler(EvilEyeBase):
                 break
         
         if obj_event_type == 'detected':
-            timestamp = obj.time_stamp.strftime('%Y_%m_%d_%H_%M_%S.%f')
+            timestamp = obj.time_stamp.strftime('%Y-%m-%d_%H-%M-%S.%f')
             img_path = os.path.join(obj_type_path, f'{timestamp}_{source_name}_{image_type}.jpeg')
         elif obj_event_type == 'lost':
-            timestamp = obj.time_lost.strftime('%Y_%m_%d_%H_%M_%S_%f')
+            timestamp = obj.time_lost.strftime('%Y-%m-%d_%H-%M-%S-%f')
             img_path = os.path.join(obj_type_path, f'{timestamp}_{source_name}_{image_type}.jpeg')
         return os.path.relpath(img_path, save_dir)

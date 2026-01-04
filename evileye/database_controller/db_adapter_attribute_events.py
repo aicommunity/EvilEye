@@ -146,36 +146,36 @@ class DatabaseAdapterAttributeEvents(DatabaseAdapterBase):
 
     def _get_img_path(self, image_type, obj_event_type, event, time_stamp=None, time_lost=None):
         save_dir = self.db_params['image_dir']
-        img_dir = os.path.join(save_dir, 'images')
+        events_dir = os.path.join(save_dir, 'Events')
         import datetime
         cur_date = datetime.date.today()
-        cur_date_str = cur_date.strftime('%Y_%m_%d')
+        cur_date_str = cur_date.strftime('%Y-%m-%d')
 
-        current_day_path = os.path.join(img_dir, cur_date_str)
-        # Unified folders for events: events_found_*/events_lost_* (frames/previews)
-        if obj_event_type == 'attribute_found':
-            tag = 'events_found'
-        elif obj_event_type == 'attribute_finished':
-            tag = 'events_lost'
+        current_day_path = os.path.join(events_dir, cur_date_str)
+        images_dir = os.path.join(current_day_path, 'Images')
+        # New folders for events: Images/Frames and Images/Previews
+        if image_type == 'preview':
+            subdir = 'Previews'
         else:
-            tag = obj_event_type
-        subdir = f"{tag}_{'previews' if image_type == 'preview' else 'frames'}"
-        obj_type_path = os.path.join(current_day_path, subdir)
+            subdir = 'Frames'
+        obj_type_path = os.path.join(images_dir, subdir)
 
-        if not os.path.exists(img_dir):
-            os.makedirs(img_dir, exist_ok=True)
+        if not os.path.exists(events_dir):
+            os.makedirs(events_dir, exist_ok=True)
         if not os.path.exists(current_day_path):
             os.makedirs(current_day_path, exist_ok=True)
+        if not os.path.exists(images_dir):
+            os.makedirs(images_dir, exist_ok=True)
         if not os.path.exists(obj_type_path):
             os.makedirs(obj_type_path, exist_ok=True)
 
         obj_id = event.object_id
         if obj_event_type == 'attribute_found':
-            timestamp = (time_stamp or event.timestamp).strftime('%Y_%m_%d_%H_%M_%S.%f')
+            timestamp = (time_stamp or event.timestamp).strftime('%Y-%m-%d_%H-%M-%S.%f')
             img_path = os.path.join(obj_type_path, f'{timestamp}_attr_{event.matched_event_name}_obj{obj_id}_{image_type}.jpeg')
         elif obj_event_type == 'attribute_finished':
             ts = (time_lost or event.get_time_finished())
-            timestamp = ts.strftime('%Y_%m_%d_%H_%M_%S_%f') if ts else 'unknown'
+            timestamp = ts.strftime('%Y-%m-%d_%H-%M-%S-%f') if ts else 'unknown'
             img_path = os.path.join(obj_type_path, f'{timestamp}_attr_{event.matched_event_name}_obj{obj_id}_{image_type}.jpeg')
         return os.path.relpath(img_path, save_dir)
 

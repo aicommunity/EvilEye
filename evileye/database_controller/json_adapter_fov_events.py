@@ -25,7 +25,7 @@ class JsonAdapterFovEvents(DatabaseAdapterBase):
     def set_params_impl(self):
         cfg = self.params or {}
         self.image_dir = cfg.get('image_dir', 'EvilEyeData')
-        self.base_dir = os.path.join(self.image_dir, 'images')
+        self.base_dir = os.path.join(self.image_dir, 'Events')
         self.event_name = 'FieldOfViewEvent'
         self.table_name = 'fov_events_json'
 
@@ -48,11 +48,12 @@ class JsonAdapterFovEvents(DatabaseAdapterBase):
         self._write_event(event, is_update=True)
 
     def _write_event(self, event, is_update: bool):
-        date_folder = datetime.date.today().strftime('%Y_%m_%d')
+        date_folder = datetime.date.today().strftime('%Y-%m-%d')
         day_dir = os.path.join(self.base_dir, date_folder)
-        os.makedirs(day_dir, exist_ok=True)
+        metadata_dir = os.path.join(day_dir, 'Metadata')
+        os.makedirs(metadata_dir, exist_ok=True)
         file_name = 'fov_events_lost.json' if is_update else 'fov_events_found.json'
-        file_path = os.path.join(day_dir, file_name)
+        file_path = os.path.join(metadata_dir, file_name)
 
         records = []
         if os.path.isfile(file_path):
@@ -79,12 +80,12 @@ class JsonAdapterFovEvents(DatabaseAdapterBase):
             json.dump(records, f, ensure_ascii=False, indent=2)
 
     def _save_images(self, day_dir: str, event, is_update: bool):
-        # Унифицированные каталоги: events_found_* / events_lost_*
-        tag = 'events_lost' if is_update else 'events_found'
+        # Новые каталоги: Events/.../Images/Frames и Previews
         ts = (event.time_lost if is_update else (event.time_obj_detected or event.timestamp))
-        ts_str = ts.strftime('%Y_%m_%d_%H_%M_%S_%f') if is_update else ts.strftime('%Y_%m_%d_%H_%M_%S.%f')
-        previews_dir = os.path.join(day_dir, f'{tag}_previews')
-        frames_dir = os.path.join(day_dir, f'{tag}_frames')
+        ts_str = ts.strftime('%Y-%m-%d_%H-%M-%S-%f') if is_update else ts.strftime('%Y-%m-%d_%H-%M-%S.%f')
+        images_dir = os.path.join(day_dir, 'Images')
+        previews_dir = os.path.join(images_dir, 'Previews')
+        frames_dir = os.path.join(images_dir, 'Frames')
         os.makedirs(previews_dir, exist_ok=True)
         os.makedirs(frames_dir, exist_ok=True)
 

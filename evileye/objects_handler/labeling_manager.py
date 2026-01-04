@@ -36,23 +36,24 @@ class LabelingManager:
         """
         self.logger = get_module_logger("labeling_manager")
         self.base_dir = base_dir
-        self.images_dir = os.path.join(base_dir, 'images')
+        self.detections_dir = os.path.join(base_dir, 'Detections')
         self.cameras_params = cameras_params or []
         
         # Create base directory if it doesn't exist
-        os.makedirs(self.images_dir, exist_ok=True)
+        os.makedirs(self.detections_dir, exist_ok=True)
         
         # Current date for file naming
         self.current_date = datetime.date.today()
-        self.date_str = self.current_date.strftime('%Y_%m_%d')
+        self.date_str = self.current_date.strftime('%Y-%m-%d')
         
         # Create date-specific directory
-        self.current_day_dir = os.path.join(self.images_dir, self.date_str)
-        os.makedirs(self.current_day_dir, exist_ok=True)
+        self.current_day_dir = os.path.join(self.detections_dir, self.date_str)
+        metadata_dir = os.path.join(self.current_day_dir, 'Metadata')
+        os.makedirs(metadata_dir, exist_ok=True)
         
-        # File paths - now in the same directory as images
-        self.found_labels_file = os.path.join(self.current_day_dir, 'objects_found.json')
-        self.lost_labels_file = os.path.join(self.current_day_dir, 'objects_lost.json')
+        # File paths - in Metadata subdirectory
+        self.found_labels_file = os.path.join(metadata_dir, 'objects_found.json')
+        self.lost_labels_file = os.path.join(metadata_dir, 'objects_lost.json')
         
         # File locks to prevent simultaneous read/write access
         self.found_file_lock = Lock()

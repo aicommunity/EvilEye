@@ -293,7 +293,12 @@ class ObjectsJournalJson(QWidget):
                 else:
                     if img_path.startswith(self.base_dir + os.sep) or img_path.startswith(self.base_dir + '/'):
                         img_path_abs = img_path
+                    elif img_path.startswith('Detections' + os.sep) or img_path.startswith('Detections/'):
+                        img_path_abs = os.path.join(self.base_dir, img_path)
+                    elif img_path.startswith('Events' + os.sep) or img_path.startswith('Events/'):
+                        img_path_abs = os.path.join(self.base_dir, img_path)
                     elif img_path.startswith('images' + os.sep) or img_path.startswith('images/'):
+                        # Legacy path support
                         img_path_abs = os.path.join(self.base_dir, img_path)
                     elif img_path.startswith(self.base_dir):
                         img_path_abs = img_path
@@ -302,7 +307,13 @@ class ObjectsJournalJson(QWidget):
                 if not os.path.exists(img_path_abs):
                     ev = item.data(Qt.ItemDataRole.UserRole)
                     date_folder = ev.get('date_folder', '') if ev else ''
-                    alt = os.path.join(self.base_dir, 'images', date_folder, os.path.basename(img_path))
+                    # Try new structure first
+                    alt = os.path.join(self.base_dir, 'Detections', date_folder, 'Images', 'FoundFrames', os.path.basename(img_path))
+                    if not os.path.exists(alt):
+                        alt = os.path.join(self.base_dir, 'Detections', date_folder, 'Images', 'LostFrames', os.path.basename(img_path))
+                    if not os.path.exists(alt):
+                        # Legacy path
+                        alt = os.path.join(self.base_dir, 'images', date_folder, os.path.basename(img_path))
                     self.logger.info(f"_open: resolved={img_path_abs}, alt={alt}")
                     if os.path.exists(alt):
                         img_path_abs = alt
