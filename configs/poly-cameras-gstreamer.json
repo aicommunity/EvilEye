@@ -419,6 +419,11 @@
     "events_processor": {},
     "record": {
         "enabled": true,
+        "continuous_recording_enabled": true,
+        "event_recording_enabled": false,
+        "event_pre_seconds": 10,
+        "event_post_seconds": 10,
+        "event_buffer_fps": null,
         "enabled_sources": [],
         "container": "mp4",
         "segment_length_sec": 300,

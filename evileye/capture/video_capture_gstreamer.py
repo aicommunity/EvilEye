@@ -60,6 +60,18 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         self._rtsp_protocol = 'udp+tcp'  # Default: try UDP first, then TCP if UDP fails (GStreamer handles fallback)
         self._last_init_error = None
         self._init_time = None  # Track when pipeline was initialized to ignore early EOS
+        # Performance metrics
+        now = time.time()
+        self._perf_stats_interval = 5.0
+        self._perf_last_log = now
+        self._perf_frame_count = 0
+        self._perf_pull_total = 0.0
+        self._perf_process_total = 0.0
+        self._perf_pts_accum = 0.0
+        self._perf_pts_count = 0
+        self._perf_last_pts = None
+        self._perf_frame_buffer_full = 0
+        self._recording_queue_elem = None
 
     # Debug stack dump removed
     
@@ -135,14 +147,47 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             pipeline = f"v4l2src device=/dev/video{device_id} ! videoconvert"
             
         elif self.source_type == CaptureDeviceType.ImageSequence:
-            # Image sequence pipeline - support for folders with jpeg, png, bmp
-            # Check if source_address is a directory (no file mask)
-            if not any(pattern in self.source_address for pattern in ['%', '*', '?']):
-                # Directory path - use multifilesrc with wildcard pattern
-                pipeline = f"multifilesrc location={self.source_address}/* ! decodebin ! videoconvert"
+            # Image sequence pipeline - prefer explicit caps/decoder to avoid typefind issues
+            pattern = str(self.source_address)
+            is_pattern = any(ch in pattern for ch in ['%', '*', '?'])
+            if not is_pattern:
+                # Treat as directory; append wildcard to pick all images
+                if pattern.endswith("/"):
+                    pattern = f"{pattern}frame_%05d.jpg"
+                else:
+                    pattern = f"{pattern}/frame_%05d.jpg"
+            # Determine decoder/caps from extension if possible
+            decoder = "decodebin"
+            caps_str = None
+            import os
+            _, ext = os.path.splitext(pattern.lower())
+            fps_num, fps_den = (15, 1)
+            if self.desired_fps and self.desired_fps > 0:
+                fps = float(self.desired_fps)
+                if abs(fps - round(fps)) < 1e-6:
+                    fps_num, fps_den = int(round(fps)), 1
+                else:
+                    fps_num, fps_den = int(round(fps * 1001)), 1001
+            if ext in {".jpg", ".jpeg"}:
+                caps_str = f"image/jpeg,framerate={fps_num}/{fps_den}"
+                decoder = "jpegdec"
+            elif ext == ".png":
+                caps_str = f"image/png,framerate={fps_num}/{fps_den}"
+                decoder = "pngdec"
+            elif ext == ".bmp":
+                caps_str = f"image/bmp,framerate={fps_num}/{fps_den}"
+                decoder = "decodebin"
+            # Build pipeline with caps when known to avoid gst_type_find errors
+            if caps_str:
+                pipeline = (
+                    f"multifilesrc location={pattern} loop=false do-timestamp=true caps=\"{caps_str}\" "
+                    f"! {decoder} ! videoconvert"
+                )
             else:
-                # File pattern - use as is
-                pipeline = f"multifilesrc location={self.source_address} ! decodebin ! videoconvert"
+                pipeline = (
+                    f"multifilesrc location={pattern} loop=false do-timestamp=true "
+                    f"! decodebin ! videoconvert"
+                )
         
         else:
             raise ValueError(f"Unsupported source type: {self.source_type}")
@@ -164,8 +209,11 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             except Exception:
                 # If anything goes wrong, skip forcing fps
                 pass
-        # If recording is enabled, use tee to split stream: one to appsink, one to recording
-        if self.recording_params and self.recording_params.enabled:
+        # If continuous recording is enabled, use tee to split stream: one to appsink, one to recording
+        continuous_enabled = (self.recording_params and 
+                              (self.recording_params.continuous_recording_enabled or 
+                               (self.recording_params.enabled and not self.recording_params.event_recording_enabled)))
+        if continuous_enabled:
             # Use tee to split stream
             pipeline += " ! tee name=t"
             # Branch 1: to appsink for capture (with queue for isolation)
@@ -182,9 +230,13 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         """
         Callback for new frame from GStreamer pipeline.
         """
+        pull_duration = 0.0
         try:
+            pull_start = time.perf_counter()
             sample = appsink.emit("pull-sample")
+            pull_duration = time.perf_counter() - pull_start
             if sample:
+                processing_start = time.perf_counter()
                 # Mark as working when we receive first frame after init
                 # Allow processing frames even if is_working is False (within 5 seconds of init)
                 if self._init_time and not self.is_working:
@@ -195,10 +247,15 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 
                 # If still not working after init grace period, skip frame
                 if not self.is_working:
+                    process_time = time.perf_counter() - processing_start
+                    buffer = sample.get_buffer()
+                    pts_value = buffer.pts if buffer else None
+                    self._record_perf_metrics(pull_duration, process_time, pts_value)
                     return Gst.FlowReturn.OK  # Return OK to continue, but don't process frame
                 
                 buffer = sample.get_buffer()
                 caps = sample.get_caps()
+                pts_value = buffer.pts if buffer else None
                 
                 # Get frame dimensions
                 structure = caps.get_structure(0)
@@ -291,6 +348,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                                 try:
                                     self.frame_buffer.put(img, block=False)
                                 except Full:
+                                    self._perf_frame_buffer_full += 1
                                     try:
                                         _ = self.frame_buffer.get_nowait()
                                     except Empty:
@@ -355,14 +413,90 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                             threading.Thread(target=_notify, args=(subscriber,), daemon=True).start()
                     
                     buffer.unmap(map_info)
+                    process_time = time.perf_counter() - processing_start
+                    self._record_perf_metrics(pull_duration, process_time, pts_value)
                     return Gst.FlowReturn.OK
                 else:
+                    process_time = time.perf_counter() - processing_start
+                    self._record_perf_metrics(pull_duration, process_time, pts_value)
                     self.logger.error("Failed to map buffer")
                     return Gst.FlowReturn.ERROR
         except Exception as e:
             self.logger.error(f"Error processing frame: {e}")
             return Gst.FlowReturn.ERROR
-    
+ 
+    def _record_perf_metrics(self, pull_time: float, process_time: float, buffer_pts: Optional[int]) -> None:
+        try:
+            self._perf_frame_count += 1
+            self._perf_pull_total += pull_time
+            self._perf_process_total += process_time
+
+            clock_time_none = getattr(Gst, "CLOCK_TIME_NONE", None)
+            if buffer_pts is not None and (clock_time_none is None or buffer_pts != clock_time_none) and buffer_pts >= 0:
+                if self._perf_last_pts is not None and buffer_pts >= self._perf_last_pts:
+                    delta = (buffer_pts - self._perf_last_pts) / 1_000_000_000.0
+                    if delta > 0:
+                        self._perf_pts_accum += delta
+                        self._perf_pts_count += 1
+                self._perf_last_pts = buffer_pts
+
+            now = time.time()
+            if now - self._perf_last_log >= self._perf_stats_interval:
+                self._log_perf_stats(now)
+        except Exception as e:
+            self.logger.debug(f"Failed to record perf metrics: {e}")
+
+    def _log_perf_stats(self, now: float) -> None:
+        interval = now - self._perf_last_log
+        if interval <= 0:
+            interval = 1e-6
+
+        frames = self._perf_frame_count
+        fps = frames / interval if frames else 0.0
+        avg_pull_ms = (self._perf_pull_total / frames) * 1000.0 if frames else 0.0
+        avg_proc_ms = (self._perf_process_total / frames) * 1000.0 if frames else 0.0
+        pts_fps = (self._perf_pts_count / self._perf_pts_accum) if self._perf_pts_accum > 0 else 0.0
+
+        frame_buffer_size = 0
+        if self.split_stream:
+            try:
+                frame_buffer_size = self.frame_buffer.qsize()
+            except Exception:
+                frame_buffer_size = -1
+
+        recording_queue_buffers = None
+        if self._recording_queue_elem is not None:
+            try:
+                recording_queue_buffers = self._recording_queue_elem.get_property("current-level-buffers")
+            except Exception:
+                recording_queue_buffers = None
+
+        source_label = ",".join(str(name) for name in self.source_names) if self.source_names else str(self.source_address)
+        msg_parts = [
+            f"FPS={fps:.2f}",
+            f"pull_wait={avg_pull_ms:.2f}ms",
+            f"process={avg_proc_ms:.2f}ms"
+        ]
+        if pts_fps > 0:
+            msg_parts.append(f"pts_fps={pts_fps:.2f}")
+        if self.split_stream:
+            msg_parts.append(f"frame_buffer={frame_buffer_size}")
+        if self._perf_frame_buffer_full:
+            msg_parts.append(f"buffer_overflows={self._perf_frame_buffer_full}")
+        if recording_queue_buffers is not None:
+            msg_parts.append(f"record_queue_buf={recording_queue_buffers}")
+
+        self.logger.info(f"Capture perf [{source_label}]: " + ", ".join(msg_parts))
+
+        # Reset counters for next interval
+        self._perf_last_log = now
+        self._perf_frame_count = 0
+        self._perf_pull_total = 0.0
+        self._perf_process_total = 0.0
+        self._perf_pts_accum = 0.0
+        self._perf_pts_count = 0
+        self._perf_frame_buffer_full = 0
+
     def _build_pipeline_candidates(self) -> List[str]:
         """
         Build multiple pipeline candidates for IP cameras (H265, H264).
@@ -384,7 +518,10 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         
         # Build common tail (videoconvert + queue + appsink/tee)
         common_tail = " ! videoconvert"
-        if self.recording_params and self.recording_params.enabled:
+        continuous_enabled = (self.recording_params and 
+                              (self.recording_params.continuous_recording_enabled or 
+                               (self.recording_params.enabled and not self.recording_params.event_recording_enabled)))
+        if continuous_enabled:
             common_tail += " ! tee name=t"
             common_tail += " t. ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync=true max-buffers=1 drop=true"
             common_tail += " t. ! queue name=recording_queue"
@@ -468,8 +605,11 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                             except Exception:
                                 self._appsink_handler_id = None
                             
-                            # Setup recording branch if enabled
-                            if self.recording_params and self.recording_params.enabled:
+                            # Setup recording branch if continuous recording enabled
+                            continuous_enabled = (self.recording_params and 
+                                                  (self.recording_params.continuous_recording_enabled or 
+                                                   (self.recording_params.enabled and not self.recording_params.event_recording_enabled)))
+                            if continuous_enabled:
                                 try:
                                     self._setup_recording_branch()
                                 except Exception as e:
@@ -550,8 +690,11 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     except Exception:
                         self._appsink_handler_id = None
                     
-                    # Setup recording branch if enabled
-                    if self.recording_params and self.recording_params.enabled:
+                    # Setup recording branch if continuous recording enabled
+                    continuous_enabled = (self.recording_params and 
+                                          (self.recording_params.continuous_recording_enabled or 
+                                           (self.recording_params.enabled and not self.recording_params.event_recording_enabled)))
+                    if continuous_enabled:
                         try:
                             self._setup_recording_branch()
                         except Exception as e:
@@ -582,7 +725,15 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 self.logger.info("GStreamer pipeline initialized successfully")
                 # Track initialization time to ignore early EOS messages
                 self._init_time = time.time()
-                
+                # Reset performance metrics for new pipeline run
+                self._perf_last_log = self._init_time
+                self._perf_frame_count = 0
+                self._perf_pull_total = 0.0
+                self._perf_process_total = 0.0
+                self._perf_pts_accum = 0.0
+                self._perf_pts_count = 0
+                self._perf_frame_buffer_full = 0
+
         except Exception as e:
             self.logger.error(f"Failed to initialize GStreamer pipeline: {e}")
             if pipeline_str:
@@ -809,8 +960,11 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         # Start recording if configured (for OpenCV backend, not GStreamer - GStreamer uses tee)
         # For GStreamer, recording is integrated in pipeline via tee
         try:
-            self.logger.debug(f"Checking recording: params={self.recording_params is not None}, enabled={self.recording_params.enabled if self.recording_params else False}")
-            if self.recording_params and self.recording_params.enabled:
+            continuous_enabled = (self.recording_params and 
+                                  (self.recording_params.continuous_recording_enabled or 
+                                   (self.recording_params.enabled and not self.recording_params.event_recording_enabled)))
+            self.logger.debug(f"Checking recording: params={self.recording_params is not None}, continuous_enabled={continuous_enabled}")
+            if continuous_enabled:
                 # Check if recording is integrated in pipeline (GStreamer) or separate (OpenCV)
                 is_gstreamer = 'gstreamer' in self.__class__.__name__.lower()
                 if is_gstreamer:
@@ -1204,7 +1358,10 @@ class VideoCaptureGStreamer(VideoCaptureBase):
     
     def _setup_recording_branch(self):
         """Setup recording branch using tee output - encode and record to splitmuxsink"""
-        if not self.recording_params or not self.recording_params.enabled:
+        continuous_enabled = (self.recording_params and 
+                              (self.recording_params.continuous_recording_enabled or 
+                               (self.recording_params.enabled and not self.recording_params.event_recording_enabled)))
+        if not continuous_enabled:
             return
         
         try:
@@ -1222,6 +1379,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             recording_queue = self.pipeline.get_by_name("recording_queue")
             if not recording_queue:
                 raise RuntimeError("Failed to get recording_queue element")
+            self._recording_queue_elem = recording_queue
             
             # Create recording elements
             self.logger.debug("Creating recording elements...")
@@ -1377,6 +1535,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             self._recording_out_dir = None
             self._recording_checked_files = set()
             self._recording_check_stop = False
+            self._recording_queue_elem = None
         except Exception as e:
             self.logger.debug(f"Error cleaning up recording branch: {e}")
     

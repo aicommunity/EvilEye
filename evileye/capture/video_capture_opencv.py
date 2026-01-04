@@ -39,6 +39,21 @@ class VideoCaptureOpencv(VideoCaptureBase):
 
     def init_impl(self):
         api_pref = self.params.get('apiPreference','CAP_FFMPEG')
+        
+        # Check if GStreamer is requested but OpenCV doesn't support it
+        if api_pref == "CAP_GSTREAMER":
+            import cv2
+            build_info = cv2.getBuildInformation()
+            if "GStreamer:                   NO" in build_info or "GStreamer:                      NO" in build_info:
+                self.logger.error(
+                    f"ERROR: apiPreference='CAP_GSTREAMER' is specified for {self.source_names}, "
+                    f"but OpenCV was compiled WITHOUT GStreamer support. "
+                    f"Please either:\n"
+                    f"  1. Use 'type': 'VideoCaptureGStreamer' in source configuration instead of VideoCaptureOpencv, OR\n"
+                    f"  2. Change apiPreference to 'CAP_FFMPEG' for VideoCaptureOpencv"
+                )
+                return False
+        
         if self.source_type == CaptureDeviceType.IpCamera and api_pref == "CAP_GSTREAMER":  # Приведение rtsp ссылки к формату gstreamer
             if '!' not in self.source_address:
                 str_h265 = (' ! rtph265depay ! h265parse ! avdec_h265 ! decodebin ! videoconvert ! '  # Указание кодеков и форматов
@@ -61,7 +76,26 @@ class VideoCaptureOpencv(VideoCaptureBase):
                     self.capture.open(source, VideoCaptureOpencv.VideoCaptureAPIs[api_pref])
             else:
                 self.capture.open(self.source_address, VideoCaptureOpencv.VideoCaptureAPIs[api_pref])
+        elif self.source_type == CaptureDeviceType.VideoFile and api_pref == "CAP_GSTREAMER":
+            # Для видеофайлов с GStreamer нужен специальный pipeline
+            if '!' not in self.source_address:
+                # Строим GStreamer pipeline для видеофайла
+                # Используем decodebin для автоматического определения кодека
+                pipeline = f'filesrc location={self.source_address} ! decodebin ! videoconvert ! video/x-raw,format=BGR ! appsink'
+                self.logger.debug(f"Attempting to open video file with GStreamer pipeline: {pipeline[:100]}...")
+                result = self.capture.open(pipeline, VideoCaptureOpencv.VideoCaptureAPIs[api_pref])
+                self.logger.debug(f"GStreamer open() returned: {result}, isOpened(): {self.capture.isOpened()}")
+                if not self.capture.isOpened():
+                    self.logger.warning(f"Failed to open video file with GStreamer for {self.source_names}. Pipeline: {pipeline}")
+            else:
+                # Если pipeline уже задан, используем его напрямую
+                self.logger.debug(f"Using provided GStreamer pipeline: {self.source_address[:100]}...")
+                result = self.capture.open(self.source_address, VideoCaptureOpencv.VideoCaptureAPIs[api_pref])
+                self.logger.debug(f"GStreamer open() returned: {result}, isOpened(): {self.capture.isOpened()}")
+                if not self.capture.isOpened():
+                    self.logger.warning(f"Failed to open video file with provided GStreamer pipeline for {self.source_names}")
         else:
+            # Для FFMPEG и других API используем прямой путь к файлу
             self.capture.open(self.source_address, VideoCaptureOpencv.VideoCaptureAPIs[api_pref])
 
         self.source_fps = None

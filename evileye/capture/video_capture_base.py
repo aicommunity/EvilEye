@@ -77,8 +77,8 @@ class VideoCaptureBase(EvilEyeBase):
         return captured_images
 
     def start(self):
-        if not self.is_inited:
-            return
+        # Always start threads, even if not initialized - reconnect logic will handle it
+        # This allows reconnect logic to work from the start
         self.run_flag = True
         # self.capture_thread = threading.Thread(target=self._capture_frames)
         # self.capture_thread.start()
@@ -90,8 +90,11 @@ class VideoCaptureBase(EvilEyeBase):
         # For GStreamer backend, recording is integrated into capture pipeline via tee
         # For OpenCV backend, use separate recorder
         try:
-            self.logger.debug(f"Checking recording: params={self.recording_params is not None}, enabled={self.recording_params.enabled if self.recording_params else False}")
-            if self.recording_params and self.recording_params.enabled:
+            continuous_enabled = (self.recording_params and 
+                                  (self.recording_params.continuous_recording_enabled or 
+                                   (self.recording_params.enabled and not self.recording_params.event_recording_enabled)))
+            self.logger.debug(f"Checking recording: params={self.recording_params is not None}, continuous_enabled={continuous_enabled}")
+            if continuous_enabled:
                 # Check if recording is integrated in pipeline (GStreamer) or separate (OpenCV)
                 is_gstreamer = 'gstreamer' in self.__class__.__name__.lower()
                 if is_gstreamer:
@@ -135,7 +138,10 @@ class VideoCaptureBase(EvilEyeBase):
                     except Exception as e:
                         self.logger.error(f"Failed to start recording for {meta.source_name}: {e}", exc_info=True)
             else:
-                self.logger.debug(f"Recording not enabled or params missing: params={self.recording_params is not None}, enabled={self.recording_params.enabled if self.recording_params else False}")
+                continuous_enabled = (self.recording_params and 
+                                      (self.recording_params.continuous_recording_enabled or 
+                                       (self.recording_params.enabled and not self.recording_params.event_recording_enabled)))
+                self.logger.debug(f"Recording not enabled or params missing: params={self.recording_params is not None}, continuous_enabled={continuous_enabled}")
         except Exception as e:
             self.logger.error(f"Error starting recording: {e}", exc_info=True)
 

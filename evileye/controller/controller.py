@@ -203,6 +203,11 @@ class Controller:
 
         self.stream_pipeline_id = os.getenv('EVILEYE_PIPELINE_ID', 'default')
         self.logger.info(f"Controller initialized with stream pipeline id: {self.stream_pipeline_id}")
+        
+        # Event-based recording components
+        self.event_buffers = {}  # source_id -> EventBuffer
+        self.event_recorders = {}  # source_id -> EventRecorder
+        self.recording_params = None  # Global recording parameters
     
     def get_fps(self) -> int:
         return self.fps
@@ -280,6 +285,47 @@ class Controller:
                 self.obj_handler.put(track_info)
                 processing_frames.append(image)
                 self.source_last_processed_frame_id[image.source_id] = image.frame_id
+                
+                # Add frame to event buffer if event recording is enabled
+                if self.recording_params and self.recording_params.event_recording_enabled:
+                    if image.source_id in self.event_buffers and hasattr(image, 'image') and image.image is not None:
+                        try:
+                            # For video files, use current_video_position (in milliseconds) for accurate timestamps
+                            # For live sources (IP cameras, devices), use time_stamp
+                            if (hasattr(image, 'current_video_position') and 
+                                image.current_video_position is not None and 
+                                image.current_video_position >= 0):
+                                # Use video position in seconds as relative timestamp
+                                # This gives accurate frame intervals from the source video
+                                # Convert milliseconds to seconds
+                                timestamp = image.current_video_position / 1000.0
+                            else:
+                                # For live sources, use capture timestamp
+                                timestamp = image.time_stamp if hasattr(image, 'time_stamp') and image.time_stamp else time.time()
+                            self.event_buffers[image.source_id].add_frame(image.image, timestamp)
+                        except Exception as e:
+                            self.logger.debug(f"Error adding frame to event buffer: {e}")
+                    
+                    # Add post-event frames to active recorders
+                    if image.source_id in self.event_recorders:
+                        try:
+                            event_recorder = self.event_recorders[image.source_id]
+                            if event_recorder.is_recording() and hasattr(image, 'image') and image.image is not None:
+                                # For video files, use current_video_position (in milliseconds) for accurate timestamps
+                                # For live sources (IP cameras, devices), use time_stamp
+                                if (hasattr(image, 'current_video_position') and 
+                                    image.current_video_position is not None and 
+                                    image.current_video_position >= 0):
+                                    # Use video position in seconds as relative timestamp
+                                    # This gives accurate frame intervals from the source video
+                                    # Convert milliseconds to seconds
+                                    timestamp = image.current_video_position / 1000.0
+                                else:
+                                    # For live sources, use capture timestamp
+                                    timestamp = image.time_stamp if hasattr(image, 'time_stamp') and image.time_stamp else time.time()
+                                event_recorder.add_post_event_frame(image.image, timestamp)
+                        except Exception as e:
+                            self.logger.debug(f"Error adding post-event frame: {e}")
             
             self.logger.debug(f"Collected {len(processing_frames)} frames for processing")
 
@@ -421,6 +467,16 @@ class Controller:
             self.events_processor.put(events)
         self.events_detectors_controller.stop()
         self.events_processor.stop()
+        
+        # Stop event recording
+        for source_id, event_recorder in self.event_recorders.items():
+            try:
+                if event_recorder.is_recording():
+                    event_recorder.stop_event_recording()
+            except Exception:
+                pass
+        self.event_recorders.clear()
+        self.event_buffers.clear()
 
         # Stop database components only if database is enabled
         if self.use_database and self.db_controller:
@@ -526,9 +582,18 @@ class Controller:
                                 break
                         merged['enabled'] = enabled
                     else:
-                        # If enabled_sources is empty/None, use root enabled flag (default True)
-                        if 'enabled' not in merged:
-                            merged['enabled'] = record_cfg.get('enabled', True)
+                        # If enabled_sources is empty/None, use root enabled flag
+                        # For backward compatibility: if 'enabled' is set but new flags are not,
+                        # treat it as continuous_recording_enabled
+                        if 'continuous_recording_enabled' not in merged and 'event_recording_enabled' not in merged:
+                            if 'enabled' in merged:
+                                merged['continuous_recording_enabled'] = merged.get('enabled', False)
+                            else:
+                                merged['enabled'] = record_cfg.get('enabled', True)
+                                merged['continuous_recording_enabled'] = record_cfg.get('enabled', True)
+                        elif 'enabled' not in merged:
+                            # If new flags are set, keep 'enabled' for backward compatibility
+                            merged['enabled'] = merged.get('continuous_recording_enabled', False) or merged.get('event_recording_enabled', False)
                     s['record'] = merged
                     try:
                         sid_log = (s.get('source_ids') or [idx])[0]
@@ -656,6 +721,9 @@ class Controller:
             self._init_events_detectors_without_db(self.params.get('events_detectors', dict()))
             self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
             self._init_events_processor_without_db(self.params.get('events_processor', dict()))
+        
+        # Initialize event-based recording components
+        self._init_event_recording(params)
 
     def init_main_window(self, main_window: QMainWindow, pyqt_slots: dict, pyqt_signals: dict):
         self.main_window = main_window
@@ -1215,6 +1283,124 @@ class Controller:
                 self.visualizer.set_event_state(source_id, object_id, event_name, is_on, bbox_px)
         except Exception:
             pass
+    
+    def _init_event_recording(self, params):
+        """Initialize event-based recording components (EventBuffer and EventRecorder)."""
+        try:
+            from evileye.video_recorder.recording_params import RecordingParams
+            from evileye.video_recorder.event_buffer import EventBuffer
+            from evileye.video_recorder.event_recorder import EventRecorder
+            from evileye.video_recorder.recorder_base import SourceMeta
+            
+            # Load recording parameters
+            self.recording_params = RecordingParams.from_config(params)
+            
+            # Check if event recording is enabled
+            if not self.recording_params.event_recording_enabled:
+                self.logger.info("Event-based recording is disabled")
+                return
+            
+            # Get sources from pipeline
+            if not hasattr(self.pipeline, "get_sources"):
+                self.logger.warning("Pipeline does not support get_sources(), event recording disabled")
+                return
+            
+            sources = self.pipeline.get_sources()
+            if not sources:
+                self.logger.warning("No sources found, event recording disabled")
+                return
+            
+            # Initialize EventBuffer and EventRecorder for each source
+            max_buffer_duration = self.recording_params.event_pre_seconds + self.recording_params.event_post_seconds + 5.0  # 5s margin
+            
+            for source in sources:
+                if not hasattr(source, 'source_ids') or not source.source_ids:
+                    continue
+                
+                # Get source metadata
+                source_id = source.source_ids[0] if source.source_ids else 0
+                source_name = source.source_names[0] if (hasattr(source, 'source_names') and source.source_names) else f"source_{source_id}"
+                
+                # Get FPS for buffer
+                buffer_fps = self.recording_params.event_buffer_fps
+                if buffer_fps is None:
+                    # Try to get FPS from source
+                    if hasattr(source, 'source_fps') and source.source_fps:
+                        buffer_fps = source.source_fps
+                    else:
+                        buffer_fps = 25.0  # Default
+                
+                # Create EventBuffer
+                event_buffer = EventBuffer(max_buffer_duration, buffer_fps)
+                self.event_buffers[source_id] = event_buffer
+                
+                # Create SourceMeta for EventRecorder
+                source_meta = SourceMeta(
+                    source_name=source_name,
+                    source_address=getattr(source, 'source_address', None),
+                    source_type=str(getattr(source, 'source_type', 'unknown')),
+                    width=getattr(source, 'width', None),
+                    height=getattr(source, 'height', None),
+                    fps=buffer_fps,
+                    username=getattr(source, 'username', None),
+                    password=getattr(source, 'password', None),
+                    source_names=getattr(source, 'source_names', None),
+                    source_ids=getattr(source, 'source_ids', None),
+                )
+                
+                # Create EventRecorder
+                event_recorder = EventRecorder(source_meta, self.recording_params, event_buffer)
+                self.event_recorders[source_id] = event_recorder
+                
+                self.logger.info(f"Initialized event recording for source {source_id} ({source_name}): "
+                               f"buffer_duration={max_buffer_duration}s, fps={buffer_fps}")
+            
+            # Set callback for EventsProcessor
+            if self.events_processor:
+                self.events_processor.set_event_recording_callback(self._on_event_recording)
+                self.logger.info("Event recording callback registered with EventsProcessor")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to initialize event recording: {e}", exc_info=True)
+            # Clear partial initialization
+            self.event_buffers.clear()
+            self.event_recorders.clear()
+    
+    def _on_event_recording(self, event_id: int, event_name: str, event_timestamp: float, 
+                           source_id: int, is_on: bool, bbox: list | None = None):
+        """Callback for event-based recording from EventsProcessor."""
+        try:
+            if source_id not in self.event_recorders:
+                return
+            
+            event_recorder = self.event_recorders[source_id]
+            
+            # Convert timestamp to float (seconds) if it's datetime.datetime
+            if isinstance(event_timestamp, datetime.datetime):
+                event_timestamp = event_timestamp.timestamp()
+            elif not isinstance(event_timestamp, (int, float)):
+                # Try to convert to float
+                try:
+                    event_timestamp = float(event_timestamp)
+                except (ValueError, TypeError):
+                    self.logger.warning(f"Invalid timestamp type for event {event_id}: {type(event_timestamp)}")
+                    return
+            
+            if is_on:
+                # Event started - start recording
+                if not event_recorder.is_recording():
+                    event_recorder.start_event_recording(
+                        event_id, event_name, event_timestamp, source_id, bbox
+                    )
+            else:
+                # Event ended - stop recording
+                if event_recorder.is_recording():
+                    event_recorder.stop_event_recording()
+        except Exception as e:
+            try:
+                self.logger.error(f"Error in event recording callback: {e}", exc_info=True)
+            except Exception:
+                pass
 
     def _init_visualizer(self, params):
         self.visualizer = Visualizer(self.pyqt_slots, self.pyqt_signals)

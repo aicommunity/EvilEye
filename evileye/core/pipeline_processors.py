@@ -75,9 +75,54 @@ class PipelineProcessors(PipelineBase):
         return params
 
     def start(self):
-        """Start all processors in order"""
+        """Start all processors in order, with sources starting last to prevent queue overflow"""
+        import time
+        from ..object_detector.object_detection_base import ObjectDetectorBase
+        from .processor_frame import ProcessorFrame
+        
+        # First, start all processors except sources (detectors, trackers, etc.)
+        # This ensures they are ready to receive data before sources begin capturing
+        detectors = []
         for processor in self.processors:
-            if processor is not None:
+            if processor is not None and not isinstance(processor, ProcessorSource):
+                processor.start()
+                # Collect detectors to wait for model loading
+                if isinstance(processor, ProcessorFrame):
+                    # Check if this processor contains detectors
+                    if hasattr(processor, 'processors'):
+                        for p in processor.processors:
+                            if isinstance(p, ObjectDetectorBase):
+                                detectors.append(p)
+        
+        # Wait for all detectors to load their models before starting sources
+        # This prevents queue overflow when sources start sending frames
+        if detectors:
+            self.logger.info(f"Waiting for {len(detectors)} detector(s) to load models...")
+            all_ready = True
+            for detector in detectors:
+                if hasattr(detector, 'is_ready'):
+                    ready = detector.is_ready(timeout=30.0)
+                    if not ready:
+                        self.logger.warning(f"Detector {detector.__class__.__name__} did not become ready within timeout")
+                        all_ready = False
+                    else:
+                        self.logger.debug(f"Detector {detector.__class__.__name__} is ready")
+                else:
+                    # Fallback: wait a bit for models to load
+                    time.sleep(2.0)
+            if all_ready:
+                self.logger.info("All detectors are ready")
+            else:
+                self.logger.warning("Some detectors may not be fully ready, but starting sources anyway")
+            # Add additional delay after models are loaded to ensure processing threads are fully initialized
+            time.sleep(0.5)
+        else:
+            # No detectors found, use a small delay as fallback
+            time.sleep(1.0)
+        
+        # Finally, start sources last so they don't send frames before processors are ready
+        for processor in self.processors:
+            if processor is not None and isinstance(processor, ProcessorSource):
                 processor.start()
 
     def stop(self):

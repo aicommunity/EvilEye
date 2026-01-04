@@ -23,6 +23,7 @@ class EventsProcessor(EvilEyeBase):
         self.long_term_events = {}
         self.finished_events = {}
         self.ui_callback = None  # callback: (source_id, event_name, is_on, bbox_norm)
+        self.event_recording_callback = None  # callback: (event_id, event_name, event_timestamp, source_id, is_on, bbox)
 
     def set_params_impl(self):
         pass
@@ -40,6 +41,19 @@ class EventsProcessor(EvilEyeBase):
 
     def set_ui_callback(self, cb):
         self.ui_callback = cb
+    
+    def set_event_recording_callback(self, cb):
+        """Set callback for event-based recording.
+        
+        Callback signature: (event_id, event_name, event_timestamp, source_id, is_on, bbox)
+        - event_id: Unique event ID
+        - event_name: Name of the event (e.g., 'ZoneEvent', 'AttributeEvent')
+        - event_timestamp: Timestamp when event occurred
+        - source_id: Source ID where event occurred
+        - is_on: True for event start (ON), False for event end (OFF)
+        - bbox: Optional bounding box [x, y, w, h] or None
+        """
+        self.event_recording_callback = cb
 
     def get_last_id(self):  # Функция для получения последнего id события из БД
         # Return 0 if no database controller is available
@@ -144,6 +158,27 @@ class EventsProcessor(EvilEyeBase):
                                                          False)
                                 except Exception:
                                     pass
+                                # Notify event recording: event OFF
+                                try:
+                                    if self.event_recording_callback:
+                                        # Skip events without source_id (e.g., SystemEvent)
+                                        source_id = getattr(event, 'source_id', None)
+                                        if source_id is None:
+                                            continue
+                                        bbox = getattr(event, 'box_finished', None) or getattr(event, 'box_left', None)
+                                        self.event_recording_callback(
+                                            event.event_id,
+                                            event.get_name(),
+                                            event.timestamp,
+                                            source_id,
+                                            False,  # is_on = False (event ended)
+                                            bbox
+                                        )
+                                except Exception as e:
+                                    try:
+                                        self.logger.debug(f"Error in event recording callback (OFF): {e}")
+                                    except Exception:
+                                        pass
                                     if events not in self.finished_events:
                                         self.finished_events[events] = []
                                     self.finished_events[events].append(event)
@@ -164,6 +199,27 @@ class EventsProcessor(EvilEyeBase):
                                                      True)
                             except Exception:
                                 pass
+                            # Notify event recording: event ON
+                            try:
+                                if self.event_recording_callback and not event.is_finished():
+                                    # Skip events without source_id (e.g., SystemEvent)
+                                    source_id = getattr(event, 'source_id', None)
+                                    if source_id is None:
+                                        continue
+                                    bbox = getattr(event, 'box_found', None) or getattr(event, 'box_entered', None)
+                                    self.event_recording_callback(
+                                        event.event_id,
+                                        event.get_name(),
+                                        event.timestamp,
+                                        source_id,
+                                        True,  # is_on = True (event started)
+                                        bbox
+                                    )
+                            except Exception as e:
+                                try:
+                                    self.logger.debug(f"Error in event recording callback (ON): {e}")
+                                except Exception:
+                                    pass
                 else:  # Если нет активных долгосрочных событий, анализируем новые
                     for event in new_events[events]:
                         event.set_id(self.id_counter)
@@ -195,6 +251,27 @@ class EventsProcessor(EvilEyeBase):
                                                          getattr(event, 'box_found', None))
                                 except Exception:
                                     pass
+                                # Notify event recording: event ON
+                                try:
+                                    if self.event_recording_callback:
+                                        # Skip events without source_id (e.g., SystemEvent)
+                                        source_id = getattr(event, 'source_id', None)
+                                        if source_id is None:
+                                            continue
+                                        bbox = getattr(event, 'box_found', None) or getattr(event, 'box_entered', None)
+                                        self.event_recording_callback(
+                                            event.event_id,
+                                            event.get_name(),
+                                            event.timestamp,
+                                            source_id,
+                                            True,  # is_on = True (event started)
+                                            bbox
+                                        )
+                                except Exception as e:
+                                    try:
+                                        self.logger.debug(f"Error in event recording callback (ON): {e}")
+                                    except Exception:
+                                        pass
                         else:  # Иначе отправляем в завершенные (краткосрочные события)
                             if events not in self.finished_events:
                                 self.finished_events[events] = []
@@ -216,6 +293,37 @@ class EventsProcessor(EvilEyeBase):
                                                      None)
                             except Exception:
                                 pass
+                            # Notify event recording for non-long events: ON then OFF
+                            try:
+                                if self.event_recording_callback and not event.is_long_term():
+                                    # Skip events without source_id (e.g., SystemEvent)
+                                    source_id = getattr(event, 'source_id', None)
+                                    if source_id is None:
+                                        continue
+                                    bbox = getattr(event, 'box_found', None) or getattr(event, 'box_entered', None)
+                                    # ON
+                                    self.event_recording_callback(
+                                        event.event_id,
+                                        event.get_name(),
+                                        event.timestamp,
+                                        source_id,
+                                        True,  # is_on = True (event started)
+                                        bbox
+                                    )
+                                    # OFF (immediately after for short-term events)
+                                    self.event_recording_callback(
+                                        event.event_id,
+                                        event.get_name(),
+                                        event.timestamp,
+                                        source_id,
+                                        False,  # is_on = False (event ended)
+                                        None
+                                    )
+                            except Exception as e:
+                                try:
+                                    self.logger.debug(f"Error in event recording callback (short-term): {e}")
+                                except Exception:
+                                    pass
                 # Удаляем завершенные долгосрочные события
                 if events in self.long_term_events:
                     filtered_long_term[events] = [self.long_term_events[events][i] for i in range(len(self.long_term_events[events])) if i not in finished_idxs]
