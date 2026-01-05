@@ -12,13 +12,13 @@ class JournalAdapterSystemEvents(JournalAdapterBase):
 
     def select_query(self) -> str:
         # Columns order must match union schema in EventsJournal
-        # time_stamp, type, event_details, time_lost, information, preview_path, lost_preview_path
+        # time_stamp, type, information, source_name, time_lost, preview_path, lost_preview_path
         query = (
             'SELECT time_stamp, '
             "CAST('SystemEvent' AS text) AS type, "
-            "CAST(NULL AS text) AS event_details, "
-            'NULL as time_lost, '
             "(CASE WHEN event_type = 'SystemStart' THEN 'System started' ELSE 'System stopped' END) AS information, "
+            "'System' AS source_name, "
+            'NULL as time_lost, '
             'NULL AS preview_path, NULL AS lost_preview_path FROM system_events'
         )
         return query

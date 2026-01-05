@@ -345,19 +345,22 @@ class EventsJournal(QWidget):
         # header = self.table.verticalHeader()
         h_header = self.table.horizontalHeader()
         v_header = self.table.verticalHeader()
-        h_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        h_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        h_header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        h_header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        h_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)  # Time
+        h_header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)  # Event
+        h_header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)  # Information
+        h_header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # Source
+        h_header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)  # Time lost
+        h_header.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)  # Preview
+        h_header.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)  # Lost preview
         h_header.setDefaultSectionSize(EventsJournal.preview_width)
         v_header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
 
         self.image_delegate = ImageDelegate(None, image_dir=self.image_dir, logger_name="image_delegate", parent_logger=self.logger)
         self.date_delegate = DateTimeDelegate(None)
-        self.table.setItemDelegateForColumn(2, self.date_delegate)
-        self.table.setItemDelegateForColumn(3, self.date_delegate)
-        self.table.setItemDelegateForColumn(5, self.image_delegate)
-        self.table.setItemDelegateForColumn(6, self.image_delegate)
+        self.table.setItemDelegateForColumn(0, self.date_delegate)  # Time
+        self.table.setItemDelegateForColumn(4, self.date_delegate)  # Time lost
+        self.table.setItemDelegateForColumn(5, self.image_delegate)  # Preview
+        self.table.setItemDelegateForColumn(6, self.image_delegate)  # Lost preview
 
     def _setup_model(self):
         self.model = QSqlQueryModel()
@@ -379,9 +382,9 @@ class EventsJournal(QWidget):
             self.logger.error(f"SQL Prepare Error: {query.lastError().text()}")
         self.model.setHeaderData(0, Qt.Orientation.Horizontal, self.tr('Time'))
         self.model.setHeaderData(1, Qt.Orientation.Horizontal, self.tr('Event'))
-        self.model.setHeaderData(2, Qt.Orientation.Horizontal, self.tr('Event Details'))
-        self.model.setHeaderData(3, Qt.Orientation.Horizontal, self.tr('Time lost'))
-        self.model.setHeaderData(4, Qt.Orientation.Horizontal, self.tr('Information'))
+        self.model.setHeaderData(2, Qt.Orientation.Horizontal, self.tr('Information'))
+        self.model.setHeaderData(3, Qt.Orientation.Horizontal, self.tr('Source'))
+        self.model.setHeaderData(4, Qt.Orientation.Horizontal, self.tr('Time lost'))
         self.model.setHeaderData(5, Qt.Orientation.Horizontal, self.tr('Preview'))
         self.model.setHeaderData(6, Qt.Orientation.Horizontal, self.tr('Lost preview'))
 

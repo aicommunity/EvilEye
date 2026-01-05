@@ -368,18 +368,18 @@ class EventsJournalJson(QWidget):
 
         self.layout.addLayout(toolbar)
 
-        # Use database journal structure: Time, Event, Event Details, Time lost, Information, Preview, Lost preview
+        # Use objects journal structure: Time, Event, Information, Source, Time lost, Preview, Lost preview
         self.table = QTableWidget(0, 7)
-        self.table.setHorizontalHeaderLabels(['Time', 'Event', 'Event Details', 'Time lost', 'Information', 'Preview', 'Lost preview'])
+        self.table.setHorizontalHeaderLabels(['Time', 'Event', 'Information', 'Source', 'Time lost', 'Preview', 'Lost preview'])
         h = self.table.horizontalHeader()
         v = self.table.verticalHeader()
-        h.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        h.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        h.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        h.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        h.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
-        h.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
-        h.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
+        h.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)  # Time
+        h.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)  # Event
+        h.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)  # Information
+        h.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # Source
+        h.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)  # Time lost
+        h.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)  # Preview
+        h.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)  # Lost preview
         # Match aspect ratio with other journals: width=300, height=150
         try:
             h.resizeSection(5, 300)
@@ -400,7 +400,7 @@ class EventsJournalJson(QWidget):
         # Set up datetime delegate for time columns
         self.datetime_delegate = DateTimeDelegate(self.table)
         self.table.setItemDelegateForColumn(0, self.datetime_delegate)  # Time
-        self.table.setItemDelegateForColumn(3, self.datetime_delegate)  # Time lost
+        self.table.setItemDelegateForColumn(4, self.datetime_delegate)  # Time lost
 
         # Connect double click signal - use cellDoubleClicked for QTableWidget
         self.table.cellDoubleClicked.connect(self._display_image)
@@ -562,20 +562,17 @@ class EventsJournalJson(QWidget):
                     continue
                 if kind == 'attr':
                     event_name = 'AttributeEvent'
-                    event_details = base.get('event_name','')
                     info = f"AttributeEvent name={base.get('event_name','')}; obj={base.get('object_id')}; class={base.get('class_name', base.get('class_id',''))}; attrs={base.get('attrs', [])}"
                 elif kind == 'zone':
                     event_name = 'ZoneEvent'
-                    event_details = str(base.get('source_id',''))
                     info = f"ZoneEvent obj={base.get('object_id')} zone={base.get('zone_id','')}"
                 else:
                     event_name = 'FOVEvent'
-                    event_details = str(base.get('source_id',''))
                     info = f"FOVEvent obj={base.get('object_id')}"
 
                 row_data = {
+                    'source': base.get('source_name') or str(base.get('source_id', '')),
                     'event': event_name,
-                    'event_details': event_details,
                     'information': info,
                     'time': (found_ev.get('ts') if found_ev else base.get('ts','')),
                     'time_lost': (lost_ev.get('ts') if lost_ev else ''),
@@ -589,8 +586,8 @@ class EventsJournalJson(QWidget):
             # Add camera events as standalone rows
             for ev in cam_events:
                 table_rows.append({
+                    'source': ev.get('camera_full_address', ''),
                     'event': 'CameraEvent',
-                    'event_details': ev.get('camera_full_address',''),
                     'information': f"Camera {ev.get('camera_full_address')} status={ev.get('connection_status')}",
                     'time': ev.get('ts',''),
                     'time_lost': '',
@@ -603,8 +600,8 @@ class EventsJournalJson(QWidget):
             # Добавляем системные события отдельными строками
             for ev in sys_events:
                 table_rows.append({
+                    'source': 'System',
                     'event': 'SystemEvent',
-                    'event_details': ev.get('system_event',''),
                     'information': f"System {ev.get('system_event','')}",
                     'time': ev.get('ts',''),
                     'time_lost': '',
@@ -628,18 +625,19 @@ class EventsJournalJson(QWidget):
                 # Event column (1)
                 self.table.setItem(r, 1, QTableWidgetItem(row_data['event']))
                 
-                # Event Details column (2)
-                self.table.setItem(r, 2, QTableWidgetItem(row_data['event_details']))
+                # Information column (2)
+                self.table.setItem(r, 2, QTableWidgetItem(row_data['information']))
                 
-                # Time lost column (3)
-                self.table.setItem(r, 3, QTableWidgetItem(str(row_data['time_lost'])))
+                # Source column (3)
+                self.table.setItem(r, 3, QTableWidgetItem(str(row_data.get('source', ''))))
                 
-                # Information column (4)
-                self.table.setItem(r, 4, QTableWidgetItem(row_data['information']))
+                # Time lost column (4)
+                self.table.setItem(r, 4, QTableWidgetItem(str(row_data['time_lost'])))
                 
                 # Preview column (found image)
                 if row_data['preview']:
-                    date_folder = row_data['found_event'].get('date_folder', '')
+                    found_event = row_data.get('found_event')
+                    date_folder = found_event.get('date_folder', '') if found_event else ''
                     prev = row_data['preview']
                     if os.path.isabs(prev):
                         img_path = prev
@@ -649,16 +647,20 @@ class EventsJournalJson(QWidget):
                         img_path = os.path.join(self.base_dir, 'images', date_folder, prev)
                     item = QTableWidgetItem(img_path)
                     # Store event data for double click functionality
-                    item.setData(Qt.ItemDataRole.UserRole, row_data['found_event'])
+                    item.setData(Qt.ItemDataRole.UserRole, found_event)
                     self.table.setItem(r, 5, item)
                 else:
                     # Store empty string but still create item for delegate
                     item = QTableWidgetItem('')
+                    found_event = row_data.get('found_event')
+                    if found_event:
+                        item.setData(Qt.ItemDataRole.UserRole, found_event)
                     self.table.setItem(r, 5, item)
                 
                 # Lost preview column
                 if row_data['lost_preview']:
-                    date_folder = row_data['lost_event'].get('date_folder', '')
+                    lost_event = row_data.get('lost_event')
+                    date_folder = lost_event.get('date_folder', '') if lost_event else ''
                     prev = row_data['lost_preview']
                     if os.path.isabs(prev):
                         img_path = prev
@@ -668,11 +670,14 @@ class EventsJournalJson(QWidget):
                         img_path = os.path.join(self.base_dir, 'images', date_folder, prev)
                     item = QTableWidgetItem(img_path)
                     # Store event data for double click functionality
-                    item.setData(Qt.ItemDataRole.UserRole, row_data['lost_event'])
+                    item.setData(Qt.ItemDataRole.UserRole, lost_event)
                     self.table.setItem(r, 6, item)
                 else:
                     # Store empty string but still create item for delegate
                     item = QTableWidgetItem('')
+                    lost_event = row_data.get('lost_event')
+                    if lost_event:
+                        item.setData(Qt.ItemDataRole.UserRole, lost_event)
                     self.table.setItem(r, 6, item)
                 
                 # Set row height for image display
