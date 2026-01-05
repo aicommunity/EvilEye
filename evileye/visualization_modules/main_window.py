@@ -847,6 +847,9 @@ class MainWindow(QMainWindow):
                 for i in range(tabs.count()):
                     if tabs.tabText(i).lower().startswith('objects'):
                         tabs.setCurrentIndex(i)
+                        # Explicitly ensure journal is initialized
+                        if hasattr(self.db_journal_win, '_ensure_tab_initialized'):
+                            self.db_journal_win._ensure_tab_initialized(i)
                         tabs.widget(i).setVisible(True)
                         tabs.tabBar().setTabVisible(i, True)
                         break
@@ -875,6 +878,9 @@ class MainWindow(QMainWindow):
                 for i in range(tabs.count()):
                     if tabs.tabText(i).lower().startswith('events'):
                         tabs.setCurrentIndex(i)
+                        # Explicitly ensure journal is initialized
+                        if hasattr(self.db_journal_win, '_ensure_tab_initialized'):
+                            self.db_journal_win._ensure_tab_initialized(i)
                         tabs.widget(i).setVisible(True)
                         tabs.tabBar().setTabVisible(i, True)
                         break

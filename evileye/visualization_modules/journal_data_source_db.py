@@ -50,8 +50,12 @@ class DatabaseJournalDataSource(EventJournalDataSource):
         self._qdatetime_type = QDateTime
         self._qvariant_type = QVariant
         
-        # Default time range: last 7 days
+        # Default time range: last 7 days (for pagination after initial load)
         self.default_days_back = 7
+        
+        # Initial load optimization: limit to last day, max 30 records
+        self.initial_load_limit = 30
+        self._is_initial_load = True
         
         # Initialize database connection
         self._init_db_connection()
@@ -249,7 +253,7 @@ class DatabaseJournalDataSource(EventJournalDataSource):
             pass
         return []
 
-    def _build_objects_sql(self, filters: Dict, include_pagination: bool = False, page: int = 0, size: int = 50) -> str:
+    def _build_objects_sql(self, filters: Dict, include_pagination: bool = False, page: int = 0, size: int = 50, initial_load: bool = False) -> str:
         """Build SQL query for objects with filters and optional pagination"""
         # Base SELECT
         sql = ('SELECT time_stamp, CAST(\'ObjectEvent\' AS text) AS event_type, '
@@ -263,8 +267,12 @@ class DatabaseJournalDataSource(EventJournalDataSource):
         # Date filter
         if self.date_filter:
             conditions.append(f"DATE(time_stamp) = '{self.date_filter}'")
+        elif initial_load:
+            # При начальной загрузке - только последний день
+            today = datetime.datetime.now().date()
+            conditions.append(f"DATE(time_stamp) = '{today.strftime('%Y-%m-%d')}'")
         else:
-            # Default: last 7 days
+            # Default: last 7 days (for pagination)
             default_start = datetime.datetime.now() - datetime.timedelta(days=self.default_days_back)
             conditions.append(f"time_stamp >= '{default_start.strftime('%Y-%m-%d %H:%M:%S')}'")
         
@@ -293,12 +301,16 @@ class DatabaseJournalDataSource(EventJournalDataSource):
         
         # Add pagination
         if include_pagination:
-            offset = page * size
-            sql += f' LIMIT {size} OFFSET {offset}'
+            if initial_load:
+                # При начальной загрузке - только 30 записей
+                sql += f' LIMIT {min(size, self.initial_load_limit)}'
+            else:
+                offset = page * size
+                sql += f' LIMIT {size} OFFSET {offset}'
         
         return sql
 
-    def _build_events_sql(self, filters: Dict, include_pagination: bool = False, page: int = 0, size: int = 50) -> str:
+    def _build_events_sql(self, filters: Dict, include_pagination: bool = False, page: int = 0, size: int = 50, initial_load: bool = False) -> str:
         """Build SQL query for events with filters and optional pagination"""
         if not self.adapters:
             return ''
@@ -316,8 +328,12 @@ class DatabaseJournalDataSource(EventJournalDataSource):
         # Date filter
         if self.date_filter:
             conditions.append(f"DATE(time_stamp) = '{self.date_filter}'")
+        elif initial_load:
+            # При начальной загрузке - только последний день
+            today = datetime.datetime.now().date()
+            conditions.append(f"DATE(time_stamp) = '{today.strftime('%Y-%m-%d')}'")
         else:
-            # Default: last 7 days
+            # Default: last 7 days (for pagination)
             default_start = datetime.datetime.now() - datetime.timedelta(days=self.default_days_back)
             conditions.append(f"time_stamp >= '{default_start.strftime('%Y-%m-%d %H:%M:%S')}'")
         
@@ -333,8 +349,12 @@ class DatabaseJournalDataSource(EventJournalDataSource):
         
         # Add pagination
         if include_pagination:
-            offset = page * size
-            query_string += f' LIMIT {size} OFFSET {offset}'
+            if initial_load:
+                # При начальной загрузке - только 30 записей
+                query_string += f' LIMIT {min(size, self.initial_load_limit)}'
+            else:
+                offset = page * size
+                query_string += f' LIMIT {size} OFFSET {offset}'
         
         return query_string
 
@@ -390,7 +410,7 @@ class DatabaseJournalDataSource(EventJournalDataSource):
             'date_folder': date_folder,
         }
 
-    def _execute_query_and_convert(self, sql: str) -> List[Dict]:
+    def _execute_query_and_convert(self, sql: str, skip_enrichment: bool = False) -> List[Dict]:
         """Execute SQL query and convert results to event format"""
         query = QSqlQuery(QSqlDatabase.database(self.db_connection_name))
         
@@ -452,13 +472,13 @@ class DatabaseJournalDataSource(EventJournalDataSource):
                         results.append(lost_event)
             else:
                 # For events: convert directly
-                event_dict = self._convert_events_row_to_dict(row_dict)
+                event_dict = self._convert_events_row_to_dict(row_dict, skip_enrichment=skip_enrichment)
                 if event_dict:
                     results.append(event_dict)
         
         return results
 
-    def _convert_events_row_to_dict(self, row_dict: Dict) -> Dict:
+    def _convert_events_row_to_dict(self, row_dict: Dict, skip_enrichment: bool = False) -> Dict:
         """Convert events row to unified format"""
         event_type = row_dict.get('type', '')
         time_stamp = row_dict.get('time_stamp')
@@ -489,17 +509,22 @@ class DatabaseJournalDataSource(EventJournalDataSource):
             'date_folder': date_folder,
         }
         
-        # Enrich with additional data based on event type
+        # Enrich with additional data based on event type (skip expensive enrichment during initial load)
         if event_type == 'ZoneEvent':
-            self._enrich_zone_event(event_dict, row_dict)
+            if not skip_enrichment:
+                self._enrich_zone_event(event_dict, row_dict)
         elif event_type == 'AttributeEvent':
-            self._enrich_attribute_event(event_dict, row_dict)
+            if not skip_enrichment:
+                self._enrich_attribute_event(event_dict, row_dict)
         elif event_type == 'FOVEvent':
-            self._enrich_fov_event(event_dict, row_dict)
+            if not skip_enrichment:
+                self._enrich_fov_event(event_dict, row_dict)
         elif event_type == 'CameraEvent':
+            # CameraEvent enrichment is fast (no DB query), so always do it
             event_dict['camera_full_address'] = row_dict.get('source_name', '')
             event_dict['connection_status'] = 'reconnect' in (row_dict.get('information', '') or '').lower()
         elif event_type == 'SystemEvent':
+            # SystemEvent enrichment is fast (no DB query), so always do it
             event_dict['system_event'] = row_dict.get('information', '')
         
         return event_dict
@@ -507,17 +532,24 @@ class DatabaseJournalDataSource(EventJournalDataSource):
     def fetch(self, page: int, size: int, filters: Dict, sort: List[Tuple[str, str]]) -> List[Dict]:
         """Fetch page of events directly from database with SQL pagination"""
         try:
+            # Check if this is initial load
+            initial_load = self._is_initial_load and page == 0
+            
             # Build SQL with filters and pagination
             if self.journal_type == 'objects':
-                sql = self._build_objects_sql(filters, include_pagination=True, page=page, size=size)
+                sql = self._build_objects_sql(filters, include_pagination=True, page=page, size=size, initial_load=initial_load)
             else:
-                sql = self._build_events_sql(filters, include_pagination=True, page=page, size=size)
+                sql = self._build_events_sql(filters, include_pagination=True, page=page, size=size, initial_load=initial_load)
+            
+            # Reset initial load flag after first fetch
+            if initial_load:
+                self._is_initial_load = False
             
             if not sql:
                 return []
             
-            # Execute query and convert results
-            results = self._execute_query_and_convert(sql)
+            # Execute query and convert results (skip enrichment during initial load for events)
+            results = self._execute_query_and_convert(sql, skip_enrichment=initial_load)
             
             # Apply remaining filters that can't be done in SQL (e.g., event_type for objects)
             if self.journal_type == 'objects' and filters.get('event_type'):

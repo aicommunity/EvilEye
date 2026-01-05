@@ -61,6 +61,12 @@ class UnifiedObjectsJournal(QWidget):
         # Flag to track if data has been loaded (lazy loading)
         self._data_loaded = False
         
+        # Cache for loaded data and scroll loading
+        self._loaded_data = []  # Cache of loaded data rows
+        self._max_cache_size = 500  # Maximum cache size
+        self._min_keep_size = 30  # Minimum records to keep (latest)
+        self._is_loading = False  # Flag to prevent duplicate loading
+        
         # Cache for resolved image paths
         self._image_path_cache = {}
         
@@ -141,6 +147,9 @@ class UnifiedObjectsJournal(QWidget):
 
         # Connect double click signal
         self.table.cellDoubleClicked.connect(self._display_image)
+        
+        # Connect scroll handler for lazy loading
+        self.table.verticalScrollBar().valueChanged.connect(self._on_scroll)
 
         self.setLayout(self.layout)
 
@@ -218,8 +227,15 @@ class UnifiedObjectsJournal(QWidget):
             self.logger.error(f"Update check error: {e}")
 
     def _reload_table(self):
-        """Reload table data from data source"""
+        """Reload table data from data source - initial load or full reload"""
         try:
+            # Reset cache and page for full reload
+            self._loaded_data = []
+            self.page = 0
+            # Reset initial load flag in data source
+            if hasattr(self.data_source, '_is_initial_load'):
+                self.data_source._is_initial_load = True
+            
             filters = {k: v for k, v in self.filters.items() if v}
             rows = self.data_source.fetch(self.page, self.page_size, filters, [])
             
@@ -335,12 +351,153 @@ class UnifiedObjectsJournal(QWidget):
                 for r, row_items in enumerate(items_to_set):
                     for c, item in enumerate(row_items):
                         self.table.setItem(r, c, item)
+                
+                # Store loaded data in cache
+                self._loaded_data = table_rows
             finally:
                 # Re-enable updates and sorting
                 self.table.setSortingEnabled(True)
                 self.table.setUpdatesEnabled(True)
         except Exception as e:
             self.logger.error(f"Reload table error: {e}", exc_info=True)
+    
+    def _on_scroll(self, value):
+        """Handle scroll event - load next page when near bottom"""
+        if self._is_loading:
+            return
+        
+        scrollbar = self.table.verticalScrollBar()
+        max_value = scrollbar.maximum()
+        current_value = scrollbar.value()
+        
+        # Load when reaching 80% of scroll
+        if max_value > 0 and max_value > 100:  # Only if there's significant scrolling
+            scroll_percent = current_value / max_value if max_value > 0 else 0
+            if scroll_percent > 0.8:
+                self._load_next_page()
+    
+    def _load_next_page(self):
+        """Load next page of data and append to table"""
+        if self._is_loading:
+            return
+        
+        self._is_loading = True
+        try:
+            self.page += 1
+            filters = {k: v for k, v in self.filters.items() if v}
+            rows = self.data_source.fetch(self.page, self.page_size, filters, [])
+            
+            if not rows:
+                # No more data to load
+                return
+            
+            # Filter and group events by object_id
+            from collections import defaultdict
+            grouped_events = defaultdict(lambda: {'found': None, 'lost': None})
+            for ev in rows:
+                et = ev.get('event_type')
+                if et not in ('found', 'lost'):
+                    continue
+                object_id = ev.get('object_id')
+                if et == 'found':
+                    grouped_events[object_id]['found'] = ev
+                elif et == 'lost':
+                    grouped_events[object_id]['lost'] = ev
+            
+            # Create table rows from grouped events
+            new_table_rows = []
+            for object_id, events in grouped_events.items():
+                found_event = events['found']
+                lost_event = events['lost']
+                
+                base_event = found_event or lost_event
+                if not base_event:
+                    continue
+                
+                # Format information string
+                object_id_val = base_event.get('object_id', '')
+                class_name = base_event.get('class_name') or base_event.get('class_id', '')
+                confidence = base_event.get('confidence', 0)
+                if isinstance(confidence, (int, float)):
+                    conf_str = f"{confidence:.2f}"
+                else:
+                    conf_str = str(confidence)
+                
+                information = f"Object Id={object_id_val}; class: {class_name}; conf: {conf_str}"
+                
+                row_data = {
+                    'time': found_event.get('ts') if found_event else (lost_event.get('ts') if lost_event else ''),
+                    'event': 'ObjectEvent',
+                    'information': information,
+                    'source': base_event.get('source_name', ''),
+                    'time_lost': lost_event.get('ts') if lost_event else '',
+                    'preview': found_event.get('image_filename') if found_event else '',
+                    'lost_preview': lost_event.get('image_filename') if lost_event else '',
+                    'found_event': found_event,
+                    'lost_event': lost_event
+                }
+                new_table_rows.append(row_data)
+            
+            if new_table_rows:
+                # Add to cache
+                old_cache_size = len(self._loaded_data)
+                self._loaded_data.extend(new_table_rows)
+                
+                # Manage cache size - keep latest _min_keep_size + new data
+                if len(self._loaded_data) > self._max_cache_size:
+                    keep_count = self._min_keep_size + len(new_table_rows)
+                    if len(self._loaded_data) > keep_count:
+                        # Calculate how many rows to remove
+                        rows_to_remove = len(self._loaded_data) - keep_count
+                        # Remove oldest entries from cache, keep latest
+                        self._loaded_data = self._loaded_data[-keep_count:]
+                        # Remove old rows from table (oldest first)
+                        for _ in range(rows_to_remove):
+                            if self.table.rowCount() > 0:
+                                self.table.removeRow(0)
+                
+                # Append new rows to table
+                self._append_to_table(new_table_rows)
+        except Exception as e:
+            self.logger.error(f"Load next page error: {e}", exc_info=True)
+        finally:
+            self._is_loading = False
+    
+    def _append_to_table(self, table_rows):
+        """Append new rows to the end of the table"""
+        if not table_rows:
+            return
+        
+        self.table.setUpdatesEnabled(False)
+        self.table.setSortingEnabled(False)
+        try:
+            current_row_count = self.table.rowCount()
+            self.table.setRowCount(current_row_count + len(table_rows))
+            
+            for r, row_data in enumerate(table_rows):
+                row_idx = current_row_count + r
+                
+                # Preview column (5) - found image
+                preview_path = self._resolve_image_path(row_data['preview'], row_data.get('found_event'))
+                preview_item = QTableWidgetItem(preview_path or '')
+                preview_item.setData(Qt.ItemDataRole.UserRole, row_data.get('found_event'))
+                
+                # Lost preview column (6) - lost image
+                lost_preview_path = self._resolve_image_path(row_data['lost_preview'], row_data.get('lost_event'))
+                lost_preview_item = QTableWidgetItem(lost_preview_path or '')
+                lost_preview_item.setData(Qt.ItemDataRole.UserRole, row_data.get('lost_event'))
+                
+                # Set all items for this row
+                self.table.setItem(row_idx, 0, QTableWidgetItem(str(row_data['time'])))
+                self.table.setItem(row_idx, 1, QTableWidgetItem(row_data['event']))
+                self.table.setItem(row_idx, 2, QTableWidgetItem(row_data['information']))
+                self.table.setItem(row_idx, 3, QTableWidgetItem(str(row_data.get('source', ''))))
+                self.table.setItem(row_idx, 4, QTableWidgetItem(str(row_data['time_lost'])))
+                self.table.setItem(row_idx, 5, preview_item)
+                self.table.setItem(row_idx, 6, lost_preview_item)
+        finally:
+            self.table.setSortingEnabled(True)
+            self.table.setUpdatesEnabled(True)
 
     def _resolve_image_path(self, img_path: str, event_data: Optional[dict]) -> Optional[str]:
         """Resolve image path to full absolute path with caching"""

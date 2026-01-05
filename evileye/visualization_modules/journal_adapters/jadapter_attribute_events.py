@@ -13,15 +13,16 @@ class JournalAdapterAttributeEvents(JournalAdapterBase):
     def select_query(self) -> str:
         # Return columns compatible with EventsJournal:
         # time_stamp, type, information, source_name, time_lost, preview_path, lost_preview_path
-        # Get source_name from objects table using subquery
+        # Get source_name from objects table using LEFT JOIN (much faster than correlated subquery per row)
         query = (
             "SELECT ae.time_stamp, "
             "CAST('AttributeEvent' AS text) AS type, "
             "('Attributes event ' || ae.event_name || ' on source ' || ae.source_id || ' obj=' || ae.object_id || ' class=' || ae.class_id || ' attrs=' || ae.attrs) AS information, "
-            "COALESCE((SELECT DISTINCT o.source_name FROM objects o WHERE o.source_id = ae.source_id LIMIT 1), CAST(ae.source_id AS text)) AS source_name, "
+            "COALESCE(o.source_name, CAST(ae.source_id AS text)) AS source_name, "
             "ae.time_finished AS time_lost, "
             "ae.preview_path_found AS preview_path, "
             "ae.preview_path_finished AS lost_preview_path "
-            "FROM attribute_events ae"
+            "FROM attribute_events ae "
+            "LEFT JOIN (SELECT source_id, MAX(source_name) AS source_name FROM objects GROUP BY source_id) o ON o.source_id = ae.source_id"
         )
         return query

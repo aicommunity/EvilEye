@@ -335,6 +335,21 @@ class DatabaseJournalWindow(QWidget):
                 self.logger.error(f"Failed to create UnifiedEventsJournal: {e}")
                 import traceback
                 self.logger.error(f"Traceback: {traceback.format_exc()}")
+    
+    def _ensure_tab_initialized(self, index):
+        """Ensure journal is initialized for the tab at given index"""
+        if index < 0 or not self.db_controller or not self.tables:
+            return
+        
+        # Check if journal already created
+        tab_text = self.tabs.tabText(index)
+        if 'Objects' in tab_text and self._objects_journal_created:
+            return
+        if 'Events' in tab_text and self._events_journal_created:
+            return
+        
+        # Call _on_tab_changed to create journal
+        self._on_tab_changed(index)
 
     def close(self):
         for tab_idx in range(self.tabs.count()):
