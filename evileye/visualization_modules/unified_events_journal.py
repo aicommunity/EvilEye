@@ -314,10 +314,13 @@ class UnifiedEventsJournal(QWidget):
             for ev in cam_events:
                 camera_full_address = ev.get('camera_full_address', '')
                 source_name = self._get_source_name_from_address(camera_full_address)
+                # Format information to match old journal: 'Camera=' || camera_full_address || ' ' || 'reconnect'/'disconnect'
+                connection_status = ev.get('connection_status', False)
+                status_text = 'reconnect' if connection_status else 'disconnect'
                 table_rows.append({
                     'source': source_name,
                     'event': 'CameraEvent',
-                    'information': f"Camera {camera_full_address} status={ev.get('connection_status')}",
+                    'information': f"Camera={camera_full_address} {status_text}",
                     'time': ev.get('ts', ''),
                     'time_lost': '',
                     'preview': '',
@@ -328,10 +331,16 @@ class UnifiedEventsJournal(QWidget):
 
             # Add system events as standalone rows
             for ev in sys_events:
+                # Format information to match old journal: 'System started' or 'System stopped'
+                system_event = ev.get('system_event', '')
+                if system_event == 'SystemStart':
+                    information = 'System started'
+                else:
+                    information = 'System stopped'
                 table_rows.append({
                     'source': 'System',
                     'event': 'SystemEvent',
-                    'information': f"System {ev.get('system_event', '')}",
+                    'information': information,
                     'time': ev.get('ts', ''),
                     'time_lost': '',
                     'preview': '',
@@ -495,10 +504,13 @@ class UnifiedEventsJournal(QWidget):
             for ev in cam_events:
                 camera_full_address = ev.get('camera_full_address', '')
                 source_name = self._get_source_name_from_address(camera_full_address)
+                # Format information to match old journal: 'Camera=' || camera_full_address || ' ' || 'reconnect'/'disconnect'
+                connection_status = ev.get('connection_status', False)
+                status_text = 'reconnect' if connection_status else 'disconnect'
                 new_table_rows.append({
                     'source': source_name,
                     'event': 'CameraEvent',
-                    'information': f"Camera {camera_full_address} status={ev.get('connection_status')}",
+                    'information': f"Camera={camera_full_address} {status_text}",
                     'time': ev.get('ts', ''),
                     'time_lost': '',
                     'preview': '',
@@ -509,10 +521,16 @@ class UnifiedEventsJournal(QWidget):
             
             # Add system events
             for ev in sys_events:
+                # Format information to match old journal: 'System started' or 'System stopped'
+                system_event = ev.get('system_event', '')
+                if system_event == 'SystemStart':
+                    information = 'System started'
+                else:
+                    information = 'System stopped'
                 new_table_rows.append({
                     'source': 'System',
                     'event': 'SystemEvent',
-                    'information': f"System {ev.get('system_event', '')}",
+                    'information': information,
                     'time': ev.get('ts', ''),
                     'time_lost': '',
                     'preview': '',

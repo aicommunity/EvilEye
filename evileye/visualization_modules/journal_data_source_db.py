@@ -525,7 +525,12 @@ class DatabaseJournalDataSource(EventJournalDataSource):
             event_dict['connection_status'] = 'reconnect' in (row_dict.get('information', '') or '').lower()
         elif event_type == 'SystemEvent':
             # SystemEvent enrichment is fast (no DB query), so always do it
-            event_dict['system_event'] = row_dict.get('information', '')
+            # Extract original event_type from information (which contains 'System started' or 'System stopped')
+            information = row_dict.get('information', '')
+            if information == 'System started':
+                event_dict['system_event'] = 'SystemStart'
+            else:
+                event_dict['system_event'] = 'SystemStop'
         
         return event_dict
 
