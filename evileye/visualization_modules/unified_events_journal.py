@@ -5,7 +5,7 @@
 import os
 import sys
 from pathlib import Path
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Tuple
 
 try:
     from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView, QComboBox
@@ -91,6 +91,24 @@ class UnifiedEventsJournal(QWidget):
         self._build_ui()
         # Don't call _reload_dates() here - will be called on first show
         # Don't call _reload_table() here - will be called on first show
+    
+    def _get_source_name_from_address(self, camera_full_address: str) -> str:
+        """Get source_name (camera name like Cam1, Cam2) from camera_full_address"""
+        if not camera_full_address:
+            return ''
+        
+        # Get source mappings from data_source
+        source_mappings = getattr(self.data_source, '_source_name_id_address', {})
+        if not source_mappings:
+            return camera_full_address
+        
+        # Find source_name by matching camera_full_address
+        for source_name, (source_id, address) in source_mappings.items():
+            if address == camera_full_address:
+                return source_name
+        
+        # If not found, return original address
+        return camera_full_address
 
     def _build_ui(self):
         """Build user interface"""
@@ -124,7 +142,7 @@ class UnifiedEventsJournal(QWidget):
         h.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)  # Time lost
         h.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)  # Preview
         h.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)  # Lost preview
-        h.setDefaultSectionSize(300)
+        h.setDefaultSectionSize(300)  # Set default size for image columns
         v.setDefaultSectionSize(150)
         self.layout.addWidget(self.table)
 
@@ -294,10 +312,12 @@ class UnifiedEventsJournal(QWidget):
 
             # Add camera events as standalone rows
             for ev in cam_events:
+                camera_full_address = ev.get('camera_full_address', '')
+                source_name = self._get_source_name_from_address(camera_full_address)
                 table_rows.append({
-                    'source': ev.get('camera_full_address', ''),
+                    'source': source_name,
                     'event': 'CameraEvent',
-                    'information': f"Camera {ev.get('camera_full_address')} status={ev.get('connection_status')}",
+                    'information': f"Camera {camera_full_address} status={ev.get('connection_status')}",
                     'time': ev.get('ts', ''),
                     'time_lost': '',
                     'preview': '',
@@ -336,14 +356,12 @@ class UnifiedEventsJournal(QWidget):
                 # Prepare all items first
                 items_to_set = []
                 for r, row_data in enumerate(table_rows):
-                    # Preview column (5)
-                    preview_path = self._resolve_image_path(row_data['preview'], row_data.get('found_event'))
-                    preview_item = QTableWidgetItem(preview_path or '')
+                    # Preview column (5) - use original path, delegate will resolve it
+                    preview_item = QTableWidgetItem(row_data.get('preview', '') or '')
                     preview_item.setData(Qt.ItemDataRole.UserRole, row_data.get('found_event'))
                     
-                    # Lost preview column (6)
-                    lost_preview_path = self._resolve_image_path(row_data['lost_preview'], row_data.get('lost_event'))
-                    lost_preview_item = QTableWidgetItem(lost_preview_path or '')
+                    # Lost preview column (6) - use original path, delegate will resolve it
+                    lost_preview_item = QTableWidgetItem(row_data.get('lost_preview', '') or '')
                     lost_preview_item.setData(Qt.ItemDataRole.UserRole, row_data.get('lost_event'))
                     
                     # Store all items for this row
@@ -352,7 +370,7 @@ class UnifiedEventsJournal(QWidget):
                         QTableWidgetItem(row_data['event']),  # Column 1
                         QTableWidgetItem(row_data['information']),  # Column 2
                         QTableWidgetItem(str(row_data.get('source', ''))),  # Column 3
-                        QTableWidgetItem(str(row_data['time_lost'])),  # Column 4
+                        QTableWidgetItem(str(row_data.get('time_lost', '') or '')),  # Column 4
                         preview_item,  # Column 5
                         lost_preview_item,  # Column 6
                     ]
@@ -475,10 +493,12 @@ class UnifiedEventsJournal(QWidget):
             
             # Add camera events
             for ev in cam_events:
+                camera_full_address = ev.get('camera_full_address', '')
+                source_name = self._get_source_name_from_address(camera_full_address)
                 new_table_rows.append({
-                    'source': ev.get('camera_full_address', ''),
+                    'source': source_name,
                     'event': 'CameraEvent',
-                    'information': f"Camera {ev.get('camera_full_address')} status={ev.get('connection_status')}",
+                    'information': f"Camera {camera_full_address} status={ev.get('connection_status')}",
                     'time': ev.get('ts', ''),
                     'time_lost': '',
                     'preview': '',
@@ -546,14 +566,12 @@ class UnifiedEventsJournal(QWidget):
             for r, row_data in enumerate(table_rows):
                 row_idx = current_row_count + r
                 
-                # Preview column (5)
-                preview_path = self._resolve_image_path(row_data['preview'], row_data.get('found_event'))
-                preview_item = QTableWidgetItem(preview_path or '')
+                # Preview column (5) - use original path, delegate will resolve it
+                preview_item = QTableWidgetItem(row_data.get('preview', '') or '')
                 preview_item.setData(Qt.ItemDataRole.UserRole, row_data.get('found_event'))
                 
-                # Lost preview column (6)
-                lost_preview_path = self._resolve_image_path(row_data['lost_preview'], row_data.get('lost_event'))
-                lost_preview_item = QTableWidgetItem(lost_preview_path or '')
+                # Lost preview column (6) - use original path, delegate will resolve it
+                lost_preview_item = QTableWidgetItem(row_data.get('lost_preview', '') or '')
                 lost_preview_item.setData(Qt.ItemDataRole.UserRole, row_data.get('lost_event'))
                 
                 # Set all items for this row
@@ -561,7 +579,7 @@ class UnifiedEventsJournal(QWidget):
                 self.table.setItem(row_idx, 1, QTableWidgetItem(row_data['event']))
                 self.table.setItem(row_idx, 2, QTableWidgetItem(row_data['information']))
                 self.table.setItem(row_idx, 3, QTableWidgetItem(str(row_data.get('source', ''))))
-                self.table.setItem(row_idx, 4, QTableWidgetItem(str(row_data['time_lost'])))
+                self.table.setItem(row_idx, 4, QTableWidgetItem(str(row_data.get('time_lost', '') or '')))
                 self.table.setItem(row_idx, 5, preview_item)
                 self.table.setItem(row_idx, 6, lost_preview_item)
         finally:
@@ -657,6 +675,63 @@ class UnifiedEventsJournal(QWidget):
                 box = event_data.get('bounding_box') or event_data.get('box')
                 zone_coords = event_data.get('zone_coords')
             
+            # If no data in event_data, query from database
+            if (not box and not zone_coords) and hasattr(self.data_source, 'db_connection_name'):
+                db_connection_name = getattr(self.data_source, 'db_connection_name', None)
+                if db_connection_name:
+                    # Determine event type from table (column 1 - Event)
+                    event_type = None
+                    try:
+                        event_item = self.table.item(row, 1)  # Column 1 is Event
+                        if event_item:
+                            event_type = event_item.text()
+                    except Exception:
+                        pass
+                    
+                    # Query database for bounding box and zone coords
+                    if event_type:
+                        try:
+                            from PyQt6.QtSql import QSqlDatabase, QSqlQuery
+                        except ImportError:
+                            from PyQt5.QtSql import QSqlDatabase, QSqlQuery
+                        
+                        try:
+                            query = QSqlQuery(QSqlDatabase.database(db_connection_name))
+                            
+                            if event_type == 'ZoneEvent':
+                                if col == 5:
+                                    query.prepare('SELECT box_entered, zone_coords FROM zone_events WHERE preview_path_entered = :path')
+                                else:
+                                    query.prepare('SELECT box_left, zone_coords FROM zone_events WHERE preview_path_left = :path')
+                            elif event_type == 'AttributeEvent':
+                                if col == 5:
+                                    query.prepare('SELECT box_found FROM attribute_events WHERE preview_path_found = :path')
+                                else:
+                                    query.prepare('SELECT box_finished FROM attribute_events WHERE preview_path_finished = :path')
+                            elif event_type == 'ObjectEvent':
+                                if col == 5:
+                                    query.prepare('SELECT bounding_box FROM objects WHERE preview_path = :path')
+                                else:
+                                    query.prepare('SELECT lost_bounding_box FROM objects WHERE lost_preview_path = :path')
+                            else:
+                                query = None
+                            
+                            if query is not None:
+                                query.bindValue(':path', img_path)
+                                if query.exec() and query.next():
+                                    # Parse bounding box
+                                    value0 = query.value(0)
+                                    if value0 is not None:
+                                        box = self._parse_bbox_from_db(value0)
+                                    
+                                    # Parse zone coords for ZoneEvent
+                                    if event_type == 'ZoneEvent' and query.record().count() > 1:
+                                        value1 = query.value(1)
+                                        if value1 is not None:
+                                            zone_coords = self._parse_zone_coords_from_db(value1)
+                        except Exception as e:
+                            self.logger.warning(f"Failed to query event data from DB: {e}")
+            
             # Try to resolve frame path
             frame_path = self._resolve_frame_path(full_path, event_data)
             if frame_path and os.path.exists(frame_path):
@@ -689,6 +764,57 @@ class UnifiedEventsJournal(QWidget):
                 
         except Exception as e:
             self.logger.error(f"Error displaying image: {e}", exc_info=True)
+    
+    def _parse_bbox_from_db(self, value) -> Optional[List[float]]:
+        """Parse bounding box from database format"""
+        if value is None:
+            return None
+        try:
+            if isinstance(value, str):
+                s = value.replace('{', '').replace('}', '')
+                parts = [p.strip() for p in s.split(',')]
+                if len(parts) == 4:
+                    return [float(p) for p in parts]
+            elif isinstance(value, (list, tuple)):
+                if len(value) == 4:
+                    return [float(v) for v in value]
+            elif hasattr(value, 'toString'):
+                s = str(value.toString()).replace('{', '').replace('}', '')
+                parts = [p.strip() for p in s.split(',')]
+                if len(parts) == 4:
+                    return [float(p) for p in parts]
+        except Exception:
+            pass
+        return None
+    
+    def _parse_zone_coords_from_db(self, value) -> Optional[List[Tuple[float, float]]]:
+        """Parse zone coordinates from database format"""
+        if value is None:
+            return None
+        try:
+            if isinstance(value, str):
+                s = value.strip().strip('{}')
+                points_str = [p.strip('{} ') for p in s.split('},')]
+                coords = []
+                for ps in points_str:
+                    parts = [pp.strip() for pp in ps.split(',') if pp.strip()]
+                    if len(parts) == 2:
+                        coords.append((float(parts[0]), float(parts[1])))
+                return coords if coords else None
+            elif isinstance(value, (list, tuple)):
+                return [(float(p[0]), float(p[1])) for p in value if isinstance(p, (list, tuple)) and len(p) == 2]
+            elif hasattr(value, 'toString'):
+                s = str(value.toString()).strip('{}')
+                points_str = [p.strip('{} ') for p in s.split('},')]
+                coords = []
+                for ps in points_str:
+                    parts = [pp.strip() for pp in ps.split(',') if pp.strip()]
+                    if len(parts) == 2:
+                        coords.append((float(parts[0]), float(parts[1])))
+                return coords if coords else None
+        except Exception:
+            pass
+        return None
 
     def _resolve_frame_path(self, preview_path: str, event_data: Optional[dict]) -> Optional[str]:
         """Resolve preview path to full frame path"""

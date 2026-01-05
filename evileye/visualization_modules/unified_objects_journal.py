@@ -324,14 +324,12 @@ class UnifiedObjectsJournal(QWidget):
                 # Prepare all items first
                 items_to_set = []
                 for r, row_data in enumerate(table_rows):
-                    # Preview column (5) - found image
-                    preview_path = self._resolve_image_path(row_data['preview'], row_data.get('found_event'))
-                    preview_item = QTableWidgetItem(preview_path or '')
+                    # Preview column (5) - found image - use original path, delegate will resolve it
+                    preview_item = QTableWidgetItem(row_data.get('preview', '') or '')
                     preview_item.setData(Qt.ItemDataRole.UserRole, row_data.get('found_event'))
                     
-                    # Lost preview column (6) - lost image
-                    lost_preview_path = self._resolve_image_path(row_data['lost_preview'], row_data.get('lost_event'))
-                    lost_preview_item = QTableWidgetItem(lost_preview_path or '')
+                    # Lost preview column (6) - lost image - use original path, delegate will resolve it
+                    lost_preview_item = QTableWidgetItem(row_data.get('lost_preview', '') or '')
                     lost_preview_item.setData(Qt.ItemDataRole.UserRole, row_data.get('lost_event'))
                     
                     # Store all items for this row
@@ -340,7 +338,7 @@ class UnifiedObjectsJournal(QWidget):
                         QTableWidgetItem(row_data['event']),  # Column 1
                         QTableWidgetItem(row_data['information']),  # Column 2
                         QTableWidgetItem(str(row_data.get('source', ''))),  # Column 3
-                        QTableWidgetItem(str(row_data['time_lost'])),  # Column 4
+                        QTableWidgetItem(str(row_data.get('time_lost', '') or '')),  # Column 4
                         preview_item,  # Column 5
                         lost_preview_item,  # Column 6
                     ]
@@ -477,14 +475,12 @@ class UnifiedObjectsJournal(QWidget):
             for r, row_data in enumerate(table_rows):
                 row_idx = current_row_count + r
                 
-                # Preview column (5) - found image
-                preview_path = self._resolve_image_path(row_data['preview'], row_data.get('found_event'))
-                preview_item = QTableWidgetItem(preview_path or '')
+                # Preview column (5) - found image - use original path, delegate will resolve it
+                preview_item = QTableWidgetItem(row_data.get('preview', '') or '')
                 preview_item.setData(Qt.ItemDataRole.UserRole, row_data.get('found_event'))
                 
-                # Lost preview column (6) - lost image
-                lost_preview_path = self._resolve_image_path(row_data['lost_preview'], row_data.get('lost_event'))
-                lost_preview_item = QTableWidgetItem(lost_preview_path or '')
+                # Lost preview column (6) - lost image - use original path, delegate will resolve it
+                lost_preview_item = QTableWidgetItem(row_data.get('lost_preview', '') or '')
                 lost_preview_item.setData(Qt.ItemDataRole.UserRole, row_data.get('lost_event'))
                 
                 # Set all items for this row
@@ -492,7 +488,7 @@ class UnifiedObjectsJournal(QWidget):
                 self.table.setItem(row_idx, 1, QTableWidgetItem(row_data['event']))
                 self.table.setItem(row_idx, 2, QTableWidgetItem(row_data['information']))
                 self.table.setItem(row_idx, 3, QTableWidgetItem(str(row_data.get('source', ''))))
-                self.table.setItem(row_idx, 4, QTableWidgetItem(str(row_data['time_lost'])))
+                self.table.setItem(row_idx, 4, QTableWidgetItem(str(row_data.get('time_lost', '') or '')))
                 self.table.setItem(row_idx, 5, preview_item)
                 self.table.setItem(row_idx, 6, lost_preview_item)
         finally:

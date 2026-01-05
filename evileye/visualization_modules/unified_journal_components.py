@@ -45,8 +45,12 @@ class UnifiedImageDelegate(QStyledItemDelegate):
         if not img_path:
             return
         
+        # Get event data for date_folder if available
+        event_data = index.data(Qt.ItemDataRole.UserRole)
+        date_folder = event_data.get('date_folder', '') if event_data else ''
+        
         # Resolve full path
-        full_path = self._resolve_image_path(img_path)
+        full_path = self._resolve_image_path(img_path, date_folder)
         if not full_path or not os.path.exists(full_path):
             return
             
@@ -74,14 +78,57 @@ class UnifiedImageDelegate(QStyledItemDelegate):
         painter.drawPixmap(draw_x, draw_y, draw_w, draw_h, pixmap)
         
         # Try to get bounding box and zone coords from event data
-        event_data = index.data(Qt.ItemDataRole.UserRole)
+        box = None
+        zone_coords = None
         if event_data:
-            self._draw_overlays(painter, event_data, draw_x, draw_y, draw_w, draw_h, full_path)
-        elif self.db_connection_name:
-            # Try to get from database
-            self._draw_overlays_from_db(painter, img_path, draw_x, draw_y, draw_w, draw_h)
+            box = event_data.get('bounding_box') or event_data.get('box')
+            zone_coords = event_data.get('zone_coords')
+        
+        # If no data in event_data, try to get from database
+        if (not box and not zone_coords) and self.db_connection_name:
+            # Try to determine event type from table or event_data
+            event_type = None
+            if event_data:
+                # Map event_type from unified format to DB format
+                unified_type = event_data.get('event_type', '')
+                type_mapping = {
+                    'zone_entered': 'ZoneEvent',
+                    'zone_left': 'ZoneEvent',
+                    'attr_found': 'AttributeEvent',
+                    'attr_lost': 'AttributeEvent',
+                    'fov_found': 'FOVEvent',
+                    'fov_lost': 'FOVEvent',
+                    'found': 'ObjectEvent',
+                    'lost': 'ObjectEvent',
+                }
+                event_type = type_mapping.get(unified_type, '')
+            
+            # If still no event_type, try to get from table (column 1 - Event)
+            if not event_type:
+                try:
+                    table = self.parent()
+                    if table:
+                        row = index.row()
+                        if row < table.rowCount():
+                            event_item = table.item(row, 1)  # Column 1 is Event
+                            if event_item:
+                                event_type = event_item.text()
+                except Exception:
+                    pass
+            
+            # Query database based on event type and column
+            if event_type:
+                db_box, db_zone_coords = self._get_event_data_from_db(img_path, event_type, index.column())
+                if db_box:
+                    box = db_box
+                if db_zone_coords:
+                    zone_coords = db_zone_coords
+        
+        # Draw overlays if available
+        if box or zone_coords:
+            self._draw_overlays_from_data(painter, box, zone_coords, draw_x, draw_y, draw_w, draw_h)
 
-    def _resolve_image_path(self, img_path: str) -> Optional[str]:
+    def _resolve_image_path(self, img_path: str, date_folder: str = '') -> Optional[str]:
         """Resolve image path to full absolute path"""
         if not img_path:
             return None
@@ -90,39 +137,76 @@ class UnifiedImageDelegate(QStyledItemDelegate):
         if os.path.isabs(img_path):
             return img_path if os.path.exists(img_path) else None
         
-        # Relative to base_dir
+        # Relative to base_dir (like old ImageDelegate: os.path.join(self.image_dir, path))
         if self.base_dir:
+            # Primary: try direct path (path is relative to base_dir, like in old journal)
+            # This matches the old behavior: os.path.join(self.image_dir, path)
             full_path = os.path.join(self.base_dir, img_path)
             if os.path.exists(full_path):
                 return full_path
             
-            # Try with 'images' prefix
-            if not img_path.startswith('images'):
+            # Fallback: if direct path doesn't exist, try with date_folder
+            if date_folder:
+                # Try structured paths with date_folder
+                filename = os.path.basename(img_path)
+                candidates = [
+                    os.path.join(self.base_dir, 'Events', date_folder, 'Images', 'FoundPreviews', filename),
+                    os.path.join(self.base_dir, 'Events', date_folder, 'Images', 'LostPreviews', filename),
+                    os.path.join(self.base_dir, 'Detections', date_folder, 'Images', 'FoundPreviews', filename),
+                    os.path.join(self.base_dir, 'Detections', date_folder, 'Images', 'LostPreviews', filename),
+                    os.path.join(self.base_dir, 'images', date_folder, img_path),
+                    os.path.join(self.base_dir, 'images', date_folder, filename),
+                ]
+                for cand in candidates:
+                    if cand and os.path.exists(cand):
+                        return cand
+            
+            # Fallback: try with 'images' prefix (legacy)
+            if not img_path.startswith('images') and not img_path.startswith('Events') and not img_path.startswith('Detections'):
                 alt_path = os.path.join(self.base_dir, 'images', img_path)
                 if os.path.exists(alt_path):
                     return alt_path
+            
+            # Fallback: try recent dates
+            import datetime
+            today = datetime.datetime.now().date()
+            yesterday = today - datetime.timedelta(days=1)
+            for check_date in [today.strftime('%Y-%m-%d'), yesterday.strftime('%Y-%m-%d')]:
+                filename = os.path.basename(img_path)
+                candidates = [
+                    os.path.join(self.base_dir, 'Events', check_date, 'Images', 'FoundPreviews', filename),
+                    os.path.join(self.base_dir, 'Events', check_date, 'Images', 'LostPreviews', filename),
+                    os.path.join(self.base_dir, 'Detections', check_date, 'Images', 'FoundPreviews', filename),
+                    os.path.join(self.base_dir, 'Detections', check_date, 'Images', 'LostPreviews', filename),
+                ]
+                for cand in candidates:
+                    if cand and os.path.exists(cand):
+                        return cand
         
         return None
 
     def _draw_overlays(self, painter, event_data: dict, draw_x: int, draw_y: int, 
                       draw_w: int, draw_h: int, img_path: str):
         """Draw bounding box and zone overlays from event data"""
-        # Draw bounding box
         box = event_data.get('bounding_box') or event_data.get('box')
-        if box:
+        zone_coords = event_data.get('zone_coords')
+        self._draw_overlays_from_data(painter, box, zone_coords, draw_x, draw_y, draw_w, draw_h)
+    
+    def _draw_overlays_from_data(self, painter, box, zone_coords, draw_x: int, draw_y: int, 
+                                  draw_w: int, draw_h: int):
+        """Draw bounding box and zone overlays from box and zone_coords data"""
+        # Draw bounding box
+        if box and len(box) == 4:
             painter.setPen(QPen(QColor(0, 255, 0), 2))  # Green for bbox
-            
-            # Normalize box coordinates
-            x1, y1, x2, y2 = self._normalize_bbox(box, img_path)
-            if x1 is not None:
-                x = draw_x + int(x1 * draw_w)
-                y = draw_y + int(y1 * draw_h)
-                w = int((x2 - x1) * draw_w)
-                h = int((y2 - y1) * draw_h)
-                painter.drawRect(x, y, w, h)
+            # Coordinates are normalized [x1, y1, x2, y2]
+            x1, y1, x2, y2 = box
+            x = draw_x + int(x1 * draw_w)
+            y = draw_y + int(y1 * draw_h)
+            w = int((x2 - x1) * draw_w)
+            h = int((y2 - y1) * draw_h)
+            painter.drawRect(x, y, w, h)
         
         # Draw zone
-        zone_coords = event_data.get('zone_coords')
         if zone_coords:
             painter.setPen(QPen(QColor(255, 0, 0), 2))  # Red for zone
             painter.setBrush(QBrush(QColor(255, 0, 0, 64)))  # Semi-transparent red fill
@@ -136,34 +220,89 @@ class UnifiedImageDelegate(QStyledItemDelegate):
             if polygon.count() > 0:
                 painter.drawPolygon(polygon)
 
-    def _draw_overlays_from_db(self, painter, img_path: str, draw_x: int, draw_y: int, 
-                               draw_w: int, draw_h: int):
-        """Try to get bounding box from database"""
+    def _get_event_data_from_db(self, img_path: str, event_type: str, col: int) -> tuple:
+        """Get bounding box and zone_coords from database for events"""
         if not self.db_connection_name:
-            return
+            return None, None
         
         try:
             from PyQt6.QtSql import QSqlDatabase, QSqlQuery
         except ImportError:
             from PyQt5.QtSql import QSqlDatabase, QSqlQuery
         
+        box = None
+        zone_coords = None
+        
         try:
             query = QSqlQuery(QSqlDatabase.database(self.db_connection_name))
-            query.prepare('SELECT bounding_box FROM objects WHERE preview_path = :path OR lost_preview_path = :path LIMIT 1')
+            
+            # Query based on event type and column (5 = Preview, 6 = Lost preview)
+            if event_type == 'ZoneEvent':
+                if col == 5:
+                    query.prepare('SELECT box_entered, zone_coords FROM zone_events WHERE preview_path_entered = :path')
+                else:
+                    query.prepare('SELECT box_left, zone_coords FROM zone_events WHERE preview_path_left = :path')
+            elif event_type == 'AttributeEvent':
+                if col == 5:
+                    query.prepare('SELECT box_found FROM attribute_events WHERE preview_path_found = :path')
+                else:
+                    query.prepare('SELECT box_finished FROM attribute_events WHERE preview_path_finished = :path')
+            elif event_type == 'ObjectEvent':
+                if col == 5:
+                    query.prepare('SELECT bounding_box FROM objects WHERE preview_path = :path')
+                else:
+                    query.prepare('SELECT lost_bounding_box FROM objects WHERE lost_preview_path = :path')
+            else:
+                # FOV/Camera events have no bbox
+                return None, None
+            
             query.bindValue(':path', img_path)
             if query.exec() and query.next():
-                bbox_value = query.value(0)
-                box = self._parse_bbox(bbox_value)
-                if box:
-                    x1, y1, x2, y2 = box
-                    painter.setPen(QPen(QColor(0, 255, 0), 2))
-                    x = draw_x + int(x1 * draw_w)
-                    y = draw_y + int(y1 * draw_h)
-                    w = int((x2 - x1) * draw_w)
-                    h = int((y2 - y1) * draw_h)
-                    painter.drawRect(x, y, w, h)
+                # Parse bounding box
+                value0 = query.value(0)
+                if value0 is not None:
+                    box = self._parse_bbox(value0)
+                
+                # Parse zone coords for ZoneEvent
+                if event_type == 'ZoneEvent' and query.record().count() > 1:
+                    value1 = query.value(1)
+                    if value1 is not None:
+                        zone_coords = self._parse_zone_coords(value1)
+        
+        except Exception as e:
+            # Log error but don't fail
+            pass
+        
+        return box, zone_coords
+    
+    def _parse_zone_coords(self, value) -> Optional[List[Tuple[float, float]]]:
+        """Parse zone coordinates from database format"""
+        if value is None:
+            return None
+        try:
+            if isinstance(value, str):
+                s = value.strip().strip('{}')
+                points_str = [p.strip('{} ') for p in s.split('},')]
+                coords = []
+                for ps in points_str:
+                    parts = [pp.strip() for pp in ps.split(',') if pp.strip()]
+                    if len(parts) == 2:
+                        coords.append((float(parts[0]), float(parts[1])))
+                return coords if coords else None
+            elif isinstance(value, (list, tuple)):
+                return [(float(p[0]), float(p[1])) for p in value if isinstance(p, (list, tuple)) and len(p) == 2]
+            elif hasattr(value, 'toString'):
+                s = str(value.toString()).strip('{}')
+                points_str = [p.strip('{} ') for p in s.split('},')]
+                coords = []
+                for ps in points_str:
+                    parts = [pp.strip() for pp in ps.split(',') if pp.strip()]
+                    if len(parts) == 2:
+                        coords.append((float(parts[0]), float(parts[1])))
+                return coords if coords else None
         except Exception:
             pass
+        return None
 
     def _normalize_bbox(self, box, img_path: str) -> Tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
         """Normalize bounding box to [0,1] range"""
@@ -231,7 +370,14 @@ class UnifiedDateTimeDelegate(QStyledItemDelegate):
     def displayText(self, value, locale) -> str:
         """Format datetime to show only seconds precision"""
         try:
+            # Handle empty values
+            if not value or value == '' or str(value).strip() == '':
+                return ''
+            
             if isinstance(value, str):
+                # Handle empty string
+                if not value.strip():
+                    return ''
                 # Parse ISO format datetime string
                 if 'T' in value:
                     # ISO format: 2025-09-01T17:30:45.123456
@@ -244,9 +390,9 @@ class UnifiedDateTimeDelegate(QStyledItemDelegate):
                     return value
             elif isinstance(value, datetime.datetime):
                 return value.strftime('%Y-%m-%d %H:%M:%S')
-            return str(value)
+            return str(value) if value else ''
         except Exception as e:
-            return str(value)
+            return str(value) if value else ''
 
 
 class UnifiedImageWindow(QLabel):
