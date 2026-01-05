@@ -7,9 +7,9 @@ from PyQt6.QtCore import pyqtSignal
 # Add parent directory to path for imports
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
-from . import handler_journal_view
-from . import events_journal_json
-from . import objects_journal_json
+from .journal_data_source_json import JsonLabelJournalDataSource
+from .unified_objects_journal import UnifiedObjectsJournal
+from .unified_events_journal import UnifiedEventsJournal
 from ..core.logger import get_module_logger
 import logging
 
@@ -59,18 +59,36 @@ class JsonJournalWindow(QWidget):
         # Add Objects journal tab (if enabled)
         if self.obj_journal_enabled:
             try:
-                # Create dedicated objects journal for JSON mode
-                self.tabs.addTab(objects_journal_json.ObjectsJournalJson(self.images_dir, parent=self, 
-                                                                        logger_name="objects_journal_json", 
-                                                                        parent_logger=self.logger), 'Objects journal')
+                # Create JsonLabelJournalDataSource for objects
+                objects_ds = JsonLabelJournalDataSource(self.images_dir)
+                
+                # Create UnifiedObjectsJournal
+                objects_journal = UnifiedObjectsJournal(
+                    objects_ds,
+                    base_dir=self.images_dir,
+                    parent=self,
+                    logger_name="unified_objects_journal_json",
+                    parent_logger=self.logger
+                )
+                self.tabs.addTab(objects_journal, 'Objects journal')
             except Exception as e:
                 self.logger.error(f"Failed to create Objects journal: {e}")
+                import traceback
+                self.logger.error(f"Traceback: {traceback.format_exc()}")
         
         # Add Events journal tab
         try:
-            events_journal_widget = events_journal_json.EventsJournalJson(self.images_dir, parent=self,
-                                                                         logger_name="events_journal_json", 
-                                                                         parent_logger=self.logger)
+            # Create JsonLabelJournalDataSource for events
+            events_ds = JsonLabelJournalDataSource(self.images_dir)
+            
+            # Create UnifiedEventsJournal
+            events_journal_widget = UnifiedEventsJournal(
+                events_ds,
+                base_dir=self.images_dir,
+                parent=self,
+                logger_name="unified_events_journal_json",
+                parent_logger=self.logger
+            )
             self.tabs.addTab(events_journal_widget, 'Events journal')
         except Exception as e:
             self.logger.error(f"Failed to create Events journal: {e}")
@@ -115,26 +133,28 @@ class JsonJournalWindow(QWidget):
         # Recreate Objects (if enabled)
         if self.obj_journal_enabled:
             try:
-                self.tabs.addTab(
-                    objects_journal_json.ObjectsJournalJson(
-                        self.images_dir, parent=self,
-                        logger_name="objects_journal_json",
-                        parent_logger=self.logger
-                    ),
-                    'Objects journal'
+                objects_ds = JsonLabelJournalDataSource(self.images_dir)
+                objects_journal = UnifiedObjectsJournal(
+                    objects_ds,
+                    base_dir=self.images_dir,
+                    parent=self,
+                    logger_name="unified_objects_journal_json",
+                    parent_logger=self.logger
                 )
+                self.tabs.addTab(objects_journal, 'Objects journal')
             except Exception as e:
                 self.logger.error(f"Failed to recreate Objects journal: {e}")
         # Recreate Events
         try:
-            self.tabs.addTab(
-                events_journal_json.EventsJournalJson(
-                    self.images_dir, parent=self,
-                    logger_name="events_journal_json",
-                    parent_logger=self.logger
-                ),
-                'Events journal'
+            events_ds = JsonLabelJournalDataSource(self.images_dir)
+            events_journal = UnifiedEventsJournal(
+                events_ds,
+                base_dir=self.images_dir,
+                parent=self,
+                logger_name="unified_events_journal_json",
+                parent_logger=self.logger
             )
+            self.tabs.addTab(events_journal, 'Events journal')
         except Exception as e:
             self.logger.error(f"Failed to recreate Events journal: {e}")
 
@@ -167,10 +187,14 @@ class JsonJournalWindow(QWidget):
         # Create if missing
         try:
             if title.lower().startswith('objects'):
-                widget = objects_journal_json.ObjectsJournalJson(
-                    self.images_dir, parent=self,
-                    logger_name="objects_journal_json_dyn",
-                    parent_logger=self.logger)
+                objects_ds = JsonLabelJournalDataSource(self.images_dir)
+                widget = UnifiedObjectsJournal(
+                    objects_ds,
+                    base_dir=self.images_dir,
+                    parent=self,
+                    logger_name="unified_objects_journal_json_dyn",
+                    parent_logger=self.logger
+                )
                 idx = self.tabs.addTab(widget, 'Objects journal')
                 # Force initial load
                 if hasattr(widget, '_reload_table'):
@@ -181,10 +205,14 @@ class JsonJournalWindow(QWidget):
                     pass
                 return idx
             if title.lower().startswith('events'):
-                widget = events_journal_json.EventsJournalJson(
-                    self.images_dir, parent=self,
-                    logger_name="events_journal_json_dyn",
-                    parent_logger=self.logger)
+                events_ds = JsonLabelJournalDataSource(self.images_dir)
+                widget = UnifiedEventsJournal(
+                    events_ds,
+                    base_dir=self.images_dir,
+                    parent=self,
+                    logger_name="unified_events_journal_json_dyn",
+                    parent_logger=self.logger
+                )
                 idx = self.tabs.addTab(widget, 'Events journal')
                 if hasattr(widget, '_reload_table'):
                     widget._reload_table()

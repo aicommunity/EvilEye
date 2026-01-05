@@ -20,12 +20,13 @@ except ImportError:
 import sys
 from pathlib import Path
 from ..database_controller import database_controller_pg
-from . import handler_journal_view
-from . import events_journal
 from .journal_adapters.jadapter_fov_events import JournalAdapterFieldOfViewEvents
 from .journal_adapters.jadapter_cam_events import JournalAdapterCamEvents
 from .journal_adapters.jadapter_zone_events import JournalAdapterZoneEvents
 from .journal_adapters.jadapter_system_events import JournalAdapterSystemEvents
+from .journal_data_source_db import DatabaseJournalDataSource
+from .unified_objects_journal import UnifiedObjectsJournal
+from .unified_events_journal import UnifiedEventsJournal
 from ..core.logger import get_module_logger
 import logging
 
@@ -191,21 +192,40 @@ class DatabaseJournalWindow(QWidget):
             if widget:
                 widget.deleteLater()
         
+        # Get image directory from database params
+        image_dir = self.db_params.get('image_dir', 'EvilEyeData')
+        
         if self.obj_journal_enabled:
             self.logger.info("Creating Objects journal tab...")
-            # Create HandlerJournal - it will load data asynchronously
-            handler_journal = handler_journal_view.HandlerJournal()
-            handler_journal.set_db_controller(
-                self.db_controller, 
-                'objects', 
-                self.params, 
-                self.database_params,
-                self.tables.get('objects', {})
-            )
-            self.logger.info("HandlerJournal created, adding to tabs...")
-            self.tabs.addTab(handler_journal, 'Objects journal')
-            self.logger.info("Objects journal tab added")
+            try:
+                # Create DatabaseJournalDataSource for objects
+                objects_ds = DatabaseJournalDataSource(
+                    self.db_controller,
+                    journal_type='objects',
+                    adapters=None,
+                    database_params=self.database_params,
+                    params=self.params,
+                    image_dir=image_dir,
+                    db_connection_name='unified_objects_conn'
+                )
+                
+                # Create UnifiedObjectsJournal
+                objects_journal = UnifiedObjectsJournal(
+                    objects_ds,
+                    base_dir=image_dir,
+                    parent=self,
+                    logger_name="unified_objects_journal",
+                    parent_logger=self.logger
+                )
+                self.logger.info("UnifiedObjectsJournal created, adding to tabs...")
+                self.tabs.addTab(objects_journal, 'Objects journal')
+                self.logger.info("Objects journal tab added")
+            except Exception as e:
+                self.logger.error(f"Failed to create UnifiedObjectsJournal: {e}")
+                import traceback
+                self.logger.error(f"Traceback: {traceback.format_exc()}")
         
+        # Prepare adapters for events journal
         adapters = [self.cam_events_adapter, self.perimeter_events_adapter, self.zone_events_adapter]
         if self.attr_events_adapter:
             adapters.append(self.attr_events_adapter)
@@ -214,25 +234,30 @@ class DatabaseJournalWindow(QWidget):
         
         try:
             self.logger.info("Creating Events journal tab...")
-            # Create EventsJournal - it will load data asynchronously
-            events_journal_widget = events_journal.EventsJournal(
-                table_name='objects',
+            # Create DatabaseJournalDataSource for events
+            events_ds = DatabaseJournalDataSource(
+                self.db_controller,
+                journal_type='events',
+                adapters=adapters,
+                database_params=self.database_params,
+                params=self.params,
+                image_dir=image_dir,
+                db_connection_name='unified_events_conn'
+            )
+            
+            # Create UnifiedEventsJournal
+            events_journal_widget = UnifiedEventsJournal(
+                events_ds,
+                base_dir=image_dir,
                 parent=self,
-                logger_name="events_journal", 
+                logger_name="unified_events_journal",
                 parent_logger=self.logger
             )
-            events_journal_widget.set_data(
-                adapters,
-                self.db_controller,
-                self.params,
-                self.database_params,
-                self.tables.get('objects', {})
-            )
-            self.logger.info("EventsJournal created, adding to tabs...")
+            self.logger.info("UnifiedEventsJournal created, adding to tabs...")
             self.tabs.addTab(events_journal_widget, 'Events journal')
             self.logger.info("Events journal tab added")
         except Exception as e:
-            self.logger.error(f"Failed to create EventsJournal: {e}")
+            self.logger.error(f"Failed to create UnifiedEventsJournal: {e}")
             import traceback
             self.logger.error(f"Traceback: {traceback.format_exc()}")
 
