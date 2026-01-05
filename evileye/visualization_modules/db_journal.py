@@ -242,6 +242,10 @@ class DatabaseJournalWindow(QWidget):
         # Create Objects journal if needed
         if 'Objects' in tab_text and not self._objects_journal_created:
             self.logger.info("Lazy creating Objects journal...")
+            
+            # Set flag BEFORE operations to prevent recursion
+            self._objects_journal_created = True
+            
             try:
                 # Create DatabaseJournalDataSource for objects
                 objects_ds = DatabaseJournalDataSource(
@@ -263,13 +267,19 @@ class DatabaseJournalWindow(QWidget):
                     parent_logger=self.logger
                 )
                 
-                # Replace placeholder with actual journal
-                self.tabs.removeTab(index)
-                self.tabs.insertTab(index, objects_journal, 'Objects journal')
-                self.tabs.setCurrentIndex(index)
-                self._objects_journal_created = True
+                # Block signals during tab replacement to prevent currentChanged recursion
+                self.tabs.blockSignals(True)
+                try:
+                    self.tabs.removeTab(index)
+                    self.tabs.insertTab(index, objects_journal, 'Objects journal')
+                    self.tabs.setCurrentIndex(index)
+                finally:
+                    self.tabs.blockSignals(False)
+                
                 self.logger.info("Objects journal created and added")
             except Exception as e:
+                # Reset flag on error
+                self._objects_journal_created = False
                 self.logger.error(f"Failed to create UnifiedObjectsJournal: {e}")
                 import traceback
                 self.logger.error(f"Traceback: {traceback.format_exc()}")
@@ -277,6 +287,10 @@ class DatabaseJournalWindow(QWidget):
         # Create Events journal if needed
         elif 'Events' in tab_text and not self._events_journal_created:
             self.logger.info("Lazy creating Events journal...")
+            
+            # Set flag BEFORE operations to prevent recursion
+            self._events_journal_created = True
+            
             try:
                 # Prepare adapters for events journal
                 adapters = [self.cam_events_adapter, self.perimeter_events_adapter, self.zone_events_adapter]
@@ -305,13 +319,19 @@ class DatabaseJournalWindow(QWidget):
                     parent_logger=self.logger
                 )
                 
-                # Replace placeholder with actual journal
-                self.tabs.removeTab(index)
-                self.tabs.insertTab(index, events_journal_widget, 'Events journal')
-                self.tabs.setCurrentIndex(index)
-                self._events_journal_created = True
+                # Block signals during tab replacement to prevent currentChanged recursion
+                self.tabs.blockSignals(True)
+                try:
+                    self.tabs.removeTab(index)
+                    self.tabs.insertTab(index, events_journal_widget, 'Events journal')
+                    self.tabs.setCurrentIndex(index)
+                finally:
+                    self.tabs.blockSignals(False)
+                
                 self.logger.info("Events journal created and added")
             except Exception as e:
+                # Reset flag on error
+                self._events_journal_created = False
                 self.logger.error(f"Failed to create UnifiedEventsJournal: {e}")
                 import traceback
                 self.logger.error(f"Traceback: {traceback.format_exc()}")
