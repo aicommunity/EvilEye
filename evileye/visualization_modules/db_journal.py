@@ -68,6 +68,15 @@ class DatabaseJournalWindow(QWidget):
         self.tabs = QTabWidget()
         self.tabs.setTabsClosable(True)
         self.tabs.tabCloseRequested.connect(self._close_tab)
+        # Connect tab change signal for lazy journal creation
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+        
+        # Track which journals have been created
+        self._objects_journal_created = False
+        self._events_journal_created = False
+        
+        # Flag to prevent journal creation during initial tab setup
+        self._initializing_tabs = False
 
         self.logger.info("Setting up layout...")
         self.layout = QVBoxLayout()
@@ -181,7 +190,7 @@ class DatabaseJournalWindow(QWidget):
             self.system_events_adapter = None
     
     def _create_journal_tabs(self):
-        """Создать вкладки журналов"""
+        """Создать вкладки журналов лениво - только заглушки"""
         if not self.db_controller or not self.tables:
             return
             
@@ -192,11 +201,47 @@ class DatabaseJournalWindow(QWidget):
             if widget:
                 widget.deleteLater()
         
+        # Reset creation flags
+        self._objects_journal_created = False
+        self._events_journal_created = False
+        
+        # Set flag to prevent journal creation during initial setup
+        self._initializing_tabs = True
+        
+        try:
+            # Create placeholder tabs (journals will be created lazily on first switch)
+            if self.obj_journal_enabled:
+                # Add empty placeholder widget - journal will be created on first switch
+                placeholder = QWidget()
+                self.tabs.addTab(placeholder, 'Objects journal')
+                self.logger.info("Objects journal placeholder tab added")
+            
+            # Add placeholder for events journal
+            placeholder = QWidget()
+            self.tabs.addTab(placeholder, 'Events journal')
+            self.logger.info("Events journal placeholder tab added")
+        finally:
+            # Reset flag after tabs are created
+            self._initializing_tabs = False
+    
+    def _on_tab_changed(self, index):
+        """Обработчик переключения вкладок - создавать журналы лениво"""
+        if index < 0 or not self.db_controller or not self.tables:
+            return
+        
+        # Don't create journals during initial tab setup
+        if self._initializing_tabs:
+            return
+        
+        tab_text = self.tabs.tabText(index)
+        widget = self.tabs.widget(index)
+        
         # Get image directory from database params
         image_dir = self.db_params.get('image_dir', 'EvilEyeData')
         
-        if self.obj_journal_enabled:
-            self.logger.info("Creating Objects journal tab...")
+        # Create Objects journal if needed
+        if 'Objects' in tab_text and not self._objects_journal_created:
+            self.logger.info("Lazy creating Objects journal...")
             try:
                 # Create DatabaseJournalDataSource for objects
                 objects_ds = DatabaseJournalDataSource(
@@ -217,49 +262,59 @@ class DatabaseJournalWindow(QWidget):
                     logger_name="unified_objects_journal",
                     parent_logger=self.logger
                 )
-                self.logger.info("UnifiedObjectsJournal created, adding to tabs...")
-                self.tabs.addTab(objects_journal, 'Objects journal')
-                self.logger.info("Objects journal tab added")
+                
+                # Replace placeholder with actual journal
+                self.tabs.removeTab(index)
+                self.tabs.insertTab(index, objects_journal, 'Objects journal')
+                self.tabs.setCurrentIndex(index)
+                self._objects_journal_created = True
+                self.logger.info("Objects journal created and added")
             except Exception as e:
                 self.logger.error(f"Failed to create UnifiedObjectsJournal: {e}")
                 import traceback
                 self.logger.error(f"Traceback: {traceback.format_exc()}")
         
-        # Prepare adapters for events journal
-        adapters = [self.cam_events_adapter, self.perimeter_events_adapter, self.zone_events_adapter]
-        if self.attr_events_adapter:
-            adapters.append(self.attr_events_adapter)
-        if self.system_events_adapter:
-            adapters.append(self.system_events_adapter)
-        
-        try:
-            self.logger.info("Creating Events journal tab...")
-            # Create DatabaseJournalDataSource for events
-            events_ds = DatabaseJournalDataSource(
-                self.db_controller,
-                journal_type='events',
-                adapters=adapters,
-                database_params=self.database_params,
-                params=self.params,
-                image_dir=image_dir,
-                db_connection_name='unified_events_conn'
-            )
-            
-            # Create UnifiedEventsJournal
-            events_journal_widget = UnifiedEventsJournal(
-                events_ds,
-                base_dir=image_dir,
-                parent=self,
-                logger_name="unified_events_journal",
-                parent_logger=self.logger
-            )
-            self.logger.info("UnifiedEventsJournal created, adding to tabs...")
-            self.tabs.addTab(events_journal_widget, 'Events journal')
-            self.logger.info("Events journal tab added")
-        except Exception as e:
-            self.logger.error(f"Failed to create UnifiedEventsJournal: {e}")
-            import traceback
-            self.logger.error(f"Traceback: {traceback.format_exc()}")
+        # Create Events journal if needed
+        elif 'Events' in tab_text and not self._events_journal_created:
+            self.logger.info("Lazy creating Events journal...")
+            try:
+                # Prepare adapters for events journal
+                adapters = [self.cam_events_adapter, self.perimeter_events_adapter, self.zone_events_adapter]
+                if self.attr_events_adapter:
+                    adapters.append(self.attr_events_adapter)
+                if self.system_events_adapter:
+                    adapters.append(self.system_events_adapter)
+                
+                # Create DatabaseJournalDataSource for events
+                events_ds = DatabaseJournalDataSource(
+                    self.db_controller,
+                    journal_type='events',
+                    adapters=adapters,
+                    database_params=self.database_params,
+                    params=self.params,
+                    image_dir=image_dir,
+                    db_connection_name='unified_events_conn'
+                )
+                
+                # Create UnifiedEventsJournal
+                events_journal_widget = UnifiedEventsJournal(
+                    events_ds,
+                    base_dir=image_dir,
+                    parent=self,
+                    logger_name="unified_events_journal",
+                    parent_logger=self.logger
+                )
+                
+                # Replace placeholder with actual journal
+                self.tabs.removeTab(index)
+                self.tabs.insertTab(index, events_journal_widget, 'Events journal')
+                self.tabs.setCurrentIndex(index)
+                self._events_journal_created = True
+                self.logger.info("Events journal created and added")
+            except Exception as e:
+                self.logger.error(f"Failed to create UnifiedEventsJournal: {e}")
+                import traceback
+                self.logger.error(f"Traceback: {traceback.format_exc()}")
 
     def close(self):
         for tab_idx in range(self.tabs.count()):

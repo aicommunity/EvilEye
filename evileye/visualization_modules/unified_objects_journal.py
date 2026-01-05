@@ -64,6 +64,10 @@ class UnifiedObjectsJournal(QWidget):
         # Cache for resolved image paths
         self._image_path_cache = {}
         
+        # Cache for dates list
+        self._dates_cache = None
+        self._dates_loaded = False
+        
         # Real-time update timer (will be started in showEvent)
         self.update_timer = QTimer()
         self.update_timer.timeout.connect(self._check_for_updates)
@@ -79,7 +83,7 @@ class UnifiedObjectsJournal(QWidget):
         self.cmb_source = None
         
         self._build_ui()
-        self._reload_dates()  # Load dates immediately (fast operation)
+        # Don't call _reload_dates() here - will be called on first show
         # Don't call _reload_table() here - will be called on first show
 
     def _build_ui(self):
@@ -141,9 +145,17 @@ class UnifiedObjectsJournal(QWidget):
         self.setLayout(self.layout)
 
     def _reload_dates(self):
-        """Reload available dates"""
+        """Reload available dates with caching"""
         try:
-            dates = self.data_source.list_available_dates()
+            # Use cached dates if available
+            if self._dates_loaded and self._dates_cache is not None:
+                dates = self._dates_cache
+            else:
+                # Load dates from data source
+                dates = self.data_source.list_available_dates()
+                self._dates_cache = dates
+                self._dates_loaded = True
+            
             # Block signals to avoid triggering _on_date_changed during update
             self.cmb_date.blockSignals(True)
             try:
@@ -531,7 +543,16 @@ class UnifiedObjectsJournal(QWidget):
     def showEvent(self, event):
         """Handle show event - load data only on first show"""
         super().showEvent(event)
+        
+        # Note: isVisible() check removed - it can be False when switching tabs
+        # even though the widget should be visible. showEvent is called when widget
+        # should be shown, so we proceed with loading data.
+        
         self.is_visible = True
+        
+        # Load dates on first show (if not already loaded)
+        if not self._dates_loaded:
+            self._reload_dates()
         
         # Load data only on first show (lazy loading)
         if not self._data_loaded:

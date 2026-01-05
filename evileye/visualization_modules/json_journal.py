@@ -196,9 +196,7 @@ class JsonJournalWindow(QWidget):
                     parent_logger=self.logger
                 )
                 idx = self.tabs.addTab(widget, 'Objects journal')
-                # Force initial load
-                if hasattr(widget, '_reload_table'):
-                    widget._reload_table()
+                # Don't call _reload_table() here - widget will load data on first show via showEvent
                 try:
                     self.tabs.setTabVisible(idx, True)
                 except Exception:
@@ -214,8 +212,7 @@ class JsonJournalWindow(QWidget):
                     parent_logger=self.logger
                 )
                 idx = self.tabs.addTab(widget, 'Events journal')
-                if hasattr(widget, '_reload_table'):
-                    widget._reload_table()
+                # Don't call _reload_table() here - widget will load data on first show via showEvent
                 try:
                     self.tabs.setTabVisible(idx, True)
                 except Exception:
@@ -238,11 +235,8 @@ class JsonJournalWindow(QWidget):
         # If there are tabs but no current, set to first
         if self.tabs.count() > 0 and self.tabs.currentIndex() < 0:
             self.tabs.setCurrentIndex(0)
-        # Refresh data when window is shown
-        for i in range(self.tabs.count()):
-            widget = self.tabs.widget(i)
-            if hasattr(widget, '_reload_table'):
-                widget._reload_table()
+        # Don't reload all tabs here - they will load data on first show via showEvent
+        # This prevents unnecessary data loading when switching tabs or showing window
 
     def closeEvent(self, event):
         """Handle close event"""
