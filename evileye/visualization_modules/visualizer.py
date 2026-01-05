@@ -44,7 +44,13 @@ class Visualizer(EvilEyeBase):
         pass
 
     def init_impl(self):
+        # Останавливаем существующие потоки перед пересозданием
         if len(self.visual_threads) > 0:
+            for thr in self.visual_threads:
+                try:
+                    thr.stop_thread()
+                except Exception:
+                    pass
             self.visual_threads = []
         for i in range(len(self.source_ids)):
             logger_name = f"src{self.source_ids[i]}"
