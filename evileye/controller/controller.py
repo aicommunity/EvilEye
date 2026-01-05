@@ -657,43 +657,13 @@ class Controller:
                             self.source_last_processed_frame_id[source_id] = 0
 
         # Initialize database configuration only if database is enabled
-        if self.use_database:
-            database_creds = self.credentials.get("database", None)
-            if not database_creds:
-                database_creds = dict()
-
-            try:
-                with open(os.path.join(os.path.dirname(__file__), "..", "database_config.json")) as data_config_file:
-                    self.database_config = json.load(data_config_file)
-            except FileNotFoundError as ex:
-                pass
-
-            database_creds["user_name"] = database_creds.get("user_name", "postgres")
-            database_creds["password"] = database_creds.get("password", "")
-            database_creds["database_name"] = database_creds.get("database_name", "evil_eye_db")
-            database_creds["host_name"] = database_creds.get("host_name", "localhost")
-            database_creds["port"] = database_creds.get("port", 5432)
-            database_creds["admin_user_name"] = database_creds.get("admin_user_name", "postgres")
-            database_creds["admin_password"] = database_creds.get("admin_password", "")
-
-            self.database_config["database"]["user_name"] = self.database_config["database"].get("user_name", database_creds["user_name"])
-            self.database_config["database"]["password"] = self.database_config["database"].get("password", database_creds["password"])
-            self.database_config["database"]["database_name"] = self.database_config["database"].get("database_name", database_creds["database_name"])
-            self.database_config["database"]["host_name"] = self.database_config["database"].get("host_name", database_creds["host_name"])
-            self.database_config["database"]["port"] = self.database_config["database"].get("port", database_creds["port"])
-            self.database_config["database"]["admin_user_name"] = self.database_config["database"].get("admin_user_name", database_creds["admin_user_name"])
-            self.database_config["database"]["admin_password"] = self.database_config["database"].get("admin_password", database_creds["admin_password"])
-
-            if 'database' in self.params.keys():
-                self.database_config["database"]['database_name'] = self.params['database'].get('database_name', self.database_config["database"]['database_name'])
-                self.database_config["database"]['host_name'] = self.params['database'].get('host_name', self.database_config["database"]['host_name'])
-                self.database_config["database"]['port'] = self.params['database'].get('port', self.database_config["database"]['port'])
-                self.database_config["database"]['image_dir'] = self.params['database'].get('image_dir', self.database_config["database"]['image_dir'])
-                self.database_config["database"]['preview_width'] = self.params['database'].get('preview_width', self.database_config["database"]['preview_width'])
-                self.database_config["database"]['preview_height'] = self.params['database'].get('preview_height', self.database_config["database"]['preview_height'])
-        else:
-            # Initialize empty database config when database is disabled
-            self.database_config = {"database": {}, "database_adapters": {}}
+        # Используем утилиту для вычисления database_config
+        from evileye.utils.database_config_utils import compute_database_config
+        self.database_config = compute_database_config(
+            use_database=self.use_database,
+            credentials=self.credentials,
+            params=self.params
+        )
 
         # Initialize database components only if use_database is True
         if self.use_database:

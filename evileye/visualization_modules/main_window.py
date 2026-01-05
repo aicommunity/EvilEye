@@ -105,35 +105,38 @@ class MainWindow(QMainWindow):
     # UI-level signalization controls
     set_signal_params_signal = pyqtSignal(bool, tuple)
 
-    def __init__(self, controller, params_file_path, params, win_width, win_height):
+    def __init__(self, win_width=1600, win_height=720):
         super().__init__()
         self.logger = get_module_logger("main_window")
+        self.logger.info("MainWindow.__init__ started")
         self.setWindowTitle("EvilEye")
         self.resize(win_width, win_height)
+        self.logger.info("MainWindow basic setup done")
         self.slots = {'update_image': self.update_image, 'update_original_cv_image': self.update_original_cv_image, 'clean_image_available': self.clean_image_available, 'open_zone_win': self.open_zone_win, 'open_roi_win': self.open_roi_win}
         self.signals = {'display_zones_signal': self.display_zones_signal, 'add_zone_signal': self.add_zone_signal, 'add_roi_signal': self.add_roi_signal}
+        self.logger.info("MainWindow slots and signals initialized")
 
-        self.controller = controller
-
-        self.params_path = params_file_path
-        self.params = params
+        # Инициализация без controller и params
+        self.controller = None
+        self.params_path = None
+        self.params = {}
+        self.logger.info("MainWindow initialized without controller")
         
         # Инициализация WindowManager
+        self.logger.info("About to get WindowManager...")
         self.window_manager = get_window_manager()
+        self.logger.info("WindowManager obtained")
         self.settings_window = None
         self.config_history_window = None
         self.config_history_manager = None
 
-        self.rows = self.params['visualizer'].get('num_height', 1)
-        self.cols = self.params['visualizer'].get('num_width', 1)
-        self.cameras = self.params.get('pipeline', {}).get('sources', list())
-
-        self.num_cameras = len(self.cameras)
+        # Инициализация базовых переменных
+        self.rows = 1
+        self.cols = 1
+        self.cameras = []
+        self.num_cameras = 0
         self.src_ids = []
-        for camera in self.cameras:
-            for src_id in camera['source_ids']:
-                self.src_ids.append(src_id)
-        self.num_sources = len(self.src_ids)
+        self.num_sources = 0
 
         self.labels_sources_ids = {}  # Для сопоставления id источника с id label
         self.labels = []
@@ -147,51 +150,28 @@ class MainWindow(QMainWindow):
         self.last_pixmaps = {}  # {source_id: QPixmap} - последние кадры для каждого источника
         self.last_clean_cv_images = {}  # {source_id: cv_image} - чистые OpenCV изображения для каждого источника
 
+        self.logger.info("About to set central widget and create actions...")
         self.setCentralWidget(QWidget())
         self._create_actions()
         self._connect_actions()
+        self.logger.info("Actions created and connected")
 
-        close_app = False
-        if self.controller.enable_close_from_gui and not self.controller.show_main_gui and self.controller.show_journal:
-            close_app = True
-
-        # Create journal window (DB or JSON mode)
-        if hasattr(self.controller, 'use_database') and self.controller.use_database:
-            try:
-                self.db_journal_win = DatabaseJournalWindow(self, self.params, self.controller.database_config, close_app,
-                                                           logger_name="db_journal", parent_logger=self.logger)
-                self.db_journal_win.setVisible(False)
-            except Exception as e:
-                self.logger.warning(f"Warning: Failed to create database journal window. Switching to JSON mode. Reason: {e}")
-                # Fallback to JSON journal mode
-                self._create_json_journal_window()
-        else:
-            # Get image_dir from database_config (even if database is disabled)
-            images_dir = 'EvilEyeData'  # default
-            if hasattr(self.controller, 'database_config') and self.controller.database_config.get('database', {}):
-                images_dir = self.controller.database_config['database'].get('images_dir', images_dir)
-            
-            # Check if directory exists before creating journal
-            if os.path.exists(images_dir):
-                try:
-                    from . import json_journal
-                    self.db_journal_win = json_journal.JsonJournalWindow(self, self.params, images_dir, close_app,
-                                                                        logger_name="json_journal", parent_logger=self.logger)
-                    self.db_journal_win.setVisible(False)
-                except Exception as e:
-                    self.logger.error(f"JSON journal creation error: {e}")
-                    self.db_journal_win = None
-            else:
-                self.logger.warning(f"Images folder does not exist: {images_dir}")
-                self.db_journal_win = None
-        self.zone_window = ZoneWindow(self.params)
+        # Journal window будет создан позже через set_controller
+        self.db_journal_win = None
+        self._journal_init_thread = None
+        self._journal_open_requested = False
+        
+        self.logger.info("About to create zone window...")
+        self.zone_window = ZoneWindow()
         self.zone_window.zones_updated.connect(self._on_zones_updated)
         self.zone_window.zone_editor_closed.connect(self._on_zone_editor_closed)
         self.zone_window.setVisible(False)
+        self.logger.info("Zone window created")
 
         # ROI Editor window (new non-modal window)
+        self.logger.info("About to create ROI editor window...")
         try:
-            self.roi_editor_window = ROIEditorWindow(self.params)
+            self.roi_editor_window = ROIEditorWindow()
             # Не сохраняем конфигурацию при каждом обновлении ROI — работаем только по закрытию
             self.roi_editor_window.roi_updated.connect(lambda rois: None)
             # Обновление ROI детектора по закрытию ROI окна
@@ -200,32 +180,74 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.logger.error(f"Failed to create ROIEditorWindow: {e}")
             self.roi_editor_window = None
+        self.logger.info("ROI editor window creation completed")
 
+        # Инициализация базового UI без данных
+        self.logger.info("About to setup layout...")
         vertical_layout = QVBoxLayout()
-        for i in range(self.rows):
-            self.hlayouts.append(QHBoxLayout())
-            vertical_layout.addLayout(self.hlayouts[-1])
+        self.hlayouts.append(QHBoxLayout())
+        vertical_layout.addLayout(self.hlayouts[-1])
         self.centralWidget().setLayout(vertical_layout)
-        self.setup_layout()
+        # setup_layout будет вызван в set_controller когда будут данные
+        self.logger.info("Basic layout setup completed")
 
+        self.logger.info("About to create timer...")
         self.timer = QTimer()
         self.timer.timeout.connect(self.check_controller_status)
         self.timer.setInterval(1000)
         self.timer.start()
+        self.logger.info("Timer created and started")
 
-        # Configure journal button after journal window is created
+        # Configure journal button (будет обновлен в set_controller)
+        self.logger.info("About to configure journal button...")
         self._configure_journal_button()
+        self.logger.info("Journal button configured")
         
-        # Create menu and toolbar after journal window is created
+        # Create menu and toolbar
+        self.logger.info("About to create menu and toolbar...")
         self.menu_height = 0
         self._create_menu_bar()
+        self.logger.info("Menu bar created")
 
         self.toolbar_width = 0
         self._create_toolbar()
+        self.logger.info("Toolbar created")
 
         # Connect signalization params to visualizer
         self.set_signal_params_signal.connect(self._broadcast_signal_params)
+        self.logger.info("MainWindow.__init__ completed")
 
+    def set_controller(self, controller, params_file_path, params):
+        """Установить данные из controller (вызывается после controller.init())"""
+        self.logger.info("MainWindow.set_controller started")
+        self.controller = controller
+        self.params_path = params_file_path
+        self.params = params
+        
+        # Обновляем параметры визуализации
+        self.rows = self.params.get('visualizer', {}).get('num_height', 1)
+        self.cols = self.params.get('visualizer', {}).get('num_width', 1)
+        self.cameras = self.params.get('pipeline', {}).get('sources', list())
+
+        self.num_cameras = len(self.cameras)
+        self.src_ids = []
+        for camera in self.cameras:
+            for src_id in camera.get('source_ids', []):
+                self.src_ids.append(src_id)
+        self.num_sources = len(self.src_ids)
+        self.logger.info(f"set_controller: num_sources={self.num_sources}, src_ids={self.src_ids}, rows={self.rows}, cols={self.cols}")
+        
+        # Обновляем layout с правильным количеством строк/столбцов
+        self._update_layout()
+        
+        # Обновляем дочерние виджеты
+        self._update_journal_widgets()
+        self._update_zone_window()
+        self._update_roi_editor()
+        
+        # Обновляем actions с правильными параметрами
+        self._update_actions()
+        
         # Schedule zones emission after startup if persistent flag is enabled
         try:
             from PyQt6.QtCore import QTimer as _QTimer6
@@ -238,9 +260,155 @@ class MainWindow(QMainWindow):
             _Timer.singleShot(1500, self._emit_zones_from_config_if_enabled)
         except Exception:
             pass
+        
+        self.logger.info("MainWindow.set_controller completed")
+    
+    def _update_layout(self):
+        """Обновить layout с правильным количеством строк/столбцов"""
+        # Очищаем существующие labels
+        for label in self.labels:
+            if label:
+                label.deleteLater()
+        self.labels = []
+        self.labels_sources_ids = {}
+        
+        # Получаем текущий layout или создаем новый
+        central_widget = self.centralWidget()
+        old_layout = central_widget.layout()
+        
+        if old_layout:
+            # Очищаем существующий layout (удаляем все элементы)
+            while old_layout.count():
+                item = old_layout.takeAt(0)
+                if item.widget():
+                    widget = item.widget()
+                    widget.hide()
+                    widget.setParent(None)
+                    widget.deleteLater()
+                elif item.layout():
+                    # Рекурсивно очищаем вложенные layouts
+                    nested_layout = item.layout()
+                    while nested_layout.count():
+                        nested_item = nested_layout.takeAt(0)
+                        if nested_item.widget():
+                            nested_widget = nested_item.widget()
+                            nested_widget.hide()
+                            nested_widget.setParent(None)
+                            nested_widget.deleteLater()
+                    # Удаляем вложенный layout
+                    nested_layout.setParent(None)
+                    nested_layout.deleteLater()
+            
+            # Переиспользуем существующий layout, очищаем его полностью
+            # Создаем новые hlayouts
+            self.hlayouts = []
+            for i in range(self.rows):
+                hlayout = QHBoxLayout()
+                self.hlayouts.append(hlayout)
+                old_layout.addLayout(hlayout)
+        else:
+            # Если layout не существует, создаем новый
+            vertical_layout = QVBoxLayout()
+            self.hlayouts = []
+            for i in range(self.rows):
+                self.hlayouts.append(QHBoxLayout())
+                vertical_layout.addLayout(self.hlayouts[-1])
+            central_widget.setLayout(vertical_layout)
+        
+        self.logger.info(f"_update_layout: creating layout with rows={self.rows}, cols={self.cols}, num_sources={self.num_sources}")
+        self.setup_layout()
+        self.logger.info(f"_update_layout: created {len(self.labels)} labels")
+    
+    def _update_journal_widgets(self):
+        """Обновить journal widgets данными из controller"""
+        if not self.controller:
+            return
+            
+        close_app = False
+        # Check if journal should be shown (backward compatibility check)
+        show_journal = getattr(self.controller, 'show_journal', False)
+        show_main_gui = getattr(self.controller, 'show_main_gui', True)
+        if self.controller.enable_close_from_gui and not show_main_gui and show_journal:
+            close_app = True
+
+        # Create journal window (DB or JSON mode) - initialize DB in background, create GUI in main thread
+        self.logger.info("About to create journal window...")
+        self.logger.info(f"Checking database: hasattr use_database={hasattr(self.controller, 'use_database')}")
+        if hasattr(self.controller, 'use_database'):
+            self.logger.info(f"use_database value: {self.controller.use_database}")
+        
+        # Initialize database connection in background thread, then create GUI window in main thread
+        if hasattr(self.controller, 'use_database') and self.controller.use_database:
+            # Start database initialization in background thread (only DB connection, NOT GUI)
+            self.logger.info("Starting database initialization in background thread...")
+            self._journal_init_thread = None
+            self._journal_open_requested = False
+            
+            from . import journal_init_thread
+            self._journal_init_thread = journal_init_thread.JournalInitThread(
+                self.params, self.controller.database_config,
+                logger_name="journal_init", parent_logger=self.logger
+            )
+            
+            # Connect signals - GUI creation will happen in main thread via signal slot
+            self._journal_init_thread.initialization_complete.connect(self._on_journal_init_complete_slot)
+            self._journal_init_thread.initialization_failed.connect(self._on_journal_init_failed_slot)
+            
+            # Start thread - DB initialization happens in background, GUI creation in main thread
+            self._journal_init_thread.start()
+            self.logger.info("Database initialization thread started (GUI will be created in main thread when ready)")
+            
+            # Set db_journal_win to None initially - will be set when DB is ready and GUI is created
+            self.db_journal_win = None
+        else:
+            # Get image_dir from database_config (even if database is disabled)
+            images_dir = 'EvilEyeData'  # default
+            if hasattr(self.controller, 'database_config') and self.controller.database_config.get('database', {}):
+                images_dir = self.controller.database_config['database'].get('images_dir', images_dir)
+            
+            # Check if directory exists before creating journal
+            if os.path.exists(images_dir):
+                try:
+                    from . import json_journal
+                    self.db_journal_win = json_journal.JsonJournalWindow(self, close_app,
+                                                                        logger_name="json_journal", parent_logger=self.logger)
+                    self.db_journal_win.set_images_dir(images_dir, self.params)
+                    self.db_journal_win.setVisible(False)
+                except Exception as e:
+                    self.logger.error(f"JSON journal creation error: {e}")
+                    self.db_journal_win = None
+            else:
+                self.logger.warning(f"Images folder does not exist: {images_dir}")
+                self.db_journal_win = None
+        self.logger.info("Journal window creation setup completed")
+        self._configure_journal_button()
+    
+    def _update_zone_window(self):
+        """Обновить zone window параметрами"""
+        if self.zone_window and self.params:
+            self.zone_window.set_params(self.params)
+    
+    def _update_roi_editor(self):
+        """Обновить ROI editor параметрами"""
+        if self.roi_editor_window and self.params:
+            self.roi_editor_window.set_params(self.params)
+    
+    def _update_actions(self):
+        """Обновить actions с правильными параметрами"""
+        # Обновляем toggle states
+        if self.params:
+            vis_params = self.params.get('visualizer', {})
+            if hasattr(self, 'toggle_zones'):
+                self.toggle_zones.setChecked(vis_params.get('display_zones', False))
+            if hasattr(self, 'toggle_signal'):
+                self.toggle_signal.setChecked(vis_params.get('event_signal_enabled', False))
 
     def setup_layout(self):
-        self.centralWidget().layout().setContentsMargins(0, 0, 0, 0)
+        layout = self.centralWidget().layout()
+        if not layout:
+            self.logger.error("setup_layout called but centralWidget has no layout!")
+            return
+        layout.setContentsMargins(0, 0, 0, 0)
         grid_cols = 0
         grid_rows = 0
         for i in range(self.num_sources):
@@ -341,11 +509,11 @@ class MainWindow(QMainWindow):
         # Persistent display zones toggle (visualizer param)
         self.toggle_zones = QAction('&Display zones', self)
         self.toggle_zones.setCheckable(True)
-        self.toggle_zones.setChecked(self.params['visualizer'].get('display_zones', False))
+        self.toggle_zones.setChecked(False)  # Будет обновлено в set_controller
         # Add toggle for event signalization
         self.toggle_signal = QAction('&Event Signalization', self)
         self.toggle_signal.setCheckable(True)
-        self.toggle_signal.setChecked(self.params['visualizer'].get('event_signal_enabled', False))
+        self.toggle_signal.setChecked(False)  # Будет обновлено в set_controller
 
         self.add_channel = QAction('&Add Channel', self)
         self.del_channel = QAction('&Del Channel', self)
@@ -411,25 +579,54 @@ class MainWindow(QMainWindow):
 
     def _configure_journal_button(self):
         """Configure journal actions based on database mode and availability"""
-        available = self.db_journal_win is not None
-        self.objects_journal.setEnabled(available)
-        self.events_journal.setEnabled(available)
-        self.objects_journal.setToolTip("Open Objects journal" if available else "Journal is not available")
-        self.events_journal.setToolTip("Open Events journal" if available else "Journal is not available")
-        
-        # Configuration History доступна только с DatabaseJournalWindow
-        config_history_available = (available and 
-                                  hasattr(self.db_journal_win, 'db_controller') and 
-                                  self.db_journal_win.db_controller is not None)
-        self.open_config_history.setEnabled(config_history_available)
-        self.open_config_history.setToolTip(
-            "Open Configuration History" if config_history_available 
-            else "Configuration History requires database mode"
-        )
+        try:
+            # Проверяем, доступен ли journal window или может быть создан
+            available = False
+            if self.db_journal_win is not None:
+                available = True
+            elif hasattr(self, '_deferred_journal_creation') and self._deferred_journal_creation:
+                # Journal window отложен, но может быть создан - считаем доступным
+                # Проверяем, что journal creation был отложен и еще не создан
+                try:
+                    if (isinstance(self._deferred_journal_creation, dict) and 
+                        self._deferred_journal_creation.get('enabled', False) and
+                        not self._deferred_journal_creation.get('created', False)):
+                        available = True
+                except Exception as e:
+                    self.logger.warning(f"Error checking deferred journal creation: {e}")
+            
+            self.objects_journal.setEnabled(available)
+            self.events_journal.setEnabled(available)
+            self.objects_journal.setToolTip("Open Objects journal" if available else "Journal is not available")
+            self.events_journal.setToolTip("Open Events journal" if available else "Journal is not available")
+            
+            # Configuration History доступна только с DatabaseJournalWindow (не отложенным)
+            config_history_available = False
+            try:
+                config_history_available = (self.db_journal_win is not None and 
+                                          hasattr(self.db_journal_win, 'db_controller') and 
+                                          self.db_journal_win.db_controller is not None)
+            except Exception as e:
+                self.logger.warning(f"Error checking config history availability: {e}")
+            
+            self.open_config_history.setEnabled(config_history_available)
+            self.open_config_history.setToolTip(
+                "Open Configuration History" if config_history_available 
+                else "Configuration History requires database mode"
+            )
+        except Exception as e:
+            self.logger.error(f"Error in _configure_journal_button: {e}", exc_info=True)
+            # В случае ошибки отключаем кнопки
+            try:
+                self.objects_journal.setEnabled(False)
+                self.events_journal.setEnabled(False)
+                self.open_config_history.setEnabled(False)
+            except:
+                pass
 
     def _emit_zones_from_config_if_enabled(self):
         try:
-            if self.params.get('visualizer', {}).get('display_zones', False):
+            if self.params and self.params.get('visualizer', {}).get('display_zones', False):
                 zones = {}
                 if hasattr(self, 'zone_window') and self.zone_window:
                     try:
@@ -447,17 +644,190 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot()
     def _ensure_journal_window(self):
+        """Ensure journal window is created. Create it if deferred."""
         if self.db_journal_win is None:
-            self.logger.warning("Journal unavailable (database disabled or initialization failed)")
-            return False
+            # Check if journal creation was deferred
+            if hasattr(self, '_deferred_journal_creation') and self._deferred_journal_creation and not self._deferred_journal_creation['created']:
+                # Check if initialization is already in progress
+                if hasattr(self, '_journal_init_thread') and self._journal_init_thread and self._journal_init_thread.isRunning():
+                    self.logger.info("Journal initialization already in progress, waiting...")
+                    return False
+                
+                self.logger.info("Starting journal initialization in background thread...")
+                # Create and start initialization thread first
+                from . import journal_init_thread
+                self._journal_init_thread = journal_init_thread.JournalInitThread(
+                    self.params, self.controller.database_config,
+                    logger_name="journal_init", parent_logger=self.logger
+                )
+                
+                # Show progress dialog (non-blocking, processes events automatically)
+                try:
+                    from PyQt6.QtWidgets import QProgressDialog
+                except ImportError:
+                    from PyQt5.QtWidgets import QProgressDialog
+                
+                progress_dialog = QProgressDialog("Initializing database journal window...\nThis may take a few seconds.", 
+                                                 None, 0, 0, self)
+                progress_dialog.setWindowTitle("Journal Initialization")
+                progress_dialog.setModal(True)  # Modal but processes events
+                progress_dialog.setCancelButton(None)  # No cancel button
+                progress_dialog.setMinimumDuration(0)  # Show immediately
+                progress_dialog.show()
+                QApplication.processEvents()
+                
+                # Store progress_dialog for use in callbacks BEFORE starting thread
+                self._journal_init_msg_box = progress_dialog
+                
+                # Connect signals
+                def update_progress(msg):
+                    self.logger.info(f"Journal init: {msg}")
+                    if progress_dialog:
+                        try:
+                            progress_dialog.setLabelText(f"Initializing database journal window...\n{msg}")
+                            QApplication.processEvents()
+                        except:
+                            pass
+                
+                self._journal_init_thread.progress_updated.connect(update_progress)
+                self._journal_init_thread.initialization_complete.connect(self._on_journal_init_complete_slot)
+                self._journal_init_thread.initialization_failed.connect(self._on_journal_init_failed_slot)
+                
+                # Start thread
+                self.logger.info("Starting journal initialization thread...")
+                self._journal_init_thread.start()
+                self.logger.info("Journal initialization thread started")
+                
+                return False
+            else:
+                self.logger.warning("Journal unavailable (database disabled or initialization failed)")
+                return False
         return True
+    
+    @pyqtSlot(object)
+    def _on_journal_init_complete_slot(self, db_controller):
+        """Slot for journal initialization complete signal"""
+        msg_box = getattr(self, '_journal_init_msg_box', None)
+        self._on_journal_init_complete(db_controller, msg_box)
+    
+    def _on_journal_init_complete(self, db_controller, progress_dialog=None):
+        """
+        Called when database initialization completes successfully.
+        This runs in the MAIN GUI THREAD (via signal/slot), so we can safely create Qt widgets here.
+        """
+        self.logger.info("Database initialization completed, creating GUI window in main thread...")
+        
+        try:
+            from . import db_journal
+            
+            # Determine close_app flag
+            close_app = False
+            show_journal = getattr(self.controller, 'show_journal', False)
+            show_main_gui = getattr(self.controller, 'show_main_gui', True)
+            if self.controller.enable_close_from_gui and not show_main_gui and show_journal:
+                close_app = True
+            
+            # Create GUI window in MAIN THREAD (Qt requirement - all GUI must be created in main thread)
+            # db_controller is already initialized and connected (done in background thread)
+            # Window creation is fast - widgets inside load data asynchronously
+            self.db_journal_win = db_journal.DatabaseJournalWindow(
+                self, close_app,
+                logger_name="db_journal", parent_logger=self.logger
+            )
+            # Устанавливаем данные из controller
+            # Логируем структуру database_config для отладки
+            self.logger.info(f"Passing database_config to set_db_controller, keys: {list(self.controller.database_config.keys()) if self.controller.database_config else 'None'}")
+            try:
+                self.db_journal_win.set_db_controller(
+                    db_controller,
+                    self.params,
+                    self.controller.database_config
+                )
+            except Exception as e:
+                self.logger.error(f"Failed to set database controller in journal window: {e}", exc_info=True)
+                # Очищаем созданное окно и переключаемся на JSON journal
+                if self.db_journal_win:
+                    self.db_journal_win.deleteLater()
+                    self.db_journal_win = None
+                self.logger.warning("Falling back to JSON journal mode due to database journal initialization error")
+                self._create_json_journal_window()
+                # Clean up thread and return early
+                if hasattr(self, '_journal_init_thread'):
+                    self._journal_init_thread.deleteLater()
+                    self._journal_init_thread = None
+                if progress_dialog:
+                    try:
+                        progress_dialog.close()
+                    except:
+                        pass
+                return
+            
+            # Hide window initially (will be shown when user clicks button)
+            self.db_journal_win.setVisible(False)
+            self.logger.info("Database journal window created successfully in main thread (hidden)")
+            
+            # Update journal button states
+            self._configure_journal_button()
+            
+            # Clean up thread
+            if hasattr(self, '_journal_init_thread'):
+                self._journal_init_thread.deleteLater()
+                self._journal_init_thread = None
+            
+            # If user requested to open journal during initialization, show it now
+            if hasattr(self, '_journal_open_requested') and self._journal_open_requested:
+                self.logger.info("Showing journal window (was requested during initialization)...")
+                self.open_journal()
+                self._journal_open_requested = False
+                
+        except Exception as e:
+            self.logger.error(f"Failed to create database journal window after init: {e}", exc_info=True)
+            self._on_journal_init_failed(str(e), progress_dialog)
+    
+    @pyqtSlot(str)
+    def _on_journal_init_failed_slot(self, error_message):
+        """Slot for journal initialization failed signal"""
+        msg_box = getattr(self, '_journal_init_msg_box', None)
+        self._on_journal_init_failed(error_message, msg_box)
+    
+    def _on_journal_init_failed(self, error_message, msg_box=None):
+        """Called when journal initialization fails"""
+        self.logger.error(f"Journal initialization failed: {error_message}")
+        if msg_box:
+            msg_box.close()
+        
+        # Логируем ошибку вместо показа диалога
+        self.logger.warning(f"Failed to initialize database journal: {error_message}. Falling back to JSON journal mode.")
+        self._create_json_journal_window()
+        
+        # Clean up thread
+        if hasattr(self, '_journal_init_thread'):
+            self._journal_init_thread.deleteLater()
+            self._journal_init_thread = None
+
+    def open_journal(self):
+        """Open journal window. Create it if deferred."""
+        # Ensure journal window exists
+        if self._ensure_journal_window():
+            # Window exists and is ready
+            if self.db_journal_win is not None:
+                self.db_journal_win.show()
+                try:
+                    self.db_journal_win.raise_()
+                    self.db_journal_win.activateWindow()
+                except Exception:
+                    pass
+        else:
+            # Window is being initialized, mark that we want to open it when ready
+            self.logger.info("Journal window is being initialized, will open when ready...")
+            self._journal_open_requested = True
 
     @pyqtSlot()
     def open_objects_journal(self):
-        if not self._ensure_journal_window():
-            return
+        self._ensure_journal_window()
         # Ensure window is shown and focused on each click
-        self.db_journal_win.show()
+        if self.db_journal_win is not None:
+            self.db_journal_win.show()
         try:
             self.db_journal_win.raise_()
             self.db_journal_win.activateWindow()
@@ -605,12 +975,17 @@ class MainWindow(QMainWindow):
     @pyqtSlot(int, QPixmap)
     def update_image(self, label_id: int, picture: QPixmap):
         # Обновляет label, в котором находится изображение
+        if not self.labels:
+            self.logger.warning(f"update_image called but labels are empty (label_id={label_id})")
+            return
         if 0 <= label_id < len(self.labels):
             self.labels[label_id].setPixmap(picture)
             # Сохраняем последний pixmap для источника
             source_id = self.labels_sources_ids.get(label_id)
             if source_id is not None:
                 self.last_pixmaps[source_id] = picture.copy()
+        else:
+            self.logger.warning(f"update_image called with invalid label_id={label_id}, labels count={len(self.labels)}")
     
     @pyqtSlot(int, object)
     def update_original_cv_image(self, label_id: int, original_cv_image):
@@ -640,7 +1015,10 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(bool)
     def _toggle_signalization(self, enabled: bool):
-        color = tuple(self.params['visualizer'].get('event_signal_color', [255, 0, 0]))
+        if self.params:
+            color = tuple(self.params.get('visualizer', {}).get('event_signal_color', [255, 0, 0]))
+        else:
+            color = (255, 0, 0)
         self._broadcast_signal_params(enabled, color)
 
     @pyqtSlot(bool, tuple)
@@ -670,8 +1048,9 @@ class MainWindow(QMainWindow):
                     label.hide()
             VideoThread.rows = 1
             VideoThread.cols = 1
-        self.controller.set_current_main_widget_size(self.geometry().width() - self.toolbar_width,
-                                                     self.geometry().height() - self.menu_height)
+        if self.controller:
+            self.controller.set_current_main_widget_size(self.geometry().width() - self.toolbar_width,
+                                                         self.geometry().height() - self.menu_height)
 
     @pyqtSlot()
     def emit_add_zone_signal(self):
@@ -859,8 +1238,9 @@ class MainWindow(QMainWindow):
         if os.path.exists(images_dir):
             try:
                 from . import json_journal
-                self.db_journal_win = json_journal.JsonJournalWindow(self, self.params, images_dir, False,
+                self.db_journal_win = json_journal.JsonJournalWindow(self, False,
                                                                     logger_name="json_journal", parent_logger=self.logger)
+                self.db_journal_win.set_images_dir(images_dir, self.params)
                 self.db_journal_win.setVisible(False)
             except Exception as e:
                 self.logger.error(f"JSON journal creation error: {e}")
@@ -1124,9 +1504,12 @@ class MainWindow(QMainWindow):
             if self.roi_editor_window is None:
                 # Пытаемся создать окно лениво при первом открытии
                 try:
-                    self.roi_editor_window = ROIEditorWindow(self.params)
+                    self.roi_editor_window = ROIEditorWindow()
                     self.roi_editor_window.roi_updated.connect(lambda rois: None)
                     self.roi_editor_window.roi_editor_closed.connect(self._on_roi_editor_closed)
+                    # Устанавливаем параметры если они доступны
+                    if self.params:
+                        self.roi_editor_window.set_params(self.params)
                     self.roi_editor_window.setVisible(False)
                     self.logger.info("ROIEditorWindow lazily initialized")
                 except Exception as e:

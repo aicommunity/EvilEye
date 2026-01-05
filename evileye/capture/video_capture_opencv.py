@@ -18,6 +18,9 @@ class VideoCaptureOpencv(VideoCaptureBase):
         CAP_GSTREAMER = 1800
         CAP_FFMPEG = 1900
         CAP_IMAGES = 2000
+    
+    # Класс-переменная для отслеживания уже залогированных ошибок GStreamer
+    _gstreamer_error_logged = set()  # Множество source_names, для которых уже залогирована ошибка
 
     def __init__(self):
         super().__init__()
@@ -42,16 +45,24 @@ class VideoCaptureOpencv(VideoCaptureBase):
         
         # Check if GStreamer is requested but OpenCV doesn't support it
         if api_pref == "CAP_GSTREAMER":
-            import cv2
             build_info = cv2.getBuildInformation()
             if "GStreamer:                   NO" in build_info or "GStreamer:                      NO" in build_info:
-                self.logger.error(
-                    f"ERROR: apiPreference='CAP_GSTREAMER' is specified for {self.source_names}, "
-                    f"but OpenCV was compiled WITHOUT GStreamer support. "
-                    f"Please either:\n"
-                    f"  1. Use 'type': 'VideoCaptureGStreamer' in source configuration instead of VideoCaptureOpencv, OR\n"
-                    f"  2. Change apiPreference to 'CAP_FFMPEG' for VideoCaptureOpencv"
-                )
+                # Логируем ошибку только один раз для каждого набора источников
+                source_names_key = tuple(sorted(self.source_names)) if isinstance(self.source_names, list) else str(self.source_names)
+                if source_names_key not in VideoCaptureOpencv._gstreamer_error_logged:
+                    self.logger.error(
+                        f"ERROR: apiPreference='CAP_GSTREAMER' is specified for {self.source_names}, "
+                        f"but OpenCV was compiled WITHOUT GStreamer support. "
+                        f"Please either:\n"
+                        f"  1. Use 'type': 'VideoCaptureGStreamer' in source configuration instead of VideoCaptureOpencv, OR\n"
+                        f"  2. Change apiPreference to 'CAP_FFMPEG' for VideoCaptureOpencv"
+                    )
+                    VideoCaptureOpencv._gstreamer_error_logged.add(source_names_key)
+                else:
+                    # Логируем только на уровне debug при повторных попытках
+                    self.logger.debug(
+                        f"GStreamer not supported for {self.source_names} (error already logged, using reconnect logic)"
+                    )
                 return False
         
         if self.source_type == CaptureDeviceType.IpCamera and api_pref == "CAP_GSTREAMER":  # Приведение rtsp ссылки к формату gstreamer

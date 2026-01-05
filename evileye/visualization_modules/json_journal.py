@@ -15,18 +15,19 @@ import logging
 
 
 class JsonJournalWindow(QWidget):
-    def __init__(self, main_window, params, images_dir, close_app: bool, logger_name: str | None = None, parent_logger: logging.Logger | None = None):
+    def __init__(self, main_window, close_app: bool = False, logger_name: str | None = None, parent_logger: logging.Logger | None = None):
         super().__init__()
         base_name = "evileye.json_journal"
         full_name = f"{base_name}.{logger_name}" if logger_name else base_name
         self.logger = parent_logger or logging.getLogger(full_name)
         self.main_window = main_window
-        self.params = params
-        self.images_dir = images_dir
+        self.params = {}
+        self.images_dir = None
+        self.close_app = close_app
         
-        # Get visualizer params
-        self.vis_params = self.params['visualizer']
-        self.obj_journal_enabled = self.vis_params.get('objects_journal_enabled', True)
+        # Инициализация пустого UI
+        self.vis_params = {}
+        self.obj_journal_enabled = True
 
         self.setWindowTitle('JSON Journal')
         self.resize(1600, 600)
@@ -34,12 +35,32 @@ class JsonJournalWindow(QWidget):
         self.tabs = QTabWidget()
         self.tabs.setTabsClosable(True)
         self.tabs.tabCloseRequested.connect(self._close_tab)
+
+        self.layout = QVBoxLayout()
+        self.layout.addWidget(self.tabs)
+        self.setLayout(self.layout)
+    
+    def set_images_dir(self, images_dir, params):
+        """Установить images_dir и params (вызывается после controller.init())"""
+        self.images_dir = images_dir
+        self.params = params
+        
+        # Get visualizer params
+        self.vis_params = self.params.get('visualizer', {})
+        self.obj_journal_enabled = self.vis_params.get('objects_journal_enabled', True)
+        
+        # Очищаем существующие вкладки
+        while self.tabs.count() > 0:
+            widget = self.tabs.widget(0)
+            self.tabs.removeTab(0)
+            if widget:
+                widget.deleteLater()
         
         # Add Objects journal tab (if enabled)
         if self.obj_journal_enabled:
             try:
                 # Create dedicated objects journal for JSON mode
-                self.tabs.addTab(objects_journal_json.ObjectsJournalJson(images_dir, parent=self, 
+                self.tabs.addTab(objects_journal_json.ObjectsJournalJson(self.images_dir, parent=self, 
                                                                         logger_name="objects_journal_json", 
                                                                         parent_logger=self.logger), 'Objects journal')
             except Exception as e:
@@ -47,7 +68,7 @@ class JsonJournalWindow(QWidget):
         
         # Add Events journal tab
         try:
-            events_journal_widget = events_journal_json.EventsJournalJson(images_dir, parent=self,
+            events_journal_widget = events_journal_json.EventsJournalJson(self.images_dir, parent=self,
                                                                          logger_name="events_journal_json", 
                                                                          parent_logger=self.logger)
             self.tabs.addTab(events_journal_widget, 'Events journal')
@@ -55,10 +76,6 @@ class JsonJournalWindow(QWidget):
             self.logger.error(f"Failed to create Events journal: {e}")
             import traceback
             self.logger.error(f"Traceback: {traceback.format_exc()}")
-
-        self.layout = QVBoxLayout()
-        self.layout.addWidget(self.tabs)
-        self.setLayout(self.layout)
 
     def _close_tab(self, index):
         """Handle tab close request: hide tab but keep widget for quick restore"""
@@ -91,6 +108,8 @@ class JsonJournalWindow(QWidget):
 
     def _ensure_default_tabs(self):
         """Recreate default tabs when none exist (after user closed them)."""
+        if not self.images_dir:
+            return
         if self.tabs.count() > 0:
             return
         # Recreate Objects (if enabled)
@@ -135,6 +154,8 @@ class JsonJournalWindow(QWidget):
 
     def ensure_tab(self, title: str):
         """Ensure a tab with given title exists; create if missing and return its index."""
+        if not self.images_dir:
+            return -1
         # Check existing
         for i in range(self.tabs.count()):
             if self.tabs.tabText(i).lower().startswith(title.lower()):
