@@ -198,6 +198,7 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                     'ts': timestamp,
                     'source_id': item.get('source_id'),
                     'object_id': item.get('object_id'),
+                    'zone_id': item.get('zone_id'),  # zone_id exists in JSON data
                     'image_filename': item.get('preview_path'),
                     'bounding_box': item.get('box'),
                     'zone_coords': item.get('zone_coords'),

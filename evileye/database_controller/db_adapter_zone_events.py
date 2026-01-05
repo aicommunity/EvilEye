@@ -93,8 +93,29 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
                 continue
 
             # Безопасные проверки результата RETURNING
-            if not record or not isinstance(record, list) or not record[0] or len(record[0]) < 2:
-                self.logger.warning('DB: ZoneEvents query returned no data; skipping image save')
+            # UPDATE может не найти запись для обновления (подзапрос не нашел event_id)
+            # В этом случае record будет пустым списком []
+            if not record:
+                # Пустой результат - это нормально для UPDATE, если запись не найдена
+                # (например, событие уже было обновлено или удалено)
+                # Для INSERT это не должно происходить, но проверяем тип запроса
+                if query_type == 'insert':
+                    self.logger.warning('DB: ZoneEvents INSERT returned no data; skipping image save')
+                # Для UPDATE не логируем, так как это нормальная ситуация
+                continue
+            
+            if not isinstance(record, list):
+                self.logger.warning(f'DB: ZoneEvents query returned unexpected type: {type(record)}; skipping image save')
+                continue
+                
+            if len(record) == 0:
+                # Пустой список - запись не найдена для обновления
+                if query_type == 'insert':
+                    self.logger.warning('DB: ZoneEvents INSERT returned empty list; skipping image save')
+                continue
+                
+            if not record[0] or len(record[0]) < 2:
+                self.logger.warning(f'DB: ZoneEvents query returned incomplete data: {record}; skipping image save')
                 continue
 
             box = record[0][0]

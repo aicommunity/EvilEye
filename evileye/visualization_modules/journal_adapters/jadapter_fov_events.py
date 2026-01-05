@@ -22,14 +22,15 @@ class JournalAdapterFieldOfViewEvents(JournalAdapterBase):
 
     def select_query(self) -> str:
         # Return columns compatible with EventsJournal:
-        # time_stamp, type, information, source_name, time_lost, preview_path, lost_preview_path
+        # time_stamp, type, information, source_name, time_lost, preview_path, lost_preview_path, object_id, zone_id
         # Get source_name from objects table using LEFT JOIN (much faster than correlated subquery per row)
         query = ('SELECT fe.time_stamp, '
                  'CAST(\'FOVEvent\' AS text) AS type, '
                  '(\'Intrusion detected on source \' || fe.source_id) AS information, '
                  'COALESCE(o.source_name, CAST(fe.source_id AS text)) AS source_name, '
                  'fe.time_lost, '
-                 'fe.preview_path, fe.lost_preview_path '
+                 'fe.preview_path, fe.lost_preview_path, '
+                 'fe.object_id::integer AS object_id, NULL::integer AS zone_id '
                  'FROM fov_events fe '
                  'LEFT JOIN (SELECT source_id, MAX(source_name) AS source_name FROM objects GROUP BY source_id) o ON o.source_id = fe.source_id')
         return query

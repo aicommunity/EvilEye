@@ -170,14 +170,15 @@ class DatabaseJournalDataSource(EventJournalDataSource):
     def _enrich_zone_event(self, event_dict: Dict, row_dict: Dict) -> None:
         """Enrich zone event with additional data from zone_events table"""
         query = QSqlQuery(QSqlDatabase.database(self.db_connection_name))
-        query.prepare('SELECT box_entered, box_left, zone_coords, object_id, zone_id FROM zone_events WHERE preview_path_entered = :path OR preview_path_left = :path LIMIT 1')
+        # Note: zone_id doesn't exist in zone_events table, so we don't select it
+        query.prepare('SELECT box_entered, box_left, zone_coords, object_id FROM zone_events WHERE preview_path_entered = :path OR preview_path_left = :path LIMIT 1')
         query.bindValue(':path', row_dict.get('preview_path', ''))
         if query.exec() and query.next():
             event_dict['bounding_box'] = self._parse_bbox(query.value(0))
             event_dict['lost_bounding_box'] = self._parse_bbox(query.value(1))
             event_dict['zone_coords'] = self._parse_zone_coords(query.value(2))
             event_dict['object_id'] = query.value(3)
-            event_dict['zone_id'] = query.value(4)
+            # zone_id doesn't exist in table, so we don't set it
 
     def _enrich_attribute_event(self, event_dict: Dict, row_dict: Dict) -> None:
         """Enrich attribute event with additional data"""
@@ -511,8 +512,22 @@ class DatabaseJournalDataSource(EventJournalDataSource):
         
         # Enrich with additional data based on event type (skip expensive enrichment during initial load)
         if event_type == 'ZoneEvent':
+            # Extract object_id from row_dict (it's now in SQL SELECT)
+            # zone_id doesn't exist in zone_events table, but we can generate it from zone_coords if available
+            # This works even when skip_enrichment=True
+            event_dict['object_id'] = row_dict.get('object_id')
+            # Try to get zone_coords to generate zone_id (hash of coordinates)
             if not skip_enrichment:
                 self._enrich_zone_event(event_dict, row_dict)
+                # Generate zone_id from zone_coords if available
+                if 'zone_coords' in event_dict and event_dict['zone_coords']:
+                    import hashlib
+                    coords_str = str(event_dict['zone_coords'])
+                    zone_id = abs(hash(coords_str)) % 10000  # Generate ID from hash, limit to 4 digits
+                    event_dict['zone_id'] = zone_id
+            else:
+                # During initial load, we don't have zone_coords, so zone_id will be None
+                event_dict['zone_id'] = None
         elif event_type == 'AttributeEvent':
             if not skip_enrichment:
                 self._enrich_attribute_event(event_dict, row_dict)

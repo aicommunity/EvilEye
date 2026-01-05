@@ -22,12 +22,13 @@ class JournalAdapterCamEvents(JournalAdapterBase):
 
     def select_query(self) -> str:
         # Return columns compatible with EventsJournal:
-        # time_stamp, type, information, source_name, time_lost, preview_path, lost_preview_path
+        # time_stamp, type, information, source_name, time_lost, preview_path, lost_preview_path, object_id, zone_id
         query = ('SELECT time_stamp, '
                  'CAST(\'CameraEvent\' AS text) AS type, '
                  '(\'Camera=\' || camera_full_address || \' \' || '
                  'CASE WHEN connection_status then \'reconnect\' ELSE \'disconnect\' END) AS information, '
                  'camera_full_address AS source_name, '
                  'NULL as time_lost, '
-                 'NULL AS preview_path, NULL AS lost_preview_path FROM camera_events')
+                 'NULL AS preview_path, NULL AS lost_preview_path, '
+                 'NULL::integer AS object_id, NULL::integer AS zone_id FROM camera_events')
         return query

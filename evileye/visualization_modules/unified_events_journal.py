@@ -263,7 +263,8 @@ class UnifiedEventsJournal(QWidget):
                     elif et == 'attr_lost':
                         grouped[key]['lost'] = ev
                 elif et.startswith('zone'):
-                    key = ('zone', ev.get('source_id'), ev.get('zone_id'))
+                    # zone_id doesn't exist in zone_events table, use source_id + object_id for grouping
+                    key = ('zone', ev.get('source_id'), ev.get('object_id'))
                     if et == 'zone_entered':
                         grouped[key]['found'] = ev
                     elif et == 'zone_left':
@@ -292,7 +293,12 @@ class UnifiedEventsJournal(QWidget):
                     info = f"AttributeEvent name={base.get('event_name', '')}; obj={base.get('object_id')}; class={base.get('class_name', base.get('class_id', ''))}; attrs={base.get('attrs', [])}"
                 elif kind == 'zone':
                     event_name = 'ZoneEvent'
-                    info = f"ZoneEvent obj={base.get('object_id')} zone={base.get('zone_id', '')}"
+                    # zone_id exists in JSON data but not in DB, so show it if available
+                    zone_id = base.get('zone_id')
+                    if zone_id is not None:
+                        info = f"ZoneEvent obj={base.get('object_id')} zone={zone_id}"
+                    else:
+                        info = f"ZoneEvent obj={base.get('object_id')}"
                 else:  # fov
                     event_name = 'FOVEvent'
                     info = f"FOVEvent obj={base.get('object_id')}"
@@ -453,7 +459,8 @@ class UnifiedEventsJournal(QWidget):
                     elif et == 'attr_lost':
                         grouped[key]['lost'] = ev
                 elif et.startswith('zone'):
-                    key = ('zone', ev.get('source_id'), ev.get('zone_id'))
+                    # zone_id doesn't exist in zone_events table, use source_id + object_id for grouping
+                    key = ('zone', ev.get('source_id'), ev.get('object_id'))
                     if et == 'zone_entered':
                         grouped[key]['found'] = ev
                     elif et == 'zone_left':
@@ -482,7 +489,12 @@ class UnifiedEventsJournal(QWidget):
                     info = f"AttributeEvent name={base.get('event_name', '')}; obj={base.get('object_id')}; class={base.get('class_name', base.get('class_id', ''))}; attrs={base.get('attrs', [])}"
                 elif kind == 'zone':
                     event_name = 'ZoneEvent'
-                    info = f"ZoneEvent obj={base.get('object_id')} zone={base.get('zone_id', '')}"
+                    # zone_id exists in JSON data but not in DB, so show it if available
+                    zone_id = base.get('zone_id')
+                    if zone_id is not None:
+                        info = f"ZoneEvent obj={base.get('object_id')} zone={zone_id}"
+                    else:
+                        info = f"ZoneEvent obj={base.get('object_id')}"
                 else:  # fov
                     event_name = 'FOVEvent'
                     info = f"FOVEvent obj={base.get('object_id')}"
