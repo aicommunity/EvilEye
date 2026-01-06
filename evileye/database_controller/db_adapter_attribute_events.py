@@ -98,7 +98,9 @@ class DatabaseAdapterAttributeEvents(DatabaseAdapterBase):
             'box_found': None,
             'box_finished': None,
             'preview_path_found': '',
-            'frame_path_found': ''
+            'frame_path_found': '',
+            'video_path_found': getattr(event, 'video_path_found', None),
+            'video_path_finished': None
         }
         # Normalize and set box_found if available
         if event.box_found is not None and event.img_found is not None and hasattr(event.img_found, 'image'):
@@ -118,7 +120,8 @@ class DatabaseAdapterAttributeEvents(DatabaseAdapterBase):
             'time_finished': event.get_time_finished(),
             'box_finished': None,
             'preview_path_finished': self._get_img_path('preview', 'attribute_finished', event, time_lost=event.get_time_finished()),
-            'frame_path_finished': self._get_img_path('frame', 'attribute_finished', event, time_lost=event.get_time_finished())
+            'frame_path_finished': self._get_img_path('frame', 'attribute_finished', event, time_lost=event.get_time_finished()),
+            'video_path_finished': getattr(event, 'video_path_finished', None)
         }
         if event.box_finished is not None and event.img_finished is not None and hasattr(event.img_finished, 'image'):
             ih, iw, _ = event.img_finished.image.shape
@@ -196,6 +199,8 @@ class DatabaseAdapterAttributeEvents(DatabaseAdapterBase):
                 ('frame_path_found', 'text'),
                 ('preview_path_finished', 'text'),
                 ('frame_path_finished', 'text'),
+                ('video_path_found', 'text'),
+                ('video_path_finished', 'text'),
                 ('class_id', 'integer'),
                 ('box_found', 'real[]'),
                 ('box_finished', 'real[]')

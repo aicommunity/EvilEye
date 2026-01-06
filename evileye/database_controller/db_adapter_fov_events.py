@@ -61,7 +61,22 @@ class DatabaseAdapterFieldOfViewEvents(DatabaseAdapterBase):
             if query_string is None:
                 continue
 
-            record = self.db_controller.query(query_string, data)
+            try:
+                record = self.db_controller.query(query_string, data)
+            except Exception as e:
+                # Attempt to auto-migrate missing columns and retry once
+                msg = str(e)
+                if 'UndefinedColumn' in msg or 'does not exist' in msg:
+                    try:
+                        self._ensure_fov_columns()
+                        self.logger.warning('DB: Missing columns in fov_events detected. Applied auto-migration. Retrying query...')
+                        record = self.db_controller.query(query_string, data)
+                    except Exception as e2:
+                        self.logger.error(f'DB: FOVEvents query failed after migration attempt: {e2}')
+                        continue
+                else:
+                    self.logger.error(f'DB: FOVEvents query failed: {e}')
+                    continue
             # row_num = record[0][0]
             if query_type == 'insert':
                 threading_events.notify('new event')
@@ -80,7 +95,8 @@ class DatabaseAdapterFieldOfViewEvents(DatabaseAdapterBase):
 
     def _prepare_for_updating(self, event):
         fields_for_updating = {'time_lost': event.time_lost,
-                               'lost_preview_path': ''}
+                               'lost_preview_path': '',
+                               'video_path_lost': getattr(event, 'video_path_lost', None)}
 
         src_name = ''
         for camera in self.cameras_params:
@@ -103,6 +119,8 @@ class DatabaseAdapterFieldOfViewEvents(DatabaseAdapterBase):
                              'object_id': event.object_id,
                              'preview_path': '',
                              'lost_preview_path': None,
+                             'video_path': getattr(event, 'video_path', None),
+                             'video_path_lost': None,
                              'project_id': self.db_controller.get_project_id(),
                              'job_id': self.db_controller.get_job_id()}
         src_name = ''
@@ -154,3 +172,19 @@ class DatabaseAdapterFieldOfViewEvents(DatabaseAdapterBase):
             timestamp = time_lost.strftime('%Y-%m-%d_%H-%M-%S-%f')
             img_path = os.path.join(obj_type_path, f'{timestamp}_{src_name}_{image_type}.jpeg')
         return os.path.relpath(img_path, save_dir)
+
+    def _ensure_fov_columns(self):
+        # Ensure newly added columns exist in fov_events table
+        try:
+            alter_tpl = "ALTER TABLE {} ADD COLUMN IF NOT EXISTS {} {};"
+            table = self.table_name
+            # List of required columns and types
+            required = [
+                ('video_path', 'text'),
+                ('video_path_lost', 'text'),
+            ]
+            for col, coltype in required:
+                query = alter_tpl.format(table, col, coltype)
+                self.db_controller.query(query, None)
+        except Exception as e:
+            self.logger.error(f'DB: Failed to ensure fov_events columns: {e}')

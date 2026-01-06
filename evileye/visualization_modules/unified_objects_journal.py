@@ -145,6 +145,7 @@ class UnifiedObjectsJournal(QWidget):
         db_connection_name = getattr(self.data_source, 'db_connection_name', None)
         self.image_delegate = UnifiedImageDelegate(
             self.table, self.base_dir, db_connection_name,
+            journal_type='objects',
             logger_name="image_delegate", parent_logger=self.logger
         )
         self.table.setItemDelegateForColumn(5, self.image_delegate)  # Preview (with found/lost switching)

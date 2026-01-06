@@ -416,8 +416,23 @@ class DatabaseJournalDataSource(EventJournalDataSource):
         query = QSqlQuery(QSqlDatabase.database(self.db_connection_name))
         
         if not query.exec(sql):
-            self.logger.error(f"SQL Error: {query.lastError().text()}")
-            return []
+            error_text = query.lastError().text()
+            # Attempt to auto-migrate missing columns and retry once
+            if 'does not exist' in error_text or 'UndefinedColumn' in error_text:
+                try:
+                    self._ensure_video_columns()
+                    self.logger.warning('DB: Missing video columns detected. Applied auto-migration. Retrying query...')
+                    # Retry query
+                    query = QSqlQuery(QSqlDatabase.database(self.db_connection_name))
+                    if not query.exec(sql):
+                        self.logger.error(f"SQL Error after migration: {query.lastError().text()}")
+                        return []
+                except Exception as e:
+                    self.logger.error(f"Failed to migrate video columns: {e}")
+                    return []
+            else:
+                self.logger.error(f"SQL Error: {error_text}")
+                return []
         
         results = []
         while query.next():
@@ -479,6 +494,27 @@ class DatabaseJournalDataSource(EventJournalDataSource):
         
         return results
 
+    def _ensure_video_columns(self):
+        """Ensure video columns exist in event tables"""
+        try:
+            from psycopg2 import sql as psql
+            
+            # Zone events
+            self.db_controller.query(psql.SQL("ALTER TABLE zone_events ADD COLUMN IF NOT EXISTS video_path_entered text;"), None)
+            self.db_controller.query(psql.SQL("ALTER TABLE zone_events ADD COLUMN IF NOT EXISTS video_path_left text;"), None)
+            
+            # Attribute events
+            self.db_controller.query(psql.SQL("ALTER TABLE attribute_events ADD COLUMN IF NOT EXISTS video_path_found text;"), None)
+            self.db_controller.query(psql.SQL("ALTER TABLE attribute_events ADD COLUMN IF NOT EXISTS video_path_finished text;"), None)
+            
+            # FOV events
+            self.db_controller.query(psql.SQL("ALTER TABLE fov_events ADD COLUMN IF NOT EXISTS video_path text;"), None)
+            self.db_controller.query(psql.SQL("ALTER TABLE fov_events ADD COLUMN IF NOT EXISTS video_path_lost text;"), None)
+            
+            self.logger.info("Video columns migration completed")
+        except Exception as e:
+            self.logger.error(f'DB: Failed to ensure video columns: {e}')
+
     def _convert_events_row_to_dict(self, row_dict: Dict, skip_enrichment: bool = False) -> Dict:
         """Convert events row to unified format"""
         event_type = row_dict.get('type', '')
@@ -498,15 +534,27 @@ class DatabaseJournalDataSource(EventJournalDataSource):
         else:
             date_folder = self.date_filter or ''
         
+        # Extract numeric event_id from row_dict (if available)
+        event_id_numeric = row_dict.get('event_id')
+        if event_id_numeric is not None:
+            try:
+                event_id_numeric = int(event_id_numeric)
+            except (ValueError, TypeError):
+                event_id_numeric = None
+        
         event_dict = {
-            'event_id': f"db:{event_type}:{time_stamp}",
+            'event_id': f"db:{event_type}:{time_stamp}",  # String ID for backward compatibility
+            'event_id_numeric': event_id_numeric,  # Numeric ID from DB for video fragment lookup
             'event_type': self._map_event_type(event_type),
             'ts': time_stamp,
             'source_name': row_dict.get('source_name', ''),
+            'source_id': row_dict.get('source_id'),  # Add source_id for video path resolution
             'information': row_dict.get('information', ''),
             'image_filename': row_dict.get('preview_path', ''),
             'time_lost': row_dict.get('time_lost'),
             'lost_preview_path': row_dict.get('lost_preview_path', ''),
+            'video_path': row_dict.get('video_path'),  # Path to video fragment from DB
+            'video_path_lost': row_dict.get('video_path_lost'),  # Path to lost video fragment from DB
             'date_folder': date_folder,
         }
         

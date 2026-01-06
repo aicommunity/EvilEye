@@ -298,7 +298,7 @@ class DatabaseJournalWindow(QWidget):
                     adapters.append(self.attr_events_adapter)
                 if self.system_events_adapter:
                     adapters.append(self.system_events_adapter)
-        
+                
                 # Create DatabaseJournalDataSource for events
                 events_ds = DatabaseJournalDataSource(
                     self.db_controller,
@@ -317,7 +317,7 @@ class DatabaseJournalWindow(QWidget):
                     parent=self,
                     logger_name="unified_events_journal",
                     parent_logger=self.logger
-                )
+            )
                 
                 # Block signals during tab replacement to prevent currentChanged recursion
                 self.tabs.blockSignals(True)
@@ -332,9 +332,9 @@ class DatabaseJournalWindow(QWidget):
             except Exception as e:
                 # Reset flag on error
                 self._events_journal_created = False
+                import traceback
                 self.logger.error(f"Failed to create UnifiedEventsJournal: {e}")
-            import traceback
-            self.logger.error(f"Traceback: {traceback.format_exc()}")
+                self.logger.error(f"Traceback: {traceback.format_exc()}")
     
     def _ensure_tab_initialized(self, index):
         """Ensure journal is initialized for the tab at given index"""

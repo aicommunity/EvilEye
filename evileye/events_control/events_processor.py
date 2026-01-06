@@ -213,8 +213,32 @@ class EventsProcessor(EvilEyeBase):
                             event.set_id(self.id_counter)
                             self.id_counter += 1
                             self.long_term_events[events].append(event)
+                            
+                            # Notify event recording: event ON (BEFORE saving to DB, so video path can be stored in event)
+                            try:
+                                if self.event_recording_callback and not event.is_finished():
+                                    # Skip events without source_id (e.g., SystemEvent)
+                                    source_id = getattr(event, 'source_id', None)
+                                    if source_id is None:
+                                        pass  # Continue to save event even if no source_id
+                                    else:
+                                        bbox = getattr(event, 'box_found', None) or getattr(event, 'box_entered', None)
+                                        self.event_recording_callback(
+                                            event.event_id,
+                                            event.get_name(),
+                                            event.timestamp,
+                                            source_id,
+                                            True,  # is_on = True (event started)
+                                            bbox
+                                        )
+                            except Exception as e:
+                                try:
+                                    self.logger.debug(f"Error in event recording callback (ON): {e}")
+                                except Exception:
+                                    pass
+                            
                             if event.get_name() in self.events_adapters:
-                                # Call insert on all adapters for this event name
+                                # Call insert on all adapters for this event name (after callback, so video path is available)
                                 for adapter in self.events_adapters[event.get_name()]:
                                     try:
                                         adapter.insert(event)
@@ -229,27 +253,6 @@ class EventsProcessor(EvilEyeBase):
                                                      True)
                             except Exception:
                                 pass
-                            # Notify event recording: event ON
-                            try:
-                                if self.event_recording_callback and not event.is_finished():
-                                    # Skip events without source_id (e.g., SystemEvent)
-                                    source_id = getattr(event, 'source_id', None)
-                                    if source_id is None:
-                                        continue
-                                    bbox = getattr(event, 'box_found', None) or getattr(event, 'box_entered', None)
-                                    self.event_recording_callback(
-                                        event.event_id,
-                                        event.get_name(),
-                                        event.timestamp,
-                                        source_id,
-                                        True,  # is_on = True (event started)
-                                        bbox
-                                    )
-                            except Exception as e:
-                                try:
-                                    self.logger.debug(f"Error in event recording callback (ON): {e}")
-                                except Exception:
-                                    pass
                 else:  # Если нет активных долгосрочных событий, анализируем новые
                     for event in new_events[events]:
                         event.set_id(self.id_counter)

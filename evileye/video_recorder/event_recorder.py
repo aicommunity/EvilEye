@@ -231,7 +231,7 @@ class EventRecorder:
             self.logger.debug("Recording worker finished")
     
     def start_event_recording(self, event_id: int, event_name: str, event_timestamp: float, 
-                              source_id: int, bbox: Optional[List] = None) -> bool:
+                              source_id: int, bbox: Optional[List] = None) -> tuple[bool, Optional[str]]:
         """
         Start recording an event.
         
@@ -243,12 +243,13 @@ class EventRecorder:
             bbox: Optional bounding box of the event
             
         Returns:
-            True if recording started successfully
+            Tuple of (success: bool, relative_video_path: Optional[str])
+            relative_video_path is relative to base_dir (e.g., "EvilEyeData")
         """
         with self._lock:
             if self._is_recording:
                 self.logger.warning(f"Event recording already in progress, skipping event {event_id}")
-                return False
+                return False, None
             
             # Get pre-event frames from buffer
             self._pre_event_frames = self.event_buffer.get_frames_before(
@@ -314,9 +315,30 @@ class EventRecorder:
             # Generate output path
             output_path = self._get_event_output_path(event_id, event_name, event_timestamp)
             
+            # Calculate relative path (relative to base_dir, e.g., "EvilEyeData")
+            # Extract base_dir from output_path
+            # output_path format: base_dir/Events/YYYY-MM-DD/Videos/CameraName/filename.mp4
+            # We need: Events/YYYY-MM-DD/Videos/CameraName/filename.mp4
+            relative_video_path = None
+            try:
+                # Find base_dir by looking for "Events" in path
+                path_parts = output_path.parts
+                if 'Events' in path_parts:
+                    events_idx = path_parts.index('Events')
+                    relative_parts = path_parts[events_idx:]
+                    relative_video_path = str(Path(*relative_parts))
+                else:
+                    # Fallback: use relative path from current working directory
+                    # This shouldn't happen, but handle it gracefully
+                    self.logger.warning(f"Could not determine relative path for video: {output_path}")
+                    relative_video_path = str(output_path)
+            except Exception as e:
+                self.logger.warning(f"Error calculating relative video path: {e}")
+                relative_video_path = str(output_path)
+            
             # Open writer
             if not self._open_writer(output_path, frame_size):
-                return False
+                return False, None
             
             # Initialize recording state
             self._is_recording = True
@@ -343,8 +365,8 @@ class EventRecorder:
             self.logger.info(f"Started event recording: event_id={event_id}, event_name={event_name}, "
                            f"pre_frames={len(self._pre_event_frames)}, event_start_time={self._event_start_time:.3f}s, "
                            f"pre_seconds={self.params.event_pre_seconds}s, post_seconds={self.params.event_post_seconds}s, "
-                           f"output={output_path}")
-            return True
+                           f"output={output_path}, relative_path={relative_video_path}")
+            return True, relative_video_path
     
     def add_post_event_frame(self, frame: np.ndarray, timestamp: Optional[float] = None) -> bool:
         """

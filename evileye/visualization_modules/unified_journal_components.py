@@ -9,12 +9,12 @@ from typing import Optional, List, Tuple
 
 try:
     from PyQt6.QtCore import Qt, QSize, QPointF, QRect
-    from PyQt6.QtWidgets import QStyledItemDelegate, QLabel, QVBoxLayout
+    from PyQt6.QtWidgets import QStyledItemDelegate, QLabel, QVBoxLayout, QTableWidget
     from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor, QBrush, QPolygonF
     pyqt_version = 6
 except ImportError:
     from PyQt5.QtCore import Qt, QSize, QPointF, QRect
-    from PyQt5.QtWidgets import QStyledItemDelegate, QLabel, QVBoxLayout
+    from PyQt5.QtWidgets import QStyledItemDelegate, QLabel, QVBoxLayout, QTableWidget
     from PyQt5.QtGui import QPixmap, QPainter, QPen, QColor, QBrush, QPolygonF
     pyqt_version = 5
 
@@ -26,13 +26,15 @@ class UnifiedImageDelegate(QStyledItemDelegate):
     """Универсальный делегат для отображения изображений в журналах"""
     
     def __init__(self, parent=None, base_dir=None, db_connection_name=None, 
-                 logger_name: str | None = None, parent_logger: logging.Logger | None = None):
+                 journal_type='objects', journal_widget=None, logger_name: str | None = None, parent_logger: logging.Logger | None = None):
         super().__init__(parent)
         base_name = "evileye.unified_image_delegate"
         full_name = f"{base_name}.{logger_name}" if logger_name else base_name
         self.logger = parent_logger or logging.getLogger(full_name)
         self.base_dir = base_dir
         self.db_connection_name = db_connection_name
+        self.journal_type = journal_type  # 'objects' or 'events'
+        self.journal_widget = journal_widget  # Reference to UnifiedEventsJournal for video playback
         self.preview_width = 300
         self.preview_height = 150
 
@@ -150,11 +152,25 @@ class UnifiedImageDelegate(QStyledItemDelegate):
         if box or zone_coords:
             self._draw_overlays_from_data(painter, box, zone_coords, draw_x, draw_y, draw_w, draw_h)
         
+        # Get video paths for events journal (independent of Found/Lost buttons)
+        found_video_path = preview_data.get('found_video_path') if self.journal_type == 'events' else None
+        lost_video_path = preview_data.get('lost_video_path') if self.journal_type == 'events' else None
+        current_video_path = found_video_path if current_mode == 'found' else lost_video_path
+        
         # Draw switching buttons if both found and lost paths are available
         found_path = preview_data.get('found_path', '')
         lost_path = preview_data.get('lost_path', '')
-        if found_path and lost_path:
-            self._draw_switching_buttons(painter, option, current_mode, draw_x, draw_y, draw_w, draw_h)
+        has_both_previews = bool(found_path and lost_path)
+        
+        # Draw Found/Lost buttons only if both previews exist
+        if has_both_previews:
+            self._draw_switching_buttons(painter, option, current_mode, draw_x, draw_y, draw_w, draw_h, 
+                                        current_video_path if self.journal_type == 'events' else None, 
+                                        has_found_lost=True)
+        # Draw Play/Stop button independently if video is available (even without Found/Lost buttons)
+        elif self.journal_type == 'events' and current_video_path:
+            self._draw_switching_buttons(painter, option, current_mode, draw_x, draw_y, draw_w, draw_h,
+                                        current_video_path, has_found_lost=False)
     
     def _compute_switch_button_rects(self, option, draw_x, draw_y, draw_w, draw_h):
         """
@@ -195,38 +211,103 @@ class UnifiedImageDelegate(QStyledItemDelegate):
 
         return found_rect, lost_rect
 
-    def _draw_switching_buttons(self, painter, option, current_mode, draw_x, draw_y, draw_w, draw_h):
-        """Draw switching buttons (Found/Lost) on top of the image"""
+    def _draw_switching_buttons(self, painter, option, current_mode, draw_x, draw_y, draw_w, draw_h, video_path=None, has_found_lost=True):
+        """Draw switching buttons (Found/Lost) on top of the image, and Play/Stop button for events journal"""
         try:
             from PyQt6.QtGui import QColor, QFont
         except ImportError:
             from PyQt5.QtGui import QColor, QFont
 
-        found_rect, lost_rect = self._compute_switch_button_rects(
-            option, draw_x, draw_y, draw_w, draw_h
-        )
+        found_rect = None
+        lost_rect = None
         
-        # Draw Found button
-        if current_mode == 'found':
-            painter.fillRect(found_rect, QColor(100, 150, 255, 200))  # Active: blue
-        else:
-            painter.fillRect(found_rect, QColor(200, 200, 200, 150))  # Inactive: gray
-        painter.setPen(QColor(0, 0, 0))
-        painter.drawRect(found_rect)
-        painter.setPen(QColor(255, 255, 255) if current_mode == 'found' else QColor(0, 0, 0))
-        font = QFont()
-        font.setPointSize(9)
-        painter.setFont(font)
-        painter.drawText(found_rect, Qt.AlignmentFlag.AlignCenter, "Found")
+        # Draw Found/Lost buttons only if both previews exist
+        if has_found_lost:
+            found_rect, lost_rect = self._compute_switch_button_rects(
+                option, draw_x, draw_y, draw_w, draw_h
+            )
+            
+            # Draw Found button
+            if current_mode == 'found':
+                painter.fillRect(found_rect, QColor(100, 150, 255, 200))  # Active: blue
+            else:
+                painter.fillRect(found_rect, QColor(200, 200, 200, 150))  # Inactive: gray
+            painter.setPen(QColor(0, 0, 0))
+            painter.drawRect(found_rect)
+            painter.setPen(QColor(255, 255, 255) if current_mode == 'found' else QColor(0, 0, 0))
+            font = QFont()
+            font.setPointSize(9)
+            painter.setFont(font)
+            painter.drawText(found_rect, Qt.AlignmentFlag.AlignCenter, "Found")
+            
+            if current_mode == 'lost':
+                painter.fillRect(lost_rect, QColor(100, 150, 255, 200))  # Active: blue
+            else:
+                painter.fillRect(lost_rect, QColor(200, 200, 200, 150))  # Inactive: gray
+            painter.setPen(QColor(0, 0, 0))
+            painter.drawRect(lost_rect)
+            painter.setPen(QColor(255, 255, 255) if current_mode == 'lost' else QColor(0, 0, 0))
+            painter.drawText(lost_rect, Qt.AlignmentFlag.AlignCenter, "Lost")
         
-        if current_mode == 'lost':
-            painter.fillRect(lost_rect, QColor(100, 150, 255, 200))  # Active: blue
+        # Draw Play/Stop button for events journal if video is available (independent of Found/Lost)
+        if self.journal_type == 'events' and video_path:
+            play_rect = self._compute_video_button_rect(option, draw_x, draw_y, draw_w, draw_h, found_rect, lost_rect, has_found_lost)
+            if play_rect:
+                # Check if video is currently playing
+                is_playing = False
+                if self.journal_widget and self.journal_widget.video_player:
+                    is_playing = getattr(self.journal_widget.video_player, '_is_playing', False)
+                
+                if is_playing:
+                    # Draw Stop button (red)
+                    painter.fillRect(play_rect, QColor(200, 100, 100, 200))  # Red for stop
+                    painter.setPen(QColor(0, 0, 0))
+                    painter.drawRect(play_rect)
+                    painter.setPen(QColor(255, 255, 255))
+                    painter.drawText(play_rect, Qt.AlignmentFlag.AlignCenter, "■")
+                else:
+                    # Draw Play button (green)
+                    painter.fillRect(play_rect, QColor(100, 200, 100, 200))  # Green for play
+                    painter.setPen(QColor(0, 0, 0))
+                    painter.drawRect(play_rect)
+                    painter.setPen(QColor(255, 255, 255))
+                    painter.drawText(play_rect, Qt.AlignmentFlag.AlignCenter, "▶")
+    
+    def _compute_video_button_rect(self, option, draw_x, draw_y, draw_w, draw_h, found_rect, lost_rect, has_found_lost=True):
+        """Compute QRect for Play/Stop button, positioned to the right of Found/Lost buttons or standalone"""
+        try:
+            from PyQt6.QtCore import QRect
+        except ImportError:
+            from PyQt5.QtCore import QRect
+        
+        # Button dimensions (same as Found/Lost if they exist, otherwise use defaults)
+        if has_found_lost and found_rect:
+            button_width = found_rect.width()
+            button_height = found_rect.height()
+            button_spacing = 2
+            
+            # Position to the right of Lost button
+            buttons_x = lost_rect.x() + lost_rect.width() + button_spacing
+            
+            # Check if there's enough space
+            if buttons_x + button_width > draw_x + draw_w - 4:
+                # Not enough space horizontally, try below Found/Lost buttons
+                buttons_y = found_rect.y() + found_rect.height() + button_spacing
+                if buttons_y + button_height > draw_y + draw_h - 4:
+                    # Not enough space, return None
+                    return None
+                buttons_x = draw_x + 4
+            else:
+                buttons_y = found_rect.y()
         else:
-            painter.fillRect(lost_rect, QColor(200, 200, 200, 150))  # Inactive: gray
-        painter.setPen(QColor(0, 0, 0))
-        painter.drawRect(lost_rect)
-        painter.setPen(QColor(255, 255, 255) if current_mode == 'lost' else QColor(0, 0, 0))
-        painter.drawText(lost_rect, Qt.AlignmentFlag.AlignCenter, "Lost")
+            # Standalone Play button (no Found/Lost buttons)
+            button_spacing = 2
+            button_width = max(32, min(40, draw_w // 6 if draw_w > 0 else 36))
+            button_height = max(14, min(18, draw_h // 10 if draw_h > 0 else 16))
+            buttons_x = draw_x + 4
+            buttons_y = draw_y + 4
+        
+        return QRect(buttons_x, buttons_y, button_width, button_height)
     
     def _paint_image_old(self, painter, option, index, full_path, event_data):
         """Old paint logic for backward compatibility"""
@@ -290,15 +371,27 @@ class UnifiedImageDelegate(QStyledItemDelegate):
         
         found_path = preview_data.get('found_path', '')
         lost_path = preview_data.get('lost_path', '')
-        if not found_path or not lost_path:
-            return False  # No switching needed if only one path
+        has_both_previews = bool(found_path and lost_path)
         
-        # Get image dimensions from current display
-        img_path = preview_data.get('found_path', '') if preview_data.get('current_mode', 'found') == 'found' else preview_data.get('lost_path', '')
+        # Get current image path and video path (for Play button)
+        current_mode = preview_data.get('current_mode', 'found')
+        img_path = found_path if current_mode == 'found' else lost_path
+        if not img_path:
+            img_path = found_path or lost_path  # Fallback to any available path
+        
+        # Get video paths for events journal
+        found_video_path = preview_data.get('found_video_path') if self.journal_type == 'events' else None
+        lost_video_path = preview_data.get('lost_video_path') if self.journal_type == 'events' else None
+        current_video_path = found_video_path if current_mode == 'found' else lost_video_path
+        if not current_video_path:
+            current_video_path = found_video_path or lost_video_path  # Fallback to any available video
+        
         if not img_path:
             return False
         
-        event_data = preview_data.get('found_event') if preview_data.get('current_mode', 'found') == 'found' else preview_data.get('lost_event')
+        event_data = preview_data.get('found_event') if current_mode == 'found' else preview_data.get('lost_event')
+        if not event_data:
+            event_data = preview_data.get('found_event') or preview_data.get('lost_event')
         date_folder = event_data.get('date_folder', '') if event_data else ''
         full_path = self._resolve_image_path(img_path, date_folder)
         if not full_path or not os.path.exists(full_path):
@@ -322,16 +415,95 @@ class UnifiedImageDelegate(QStyledItemDelegate):
         draw_x = cell_rect.x() + (cell_w - draw_w) // 2
         draw_y = cell_rect.y() + (cell_h - draw_h) // 2
         
-        # Build button rects exactly as in _draw_switching_buttons
-        found_rect, lost_rect = self._compute_switch_button_rects(
-            option, draw_x, draw_y, draw_w, draw_h
-        )
+        # Build button rects (only if both previews exist)
+        found_rect = None
+        lost_rect = None
+        if has_both_previews:
+            found_rect, lost_rect = self._compute_switch_button_rects(
+                option, draw_x, draw_y, draw_w, draw_h
+            )
+        
+        # Check for Play/Stop button (events journal only, independent of Found/Lost)
+        play_rect = None
+        if self.journal_type == 'events' and current_video_path:
+            play_rect = self._compute_video_button_rect(option, draw_x, draw_y, draw_w, draw_h, found_rect, lost_rect, has_both_previews)
         
         # Check if click is within button areas (event.pos() is in viewport coords)
         click_pos = event.pos()
+        
+        # Check Play/Stop button first (events journal, independent of Found/Lost)
+        if play_rect and play_rect.contains(click_pos):
+            # Clicked on Play/Stop button
+            if self.journal_widget and current_video_path:
+                # Check if video is currently playing
+                is_playing = False
+                if self.journal_widget.video_player:
+                    is_playing = getattr(self.journal_widget.video_player, '_is_playing', False)
+                
+                if is_playing:
+                    # Stop video playback
+                    if self.journal_widget.video_player:
+                        self.journal_widget.video_player.stop()
+                        # Widget will be removed in _on_video_stopped
+                    return True
+                else:
+                    # Start video playback
+                    # Stop any existing video playback
+                    if self.journal_widget.video_player:
+                        self.journal_widget.video_player.stop()
+                        self.journal_widget.video_player = None
+                    
+                    # Import VideoPlayerWidget
+                    try:
+                        from .video_player_window import VideoPlayerWidget
+                    except ImportError:
+                        self.logger.error("Failed to import VideoPlayerWidget")
+                        return True
+                    
+                    # Get table and cell coordinates
+                    table = self.parent()
+                    if not table or not isinstance(table, QTableWidget):
+                        return True
+                    
+                    row = index.row()
+                    col = index.column()
+                    
+                    # Remove any existing widget from this cell
+                    existing_widget = table.cellWidget(row, col)
+                    if existing_widget:
+                        existing_widget.deleteLater()
+                    
+                    # Create video player widget
+                    self.journal_widget.video_player = VideoPlayerWidget(
+                        parent=table,
+                        logger_name="video_player", 
+                        parent_logger=self.logger
+                    )
+                    self.journal_widget.video_player.stopped.connect(self._on_video_stopped)
+                    
+                    # Set widget in cell - this will show video over the image
+                    table.setCellWidget(row, col, self.journal_widget.video_player)
+                    
+                    # Start playback
+                    if self.journal_widget.video_player.play_video(current_video_path):
+                        # Store row/col for cleanup
+                        self.journal_widget._video_player_row = row
+                        self.journal_widget._video_player_col = col
+                    else:
+                        # Playback failed, remove widget
+                        table.setCellWidget(row, col, None)
+                        self.journal_widget.video_player = None
+                    
+                    return True
 
-        if found_rect.contains(click_pos):
+        # Handle Found/Lost buttons (only if both previews exist)
+        if has_both_previews and found_rect and found_rect.contains(click_pos):
             # Clicked on Found button
+            # Stop video playback if active
+            if self.journal_widget and self.journal_widget.video_player:
+                self.journal_widget.video_player.stop()
+                # Widget will be removed in _on_video_stopped
+            
             if preview_data.get('current_mode') != 'found':
                 preview_data = preview_data.copy()  # Create a copy to avoid modifying original
                 preview_data['current_mode'] = 'found'
@@ -348,8 +520,13 @@ class UnifiedImageDelegate(QStyledItemDelegate):
                         table.viewport().update()
                 return True
         
-        if lost_rect.contains(click_pos):
+        if has_both_previews and lost_rect and lost_rect.contains(click_pos):
             # Clicked on Lost button
+            # Stop video playback if active
+            if self.journal_widget and self.journal_widget.video_player:
+                self.journal_widget.video_player.stop()
+                # Widget will be removed in _on_video_stopped
+            
             if preview_data.get('current_mode') != 'lost':
                 preview_data = preview_data.copy()  # Create a copy to avoid modifying original
                 preview_data['current_mode'] = 'lost'
@@ -367,6 +544,35 @@ class UnifiedImageDelegate(QStyledItemDelegate):
                 return True
         
         return False
+    
+    def _on_video_stopped(self):
+        """Handle video player stopped signal"""
+        if self.journal_widget and self.journal_widget.video_player:
+            # Remove widget from cell
+            table = self.parent()
+            if table and isinstance(table, QTableWidget):
+                row = getattr(self.journal_widget, '_video_player_row', None)
+                col = getattr(self.journal_widget, '_video_player_col', None)
+                if row is not None and col is not None:
+                    # Store reference before clearing
+                    widget_to_remove = self.journal_widget.video_player
+                    # Remove widget from cell first (this will hide it)
+                    table.setCellWidget(row, col, None)
+                    # Clear reference before deleting
+                    self.journal_widget.video_player = None
+                    # Delete widget asynchronously
+                    if widget_to_remove:
+                        widget_to_remove.deleteLater()
+                    # Trigger repaint to show image again
+                    table.viewport().update()
+            else:
+                # Clear reference if no table
+                self.journal_widget.video_player = None
+            # Clean up stored coordinates
+            if hasattr(self.journal_widget, '_video_player_row'):
+                delattr(self.journal_widget, '_video_player_row')
+            if hasattr(self.journal_widget, '_video_player_col'):
+                delattr(self.journal_widget, '_video_player_col')
 
     def _resolve_image_path(self, img_path: str, date_folder: str = '') -> Optional[str]:
         """Resolve image path to full absolute path"""

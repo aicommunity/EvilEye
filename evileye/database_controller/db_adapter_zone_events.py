@@ -89,8 +89,19 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
             try:
                 record = self.db_controller.query(query_string, data)
             except Exception as e:
-                self.logger.error(f'DB: ZoneEvents query failed: {e}')
-                continue
+                # Attempt to auto-migrate missing columns and retry once
+                msg = str(e)
+                if 'UndefinedColumn' in msg or 'does not exist' in msg:
+                    try:
+                        self._ensure_zone_columns()
+                        self.logger.warning('DB: Missing columns in zone_events detected. Applied auto-migration. Retrying query...')
+                        record = self.db_controller.query(query_string, data)
+                    except Exception as e2:
+                        self.logger.error(f'DB: ZoneEvents query failed after migration attempt: {e2}')
+                        continue
+                else:
+                    self.logger.error(f'DB: ZoneEvents query failed: {e}')
+                    continue
 
             # Безопасные проверки результата RETURNING
             # UPDATE может не найти запись для обновления (подзапрос не нашел event_id)
@@ -157,7 +168,8 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
         fields_for_updating = {'time_left': event.time_left,
                                'box_left': event.box_left,
                                'frame_path_left': self._get_img_path('frame', 'zone_left', event, time_lost=event.time_left),
-                               'preview_path_left': self._get_img_path('preview', 'zone_left', event, time_lost=event.time_left)}
+                               'preview_path_left': self._get_img_path('preview', 'zone_left', event, time_lost=event.time_left),
+                               'video_path_left': getattr(event, 'video_path_left', None)}
 
         image_height, image_width, _ = event.img_left.image.shape
         fields_for_updating['box_left'] = copy.deepcopy(fields_for_updating['box_left'])
@@ -181,6 +193,8 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
                              'frame_path_left': None,
                              'preview_path_entered': self._get_img_path('preview', 'zone_entered', event, event.time_entered),
                              'preview_path_left': None,
+                             'video_path_entered': getattr(event, 'video_path_entered', None),
+                             'video_path_left': None,
                              'project_id': self.db_controller.get_project_id(),
                              'job_id': self.db_controller.get_job_id()}
 
@@ -237,3 +251,19 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
             timestamp = time_lost.strftime('%Y-%m-%d_%H-%M-%S-%f')
             img_path = os.path.join(obj_type_path, f'{timestamp}_zone{zone_id}_obj{obj_id}_{image_type}.jpeg')
         return os.path.relpath(img_path, save_dir)
+
+    def _ensure_zone_columns(self):
+        # Ensure newly added columns exist in zone_events table
+        try:
+            alter_tpl = "ALTER TABLE {} ADD COLUMN IF NOT EXISTS {} {};"
+            table = self.table_name
+            # List of required columns and types
+            required = [
+                ('video_path_entered', 'text'),
+                ('video_path_left', 'text'),
+            ]
+            for col, coltype in required:
+                query = alter_tpl.format(table, col, coltype)
+                self.db_controller.query(query, None)
+        except Exception as e:
+            self.logger.error(f'DB: Failed to ensure zone_events columns: {e}')

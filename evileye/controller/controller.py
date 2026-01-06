@@ -207,6 +207,7 @@ class Controller:
         # Event-based recording components
         self.event_buffers = {}  # source_id -> EventBuffer
         self.event_recorders = {}  # source_id -> EventRecorder
+        self.event_video_paths = {}  # event_id -> relative_video_path (for storing video paths in DB)
         self.recording_params = None  # Global recording parameters
     
     def get_fps(self) -> int:
@@ -1341,7 +1342,10 @@ class Controller:
     
     def _on_event_recording(self, event_id: int, event_name: str, event_timestamp: float, 
                            source_id: int, is_on: bool, bbox: list | None = None):
-        """Callback for event-based recording from EventsProcessor."""
+        """Callback for event-based recording from EventsProcessor.
+        
+        Also stores video path in event object if available, and in event_video_paths dict.
+        """
         try:
             if source_id not in self.event_recorders:
                 return
@@ -1362,13 +1366,64 @@ class Controller:
             if is_on:
                 # Event started - start recording
                 if not event_recorder.is_recording():
-                    event_recorder.start_event_recording(
+                    success, relative_video_path = event_recorder.start_event_recording(
                         event_id, event_name, event_timestamp, source_id, bbox
                     )
+                    if success and relative_video_path:
+                        # Store video path for this event_id
+                        self.event_video_paths[event_id] = relative_video_path
+                        self.logger.debug(f"Stored video path for event {event_id}: {relative_video_path}")
+                        
+                        # Try to store video path in event object if available
+                        if self.events_processor:
+                            # Find event in long_term_events
+                            for event_type, events_list in self.events_processor.long_term_events.items():
+                                for event in events_list:
+                                    if event.event_id == event_id:
+                                        # Store video path based on event type
+                                        if event_name == 'ZoneEvent':
+                                            if not hasattr(event, 'video_path_entered'):
+                                                event.video_path_entered = None
+                                            event.video_path_entered = relative_video_path
+                                        elif event_name == 'AttributeEvent':
+                                            if not hasattr(event, 'video_path_found'):
+                                                event.video_path_found = None
+                                            event.video_path_found = relative_video_path
+                                        elif event_name == 'FOVEvent':
+                                            if not hasattr(event, 'video_path'):
+                                                event.video_path = None
+                                            event.video_path = relative_video_path
+                                        self.logger.debug(f"Stored video path in event object {event_id}: {relative_video_path}")
+                                        break
             else:
                 # Event ended - stop recording
                 if event_recorder.is_recording():
-                    event_recorder.stop_event_recording()
+                    video_path = event_recorder.stop_event_recording()
+                    # If video was deleted due to small size, remove from dict
+                    if video_path is None and event_id in self.event_video_paths:
+                        del self.event_video_paths[event_id]
+                        self.logger.debug(f"Removed video path for event {event_id} (file deleted)")
+                    elif video_path is not None:
+                        # Update video path for finished events (e.g., video_path_left for ZoneEvent)
+                        if self.events_processor:
+                            # Find event in finished_events or long_term_events
+                            for event_type, events_list in list(self.events_processor.finished_events.items()) + list(self.events_processor.long_term_events.items()):
+                                for event in events_list:
+                                    if event.event_id == event_id:
+                                        # Store video path for finished event based on event type
+                                        if event_name == 'ZoneEvent':
+                                            if not hasattr(event, 'video_path_left'):
+                                                event.video_path_left = None
+                                            event.video_path_left = self.event_video_paths.get(event_id)
+                                        elif event_name == 'AttributeEvent':
+                                            if not hasattr(event, 'video_path_finished'):
+                                                event.video_path_finished = None
+                                            event.video_path_finished = self.event_video_paths.get(event_id)
+                                        elif event_name == 'FOVEvent':
+                                            if not hasattr(event, 'video_path_lost'):
+                                                event.video_path_lost = None
+                                            event.video_path_lost = self.event_video_paths.get(event_id)
+                                        break
         except Exception as e:
             try:
                 self.logger.error(f"Error in event recording callback: {e}", exc_info=True)
