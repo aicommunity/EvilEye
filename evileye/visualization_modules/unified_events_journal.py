@@ -705,8 +705,10 @@ class UnifiedEventsJournal(QWidget):
             return
         
         scrollbar = self.table.verticalScrollBar()
-        row_height = self.table.verticalHeader().defaultSectionSize()
-        delta = len(table_rows) * row_height if row_height > 0 else 0
+        # Запоминаем индекс верхней видимой строки, чтобы вернуть пользователя на тот же диапазон
+        old_top_row = self.table.rowAt(0)
+        if old_top_row < 0:
+            old_top_row = 0
 
         self._updating_table = True
         self.table.setUpdatesEnabled(False)
@@ -753,11 +755,20 @@ class UnifiedEventsJournal(QWidget):
             # Adjust scroll to preserve view if user is not on auto-scroll
             if scrollbar is not None:
                 if self._auto_scroll:
+                    # Пользователь следит за новыми событиями - держим верх таблицы
                     scrollbar.setValue(scrollbar.minimum())
                 else:
                     try:
-                        old_value = scrollbar.value()
-                        scrollbar.setValue(old_value + delta)
+                        # Пользователь читает старые события: возвращаем видимую область
+                        target_row = old_top_row + len(table_rows)
+                        if target_row < self.table.rowCount():
+                            item = self.table.item(target_row, 0)
+                            if item is not None:
+                                from PyQt6.QtWidgets import QAbstractItemView
+                                self.table.scrollToItem(
+                                    item,
+                                    QAbstractItemView.ScrollHint.PositionAtTop
+                                )
                     except Exception:
                         pass
         finally:

@@ -74,7 +74,8 @@ class UnifiedObjectsJournal(QWidget):
         self._dates_cache = None
         self._dates_loaded = False
         
-        # Scroll / update flags
+        # Closing / scroll / update flags
+        self._is_closing = False
         self._auto_scroll = True      # автопрокрутка, когда пользователь на новых событиях (вверху)
         self._updating_table = False  # защита от обработки скролла во время массовых обновлений
         
@@ -214,6 +215,8 @@ class UnifiedObjectsJournal(QWidget):
     def _check_for_updates(self):
         """Check for data updates and refresh if needed"""
         try:
+            if self._is_closing or self.table is None or self.data_source is None:
+                return
             # Only update if widget is visible and data has been loaded
             if not self.is_visible or not self._data_loaded:
                 return
@@ -316,6 +319,8 @@ class UnifiedObjectsJournal(QWidget):
         # Флаг, что мы находимся в процессе массового обновления таблицы
         self._updating_table = True
         try:
+            if self._is_closing or self.table is None or self.data_source is None:
+                return
             scrollbar = self.table.verticalScrollBar() if self.table is not None else None
             anchor_key = None
             restore_position = False
@@ -588,8 +593,10 @@ class UnifiedObjectsJournal(QWidget):
             return
         
         scrollbar = self.table.verticalScrollBar()
-        row_height = self.table.verticalHeader().defaultSectionSize()
-        delta = len(table_rows) * row_height if row_height > 0 else 0
+        # Запоминаем индекс верхней видимой строки, чтобы вернуть пользователя на тот же диапазон
+        old_top_row = self.table.rowAt(0)
+        if old_top_row < 0:
+            old_top_row = 0
 
         self._updating_table = True
         self.table.setUpdatesEnabled(False)
@@ -637,11 +644,21 @@ class UnifiedObjectsJournal(QWidget):
             # Adjust scroll to preserve view if user is not on auto-scroll
             if scrollbar is not None:
                 if self._auto_scroll:
+                    # Пользователь следит за новыми сообщениями - держим верх таблицы
                     scrollbar.setValue(scrollbar.minimum())
                 else:
                     try:
-                        old_value = scrollbar.value()
-                        scrollbar.setValue(old_value + delta)
+                        # Пользователь читает старые сообщения: возвращаем видимую область
+                        # на ту же логическую строку, что была сверху (смещённую вниз на len(table_rows))
+                        target_row = old_top_row + len(table_rows)
+                        if target_row < self.table.rowCount():
+                            item = self.table.item(target_row, 0)
+                            if item is not None:
+                                from PyQt6.QtWidgets import QAbstractItemView
+                                self.table.scrollToItem(
+                                    item,
+                                    QAbstractItemView.ScrollHint.PositionAtTop
+                                )
                     except Exception:
                         pass
         finally:
@@ -934,3 +951,20 @@ class UnifiedObjectsJournal(QWidget):
         self.is_visible = False
         # Stop update timer when widget is hidden
         self.update_timer.stop()
+
+    def closeEvent(self, event):
+        """Handle close event - корректно останавливаем обновления и помечаем виджет как закрытый"""
+        self._is_closing = True
+        self.is_visible = False
+        try:
+            self.update_timer.stop()
+        except Exception:
+            pass
+        if self.data_source:
+            try:
+                close_method = getattr(self.data_source, "close", None)
+                if callable(close_method):
+                    close_method()
+            except Exception:
+                pass
+        super().closeEvent(event)
