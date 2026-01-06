@@ -162,15 +162,19 @@ class UnifiedImageDelegate(QStyledItemDelegate):
         lost_path = preview_data.get('lost_path', '')
         has_both_previews = bool(found_path and lost_path)
         
+        # Get cell coordinates for video player tracking
+        cell_row = index.row()
+        cell_col = index.column()
+        
         # Draw Found/Lost buttons only if both previews exist
         if has_both_previews:
             self._draw_switching_buttons(painter, option, current_mode, draw_x, draw_y, draw_w, draw_h, 
                                         current_video_path if self.journal_type == 'events' else None, 
-                                        has_found_lost=True)
+                                        has_found_lost=True, cell_row=cell_row, cell_col=cell_col)
         # Draw Play/Stop button independently if video is available (even without Found/Lost buttons)
         elif self.journal_type == 'events' and current_video_path:
             self._draw_switching_buttons(painter, option, current_mode, draw_x, draw_y, draw_w, draw_h,
-                                        current_video_path, has_found_lost=False)
+                                        current_video_path, has_found_lost=False, cell_row=cell_row, cell_col=cell_col)
     
     def _compute_switch_button_rects(self, option, draw_x, draw_y, draw_w, draw_h):
         """
@@ -211,7 +215,7 @@ class UnifiedImageDelegate(QStyledItemDelegate):
 
         return found_rect, lost_rect
 
-    def _draw_switching_buttons(self, painter, option, current_mode, draw_x, draw_y, draw_w, draw_h, video_path=None, has_found_lost=True):
+    def _draw_switching_buttons(self, painter, option, current_mode, draw_x, draw_y, draw_w, draw_h, video_path=None, has_found_lost=True, cell_row=None, cell_col=None):
         """Draw switching buttons (Found/Lost) on top of the image, and Play/Stop button for events journal"""
         try:
             from PyQt6.QtGui import QColor, QFont
@@ -253,10 +257,16 @@ class UnifiedImageDelegate(QStyledItemDelegate):
         if self.journal_type == 'events' and video_path:
             play_rect = self._compute_video_button_rect(option, draw_x, draw_y, draw_w, draw_h, found_rect, lost_rect, has_found_lost)
             if play_rect:
-                # Check if video is currently playing
+                # Check if video is currently playing in THIS cell
                 is_playing = False
                 if self.journal_widget and self.journal_widget.video_player:
-                    is_playing = getattr(self.journal_widget.video_player, '_is_playing', False)
+                    try:
+                        player = self.journal_widget.video_player
+                        if (hasattr(player, '_cell_row') and hasattr(player, '_cell_col') and
+                            player._cell_row == cell_row and player._cell_col == cell_col):
+                            is_playing = getattr(player, '_is_playing', False)
+                    except (AttributeError, RuntimeError):
+                        pass  # Widget was deleted
                 
                 if is_playing:
                     # Draw Stop button (red)
@@ -435,22 +445,39 @@ class UnifiedImageDelegate(QStyledItemDelegate):
         if play_rect and play_rect.contains(click_pos):
             # Clicked on Play/Stop button
             if self.journal_widget and current_video_path:
-                # Check if video is currently playing
+                row = index.row()
+                col = index.column()
+                
+                # Check if video is playing in THIS cell
                 is_playing = False
                 if self.journal_widget.video_player:
-                    is_playing = getattr(self.journal_widget.video_player, '_is_playing', False)
+                    try:
+                        player = self.journal_widget.video_player
+                        if (hasattr(player, '_cell_row') and hasattr(player, '_cell_col') and
+                            player._cell_row == row and player._cell_col == col):
+                            is_playing = getattr(player, '_is_playing', False)
+                    except (AttributeError, RuntimeError):
+                        pass  # Widget was deleted
                 
                 if is_playing:
-                    # Stop video playback
-                    if self.journal_widget.video_player:
-                        self.journal_widget.video_player.stop()
-                        # Widget will be removed in _on_video_stopped
+                    # Stop video playback - safely
+                    try:
+                        if self.journal_widget.video_player:
+                            self.journal_widget.video_player.stop()
+                            # Widget will be removed in _on_video_stopped
+                    except (AttributeError, RuntimeError):
+                        # Widget was already deleted
+                        if self.journal_widget:
+                            self.journal_widget.video_player = None
                     return True
                 else:
                     # Start video playback
                     # Stop any existing video playback
                     if self.journal_widget.video_player:
-                        self.journal_widget.video_player.stop()
+                        try:
+                            self.journal_widget.video_player.stop()
+                        except (AttributeError, RuntimeError):
+                            pass  # Widget was already deleted
                         self.journal_widget.video_player = None
                     
                     # Import VideoPlayerWidget
@@ -465,9 +492,6 @@ class UnifiedImageDelegate(QStyledItemDelegate):
                     if not table or not isinstance(table, QTableWidget):
                         return True
                     
-                    row = index.row()
-                    col = index.column()
-                    
                     # Remove any existing widget from this cell
                     existing_widget = table.cellWidget(row, col)
                     if existing_widget:
@@ -479,6 +503,8 @@ class UnifiedImageDelegate(QStyledItemDelegate):
                         logger_name="video_player", 
                         parent_logger=self.logger
                     )
+                    # Set cell position for tracking
+                    self.journal_widget.video_player.set_cell_position(row, col)
                     self.journal_widget.video_player.stopped.connect(self._on_video_stopped)
                     
                     # Set widget in cell - this will show video over the image
@@ -486,9 +512,8 @@ class UnifiedImageDelegate(QStyledItemDelegate):
                     
                     # Start playback
                     if self.journal_widget.video_player.play_video(current_video_path):
-                        # Store row/col for cleanup
-                        self.journal_widget._video_player_row = row
-                        self.journal_widget._video_player_col = col
+                        # Position already set via set_cell_position
+                        pass
                     else:
                         # Playback failed, remove widget
                         table.setCellWidget(row, col, None)
@@ -499,10 +524,18 @@ class UnifiedImageDelegate(QStyledItemDelegate):
         # Handle Found/Lost buttons (only if both previews exist)
         if has_both_previews and found_rect and found_rect.contains(click_pos):
             # Clicked on Found button
-            # Stop video playback if active
+            # Stop video playback if active in this cell
+            row = index.row()
+            col = index.column()
             if self.journal_widget and self.journal_widget.video_player:
-                self.journal_widget.video_player.stop()
-                # Widget will be removed in _on_video_stopped
+                try:
+                    player = self.journal_widget.video_player
+                    if (hasattr(player, '_cell_row') and hasattr(player, '_cell_col') and
+                        player._cell_row == row and player._cell_col == col):
+                        player.stop()
+                        # Widget will be removed in _on_video_stopped
+                except (AttributeError, RuntimeError):
+                    pass  # Widget was already deleted
             
             if preview_data.get('current_mode') != 'found':
                 preview_data = preview_data.copy()  # Create a copy to avoid modifying original
@@ -522,10 +555,18 @@ class UnifiedImageDelegate(QStyledItemDelegate):
         
         if has_both_previews and lost_rect and lost_rect.contains(click_pos):
             # Clicked on Lost button
-            # Stop video playback if active
+            # Stop video playback if active in this cell
+            row = index.row()
+            col = index.column()
             if self.journal_widget and self.journal_widget.video_player:
-                self.journal_widget.video_player.stop()
-                # Widget will be removed in _on_video_stopped
+                try:
+                    player = self.journal_widget.video_player
+                    if (hasattr(player, '_cell_row') and hasattr(player, '_cell_col') and
+                        player._cell_row == row and player._cell_col == col):
+                        player.stop()
+                        # Widget will be removed in _on_video_stopped
+                except (AttributeError, RuntimeError):
+                    pass  # Widget was already deleted
             
             if preview_data.get('current_mode') != 'lost':
                 preview_data = preview_data.copy()  # Create a copy to avoid modifying original
@@ -547,32 +588,47 @@ class UnifiedImageDelegate(QStyledItemDelegate):
     
     def _on_video_stopped(self):
         """Handle video player stopped signal"""
-        if self.journal_widget and self.journal_widget.video_player:
-            # Remove widget from cell
-            table = self.parent()
-            if table and isinstance(table, QTableWidget):
-                row = getattr(self.journal_widget, '_video_player_row', None)
-                col = getattr(self.journal_widget, '_video_player_col', None)
-                if row is not None and col is not None:
-                    # Store reference before clearing
-                    widget_to_remove = self.journal_widget.video_player
-                    # Remove widget from cell first (this will hide it)
-                    table.setCellWidget(row, col, None)
-                    # Clear reference before deleting
-                    self.journal_widget.video_player = None
-                    # Delete widget asynchronously
-                    if widget_to_remove:
-                        widget_to_remove.deleteLater()
-                    # Trigger repaint to show image again
-                    table.viewport().update()
-            else:
-                # Clear reference if no table
+        try:
+            if self.journal_widget and self.journal_widget.video_player:
+                table = self.parent()
+                if table and isinstance(table, QTableWidget):
+                    # Get coordinates from the video player widget itself
+                    try:
+                        player = self.journal_widget.video_player
+                        row = getattr(player, '_cell_row', None)
+                        col = getattr(player, '_cell_col', None)
+                        if row is not None and col is not None:
+                            # Verify widget is still in this cell
+                            current_widget = table.cellWidget(row, col)
+                            if current_widget == player:
+                                widget_to_remove = player
+                                # Remove widget from cell first (this will hide it)
+                                table.setCellWidget(row, col, None)
+                                # Clear reference before deleting
+                                self.journal_widget.video_player = None
+                                # Delete widget asynchronously
+                                if widget_to_remove:
+                                    widget_to_remove.deleteLater()
+                                # Trigger repaint to show image again
+                                table.viewport().update()
+                            else:
+                                # Widget was moved or replaced, just clear reference
+                                self.journal_widget.video_player = None
+                        else:
+                            # No coordinates, just clear reference
+                            self.journal_widget.video_player = None
+                    except (AttributeError, RuntimeError):
+                        # Widget was already deleted or invalid
+                        if self.journal_widget:
+                            self.journal_widget.video_player = None
+                else:
+                    # Clear reference if no table
+                    if self.journal_widget:
+                        self.journal_widget.video_player = None
+        except (AttributeError, RuntimeError) as e:
+            # Widget was already deleted or invalid
+            if self.journal_widget:
                 self.journal_widget.video_player = None
-            # Clean up stored coordinates
-            if hasattr(self.journal_widget, '_video_player_row'):
-                delattr(self.journal_widget, '_video_player_row')
-            if hasattr(self.journal_widget, '_video_player_col'):
-                delattr(self.journal_widget, '_video_player_col')
 
     def _resolve_image_path(self, img_path: str, date_folder: str = '') -> Optional[str]:
         """Resolve image path to full absolute path"""

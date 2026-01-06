@@ -58,6 +58,10 @@ class VideoPlayerWidget(QWidget):
         self.cap = None
         self.timer = None
         
+        # Cell position for tracking which cell this player belongs to
+        self._cell_row = None
+        self._cell_col = None
+        
         # Try to use QMediaPlayer first
         self._use_opencv = False
         if pyqt_version == 6:
@@ -403,6 +407,11 @@ class VideoPlayerWidget(QWidget):
         
         # Emit signal - parent will remove widget from cell
         self.stopped.emit()
+    
+    def set_cell_position(self, row: int, col: int):
+        """Set the cell position where this video player is located"""
+        self._cell_row = row
+        self._cell_col = col
 
 
 class VideoPlayerWindow(QWidget):
