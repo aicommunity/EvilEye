@@ -8,12 +8,12 @@ import datetime
 from typing import Optional, List, Tuple
 
 try:
-    from PyQt6.QtCore import Qt, QSize, QPointF
+    from PyQt6.QtCore import Qt, QSize, QPointF, QRect
     from PyQt6.QtWidgets import QStyledItemDelegate, QLabel, QVBoxLayout
     from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor, QBrush, QPolygonF
     pyqt_version = 6
 except ImportError:
-    from PyQt5.QtCore import Qt, QSize, QPointF
+    from PyQt5.QtCore import Qt, QSize, QPointF, QRect
     from PyQt5.QtWidgets import QStyledItemDelegate, QLabel, QVBoxLayout
     from PyQt5.QtGui import QPixmap, QPainter, QPen, QColor, QBrush, QPolygonF
     pyqt_version = 5
@@ -39,14 +39,36 @@ class UnifiedImageDelegate(QStyledItemDelegate):
     def paint(self, painter, option, index):
         if not index.isValid():
             return
-            
-        # Get image path from index
-        img_path = index.data(Qt.ItemDataRole.DisplayRole)
+        
+        # Get preview data from UserRole (contains both found and lost paths)
+        preview_data = index.data(Qt.ItemDataRole.UserRole)
+        if not preview_data or not isinstance(preview_data, dict):
+            # Fallback to old format for compatibility
+            img_path = index.data(Qt.ItemDataRole.DisplayRole)
+            if not img_path:
+                return
+            event_data = index.data(Qt.ItemDataRole.UserRole)
+            date_folder = event_data.get('date_folder', '') if event_data else ''
+            full_path = self._resolve_image_path(img_path, date_folder)
+            if not full_path or not os.path.exists(full_path):
+                return
+            # Use old logic for backward compatibility
+            self._paint_image_old(painter, option, index, full_path, event_data)
+            return
+        
+        # New format: get current mode and corresponding path
+        current_mode = preview_data.get('current_mode', 'found')
+        if current_mode == 'found':
+            img_path = preview_data.get('found_path', '')
+            event_data = preview_data.get('found_event')
+        else:  # lost
+            img_path = preview_data.get('lost_path', '')
+            event_data = preview_data.get('lost_event')
+        
         if not img_path:
             return
         
-        # Get event data for date_folder if available
-        event_data = index.data(Qt.ItemDataRole.UserRole)
+        # Get date_folder from event_data
         date_folder = event_data.get('date_folder', '') if event_data else ''
         
         # Resolve full path
@@ -127,6 +149,224 @@ class UnifiedImageDelegate(QStyledItemDelegate):
         # Draw overlays if available
         if box or zone_coords:
             self._draw_overlays_from_data(painter, box, zone_coords, draw_x, draw_y, draw_w, draw_h)
+        
+        # Draw switching buttons if both found and lost paths are available
+        found_path = preview_data.get('found_path', '')
+        lost_path = preview_data.get('lost_path', '')
+        if found_path and lost_path:
+            self._draw_switching_buttons(painter, option, current_mode, draw_x, draw_y, draw_w, draw_h)
+    
+    def _compute_switch_button_rects(self, option, draw_x, draw_y, draw_w, draw_h):
+        """
+        Compute QRect-ы кнопок Found/Lost в координатах viewport.
+        Возвращает (found_rect, lost_rect).
+        """
+        # Button dimensions (compact, consistent)
+        button_spacing = 2
+        button_width = max(32, min(40, draw_w // 6 if draw_w > 0 else 36))
+        button_height = max(14, min(18, draw_h // 10 if draw_h > 0 else 16))
+        total_width = button_width * 2 + button_spacing
+        if total_width > draw_w:
+            scale = (draw_w - 4) / total_width if draw_w > 4 else 1.0
+            button_width = max(28, int(button_width * scale))
+            button_height = max(12, int(button_height * scale))
+            total_width = button_width * 2 + button_spacing
+
+        # Position buttons at the top-left of the image (viewport coords)
+        buttons_y = draw_y + 4
+        buttons_x = draw_x + 4
+
+        found_rect = QRect(buttons_x, buttons_y, button_width, button_height)
+        lost_rect = QRect(buttons_x + button_width + button_spacing,
+                          buttons_y, button_width, button_height)
+
+        # Debug log for geometry
+        try:
+            self.logger.debug(
+                "Switch buttons geom: cell_rect=(%d,%d,%d,%d) img_rect=(%d,%d,%d,%d) "
+                "found_rect=(%d,%d,%d,%d) lost_rect=(%d,%d,%d,%d)",
+                option.rect.x(), option.rect.y(), option.rect.width(), option.rect.height(),
+                draw_x, draw_y, draw_w, draw_h,
+                found_rect.x(), found_rect.y(), found_rect.width(), found_rect.height(),
+                lost_rect.x(), lost_rect.y(), lost_rect.width(), lost_rect.height(),
+            )
+        except Exception:
+            pass
+
+        return found_rect, lost_rect
+
+    def _draw_switching_buttons(self, painter, option, current_mode, draw_x, draw_y, draw_w, draw_h):
+        """Draw switching buttons (Found/Lost) on top of the image"""
+        try:
+            from PyQt6.QtGui import QColor, QFont
+        except ImportError:
+            from PyQt5.QtGui import QColor, QFont
+
+        found_rect, lost_rect = self._compute_switch_button_rects(
+            option, draw_x, draw_y, draw_w, draw_h
+        )
+        
+        # Draw Found button
+        if current_mode == 'found':
+            painter.fillRect(found_rect, QColor(100, 150, 255, 200))  # Active: blue
+        else:
+            painter.fillRect(found_rect, QColor(200, 200, 200, 150))  # Inactive: gray
+        painter.setPen(QColor(0, 0, 0))
+        painter.drawRect(found_rect)
+        painter.setPen(QColor(255, 255, 255) if current_mode == 'found' else QColor(0, 0, 0))
+        font = QFont()
+        font.setPointSize(9)
+        painter.setFont(font)
+        painter.drawText(found_rect, Qt.AlignmentFlag.AlignCenter, "Found")
+        
+        if current_mode == 'lost':
+            painter.fillRect(lost_rect, QColor(100, 150, 255, 200))  # Active: blue
+        else:
+            painter.fillRect(lost_rect, QColor(200, 200, 200, 150))  # Inactive: gray
+        painter.setPen(QColor(0, 0, 0))
+        painter.drawRect(lost_rect)
+        painter.setPen(QColor(255, 255, 255) if current_mode == 'lost' else QColor(0, 0, 0))
+        painter.drawText(lost_rect, Qt.AlignmentFlag.AlignCenter, "Lost")
+    
+    def _paint_image_old(self, painter, option, index, full_path, event_data):
+        """Old paint logic for backward compatibility"""
+        # Load image
+        pixmap = QPixmap(full_path)
+        if pixmap.isNull():
+            return
+
+        # Calculate target rect with aspect fit
+        cell_rect = option.rect
+        img_w = pixmap.width()
+        img_h = pixmap.height()
+        if img_w <= 0 or img_h <= 0:
+            return
+            
+        cell_w = cell_rect.width()
+        cell_h = cell_rect.height()
+        scale = min(cell_w / img_w, cell_h / img_h)
+        draw_w = int(img_w * scale)
+        draw_h = int(img_h * scale)
+        draw_x = cell_rect.x() + (cell_w - draw_w) // 2
+        draw_y = cell_rect.y() + (cell_h - draw_h) // 2
+        
+        # Draw image
+        painter.drawPixmap(draw_x, draw_y, draw_w, draw_h, pixmap)
+        
+        # Try to get bounding box and zone coords from event data
+        box = None
+        zone_coords = None
+        if event_data:
+            box = event_data.get('bounding_box') or event_data.get('box')
+            zone_coords = event_data.get('zone_coords')
+        
+        # Draw overlays if available
+        if box or zone_coords:
+            self._draw_overlays_from_data(painter, box, zone_coords, draw_x, draw_y, draw_w, draw_h)
+    
+    def editorEvent(self, event, model, option, index):
+        """Handle mouse clicks on switching buttons"""
+        try:
+            from PyQt6.QtCore import QEvent
+            from PyQt6.QtWidgets import QTableWidget
+        except ImportError:
+            from PyQt5.QtCore import QEvent
+            from PyQt5.QtWidgets import QTableWidget
+        
+        if not index.isValid():
+            return False
+        
+        # Only handle left button clicks
+        if event.type() != QEvent.Type.MouseButtonPress:
+            return False
+        
+        if event.button() != Qt.MouseButton.LeftButton:
+            return False
+        
+        # Get preview data
+        preview_data = index.data(Qt.ItemDataRole.UserRole)
+        if not preview_data or not isinstance(preview_data, dict):
+            return False
+        
+        found_path = preview_data.get('found_path', '')
+        lost_path = preview_data.get('lost_path', '')
+        if not found_path or not lost_path:
+            return False  # No switching needed if only one path
+        
+        # Get image dimensions from current display
+        img_path = preview_data.get('found_path', '') if preview_data.get('current_mode', 'found') == 'found' else preview_data.get('lost_path', '')
+        if not img_path:
+            return False
+        
+        event_data = preview_data.get('found_event') if preview_data.get('current_mode', 'found') == 'found' else preview_data.get('lost_event')
+        date_folder = event_data.get('date_folder', '') if event_data else ''
+        full_path = self._resolve_image_path(img_path, date_folder)
+        if not full_path or not os.path.exists(full_path):
+            return False
+        
+        pixmap = QPixmap(full_path)
+        if pixmap.isNull():
+            return False
+        
+        cell_rect = option.rect
+        img_w = pixmap.width()
+        img_h = pixmap.height()
+        if img_w <= 0 or img_h <= 0:
+            return False
+        
+        cell_w = cell_rect.width()
+        cell_h = cell_rect.height()
+        scale = min(cell_w / img_w, cell_h / img_h)
+        draw_w = int(img_w * scale)
+        draw_h = int(img_h * scale)
+        draw_x = cell_rect.x() + (cell_w - draw_w) // 2
+        draw_y = cell_rect.y() + (cell_h - draw_h) // 2
+        
+        # Build button rects exactly as in _draw_switching_buttons
+        found_rect, lost_rect = self._compute_switch_button_rects(
+            option, draw_x, draw_y, draw_w, draw_h
+        )
+        
+        # Check if click is within button areas (event.pos() is in viewport coords)
+        click_pos = event.pos()
+
+        if found_rect.contains(click_pos):
+            # Clicked on Found button
+            if preview_data.get('current_mode') != 'found':
+                preview_data = preview_data.copy()  # Create a copy to avoid modifying original
+                preview_data['current_mode'] = 'found'
+                # Update QTableWidgetItem directly
+                table = self.parent()
+                if table and isinstance(table, QTableWidget):
+                    row = index.row()
+                    col = index.column()
+                    item = table.item(row, col)
+                    if item:
+                        item.setText(found_path)
+                        item.setData(Qt.ItemDataRole.UserRole, preview_data)
+                        # Trigger repaint
+                        table.viewport().update()
+                return True
+        
+        if lost_rect.contains(click_pos):
+            # Clicked on Lost button
+            if preview_data.get('current_mode') != 'lost':
+                preview_data = preview_data.copy()  # Create a copy to avoid modifying original
+                preview_data['current_mode'] = 'lost'
+                # Update QTableWidgetItem directly
+                table = self.parent()
+                if table and isinstance(table, QTableWidget):
+                    row = index.row()
+                    col = index.column()
+                    item = table.item(row, col)
+                    if item:
+                        item.setText(lost_path)
+                        item.setData(Qt.ItemDataRole.UserRole, preview_data)
+                        # Trigger repaint
+                        table.viewport().update()
+                return True
+        
+        return False
 
     def _resolve_image_path(self, img_path: str, date_folder: str = '') -> Optional[str]:
         """Resolve image path to full absolute path"""
@@ -370,8 +610,12 @@ class UnifiedDateTimeDelegate(QStyledItemDelegate):
     def displayText(self, value, locale) -> str:
         """Format datetime to show only seconds precision"""
         try:
-            # Handle empty values
-            if not value or value == '' or str(value).strip() == '':
+            # Handle empty / null-like values аккуратно, без прямого bool(value)
+            if value is None:
+                return ''
+            # Qt может передавать специальные типы (QDateTime/QVariant), для них сначала берём строку
+            value_str = str(value).strip()
+            if value_str == '' or value_str.lower() in ('none', 'null'):
                 return ''
             
             if isinstance(value, str):
@@ -390,9 +634,9 @@ class UnifiedDateTimeDelegate(QStyledItemDelegate):
                     return value
             elif isinstance(value, datetime.datetime):
                 return value.strftime('%Y-%m-%d %H:%M:%S')
-            return str(value) if value else ''
+            return value_str
         except Exception as e:
-            return str(value) if value else ''
+            return value_str if 'value_str' in locals() and value_str else ''
 
 
 class UnifiedImageWindow(QLabel):

@@ -74,6 +74,10 @@ class UnifiedObjectsJournal(QWidget):
         self._dates_cache = None
         self._dates_loaded = False
         
+        # Scroll / update flags
+        self._auto_scroll = True      # автопрокрутка, когда пользователь на новых событиях (вверху)
+        self._updating_table = False  # защита от обработки скролла во время массовых обновлений
+        
         # Real-time update timer (will be started in showEvent)
         self.update_timer = QTimer()
         self.update_timer.timeout.connect(self._check_for_updates)
@@ -117,18 +121,17 @@ class UnifiedObjectsJournal(QWidget):
 
         self.layout.addLayout(toolbar)
 
-        # Table with 7 columns: Time, Event, Information, Source, Time lost, Preview, Lost preview
-        self.table = QTableWidget(0, 7)
-        self.table.setHorizontalHeaderLabels(['Time', 'Event', 'Information', 'Source', 'Time lost', 'Preview', 'Lost preview'])
+        # Table with 6 columns: Time, Event, Information, Source, Time lost, Preview (with found/lost switching)
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels(['Time', 'Event', 'Information', 'Source', 'Time lost', 'Preview'])
         h = self.table.horizontalHeader()
         h.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)  # Time
         h.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)  # Event
         h.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)  # Information
         h.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # Source
         h.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)  # Time lost
-        h.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)  # Preview
-        h.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)  # Lost preview
-        h.setDefaultSectionSize(300)  # Set default size for image columns
+        h.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)  # Preview (with found/lost switching)
+        h.setDefaultSectionSize(300)  # Set default size for image column
         self.layout.addWidget(self.table)
 
         # Set up image delegate for image columns
@@ -137,8 +140,7 @@ class UnifiedObjectsJournal(QWidget):
             self.table, self.base_dir, db_connection_name,
             logger_name="image_delegate", parent_logger=self.logger
         )
-        self.table.setItemDelegateForColumn(5, self.image_delegate)  # Preview
-        self.table.setItemDelegateForColumn(6, self.image_delegate)  # Lost preview
+        self.table.setItemDelegateForColumn(5, self.image_delegate)  # Preview (with found/lost switching)
 
         # Set up datetime delegate for time columns
         self.datetime_delegate = UnifiedDateTimeDelegate(self.table)
@@ -222,13 +224,122 @@ class UnifiedObjectsJournal(QWidget):
             except AttributeError:
                 # Data source doesn't have force_refresh method
                 pass
-            self._reload_table()
+
+            # Инкрементальное обновление: получаем свежие данные первой страницы
+            filters = {k: v for k, v in self.filters.items() if v}
+            rows = self.data_source.fetch(0, self.page_size, filters, [])
+            if not rows:
+                return
+
+            new_table_rows = self._build_table_rows(rows)
+            if not new_table_rows:
+                return
+
+            # Если нет кэша — полный reload
+            if not self._loaded_data:
+                self._reload_table()
+                return
+
+            # Найдём, сколько верхних строк новые (сравниваем по ключу time+event+info)
+            def make_key(row):
+                return (row.get('time', ''), row.get('event', ''), row.get('information', ''))
+
+            existing_keys = {make_key(r) for r in self._loaded_data[:max(1, len(new_table_rows))]}
+
+            prepend_rows = []
+            for r in new_table_rows:
+                key = make_key(r)
+                if key in existing_keys:
+                    break
+                prepend_rows.append(r)
+
+            if not prepend_rows:
+                return
+
+            self._prepend_rows(prepend_rows)
         except Exception as e:
             self.logger.error(f"Update check error: {e}")
 
+    def _build_table_rows(self, rows):
+        """Построить список row_data из сырых событий."""
+        from collections import defaultdict
+        grouped_events = defaultdict(lambda: {'found': None, 'lost': None})
+        for ev in rows:
+            et = ev.get('event_type')
+            if et not in ('found', 'lost'):
+                continue
+            object_id = ev.get('object_id')
+            if et == 'found':
+                grouped_events[object_id]['found'] = ev
+            elif et == 'lost':
+                grouped_events[object_id]['lost'] = ev
+        
+        table_rows = []
+        for object_id, events in grouped_events.items():
+            found_event = events['found']
+            lost_event = events['lost']
+            
+            # Use found event as base, or lost event if no found event
+            base_event = found_event or lost_event
+            if not base_event:
+                continue
+
+            # Format information string
+            object_id_val = base_event.get('object_id', '')
+            class_name = base_event.get('class_name') or base_event.get('class_id', '')
+            confidence = base_event.get('confidence', 0)
+            if isinstance(confidence, (int, float)):
+                conf_str = f"{confidence:.2f}"
+            else:
+                conf_str = str(confidence)
+            
+            information = f"Object Id={object_id_val}; class: {class_name}; conf: {conf_str}"
+
+            row_data = {
+                'time': found_event.get('ts') if found_event else (lost_event.get('ts') if lost_event else ''),
+                'event': 'ObjectEvent',
+                'information': information,
+                'source': base_event.get('source_name', ''),
+                'time_lost': lost_event.get('ts') if lost_event else '',
+                'preview': found_event.get('image_filename') if found_event else '',
+                'lost_preview': lost_event.get('image_filename') if lost_event else '',
+                'found_event': found_event,
+                'lost_event': lost_event
+            }
+            table_rows.append(row_data)
+        return table_rows
+
     def _reload_table(self):
-        """Reload table data from data source - initial load or full reload"""
+        """Reload table data from data source - initial load or full reload.
+        Старательно сохраняем положение скролла, если пользователь читает старые записи.
+        """
+        # Флаг, что мы находимся в процессе массового обновления таблицы
+        self._updating_table = True
         try:
+            scrollbar = self.table.verticalScrollBar() if self.table is not None else None
+            anchor_key = None
+            restore_position = False
+            
+            # Если пользователь не в режиме авто-скролла, запомним «якорную» строку (верхнюю видимую)
+            if scrollbar is not None and not self._auto_scroll and self.table.rowCount() > 0:
+                try:
+                    top_row = self.table.rowAt(0)
+                    if top_row < 0:
+                        top_row = 0
+                    if 0 <= top_row < self.table.rowCount():
+                        time_item = self.table.item(top_row, 0)
+                        event_item = self.table.item(top_row, 1)
+                        info_item = self.table.item(top_row, 2)
+                        anchor_key = (
+                            time_item.text() if time_item else '',
+                            event_item.text() if event_item else '',
+                            info_item.text() if info_item else '',
+                        )
+                        restore_position = True
+                except Exception:
+                    anchor_key = None
+                    restore_position = False
+
             # Reset cache and page for full reload
             self._loaded_data = []
             self.page = 0
@@ -239,53 +350,8 @@ class UnifiedObjectsJournal(QWidget):
             filters = {k: v for k, v in self.filters.items() if v}
             rows = self.data_source.fetch(self.page, self.page_size, filters, [])
             
-            # Filter and group events by object_id in one pass using defaultdict
-            from collections import defaultdict
-            grouped_events = defaultdict(lambda: {'found': None, 'lost': None})
-            for ev in rows:
-                et = ev.get('event_type')
-                if et not in ('found', 'lost'):
-                    continue
-                object_id = ev.get('object_id')
-                if et == 'found':
-                    grouped_events[object_id]['found'] = ev
-                elif et == 'lost':
-                    grouped_events[object_id]['lost'] = ev
-            
-            # Create table rows from grouped events
-            table_rows = []
-            for object_id, events in grouped_events.items():
-                found_event = events['found']
-                lost_event = events['lost']
-                
-                # Use found event as base, or lost event if no found event
-                base_event = found_event or lost_event
-                if not base_event:
-                    continue
-
-                # Format information string
-                object_id_val = base_event.get('object_id', '')
-                class_name = base_event.get('class_name') or base_event.get('class_id', '')
-                confidence = base_event.get('confidence', 0)
-                if isinstance(confidence, (int, float)):
-                    conf_str = f"{confidence:.2f}"
-                else:
-                    conf_str = str(confidence)
-                
-                information = f"Object Id={object_id_val}; class: {class_name}; conf: {conf_str}"
-
-                row_data = {
-                    'time': found_event.get('ts') if found_event else (lost_event.get('ts') if lost_event else ''),
-                    'event': 'ObjectEvent',
-                    'information': information,
-                    'source': base_event.get('source_name', ''),
-                    'time_lost': lost_event.get('ts') if lost_event else '',
-                    'preview': found_event.get('image_filename') if found_event else '',
-                    'lost_preview': lost_event.get('image_filename') if lost_event else '',
-                    'found_event': found_event,
-                    'lost_event': lost_event
-                }
-                table_rows.append(row_data)
+            # Build table rows
+            table_rows = self._build_table_rows(rows)
             
             # Update source filter (temporarily disconnect signal to avoid recursion)
             sources = set()
@@ -324,13 +390,26 @@ class UnifiedObjectsJournal(QWidget):
                 # Prepare all items first
                 items_to_set = []
                 for r, row_data in enumerate(table_rows):
-                    # Preview column (5) - found image - use original path, delegate will resolve it
-                    preview_item = QTableWidgetItem(row_data.get('preview', '') or '')
-                    preview_item.setData(Qt.ItemDataRole.UserRole, row_data.get('found_event'))
+                    # Preview column (5) - combined found/lost preview with switching
+                    found_path = row_data.get('preview', '') or ''
+                    lost_path = row_data.get('lost_preview', '') or ''
+                    found_event = row_data.get('found_event')
+                    lost_event = row_data.get('lost_event')
                     
-                    # Lost preview column (6) - lost image - use original path, delegate will resolve it
-                    lost_preview_item = QTableWidgetItem(row_data.get('lost_preview', '') or '')
-                    lost_preview_item.setData(Qt.ItemDataRole.UserRole, row_data.get('lost_event'))
+                    # Determine default path (prefer found, fallback to lost)
+                    default_path = found_path if found_path else lost_path
+                    current_mode = 'found' if found_path else 'lost' if lost_path else 'found'
+                    
+                    preview_item = QTableWidgetItem(default_path)
+                    # Store both paths and events in UserRole for switching
+                    preview_data = {
+                        'found_path': found_path,
+                        'lost_path': lost_path,
+                        'found_event': found_event,
+                        'lost_event': lost_event,
+                        'current_mode': current_mode
+                    }
+                    preview_item.setData(Qt.ItemDataRole.UserRole, preview_data)
                     
                     # Store all items for this row
                     row_items = [
@@ -339,8 +418,7 @@ class UnifiedObjectsJournal(QWidget):
                         QTableWidgetItem(row_data['information']),  # Column 2
                         QTableWidgetItem(str(row_data.get('source', ''))),  # Column 3
                         QTableWidgetItem(str(row_data.get('time_lost', '') or '')),  # Column 4
-                        preview_item,  # Column 5
-                        lost_preview_item,  # Column 6
+                        preview_item,  # Column 5 - combined preview with switching
                     ]
                     items_to_set.append(row_items)
                 
@@ -356,19 +434,62 @@ class UnifiedObjectsJournal(QWidget):
                 # Re-enable updates and sorting
                 self.table.setSortingEnabled(True)
                 self.table.setUpdatesEnabled(True)
+                
+                # Восстановить положение скролла
+                if scrollbar is not None:
+                    try:
+                        if self._auto_scroll and self.table.rowCount() > 0:
+                            # Пользователь на новых событиях - держим верх таблицы
+                            scrollbar.setValue(scrollbar.minimum())
+                        elif restore_position and anchor_key is not None:
+                            # Найдём строку с тем же ключом (time, event, info) и прокрутим к ней
+                            target_row = None
+                            for r in range(self.table.rowCount()):
+                                t_item = self.table.item(r, 0)
+                                e_item = self.table.item(r, 1)
+                                i_item = self.table.item(r, 2)
+                                key = (
+                                    t_item.text() if t_item else '',
+                                    e_item.text() if e_item else '',
+                                    i_item.text() if i_item else '',
+                                )
+                                if key == anchor_key:
+                                    target_row = r
+                                    break
+                            if target_row is not None:
+                                self.table.scrollToItem(
+                                    self.table.item(target_row, 0),
+                                    QAbstractItemView.ScrollHint.PositionAtTop
+                                )
+                    except Exception:
+                        pass
         except Exception as e:
             self.logger.error(f"Reload table error: {e}", exc_info=True)
+        finally:
+            self._updating_table = False
     
     def _on_scroll(self, value):
-        """Handle scroll event - load next page when near bottom"""
-        if self._is_loading:
+        """Handle scroll event - load next page when near bottom и обновить флаг авто-прокрутки"""
+        if self._is_loading or self._updating_table:
             return
         
         scrollbar = self.table.verticalScrollBar()
         max_value = scrollbar.maximum()
         current_value = scrollbar.value()
         
-        # Load when reaching 80% of scroll
+        # Обновляем флаг auto-scroll: если пользователь близко к верху (новые события) - включаем,
+        # если промотал вниз (старые события) - отключаем.
+        try:
+            if max_value <= 0:
+                self._auto_scroll = True
+            else:
+                # порог ~ 10% от максимума
+                threshold = max_value * 0.1
+                self._auto_scroll = current_value <= threshold
+        except Exception:
+            pass
+        
+        # Load when reaching 80% of scroll (пагинация вниз)
         if max_value > 0 and max_value > 100:  # Only if there's significant scrolling
             scroll_percent = current_value / max_value if max_value > 0 else 0
             if scroll_percent > 0.8:
@@ -461,6 +582,73 @@ class UnifiedObjectsJournal(QWidget):
         finally:
             self._is_loading = False
     
+    def _prepend_rows(self, table_rows):
+        """Prepend new rows to the top of the table while preserving user scroll position when auto-scroll is off."""
+        if not table_rows:
+            return
+        
+        scrollbar = self.table.verticalScrollBar()
+        row_height = self.table.verticalHeader().defaultSectionSize()
+        delta = len(table_rows) * row_height if row_height > 0 else 0
+
+        self._updating_table = True
+        self.table.setUpdatesEnabled(False)
+        self.table.setSortingEnabled(False)
+        try:
+            # Insert rows at top (from oldest to newest among prepend_rows to keep order)
+            # table_rows assumed in time-desc order; we need to insert in reverse to keep final order
+            for row_data in reversed(table_rows):
+                self.table.insertRow(0)
+                
+                found_path = row_data.get('preview', '') or ''
+                lost_path = row_data.get('lost_preview', '') or ''
+                found_event = row_data.get('found_event')
+                lost_event = row_data.get('lost_event')
+                current_mode = 'found' if found_path else 'lost' if lost_path else 'found'
+                default_path = lost_path if (current_mode == 'lost' and lost_path) else (found_path if found_path else lost_path)
+                
+                preview_item = QTableWidgetItem(default_path)
+                preview_data = {
+                    'found_path': found_path,
+                    'lost_path': lost_path,
+                    'found_event': found_event,
+                    'lost_event': lost_event,
+                    'current_mode': current_mode
+                }
+                preview_item.setData(Qt.ItemDataRole.UserRole, preview_data)
+                
+                self.table.setItem(0, 0, QTableWidgetItem(str(row_data['time'])))
+                self.table.setItem(0, 1, QTableWidgetItem(row_data['event']))
+                self.table.setItem(0, 2, QTableWidgetItem(row_data['information']))
+                self.table.setItem(0, 3, QTableWidgetItem(str(row_data.get('source', ''))))
+                self.table.setItem(0, 4, QTableWidgetItem(str(row_data.get('time_lost', '') or '')))
+                self.table.setItem(0, 5, preview_item)
+            
+            # Update cache
+            self._loaded_data = table_rows + self._loaded_data
+            
+            # Cache trimming if needed
+            if len(self._loaded_data) > self._max_cache_size:
+                self._loaded_data = self._loaded_data[:self._max_cache_size]
+                # Remove extra rows from bottom
+                while self.table.rowCount() > self._max_cache_size:
+                    self.table.removeRow(self.table.rowCount() - 1)
+            
+            # Adjust scroll to preserve view if user is not on auto-scroll
+            if scrollbar is not None:
+                if self._auto_scroll:
+                    scrollbar.setValue(scrollbar.minimum())
+                else:
+                    try:
+                        old_value = scrollbar.value()
+                        scrollbar.setValue(old_value + delta)
+                    except Exception:
+                        pass
+        finally:
+            self.table.setSortingEnabled(True)
+            self.table.setUpdatesEnabled(True)
+            self._updating_table = False
+
     def _append_to_table(self, table_rows):
         """Append new rows to the end of the table"""
         if not table_rows:
@@ -475,13 +663,26 @@ class UnifiedObjectsJournal(QWidget):
             for r, row_data in enumerate(table_rows):
                 row_idx = current_row_count + r
                 
-                # Preview column (5) - found image - use original path, delegate will resolve it
-                preview_item = QTableWidgetItem(row_data.get('preview', '') or '')
-                preview_item.setData(Qt.ItemDataRole.UserRole, row_data.get('found_event'))
+                # Preview column (5) - combined found/lost preview with switching
+                found_path = row_data.get('preview', '') or ''
+                lost_path = row_data.get('lost_preview', '') or ''
+                found_event = row_data.get('found_event')
+                lost_event = row_data.get('lost_event')
                 
-                # Lost preview column (6) - lost image - use original path, delegate will resolve it
-                lost_preview_item = QTableWidgetItem(row_data.get('lost_preview', '') or '')
-                lost_preview_item.setData(Qt.ItemDataRole.UserRole, row_data.get('lost_event'))
+                # Determine default path (prefer found, fallback to lost)
+                default_path = found_path if found_path else lost_path
+                current_mode = 'found' if found_path else 'lost' if lost_path else 'found'
+                
+                preview_item = QTableWidgetItem(default_path)
+                # Store both paths and events in UserRole for switching
+                preview_data = {
+                    'found_path': found_path,
+                    'lost_path': lost_path,
+                    'found_event': found_event,
+                    'lost_event': lost_event,
+                    'current_mode': current_mode
+                }
+                preview_item.setData(Qt.ItemDataRole.UserRole, preview_data)
                 
                 # Set all items for this row
                 self.table.setItem(row_idx, 0, QTableWidgetItem(str(row_data['time'])))
@@ -489,8 +690,7 @@ class UnifiedObjectsJournal(QWidget):
                 self.table.setItem(row_idx, 2, QTableWidgetItem(row_data['information']))
                 self.table.setItem(row_idx, 3, QTableWidgetItem(str(row_data.get('source', ''))))
                 self.table.setItem(row_idx, 4, QTableWidgetItem(str(row_data.get('time_lost', '') or '')))
-                self.table.setItem(row_idx, 5, preview_item)
-                self.table.setItem(row_idx, 6, lost_preview_item)
+                self.table.setItem(row_idx, 5, preview_item)  # Combined preview with switching
         finally:
             self.table.setSortingEnabled(True)
             self.table.setUpdatesEnabled(True)
@@ -560,7 +760,7 @@ class UnifiedObjectsJournal(QWidget):
     @pyqtSlot(int, int)
     def _display_image(self, row, col):
         """Handle double click on image cell"""
-        if col not in (5, 6):  # Only handle preview columns
+        if col != 5:  # Only handle preview column (with found/lost switching)
             return
 
         try:
@@ -568,12 +768,24 @@ class UnifiedObjectsJournal(QWidget):
             if not item:
                 return
             
-            img_path = item.text()
+            # Get preview data from UserRole (contains both found and lost paths)
+            preview_data = item.data(Qt.ItemDataRole.UserRole)
+            if not preview_data or not isinstance(preview_data, dict):
+                return
+            
+            # Get current mode and corresponding path/event
+            current_mode = preview_data.get('current_mode', 'found')
+            if current_mode == 'found':
+                img_path = preview_data.get('found_path', '')
+                event_data = preview_data.get('found_event')
+            else:  # lost
+                img_path = preview_data.get('lost_path', '')
+                event_data = preview_data.get('lost_event')
+            
             if not img_path:
                 return
             
             # Resolve full path
-            event_data = item.data(Qt.ItemDataRole.UserRole)
             full_path = self._resolve_image_path(img_path, event_data)
             if not full_path or not os.path.exists(full_path):
                 self.logger.warning(f"Image not found: {img_path}")
