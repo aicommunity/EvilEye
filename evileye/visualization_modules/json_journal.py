@@ -139,7 +139,7 @@ class JsonJournalWindow(QWidget):
                     base_dir=self.images_dir,
                     parent=self,
                     logger_name="unified_objects_journal_json",
-                    parent_logger=self.logger
+                        parent_logger=self.logger
                 )
                 self.tabs.addTab(objects_journal, 'Objects journal')
             except Exception as e:
@@ -152,7 +152,7 @@ class JsonJournalWindow(QWidget):
                 base_dir=self.images_dir,
                 parent=self,
                 logger_name="unified_events_journal_json",
-                parent_logger=self.logger
+                    parent_logger=self.logger
             )
             self.tabs.addTab(events_journal, 'Events journal')
         except Exception as e:

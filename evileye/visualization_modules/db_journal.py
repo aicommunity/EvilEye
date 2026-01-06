@@ -249,7 +249,7 @@ class DatabaseJournalWindow(QWidget):
             try:
                 # Create DatabaseJournalDataSource for objects
                 objects_ds = DatabaseJournalDataSource(
-                    self.db_controller,
+                self.db_controller, 
                     journal_type='objects',
                     adapters=None,
                     database_params=self.database_params,
@@ -298,7 +298,7 @@ class DatabaseJournalWindow(QWidget):
                     adapters.append(self.attr_events_adapter)
                 if self.system_events_adapter:
                     adapters.append(self.system_events_adapter)
-                
+        
                 # Create DatabaseJournalDataSource for events
                 events_ds = DatabaseJournalDataSource(
                     self.db_controller,
@@ -333,8 +333,8 @@ class DatabaseJournalWindow(QWidget):
                 # Reset flag on error
                 self._events_journal_created = False
                 self.logger.error(f"Failed to create UnifiedEventsJournal: {e}")
-                import traceback
-                self.logger.error(f"Traceback: {traceback.format_exc()}")
+            import traceback
+            self.logger.error(f"Traceback: {traceback.format_exc()}")
     
     def _ensure_tab_initialized(self, index):
         """Ensure journal is initialized for the tab at given index"""

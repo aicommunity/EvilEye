@@ -8,12 +8,12 @@ from pathlib import Path
 from typing import Optional, Dict, List, Tuple
 
 try:
-    from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView, QComboBox
-    from PyQt6.QtCore import Qt, QTimer, pyqtSlot
+    from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView, QComboBox, QPushButton, QDateEdit
+    from PyQt6.QtCore import Qt, QTimer, pyqtSlot, QDate
     pyqt_version = 6
 except ImportError:
-    from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView, QComboBox
-    from PyQt5.QtCore import Qt, QTimer, pyqtSlot
+    from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView, QComboBox, QPushButton, QDateEdit
+    from PyQt5.QtCore import Qt, QTimer, pyqtSlot, QDate
     pyqt_version = 5
 
 # Add parent directory to path for imports
@@ -71,10 +71,6 @@ class UnifiedEventsJournal(QWidget):
         self._image_path_cache = {}
         self._is_closing = False
         
-        # Cache for dates list
-        self._dates_cache = None
-        self._dates_loaded = False
-        
         # Scroll / update flags
         self._auto_scroll = True      # автопрокрутка, когда пользователь на новых событиях (вверху)
         self._updating_table = False  # защита от обработки скролла во время массовых обновлений
@@ -89,11 +85,11 @@ class UnifiedEventsJournal(QWidget):
         
         # Initialize UI components (will be set in _build_ui)
         self.table = None
-        self.cmb_date = None
+        self.date_edit = None
+        self.btn_all_dates = None
         self.cmb_type = None
         
         self._build_ui()
-        # Don't call _reload_dates() here - will be called on first show
         # Don't call _reload_table() here - will be called on first show
     
     def _get_source_name_from_address(self, camera_full_address: str) -> str:
@@ -120,10 +116,20 @@ class UnifiedEventsJournal(QWidget):
 
         toolbar = QHBoxLayout()
 
-        # Date filter
-        self.cmb_date = QComboBox()
-        self.cmb_date.currentTextChanged.connect(self._on_date_changed)
-        toolbar.addWidget(self.cmb_date)
+        # Date filter with calendar
+        self.date_edit = QDateEdit()
+        self.date_edit.setCalendarPopup(True)
+        self.date_edit.setDisplayFormat("yyyy-MM-dd")
+        self.date_edit.setMinimumDate(QDate.currentDate().addDays(-365))
+        self.date_edit.setMaximumDate(QDate.currentDate().addDays(365))
+        self.date_edit.setDate(QDate.currentDate())
+        self.date_edit.dateChanged.connect(self._on_date_changed)
+        toolbar.addWidget(self.date_edit)
+        
+        # Button to show all dates
+        self.btn_all_dates = QPushButton("All")
+        self.btn_all_dates.clicked.connect(self._on_all_dates_clicked)
+        toolbar.addWidget(self.btn_all_dates)
 
         # Event type filter
         self.cmb_type = QComboBox()
@@ -170,30 +176,15 @@ class UnifiedEventsJournal(QWidget):
 
         self.setLayout(self.layout)
 
-    def _reload_dates(self):
-        """Reload available dates with caching"""
-        try:
-            # Use cached dates if available
-            if self._dates_loaded and self._dates_cache is not None:
-                dates = self._dates_cache
-            else:
-                # Load dates from data source
-                dates = self.data_source.list_available_dates()
-                self._dates_cache = dates
-                self._dates_loaded = True
-            
-            self.cmb_date.clear()
-            self.cmb_date.addItem('All')
-            for d in dates:
-                self.cmb_date.addItem(d)
-        except Exception as e:
-            self.logger.error(f"Date loading error: {e}")
-            self.cmb_date.clear()
-            self.cmb_date.addItem('All')
-
-    def _on_date_changed(self, text: str):
+    def _on_date_changed(self, date: QDate):
         """Handle date selection change"""
-        self.data_source.set_date(text if text and text != 'All' else None)
+        date_str = date.toString('yyyy-MM-dd')
+        self.data_source.set_date(date_str)
+        self._reload_table()
+    
+    def _on_all_dates_clicked(self):
+        """Handle 'All' button click - disable date filter"""
+        self.data_source.set_date(None)
         self._reload_table()
 
     def _on_filter_changed(self, text: str):
@@ -1165,10 +1156,6 @@ class UnifiedEventsJournal(QWidget):
         # should be shown, so we proceed with loading data.
         
         self.is_visible = True
-        
-        # Load dates on first show (if not already loaded)
-        if not self._dates_loaded:
-            self._reload_dates()
         
         # Load data only on first show (lazy loading)
         if not self._data_loaded:
