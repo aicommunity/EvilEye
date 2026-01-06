@@ -593,10 +593,25 @@ class UnifiedObjectsJournal(QWidget):
             return
         
         scrollbar = self.table.verticalScrollBar()
-        # Запоминаем индекс верхней видимой строки, чтобы вернуть пользователя на тот же диапазон
-        old_top_row = self.table.rowAt(0)
-        if old_top_row < 0:
-            old_top_row = 0
+        # Запоминаем ключ верхней видимой строки (time, event, information) для точного восстановления позиции
+        anchor_key = None
+        if scrollbar is not None and not self._auto_scroll and self.table.rowCount() > 0:
+            try:
+                # Получаем индекс верхней видимой строки через viewport
+                top_row = self.table.rowAt(0)
+                if top_row < 0:
+                    top_row = 0
+                if 0 <= top_row < self.table.rowCount():
+                    time_item = self.table.item(top_row, 0)
+                    event_item = self.table.item(top_row, 1)
+                    info_item = self.table.item(top_row, 2)
+                    anchor_key = (
+                        time_item.text() if time_item else '',
+                        event_item.text() if event_item else '',
+                        info_item.text() if info_item else '',
+                    )
+            except Exception:
+                anchor_key = None
 
         self._updating_table = True
         self.table.setUpdatesEnabled(False)
@@ -646,15 +661,30 @@ class UnifiedObjectsJournal(QWidget):
                 if self._auto_scroll:
                     # Пользователь следит за новыми сообщениями - держим верх таблицы
                     scrollbar.setValue(scrollbar.minimum())
-                else:
+                elif anchor_key is not None:
                     try:
-                        # Пользователь читает старые сообщения: возвращаем видимую область
-                        # на ту же логическую строку, что была сверху (смещённую вниз на len(table_rows))
-                        target_row = old_top_row + len(table_rows)
-                        if target_row < self.table.rowCount():
+                        # Пользователь читает старые сообщения: находим строку с тем же ключом и прокручиваем к ней
+                        target_row = None
+                        for r in range(self.table.rowCount()):
+                            t_item = self.table.item(r, 0)
+                            e_item = self.table.item(r, 1)
+                            i_item = self.table.item(r, 2)
+                            key = (
+                                t_item.text() if t_item else '',
+                                e_item.text() if e_item else '',
+                                i_item.text() if i_item else '',
+                            )
+                            if key == anchor_key:
+                                target_row = r
+                                break
+                        
+                        if target_row is not None:
                             item = self.table.item(target_row, 0)
                             if item is not None:
-                                from PyQt6.QtWidgets import QAbstractItemView
+                                try:
+                                    from PyQt6.QtWidgets import QAbstractItemView
+                                except ImportError:
+                                    from PyQt5.QtWidgets import QAbstractItemView
                                 self.table.scrollToItem(
                                     item,
                                     QAbstractItemView.ScrollHint.PositionAtTop
@@ -856,7 +886,13 @@ class UnifiedObjectsJournal(QWidget):
             
             # Resume timer when window closed
             def _resume():
-                self.update_timer.start(500)
+                try:
+                    # Проверяем, что таймер ещё существует и виджет не закрывается
+                    if not self._is_closing and hasattr(self, 'update_timer') and self.update_timer is not None:
+                        self.update_timer.start(500)
+                except (RuntimeError, AttributeError):
+                    # Таймер уже удалён Qt - игнорируем
+                    pass
             try:
                 self.image_win.destroyed.connect(lambda *_: _resume())
             except Exception:
