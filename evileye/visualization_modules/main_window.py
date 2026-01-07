@@ -49,6 +49,7 @@ from .window_manager import get_window_manager
 from ..database.config_history_manager import ConfigHistoryManager
 from .roi_editor_window import ROIEditorWindow
 from .dialogs.class_mapping_dialog import ClassMappingDialog
+from .stream_player_window import StreamPlayerWindow
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 
@@ -129,6 +130,7 @@ class MainWindow(QMainWindow):
         self.settings_window = None
         self.config_history_window = None
         self.config_history_manager = None
+        self.stream_player_window = None
 
         # Инициализация базовых переменных
         self.rows = 1
@@ -451,6 +453,8 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self.objects_journal)
         view_menu.addAction(self.events_journal)
         view_menu.addAction(self.toggle_signal)
+        view_menu.addSeparator()
+        view_menu.addAction(self.open_stream_player)
         self.menu_height = view_menu.frameGeometry().height()
 
         edit_menu = QMenu('&Edit', self)
@@ -546,6 +550,13 @@ class MainWindow(QMainWindow):
         self.open_class_mapping_editor = QAction('&Class Mapping Editor', self)
         self.open_class_mapping_editor.setToolTip("Open Class Mapping Editor for managing object classes")
         
+        # Stream Player action
+        self.open_stream_player = QAction('&Stream Player', self)
+        self.open_stream_player.setToolTip("Open Stream Player for viewing recorded streams")
+        icon_path = os.path.join(utils_utils.get_project_root(), 'icons', 'journal.svg')
+        if os.path.exists(icon_path):
+            self.open_stream_player.setIcon(QIcon(icon_path))
+        
         # Tools menu actions
         self.validate_config = QAction('&Validate Configuration', self)
         self.validate_config.setToolTip("Validate current configuration")
@@ -571,6 +582,7 @@ class MainWindow(QMainWindow):
         self.open_roi_editor.triggered.connect(self.open_roi_editor_window)
         self.open_zone_editor.triggered.connect(self.open_zone_editor_window)
         self.open_class_mapping_editor.triggered.connect(self.open_class_mapping_editor_window)
+        self.open_stream_player.triggered.connect(self.open_stream_player_window)
         
         # Tools connections
         self.validate_config.triggered.connect(self.validate_current_config)
@@ -853,6 +865,31 @@ class MainWindow(QMainWindow):
                         tabs.widget(i).setVisible(True)
                         tabs.tabBar().setTabVisible(i, True)
                         break
+        except Exception:
+            pass
+
+    @pyqtSlot()
+    def open_stream_player_window(self):
+        """Открыть окно плеера потоковых записей"""
+        if self.stream_player_window is None:
+            # Определить base_dir из params
+            base_dir = 'EvilEyeData'
+            if self.params:
+                db_config = self.params.get('database', {})
+                if db_config:
+                    base_dir = db_config.get('image_dir', 'EvilEyeData')
+            
+            self.stream_player_window = StreamPlayerWindow(base_dir=base_dir, parent=self)
+            try:
+                self.stream_player_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+            except Exception:
+                pass
+            self.stream_player_window.destroyed.connect(lambda: setattr(self, 'stream_player_window', None))
+        
+        self.stream_player_window.show()
+        try:
+            self.stream_player_window.raise_()
+            self.stream_player_window.activateWindow()
         except Exception:
             pass
 

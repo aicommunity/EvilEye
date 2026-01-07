@@ -253,6 +253,10 @@ class VideoPlayerWidget(QWidget):
     
     def play_video(self, video_path: str):
         """Запустить воспроизведение видеофрагмента"""
+        # Преобразовать в абсолютный путь если нужно
+        if video_path and not os.path.isabs(video_path):
+            video_path = os.path.abspath(video_path)
+        
         if not video_path or not os.path.exists(video_path):
             self.logger.warning(f"Video file not found: {video_path}")
             return False
@@ -260,11 +264,12 @@ class VideoPlayerWidget(QWidget):
         # Check file size - if too small, file might be corrupted or incomplete
         try:
             file_size = os.path.getsize(video_path)
-            if file_size < 1000:  # Less than 1KB - likely corrupted or empty
+            if file_size < 1024:  # Less than 1KB - likely corrupted or empty
                 self.logger.warning(f"Video file is too small ({file_size} bytes), likely corrupted: {video_path}")
                 return False
         except Exception as e:
             self.logger.warning(f"Error checking video file size: {e}, path={video_path}")
+            return False
         
         self.video_path = video_path
         self._is_playing = True
@@ -629,6 +634,10 @@ class VideoPlayerWindow(QWidget):
     
     def play_video(self, video_path: str):
         """Запустить воспроизведение видеофрагмента"""
+        # Преобразовать в абсолютный путь если нужно
+        if video_path and not os.path.isabs(video_path):
+            video_path = os.path.abspath(video_path)
+        
         if not video_path or not os.path.exists(video_path):
             self.logger.warning(f"Video file not found: {video_path}")
             return False
@@ -636,11 +645,12 @@ class VideoPlayerWindow(QWidget):
         # Check file size - if too small, file might be corrupted or incomplete
         try:
             file_size = os.path.getsize(video_path)
-            if file_size < 1000:  # Less than 1KB - likely corrupted or empty
+            if file_size < 1024:  # Less than 1KB - likely corrupted or empty
                 self.logger.warning(f"Video file is too small ({file_size} bytes), likely corrupted: {video_path}")
                 return False
         except Exception as e:
             self.logger.warning(f"Error checking video file size: {e}, path={video_path}")
+            return False
         
         self.video_path = video_path
         self._is_playing = True
