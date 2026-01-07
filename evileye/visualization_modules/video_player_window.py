@@ -53,6 +53,7 @@ class VideoPlayerWidget(QWidget):
         
         self.video_path: Optional[str] = None
         self._is_playing = False
+        self._current_frame = None  # Текущий кадр для разделения потоков
         
         # Initialize OpenCV-related attributes (will be set if OpenCV is used)
         self.cap = None
@@ -227,6 +228,9 @@ class VideoPlayerWidget(QWidget):
             if not ret:
                 self.timer.stop()
                 return
+        
+        # Сохранить текущий кадр для разделения потоков
+        self._current_frame = frame.copy() if frame is not None else None
         
         # Convert BGR to RGB
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)

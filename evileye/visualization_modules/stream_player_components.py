@@ -33,6 +33,13 @@ from ..core.logger import get_module_logger
 from .video_player_window import VideoPlayerWidget
 import logging
 
+try:
+    import cv2
+    import numpy as np
+except ImportError:
+    cv2 = None
+    np = None
+
 
 class CameraSelectorWidget(QWidget):
     """Виджет для выбора камер и даты"""
@@ -40,11 +47,12 @@ class CameraSelectorWidget(QWidget):
     cameras_selected = pyqtSignal(list)
     date_selected = pyqtSignal(str)
     
-    def __init__(self, base_dir: str, parent=None):
+    def __init__(self, base_dir: str, parent=None, source_config: Dict = None):
         super().__init__(parent)
         self.logger = get_module_logger("camera_selector")
         self.base_dir = base_dir
         self.streams_dir = os.path.join(base_dir, 'Streams')
+        self._source_config = source_config or {}
         
         self._available_dates = []
         self._available_cameras = {}
@@ -172,33 +180,56 @@ class CameraSelectorWidget(QWidget):
         self.camera_checkboxes.clear()
         
         # Найти все папки камер
-        cameras = []
+        camera_folders = []
         for item in os.listdir(date_dir):
             item_path = os.path.join(date_dir, item)
             if os.path.isdir(item_path):
                 # Проверить наличие видео файлов
                 video_files = glob.glob(os.path.join(item_path, '*.mp4'))
                 if video_files:
-                    cameras.append(item)
+                    camera_folders.append(item)
         
-        self._available_cameras[date] = sorted(cameras)
+        self._available_cameras[date] = sorted(camera_folders)
         
-        # Создать чекбоксы для камер
-        for camera in self._available_cameras[date]:
-            checkbox = QCheckBox(camera)
-            checkbox.stateChanged.connect(self._on_camera_selection_changed)
-            self.camera_checkboxes[camera] = checkbox
-            self.cameras_layout.addWidget(checkbox)
+        # Создать чекбоксы для камер и источников
+        # Для разделенных потоков показывать отдельные источники
+        for camera_folder in self._available_cameras[date]:
+            split_config = self._source_config.get(camera_folder)
+            if split_config and split_config.get('split', False):
+                # Разделенный поток - показать отдельные источники
+                source_names = split_config.get('source_names', [])
+                num_split = split_config.get('num_split', 0)
+                for i in range(num_split):
+                    source_name = source_names[i] if i < len(source_names) else f"{camera_folder}_src{i}"
+                    checkbox = QCheckBox(source_name)
+                    checkbox.stateChanged.connect(self._on_camera_selection_changed)
+                    # Сохранить информацию о родительской папке
+                    checkbox.setProperty('camera_folder', camera_folder)
+                    checkbox.setProperty('is_split_source', True)
+                    self.camera_checkboxes[source_name] = checkbox
+                    self.cameras_layout.addWidget(checkbox)
+            else:
+                # Обычный поток
+                checkbox = QCheckBox(camera_folder)
+                checkbox.stateChanged.connect(self._on_camera_selection_changed)
+                checkbox.setProperty('camera_folder', camera_folder)
+                checkbox.setProperty('is_split_source', False)
+                self.camera_checkboxes[camera_folder] = checkbox
+                self.cameras_layout.addWidget(checkbox)
         
-        self.logger.info(f"Loaded {len(cameras)} cameras for date {date}")
+        self.logger.info(f"Loaded {len(camera_folders)} camera folders for date {date}")
         
     def _on_camera_selection_changed(self):
         """Обработка изменения выбора камер"""
-        selected = []
-        for camera, checkbox in self.camera_checkboxes.items():
+        # Собрать выбранные папки камер (не отдельные источники)
+        selected_folders = set()
+        for checkbox in self.camera_checkboxes.values():
             if checkbox.isChecked():
-                selected.append(camera)
+                camera_folder = checkbox.property('camera_folder')
+                if camera_folder:
+                    selected_folders.add(camera_folder)
         
+        selected = sorted(list(selected_folders))
         self._selected_cameras = selected
         self.cameras_selected.emit(selected)
         
@@ -233,11 +264,12 @@ class VideoGridWidget(QWidget):
         
         self._cameras = []
         self._camera_segments = {}  # {camera: [(start_time, end_time, path)]}
-        self._video_players = {}  # {camera_name: VideoPlayerWidget}
+        self._video_players = {}  # {camera_name: VideoPlayerWidget or SplitVideoPlayerWidget}
         self._current_segments = {}  # {camera_name: current_segment_path}
         self._current_segment_indices = {}  # {camera_name: index in segments list}
         self._playback_speed = 1.0
         self._start_time = None  # datetime начала общего временного диапазона
+        self._source_config = {}  # Конфигурация источников для разделения
         
         self._init_ui()
         
@@ -253,10 +285,11 @@ class VideoGridWidget(QWidget):
         container.setLayout(self.grid_layout)
         layout.addWidget(container)
         
-    def set_cameras(self, cameras: List[str], camera_segments: Dict[str, List[Tuple]]):
-        """Установить камеры и их сегменты"""
+    def set_cameras(self, cameras: List[str], camera_segments: Dict[str, List[Tuple]], source_config: Dict = None):
+        """Установить камеры и их сегменты с поддержкой разделенных потоков"""
         self._cameras = cameras
         self._camera_segments = camera_segments
+        self._source_config = source_config or {}
         
         # Очистить существующие виджеты
         self._clear_grid()
@@ -264,19 +297,38 @@ class VideoGridWidget(QWidget):
         if not cameras:
             return
         
-        # Определить размер сетки
+        # Определить все источники (включая разделенные)
+        all_sources = []  # [(camera_folder, source_name, is_split, split_index)]
+        
+        for camera in cameras:
+            split_config = self._source_config.get(camera)
+            if split_config and split_config.get('split', False):
+                # Разделенный поток - добавить все источники
+                source_names = split_config.get('source_names', [])
+                num_split = split_config.get('num_split', 0)
+                for i in range(num_split):
+                    source_name = source_names[i] if i < len(source_names) else f"{camera}_src{i}"
+                    all_sources.append((camera, source_name, True, i))
+            else:
+                # Обычный поток
+                all_sources.append((camera, camera, False, None))
+        
+        # Определить размер сетки на основе всех источников
+        total_sources = len(all_sources)
         rows = 2
         cols = 2
-        if len(cameras) == 1:
+        if total_sources == 1:
             rows, cols = 1, 1
-        elif len(cameras) <= 2:
+        elif total_sources <= 2:
             rows, cols = 1, 2
-        elif len(cameras) <= 4:
+        elif total_sources <= 4:
             rows, cols = 2, 2
-        elif len(cameras) <= 6:
+        elif total_sources <= 6:
             rows, cols = 2, 3
-        else:
+        elif total_sources <= 9:
             rows, cols = 3, 3
+        else:
+            rows, cols = 3, 4
         
         # Определить общее время начала
         if camera_segments:
@@ -287,46 +339,97 @@ class VideoGridWidget(QWidget):
             if all_starts:
                 self._start_time = min(all_starts)
         
-        # Создать виджеты видео для каждой камеры
-        for idx, camera in enumerate(cameras[:rows * cols]):
-            row = idx // cols
-            col = idx % cols
+        # Группировать источники по папкам камер для разделенных потоков
+        camera_groups = {}  # {camera_folder: [source_indices]}
+        for idx, (camera_folder, source_name, is_split, split_index) in enumerate(all_sources):
+            if camera_folder not in camera_groups:
+                camera_groups[camera_folder] = []
+            camera_groups[camera_folder].append(idx)
+        
+        # Создать виджеты видео для каждого источника
+        grid_idx = 0
+        for camera_folder in cameras:
+            if camera_folder not in camera_segments:
+                continue
             
-            # Создать контейнер для видео и метки
-            container_widget = QWidget()
-            container_layout = QVBoxLayout(container_widget)
-            container_layout.setContentsMargins(0, 0, 0, 0)
-            container_layout.setSpacing(0)
+            split_config = self._source_config.get(camera_folder)
+            is_split = split_config and split_config.get('split', False)
             
-            # Метка с именем камеры
-            label = QLabel(camera)
-            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            label.setStyleSheet("background-color: rgba(0, 0, 0, 200); color: white; padding: 3px; font-weight: bold;")
-            container_layout.addWidget(label)
-            
-            # Создать виджет видео
-            video_widget = VideoPlayerWidget(parent=container_widget, logger_name=f"camera_{camera}")
-            self._video_players[camera] = video_widget
-            container_layout.addWidget(video_widget, stretch=1)
-            
-            # Загрузить первый сегмент
-            if camera in camera_segments and camera_segments[camera]:
-                first_segment = camera_segments[camera][0][2]  # (start, end, path)
-                # Преобразовать в абсолютный путь если нужно
-                if not os.path.isabs(first_segment):
-                    first_segment = os.path.abspath(first_segment)
+            if is_split and grid_idx < rows * cols:
+                # Разделенный поток - создать SplitVideoPlayerWidget
+                # Определить позицию в сетке
+                row = grid_idx // cols
+                col = grid_idx % cols
                 
-                if os.path.exists(first_segment) and os.path.getsize(first_segment) > 1024:
-                    if video_widget.play_video(first_segment):
-                        self._current_segments[camera] = first_segment
-                        self._current_segment_indices[camera] = 0
+                # Создать SplitVideoPlayerWidget
+                split_player = SplitVideoPlayerWidget(parent=self)
+                
+                # Загрузить первый сегмент
+                if camera_segments[camera_folder]:
+                    first_segment = camera_segments[camera_folder][0][2]
+                    if not os.path.isabs(first_segment):
+                        first_segment = os.path.abspath(first_segment)
+                    
+                    if os.path.exists(first_segment) and os.path.getsize(first_segment) > 1024:
+                        if split_player.set_split_config(split_config, first_segment):
+                            # Сохранить информацию о плеере
+                            self._video_players[camera_folder] = split_player
+                            self._current_segments[camera_folder] = first_segment
+                            self._current_segment_indices[camera_folder] = 0
+                            
+                            # Добавить в сетку (занимает несколько ячеек по вертикали)
+                            num_split = split_config.get('num_split', 1)
+                            self.grid_layout.addWidget(split_player, row, col, num_split, 1)
+                            grid_idx += num_split
+                        else:
+                            self.logger.warning(f"Failed to setup split player for {camera_folder}")
+                            grid_idx += 1
                     else:
-                        self.logger.warning(f"Failed to play video for camera {camera}: {first_segment}")
-                else:
-                    self.logger.warning(f"Video file not found or too small for camera {camera}: {first_segment}")
-            
-            # Добавить контейнер в сетку
-            self.grid_layout.addWidget(container_widget, row, col)
+                        self.logger.warning(f"Video file not found for split camera {camera_folder}")
+                        grid_idx += 1
+            else:
+                # Обычный поток - создать обычный VideoPlayerWidget
+                if grid_idx >= rows * cols:
+                    break
+                
+                row = grid_idx // cols
+                col = grid_idx % cols
+                
+                # Создать контейнер для видео и метки
+                container_widget = QWidget()
+                container_layout = QVBoxLayout(container_widget)
+                container_layout.setContentsMargins(0, 0, 0, 0)
+                container_layout.setSpacing(0)
+                
+                # Метка с именем камеры
+                label = QLabel(camera_folder)
+                label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                label.setStyleSheet("background-color: rgba(0, 0, 0, 200); color: white; padding: 3px; font-weight: bold;")
+                container_layout.addWidget(label)
+                
+                # Создать виджет видео
+                video_widget = VideoPlayerWidget(parent=container_widget, logger_name=f"camera_{camera_folder}")
+                self._video_players[camera_folder] = video_widget
+                container_layout.addWidget(video_widget, stretch=1)
+                
+                # Загрузить первый сегмент
+                if camera_segments[camera_folder]:
+                    first_segment = camera_segments[camera_folder][0][2]
+                    if not os.path.isabs(first_segment):
+                        first_segment = os.path.abspath(first_segment)
+                    
+                    if os.path.exists(first_segment) and os.path.getsize(first_segment) > 1024:
+                        if video_widget.play_video(first_segment):
+                            self._current_segments[camera_folder] = first_segment
+                            self._current_segment_indices[camera_folder] = 0
+                        else:
+                            self.logger.warning(f"Failed to play video for camera {camera_folder}: {first_segment}")
+                    else:
+                        self.logger.warning(f"Video file not found or too small for camera {camera_folder}: {first_segment}")
+                
+                # Добавить контейнер в сетку
+                self.grid_layout.addWidget(container_widget, row, col)
+                grid_idx += 1
         
     def _clear_grid(self):
         """Очистить сетку"""
@@ -346,40 +449,49 @@ class VideoGridWidget(QWidget):
     def play_all(self):
         """Запустить воспроизведение всех видео"""
         for player in self._video_players.values():
-            # Видео уже загружено, нужно только возобновить воспроизведение
-            # VideoPlayerWidget автоматически начинает воспроизведение при загрузке
-            if hasattr(player, 'player') and player.player:
-                if pyqt_version == 6:
-                    player.player.play()
-                else:
-                    player.player.play()
-            elif hasattr(player, 'timer') and player.timer:
-                if not player.timer.isActive():
-                    player.timer.start()
+            # Проверить тип плеера
+            if isinstance(player, SplitVideoPlayerWidget):
+                player.play()
+            else:
+                # Обычный VideoPlayerWidget
+                if hasattr(player, 'player') and player.player:
+                    if pyqt_version == 6:
+                        player.player.play()
+                    else:
+                        player.player.play()
+                elif hasattr(player, 'timer') and player.timer:
+                    if not player.timer.isActive():
+                        player.timer.start()
     
     def pause_all(self):
         """Приостановить воспроизведение всех видео"""
         for player in self._video_players.values():
-            if hasattr(player, 'player') and player.player:
-                try:
-                    if pyqt_version == 6:
-                        from PyQt6.QtMultimedia import QMediaPlayer
-                        if player.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
-                            player.player.pause()
-                    else:
-                        from PyQt5.QtMultimedia import QMediaPlayer
-                        if player.player.state() == QMediaPlayer.PlayingState:
-                            player.player.pause()
-                except Exception:
-                    pass
-            elif hasattr(player, 'timer') and player.timer:
-                if player.timer.isActive():
-                    player.timer.stop()
+            if isinstance(player, SplitVideoPlayerWidget):
+                player.pause()
+            else:
+                if hasattr(player, 'player') and player.player:
+                    try:
+                        if pyqt_version == 6:
+                            from PyQt6.QtMultimedia import QMediaPlayer
+                            if player.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+                                player.player.pause()
+                        else:
+                            from PyQt5.QtMultimedia import QMediaPlayer
+                            if player.player.state() == QMediaPlayer.PlayingState:
+                                player.player.pause()
+                    except Exception:
+                        pass
+                elif hasattr(player, 'timer') and player.timer:
+                    if player.timer.isActive():
+                        player.timer.stop()
     
     def stop_all(self):
         """Остановить воспроизведение всех видео"""
         for player in self._video_players.values():
-            player.stop()
+            if isinstance(player, SplitVideoPlayerWidget):
+                player.stop()
+            else:
+                player.stop()
     
     def seek_all(self, position_ms: int):
         """Перемотать все видео на указанную позицию"""
@@ -424,12 +536,23 @@ class VideoGridWidget(QWidget):
                 if os.path.exists(new_segment) and os.path.getsize(new_segment) > 1024:
                     player = self._video_players.get(camera)
                     if player:
-                        player.stop()
-                        if player.play_video(new_segment):
-                            self._current_segments[camera] = new_segment
-                            self._current_segment_indices[camera] = target_segment_idx
+                        if isinstance(player, SplitVideoPlayerWidget):
+                            # Для разделенного потока нужно перезагрузить конфигурацию
+                            split_config = self._source_config.get(camera)
+                            if split_config:
+                                player.stop()
+                                if player.set_split_config(split_config, new_segment):
+                                    self._current_segments[camera] = new_segment
+                                    self._current_segment_indices[camera] = target_segment_idx
+                                else:
+                                    self.logger.warning(f"Failed to switch split segment for camera {camera}: {new_segment}")
                         else:
-                            self.logger.warning(f"Failed to switch to segment for camera {camera}: {new_segment}")
+                            player.stop()
+                            if player.play_video(new_segment):
+                                self._current_segments[camera] = new_segment
+                                self._current_segment_indices[camera] = target_segment_idx
+                            else:
+                                self.logger.warning(f"Failed to switch to segment for camera {camera}: {new_segment}")
                 else:
                     self.logger.debug(f"Segment file not found or invalid for camera {camera}: {new_segment}")
             
@@ -442,9 +565,11 @@ class VideoGridWidget(QWidget):
             if player:
                 self._seek_player(player, segment_offset_ms)
     
-    def _seek_player(self, player: VideoPlayerWidget, position_ms: int):
+    def _seek_player(self, player, position_ms: int):
         """Перемотать конкретный плеер на позицию"""
-        if hasattr(player, 'player') and player.player:
+        if isinstance(player, SplitVideoPlayerWidget):
+            player.seek(position_ms)
+        elif hasattr(player, 'player') and player.player:
             # QMediaPlayer
             if pyqt_version == 6:
                 player.player.setPosition(position_ms)
@@ -462,7 +587,9 @@ class VideoGridWidget(QWidget):
         self._playback_speed = speed
         
         for player in self._video_players.values():
-            if hasattr(player, 'player') and player.player:
+            if isinstance(player, SplitVideoPlayerWidget):
+                player.set_playback_speed(speed)
+            elif hasattr(player, 'player') and player.player:
                 # QMediaPlayer поддерживает setPlaybackRate
                 try:
                     if pyqt_version == 6:
@@ -774,3 +901,333 @@ class PlaybackControlsWidget(QWidget):
         if 0 <= index < len(speeds):
             self._current_speed = speeds[index]
             self.speed_changed.emit(self._current_speed)
+
+
+class SplitVideoPlayerWidget(QWidget):
+    """Виджет для воспроизведения разделенного потока на несколько источников"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.logger = get_module_logger("split_video_player")
+        
+        self._video_player = None  # VideoPlayerWidget для основного потока
+        self._split_config = None  # Конфигурация разделения
+        self._region_widgets = []  # Виджеты для отображения областей
+        self._current_frame = None  # Текущий кадр для разделения
+        self._extraction_timer = None  # Таймер для извлечения кадров
+        
+        self._init_ui()
+        
+    def _init_ui(self):
+        """Инициализация интерфейса"""
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        
+    def set_split_config(self, split_config: Dict, video_path: str):
+        """Установить конфигурацию разделения и загрузить видео"""
+        self._split_config = split_config
+        
+        if not split_config or not split_config.get('split', False):
+            self.logger.warning("Invalid split config provided")
+            return False
+        
+        num_split = split_config.get('num_split', 0)
+        src_coords = split_config.get('src_coords', [])
+        source_names = split_config.get('source_names', [])
+        
+        if num_split == 0 or len(src_coords) < num_split:
+            self.logger.warning(f"Invalid split config: num_split={num_split}, src_coords={len(src_coords)}")
+            return False
+        
+        # Очистить существующие виджеты
+        self._clear_regions()
+        
+        # Создать основной VideoPlayerWidget (скрытый, только для декодирования)
+        self._video_player = VideoPlayerWidget(parent=self, logger_name="split_main")
+        self._video_player.hide()  # Скрыть основной плеер
+        
+        # Создать виджеты для каждой области
+        layout = self.layout()
+        for i in range(num_split):
+            # Контейнер для области
+            region_container = QWidget()
+            region_layout = QVBoxLayout(region_container)
+            region_layout.setContentsMargins(0, 0, 0, 0)
+            region_layout.setSpacing(0)
+            
+            # Метка с именем источника
+            source_name = source_names[i] if i < len(source_names) else f"Source{i}"
+            label = QLabel(source_name)
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label.setStyleSheet("background-color: rgba(0, 0, 0, 200); color: white; padding: 3px; font-weight: bold;")
+            region_layout.addWidget(label)
+            
+            # Виджет для отображения области
+            region_widget = QLabel()
+            region_widget.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            region_widget.setStyleSheet("background-color: black;")
+            region_widget.setMinimumSize(320, 240)
+            region_layout.addWidget(region_widget, stretch=1)
+            
+            self._region_widgets.append({
+                'container': region_container,
+                'widget': region_widget,
+                'label': label,
+                'coords': src_coords[i] if i < len(src_coords) else None,
+                'source_name': source_name
+            })
+            
+            layout.addWidget(region_container)
+        
+        # Загрузить видео в основной плеер
+        if video_path and os.path.exists(video_path):
+            if not os.path.isabs(video_path):
+                video_path = os.path.abspath(video_path)
+            
+            if self._video_player.play_video(video_path):
+                # Подключить обработчик обновления кадров для разделения
+                # Использовать таймер для периодического извлечения кадров
+                self._setup_frame_extraction()
+                return True
+            else:
+                self.logger.error(f"Failed to load video: {video_path}")
+                return False
+        
+        return False
+    
+    def _setup_frame_extraction(self):
+        """Настроить извлечение кадров для разделения"""
+        # Для OpenCV - перехватывать кадры через переопределение метода обновления
+        if hasattr(self._video_player, '_use_opencv') and self._video_player._use_opencv:
+            # Сохранить оригинальный метод обновления кадра
+            if hasattr(self._video_player, '_update_frame_opencv'):
+                # Создать обертку для перехвата кадров
+                original_update = self._video_player._update_frame_opencv
+                
+                def wrapped_update():
+                    # Вызвать оригинальный метод
+                    original_update()
+                    # Извлечь кадр для разделения (кадр уже прочитан в оригинальном методе)
+                    self._extract_current_frame()
+                
+                self._video_player._update_frame_opencv = wrapped_update
+                self._extraction_timer = None  # Не нужен отдельный таймер
+            else:
+                # Fallback: использовать таймер
+                try:
+                    from PyQt6.QtCore import QTimer
+                except ImportError:
+                    from PyQt5.QtCore import QTimer
+                
+                self._extraction_timer = QTimer()
+                self._extraction_timer.timeout.connect(self._update_split_frames_opencv)
+                
+                if hasattr(self._video_player, 'timer') and self._video_player.timer:
+                    interval = self._video_player.timer.interval()
+                    self._extraction_timer.start(interval)
+        else:
+            # QMediaPlayer режим - использовать QVideoSink для перехвата кадров
+            # Пока используем только OpenCV режим
+            self.logger.debug("QMediaPlayer mode - frame extraction will be handled differently")
+            self._extraction_timer = None
+    
+    def _extract_current_frame(self):
+        """Извлечь текущий кадр из VideoPlayerWidget для разделения"""
+        if not self._video_player:
+            return
+        
+        # Получить сохраненный кадр из VideoPlayerWidget
+        if hasattr(self._video_player, '_current_frame') and self._video_player._current_frame is not None:
+            frame = self._video_player._current_frame
+            # Разделить кадр на области
+            self._split_frame(frame)
+    
+    def _update_split_frames_opencv(self):
+        """Обновить разделенные кадры для OpenCV режима"""
+        if not self._video_player or not hasattr(self._video_player, 'cap'):
+            return
+        
+        cap = self._video_player.cap
+        if not cap or not cap.isOpened():
+            return
+        
+        # Получить текущий кадр
+        # Используем текущую позицию кадра из VideoPlayerWidget
+        # Не читаем кадр заново, а используем тот, который уже был прочитан
+        # Для этого нужно получить кадр из внутреннего буфера или использовать другой подход
+        
+        # Альтернативный подход: читать кадр напрямую (это переместит позицию, но это нормально для синхронизации)
+        ret, frame = cap.read()
+        if ret and frame is not None:
+            # Разделить кадр на области
+            self._split_frame(frame)
+            # Не возвращаем позицию - пусть VideoPlayerWidget сам управляет позицией
+    
+    def _split_frame(self, frame):
+        """Разделить кадр на области согласно конфигурации"""
+        if not self._split_config or not self._region_widgets:
+            return
+        
+        if cv2 is None:
+            self.logger.error("OpenCV not available for frame splitting")
+            return
+        
+        try:
+            # Конвертировать в RGB если нужно
+            if len(frame.shape) == 3 and frame.shape[2] == 3:
+                # BGR to RGB для отображения
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            else:
+                frame_rgb = frame
+            
+            # Разделить на области
+            for region_info in self._region_widgets:
+                coords = region_info['coords']
+                if not coords or len(coords) < 4:
+                    continue
+                
+                x, y, w, h = int(coords[0]), int(coords[1]), int(coords[2]), int(coords[3])
+                
+                # Проверить границы
+                frame_h, frame_w = frame_rgb.shape[:2]
+                x = max(0, min(x, frame_w))
+                y = max(0, min(y, frame_h))
+                w = min(w, frame_w - x)
+                h = min(h, frame_h - y)
+                
+                if w <= 0 or h <= 0:
+                    continue
+                
+                # Извлечь область
+                region = frame_rgb[y:y+h, x:x+w].copy()
+                
+                # Отобразить в виджете
+                self._display_region(region_info['widget'], region)
+                
+        except Exception as e:
+            self.logger.error(f"Error splitting frame: {e}")
+    
+    def _display_region(self, widget: QLabel, region):
+        """Отобразить область в виджете"""
+        try:
+            from PyQt6.QtGui import QImage, QPixmap
+        except ImportError:
+            from PyQt5.QtGui import QImage, QPixmap
+        
+        h, w, ch = region.shape
+        bytes_per_line = ch * w
+        
+        q_image = QImage(region.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
+        pixmap = QPixmap.fromImage(q_image)
+        
+        # Масштабировать под размер виджета
+        widget_size = widget.size()
+        if widget_size.width() > 0 and widget_size.height() > 0:
+            scaled_pixmap = pixmap.scaled(
+                widget_size,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            widget.setPixmap(scaled_pixmap)
+    
+    def _clear_regions(self):
+        """Очистить виджеты областей"""
+        if self._extraction_timer:
+            self._extraction_timer.stop()
+            self._extraction_timer.deleteLater()
+            self._extraction_timer = None
+        
+        layout = self.layout()
+        if layout:
+            while layout.count():
+                item = layout.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+        
+        if self._video_player:
+            self._video_player.stop()
+            self._video_player.deleteLater()
+            self._video_player = None
+        
+        self._region_widgets.clear()
+    
+    def play(self):
+        """Запустить воспроизведение"""
+        if self._video_player:
+            if hasattr(self._video_player, 'player') and self._video_player.player:
+                if pyqt_version == 6:
+                    self._video_player.player.play()
+                else:
+                    self._video_player.player.play()
+            elif hasattr(self._video_player, 'timer') and self._video_player.timer:
+                if not self._video_player.timer.isActive():
+                    self._video_player.timer.start()
+            
+            # Запустить таймер извлечения кадров если есть
+            if self._extraction_timer and not self._extraction_timer.isActive():
+                self._extraction_timer.start()
+    
+    def pause(self):
+        """Приостановить воспроизведение"""
+        if self._video_player:
+            if hasattr(self._video_player, 'player') and self._video_player.player:
+                try:
+                    if pyqt_version == 6:
+                        from PyQt6.QtMultimedia import QMediaPlayer
+                        if self._video_player.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+                            self._video_player.player.pause()
+                    else:
+                        from PyQt5.QtMultimedia import QMediaPlayer
+                        if self._video_player.player.state() == QMediaPlayer.PlayingState:
+                            self._video_player.player.pause()
+                except Exception:
+                    pass
+            elif hasattr(self._video_player, 'timer') and self._video_player.timer:
+                if self._video_player.timer.isActive():
+                    self._video_player.timer.stop()
+            
+            # Остановить таймер извлечения кадров
+            if self._extraction_timer and self._extraction_timer.isActive():
+                self._extraction_timer.stop()
+    
+    def stop(self):
+        """Остановить воспроизведение"""
+        if self._extraction_timer:
+            self._extraction_timer.stop()
+        if self._video_player:
+            self._video_player.stop()
+    
+    def seek(self, position_ms: int):
+        """Перемотать на позицию"""
+        if self._video_player:
+            if hasattr(self._video_player, 'player') and self._video_player.player:
+                if pyqt_version == 6:
+                    self._video_player.player.setPosition(position_ms)
+                else:
+                    self._video_player.player.setPosition(position_ms)
+            elif hasattr(self._video_player, 'cap') and self._video_player.cap:
+                import cv2
+                fps = self._video_player.cap.get(cv2.CAP_PROP_FPS) or 30
+                frame_number = int((position_ms / 1000.0) * fps)
+                self._video_player.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+    
+    def set_playback_speed(self, speed: float):
+        """Установить скорость воспроизведения"""
+        if self._video_player:
+            if hasattr(self._video_player, 'player') and self._video_player.player:
+                try:
+                    if pyqt_version == 6:
+                        self._video_player.player.setPlaybackRate(speed)
+                    else:
+                        self._video_player.player.setPlaybackRate(speed)
+                except Exception:
+                    pass
+            elif hasattr(self._video_player, 'timer') and self._video_player.timer:
+                if hasattr(self._video_player, 'cap') and self._video_player.cap:
+                    import cv2
+                    fps = self._video_player.cap.get(cv2.CAP_PROP_FPS) or 30
+                    base_interval = int(1000 / fps)
+                    new_interval = int(base_interval / speed)
+                    if new_interval > 0:
+                        self._video_player.timer.setInterval(new_interval)

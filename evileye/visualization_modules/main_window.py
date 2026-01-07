@@ -879,7 +879,7 @@ class MainWindow(QMainWindow):
                 if db_config:
                     base_dir = db_config.get('image_dir', 'EvilEyeData')
             
-            self.stream_player_window = StreamPlayerWindow(base_dir=base_dir, parent=self)
+            self.stream_player_window = StreamPlayerWindow(base_dir=base_dir, params=self.params, parent=self)
             try:
                 self.stream_player_window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
             except Exception:

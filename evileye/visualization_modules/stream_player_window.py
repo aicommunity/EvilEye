@@ -42,13 +42,18 @@ import logging
 class StreamPlayerWindow(QMainWindow):
     """Окно плеера потоковых записей с поддержкой сетки видео NxM"""
     
-    def __init__(self, base_dir: str = None, parent=None):
+    def __init__(self, base_dir: str = None, params: Dict = None, parent=None):
         super().__init__(parent)
         self.logger = get_module_logger("stream_player_window")
         
         self.base_dir = base_dir or 'EvilEyeData'
         self.streams_dir = os.path.join(self.base_dir, 'Streams')
         self.events_dir = os.path.join(self.base_dir, 'Events')
+        self.params = params or {}
+        
+        # Конфигурация источников для разделения потоков
+        self._source_config = {}  # {camera_folder: {split, num_split, src_coords, source_names, source_ids}}
+        self._load_source_config()
         
         # Состояние воспроизведения
         self._is_playing = False
@@ -102,7 +107,7 @@ class StreamPlayerWindow(QMainWindow):
         main_layout.setContentsMargins(5, 5, 5, 5)
         
         # Селектор камер (вверху)
-        self.camera_selector = CameraSelectorWidget(self.base_dir, self)
+        self.camera_selector = CameraSelectorWidget(self.base_dir, self, self._source_config)
         self.camera_selector.cameras_selected.connect(self._on_cameras_selected)
         self.camera_selector.date_selected.connect(self._on_date_selected)
         main_layout.addWidget(self.camera_selector)
@@ -131,7 +136,7 @@ class StreamPlayerWindow(QMainWindow):
         self._selected_cameras = cameras
         self.logger.info(f"Selected cameras: {cameras}")
         self._load_camera_segments()
-        self.video_grid.set_cameras(cameras, self._camera_segment_times)
+        self.video_grid.set_cameras(cameras, self._camera_segment_times, self._source_config)
         
     def _on_date_selected(self, date: str):
         """Обработка выбора даты"""
@@ -189,6 +194,78 @@ class StreamPlayerWindow(QMainWindow):
         
         # Определить общий временной диапазон
         self._calculate_time_range()
+    
+    def _load_source_config(self):
+        """Загрузить конфигурацию источников из params для определения разделенных потоков"""
+        self._source_config = {}
+        
+        if not self.params:
+            self.logger.debug("No params provided, skipping source config loading")
+            return
+        
+        pipeline_sources = self.params.get('pipeline', {}).get('sources', [])
+        if not pipeline_sources:
+            self.logger.debug("No pipeline sources found in params")
+            return
+        
+        # Создать маппинг: имя папки камеры → параметры разделения
+        for source_config in pipeline_sources:
+            if not isinstance(source_config, dict):
+                continue
+            
+            source_names = source_config.get('source_names', [])
+            split = source_config.get('split', False)
+            num_split = source_config.get('num_split', 0)
+            src_coords = source_config.get('src_coords', [])
+            source_ids = source_config.get('source_ids', [])
+            
+            if not source_names:
+                continue
+            
+            # Определить имя папки камеры
+            # Если split=True и несколько source_names, имя папки может быть составным (например, "Cam2-Cam3")
+            # Или может быть одно имя для всех источников
+            if split and num_split > 1 and len(source_names) >= num_split:
+                # Попробовать найти папку по составному имени
+                camera_folder = '-'.join(source_names[:num_split])
+                # Также добавить маппинг для каждого отдельного имени
+                for i, source_name in enumerate(source_names[:num_split]):
+                    if source_name not in self._source_config:
+                        self._source_config[source_name] = {
+                            'split': True,
+                            'num_split': 1,
+                            'src_coords': [src_coords[i]] if i < len(src_coords) else [],
+                            'source_names': [source_name],
+                            'source_ids': [source_ids[i]] if i < len(source_ids) else [],
+                            'parent_folder': camera_folder,
+                            'split_index': i
+                        }
+                
+                # Добавить конфигурацию для составной папки
+                self._source_config[camera_folder] = {
+                    'split': True,
+                    'num_split': num_split,
+                    'src_coords': src_coords[:num_split] if len(src_coords) >= num_split else [],
+                    'source_names': source_names[:num_split],
+                    'source_ids': source_ids[:num_split] if len(source_ids) >= num_split else []
+                }
+            else:
+                # Обычный источник без разделения
+                camera_folder = source_names[0] if source_names else None
+                if camera_folder:
+                    self._source_config[camera_folder] = {
+                        'split': False,
+                        'num_split': 1,
+                        'src_coords': [],
+                        'source_names': source_names[:1],
+                        'source_ids': source_ids[:1] if source_ids else []
+                    }
+        
+        self.logger.info(f"Loaded source config for {len(self._source_config)} camera folders")
+    
+    def _get_split_config(self, camera_folder: str) -> Optional[Dict]:
+        """Получить параметры разделения для папки камеры"""
+        return self._source_config.get(camera_folder)
         
     def _get_segment_time_info(self, segment_path: str) -> Tuple[Optional[datetime.datetime], float]:
         """Получить время начала и длительность сегмента из имени файла"""
