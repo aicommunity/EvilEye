@@ -13,17 +13,17 @@ try:
     from PyQt6.QtWidgets import (
         QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
         QLabel, QPushButton, QSlider, QCheckBox, QComboBox, QSpinBox,
-        QGroupBox, QScrollArea, QButtonGroup, QDateEdit
+        QGroupBox, QScrollArea, QButtonGroup, QDateEdit, QSizePolicy, QMenu
     )
-    from PyQt6.QtCore import Qt, pyqtSignal, QDate
+    from PyQt6.QtCore import Qt, pyqtSignal, QDate, QPoint
     pyqt_version = 6
 except ImportError:
     from PyQt5.QtWidgets import (
         QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
         QLabel, QPushButton, QSlider, QCheckBox, QComboBox, QSpinBox,
-        QGroupBox, QScrollArea, QButtonGroup, QDateEdit
+        QGroupBox, QScrollArea, QButtonGroup, QDateEdit, QSizePolicy, QMenu
     )
-    from PyQt5.QtCore import Qt, pyqtSignal, QDate
+    from PyQt5.QtCore import Qt, pyqtSignal, QDate, QPoint
     pyqt_version = 5
 
 # Add parent directory to path for imports
@@ -41,6 +41,40 @@ except ImportError:
     np = None
 
 
+class SourceSelectionMenu(QMenu):
+    """Popup меню для выбора источника видео"""
+    
+    def __init__(self, available_sources: List[str], selected_sources: List[str], parent=None):
+        super().__init__(parent)
+        self._available_sources = available_sources
+        self._selected_sources = selected_sources
+        self._selected_action = None
+        
+        self._build_menu()
+    
+    def _build_menu(self):
+        """Построить меню с доступными источниками"""
+        if not self._available_sources:
+            no_sources_action = self.addAction("Нет доступных источников")
+            no_sources_action.setEnabled(False)
+            return
+        
+        # Добавить действие "Очистить ячейку"
+        clear_action = self.addAction("Очистить ячейку")
+        clear_action.setData(None)
+        
+        self.addSeparator()
+        
+        # Добавить все доступные источники
+        for source in self._available_sources:
+            action = self.addAction(source)
+            action.setData(source)
+            action.setCheckable(True)
+            # Отметить выбранные источники
+            if source in self._selected_sources:
+                action.setChecked(True)
+
+
 class CameraSelectorWidget(QWidget):
     """Виджет для выбора камер и даты"""
     
@@ -56,6 +90,7 @@ class CameraSelectorWidget(QWidget):
         
         self._available_dates = []
         self._available_cameras = {}
+        self._available_sources = []  # Все доступные источники (включая разделенные)
         self._selected_cameras = []
         
         self._init_ui()
@@ -79,25 +114,15 @@ class CameraSelectorWidget(QWidget):
         date_group.setLayout(date_layout)
         layout.addWidget(date_group)
         
-        # Группа выбора камер
-        cameras_group = QGroupBox("Камеры")
+        # Группа выбора камер (упрощенная - только кнопки, выбор через правый клик на ячейки)
+        cameras_group = QGroupBox("Источники")
         cameras_layout = QVBoxLayout()
         
-        # Scroll area для списка камер
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setMaximumHeight(150)
-        
-        self.cameras_widget = QWidget()
-        self.cameras_layout = QVBoxLayout(self.cameras_widget)
-        self.cameras_layout.setContentsMargins(5, 5, 5, 5)
-        
-        self.camera_checkboxes = {}
-        self.camera_group = QButtonGroup()
-        self.camera_group.setExclusive(False)
-        
-        scroll.setWidget(self.cameras_widget)
-        cameras_layout.addWidget(scroll)
+        # Информационная метка
+        info_label = QLabel("Используйте правый клик на ячейки сетки для выбора источников")
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet("color: gray; font-style: italic; padding: 5px;")
+        cameras_layout.addWidget(info_label)
         
         # Кнопки управления
         buttons_layout = QHBoxLayout()
@@ -173,12 +198,6 @@ class CameraSelectorWidget(QWidget):
             self.logger.warning(f"Date directory does not exist: {date_dir}")
             return
         
-        # Очистить существующие чекбоксы
-        for checkbox in self.camera_checkboxes.values():
-            self.cameras_layout.removeWidget(checkbox)
-            checkbox.deleteLater()
-        self.camera_checkboxes.clear()
-        
         # Найти все папки камер
         camera_folders = []
         for item in os.listdir(date_dir):
@@ -191,57 +210,30 @@ class CameraSelectorWidget(QWidget):
         
         self._available_cameras[date] = sorted(camera_folders)
         
-        # Создать чекбоксы для камер и источников
-        # Для разделенных потоков показывать отдельные источники
+        # Построить список всех доступных источников (включая разделенные)
+        self._available_sources = []
         for camera_folder in self._available_cameras[date]:
             split_config = self._source_config.get(camera_folder)
             if split_config and split_config.get('split', False):
-                # Разделенный поток - показать отдельные источники
+                # Разделенный поток - добавить отдельные источники
                 source_names = split_config.get('source_names', [])
                 num_split = split_config.get('num_split', 0)
-                for i in range(num_split):
-                    source_name = source_names[i] if i < len(source_names) else f"{camera_folder}_src{i}"
-                    checkbox = QCheckBox(source_name)
-                    checkbox.stateChanged.connect(self._on_camera_selection_changed)
-                    # Сохранить информацию о родительской папке
-                    checkbox.setProperty('camera_folder', camera_folder)
-                    checkbox.setProperty('is_split_source', True)
-                    self.camera_checkboxes[source_name] = checkbox
-                    self.cameras_layout.addWidget(checkbox)
+                self._available_sources.extend(source_names[:num_split])
             else:
                 # Обычный поток
-                checkbox = QCheckBox(camera_folder)
-                checkbox.stateChanged.connect(self._on_camera_selection_changed)
-                checkbox.setProperty('camera_folder', camera_folder)
-                checkbox.setProperty('is_split_source', False)
-                self.camera_checkboxes[camera_folder] = checkbox
-                self.cameras_layout.addWidget(checkbox)
+                self._available_sources.append(camera_folder)
         
-        self.logger.info(f"Loaded {len(camera_folders)} camera folders for date {date}")
-        
-    def _on_camera_selection_changed(self):
-        """Обработка изменения выбора камер"""
-        # Собрать выбранные папки камер (не отдельные источники)
-        selected_folders = set()
-        for checkbox in self.camera_checkboxes.values():
-            if checkbox.isChecked():
-                camera_folder = checkbox.property('camera_folder')
-                if camera_folder:
-                    selected_folders.add(camera_folder)
-        
-        selected = sorted(list(selected_folders))
-        self._selected_cameras = selected
-        self.cameras_selected.emit(selected)
+        self.logger.info(f"Loaded {len(camera_folders)} camera folders and {len(self._available_sources)} sources for date {date}")
         
     def _select_all(self):
-        """Выбрать все камеры"""
-        for checkbox in self.camera_checkboxes.values():
-            checkbox.setChecked(True)
+        """Выбрать все источники (отправить сигнал)"""
+        # Отправить сигнал со всеми доступными источниками
+        if self._available_sources:
+            self.cameras_selected.emit(self._available_sources.copy())
         
     def _deselect_all(self):
-        """Снять выбор со всех камер"""
-        for checkbox in self.camera_checkboxes.values():
-            checkbox.setChecked(False)
+        """Снять выбор со всех источников"""
+        self.cameras_selected.emit([])
     
     def get_selected_date(self) -> str:
         """Получить выбранную дату"""
@@ -257,6 +249,7 @@ class VideoGridWidget(QWidget):
     """Виджет сетки видео NxM"""
     
     position_changed = pyqtSignal(int)  # position in milliseconds
+    source_selected = pyqtSignal(int, str)  # (grid_index, source_name) - сигнал выбора источника для ячейки
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -270,8 +263,13 @@ class VideoGridWidget(QWidget):
         self._playback_speed = 1.0
         self._start_time = None  # datetime начала общего временного диапазона
         self._source_config = {}  # Конфигурация источников для разделения
+        self._available_sources = []  # Список всех доступных источников
+        self._grid_cell_sources = {}  # {grid_index: source_name} - маппинг ячеек к источникам
+        self._grid_cell_widgets = {}  # {grid_index: widget} - виджеты в ячейках
         
         self._init_ui()
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._on_context_menu)
         
     def _init_ui(self):
         """Инициализация интерфейса"""
@@ -285,11 +283,27 @@ class VideoGridWidget(QWidget):
         container.setLayout(self.grid_layout)
         layout.addWidget(container)
         
-    def set_cameras(self, cameras: List[str], camera_segments: Dict[str, List[Tuple]], source_config: Dict = None):
+        # Инициализировать stretch factors (будут обновлены в set_cameras)
+        self._rows = 2
+        self._cols = 2
+        
+    def set_cameras(self, cameras: List[str], camera_segments: Dict[str, List[Tuple]], source_config: Dict = None, base_dir: str = None, date_folder: str = None):
         """Установить камеры и их сегменты с поддержкой разделенных потоков"""
         self._cameras = cameras
         self._camera_segments = camera_segments
         self._source_config = source_config or {}
+        self._base_dir = base_dir
+        self._date_folder = date_folder
+        
+        # Построить список всех доступных источников (включая разделенные)
+        self._available_sources = []
+        for camera in cameras:
+            split_config = self._source_config.get(camera)
+            if split_config and split_config.get('split', False):
+                source_names = split_config.get('source_names', [])
+                self._available_sources.extend(source_names[:split_config.get('num_split', 0)])
+            else:
+                self._available_sources.append(camera)
         
         # Очистить существующие виджеты
         self._clear_grid()
@@ -330,6 +344,16 @@ class VideoGridWidget(QWidget):
         else:
             rows, cols = 3, 4
         
+        # Сохранить размеры сетки
+        self._rows = rows
+        self._cols = cols
+        
+        # Настроить stretch factors для равномерного распределения
+        for col in range(cols):
+            self.grid_layout.setColumnStretch(col, 1)
+        for row in range(rows):
+            self.grid_layout.setRowStretch(row, 1)
+        
         # Определить общее время начала
         if camera_segments:
             all_starts = []
@@ -363,6 +387,7 @@ class VideoGridWidget(QWidget):
                 
                 # Создать SplitVideoPlayerWidget
                 split_player = SplitVideoPlayerWidget(parent=self)
+                split_player.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
                 
                 # Загрузить первый сегмент
                 if camera_segments[camera_folder]:
@@ -397,6 +422,7 @@ class VideoGridWidget(QWidget):
                 
                 # Создать контейнер для видео и метки
                 container_widget = QWidget()
+                container_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
                 container_layout = QVBoxLayout(container_widget)
                 container_layout.setContentsMargins(0, 0, 0, 0)
                 container_layout.setSpacing(0)
@@ -409,8 +435,13 @@ class VideoGridWidget(QWidget):
                 
                 # Создать виджет видео
                 video_widget = VideoPlayerWidget(parent=container_widget, logger_name=f"camera_{camera_folder}")
+                video_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
                 self._video_players[camera_folder] = video_widget
                 container_layout.addWidget(video_widget, stretch=1)
+                
+                # Настроить метаданные для плеера
+                if self._base_dir and self._date_folder:
+                    video_widget.set_metadata_config(self._base_dir, self._date_folder, camera_folder)
                 
                 # Загрузить первый сегмент
                 if camera_segments[camera_folder]:
@@ -429,6 +460,8 @@ class VideoGridWidget(QWidget):
                 
                 # Добавить контейнер в сетку
                 self.grid_layout.addWidget(container_widget, row, col)
+                self._grid_cell_sources[grid_idx] = camera_folder
+                self._grid_cell_widgets[grid_idx] = container_widget
                 grid_idx += 1
         
     def _clear_grid(self):
@@ -439,6 +472,8 @@ class VideoGridWidget(QWidget):
         self._video_players.clear()
         self._current_segments.clear()
         self._current_segment_indices.clear()
+        self._grid_cell_sources.clear()
+        self._grid_cell_widgets.clear()
         
         # Удалить все виджеты из layout
         while self.grid_layout.count():
@@ -446,14 +481,71 @@ class VideoGridWidget(QWidget):
             if item.widget():
                 item.widget().deleteLater()
     
+    def _on_context_menu(self, position: QPoint):
+        """Обработка правого клика для выбора источника"""
+        # Определить, в какой ячейке был клик
+        grid_index = self._get_grid_index_at_position(position)
+        if grid_index is None:
+            return
+        
+        # Получить текущий источник в ячейке
+        current_source = self._grid_cell_sources.get(grid_index)
+        selected_sources = list(self._grid_cell_sources.values())
+        
+        # Создать и показать меню
+        menu = SourceSelectionMenu(self._available_sources, selected_sources, self)
+        action = menu.exec(self.mapToGlobal(position))
+        
+        if action and action.data() is not None:
+            selected_source = action.data()
+            # Отправить сигнал о выборе источника
+            self.source_selected.emit(grid_index, selected_source)
+        elif action and action.data() is None:
+            # Очистить ячейку
+            self.source_selected.emit(grid_index, None)
+    
+    def _get_grid_index_at_position(self, position: QPoint) -> Optional[int]:
+        """Определить индекс ячейки сетки по позиции клика"""
+        # Простой подход: перебрать все ячейки и проверить, попадает ли позиция в их границы
+        for grid_idx, widget in self._grid_cell_widgets.items():
+            widget_pos = widget.mapFromGlobal(self.mapToGlobal(position))
+            if widget.rect().contains(widget_pos):
+                return grid_idx
+        return None
+    
+    def set_source_for_cell(self, grid_index: int, source_name: Optional[str]):
+        """Установить источник для ячейки сетки (вызывается извне)"""
+        # Это будет вызываться из StreamPlayerWindow при получении сигнала source_selected
+        # Пока оставляем заглушку - полная реализация требует пересоздания виджетов
+        self._grid_cell_sources[grid_index] = source_name
+    
     def play_all(self):
         """Запустить воспроизведение всех видео"""
-        for player in self._video_players.values():
+        for camera, player in self._video_players.items():
             # Проверить тип плеера
             if isinstance(player, SplitVideoPlayerWidget):
                 player.play()
             else:
                 # Обычный VideoPlayerWidget
+                # Проверить, загружено ли видео
+                if not hasattr(player, 'video_path') or not player.video_path:
+                    # Видео не загружено - попытаться загрузить первый сегмент
+                    if camera in self._camera_segments and self._camera_segments[camera]:
+                        first_segment = self._camera_segments[camera][0][2]
+                        if not os.path.isabs(first_segment):
+                            first_segment = os.path.abspath(first_segment)
+                        if os.path.exists(first_segment) and os.path.getsize(first_segment) > 1024:
+                            if player.play_video(first_segment):
+                                self._current_segments[camera] = first_segment
+                                self._current_segment_indices[camera] = 0
+                            else:
+                                self.logger.warning(f"Failed to play video for camera {camera}: {first_segment}")
+                                continue
+                    else:
+                        self.logger.warning(f"No segments available for camera {camera}")
+                        continue
+                
+                # Запустить воспроизведение
                 if hasattr(player, 'player') and player.player:
                     if pyqt_version == 6:
                         player.player.play()
@@ -462,6 +554,23 @@ class VideoGridWidget(QWidget):
                 elif hasattr(player, 'timer') and player.timer:
                     if not player.timer.isActive():
                         player.timer.start()
+                elif hasattr(player, '_use_opencv') and player._use_opencv:
+                    # OpenCV режим - запустить таймер если он есть
+                    if hasattr(player, 'timer') and player.timer:
+                        if not player.timer.isActive():
+                            player.timer.start()
+                    elif hasattr(player, 'cap') and player.cap and player.cap.isOpened():
+                        # Таймер не создан - создать и запустить
+                        try:
+                            from PyQt6.QtCore import QTimer
+                        except ImportError:
+                            from PyQt5.QtCore import QTimer
+                        player.timer = QTimer()
+                        player.timer.timeout.connect(player._update_frame_opencv)
+                        if cv2:
+                            fps = player.cap.get(cv2.CAP_PROP_FPS) or 30
+                            interval = int(1000 / fps)
+                            player.timer.start(interval)
     
     def pause_all(self):
         """Приостановить воспроизведение всех видео"""
@@ -660,18 +769,67 @@ class TimelineWidget(QWidget):
         timeline_group = QGroupBox("Временная шкала")
         timeline_layout = QVBoxLayout()
         
-        # Отображение времени
-        time_layout = QHBoxLayout()
-        self.time_label = QLabel("00:00:00 / 00:00:00")
-        time_layout.addWidget(self.time_label)
-        time_layout.addStretch()
-        timeline_layout.addLayout(time_layout)
+        # Верхняя строка: метки даты-времени начала и конца, текущее время в центре
+        time_labels_layout = QHBoxLayout()
+        
+        # Метка начала (слева)
+        self.start_time_label = QLabel("Начало: --")
+        self.start_time_label.setStyleSheet("font-weight: bold; color: blue;")
+        time_labels_layout.addWidget(self.start_time_label)
+        
+        time_labels_layout.addStretch()
+        
+        # Текущее время (в центре)
+        self.current_time_label = QLabel("Текущее: --")
+        self.current_time_label.setStyleSheet("font-weight: bold; font-size: 12pt; color: green;")
+        self.current_time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        time_labels_layout.addWidget(self.current_time_label)
+        
+        time_labels_layout.addStretch()
+        
+        # Метка конца (справа)
+        self.end_time_label = QLabel("Конец: --")
+        self.end_time_label.setStyleSheet("font-weight: bold; color: blue;")
+        time_labels_layout.addWidget(self.end_time_label)
+        
+        timeline_layout.addLayout(time_labels_layout)
+        
+        # Кнопки перемотки
+        seek_buttons_layout = QHBoxLayout()
+        seek_buttons_layout.addStretch()
+        
+        self.seek_back_5min_btn = QPushButton("← 5 мин")
+        self.seek_back_5min_btn.clicked.connect(lambda: self._seek_relative(-5 * 60 * 1000))
+        seek_buttons_layout.addWidget(self.seek_back_5min_btn)
+        
+        self.seek_back_1min_btn = QPushButton("← 1 мин")
+        self.seek_back_1min_btn.clicked.connect(lambda: self._seek_relative(-1 * 60 * 1000))
+        seek_buttons_layout.addWidget(self.seek_back_1min_btn)
+        
+        seek_buttons_layout.addStretch()
+        
+        self.seek_forward_1min_btn = QPushButton("1 мин →")
+        self.seek_forward_1min_btn.clicked.connect(lambda: self._seek_relative(1 * 60 * 1000))
+        seek_buttons_layout.addWidget(self.seek_forward_1min_btn)
+        
+        self.seek_forward_5min_btn = QPushButton("5 мин →")
+        self.seek_forward_5min_btn.clicked.connect(lambda: self._seek_relative(5 * 60 * 1000))
+        seek_buttons_layout.addWidget(self.seek_forward_5min_btn)
+        
+        seek_buttons_layout.addStretch()
+        
+        timeline_layout.addLayout(seek_buttons_layout)
         
         # Контейнер для слайдера и меток
         slider_container = QWidget()
         slider_layout = QVBoxLayout(slider_container)
         slider_layout.setContentsMargins(0, 0, 0, 0)
         slider_layout.setSpacing(0)
+        
+        # Виджет для отображения доступности записей (цветовая индикация)
+        self.availability_widget = RecordingAvailabilityWidget()
+        self.availability_widget.setFixedHeight(15)
+        slider_layout.addWidget(self.availability_widget)
         
         # Метки событий (отображаются над слайдером)
         self.markers_widget = EventMarkersWidget()
@@ -691,13 +849,27 @@ class TimelineWidget(QWidget):
         timeline_group.setLayout(timeline_layout)
         layout.addWidget(timeline_group)
         
-    def set_time_range(self, start_time: datetime.datetime, end_time: datetime.datetime):
+        # Хранить сегменты для цветовой индикации
+        self._recording_segments = []  # [(start_time, end_time), ...]
+        
+    def set_time_range(self, start_time: datetime.datetime, end_time: datetime.datetime, recording_segments: List[Tuple] = None):
         """Установить временной диапазон"""
         self._start_time = start_time
         self._end_time = end_time
+        self._recording_segments = recording_segments or []
         
         total_seconds = (end_time - start_time).total_seconds()
         self.slider.setMaximum(int(total_seconds * 1000))
+        
+        # Обновить метки даты-времени
+        if start_time:
+            self.start_time_label.setText(f"Начало: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        if end_time:
+            self.end_time_label.setText(f"Конец: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        # Обновить виджет доступности записей
+        if hasattr(self, 'availability_widget'):
+            self.availability_widget.set_segments(self._recording_segments, start_time, end_time)
         
         self._update_time_label()
         self._update_markers()
@@ -737,12 +909,14 @@ class TimelineWidget(QWidget):
             return
         
         current_time = self._start_time + datetime.timedelta(milliseconds=self._current_position_ms)
-        total_time = self._end_time - self._start_time if self._end_time else datetime.timedelta(0)
-        
-        current_str = current_time.strftime('%H:%M:%S')
-        total_str = str(total_time).split('.')[0] if total_time.total_seconds() > 0 else "00:00:00"
-        
-        self.time_label.setText(f"{current_str} / {total_str}")
+        current_str = current_time.strftime('%Y-%m-%d %H:%M:%S')
+        self.current_time_label.setText(f"Текущее: {current_str}")
+    
+    def _seek_relative(self, delta_ms: int):
+        """Перемотка на указанное количество миллисекунд"""
+        new_position = max(0, min(self.slider.maximum(), self._current_position_ms + delta_ms))
+        self.set_position(new_position)
+        self.position_changed.emit(new_position)
     
     def _update_markers(self):
         """Обновить отображение меток событий"""
@@ -756,6 +930,59 @@ class TimelineWidget(QWidget):
             self._end_time
         )
         self.markers_widget.update()
+
+
+class RecordingAvailabilityWidget(QWidget):
+    """Виджет для отображения цветовой индикации наличия записей"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._segments = []  # [(start_time, end_time), ...]
+        self._start_time = None
+        self._end_time = None
+    
+    def set_segments(self, segments: List[Tuple], start_time: datetime.datetime, end_time: datetime.datetime):
+        """Установить сегменты записей для отображения"""
+        self._segments = segments
+        self._start_time = start_time
+        self._end_time = end_time
+        self.update()
+    
+    def paintEvent(self, event):
+        """Отрисовать цветовую индикацию записей"""
+        super().paintEvent(event)
+        
+        if not self._segments or not self._start_time or not self._end_time:
+            return
+        
+        try:
+            from PyQt6.QtGui import QPainter, QColor
+        except ImportError:
+            from PyQt5.QtGui import QPainter, QColor
+        
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        widget_width = self.width()
+        widget_height = self.height()
+        total_ms = (self._end_time - self._start_time).total_seconds() * 1000
+        
+        if total_ms <= 0:
+            painter.end()
+            return
+        
+        # Отрисовать зеленые полосы для сегментов с записями
+        for start_time, end_time in self._segments:
+            start_ms = (start_time - self._start_time).total_seconds() * 1000
+            end_ms = (end_time - self._start_time).total_seconds() * 1000
+            
+            x = int((start_ms / total_ms) * widget_width)
+            w = int(((end_ms - start_ms) / total_ms) * widget_width)
+            
+            # Зеленая полоса для записей
+            painter.fillRect(x, 0, w, widget_height, QColor(0, 255, 0, 180))
+        
+        painter.end()
 
 
 class EventMarkersWidget(QWidget):
@@ -901,6 +1128,18 @@ class PlaybackControlsWidget(QWidget):
         if 0 <= index < len(speeds):
             self._current_speed = speeds[index]
             self.speed_changed.emit(self._current_speed)
+    
+    def set_speed(self, speed: float):
+        """Установить скорость воспроизведения программно"""
+        speeds = [0.5, 1.0, 2.0, 4.0, 8.0]
+        try:
+            index = speeds.index(speed)
+            self.speed_combo.setCurrentIndex(index)
+            self._current_speed = speed
+        except ValueError:
+            self.logger.warning(f"Invalid speed value: {speed}, using default 1.0")
+            self.speed_combo.setCurrentIndex(1)
+            self._current_speed = 1.0
 
 
 class SplitVideoPlayerWidget(QWidget):
@@ -952,6 +1191,7 @@ class SplitVideoPlayerWidget(QWidget):
         for i in range(num_split):
             # Контейнер для области
             region_container = QWidget()
+            region_container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
             region_layout = QVBoxLayout(region_container)
             region_layout.setContentsMargins(0, 0, 0, 0)
             region_layout.setSpacing(0)
@@ -967,7 +1207,7 @@ class SplitVideoPlayerWidget(QWidget):
             region_widget = QLabel()
             region_widget.setAlignment(Qt.AlignmentFlag.AlignCenter)
             region_widget.setStyleSheet("background-color: black;")
-            region_widget.setMinimumSize(320, 240)
+            region_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
             region_layout.addWidget(region_widget, stretch=1)
             
             self._region_widgets.append({

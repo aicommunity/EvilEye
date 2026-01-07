@@ -34,6 +34,7 @@ except ImportError:
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from ..core.logger import get_module_logger
+from .metadata_overlay_widget import MetadataOverlayWidget
 import logging
 
 
@@ -54,6 +55,11 @@ class VideoPlayerWidget(QWidget):
         self.video_path: Optional[str] = None
         self._is_playing = False
         self._current_frame = None  # Текущий кадр для разделения потоков
+        self._source_name = None  # Имя источника для метаданных
+        self._base_dir = None  # Базовая директория для загрузки метаданных
+        self._date_folder = None  # Папка даты для метаданных
+        self._metadata_overlay = None  # Виджет метаданных
+        self._show_metadata = False  # Показывать ли метаданные
         
         # Initialize OpenCV-related attributes (will be set if OpenCV is used)
         self.cap = None
@@ -117,6 +123,14 @@ class VideoPlayerWidget(QWidget):
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.video_widget)
+        
+        # Создать overlay для метаданных (поверх видео)
+        # Используем абсолютное позиционирование для наложения поверх видео
+        self._metadata_overlay = MetadataOverlayWidget(self)
+        self._metadata_overlay.hide()  # По умолчанию скрыт
+        self._metadata_overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._metadata_overlay.lower()  # Поместить под другие виджеты, но поверх видео
+        
         self.setLayout(layout)
         
         # Stop button - positioned on top of video
@@ -148,6 +162,11 @@ class VideoPlayerWidget(QWidget):
             button_y = 5
             self.stop_button.move(button_x, button_y)
             self.stop_button.raise_()
+        
+        # Обновить размер и позицию overlay метаданных
+        if self._metadata_overlay:
+            self._metadata_overlay.setGeometry(0, 0, self.width(), self.height())
+            self._metadata_overlay.lower()  # Под кнопкой, но поверх видео
     
     def _on_player_error(self, error, error_string=""):
         """Handle QMediaPlayer errors (FFmpeg errors, etc.)"""
@@ -164,9 +183,19 @@ class VideoPlayerWidget(QWidget):
             else:
                 error_msg = str(error)
         
-        # Check for common FFmpeg errors that indicate corrupted/incomplete files
-        if "moov atom not found" in error_msg.lower() or "invalid data" in error_msg.lower() or "could not open" in error_msg.lower():
-            self.logger.warning(f"Video file appears corrupted or incomplete (FFmpeg error: {error_msg}). Trying OpenCV fallback...")
+        # Check for common FFmpeg errors that require fallback to OpenCV
+        error_lower = error_msg.lower()
+        should_fallback = (
+            "moov atom not found" in error_lower or
+            "invalid data" in error_lower or
+            "could not open" in error_lower or
+            "failed setup for format cuda" in error_lower or
+            "hwaccel initialisation returned error" in error_lower or
+            ("video width" in error_lower and "not within range" in error_lower)
+        )
+        
+        if should_fallback:
+            self.logger.warning(f"QMediaPlayer/FFmpeg error detected (FFmpeg error: {error_msg}). Trying OpenCV fallback...")
             # Stop current playback
             if self.player:
                 self.player.stop()
@@ -193,6 +222,18 @@ class VideoPlayerWidget(QWidget):
                 if self.video_path:
                     self._use_opencv = True
                     self.play_video(self.video_path)
+            elif status == QMediaPlayer.MediaStatus.LoadingMedia:
+                # Check for errors during loading (e.g., CUDA errors)
+                if self.player and self.player.error() != QMediaPlayer.Error.NoError:
+                    error_str = self.player.errorString()
+                    error_lower = error_str.lower()
+                    if ("failed setup for format cuda" in error_lower or
+                        "hwaccel initialisation returned error" in error_lower or
+                        ("video width" in error_lower and "not within range" in error_lower)):
+                        self.logger.warning(f"CUDA/hardware acceleration error detected during loading: {error_str}. Switching to OpenCV fallback...")
+                        if self.video_path:
+                            self._use_opencv = True
+                            self.play_video(self.video_path)
     
     def _on_state_changed(self, state):
         """Handle state changes for PyQt5"""
@@ -254,6 +295,13 @@ class VideoPlayerWidget(QWidget):
                 Qt.TransformationMode.SmoothTransformation
             )
             self.video_widget.setPixmap(scaled_pixmap)
+            
+            # Обновить размер overlay и метаданные
+            if self._metadata_overlay:
+                self._metadata_overlay.set_video_size(w, h)
+                self._metadata_overlay.setGeometry(0, 0, widget_size.width(), widget_size.height())
+                if self._show_metadata:
+                    self._update_metadata_overlay()
     
     def play_video(self, video_path: str):
         """Запустить воспроизведение видеофрагмента"""
@@ -277,6 +325,21 @@ class VideoPlayerWidget(QWidget):
         
         self.video_path = video_path
         self._is_playing = True
+        
+        # Проверить размер видео перед использованием QMediaPlayer
+        # CUDA декодер mpeg4 не поддерживает ширину > 2048
+        if not self._use_opencv and cv2 is not None:
+            try:
+                cap_test = cv2.VideoCapture(video_path)
+                if cap_test.isOpened():
+                    width = int(cap_test.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    cap_test.release()
+                    # Если ширина > 2048, использовать OpenCV напрямую (CUDA не поддерживает)
+                    if width > 2048:
+                        self.logger.info(f"Video width {width} exceeds CUDA limit (2048), using OpenCV fallback")
+                        self._use_opencv = True
+            except Exception as e:
+                self.logger.debug(f"Could not check video dimensions: {e}")
         
         if self._use_opencv:
             # Use OpenCV
@@ -347,21 +410,37 @@ class VideoPlayerWidget(QWidget):
                     # Check for errors immediately after setting source
                     if self.player.error() != QMediaPlayer.Error.NoError:
                         error_str = self.player.errorString()
-                        self.logger.warning(f"QMediaPlayer error after setSource: {error_str}, path={video_path}. Trying OpenCV fallback...")
+                        error_lower = error_str.lower()
+                        # Check for CUDA/hardware acceleration errors
+                        if ("failed setup for format cuda" in error_lower or
+                            "hwaccel initialisation returned error" in error_lower or
+                            ("video width" in error_lower and "not within range" in error_lower)):
+                            self.logger.warning(f"CUDA/hardware acceleration error detected: {error_str}. Trying OpenCV fallback...")
+                        else:
+                            self.logger.warning(f"QMediaPlayer error after setSource: {error_str}, path={video_path}. Trying OpenCV fallback...")
                         # Fallback to OpenCV if QMediaPlayer fails
                         self._use_opencv = True
                         return self.play_video(video_path)
                     
                     self.player.play()
                     
-                    # Check for errors after play
-                    if self.player.error() != QMediaPlayer.Error.NoError:
-                        error_str = self.player.errorString()
-                        self.logger.warning(f"QMediaPlayer error after play: {error_str}, path={video_path}. Trying OpenCV fallback...")
-                        self.player.stop()
-                        # Fallback to OpenCV if QMediaPlayer fails
-                        self._use_opencv = True
-                        return self.play_video(video_path)
+                    # Check for errors after play (with a small delay to allow CUDA errors to surface)
+                    def check_errors_after_play():
+                        if self.player and self.player.error() != QMediaPlayer.Error.NoError:
+                            error_str = self.player.errorString()
+                            error_lower = error_str.lower()
+                            if ("failed setup for format cuda" in error_lower or
+                                "hwaccel initialisation returned error" in error_lower or
+                                ("video width" in error_lower and "not within range" in error_lower)):
+                                self.logger.warning(f"CUDA/hardware acceleration error detected after play: {error_str}. Switching to OpenCV fallback...")
+                                self.player.stop()
+                                self._use_opencv = True
+                                if self.video_path:
+                                    self.play_video(self.video_path)
+                    
+                    # Check errors after a short delay (200ms) to catch CUDA errors
+                    # QTimer already imported at module level
+                    QTimer.singleShot(200, check_errors_after_play)
                 else:
                     # PyQt5
                     self.player.setMedia(QMediaContent(QUrl.fromLocalFile(video_path)))
@@ -387,6 +466,56 @@ class VideoPlayerWidget(QWidget):
                 # Fallback to OpenCV
                 self._use_opencv = True
                 return self.play_video(video_path)
+    
+    def set_metadata_config(self, base_dir: str, date_folder: str, source_name: str):
+        """Установить конфигурацию для загрузки метаданных"""
+        self._base_dir = base_dir
+        self._date_folder = date_folder
+        self._source_name = source_name
+    
+    def set_show_metadata(self, show: bool):
+        """Включить/выключить отображение метаданных"""
+        self._show_metadata = show
+        if self._metadata_overlay:
+            if show:
+                self._metadata_overlay.show()
+                self._metadata_overlay.raise_()  # Поднять поверх видео
+                self._update_metadata_overlay()
+            else:
+                self._metadata_overlay.hide()
+    
+    def update_metadata_for_time(self, timestamp):
+        """Обновить метаданные для указанного времени"""
+        if not self._show_metadata or not self._metadata_overlay:
+            return
+        
+        if self._base_dir and self._date_folder and self._source_name:
+            self._metadata_overlay.load_metadata_for_time(
+                timestamp, self._source_name, self._base_dir, self._date_folder
+            )
+    
+    def _update_metadata_overlay(self):
+        """Обновить метаданные overlay (вызывается при обновлении кадра)"""
+        if not self._show_metadata or not self._metadata_overlay:
+            return
+        
+        # Получить текущее время из видео (если доступно)
+        # Для упрощения используем время из имени файла или текущее системное время
+        # В реальной реализации нужно получать время из позиции воспроизведения
+        import datetime
+        current_time = datetime.datetime.now()  # Заглушка - нужно получать из позиции видео
+        
+        if self._base_dir and self._date_folder and self._source_name:
+            self._metadata_overlay.load_metadata_for_time(
+                current_time, self._source_name, self._base_dir, self._date_folder
+            )
+    
+    def resizeEvent(self, event):
+        """Обработка изменения размера виджета"""
+        super().resizeEvent(event)
+        if self._metadata_overlay:
+            self._metadata_overlay.setGeometry(0, 0, self.width(), self.height())
+            self._metadata_overlay.lower()  # Под кнопкой, но поверх видео
     
     def stop(self):
         """Остановить воспроизведение"""
@@ -551,9 +680,19 @@ class VideoPlayerWindow(QWidget):
             else:
                 error_msg = str(error)
         
-        # Check for common FFmpeg errors that indicate corrupted/incomplete files
-        if "moov atom not found" in error_msg.lower() or "invalid data" in error_msg.lower() or "could not open" in error_msg.lower():
-            self.logger.warning(f"Video file appears corrupted or incomplete (FFmpeg error: {error_msg}). Trying OpenCV fallback...")
+        # Check for common FFmpeg errors that require fallback to OpenCV
+        error_lower = error_msg.lower()
+        should_fallback = (
+            "moov atom not found" in error_lower or
+            "invalid data" in error_lower or
+            "could not open" in error_lower or
+            "failed setup for format cuda" in error_lower or
+            "hwaccel initialisation returned error" in error_lower or
+            ("video width" in error_lower and "not within range" in error_lower)
+        )
+        
+        if should_fallback:
+            self.logger.warning(f"QMediaPlayer/FFmpeg error detected (FFmpeg error: {error_msg}). Trying OpenCV fallback...")
             # Stop current playback
             if self.player:
                 self.player.stop()
@@ -580,6 +719,18 @@ class VideoPlayerWindow(QWidget):
                 if self.video_path:
                     self._use_opencv = True
                     self.play_video(self.video_path)
+            elif status == QMediaPlayer.MediaStatus.LoadingMedia:
+                # Check for errors during loading (e.g., CUDA errors)
+                if self.player and self.player.error() != QMediaPlayer.Error.NoError:
+                    error_str = self.player.errorString()
+                    error_lower = error_str.lower()
+                    if ("failed setup for format cuda" in error_lower or
+                        "hwaccel initialisation returned error" in error_lower or
+                        ("video width" in error_lower and "not within range" in error_lower)):
+                        self.logger.warning(f"CUDA/hardware acceleration error detected during loading: {error_str}. Switching to OpenCV fallback...")
+                        if self.video_path:
+                            self._use_opencv = True
+                            self.play_video(self.video_path)
     
     def _on_state_changed(self, state):
         """Handle state changes for PyQt5"""
@@ -698,21 +849,37 @@ class VideoPlayerWindow(QWidget):
                     # Check for errors immediately after setting source
                     if self.player.error() != QMediaPlayer.Error.NoError:
                         error_str = self.player.errorString()
-                        self.logger.warning(f"QMediaPlayer error after setSource: {error_str}, path={video_path}. Trying OpenCV fallback...")
+                        error_lower = error_str.lower()
+                        # Check for CUDA/hardware acceleration errors
+                        if ("failed setup for format cuda" in error_lower or
+                            "hwaccel initialisation returned error" in error_lower or
+                            ("video width" in error_lower and "not within range" in error_lower)):
+                            self.logger.warning(f"CUDA/hardware acceleration error detected: {error_str}. Trying OpenCV fallback...")
+                        else:
+                            self.logger.warning(f"QMediaPlayer error after setSource: {error_str}, path={video_path}. Trying OpenCV fallback...")
                         # Fallback to OpenCV if QMediaPlayer fails
                         self._use_opencv = True
                         return self.play_video(video_path)
                     
                     self.player.play()
                     
-                    # Check for errors after play
-                    if self.player.error() != QMediaPlayer.Error.NoError:
-                        error_str = self.player.errorString()
-                        self.logger.warning(f"QMediaPlayer error after play: {error_str}, path={video_path}. Trying OpenCV fallback...")
-                        self.player.stop()
-                        # Fallback to OpenCV if QMediaPlayer fails
-                        self._use_opencv = True
-                        return self.play_video(video_path)
+                    # Check for errors after play (with a small delay to allow CUDA errors to surface)
+                    def check_errors_after_play():
+                        if self.player and self.player.error() != QMediaPlayer.Error.NoError:
+                            error_str = self.player.errorString()
+                            error_lower = error_str.lower()
+                            if ("failed setup for format cuda" in error_lower or
+                                "hwaccel initialisation returned error" in error_lower or
+                                ("video width" in error_lower and "not within range" in error_lower)):
+                                self.logger.warning(f"CUDA/hardware acceleration error detected after play: {error_str}. Switching to OpenCV fallback...")
+                                self.player.stop()
+                                self._use_opencv = True
+                                if self.video_path:
+                                    self.play_video(self.video_path)
+                    
+                    # Check errors after a short delay (200ms) to catch CUDA errors
+                    # QTimer already imported at module level
+                    QTimer.singleShot(200, check_errors_after_play)
                 else:
                     # PyQt5
                     self.player.setMedia(QMediaContent(QUrl.fromLocalFile(video_path)))

@@ -82,6 +82,7 @@ class StreamPlayerWindow(QMainWindow):
         self._sync_timer.timeout.connect(self._sync_playback)
         
         self._init_ui()
+        self._load_state()
         
     def _init_ui(self):
         """Инициализация интерфейса"""
@@ -125,6 +126,20 @@ class StreamPlayerWindow(QMainWindow):
         self.playback_controls.speed_changed.connect(self._on_speed_changed)
         main_layout.addWidget(self.playback_controls)
         
+        # Опция показа метаданных
+        try:
+            from PyQt6.QtWidgets import QCheckBox
+        except ImportError:
+            from PyQt5.QtWidgets import QCheckBox
+        
+        metadata_layout = QHBoxLayout()
+        self.show_metadata_checkbox = QCheckBox("Показывать метаданные (объекты и события)")
+        self.show_metadata_checkbox.setChecked(False)
+        self.show_metadata_checkbox.stateChanged.connect(self._on_metadata_toggled)
+        metadata_layout.addWidget(self.show_metadata_checkbox)
+        metadata_layout.addStretch()
+        main_layout.addLayout(metadata_layout)
+        
         # Временная шкала (внизу)
         self.timeline = TimelineWidget(self)
         self.timeline.position_changed.connect(self._on_timeline_position_changed)
@@ -136,14 +151,80 @@ class StreamPlayerWindow(QMainWindow):
         self._selected_cameras = cameras
         self.logger.info(f"Selected cameras: {cameras}")
         self._load_camera_segments()
-        self.video_grid.set_cameras(cameras, self._camera_segment_times, self._source_config)
+        date = self.camera_selector.get_selected_date() if hasattr(self.camera_selector, 'get_selected_date') else None
+        self.video_grid.set_cameras(cameras, self._camera_segment_times, self._source_config, self.base_dir, date)
+        self._configure_metadata_for_players()
         
     def _on_date_selected(self, date: str):
         """Обработка выбора даты"""
         self.logger.info(f"Selected date: {date}")
         self._load_events(date)
         self.timeline.set_events(self._events, self._event_filters)
+        self._configure_metadata_for_players()
         
+    def _resolve_camera_folder_name(self, camera_name: str, date: str) -> Optional[str]:
+        """
+        Преобразовать имя источника в имя папки камеры.
+        
+        Args:
+            camera_name: Имя источника (может быть отдельным источником или именем папки)
+            date: Дата для проверки существования папки
+            
+        Returns:
+            Имя папки камеры или None, если папка не найдена
+        """
+        streams_date_dir = os.path.join(self.streams_dir, date)
+        if not os.path.exists(streams_date_dir):
+            return None
+        
+        # Сначала проверить, существует ли папка с таким именем напрямую
+        camera_dir = os.path.join(streams_date_dir, camera_name)
+        if os.path.exists(camera_dir) and os.path.isdir(camera_dir):
+            # Проверить наличие видео файлов
+            video_files = glob.glob(os.path.join(camera_dir, '*.mp4'))
+            if video_files:
+                return camera_name
+        
+        # Если папка не найдена напрямую, попробовать найти через source_config
+        source_config = self._source_config.get(camera_name)
+        if source_config:
+            # Если источник разделен и есть parent_folder, использовать его
+            parent_folder = source_config.get('parent_folder')
+            if parent_folder:
+                parent_dir = os.path.join(streams_date_dir, parent_folder)
+                if os.path.exists(parent_dir) and os.path.isdir(parent_dir):
+                    video_files = glob.glob(os.path.join(parent_dir, '*.mp4'))
+                    if video_files:
+                        return parent_folder
+            
+            # Если источник разделен, попробовать составить имя папки из source_names
+            if source_config.get('split', False):
+                source_names = source_config.get('source_names', [])
+                if source_names:
+                    # Попробовать составное имя (например, "Cam2-Cam3")
+                    composite_name = '-'.join(source_names)
+                    composite_dir = os.path.join(streams_date_dir, composite_name)
+                    if os.path.exists(composite_dir) and os.path.isdir(composite_dir):
+                        video_files = glob.glob(os.path.join(composite_dir, '*.mp4'))
+                        if video_files:
+                            return composite_name
+        
+        # Попробовать найти папку, которая содержит это имя источника
+        # (для случаев, когда папка называется составным именем)
+        try:
+            for item in os.listdir(streams_date_dir):
+                item_path = os.path.join(streams_date_dir, item)
+                if os.path.isdir(item_path):
+                    # Проверить, содержит ли имя папки имя источника
+                    if camera_name in item.split('-'):
+                        video_files = glob.glob(os.path.join(item_path, '*.mp4'))
+                        if video_files:
+                            return item
+        except OSError:
+            pass
+        
+        return None
+    
     def _load_camera_segments(self):
         """Загрузка сегментов видео для выбранных камер"""
         if not self._selected_cameras:
@@ -161,10 +242,23 @@ class StreamPlayerWindow(QMainWindow):
             self.logger.warning(f"Streams directory does not exist: {streams_date_dir}")
             return
         
+        # Маппинг исходных имен источников на имена папок
+        camera_folder_mapping = {}
+        
         for camera in self._selected_cameras:
-            camera_dir = os.path.join(streams_date_dir, camera)
+            # Разрешить имя папки для источника
+            folder_name = self._resolve_camera_folder_name(camera, date)
+            
+            if not folder_name:
+                # Если папка не найдена, логировать на уровне DEBUG (ожидаемое поведение для отдельных источников)
+                self.logger.debug(f"Camera folder not found for source '{camera}' in date {date}")
+                continue
+            
+            camera_folder_mapping[camera] = folder_name
+            
+            camera_dir = os.path.join(streams_date_dir, folder_name)
             if not os.path.exists(camera_dir):
-                self.logger.warning(f"Camera directory does not exist: {camera_dir}")
+                self.logger.debug(f"Camera directory does not exist: {camera_dir}")
                 continue
                 
             # Найти все сегменты видео и проверить их валидность
@@ -190,7 +284,10 @@ class StreamPlayerWindow(QMainWindow):
             
             self._camera_segment_times[camera] = sorted(segment_times, key=lambda x: x[0])
             
-            self.logger.info(f"Loaded {len(valid_segments)} valid segments (out of {len(all_segments)} total) for camera {camera}")
+            if folder_name != camera:
+                self.logger.info(f"Loaded {len(valid_segments)} valid segments (out of {len(all_segments)} total) for source '{camera}' from folder '{folder_name}'")
+            else:
+                self.logger.info(f"Loaded {len(valid_segments)} valid segments (out of {len(all_segments)} total) for camera {camera}")
         
         # Определить общий временной диапазон
         self._calculate_time_range()
@@ -372,7 +469,13 @@ class StreamPlayerWindow(QMainWindow):
             # Обновить временную шкалу
             total_seconds = (end_time - start_time).total_seconds()
             self._total_duration_ms = int(total_seconds * 1000)
-            self.timeline.set_time_range(start_time, end_time)
+            # Собрать все сегменты записей для цветовой индикации
+            recording_segments = []
+            for camera_name, segments in self._camera_segment_times.items():
+                for start_time_seg, end_time_seg, path in segments:
+                    recording_segments.append((start_time_seg, end_time_seg))
+            
+            self.timeline.set_time_range(start_time, end_time, recording_segments)
             
             self.logger.info(f"Time range: {start_time} to {end_time}")
     
@@ -445,6 +548,7 @@ class StreamPlayerWindow(QMainWindow):
         """Обработка изменения скорости воспроизведения"""
         self._playback_speed = speed
         self.video_grid.set_playback_speed(speed)
+        self.save_state()  # Сохранить состояние при изменении скорости
         
     def _on_timeline_position_changed(self, position_ms: int):
         """Обработка изменения позиции на временной шкале"""
@@ -460,7 +564,50 @@ class StreamPlayerWindow(QMainWindow):
         """Обработка изменения фильтров событий"""
         self._event_filters = filters
         self.timeline.set_events(self._events, filters)
+        self.save_state()  # Сохранить состояние при изменении фильтров
+    
+    def _on_metadata_toggled(self, state):
+        """Обработка переключения показа метаданных"""
+        try:
+            from PyQt6.QtCore import Qt
+        except ImportError:
+            from PyQt5.QtCore import Qt
         
+        show_metadata = state == Qt.CheckState.Checked.value if hasattr(Qt.CheckState, 'Checked') else state == 2
+        self._update_metadata_visibility(show_metadata)
+        self.save_state()
+    
+    def _configure_metadata_for_players(self):
+        """Настроить метаданные для всех видеоплееров"""
+        date = self.camera_selector.get_selected_date() if hasattr(self.camera_selector, 'get_selected_date') else None
+        if not date:
+            return
+        
+        for camera_name, player in self.video_grid._video_players.items():
+            if hasattr(player, 'set_metadata_config'):
+                # Определить имя источника
+                source_name = camera_name
+                split_config = self._source_config.get(camera_name)
+                if split_config and split_config.get('split', False):
+                    # Для разделенных потоков используем первое имя источника
+                    source_names = split_config.get('source_names', [])
+                    if source_names:
+                        source_name = source_names[0]
+                
+                player.set_metadata_config(self.base_dir, date, source_name)
+    
+    def _update_metadata_visibility(self, show: bool):
+        """Обновить видимость метаданных для всех плееров"""
+        for player in self.video_grid._video_players.values():
+            if hasattr(player, 'set_show_metadata'):
+                player.set_show_metadata(show)
+    
+    def _update_metadata_for_time(self, timestamp: datetime.datetime):
+        """Обновить метаданные для всех плееров для указанного времени"""
+        for player in self.video_grid._video_players.values():
+            if hasattr(player, 'update_metadata_for_time'):
+                player.update_metadata_for_time(timestamp)
+    
     def _sync_playback(self):
         """Синхронизация воспроизведения всех видео"""
         if not self._is_playing:
@@ -479,8 +626,85 @@ class StreamPlayerWindow(QMainWindow):
         if self._current_position_ms % 100 == 0:  # Обновлять каждые 100мс
             self.video_grid.seek_all(self._current_position_ms)
             self.timeline.set_position(self._current_position_ms)
+            
+            # Обновить метаданные для текущего времени
+            if self._start_time and hasattr(self, 'show_metadata_checkbox') and self.show_metadata_checkbox.isChecked():
+                current_time = self._start_time + datetime.timedelta(milliseconds=self._current_position_ms)
+                self._update_metadata_for_time(current_time)
         
+    def save_state(self):
+        """Сохранить состояние плеера в params"""
+        if not self.params:
+            return
+        
+        # Создать секцию stream_player если её нет
+        if 'stream_player' not in self.params:
+            self.params['stream_player'] = {}
+        
+        state = {
+            'selected_cameras': self._selected_cameras.copy(),
+            'playback_speed': self._playback_speed,
+            'event_filters': self._event_filters.copy(),
+            'grid_rows': getattr(self.camera_selector, 'rows_spin', None) and self.camera_selector.rows_spin.value() or 2,
+            'grid_cols': getattr(self.camera_selector, 'cols_spin', None) and self.camera_selector.cols_spin.value() or 2,
+            'last_date': self.camera_selector.get_selected_date() if hasattr(self.camera_selector, 'get_selected_date') else None,
+            'grid_cell_sources': getattr(self.video_grid, '_grid_cell_sources', {}).copy(),
+            'show_metadata': getattr(self, 'show_metadata_checkbox', None) and self.show_metadata_checkbox.isChecked() or False
+        }
+        
+        self.params['stream_player'] = state
+        self.logger.debug("Player state saved to params")
+    
+    def _load_state(self):
+        """Загрузить состояние плеера из params"""
+        if not self.params or 'stream_player' not in self.params:
+            return
+        
+        state = self.params.get('stream_player', {})
+        
+        # Восстановить фильтры событий
+        if 'event_filters' in state:
+            self._event_filters.update(state['event_filters'])
+            # Применить фильтры к timeline
+            if hasattr(self, 'timeline'):
+                self.timeline.set_events(self._events, self._event_filters)
+        
+        # Восстановить скорость воспроизведения
+        if 'playback_speed' in state:
+            self._playback_speed = state['playback_speed']
+            if hasattr(self, 'playback_controls'):
+                self.playback_controls.set_speed(self._playback_speed)
+        
+        # Восстановить размеры сетки
+        if 'grid_rows' in state and hasattr(self.camera_selector, 'rows_spin'):
+            self.camera_selector.rows_spin.setValue(state['grid_rows'])
+        if 'grid_cols' in state and hasattr(self.camera_selector, 'cols_spin'):
+            self.camera_selector.cols_spin.setValue(state['grid_cols'])
+        
+        # Восстановить последнюю выбранную дату
+        if 'last_date' in state and state['last_date']:
+            try:
+                date_parts = state['last_date'].split('-')
+                if len(date_parts) == 3:
+                    from PyQt6.QtCore import QDate
+                    try:
+                        from PyQt5.QtCore import QDate
+                    except ImportError:
+                        pass
+                    qdate = QDate(int(date_parts[0]), int(date_parts[1]), int(date_parts[2]))
+                    self.camera_selector.date_edit.setDate(qdate)
+            except Exception as e:
+                self.logger.debug(f"Failed to restore date: {e}")
+        
+        # Восстановить состояние показа метаданных
+        if 'show_metadata' in state and hasattr(self, 'show_metadata_checkbox'):
+            self.show_metadata_checkbox.setChecked(state['show_metadata'])
+            self._update_metadata_visibility(state['show_metadata'])
+        
+        self.logger.debug("Player state loaded from params")
+    
     def closeEvent(self, event):
         """Обработка закрытия окна"""
         self._on_stop_clicked()
+        self.save_state()
         super().closeEvent(event)
