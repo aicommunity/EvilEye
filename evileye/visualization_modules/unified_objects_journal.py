@@ -879,37 +879,43 @@ class UnifiedObjectsJournal(QWidget):
             if not preview_data or not isinstance(preview_data, dict):
                 return
             
-            # Get current mode and corresponding path/event
-            current_mode = preview_data.get('current_mode', 'found')
-            if current_mode == 'found':
-                img_path = preview_data.get('found_path', '')
-                event_data = preview_data.get('found_event')
-            else:  # lost
-                img_path = preview_data.get('lost_path', '')
-                event_data = preview_data.get('lost_event')
+            # Get found and lost events and paths
+            found_path = preview_data.get('found_path', '')
+            lost_path = preview_data.get('lost_path', '')
+            found_event = preview_data.get('found_event')
+            lost_event = preview_data.get('lost_event')
             
-            if not img_path:
+            if not found_path and not lost_path:
                 return
             
-            # Resolve full path
-            full_path = self._resolve_image_path(img_path, event_data)
-            if not full_path or not os.path.exists(full_path):
-                self.logger.warning(f"Image not found: {img_path}")
+            # Resolve full paths
+            found_full_path = None
+            lost_full_path = None
+            
+            if found_path:
+                found_full_path = self._resolve_image_path(found_path, found_event)
+                if found_full_path and os.path.exists(found_full_path):
+                    # Try to resolve frame path (prefer full frame over preview)
+                    frame_path = self._resolve_frame_path(found_full_path, found_event)
+                    if frame_path and os.path.exists(frame_path):
+                        found_full_path = frame_path
+                else:
+                    self.logger.warning(f"Found image not found: {found_path}")
+                    found_full_path = None
+            
+            if lost_path:
+                lost_full_path = self._resolve_image_path(lost_path, lost_event)
+                if lost_full_path and os.path.exists(lost_full_path):
+                    # Try to resolve frame path (prefer full frame over preview)
+                    frame_path = self._resolve_frame_path(lost_full_path, lost_event)
+                    if frame_path and os.path.exists(frame_path):
+                        lost_full_path = frame_path
+                else:
+                    self.logger.warning(f"Lost image not found: {lost_path}")
+                    lost_full_path = None
+            
+            if not found_full_path and not lost_full_path:
                 return
-            
-            # Get bounding box from event data
-            box = None
-            if event_data:
-                box = event_data.get('bounding_box') or event_data.get('box')
-            
-            # Try to resolve frame path (prefer full frame over preview)
-            frame_path = self._resolve_frame_path(full_path, event_data)
-            if frame_path and os.path.exists(frame_path):
-                full_path = frame_path
-            
-            # Normalize box if needed
-            if box:
-                box = self._normalize_bbox(box, full_path)
             
             # Pause auto updates
             self.update_timer.stop()
@@ -918,26 +924,34 @@ class UnifiedObjectsJournal(QWidget):
             if self.image_win:
                 self.image_win.close()
             
-            # Create and show image window
-            self.image_win = UnifiedImageWindow(full_path, box, None)
+            # Create and show image window with tabs
+            self.image_win = UnifiedImageWindow(
+                found_image_path=found_full_path or '',
+                found_event=found_event,
+                lost_image_path=lost_full_path,
+                lost_event=lost_event,
+                journal_type='objects',
+                base_dir=self.base_dir,
+                data_source=self.data_source
+            )
             
             # Add info to title
-            if event_data:
+            if found_event:
                 info_parts = []
-                if event_data.get('object_id') is not None:
-                    info_parts.append(f"obj={event_data['object_id']}")
-                if event_data.get('class_name'):
-                    info_parts.append(f"class={event_data['class_name']}")
-                elif event_data.get('class_id'):
-                    info_parts.append(f"class={event_data['class_id']}")
-                if event_data.get('confidence') is not None:
-                    conf = event_data['confidence']
+                if found_event.get('object_id') is not None:
+                    info_parts.append(f"obj={found_event['object_id']}")
+                if found_event.get('class_name'):
+                    info_parts.append(f"class={found_event['class_name']}")
+                elif found_event.get('class_id'):
+                    info_parts.append(f"class={found_event['class_id']}")
+                if found_event.get('confidence') is not None:
+                    conf = found_event['confidence']
                     if isinstance(conf, (int, float)):
                         info_parts.append(f"conf={conf:.2f}")
                     else:
                         info_parts.append(f"conf={conf}")
                 if info_parts:
-                    self.image_win.setWindowTitle('Image - ' + ' '.join(info_parts))
+                    self.image_win.setWindowTitle('Media Viewer - ' + ' '.join(info_parts))
             
             self.image_win.show()
             self.image_win.raise_()

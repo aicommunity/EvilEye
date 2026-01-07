@@ -8,14 +8,23 @@ import datetime
 from typing import Optional, List, Tuple
 
 try:
-    from PyQt6.QtCore import Qt, QSize, QPointF, QRect
-    from PyQt6.QtWidgets import QStyledItemDelegate, QLabel, QVBoxLayout, QTableWidget
+    from PyQt6.QtCore import Qt, QSize, QPointF, QRect, QUrl
+    from PyQt6.QtWidgets import QStyledItemDelegate, QLabel, QVBoxLayout, QTableWidget, QWidget, QTabWidget
     from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor, QBrush, QPolygonF
+    from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
+    from PyQt6.QtMultimediaWidgets import QVideoWidget
     pyqt_version = 6
+    pyqt_multimedia_available = True
 except ImportError:
-    from PyQt5.QtCore import Qt, QSize, QPointF, QRect
-    from PyQt5.QtWidgets import QStyledItemDelegate, QLabel, QVBoxLayout, QTableWidget
+    from PyQt5.QtCore import Qt, QSize, QPointF, QRect, QUrl
+    from PyQt5.QtWidgets import QStyledItemDelegate, QLabel, QVBoxLayout, QTableWidget, QWidget, QTabWidget
     from PyQt5.QtGui import QPixmap, QPainter, QPen, QColor, QBrush, QPolygonF
+    try:
+        from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
+        from PyQt5.QtMultimediaWidgets import QVideoWidget
+        pyqt_multimedia_available = True
+    except ImportError:
+        pyqt_multimedia_available = False
     pyqt_version = 5
 
 from ..core.logger import get_module_logger
@@ -1139,41 +1148,493 @@ class UnifiedDateTimeDelegate(QStyledItemDelegate):
             return value_str if 'value_str' in locals() and value_str else ''
 
 
-class UnifiedImageWindow(QLabel):
-    """Универсальное окно для просмотра изображений с оверлеями"""
+class UnifiedImageWindow(QWidget):
+    """Универсальное окно для просмотра видео и изображений с оверлеями"""
     
-    def __init__(self, image_path: str, box=None, zone_coords=None, parent=None):
+    def __init__(self, found_image_path: str, found_event: dict = None, 
+                 lost_image_path: str = None, lost_event: dict = None,
+                 journal_type: str = 'events', base_dir: str = None,
+                 data_source = None, parent=None):
         super().__init__(parent)
-        self.setWindowTitle('Image')
+        self.setWindowTitle('Media Viewer')
         try:
             self.setWindowFlag(Qt.Window, True)
             self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         except Exception:
             pass
-        self.setFixedSize(900, 600)
-        self.image_path = image_path
-        self.zone_coords = zone_coords
+        self.setFixedSize(1200, 800)
+        
+        # Store parameters
+        self.found_image_path = found_image_path
+        self.found_event = found_event or {}
+        self.lost_image_path = lost_image_path
+        self.lost_event = lost_event or {}
+        self.journal_type = journal_type
+        self.base_dir = base_dir
+        self.data_source = data_source
+        
+        # Video player components
+        self.video_player = None
+        self.video_widget = None
+        self.video_path = None
+        self.video_offset_seconds = 0
+        
+        # Logger
+        self.logger = get_module_logger("unified_image_window")
+        
+        # Create tab widget
+        self.tab_widget = QTabWidget()
+        self.tab_widget.setTabsClosable(False)
+        
+        # Setup tabs
+        self._setup_tabs()
+        
+        # Setup layout
+        self.layout = QVBoxLayout()
+        self.layout.addWidget(self.tab_widget)
+        self.setLayout(self.layout)
+    
+    def _setup_tabs(self):
+        """Setup video and image tabs"""
+        # Tab 1: Video (if available)
+        video_path, offset_seconds = self._resolve_video()
+        if video_path:
+            self.video_path = video_path
+            self.video_offset_seconds = offset_seconds
+            self._create_video_tab()
+        
+        # Tab 2: Found image (always visible)
+        self._create_found_image_tab()
+        
+        # Tab 3: Lost image (if available)
+        if self.lost_image_path:
+            self._create_lost_image_tab()
+    
+    def _resolve_video(self):
+        """Resolve video path based on journal type"""
+        if self.journal_type == 'events':
+            return self._resolve_event_video()
+        elif self.journal_type == 'objects':
+            return self._resolve_stream_segment_path()
+        return None, 0
+    
+    def _resolve_event_video(self):
+        """Resolve video path for events"""
+        if not self.found_event or not self.base_dir:
+            return None, 0
+        
+        # Try to use saved video path from event data (preferred)
+        video_path = self.found_event.get('video_path') or self.found_event.get('video_path_entered')
+        if video_path:
+            full_path = os.path.join(self.base_dir, video_path) if not os.path.isabs(video_path) else video_path
+            if os.path.exists(full_path):
+                try:
+                    file_size = os.path.getsize(full_path)
+                    if file_size >= 1000:  # At least 1KB
+                        return full_path, 0
+                except Exception:
+                    pass
+        
+        # Try lost video path
+        video_path = self.found_event.get('video_path_lost') or self.found_event.get('video_path_left')
+        if video_path:
+            full_path = os.path.join(self.base_dir, video_path) if not os.path.isabs(video_path) else video_path
+            if os.path.exists(full_path):
+                try:
+                    file_size = os.path.getsize(full_path)
+                    if file_size >= 1000:
+                        return full_path, 0
+                except Exception:
+                    pass
+        
+        # Fallback: try to construct path from event data
+        # This is a simplified version of _resolve_video_path from UnifiedEventsJournal
+        event_type = self.found_event.get('event_type', '')
+        time_stamp = self.found_event.get('ts') or self.found_event.get('time_stamp')
+        source_name = self.found_event.get('source_name', '')
+        event_id_numeric = self.found_event.get('event_id_numeric')
+        
+        if not all([event_type, time_stamp]):
+            return None, 0
+        
+        # Parse timestamp
+        if isinstance(time_stamp, str):
+            try:
+                dt = datetime.datetime.fromisoformat(time_stamp.replace('Z', '+00:00'))
+            except Exception:
+                return None, 0
+        elif isinstance(time_stamp, datetime.datetime):
+            dt = time_stamp
+        else:
+            return None, 0
+        
+        date_folder = dt.strftime('%Y-%m-%d')
+        time_str = dt.strftime('%Y%m%d_%H%M%S')
+        
+        # Map event type
+        event_name_map = {
+            'zone_entered': 'ZoneEvent',
+            'zone_left': 'ZoneEvent',
+            'attr_found': 'AttributeEvent',
+            'attr_lost': 'AttributeEvent',
+            'fov_found': 'FOVEvent',
+            'fov_lost': 'FOVEvent',
+        }
+        event_name = event_name_map.get(event_type, event_type)
+        
+        # Try to find video file
+        videos_base_dir = os.path.join(self.base_dir, 'Events', date_folder, 'Videos')
+        if not os.path.exists(videos_base_dir):
+            return None, 0
+        
+        # Get possible camera folders
+        possible_camera_folders = []
+        if source_name:
+            possible_camera_folders.append(source_name)
+        
+        # Try to find video file
+        import glob
+        for camera_folder in possible_camera_folders:
+            camera_path = os.path.join(videos_base_dir, camera_folder)
+            if not os.path.isdir(camera_path):
+                continue
+            
+            # Try with event_id_numeric
+            if event_id_numeric is not None:
+                pattern = f'*_{event_name}_{event_id_numeric}_{time_str}.mp4'
+                matching = glob.glob(os.path.join(camera_path, pattern))
+                if matching:
+                    return matching[0], 0
+            
+            # Try without event_id
+            pattern = f'*_{event_name}_{time_str}.mp4'
+            matching = glob.glob(os.path.join(camera_path, pattern))
+            if matching:
+                return matching[0], 0
+            
+            # Try partial time match
+            time_str_partial = dt.strftime('%Y%m%d_%H%M')
+            pattern = f'*_{event_name}_*_{time_str_partial}*.mp4'
+            matching = glob.glob(os.path.join(camera_path, pattern))
+            if matching:
+                return matching[0], 0
+        
+        return None, 0
+    
+    def _resolve_stream_segment_path(self):
+        """Resolve stream segment path for objects"""
+        if not self.found_event or not self.base_dir:
+            self.logger.debug("_resolve_stream_segment_path: missing found_event or base_dir")
+            return None, 0
+        
+        # Get timestamp from event
+        timestamp = self.found_event.get('ts') or self.found_event.get('time_stamp')
+        if not timestamp:
+            self.logger.debug("_resolve_stream_segment_path: no timestamp in event")
+            return None, 0
+        
+        # Parse timestamp
+        if isinstance(timestamp, str):
+            try:
+                dt = datetime.datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+            except Exception as e:
+                self.logger.debug(f"_resolve_stream_segment_path: failed to parse timestamp '{timestamp}': {e}")
+                return None, 0
+        elif isinstance(timestamp, datetime.datetime):
+            dt = timestamp
+        else:
+            self.logger.debug(f"_resolve_stream_segment_path: invalid timestamp type {type(timestamp)}")
+            return None, 0
+        
+        date_folder = dt.strftime('%Y-%m-%d')
+        time_str = dt.strftime('%Y%m%d_%H%M%S')
+        
+        # Get source name
+        source_name = self.found_event.get('source_name', '')
+        source_id = self.found_event.get('source_id')
+        
+        self.logger.debug(f"_resolve_stream_segment_path: event_time={dt}, source_name={source_name}, source_id={source_id}, date_folder={date_folder}")
+        
+        # Build stream directory path
+        streams_dir = os.path.join(self.base_dir, 'Streams', date_folder)
+        if not os.path.exists(streams_dir):
+            self.logger.debug(f"_resolve_stream_segment_path: streams directory does not exist: {streams_dir}")
+            return None, 0
+        
+        # Try to find camera folder - check all possible folders
+        camera_folders = []
+        
+        # Try exact source_name match
+        if source_name:
+            camera_folder_path = os.path.join(streams_dir, source_name)
+            if os.path.exists(camera_folder_path):
+                camera_folders.append(source_name)
+                self.logger.debug(f"_resolve_stream_segment_path: found camera folder by source_name: {source_name}")
+        
+        # Try composite names (for split sources) - check all folders in streams_dir
+        if self.data_source and hasattr(self.data_source, '_source_name_id_address'):
+            source_mappings = self.data_source._source_name_id_address
+            if source_id is not None:
+                # Find all source names that map to this source_id
+                for src_name, (src_id, address) in source_mappings.items():
+                    if src_id == source_id:
+                        composite_folder = os.path.join(streams_dir, src_name)
+                        if os.path.exists(composite_folder) and src_name not in camera_folders:
+                            camera_folders.append(src_name)
+                            self.logger.debug(f"_resolve_stream_segment_path: found camera folder by source_id mapping: {src_name}")
+        
+        # Also check all existing folders in streams_dir (for cases where folder name doesn't match source_name)
+        try:
+            for folder_name in os.listdir(streams_dir):
+                folder_path = os.path.join(streams_dir, folder_name)
+                if os.path.isdir(folder_path) and folder_name not in camera_folders:
+                    # Check if this folder might contain segments for our source
+                    # For split sources, folder might be like "Cam2-Cam3" but source_name is "Cam2"
+                    if source_name and (source_name in folder_name or folder_name in source_name):
+                        camera_folders.append(folder_name)
+                        self.logger.debug(f"_resolve_stream_segment_path: found potential camera folder by name match: {folder_name}")
+        except Exception as e:
+            self.logger.debug(f"_resolve_stream_segment_path: error listing streams_dir: {e}")
+        
+        if not camera_folders:
+            self.logger.warning(f"_resolve_stream_segment_path: no camera folders found for source_name={source_name}, source_id={source_id}, streams_dir={streams_dir}")
+            return None, 0
+        
+        # Search for segment file
+        segment_length_sec = 300  # Default segment length (5 minutes)
+        import glob
+        
+        for camera_folder in camera_folders:
+            camera_path = os.path.join(streams_dir, camera_folder)
+            if not os.path.isdir(camera_path):
+                continue
+            
+            self.logger.debug(f"_resolve_stream_segment_path: searching in camera folder: {camera_folder}")
+            
+            # List all segment files in this folder (don't filter by source_name in filename)
+            # Format: {source_name}_{YYYYMMDD}_{HHMMSS}_{seq}.mp4
+            # But folder might contain segments from multiple sources or with different naming
+            all_segments = glob.glob(os.path.join(camera_path, '*.mp4'))
+            
+            if not all_segments:
+                self.logger.debug(f"_resolve_stream_segment_path: no .mp4 files found in {camera_path}")
+                continue
+            
+            self.logger.debug(f"_resolve_stream_segment_path: found {len(all_segments)} segment files in {camera_folder}")
+            
+            # Find segment that contains the event time
+            best_segment = None
+            best_offset = 0
+            min_time_diff = float('inf')
+            
+            for segment_file in all_segments:
+                filename = os.path.basename(segment_file)
+                # Extract start time from filename: {source_name}_{YYYYMMDD}_{HHMMSS}_{seq}.mp4
+                # Format: parts[0] = source_name, parts[1] = YYYYMMDD, parts[2] = HHMMSS, parts[3] = seq
+                parts = filename.replace('.mp4', '').split('_')
+                if len(parts) >= 3:
+                    try:
+                        date_part = parts[1]  # YYYYMMDD
+                        time_part = parts[2]  # HHMMSS
+                        segment_start_str = f"{date_part}_{time_part}"
+                        segment_start = datetime.datetime.strptime(segment_start_str, '%Y%m%d_%H%M%S')
+                        
+                        # Check if event time is within this segment
+                        segment_end = segment_start + datetime.timedelta(seconds=segment_length_sec)
+                        if segment_start <= dt < segment_end:
+                            # Calculate offset
+                            offset_seconds = (dt - segment_start).total_seconds()
+                            self.logger.info(f"_resolve_stream_segment_path: found exact segment match: {filename}, offset={offset_seconds}s")
+                            return segment_file, int(offset_seconds)
+                        
+                        # Track closest segment for fallback
+                        time_diff = abs((dt - segment_start).total_seconds())
+                        if time_diff < segment_length_sec and time_diff < min_time_diff:
+                            min_time_diff = time_diff
+                            best_segment = segment_file
+                            best_offset = max(0, int((dt - segment_start).total_seconds()))
+                    except Exception as e:
+                        self.logger.debug(f"_resolve_stream_segment_path: error parsing segment filename '{filename}': {e}")
+                        continue
+            
+            # If exact match not found, use closest segment
+            if best_segment:
+                self.logger.info(f"_resolve_stream_segment_path: using closest segment: {os.path.basename(best_segment)}, time_diff={min_time_diff}s, offset={best_offset}s")
+                return best_segment, best_offset
+        
+        self.logger.warning(f"_resolve_stream_segment_path: no suitable segment found for event_time={dt}, source_name={source_name}")
+        return None, 0
+    
+    def _create_video_tab(self):
+        """Create video tab with player"""
+        if not self.video_path:
+            return
+        
+        video_container = QWidget()
+        video_layout = QVBoxLayout()
+        video_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Create video player
+        if pyqt_multimedia_available:
+            try:
+                if pyqt_version == 6:
+                    self.video_player = QMediaPlayer()
+                    self.audio_output = QAudioOutput()
+                    self.video_player.setAudioOutput(self.audio_output)
+                    self.video_widget = QVideoWidget()
+                    self.video_player.setVideoOutput(self.video_widget)
+                    self.video_player.setLoops(QMediaPlayer.Loops.Infinite)
+                else:
+                    self.video_player = QMediaPlayer(None, QMediaPlayer.VideoSurface)
+                    self.video_widget = QVideoWidget()
+                    self.video_player.setVideoOutput(self.video_widget)
+                    # PyQt5 looping handled in stateChanged
+                    self.video_player.stateChanged.connect(self._on_video_state_changed)
+                
+                video_layout.addWidget(self.video_widget)
+                video_container.setLayout(video_layout)
+                
+                # Set video source and play
+                video_url = QUrl.fromLocalFile(self.video_path)
+                if pyqt_version == 6:
+                    self.video_player.setSource(video_url)
+                else:
+                    self.video_player.setMedia(QMediaContent(video_url))
+                
+                # Set position if offset specified
+                if self.video_offset_seconds > 0:
+                    self.video_player.setPosition(self.video_offset_seconds * 1000)
+                
+                # Start playback
+                self.video_player.play()
+                
+            except Exception as e:
+                self.logger.warning(f"Failed to create QMediaPlayer: {e}")
+                # Fallback to label with error message
+                error_label = QLabel(f"Video playback not available:\n{str(e)}")
+                error_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                video_layout.addWidget(error_label)
+                video_container.setLayout(video_layout)
+        else:
+            error_label = QLabel("Video playback not available (Qt Multimedia not installed)")
+            error_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            video_layout.addWidget(error_label)
+            video_container.setLayout(video_layout)
+        
+        self.tab_widget.addTab(video_container, "Video")
+        # Set video tab as active if video is available
+        self.tab_widget.setCurrentIndex(0)
+    
+    def _on_video_state_changed(self, state):
+        """Handle video state changes for PyQt5 looping"""
+        if pyqt_version == 5:
+            from PyQt5.QtMultimedia import QMediaPlayer
+            if state == QMediaPlayer.State.StoppedState:
+                # Restart for looping
+                if self.video_player:
+                    self.video_player.setPosition(0)
+                    self.video_player.play()
+    
+    def _create_found_image_tab(self):
+        """Create found image tab with overlays"""
+        if not self.found_image_path or not os.path.exists(self.found_image_path):
+            # Create placeholder if no found image
+            placeholder = QLabel("Found image not available")
+            placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.tab_widget.addTab(placeholder, "Found")
+            return
+        
+        image_label = self._create_image_label(self.found_image_path, self.found_event, is_lost=False)
+        self.tab_widget.addTab(image_label, "Found")
+        
+        # Set found tab as active if video is not available
+        if not self.video_path:
+            self.tab_widget.setCurrentIndex(0)
+    
+    def _create_lost_image_tab(self):
+        """Create lost image tab with overlays"""
+        if not self.lost_image_path:
+            return
+        
+        image_label = self._create_image_label(self.lost_image_path, self.lost_event, is_lost=True)
+        self.tab_widget.addTab(image_label, "Lost")
+    
+    def _get_bbox_and_zone_from_event(self, event_data: dict, is_lost: bool = False):
+        """Extract bounding box and zone coordinates from event data based on event type"""
+        if not event_data:
+            return None, None
+        
+        event_type = event_data.get('event_type', '')
+        box = None
+        zone_coords = None
+        
+        # Handle different event types
+        if event_type in ('zone_entered', 'zone_left'):
+            # ZoneEvent: use box_entered/box_left and zone_coords
+            if is_lost:
+                box = event_data.get('box_left') or event_data.get('lost_bounding_box')
+            else:
+                box = event_data.get('box_entered') or event_data.get('bounding_box')
+            zone_coords = event_data.get('zone_coords')
+        elif event_type in ('attr_found', 'attr_lost'):
+            # AttributeEvent: use box_found/box_finished
+            if is_lost:
+                box = event_data.get('box_finished') or event_data.get('lost_bounding_box')
+            else:
+                box = event_data.get('box_found') or event_data.get('bounding_box')
+        elif event_type in ('found', 'lost'):
+            # ObjectEvent: use bounding_box
+            box = event_data.get('bounding_box') or event_data.get('box')
+        else:
+            # Fallback: try common fields
+            box = event_data.get('bounding_box') or event_data.get('box')
+            zone_coords = event_data.get('zone_coords')
+        
+        return box, zone_coords
+    
+    def _create_image_label(self, image_path: str, event_data: dict, is_lost: bool = False):
+        """Create QLabel with image and overlays"""
+        label = QLabel()
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        label.setScaledContents(False)
         
         # Load image
         pixmap = QPixmap(image_path)
         if pixmap.isNull():
-            self.label = QLabel(f"Image not found:\n{image_path}")
-            self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.layout = QVBoxLayout()
-            self.layout.addWidget(self.label)
-            self.setLayout(self.layout)
-            return
-            
-        # Compute target rect in window
-        win_w, win_h = self.width(), self.height()
+            label.setText(f"Image not found:\n{image_path}")
+            return label
+        
+        # Get bounding box and zone coords based on event type
+        box, zone_coords = self._get_bbox_and_zone_from_event(event_data, is_lost)
+        
+        self.logger.debug(f"_create_image_label: image_path={image_path}, event_type={event_data.get('event_type') if event_data else None}, "
+                         f"is_lost={is_lost}, has_box={box is not None}, has_zone_coords={zone_coords is not None}")
+        
+        # Try to resolve frame path for correct bbox normalization (use original frame size, not preview)
+        frame_path = self._resolve_frame_path_for_normalization(image_path)
+        bbox_img_w = pixmap.width()
+        bbox_img_h = pixmap.height()
+        
+        if frame_path and os.path.exists(frame_path):
+            try:
+                frame_pixmap = QPixmap(frame_path)
+                if not frame_pixmap.isNull():
+                    bbox_img_w = frame_pixmap.width()
+                    bbox_img_h = frame_pixmap.height()
+                    self.logger.debug(f"_create_image_label: using frame dimensions for normalization: {bbox_img_w}x{bbox_img_h}")
+            except Exception:
+                pass
+        
+        # Compute target size (fit to window)
+        win_w, win_h = 1200, 800
         img_w, img_h = pixmap.width(), pixmap.height()
         scale = min(win_w / img_w, win_h / img_h)
         draw_w = int(img_w * scale)
         draw_h = int(img_h * scale)
         draw_x = (win_w - draw_w) // 2
         draw_y = (win_h - draw_h) // 2
-
-        # Create canvas pixmap sized to window
+        
+        # Create canvas
         canvas = QPixmap(win_w, win_h)
         canvas.fill(QColor(0, 0, 0))
         painter = QPainter()
@@ -1186,7 +1647,7 @@ class UnifiedImageWindow(QLabel):
             if box:
                 pen = QPen(QColor(0, 255, 0), 2)
                 painter.setPen(pen)
-                x1, y1, x2, y2 = self._normalize_bbox(box, pixmap)
+                x1, y1, x2, y2 = self._normalize_bbox_with_size(box, bbox_img_w, bbox_img_h)
                 if x1 is not None:
                     x = draw_x + int(x1 * draw_w)
                     y = draw_y + int(y1 * draw_h)
@@ -1194,20 +1655,21 @@ class UnifiedImageWindow(QLabel):
                     h = int((y2 - y1) * draw_h)
                     painter.drawRect(x, y, w, h)
             
-            if self.zone_coords:
+            if zone_coords:
                 pen = QPen(QColor(255, 0, 0), 2)
                 painter.setPen(pen)
                 painter.setBrush(QBrush(QColor(255, 0, 0, 64)))
                 polygon = QPolygonF()
-                for pt in self.zone_coords:
+                for pt in zone_coords:
                     if isinstance(pt, (list, tuple)) and len(pt) == 2:
                         px, py = pt
-                        if max(px, py) <= 1.0:
-                            x = draw_x + int(px * draw_w)
-                            y = draw_y + int(py * draw_h)
-                        else:
-                            x = int(px)
-                            y = int(py)
+                        # Normalize if coordinates are in pixels
+                        if bbox_img_w > 0 and bbox_img_h > 0:
+                            if px > 1.0 or py > 1.0:
+                                px = px / bbox_img_w
+                                py = py / bbox_img_h
+                        x = draw_x + int(px * draw_w)
+                        y = draw_y + int(py * draw_h)
                         polygon.append(QPointF(x, y))
                 if polygon.count() > 0:
                     painter.drawPolygon(polygon)
@@ -1215,14 +1677,105 @@ class UnifiedImageWindow(QLabel):
             if painter.isActive():
                 painter.end()
         
-        # Create label and set pixmap
-        self.label = QLabel()
-        self.label.setPixmap(canvas)
+        label.setPixmap(canvas)
+        return label
+    
+    def _resolve_frame_path_for_normalization(self, preview_path: str) -> Optional[str]:
+        """Resolve preview path to original frame path for correct bbox normalization"""
+        if not preview_path or 'preview' not in preview_path.lower():
+            return None
         
-        # Setup layout
-        self.layout = QVBoxLayout()
-        self.layout.addWidget(self.label)
-        self.setLayout(self.layout)
+        # Try various replacements to find frame image
+        candidates = []
+        
+        # New structure: FoundPreviews -> FoundFrames, LostPreviews -> LostFrames
+        if 'FoundPreviews' in preview_path:
+            candidates.append(preview_path.replace('FoundPreviews', 'FoundFrames').replace('_preview.', '_frame.'))
+        elif 'LostPreviews' in preview_path:
+            candidates.append(preview_path.replace('LostPreviews', 'LostFrames').replace('_preview.', '_frame.'))
+        
+        # Generic replacements
+        candidates.append(preview_path.replace('previews', 'frames').replace('_preview.', '_frame.'))
+        candidates.append(preview_path.replace('found_previews', 'found_frames').replace('_preview.', '_frame.'))
+        candidates.append(preview_path.replace('lost_previews', 'lost_frames').replace('_preview.', '_frame.'))
+        
+        # Check candidates
+        for cand in candidates:
+            if cand and os.path.exists(cand):
+                return cand
+        
+        return None
+    
+    def _normalize_bbox_with_size(self, box, img_w: int, img_h: int) -> Tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
+        """Normalize bounding box to [0,1] range using image dimensions"""
+        if not box or img_w <= 0 or img_h <= 0:
+            return None, None, None, None
+        
+        try:
+            if isinstance(box, dict):
+                x = box.get('x', 0)
+                y = box.get('y', 0)
+                w = box.get('width', 0)
+                h = box.get('height', 0)
+                if max(x, y, w, h) <= 1.0:
+                    return x, y, x + w, y + h
+                else:
+                    return x / img_w, y / img_h, (x + w) / img_w, (y + h) / img_h
+            elif isinstance(box, (list, tuple)) and len(box) == 4:
+                a, b, c, d = box
+                if max(a, b, c, d) <= 1.0:
+                    return a, b, c, d
+                else:
+                    # Assume [x, y, w, h] in pixels
+                    return a / img_w, b / img_h, (a + c) / img_w, (b + d) / img_h
+        except Exception:
+            pass
+        
+        return None, None, None, None
+    
+    def _normalize_bbox(self, box, pixmap: QPixmap) -> Tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
+        """Normalize bounding box to [0,1] range"""
+        if not box:
+            return None, None, None, None
+        
+        try:
+            img_w, img_h = pixmap.width(), pixmap.height()
+            if img_w <= 0 or img_h <= 0:
+                return None, None, None, None
+            
+            if isinstance(box, dict):
+                x = box.get('x', 0)
+                y = box.get('y', 0)
+                w = box.get('width', 0)
+                h = box.get('height', 0)
+                if max(x, y, w, h) <= 1.0:
+                    return x, y, x + w, y + h
+                else:
+                    return x / img_w, y / img_h, (x + w) / img_w, (y + h) / img_h
+            elif isinstance(box, (list, tuple)) and len(box) == 4:
+                a, b, c, d = box
+                if max(a, b, c, d) <= 1.0:
+                    return a, b, c, d
+                else:
+                    # Assume [x, y, w, h] in pixels
+                    return a / img_w, b / img_h, (a + c) / img_w, (b + d) / img_h
+        except Exception:
+            pass
+        
+        return None, None, None, None
+    
+    def closeEvent(self, event):
+        """Handle window close event - stop video playback"""
+        if self.video_player:
+            try:
+                self.video_player.stop()
+            except Exception:
+                pass
+        super().closeEvent(event)
+    
+    def mouseDoubleClickEvent(self, event):
+        self.hide()
+        event.accept()
 
     def _normalize_bbox(self, box, pixmap: QPixmap) -> Tuple[Optional[float], Optional[float], Optional[float], Optional[float]]:
         """Normalize bounding box to [0,1] range"""

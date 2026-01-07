@@ -969,96 +969,43 @@ class UnifiedEventsJournal(QWidget):
             if not preview_data or not isinstance(preview_data, dict):
                 return
             
-            # Get current mode and corresponding path/event
-            current_mode = preview_data.get('current_mode', 'found')
-            if current_mode == 'found':
-                img_path = preview_data.get('found_path', '')
-                event_data = preview_data.get('found_event')
-            else:  # lost
-                img_path = preview_data.get('lost_path', '')
-                event_data = preview_data.get('lost_event')
+            # Get found and lost events and paths
+            found_path = preview_data.get('found_path', '')
+            lost_path = preview_data.get('lost_path', '')
+            found_event = preview_data.get('found_event')
+            lost_event = preview_data.get('lost_event')
             
-            if not img_path:
+            if not found_path and not lost_path:
                 return
             
-            # Resolve full path
-            full_path = self._resolve_image_path(img_path, event_data)
-            if not full_path or not os.path.exists(full_path):
-                self.logger.warning(f"Image not found: {img_path}")
+            # Resolve full paths
+            found_full_path = None
+            lost_full_path = None
+            
+            if found_path:
+                found_full_path = self._resolve_image_path(found_path, found_event)
+                if found_full_path and os.path.exists(found_full_path):
+                    # Try to resolve frame path (prefer full frame over preview)
+                    frame_path = self._resolve_frame_path(found_full_path, found_event)
+                    if frame_path and os.path.exists(frame_path):
+                        found_full_path = frame_path
+                else:
+                    self.logger.warning(f"Found image not found: {found_path}")
+                    found_full_path = None
+            
+            if lost_path:
+                lost_full_path = self._resolve_image_path(lost_path, lost_event)
+                if lost_full_path and os.path.exists(lost_full_path):
+                    # Try to resolve frame path (prefer full frame over preview)
+                    frame_path = self._resolve_frame_path(lost_full_path, lost_event)
+                    if frame_path and os.path.exists(frame_path):
+                        lost_full_path = frame_path
+                else:
+                    self.logger.warning(f"Lost image not found: {lost_path}")
+                    lost_full_path = None
+            
+            if not found_full_path and not lost_full_path:
                 return
-            
-            # Get bounding box and zone coords from event data
-            box = None
-            zone_coords = None
-            if event_data:
-                box = event_data.get('bounding_box') or event_data.get('box')
-                zone_coords = event_data.get('zone_coords')
-            
-            # If no data in event_data, query from database
-            if (not box and not zone_coords) and hasattr(self.data_source, 'db_connection_name'):
-                db_connection_name = getattr(self.data_source, 'db_connection_name', None)
-                if db_connection_name:
-                    # Determine event type from table (column 1 - Event)
-                    event_type = None
-                    try:
-                        event_item = self.table.item(row, 1)  # Column 1 is Event
-                        if event_item:
-                            event_type = event_item.text()
-                    except Exception:
-                        pass
-                    
-                    # Query database for bounding box and zone coords
-                    if event_type:
-                        try:
-                            from PyQt6.QtSql import QSqlDatabase, QSqlQuery
-                        except ImportError:
-                            from PyQt5.QtSql import QSqlDatabase, QSqlQuery
-                        
-                        try:
-                            query = QSqlQuery(QSqlDatabase.database(db_connection_name))
-                            
-                            if event_type == 'ZoneEvent':
-                                if col == 5:
-                                    query.prepare('SELECT box_entered, zone_coords FROM zone_events WHERE preview_path_entered = :path')
-                                else:
-                                    query.prepare('SELECT box_left, zone_coords FROM zone_events WHERE preview_path_left = :path')
-                            elif event_type == 'AttributeEvent':
-                                if col == 5:
-                                    query.prepare('SELECT box_found FROM attribute_events WHERE preview_path_found = :path')
-                                else:
-                                    query.prepare('SELECT box_finished FROM attribute_events WHERE preview_path_finished = :path')
-                            elif event_type == 'ObjectEvent':
-                                if col == 5:
-                                    query.prepare('SELECT bounding_box FROM objects WHERE preview_path = :path')
-                                else:
-                                    query.prepare('SELECT lost_bounding_box FROM objects WHERE lost_preview_path = :path')
-                            else:
-                                query = None
-                            
-                            if query is not None:
-                                query.bindValue(':path', img_path)
-                                if query.exec() and query.next():
-                                    # Parse bounding box
-                                    value0 = query.value(0)
-                                    if value0 is not None:
-                                        box = self._parse_bbox_from_db(value0)
-                                    
-                                    # Parse zone coords for ZoneEvent
-                                    if event_type == 'ZoneEvent' and query.record().count() > 1:
-                                        value1 = query.value(1)
-                                        if value1 is not None:
-                                            zone_coords = self._parse_zone_coords_from_db(value1)
-                        except Exception as e:
-                            self.logger.warning(f"Failed to query event data from DB: {e}")
-            
-            # Try to resolve frame path
-            frame_path = self._resolve_frame_path(full_path, event_data)
-            if frame_path and os.path.exists(frame_path):
-                full_path = frame_path
-            
-            # Normalize box if needed
-            if box:
-                box = self._normalize_bbox(box, full_path)
             
             # Pause auto updates
             self.update_timer.stop()
@@ -1067,8 +1014,16 @@ class UnifiedEventsJournal(QWidget):
             if self.image_win:
                 self.image_win.close()
             
-            # Create and show image window
-            self.image_win = UnifiedImageWindow(full_path, box, zone_coords)
+            # Create and show image window with tabs
+            self.image_win = UnifiedImageWindow(
+                found_image_path=found_full_path or '',
+                found_event=found_event,
+                lost_image_path=lost_full_path,
+                lost_event=lost_event,
+                journal_type='events',
+                base_dir=self.base_dir,
+                data_source=self.data_source
+            )
             self.image_win.show()
             self.image_win.raise_()
             self.image_win.activateWindow()
