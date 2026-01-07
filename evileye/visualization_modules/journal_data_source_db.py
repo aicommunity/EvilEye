@@ -174,8 +174,13 @@ class DatabaseJournalDataSource(EventJournalDataSource):
         query.prepare('SELECT box_entered, box_left, zone_coords, object_id FROM zone_events WHERE preview_path_entered = :path OR preview_path_left = :path LIMIT 1')
         query.bindValue(':path', row_dict.get('preview_path', ''))
         if query.exec() and query.next():
-            event_dict['bounding_box'] = self._parse_bbox(query.value(0))
-            event_dict['lost_bounding_box'] = self._parse_bbox(query.value(1))
+            # Store in both formats for compatibility
+            box_entered = self._parse_bbox(query.value(0))
+            box_left = self._parse_bbox(query.value(1))
+            event_dict['box_entered'] = box_entered
+            event_dict['box_left'] = box_left
+            event_dict['bounding_box'] = box_entered  # For backward compatibility
+            event_dict['lost_bounding_box'] = box_left  # For backward compatibility
             event_dict['zone_coords'] = self._parse_zone_coords(query.value(2))
             event_dict['object_id'] = query.value(3)
             # zone_id doesn't exist in table, so we don't set it
@@ -186,8 +191,13 @@ class DatabaseJournalDataSource(EventJournalDataSource):
         query.prepare('SELECT box_found, box_finished, object_id, class_id, class_name, attrs, event_name FROM attribute_events WHERE preview_path_found = :path OR preview_path_finished = :path LIMIT 1')
         query.bindValue(':path', row_dict.get('preview_path', ''))
         if query.exec() and query.next():
-            event_dict['bounding_box'] = self._parse_bbox(query.value(0))
-            event_dict['lost_bounding_box'] = self._parse_bbox(query.value(1))
+            # Store in both formats for compatibility
+            box_found = self._parse_bbox(query.value(0))
+            box_finished = self._parse_bbox(query.value(1))
+            event_dict['box_found'] = box_found
+            event_dict['box_finished'] = box_finished
+            event_dict['bounding_box'] = box_found  # For backward compatibility
+            event_dict['lost_bounding_box'] = box_finished  # For backward compatibility
             event_dict['object_id'] = query.value(2)
             event_dict['class_id'] = query.value(3)
             event_dict['class_name'] = query.value(4)

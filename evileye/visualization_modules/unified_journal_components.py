@@ -28,6 +28,8 @@ except ImportError:
     pyqt_version = 5
 
 from ..core.logger import get_module_logger
+from .journal_metadata_extractor import EventMetadataExtractor
+from .journal_path_resolver import JournalPathResolver
 import logging
 
 
@@ -1178,6 +1180,7 @@ class UnifiedImageWindow(QWidget):
         self.video_widget = None
         self.video_path = None
         self.video_offset_seconds = 0
+        self._use_opencv = False  # Flag for OpenCV fallback
         
         # Logger
         self.logger = get_module_logger("unified_image_window")
@@ -1470,12 +1473,18 @@ class UnifiedImageWindow(QWidget):
         if not self.video_path:
             return
         
+        # Check video file integrity before playing
+        if not self._check_video_integrity(self.video_path):
+            self.logger.warning(f"Video file integrity check failed: {self.video_path}")
+            # Try OpenCV fallback immediately
+            self._use_opencv = True
+        
         video_container = QWidget()
         video_layout = QVBoxLayout()
         video_layout.setContentsMargins(0, 0, 0, 0)
         
         # Create video player
-        if pyqt_multimedia_available:
+        if pyqt_multimedia_available and not self._use_opencv:
             try:
                 if pyqt_version == 6:
                     self.video_player = QMediaPlayer()
@@ -1484,12 +1493,16 @@ class UnifiedImageWindow(QWidget):
                     self.video_widget = QVideoWidget()
                     self.video_player.setVideoOutput(self.video_widget)
                     self.video_player.setLoops(QMediaPlayer.Loops.Infinite)
+                    # Connect error handler
+                    self.video_player.errorOccurred.connect(self._on_player_error)
                 else:
                     self.video_player = QMediaPlayer(None, QMediaPlayer.VideoSurface)
                     self.video_widget = QVideoWidget()
                     self.video_player.setVideoOutput(self.video_widget)
                     # PyQt5 looping handled in stateChanged
                     self.video_player.stateChanged.connect(self._on_video_state_changed)
+                    # Connect error handler
+                    self.video_player.error.connect(self._on_player_error)
                 
                 video_layout.addWidget(self.video_widget)
                 video_container.setLayout(video_layout)
@@ -1510,20 +1523,117 @@ class UnifiedImageWindow(QWidget):
                 
             except Exception as e:
                 self.logger.warning(f"Failed to create QMediaPlayer: {e}")
-                # Fallback to label with error message
-                error_label = QLabel(f"Video playback not available:\n{str(e)}")
-                error_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                video_layout.addWidget(error_label)
-                video_container.setLayout(video_layout)
+                # Fallback to OpenCV
+                self._use_opencv = True
+                self._create_opencv_video_player(video_container, video_layout)
         else:
-            error_label = QLabel("Video playback not available (Qt Multimedia not installed)")
-            error_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            video_layout.addWidget(error_label)
-            video_container.setLayout(video_layout)
+            # Use OpenCV fallback
+            self._create_opencv_video_player(video_container, video_layout)
         
         self.tab_widget.addTab(video_container, "Video")
         # Set video tab as active if video is available
         self.tab_widget.setCurrentIndex(0)
+    
+    def _check_video_integrity(self, video_path: str) -> bool:
+        """Check video file integrity before playback
+        
+        Args:
+            video_path: Path to video file
+            
+        Returns:
+            True if file appears valid, False otherwise
+        """
+        if not video_path or not os.path.exists(video_path):
+            return False
+        
+        try:
+            # Check file size (should be > 1KB)
+            file_size = os.path.getsize(video_path)
+            if file_size < 1000:
+                self.logger.warning(f"Video file too small ({file_size} bytes): {video_path}")
+                return False
+            
+            # For MP4 files, check if moov atom exists (basic check)
+            if video_path.lower().endswith('.mp4'):
+                with open(video_path, 'rb') as f:
+                    # Read first 8KB to check for moov atom
+                    data = f.read(8192)
+                    if b'moov' not in data and b'ftyp' not in data:
+                        # Try reading more (moov might be at the end for some encoders)
+                        f.seek(-8192, 2)  # Seek to 8KB before end
+                        end_data = f.read(8192)
+                        if b'moov' not in end_data:
+                            self.logger.warning(f"MP4 file missing moov atom: {video_path}")
+                            return False
+            
+            return True
+        except Exception as e:
+            self.logger.warning(f"Error checking video integrity: {e}")
+            return False
+    
+    def _on_player_error(self, error=None, error_string=""):
+        """Handle QMediaPlayer errors (FFmpeg errors, etc.)"""
+        if pyqt_version == 6:
+            from PyQt6.QtMultimedia import QMediaPlayer
+            if error_string:
+                error_msg = error_string
+            else:
+                error_msg = str(error) if error else "Unknown error"
+        else:
+            from PyQt5.QtMultimedia import QMediaPlayer
+            if error_string:
+                error_msg = error_string
+            else:
+                error_msg = str(error) if error else "Unknown error"
+        
+        # Check for common FFmpeg errors that indicate corrupted/incomplete files
+        if "moov atom not found" in error_msg.lower() or "invalid data" in error_msg.lower() or "could not open" in error_msg.lower():
+            self.logger.warning(f"Video file appears corrupted or incomplete (FFmpeg error: {error_msg}). Trying OpenCV fallback...")
+            # Stop current playback
+            if self.video_player:
+                try:
+                    self.video_player.stop()
+                except Exception:
+                    pass
+            
+            # Switch to OpenCV fallback
+            self._use_opencv = True
+            
+            # Remove current video widget and create OpenCV player
+            if self.video_widget:
+                self.video_widget.setParent(None)
+                self.video_widget = None
+            
+            # Find video container and recreate player
+            for i in range(self.tab_widget.count()):
+                widget = self.tab_widget.widget(i)
+                if widget and widget.findChild(QWidget, "video_container"):
+                    video_layout = widget.layout()
+                    if video_layout:
+                        self._create_opencv_video_player(widget, video_layout)
+                        break
+        else:
+            self.logger.error(f"QMediaPlayer error: {error_msg}")
+    
+    def _create_opencv_video_player(self, container, layout):
+        """Create OpenCV-based video player as fallback"""
+        try:
+            # Try to import VideoPlayerWidget from video_player_window
+            from .video_player_window import VideoPlayerWidget
+            opencv_player = VideoPlayerWidget(parent=container, parent_logger=self.logger)
+            opencv_player.play_video(self.video_path)
+            layout.addWidget(opencv_player)
+            self.logger.info(f"Using OpenCV fallback for video: {self.video_path}")
+        except ImportError:
+            error_label = QLabel("Video playback not available (OpenCV fallback failed)")
+            error_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            layout.addWidget(error_label)
+            self.logger.error("OpenCV fallback not available")
+        except Exception as e:
+            error_label = QLabel(f"Video playback error:\n{str(e)}")
+            error_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            layout.addWidget(error_label)
+            self.logger.error(f"Failed to create OpenCV video player: {e}")
     
     def _on_video_state_changed(self, state):
         """Handle video state changes for PyQt5 looping"""
@@ -1560,37 +1670,11 @@ class UnifiedImageWindow(QWidget):
         self.tab_widget.addTab(image_label, "Lost")
     
     def _get_bbox_and_zone_from_event(self, event_data: dict, is_lost: bool = False):
-        """Extract bounding box and zone coordinates from event data based on event type"""
-        if not event_data:
-            return None, None
+        """Extract bounding box and zone coordinates from event data based on event type
         
-        event_type = event_data.get('event_type', '')
-        box = None
-        zone_coords = None
-        
-        # Handle different event types
-        if event_type in ('zone_entered', 'zone_left'):
-            # ZoneEvent: use box_entered/box_left and zone_coords
-            if is_lost:
-                box = event_data.get('box_left') or event_data.get('lost_bounding_box')
-            else:
-                box = event_data.get('box_entered') or event_data.get('bounding_box')
-            zone_coords = event_data.get('zone_coords')
-        elif event_type in ('attr_found', 'attr_lost'):
-            # AttributeEvent: use box_found/box_finished
-            if is_lost:
-                box = event_data.get('box_finished') or event_data.get('lost_bounding_box')
-            else:
-                box = event_data.get('box_found') or event_data.get('bounding_box')
-        elif event_type in ('found', 'lost'):
-            # ObjectEvent: use bounding_box
-            box = event_data.get('bounding_box') or event_data.get('box')
-        else:
-            # Fallback: try common fields
-            box = event_data.get('bounding_box') or event_data.get('box')
-            zone_coords = event_data.get('zone_coords')
-        
-        return box, zone_coords
+        Uses EventMetadataExtractor to handle different data formats from DB and JSON sources.
+        """
+        return EventMetadataExtractor.get_bbox_and_zone(event_data, is_lost)
     
     def _create_image_label(self, image_path: str, event_data: dict, is_lost: bool = False):
         """Create QLabel with image and overlays"""
@@ -1645,10 +1729,12 @@ class UnifiedImageWindow(QWidget):
             
             # Draw overlays
             if box:
-                pen = QPen(QColor(0, 255, 0), 2)
-                painter.setPen(pen)
-                x1, y1, x2, y2 = self._normalize_bbox_with_size(box, bbox_img_w, bbox_img_h)
-                if x1 is not None:
+                # Normalize bbox using EventMetadataExtractor
+                normalized_bbox = EventMetadataExtractor.normalize_bbox_for_display(box, bbox_img_w, bbox_img_h)
+                if normalized_bbox:
+                    x1, y1, x2, y2 = normalized_bbox
+                    pen = QPen(QColor(0, 255, 0), 2)
+                    painter.setPen(pen)
                     x = draw_x + int(x1 * draw_w)
                     y = draw_y + int(y1 * draw_h)
                     w = int((x2 - x1) * draw_w)
@@ -1656,23 +1742,20 @@ class UnifiedImageWindow(QWidget):
                     painter.drawRect(x, y, w, h)
             
             if zone_coords:
-                pen = QPen(QColor(255, 0, 0), 2)
-                painter.setPen(pen)
-                painter.setBrush(QBrush(QColor(255, 0, 0, 64)))
-                polygon = QPolygonF()
-                for pt in zone_coords:
-                    if isinstance(pt, (list, tuple)) and len(pt) == 2:
-                        px, py = pt
-                        # Normalize if coordinates are in pixels
-                        if bbox_img_w > 0 and bbox_img_h > 0:
-                            if px > 1.0 or py > 1.0:
-                                px = px / bbox_img_w
-                                py = py / bbox_img_h
+                # Normalize zone coords using EventMetadataExtractor
+                normalized_zone = EventMetadataExtractor.normalize_zone_coords(zone_coords, bbox_img_w, bbox_img_h)
+                if normalized_zone:
+                    pen = QPen(QColor(255, 0, 0), 2)
+                    painter.setPen(pen)
+                    painter.setBrush(QBrush(QColor(255, 0, 0, 64)))
+                    polygon = QPolygonF()
+                    for pt in normalized_zone:
+                        px, py = pt  # Already normalized to [0,1] by EventMetadataExtractor
                         x = draw_x + int(px * draw_w)
                         y = draw_y + int(py * draw_h)
                         polygon.append(QPointF(x, y))
-                if polygon.count() > 0:
-                    painter.drawPolygon(polygon)
+                    if polygon.count() > 0:
+                        painter.drawPolygon(polygon)
         finally:
             if painter.isActive():
                 painter.end()

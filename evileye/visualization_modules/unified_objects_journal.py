@@ -21,34 +21,24 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from .journal_data_source import EventJournalDataSource
 from .unified_journal_components import UnifiedImageDelegate, UnifiedDateTimeDelegate, UnifiedImageWindow
+from .unified_journal_base import UnifiedJournalBase
 from ..core.logger import get_module_logger
 import logging
 
 
-class UnifiedObjectsJournal(QWidget):
+class UnifiedObjectsJournal(UnifiedJournalBase):
     """Унифицированный журнал объектов, работающий с любым источником данных"""
     
     def __init__(self, data_source: EventJournalDataSource, base_dir: str = None, 
                  parent=None, logger_name: str | None = None, parent_logger: logging.Logger | None = None):
-        super().__init__(parent)
+        # Инициализировать базовый класс
         base_name = "evileye.unified_objects_journal"
         full_name = f"{base_name}.{logger_name}" if logger_name else base_name
-        self.logger = parent_logger or logging.getLogger(full_name)
+        logger = parent_logger or logging.getLogger(full_name)
+        super().__init__(data_source, base_dir, parent, full_name, logger)
+        
         self.setWindowTitle('Objects journal')
         self.resize(1600, 600)
-        
-        self.data_source = data_source
-        # Get base_dir from data_source if available
-        if base_dir:
-            self.base_dir = base_dir
-        else:
-            # Try to get from data_source attributes
-            image_dir = getattr(data_source, 'image_dir', None)
-            if image_dir:
-                self.base_dir = image_dir
-            else:
-                base_dir_attr = getattr(data_source, 'base_dir', None)
-                self.base_dir = base_dir_attr if base_dir_attr else ''
         
         self.page = 0
         self.page_size = 50
@@ -66,9 +56,6 @@ class UnifiedObjectsJournal(QWidget):
         self._max_cache_size = 500  # Maximum cache size
         self._min_keep_size = 30  # Minimum records to keep (latest)
         self._is_loading = False  # Flag to prevent duplicate loading
-        
-        # Cache for resolved image paths
-        self._image_path_cache = {}
         
         # Closing / scroll / update flags
         self._is_closing = False
@@ -726,142 +713,6 @@ class UnifiedObjectsJournal(QWidget):
             self.table.setSortingEnabled(True)
             self.table.setUpdatesEnabled(True)
 
-    def _resolve_image_path(self, img_path: str, event_data: Optional[dict]) -> Optional[str]:
-        """Resolve image path to full absolute path with caching"""
-        if not img_path:
-            return None
-        
-        # Get date_folder from event_data
-        date_folder = ''
-        if event_data:
-            date_folder = event_data.get('date_folder', '')
-        
-        # Create cache key including date_folder for proper caching
-        cache_key = img_path
-        if date_folder:
-            cache_key = f"{img_path}:{date_folder}"
-        
-        # Check cache first
-        if cache_key in self._image_path_cache:
-            cached_path = self._image_path_cache[cache_key]
-            # Verify cached path still exists
-            if cached_path and os.path.exists(cached_path):
-                return cached_path
-            # Remove invalid cache entry
-            del self._image_path_cache[cache_key]
-        
-        # Already absolute
-        if os.path.isabs(img_path):
-            resolved = img_path if os.path.exists(img_path) else None
-            self._image_path_cache[cache_key] = resolved
-            return resolved
-        
-        # Convert frame paths to preview paths for objects (detected_frames -> FoundPreviews, lost_frames -> LostPreviews)
-        resolved = None
-        if 'detected_frames' in img_path or 'lost_frames' in img_path:
-            # Extract filename
-            filename = os.path.basename(img_path)
-            # Convert _frame.jpeg to _preview.jpeg
-            if filename.endswith('_frame.jpeg'):
-                preview_filename = filename.replace('_frame.jpeg', '_preview.jpeg')
-            elif filename.endswith('_frame.jpg'):
-                preview_filename = filename.replace('_frame.jpg', '_preview.jpg')
-            else:
-                # If no _frame suffix, try to add _preview before extension
-                name, ext = os.path.splitext(filename)
-                preview_filename = f"{name}_preview{ext}"
-            
-            # Determine type (found/lost) and corresponding folder
-            if 'detected_frames' in img_path:
-                preview_dir = 'FoundPreviews'
-            else:  # lost_frames
-                preview_dir = 'LostPreviews'
-            
-            # Build path to preview
-            if date_folder and self.base_dir:
-                preview_path = os.path.join(
-                    self.base_dir, 'Detections', date_folder, 'Images', preview_dir, preview_filename
-                )
-                if os.path.exists(preview_path):
-                    resolved = preview_path
-                    self._image_path_cache[cache_key] = resolved
-                    return resolved
-            
-            # Fallback: try without date_folder (extract from filename if possible)
-            if self.base_dir:
-                # Try to extract date from filename (format: YYYY-MM-DD_HH-MM-SS...)
-                import re
-                date_match = re.search(r'(\d{4}-\d{2}-\d{2})', filename)
-                if date_match:
-                    extracted_date = date_match.group(1)
-                    preview_path = os.path.join(
-                        self.base_dir, 'Detections', extracted_date, 'Images', preview_dir, preview_filename
-                    )
-                    if os.path.exists(preview_path):
-                        resolved = preview_path
-                        self._image_path_cache[cache_key] = resolved
-                        return resolved
-                
-                # Try recent dates
-                import datetime
-                today = datetime.datetime.now().date()
-                yesterday = today - datetime.timedelta(days=1)
-                for check_date in [today.strftime('%Y-%m-%d'), yesterday.strftime('%Y-%m-%d')]:
-                    preview_path = os.path.join(
-                        self.base_dir, 'Detections', check_date, 'Images', preview_dir, preview_filename
-                    )
-                    if os.path.exists(preview_path):
-                        resolved = preview_path
-                        self._image_path_cache[cache_key] = resolved
-                        return resolved
-        
-        # Try with base_dir
-        if self.base_dir:
-            # Try direct path
-            full_path = os.path.join(self.base_dir, img_path)
-            if os.path.exists(full_path):
-                resolved = full_path
-            else:
-                # Try with date_folder from event
-                if event_data:
-                    date_folder = event_data.get('date_folder', '')
-                    if date_folder:
-                        # New structure: Detections/YYYY-MM-DD/Images/FoundPreviews or LostPreviews
-                        candidates = [
-                            os.path.join(self.base_dir, 'Detections', date_folder, 'Images', 'FoundPreviews', os.path.basename(img_path)),
-                            os.path.join(self.base_dir, 'Detections', date_folder, 'Images', 'LostPreviews', os.path.basename(img_path)),
-                            os.path.join(self.base_dir, 'images', date_folder, 'found_previews', os.path.basename(img_path)),
-                            os.path.join(self.base_dir, 'images', date_folder, 'lost_previews', os.path.basename(img_path)),
-                            os.path.join(self.base_dir, 'images', date_folder, img_path),
-                        ]
-                        for cand in candidates:
-                            if cand and os.path.exists(cand):
-                                resolved = cand
-                                break
-                
-                # Fallback: if preview not found for detected_frames/lost_frames, try to find frame
-                if not resolved and ('detected_frames' in img_path or 'lost_frames' in img_path) and date_folder:
-                    # Try to find frame file as fallback
-                    frame_filename = os.path.basename(img_path)
-                    if 'detected_frames' in img_path:
-                        frame_dir = 'FoundFrames'
-                    else:  # lost_frames
-                        frame_dir = 'LostFrames'
-                    frame_path = os.path.join(
-                        self.base_dir, 'Detections', date_folder, 'Images', frame_dir, frame_filename
-                    )
-                    if os.path.exists(frame_path):
-                        resolved = frame_path
-                
-                # Legacy paths
-                if not resolved and (img_path.startswith('images' + os.sep) or img_path.startswith('images/')):
-                    full_path = os.path.join(self.base_dir, img_path)
-                    if os.path.exists(full_path):
-                        resolved = full_path
-        
-        # Cache result
-        self._image_path_cache[cache_key] = resolved
-        return resolved
 
     @pyqtSlot(int, int)
     def _display_image(self, row, col):
@@ -973,63 +824,6 @@ class UnifiedObjectsJournal(QWidget):
                 
         except Exception as e:
             self.logger.error(f"Error displaying image: {e}", exc_info=True)
-
-    def _resolve_frame_path(self, preview_path: str, event_data: Optional[dict]) -> Optional[str]:
-        """Resolve preview path to full frame path"""
-        if not preview_path or 'preview' not in preview_path.lower():
-            return None
-        
-        # Replace preview with frame
-        frame_path = preview_path.replace('previews', 'frames').replace('_preview.', '_frame.')
-        frame_path = frame_path.replace('FoundPreviews', 'FoundFrames')
-        frame_path = frame_path.replace('LostPreviews', 'LostFrames')
-        frame_path = frame_path.replace('found_previews', 'found_frames')
-        frame_path = frame_path.replace('lost_previews', 'lost_frames')
-        
-        if os.path.exists(frame_path):
-            return frame_path
-        
-        return None
-
-    def _normalize_bbox(self, box, img_path: str) -> Optional[list]:
-        """Normalize bounding box to [x1, y1, x2, y2] format in [0,1] range"""
-        if not box:
-            return None
-        
-        try:
-            from PyQt6.QtGui import QPixmap
-        except ImportError:
-            from PyQt5.QtGui import QPixmap
-        
-        pixmap = QPixmap(img_path)
-        if pixmap.isNull():
-            return None
-        
-        img_w, img_h = pixmap.width(), pixmap.height()
-        if img_w <= 0 or img_h <= 0:
-            return None
-        
-        try:
-            if isinstance(box, dict):
-                x = box.get('x', 0)
-                y = box.get('y', 0)
-                w = box.get('width', 0)
-                h = box.get('height', 0)
-                if max(x, y, w, h) <= 1.0:
-                    return [x, y, x + w, y + h]
-                else:
-                    return [x / img_w, y / img_h, (x + w) / img_w, (y + h) / img_h]
-            elif isinstance(box, (list, tuple)) and len(box) == 4:
-                a, b, c, d = box
-                if max(a, b, c, d) <= 1.0:
-                    return [a, b, c, d]
-                else:
-                    # Assume [x, y, w, h] in pixels
-                    return [a / img_w, b / img_h, (a + c) / img_w, (b + d) / img_h]
-        except Exception:
-            pass
-        
-        return None
 
     def showEvent(self, event):
         """Handle show event - load data only on first show"""
