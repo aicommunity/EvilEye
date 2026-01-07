@@ -268,13 +268,15 @@ class UnifiedObjectsJournal(QWidget):
                 continue
 
             # Format information string
-            object_id_val = base_event.get('object_id', '')
-            class_name = base_event.get('class_name') or base_event.get('class_id', '')
-            confidence = base_event.get('confidence', 0)
+            object_id_val = base_event.get('object_id', '') or base_event.get('id', '') or ''
+            class_name = base_event.get('class_name') or base_event.get('class_id', '') or base_event.get('class', '') or ''
+            confidence = base_event.get('confidence') or base_event.get('conf', 0)
+            if confidence is None:
+                confidence = 0
             if isinstance(confidence, (int, float)):
                 conf_str = f"{confidence:.2f}"
             else:
-                conf_str = str(confidence)
+                conf_str = str(confidence) if confidence else '0.00'
             
             information = f"Object Id={object_id_val}; class: {class_name}; conf: {conf_str}"
 
@@ -519,13 +521,15 @@ class UnifiedObjectsJournal(QWidget):
                     continue
                 
                 # Format information string
-                object_id_val = base_event.get('object_id', '')
-                class_name = base_event.get('class_name') or base_event.get('class_id', '')
-                confidence = base_event.get('confidence', 0)
+                object_id_val = base_event.get('object_id', '') or base_event.get('id', '') or ''
+                class_name = base_event.get('class_name') or base_event.get('class_id', '') or base_event.get('class', '') or ''
+                confidence = base_event.get('confidence') or base_event.get('conf', 0)
+                if confidence is None:
+                    confidence = 0
                 if isinstance(confidence, (int, float)):
                     conf_str = f"{confidence:.2f}"
                 else:
-                    conf_str = str(confidence)
+                    conf_str = str(confidence) if confidence else '0.00'
                 
                 information = f"Object Id={object_id_val}; class: {class_name}; conf: {conf_str}"
                 
@@ -727,12 +731,15 @@ class UnifiedObjectsJournal(QWidget):
         if not img_path:
             return None
         
-        # Create cache key including date_folder for proper caching
-        cache_key = img_path
+        # Get date_folder from event_data
+        date_folder = ''
         if event_data:
             date_folder = event_data.get('date_folder', '')
-            if date_folder:
-                cache_key = f"{img_path}:{date_folder}"
+        
+        # Create cache key including date_folder for proper caching
+        cache_key = img_path
+        if date_folder:
+            cache_key = f"{img_path}:{date_folder}"
         
         # Check cache first
         if cache_key in self._image_path_cache:
@@ -749,8 +756,66 @@ class UnifiedObjectsJournal(QWidget):
             self._image_path_cache[cache_key] = resolved
             return resolved
         
-        # Try with base_dir
+        # Convert frame paths to preview paths for objects (detected_frames -> FoundPreviews, lost_frames -> LostPreviews)
         resolved = None
+        if 'detected_frames' in img_path or 'lost_frames' in img_path:
+            # Extract filename
+            filename = os.path.basename(img_path)
+            # Convert _frame.jpeg to _preview.jpeg
+            if filename.endswith('_frame.jpeg'):
+                preview_filename = filename.replace('_frame.jpeg', '_preview.jpeg')
+            elif filename.endswith('_frame.jpg'):
+                preview_filename = filename.replace('_frame.jpg', '_preview.jpg')
+            else:
+                # If no _frame suffix, try to add _preview before extension
+                name, ext = os.path.splitext(filename)
+                preview_filename = f"{name}_preview{ext}"
+            
+            # Determine type (found/lost) and corresponding folder
+            if 'detected_frames' in img_path:
+                preview_dir = 'FoundPreviews'
+            else:  # lost_frames
+                preview_dir = 'LostPreviews'
+            
+            # Build path to preview
+            if date_folder and self.base_dir:
+                preview_path = os.path.join(
+                    self.base_dir, 'Detections', date_folder, 'Images', preview_dir, preview_filename
+                )
+                if os.path.exists(preview_path):
+                    resolved = preview_path
+                    self._image_path_cache[cache_key] = resolved
+                    return resolved
+            
+            # Fallback: try without date_folder (extract from filename if possible)
+            if self.base_dir:
+                # Try to extract date from filename (format: YYYY-MM-DD_HH-MM-SS...)
+                import re
+                date_match = re.search(r'(\d{4}-\d{2}-\d{2})', filename)
+                if date_match:
+                    extracted_date = date_match.group(1)
+                    preview_path = os.path.join(
+                        self.base_dir, 'Detections', extracted_date, 'Images', preview_dir, preview_filename
+                    )
+                    if os.path.exists(preview_path):
+                        resolved = preview_path
+                        self._image_path_cache[cache_key] = resolved
+                        return resolved
+                
+                # Try recent dates
+                import datetime
+                today = datetime.datetime.now().date()
+                yesterday = today - datetime.timedelta(days=1)
+                for check_date in [today.strftime('%Y-%m-%d'), yesterday.strftime('%Y-%m-%d')]:
+                    preview_path = os.path.join(
+                        self.base_dir, 'Detections', check_date, 'Images', preview_dir, preview_filename
+                    )
+                    if os.path.exists(preview_path):
+                        resolved = preview_path
+                        self._image_path_cache[cache_key] = resolved
+                        return resolved
+        
+        # Try with base_dir
         if self.base_dir:
             # Try direct path
             full_path = os.path.join(self.base_dir, img_path)
@@ -773,6 +838,20 @@ class UnifiedObjectsJournal(QWidget):
                             if cand and os.path.exists(cand):
                                 resolved = cand
                                 break
+                
+                # Fallback: if preview not found for detected_frames/lost_frames, try to find frame
+                if not resolved and ('detected_frames' in img_path or 'lost_frames' in img_path) and date_folder:
+                    # Try to find frame file as fallback
+                    frame_filename = os.path.basename(img_path)
+                    if 'detected_frames' in img_path:
+                        frame_dir = 'FoundFrames'
+                    else:  # lost_frames
+                        frame_dir = 'LostFrames'
+                    frame_path = os.path.join(
+                        self.base_dir, 'Detections', date_folder, 'Images', frame_dir, frame_filename
+                    )
+                    if os.path.exists(frame_path):
+                        resolved = frame_path
                 
                 # Legacy paths
                 if not resolved and (img_path.startswith('images' + os.sep) or img_path.startswith('images/')):

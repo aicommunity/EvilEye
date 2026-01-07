@@ -76,6 +76,9 @@ class UnifiedImageDelegate(QStyledItemDelegate):
         # Resolve full path
         full_path = self._resolve_image_path(img_path, date_folder)
         if not full_path or not os.path.exists(full_path):
+            # Log for debugging
+            if hasattr(self, 'logger'):
+                self.logger.debug(f"Image not found: img_path={img_path}, date_folder={date_folder}, base_dir={self.base_dir}, resolved={full_path}")
             return
             
         # Load image
@@ -107,6 +110,34 @@ class UnifiedImageDelegate(QStyledItemDelegate):
         if event_data:
             box = event_data.get('bounding_box') or event_data.get('box')
             zone_coords = event_data.get('zone_coords')
+        
+        # For bbox normalization: if we have a preview image and coordinates in pixels,
+        # try to find original frame image to use its dimensions for normalization
+        bbox_img_w = img_w
+        bbox_img_h = img_h
+        if box and ('preview' in full_path.lower() or 'preview' in img_path.lower()):
+            # Check if coordinates are likely in pixels (from original frame)
+            is_pixels = False
+            if isinstance(box, dict):
+                x = float(box.get('x', 0) or 0)
+                y = float(box.get('y', 0) or 0)
+                w = float(box.get('width', 0) or 0)
+                h = float(box.get('height', 0) or 0)
+                is_pixels = max(x, y, w, h) > 1.0
+            elif isinstance(box, (list, tuple)) and len(box) == 4:
+                is_pixels = max(float(v) for v in box) > 1.0
+            
+            if is_pixels:
+                # Try to find original frame image
+                frame_path = self._resolve_frame_path(full_path)
+                if frame_path and os.path.exists(frame_path):
+                    try:
+                        frame_pixmap = QPixmap(frame_path)
+                        if not frame_pixmap.isNull():
+                            bbox_img_w = frame_pixmap.width()
+                            bbox_img_h = frame_pixmap.height()
+                    except Exception:
+                        pass  # Fallback to preview dimensions
         
         # If no data in event_data, try to get from database
         if (not box and not zone_coords) and self.db_connection_name:
@@ -150,7 +181,7 @@ class UnifiedImageDelegate(QStyledItemDelegate):
         
         # Draw overlays if available
         if box or zone_coords:
-            self._draw_overlays_from_data(painter, box, zone_coords, draw_x, draw_y, draw_w, draw_h)
+            self._draw_overlays_from_data(painter, box, zone_coords, draw_x, draw_y, draw_w, draw_h, bbox_img_w, bbox_img_h)
         
         # Get video paths for events journal (independent of Found/Lost buttons)
         found_video_path = preview_data.get('found_video_path') if self.journal_type == 'events' else None
@@ -351,9 +382,37 @@ class UnifiedImageDelegate(QStyledItemDelegate):
             box = event_data.get('bounding_box') or event_data.get('box')
             zone_coords = event_data.get('zone_coords')
         
+        # For bbox normalization: if we have a preview image and coordinates in pixels,
+        # try to find original frame image to use its dimensions for normalization
+        bbox_img_w = img_w
+        bbox_img_h = img_h
+        if box and ('preview' in full_path.lower()):
+            # Check if coordinates are likely in pixels (from original frame)
+            is_pixels = False
+            if isinstance(box, dict):
+                x = float(box.get('x', 0) or 0)
+                y = float(box.get('y', 0) or 0)
+                w = float(box.get('width', 0) or 0)
+                h = float(box.get('height', 0) or 0)
+                is_pixels = max(x, y, w, h) > 1.0
+            elif isinstance(box, (list, tuple)) and len(box) == 4:
+                is_pixels = max(float(v) for v in box) > 1.0
+            
+            if is_pixels:
+                # Try to find original frame image
+                frame_path = self._resolve_frame_path(full_path)
+                if frame_path and os.path.exists(frame_path):
+                    try:
+                        frame_pixmap = QPixmap(frame_path)
+                        if not frame_pixmap.isNull():
+                            bbox_img_w = frame_pixmap.width()
+                            bbox_img_h = frame_pixmap.height()
+                    except Exception:
+                        pass  # Fallback to preview dimensions
+        
         # Draw overlays if available
         if box or zone_coords:
-            self._draw_overlays_from_data(painter, box, zone_coords, draw_x, draw_y, draw_w, draw_h)
+            self._draw_overlays_from_data(painter, box, zone_coords, draw_x, draw_y, draw_w, draw_h, bbox_img_w, bbox_img_h)
     
     def editorEvent(self, event, model, option, index):
         """Handle mouse clicks on switching buttons"""
@@ -639,6 +698,58 @@ class UnifiedImageDelegate(QStyledItemDelegate):
         if os.path.isabs(img_path):
             return img_path if os.path.exists(img_path) else None
         
+        # Convert frame paths to preview paths for objects (detected_frames -> FoundPreviews, lost_frames -> LostPreviews)
+        if 'detected_frames' in img_path or 'lost_frames' in img_path:
+            # Extract filename
+            filename = os.path.basename(img_path)
+            # Convert _frame.jpeg to _preview.jpeg
+            if filename.endswith('_frame.jpeg'):
+                preview_filename = filename.replace('_frame.jpeg', '_preview.jpeg')
+            elif filename.endswith('_frame.jpg'):
+                preview_filename = filename.replace('_frame.jpg', '_preview.jpg')
+            else:
+                # If no _frame suffix, try to add _preview before extension
+                name, ext = os.path.splitext(filename)
+                preview_filename = f"{name}_preview{ext}"
+            
+            # Determine type (found/lost) and corresponding folder
+            if 'detected_frames' in img_path:
+                preview_dir = 'FoundPreviews'
+            else:  # lost_frames
+                preview_dir = 'LostPreviews'
+            
+            # Build path to preview
+            if date_folder and self.base_dir:
+                preview_path = os.path.join(
+                    self.base_dir, 'Detections', date_folder, 'Images', preview_dir, preview_filename
+                )
+                if os.path.exists(preview_path):
+                    return preview_path
+            
+            # Fallback: try without date_folder (extract from filename if possible)
+            if self.base_dir:
+                # Try to extract date from filename (format: YYYY-MM-DD_HH-MM-SS...)
+                import re
+                date_match = re.search(r'(\d{4}-\d{2}-\d{2})', filename)
+                if date_match:
+                    extracted_date = date_match.group(1)
+                    preview_path = os.path.join(
+                        self.base_dir, 'Detections', extracted_date, 'Images', preview_dir, preview_filename
+                    )
+                    if os.path.exists(preview_path):
+                        return preview_path
+                
+                # Try recent dates
+                import datetime
+                today = datetime.datetime.now().date()
+                yesterday = today - datetime.timedelta(days=1)
+                for check_date in [today.strftime('%Y-%m-%d'), yesterday.strftime('%Y-%m-%d')]:
+                    preview_path = os.path.join(
+                        self.base_dir, 'Detections', check_date, 'Images', preview_dir, preview_filename
+                    )
+                    if os.path.exists(preview_path):
+                        return preview_path
+        
         # Relative to base_dir (like old ImageDelegate: os.path.join(self.image_dir, path))
         if self.base_dir:
             # Primary: try direct path (path is relative to base_dir, like in old journal)
@@ -662,6 +773,20 @@ class UnifiedImageDelegate(QStyledItemDelegate):
                 for cand in candidates:
                     if cand and os.path.exists(cand):
                         return cand
+            
+            # Fallback: if preview not found for detected_frames/lost_frames, try to find frame
+            if ('detected_frames' in img_path or 'lost_frames' in img_path) and date_folder:
+                # Try to find frame file as fallback
+                frame_filename = os.path.basename(img_path)
+                if 'detected_frames' in img_path:
+                    frame_dir = 'FoundFrames'
+                else:  # lost_frames
+                    frame_dir = 'LostFrames'
+                frame_path = os.path.join(
+                    self.base_dir, 'Detections', date_folder, 'Images', frame_dir, frame_filename
+                )
+                if os.path.exists(frame_path):
+                    return frame_path
             
             # Fallback: try with 'images' prefix (legacy)
             if not img_path.startswith('images') and not img_path.startswith('Events') and not img_path.startswith('Detections'):
@@ -687,26 +812,130 @@ class UnifiedImageDelegate(QStyledItemDelegate):
         
         return None
 
+    def _resolve_frame_path(self, preview_path: str) -> Optional[str]:
+        """Resolve preview path to original frame path for correct bbox normalization"""
+        if not preview_path or 'preview' not in preview_path.lower():
+            return None
+        
+        # Try various replacements to find frame image
+        candidates = []
+        
+        # New structure: FoundPreviews -> FoundFrames, LostPreviews -> LostFrames
+        if 'FoundPreviews' in preview_path:
+            candidates.append(preview_path.replace('FoundPreviews', 'FoundFrames').replace('_preview.', '_frame.'))
+        elif 'LostPreviews' in preview_path:
+            candidates.append(preview_path.replace('LostPreviews', 'LostFrames').replace('_preview.', '_frame.'))
+        
+        # Generic replacements
+        candidates.append(preview_path.replace('previews', 'frames').replace('_preview.', '_frame.'))
+        candidates.append(preview_path.replace('found_previews', 'found_frames').replace('_preview.', '_frame.'))
+        candidates.append(preview_path.replace('lost_previews', 'lost_frames').replace('_preview.', '_frame.'))
+        candidates.append(preview_path.replace('detected_previews', 'found_frames').replace('_preview.', '_frame.'))
+        
+        # Try with base_dir if preview_path is relative
+        if self.base_dir:
+            filename = os.path.basename(preview_path)
+            frame_filename = filename.replace('_preview.', '_frame.').replace('preview', 'frame')
+            # Extract date folder from preview_path if possible
+            parts = preview_path.split(os.sep)
+            date_folder = None
+            for i, part in enumerate(parts):
+                if part in ('Events', 'Detections') and i + 1 < len(parts):
+                    date_folder = parts[i + 1]
+                    break
+            
+            if date_folder:
+                candidates.extend([
+                    os.path.join(self.base_dir, 'Detections', date_folder, 'Images', 'FoundFrames', frame_filename),
+                    os.path.join(self.base_dir, 'Detections', date_folder, 'Images', 'LostFrames', frame_filename),
+                    os.path.join(self.base_dir, 'Events', date_folder, 'Images', 'FoundFrames', frame_filename),
+                    os.path.join(self.base_dir, 'Events', date_folder, 'Images', 'LostFrames', frame_filename),
+                ])
+        
+        # Check candidates
+        for cand in candidates:
+            if cand and os.path.exists(cand):
+                return cand
+        
+        return None
+
     def _draw_overlays(self, painter, event_data: dict, draw_x: int, draw_y: int, 
                       draw_w: int, draw_h: int, img_path: str):
         """Draw bounding box and zone overlays from event data"""
         box = event_data.get('bounding_box') or event_data.get('box')
         zone_coords = event_data.get('zone_coords')
-        self._draw_overlays_from_data(painter, box, zone_coords, draw_x, draw_y, draw_w, draw_h)
+        # Try to get image dimensions from img_path for normalization
+        img_w = None
+        img_h = None
+        if img_path and os.path.exists(img_path):
+            try:
+                pixmap = QPixmap(img_path)
+                if not pixmap.isNull():
+                    img_w = pixmap.width()
+                    img_h = pixmap.height()
+            except Exception:
+                pass
+        self._draw_overlays_from_data(painter, box, zone_coords, draw_x, draw_y, draw_w, draw_h, img_w, img_h)
     
     def _draw_overlays_from_data(self, painter, box, zone_coords, draw_x: int, draw_y: int, 
-                                  draw_w: int, draw_h: int):
+                                  draw_w: int, draw_h: int, img_w: int = None, img_h: int = None):
         """Draw bounding box and zone overlays from box and zone_coords data"""
+        # Normalize bbox to [x1, y1, x2, y2] in float, skip invalid values
+        norm_box = None
+        try:
+            if box:
+                if isinstance(box, dict):
+                    # Dict format {x, y, width, height} (pixel or normalized)
+                    x = float(box.get('x', 0) or 0)
+                    y = float(box.get('y', 0) or 0)
+                    w = float(box.get('width', 0) or 0)
+                    h = float(box.get('height', 0) or 0)
+                    # Check if coordinates are in pixels (need normalization)
+                    if img_w and img_h and img_w > 0 and img_h > 0:
+                        if max(x, y, w, h) > 1.0:
+                            # Coordinates are in pixels, normalize to [0,1]
+                            x = x / img_w
+                            y = y / img_h
+                            w = w / img_w
+                            h = h / img_h
+                    norm_box = [x, y, x + w, y + h]
+                elif isinstance(box, (list, tuple)) and len(box) == 4:
+                    coords = [float(v) for v in box]
+                    # Check if coordinates are in pixels (need normalization)
+                    if img_w and img_h and img_w > 0 and img_h > 0:
+                        if max(coords) > 1.0:
+                            # Coordinates are in pixels, normalize to [0,1]
+                            # Try format [x, y, w, h] first (most common in JSON)
+                            x, y, w, h = coords
+                            # Check if w and h are reasonable (not too large)
+                            if w > 0 and h > 0 and w < img_w * 2 and h < img_h * 2:
+                                # Likely [x, y, w, h] in pixels
+                                norm_box = [x / img_w, y / img_h, (x + w) / img_w, (y + h) / img_h]
+                            else:
+                                # Likely [x1, y1, x2, y2] in pixels
+                                x1, y1, x2, y2 = coords
+                                norm_box = [x1 / img_w, y1 / img_h, x2 / img_w, y2 / img_h]
+                        else:
+                            # Already normalized [x1, y1, x2, y2] in [0,1]
+                            norm_box = coords
+                    else:
+                        # No image dimensions, assume already normalized
+                        norm_box = coords
+        except Exception:
+            norm_box = None
+
         # Draw bounding box
-        if box and len(box) == 4:
+        if norm_box:
             painter.setPen(QPen(QColor(0, 255, 0), 2))  # Green for bbox
-            # Coordinates are normalized [x1, y1, x2, y2]
-            x1, y1, x2, y2 = box
-            x = draw_x + int(x1 * draw_w)
-            y = draw_y + int(y1 * draw_h)
-            w = int((x2 - x1) * draw_w)
-            h = int((y2 - y1) * draw_h)
-            painter.drawRect(x, y, w, h)
+            try:
+                x1, y1, x2, y2 = norm_box
+                x = draw_x + int(x1 * draw_w)
+                y = draw_y + int(y1 * draw_h)
+                w = int((x2 - x1) * draw_w)
+                h = int((y2 - y1) * draw_h)
+                painter.drawRect(x, y, w, h)
+            except Exception:
+                pass  # Skip drawing if values are invalid
         
         # Draw zone
         if zone_coords:
@@ -715,7 +944,16 @@ class UnifiedImageDelegate(QStyledItemDelegate):
             polygon = QPolygonF()
             for pt in zone_coords:
                 if isinstance(pt, (list, tuple)) and len(pt) == 2:
-                    px, py = pt
+                    try:
+                        px = float(pt[0])
+                        py = float(pt[1])
+                        # Normalize if coordinates are in pixels
+                        if img_w and img_h and img_w > 0 and img_h > 0:
+                            if px > 1.0 or py > 1.0:
+                                px = px / img_w
+                                py = py / img_h
+                    except Exception:
+                        continue
                     x = draw_x + int(px * draw_w)
                     y = draw_y + int(py * draw_h)
                     polygon.append(QPointF(x, y))

@@ -60,7 +60,7 @@ class JsonJournalWindow(QWidget):
         if self.obj_journal_enabled:
             try:
                 # Create JsonLabelJournalDataSource for objects
-                objects_ds = JsonLabelJournalDataSource(self.images_dir)
+                objects_ds = JsonLabelJournalDataSource(self.images_dir, params=self.params)
                 
                 # Create UnifiedObjectsJournal
                 objects_journal = UnifiedObjectsJournal(
@@ -79,7 +79,7 @@ class JsonJournalWindow(QWidget):
         # Add Events journal tab
         try:
             # Create JsonLabelJournalDataSource for events
-            events_ds = JsonLabelJournalDataSource(self.images_dir)
+            events_ds = JsonLabelJournalDataSource(self.images_dir, params=self.params)
             
             # Create UnifiedEventsJournal
             events_journal_widget = UnifiedEventsJournal(
@@ -133,7 +133,7 @@ class JsonJournalWindow(QWidget):
         # Recreate Objects (if enabled)
         if self.obj_journal_enabled:
             try:
-                objects_ds = JsonLabelJournalDataSource(self.images_dir)
+                objects_ds = JsonLabelJournalDataSource(self.images_dir, params=self.params)
                 objects_journal = UnifiedObjectsJournal(
                     objects_ds,
                     base_dir=self.images_dir,
@@ -146,7 +146,7 @@ class JsonJournalWindow(QWidget):
                 self.logger.error(f"Failed to recreate Objects journal: {e}")
         # Recreate Events
         try:
-            events_ds = JsonLabelJournalDataSource(self.images_dir)
+            events_ds = JsonLabelJournalDataSource(self.images_dir, params=self.params)
             events_journal = UnifiedEventsJournal(
                 events_ds,
                 base_dir=self.images_dir,
@@ -187,7 +187,7 @@ class JsonJournalWindow(QWidget):
         # Create if missing
         try:
             if title.lower().startswith('objects'):
-                objects_ds = JsonLabelJournalDataSource(self.images_dir)
+                objects_ds = JsonLabelJournalDataSource(self.images_dir, params=self.params)
                 widget = UnifiedObjectsJournal(
                     objects_ds,
                     base_dir=self.images_dir,
@@ -203,7 +203,7 @@ class JsonJournalWindow(QWidget):
                     pass
                 return idx
             if title.lower().startswith('events'):
-                events_ds = JsonLabelJournalDataSource(self.images_dir)
+                events_ds = JsonLabelJournalDataSource(self.images_dir, params=self.params)
                 widget = UnifiedEventsJournal(
                     events_ds,
                     base_dir=self.images_dir,

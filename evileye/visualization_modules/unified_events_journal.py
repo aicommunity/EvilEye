@@ -1212,11 +1212,13 @@ class UnifiedEventsJournal(QWidget):
         if isinstance(time_stamp, datetime.datetime):
             date_folder = time_stamp.strftime('%Y-%m-%d')
             time_str = time_stamp.strftime('%Y%m%d_%H%M%S')
+            time_str_partial = time_stamp.strftime('%Y%m%d_%H%M')  # For flexible matching (ignore seconds)
         elif isinstance(time_stamp, str):
             try:
                 dt = datetime.datetime.fromisoformat(time_stamp.replace('Z', '+00:00'))
                 date_folder = dt.strftime('%Y-%m-%d')
                 time_str = dt.strftime('%Y%m%d_%H%M%S')
+                time_str_partial = dt.strftime('%Y%m%d_%H%M')  # For flexible matching (ignore seconds)
             except Exception as e:
                 self.logger.warning(f"Failed to parse timestamp '{time_stamp}' for video resolution: {e}, preview={preview_path}")
                 return None
@@ -1305,6 +1307,24 @@ class UnifiedEventsJournal(QWidget):
                         video_path = matching_files[0]
                         self.logger.info(f"Found video fragment (searched all folders): type={event_type}, event_id={event_id_numeric}, time={time_str}, path={video_path}, preview={preview_path}")
                         return video_path
+                    
+                    # Also try with any event_id (event_id_numeric may not match real DB event_id)
+                    # Look for files matching time_str and event_name
+                    pattern_time = f'*_{event_name}_*_{time_str}.mp4'
+                    matching_files = glob.glob(os.path.join(folder_path, pattern_time))
+                    if matching_files:
+                        # Prefer files with source_name in filename
+                        for video_path in matching_files:
+                            filename = os.path.basename(video_path)
+                            # Check if any of possible_source_names is in filename
+                            if any(src_name in filename for src_name in possible_source_names if src_name):
+                                self.logger.info(f"Found video fragment (by time and source): type={event_type}, time={time_str}, path={video_path}, preview={preview_path}")
+                                return video_path
+                        # If no match by source_name, use first found
+                        if matching_files:
+                            video_path = matching_files[0]
+                            self.logger.info(f"Found video fragment (by time only): type={event_type}, time={time_str}, path={video_path}, preview={preview_path}")
+                            return video_path
             except Exception as e:
                 self.logger.debug(f"Error searching all folders: {e}, preview={preview_path}")
         
@@ -1319,6 +1339,44 @@ class UnifiedEventsJournal(QWidget):
                 if os.path.exists(alt_path):
                     self.logger.info(f"Found video fragment (alt format) for event: type={event_type}, source={src_name}, camera_folder={camera_folder}, time={time_str}, path={alt_path}, preview={preview_path}")
                     return alt_path
+        
+        # Final fallback: search all folders for files matching time_str (most flexible)
+        if os.path.exists(videos_base_dir):
+            try:
+                import glob
+                # First, try exact time match
+                pattern = f'*_{event_name}_*_{time_str}.mp4'
+                all_matching = []
+                for folder_name in os.listdir(videos_base_dir):
+                    folder_path = os.path.join(videos_base_dir, folder_name)
+                    if not os.path.isdir(folder_path):
+                        continue
+                    matching_files = glob.glob(os.path.join(folder_path, pattern))
+                    all_matching.extend(matching_files)
+                
+                # If no exact match, try partial time match (ignore seconds) - allows for small time differences
+                if not all_matching:
+                    pattern_partial = f'*_{event_name}_*_{time_str_partial}*.mp4'
+                    for folder_name in os.listdir(videos_base_dir):
+                        folder_path = os.path.join(videos_base_dir, folder_name)
+                        if not os.path.isdir(folder_path):
+                            continue
+                        matching_files = glob.glob(os.path.join(folder_path, pattern_partial))
+                        all_matching.extend(matching_files)
+                
+                if all_matching:
+                    # Prefer files with source_name in filename
+                    for video_path in all_matching:
+                        filename = os.path.basename(video_path)
+                        if any(src_name in filename for src_name in possible_source_names if src_name):
+                            self.logger.info(f"Found video fragment (final fallback by time and source): type={event_type}, time={time_str}, path={video_path}, preview={preview_path}")
+                            return video_path
+                    # If no match by source_name, use first found
+                    video_path = all_matching[0]
+                    self.logger.info(f"Found video fragment (final fallback by time only): type={event_type}, time={time_str}, path={video_path}, preview={preview_path}")
+                    return video_path
+            except Exception as e:
+                self.logger.debug(f"Error in final fallback search: {e}, preview={preview_path}")
         
         # Log failure with details
         tried_paths = []
