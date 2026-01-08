@@ -16,11 +16,10 @@
                     "Cam1"
                 ],
                 "loop_play": true,
-                "type": "VideoCaptureGStreamer",
                 "source": "IpCamera",
                 "camera": "rtsp://10.245.1.200",
                 "apiPreference": "CAP_GSTREAMER",
-                "source_fps": 25.166666666666668
+                "source_fps": null
             },
             {
                 "split": true,
@@ -49,11 +48,10 @@
                     "Cam3"
                 ],
                 "loop_play": true,
-                "type": "VideoCaptureGStreamer",
                 "source": "IpCamera",
                 "camera": "rtsp://10.245.1.199",
                 "apiPreference": "CAP_GSTREAMER",
-                "source_fps": 10.0
+                "source_fps": null
             },
             {
                 "split": true,
@@ -82,11 +80,10 @@
                     "Cam5"
                 ],
                 "loop_play": true,
-                "type": "VideoCaptureGStreamer",
                 "source": "IpCamera",
                 "camera": "rtsp://10.245.1.202",
                 "apiPreference": "CAP_GSTREAMER",
-                "source_fps": 10.0
+                "source_fps": null
             }
         ],
         "detectors": [

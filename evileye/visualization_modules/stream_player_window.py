@@ -86,7 +86,7 @@ class StreamPlayerWindow(QMainWindow):
         
     def _init_ui(self):
         """Инициализация интерфейса"""
-        self.setWindowTitle("Stream Player - Плеер потоковых записей")
+        self.setWindowTitle("Stream Player")
         self.setMinimumSize(1200, 800)
         self.resize(1400, 900)
         
@@ -116,6 +116,7 @@ class StreamPlayerWindow(QMainWindow):
         # Сетка видео (в центре)
         self.video_grid = VideoGridWidget(self)
         self.video_grid.position_changed.connect(self._on_video_position_changed)
+        self.video_grid.grid_size_changed.connect(self.camera_selector.set_grid_size)
         main_layout.addWidget(self.video_grid, stretch=1)
         
         # Контролы воспроизведения
@@ -133,7 +134,7 @@ class StreamPlayerWindow(QMainWindow):
             from PyQt5.QtWidgets import QCheckBox
         
         metadata_layout = QHBoxLayout()
-        self.show_metadata_checkbox = QCheckBox("Показывать метаданные (объекты и события)")
+        self.show_metadata_checkbox = QCheckBox("Show metadata (objects and events)")
         self.show_metadata_checkbox.setChecked(False)
         self.show_metadata_checkbox.stateChanged.connect(self._on_metadata_toggled)
         metadata_layout.addWidget(self.show_metadata_checkbox)
@@ -160,7 +161,15 @@ class StreamPlayerWindow(QMainWindow):
         self.logger.info(f"Selected date: {date}")
         self._load_events(date)
         self.timeline.set_events(self._events, self._event_filters)
-        self._configure_metadata_for_players()
+        
+        # Восстановить выбранные камеры если они были выбраны ранее
+        if self._selected_cameras:
+            self.logger.info(f"Restoring selected cameras: {self._selected_cameras}")
+            self._load_camera_segments()
+            self.video_grid.set_cameras(self._selected_cameras, self._camera_segment_times, self._source_config, self.base_dir, date)
+            self._configure_metadata_for_players()
+        else:
+            self._configure_metadata_for_players()
         
     def _resolve_camera_folder_name(self, camera_name: str, date: str) -> Optional[str]:
         """
@@ -530,11 +539,17 @@ class StreamPlayerWindow(QMainWindow):
         # Запустить таймер синхронизации (обновление каждые 100мс)
         self._sync_timer.start(100)
         
+        # Обновить визуальную индикацию кнопок
+        self.playback_controls.set_state('playing')
+        
     def _on_pause_clicked(self):
         """Обработка нажатия Pause"""
         self._is_playing = False
         self.video_grid.pause_all()
         self._sync_timer.stop()
+        
+        # Обновить визуальную индикацию кнопок
+        self.playback_controls.set_state('paused')
         
     def _on_stop_clicked(self):
         """Обработка нажатия Stop"""
@@ -543,6 +558,9 @@ class StreamPlayerWindow(QMainWindow):
         self.video_grid.stop_all()
         self._sync_timer.stop()
         self.timeline.set_position(0)
+        
+        # Обновить визуальную индикацию кнопок
+        self.playback_controls.set_state('idle')
         
     def _on_speed_changed(self, speed: float):
         """Обработка изменения скорости воспроизведения"""
@@ -681,6 +699,10 @@ class StreamPlayerWindow(QMainWindow):
         if 'grid_cols' in state and hasattr(self.camera_selector, 'cols_spin'):
             self.camera_selector.cols_spin.setValue(state['grid_cols'])
         
+        # Восстановить выбранные камеры (до восстановления даты, чтобы они были доступны при смене даты)
+        if 'selected_cameras' in state and state['selected_cameras']:
+            self._selected_cameras = state['selected_cameras'].copy()
+        
         # Восстановить последнюю выбранную дату
         if 'last_date' in state and state['last_date']:
             try:
@@ -693,6 +715,7 @@ class StreamPlayerWindow(QMainWindow):
                         pass
                     qdate = QDate(int(date_parts[0]), int(date_parts[1]), int(date_parts[2]))
                     self.camera_selector.date_edit.setDate(qdate)
+                    # После установки даты автоматически восстановятся камеры через _on_date_selected
             except Exception as e:
                 self.logger.debug(f"Failed to restore date: {e}")
         

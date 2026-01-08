@@ -55,12 +55,12 @@ class SourceSelectionMenu(QMenu):
     def _build_menu(self):
         """Построить меню с доступными источниками"""
         if not self._available_sources:
-            no_sources_action = self.addAction("Нет доступных источников")
+            no_sources_action = self.addAction("No sources available")
             no_sources_action.setEnabled(False)
             return
         
         # Добавить действие "Очистить ячейку"
-        clear_action = self.addAction("Очистить ячейку")
+        clear_action = self.addAction("Clear cell")
         clear_action.setData(None)
         
         self.addSeparator()
@@ -102,7 +102,7 @@ class CameraSelectorWidget(QWidget):
         layout.setContentsMargins(5, 5, 5, 5)
         
         # Группа выбора даты
-        date_group = QGroupBox("Дата")
+        date_group = QGroupBox("Date")
         date_layout = QVBoxLayout()
         
         self.date_edit = QDateEdit()
@@ -115,20 +115,20 @@ class CameraSelectorWidget(QWidget):
         layout.addWidget(date_group)
         
         # Группа выбора камер (упрощенная - только кнопки, выбор через правый клик на ячейки)
-        cameras_group = QGroupBox("Источники")
+        cameras_group = QGroupBox("Sources")
         cameras_layout = QVBoxLayout()
         
         # Информационная метка
-        info_label = QLabel("Используйте правый клик на ячейки сетки для выбора источников")
+        info_label = QLabel("Right-click on grid cells to select sources")
         info_label.setWordWrap(True)
         info_label.setStyleSheet("color: gray; font-style: italic; padding: 5px;")
         cameras_layout.addWidget(info_label)
         
         # Кнопки управления
         buttons_layout = QHBoxLayout()
-        self.select_all_btn = QPushButton("Выбрать все")
+        self.select_all_btn = QPushButton("Select All")
         self.select_all_btn.clicked.connect(self._select_all)
-        self.deselect_all_btn = QPushButton("Снять все")
+        self.deselect_all_btn = QPushButton("Deselect All")
         self.deselect_all_btn.clicked.connect(self._deselect_all)
         buttons_layout.addWidget(self.select_all_btn)
         buttons_layout.addWidget(self.deselect_all_btn)
@@ -138,17 +138,17 @@ class CameraSelectorWidget(QWidget):
         layout.addWidget(cameras_group, stretch=1)
         
         # Группа настроек сетки
-        grid_group = QGroupBox("Сетка видео")
+        grid_group = QGroupBox("Video Grid")
         grid_layout = QHBoxLayout()
         
-        grid_layout.addWidget(QLabel("Строк:"))
+        grid_layout.addWidget(QLabel("Rows:"))
         self.rows_spin = QSpinBox()
         self.rows_spin.setMinimum(1)
         self.rows_spin.setMaximum(4)
         self.rows_spin.setValue(2)
         grid_layout.addWidget(self.rows_spin)
         
-        grid_layout.addWidget(QLabel("Столбцов:"))
+        grid_layout.addWidget(QLabel("Columns:"))
         self.cols_spin = QSpinBox()
         self.cols_spin.setMinimum(1)
         self.cols_spin.setMaximum(4)
@@ -243,6 +243,17 @@ class CameraSelectorWidget(QWidget):
     def get_grid_size(self) -> Tuple[int, int]:
         """Получить размер сетки"""
         return (self.rows_spin.value(), self.cols_spin.value())
+    
+    def set_grid_size(self, rows: int, cols: int):
+        """Установить размер сетки (синхронизация с реальным размером)"""
+        # Обновить значения спинбоксов без отправки сигнала
+        self.rows_spin.blockSignals(True)
+        self.cols_spin.blockSignals(True)
+        self.rows_spin.setValue(rows)
+        self.cols_spin.setValue(cols)
+        self.rows_spin.blockSignals(False)
+        self.cols_spin.blockSignals(False)
+        self.logger.debug(f"Grid size UI updated to {rows}x{cols}")
 
 
 class VideoGridWidget(QWidget):
@@ -250,6 +261,7 @@ class VideoGridWidget(QWidget):
     
     position_changed = pyqtSignal(int)  # position in milliseconds
     source_selected = pyqtSignal(int, str)  # (grid_index, source_name) - сигнал выбора источника для ячейки
+    grid_size_changed = pyqtSignal(int, int)  # (rows, cols) - сигнал изменения размера сетки
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -266,6 +278,16 @@ class VideoGridWidget(QWidget):
         self._available_sources = []  # Список всех доступных источников
         self._grid_cell_sources = {}  # {grid_index: source_name} - маппинг ячеек к источникам
         self._grid_cell_widgets = {}  # {grid_index: widget} - виджеты в ячейках
+        self._last_widget_sizes = {}  # {widget_id: (width, height)} - для отслеживания изменений размеров
+        
+        # Таймер для периодической проверки размеров виджетов
+        try:
+            from PyQt6.QtCore import QTimer
+        except ImportError:
+            from PyQt5.QtCore import QTimer
+        self._size_check_timer = QTimer()
+        self._size_check_timer.timeout.connect(self._check_widget_sizes)
+        self._size_check_timer.setInterval(1000)  # Проверять каждую секунду
         
         self._init_ui()
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -277,7 +299,10 @@ class VideoGridWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         
         self.grid_layout = QGridLayout()
-        self.grid_layout.setSpacing(2)
+        self.grid_layout.setSpacing(4)
+        # Установить размеры сетки по умолчанию для предотвращения проблем с растяжением
+        self.grid_layout.setRowStretch(0, 0)
+        self.grid_layout.setColumnStretch(0, 0)
         
         container = QWidget()
         container.setLayout(self.grid_layout)
@@ -287,10 +312,10 @@ class VideoGridWidget(QWidget):
         self._rows = 2
         self._cols = 2
         
-    def set_cameras(self, cameras: List[str], camera_segments: Dict[str, List[Tuple]], source_config: Dict = None, base_dir: str = None, date_folder: str = None):
+    def set_cameras(self, cameras: List[str], camera_segment_times: Dict[str, List[Tuple]], source_config: Dict = None, base_dir: str = None, date_folder: str = None):
         """Установить камеры и их сегменты с поддержкой разделенных потоков"""
         self._cameras = cameras
-        self._camera_segments = camera_segments
+        self._camera_segments = camera_segment_times  # Используем camera_segment_times как camera_segments
         self._source_config = source_config or {}
         self._base_dir = base_dir
         self._date_folder = date_folder
@@ -327,37 +352,127 @@ class VideoGridWidget(QWidget):
                 # Обычный поток
                 all_sources.append((camera, camera, False, None))
         
-        # Определить размер сетки на основе всех источников
-        total_sources = len(all_sources)
+        # Определить размер сетки на основе уникальных папок камер (не всех источников)
+        # Сначала нужно определить уникальные папки, чтобы правильно рассчитать размер сетки
+        # Временная группировка для расчета размера сетки
+        temp_folder_to_sources = {}
+        for camera in cameras:
+            if camera not in camera_segment_times:
+                continue
+            split_config = self._source_config.get(camera)
+            if split_config and split_config.get('split', False):
+                parent_folder = split_config.get('parent_folder')
+                if parent_folder:
+                    if parent_folder not in temp_folder_to_sources:
+                        temp_folder_to_sources[parent_folder] = []
+                    temp_folder_to_sources[parent_folder].append(camera)
+                else:
+                    source_names = split_config.get('source_names', [])
+                    if source_names:
+                        composite_name = '-'.join(source_names[:split_config.get('num_split', len(source_names))])
+                        if composite_name not in temp_folder_to_sources:
+                            temp_folder_to_sources[composite_name] = []
+                        temp_folder_to_sources[composite_name].append(camera)
+                    else:
+                        if camera not in temp_folder_to_sources:
+                            temp_folder_to_sources[camera] = []
+                        temp_folder_to_sources[camera].append(camera)
+            else:
+                if camera not in temp_folder_to_sources:
+                    temp_folder_to_sources[camera] = []
+                temp_folder_to_sources[camera].append(camera)
+        
+        # Рассчитать размер сетки с учетом rowspan для split players
+        total_folders = len(temp_folder_to_sources)
+        
+        # Сначала определить max_rowspan для split players
+        max_rowspan = 1
+        num_split_players = 0
+        num_regular_players = 0
+        
+        for folder, sources in temp_folder_to_sources.items():
+            split_config = self._source_config.get(folder)
+            if not split_config:
+                # Попробовать найти по первому источнику
+                if sources:
+                    split_config = self._source_config.get(sources[0])
+            
+            if split_config and split_config.get('split', False):
+                num_split = split_config.get('num_split', 1)
+                max_rowspan = max(max_rowspan, num_split)
+                num_split_players += 1
+            else:
+                num_regular_players += 1
+        
+        # Рассчитать базовый размер сетки на основе общего количества виджетов
+        # Но учитывать, что split players занимают больше места
+        # Эффективное количество "ячеек" = обычные виджеты + split players * max_rowspan
+        effective_cells = num_regular_players + num_split_players * max_rowspan
+        
+        # Рассчитать размер сетки на основе эффективного количества ячеек
         rows = 2
         cols = 2
-        if total_sources == 1:
+        if effective_cells == 1:
             rows, cols = 1, 1
-        elif total_sources <= 2:
+        elif effective_cells <= 2:
             rows, cols = 1, 2
-        elif total_sources <= 4:
+        elif effective_cells <= 4:
             rows, cols = 2, 2
-        elif total_sources <= 6:
+        elif effective_cells <= 6:
             rows, cols = 2, 3
-        elif total_sources <= 9:
+        elif effective_cells <= 9:
             rows, cols = 3, 3
-        else:
+        elif effective_cells <= 12:
             rows, cols = 3, 4
+        elif effective_cells <= 16:
+            rows, cols = 4, 4
+        else:
+            # Для большего количества - использовать квадратную сетку
+            import math
+            grid_size = int(math.ceil(math.sqrt(effective_cells)))
+            rows, cols = grid_size, grid_size
+        
+        # Убедиться, что строк достаточно для размещения split players
+        # Каждый split player занимает max_rowspan строк
+        if max_rowspan > 1:
+            # Минимальное количество строк = max_rowspan
+            # Но нужно учесть, что split players могут размещаться в несколько рядов
+            if num_split_players > 0:
+                # Если split players размещаются в несколько колонок, нужно больше строк
+                if num_split_players > cols:
+                    # Split players размещаются в несколько рядов
+                    num_rows_of_split_players = ((num_split_players + cols - 1) // cols)
+                    rows_needed = max_rowspan * num_rows_of_split_players
+                else:
+                    # Все split players помещаются в один ряд, но каждый занимает max_rowspan строк
+                    rows_needed = max_rowspan
+                
+                rows = max(rows, rows_needed)
+        
+        self.logger.info(
+            f"Calculated grid size: {rows}x{cols} "
+            f"(total_folders={total_folders}, num_split_players={num_split_players}, "
+            f"num_regular_players={num_regular_players}, max_rowspan={max_rowspan}, "
+            f"effective_cells={effective_cells})"
+        )
         
         # Сохранить размеры сетки
         self._rows = rows
         self._cols = cols
         
-        # Настроить stretch factors для равномерного распределения
+        # Отправить сигнал об изменении размера сетки
+        self.grid_size_changed.emit(rows, cols)
+        
+        # Сначала сбросить все stretch factors
         for col in range(cols):
-            self.grid_layout.setColumnStretch(col, 1)
+            self.grid_layout.setColumnStretch(col, 0)
         for row in range(rows):
-            self.grid_layout.setRowStretch(row, 1)
+            self.grid_layout.setRowStretch(row, 0)
         
         # Определить общее время начала
-        if camera_segments:
+        if camera_segment_times:
             all_starts = []
-            for segments in camera_segments.values():
+            for segments in camera_segment_times.values():
                 if segments:
                     all_starts.append(segments[0][0])
             if all_starts:
@@ -370,42 +485,180 @@ class VideoGridWidget(QWidget):
                 camera_groups[camera_folder] = []
             camera_groups[camera_folder].append(idx)
         
-        # Создать виджеты видео для каждого источника
-        grid_idx = 0
-        for camera_folder in cameras:
-            if camera_folder not in camera_segments:
+        # Определить уникальные папки камер (для split streams - использовать parent_folder)
+        # Группировать источники по папкам
+        folder_to_sources = {}  # {folder_name: [source_names]}
+        
+        for camera in cameras:
+            if camera not in camera_segment_times:
                 continue
             
-            split_config = self._source_config.get(camera_folder)
+            split_config = self._source_config.get(camera)
+            if split_config and split_config.get('split', False):
+                # Для разделенных потоков использовать parent_folder или составное имя
+                parent_folder = split_config.get('parent_folder')
+                if parent_folder:
+                    if parent_folder not in folder_to_sources:
+                        folder_to_sources[parent_folder] = []
+                    if camera not in folder_to_sources[parent_folder]:
+                        folder_to_sources[parent_folder].append(camera)
+                else:
+                    # Если parent_folder нет, попробовать составить имя из source_names
+                    source_names = split_config.get('source_names', [])
+                    if source_names:
+                        composite_name = '-'.join(source_names[:split_config.get('num_split', len(source_names))])
+                        if composite_name not in folder_to_sources:
+                            folder_to_sources[composite_name] = []
+                        if camera not in folder_to_sources[composite_name]:
+                            folder_to_sources[composite_name].append(camera)
+                    else:
+                        # Fallback: использовать имя камеры
+                        if camera not in folder_to_sources:
+                            folder_to_sources[camera] = []
+                        folder_to_sources[camera].append(camera)
+            else:
+                # Обычный поток
+                if camera not in folder_to_sources:
+                    folder_to_sources[camera] = []
+                folder_to_sources[camera].append(camera)
+        
+        unique_camera_folders = list(folder_to_sources.keys())
+        self.logger.info(f"Grouped cameras into folders: {folder_to_sources}")
+        
+        # Создать виджеты видео для каждой уникальной папки камеры
+        # Использовать матрицу занятости для правильного размещения split players
+        occupied = [[False for _ in range(cols)] for _ in range(rows)]
+        
+        for camera_folder in unique_camera_folders:
+            # Найти конфигурацию и сегменты для этой папки
+            split_config = None
+            actual_camera_name = None
+            segments_to_use = None
+            
+            # Найти источники для этой папки
+            sources_for_folder = folder_to_sources.get(camera_folder, [])
+            if not sources_for_folder:
+                self.logger.warning(f"No sources found for folder: {camera_folder}")
+                continue
+            
+            # Использовать первый источник для получения сегментов и конфигурации
+            first_source = sources_for_folder[0]
+            actual_camera_name = first_source
+            segments_to_use = camera_segment_times.get(first_source)
+            
+            # Найти конфигурацию для этой папки
+            split_config = None
+            if camera_folder in self._source_config:
+                split_config = self._source_config[camera_folder]
+            else:
+                # Попробовать найти конфигурацию по первому источнику
+                split_config = self._source_config.get(first_source)
+                if split_config and split_config.get('split', False):
+                    # Проверить, что parent_folder совпадает
+                    parent = split_config.get('parent_folder')
+                    if parent != camera_folder:
+                        # Попробовать найти конфигурацию по составному имени
+                        source_names = split_config.get('source_names', [])
+                        if source_names:
+                            composite_name = '-'.join(source_names[:split_config.get('num_split', len(source_names))])
+                            if composite_name == camera_folder:
+                                # Использовать эту конфигурацию
+                                pass
+                            else:
+                                # Поиск по другим источникам
+                                for src in sources_for_folder:
+                                    config = self._source_config.get(src)
+                                    if config and config.get('split', False):
+                                        parent = config.get('parent_folder')
+                                        if parent == camera_folder:
+                                            split_config = config
+                                            break
+            
+            if not actual_camera_name or not segments_to_use:
+                self.logger.warning(
+                    f"Could not find camera segments for folder: {camera_folder}, "
+                    f"actual_camera_name={actual_camera_name}, segments_to_use={segments_to_use is not None}"
+                )
+                continue
+            
             is_split = split_config and split_config.get('split', False)
             
-            if is_split and grid_idx < rows * cols:
+            # Найти первую свободную позицию в сетке
+            row, col = -1, -1
+            for r in range(rows):
+                for c in range(cols):
+                    if not occupied[r][c]:
+                        row, col = r, c
+                        break
+                if row >= 0:
+                    break
+            
+            if row < 0 or col < 0:
+                self.logger.warning(f"No free position in grid for {camera_folder}")
+                continue
+            
+            if is_split:
                 # Разделенный поток - создать SplitVideoPlayerWidget
                 # Определить позицию в сетке
-                row = grid_idx // cols
-                col = grid_idx % cols
                 
                 # Создать SplitVideoPlayerWidget
                 split_player = SplitVideoPlayerWidget(parent=self)
-                split_player.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+                split_player.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+                split_player.setStyleSheet("border: 2px solid #888888;")
+                split_player.setMinimumSize(100, 100)  # Минимальный размер для предотвращения слишком маленьких виджетов
+                split_player.setMaximumSize(16777215, 16777215)  # Установить максимальный размер (Qt default)
                 
                 # Загрузить первый сегмент
-                if camera_segments[camera_folder]:
-                    first_segment = camera_segments[camera_folder][0][2]
+                if segments_to_use:
+                    first_segment = segments_to_use[0][2] if isinstance(segments_to_use[0], tuple) else segments_to_use[0]
                     if not os.path.isabs(first_segment):
                         first_segment = os.path.abspath(first_segment)
                     
                     if os.path.exists(first_segment) and os.path.getsize(first_segment) > 1024:
                         if split_player.set_split_config(split_config, first_segment):
-                            # Сохранить информацию о плеере
+                            # Сохранить информацию о плеере (использовать имя папки как ключ)
                             self._video_players[camera_folder] = split_player
                             self._current_segments[camera_folder] = first_segment
                             self._current_segment_indices[camera_folder] = 0
                             
                             # Добавить в сетку (занимает несколько ячеек по вертикали)
                             num_split = split_config.get('num_split', 1)
+                            # Проверить, помещается ли виджет в сетку
+                            if row + num_split > rows:
+                                self.logger.warning(
+                                    f"Split player {camera_folder} (rowspan={num_split}) doesn't fit in grid "
+                                    f"(rows={rows}), adjusting rowspan"
+                                )
+                                num_split = max(1, rows - row)
+                            
+                            self.logger.info(
+                                f"Adding split player for {camera_folder} (actual={actual_camera_name}) "
+                                f"at row={row}, col={col}, rowspan={num_split}, colspan=1"
+                            )
                             self.grid_layout.addWidget(split_player, row, col, num_split, 1)
-                            grid_idx += num_split
+                            
+                            # Отметить занятые ячейки
+                            for r in range(row, min(row + num_split, rows)):
+                                occupied[r][col] = True
+                            
+                            # Сохранить виджет в маппинге ТОЛЬКО для первой ячейки
+                            grid_idx = row * cols + col
+                            self._grid_cell_sources[grid_idx] = camera_folder
+                            self._grid_cell_widgets[grid_idx] = split_player
+                            
+                            # Добавить обработчик изменения размера для диагностики
+                            original_split_resize = split_player.resizeEvent
+                            def on_split_resize(event, cam=camera_folder, r=row, c=col):
+                                size = split_player.size()
+                                geometry = split_player.geometry()
+                                self.logger.warning(
+                                    f"SplitPlayer widget resize: camera={cam}, row={r}, col={c}, "
+                                    f"size={size.width()}x{size.height()}, "
+                                    f"geometry={geometry.x()},{geometry.y()} {geometry.width()}x{geometry.height()}"
+                                )
+                                original_split_resize(event)
+                            
+                            split_player.resizeEvent = on_split_resize
                         else:
                             self.logger.warning(f"Failed to setup split player for {camera_folder}")
                             grid_idx += 1
@@ -414,55 +667,273 @@ class VideoGridWidget(QWidget):
                         grid_idx += 1
             else:
                 # Обычный поток - создать обычный VideoPlayerWidget
-                if grid_idx >= rows * cols:
-                    break
+                # Найти первую свободную позицию (уже найдена выше)
+                if row < 0 or col < 0:
+                    continue
                 
-                row = grid_idx // cols
-                col = grid_idx % cols
+                # Использовать actual_camera_name если есть, иначе camera_folder
+                camera_name = actual_camera_name if actual_camera_name else camera_folder
+                
+                # Вычислить grid_idx до создания замыкания
+                grid_idx = row * cols + col
                 
                 # Создать контейнер для видео и метки
                 container_widget = QWidget()
-                container_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+                container_widget.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+                container_widget.setStyleSheet("border: 2px solid #888888;")
+                container_widget.setMinimumSize(100, 100)  # Минимальный размер для предотвращения слишком маленьких виджетов
+                container_widget.setMaximumSize(16777215, 16777215)  # Установить максимальный размер (Qt default)
+                
+                # Добавить обработчик изменения размера для диагностики
+                original_resize = container_widget.resizeEvent
+                def on_container_resize(event, cam=camera_name, idx=grid_idx):
+                    size = container_widget.size()
+                    geometry = container_widget.geometry()
+                    self.logger.warning(
+                        f"Container widget resize: camera={cam}, grid_idx={idx}, "
+                        f"size={size.width()}x{size.height()}, "
+                        f"geometry={geometry.x()},{geometry.y()} {geometry.width()}x{geometry.height()}"
+                    )
+                    original_resize(event)
+                
+                container_widget.resizeEvent = on_container_resize
+                
                 container_layout = QVBoxLayout(container_widget)
                 container_layout.setContentsMargins(0, 0, 0, 0)
                 container_layout.setSpacing(0)
                 
                 # Метка с именем камеры
-                label = QLabel(camera_folder)
+                label = QLabel(camera_name)
                 label.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 label.setStyleSheet("background-color: rgba(0, 0, 0, 200); color: white; padding: 3px; font-weight: bold;")
                 container_layout.addWidget(label)
                 
                 # Создать виджет видео
-                video_widget = VideoPlayerWidget(parent=container_widget, logger_name=f"camera_{camera_folder}")
-                video_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-                self._video_players[camera_folder] = video_widget
+                video_widget = VideoPlayerWidget(parent=container_widget, logger_name=f"camera_{camera_name}")
+                video_widget.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+                self._video_players[camera_name] = video_widget
                 container_layout.addWidget(video_widget, stretch=1)
                 
                 # Настроить метаданные для плеера
                 if self._base_dir and self._date_folder:
-                    video_widget.set_metadata_config(self._base_dir, self._date_folder, camera_folder)
+                    video_widget.set_metadata_config(self._base_dir, self._date_folder, camera_name)
                 
                 # Загрузить первый сегмент
-                if camera_segments[camera_folder]:
-                    first_segment = camera_segments[camera_folder][0][2]
+                if camera_segment_times.get(camera_name):
+                    first_segment = camera_segment_times[camera_name][0][2]
                     if not os.path.isabs(first_segment):
                         first_segment = os.path.abspath(first_segment)
                     
                     if os.path.exists(first_segment) and os.path.getsize(first_segment) > 1024:
                         if video_widget.play_video(first_segment):
-                            self._current_segments[camera_folder] = first_segment
-                            self._current_segment_indices[camera_folder] = 0
+                            self._current_segments[camera_name] = first_segment
+                            self._current_segment_indices[camera_name] = 0
                         else:
-                            self.logger.warning(f"Failed to play video for camera {camera_folder}: {first_segment}")
+                            self.logger.warning(f"Failed to play video for camera {camera_name}: {first_segment}")
                     else:
-                        self.logger.warning(f"Video file not found or too small for camera {camera_folder}: {first_segment}")
+                        self.logger.warning(f"Video file not found or too small for camera {camera_name}: {first_segment}")
                 
                 # Добавить контейнер в сетку
+                self.logger.info(
+                    f"Adding container widget for {camera_name} at row={row}, col={col}, grid_idx={grid_idx}"
+                )
                 self.grid_layout.addWidget(container_widget, row, col)
-                self._grid_cell_sources[grid_idx] = camera_folder
+                
+                # Отметить занятую ячейку
+                occupied[row][col] = True
+                
+                # Сохранить виджет в маппинге (grid_idx уже вычислен выше)
+                self._grid_cell_sources[grid_idx] = camera_name
                 self._grid_cell_widgets[grid_idx] = container_widget
-                grid_idx += 1
+        
+        # Вычислить максимальный размер виджетов на основе размера сетки и доступного пространства
+        # Это предотвращает бесконечный рост виджетов
+        if self.width() > 0 and self.height() > 0:
+            # Использовать текущий размер виджета сетки
+            available_width = self.width()
+            available_height = self.height()
+        else:
+            # Если размер еще не установлен, использовать размер по умолчанию
+            available_width = 1400
+            available_height = 600
+        
+        # Учесть spacing и margins
+        spacing = self.grid_layout.spacing()
+        margins = self.grid_layout.contentsMargins()
+        usable_width = available_width - margins.left() - margins.right() - spacing * (cols - 1)
+        usable_height = available_height - margins.top() - margins.bottom() - spacing * (rows - 1)
+        
+        # Максимальный размер виджета = размер ячейки сетки
+        max_widget_width = usable_width // cols if cols > 0 else usable_width
+        max_widget_height = usable_height // rows if rows > 0 else usable_height
+        
+        # Установить максимальный размер для всех виджетов
+        for grid_idx, widget in self._grid_cell_widgets.items():
+            if widget:
+                widget.setMaximumSize(max_widget_width, max_widget_height)
+                self.logger.debug(
+                    f"Set maximum size for widget {grid_idx}: {max_widget_width}x{max_widget_height}"
+                )
+        
+        # Установить stretch factors ПОСЛЕ добавления всех виджетов для равномерного распределения
+        # Использовать более умное распределение на основе типов виджетов
+        self.logger.info(f"Setting stretch factors: rows={rows}, cols={cols}")
+        
+        # Определить, какие строки содержат split players (rowspan > 1)
+        rows_with_split_players = set()
+        for i in range(self.grid_layout.count()):
+            item = self.grid_layout.itemAt(i)
+            if item and item.widget():
+                try:
+                    position = self.grid_layout.getItemPosition(i)
+                    row, col, rowspan, colspan = position
+                    if rowspan > 1:
+                        # Отметить все строки, занятые этим split player
+                        for r in range(row, min(row + rowspan, rows)):
+                            rows_with_split_players.add(r)
+                except (AttributeError, TypeError):
+                    pass
+        
+        # Установить stretch factors для колонок - равномерно
+        for col in range(cols):
+            self.grid_layout.setColumnStretch(col, 1)
+            self.logger.debug(f"  Column {col} stretch = 1")
+        
+        # Установить stretch factors для строк - учитывая split players
+        for row in range(rows):
+            if row in rows_with_split_players:
+                # Строки с split players получают больший stretch для правильного распределения
+                self.grid_layout.setRowStretch(row, 2)
+                self.logger.debug(f"  Row {row} stretch = 2 (contains split player)")
+            else:
+                # Обычные строки получают стандартный stretch
+                self.grid_layout.setRowStretch(row, 1)
+                self.logger.debug(f"  Row {row} stretch = 1")
+        
+        # Логировать размеры всех виджетов после добавления
+        self._log_widget_sizes("after set_cameras")
+        
+        # Запустить таймер для периодической проверки размеров
+        self._size_check_timer.start()
+        
+    def _check_widget_sizes(self):
+        """Периодическая проверка размеров виджетов для обнаружения бесконечного роста"""
+        if not self._grid_cell_widgets:
+            return
+        
+        # Проверять виджеты напрямую из layout, а не из маппинга
+        # Это более надежно, так как layout знает реальную структуру
+        processed_widgets = set()
+        for i in range(self.grid_layout.count()):
+            item = self.grid_layout.itemAt(i)
+            if item and item.widget():
+                widget = item.widget()
+                widget_id = id(widget)
+                
+                # Пропустить если уже обработали
+                if widget_id in processed_widgets:
+                    continue
+                processed_widgets.add(widget_id)
+                
+                # Получить позицию из layout правильно
+                try:
+                    # QGridLayout.getItemPosition() возвращает (row, col, rowspan, colspan)
+                    position = self.grid_layout.getItemPosition(i)
+                    row, col, rowspan, colspan = position
+                except (AttributeError, TypeError):
+                    # Fallback: попробовать получить через itemAtPosition
+                    row, col, rowspan, colspan = -1, -1, 1, 1
+                    # Перебрать все позиции для поиска
+                    for r in range(self._rows):
+                        for c in range(self._cols):
+                            layout_item = self.grid_layout.itemAtPosition(r, c)
+                            if layout_item == item:
+                                row, col = r, c
+                                # Попробовать получить rowspan и colspan
+                                try:
+                                    if hasattr(layout_item, 'rowSpan'):
+                                        rowspan = layout_item.rowSpan()
+                                    if hasattr(layout_item, 'columnSpan'):
+                                        colspan = layout_item.columnSpan()
+                                except:
+                                    pass
+                                break
+                        if row >= 0:
+                            break
+                
+                size = widget.size()
+                geometry = widget.geometry()
+                
+                # Найти имя камеры для этого виджета
+                camera = "unknown"
+                for grid_idx, w in self._grid_cell_widgets.items():
+                    if w == widget:
+                        camera = self._grid_cell_sources.get(grid_idx, "unknown")
+                        break
+                
+                last_size = self._last_widget_sizes.get(widget_id)
+                if last_size:
+                    if size.width() > last_size[0] * 1.1 or size.height() > last_size[1] * 1.1:
+                        # Размер увеличился более чем на 10%
+                        self.logger.error(
+                            f"WIDGET SIZE INCREASING: row={row}, col={col}, rowspan={rowspan}, colspan={colspan}, camera={camera}, "
+                            f"size changed from {last_size[0]}x{last_size[1]} to {size.width()}x{size.height()}, "
+                            f"geometry={geometry.x()},{geometry.y()} {geometry.width()}x{geometry.height()}"
+                        )
+                    elif size.width() != last_size[0] or size.height() != last_size[1]:
+                        self.logger.debug(
+                            f"Widget size changed: row={row}, col={col}, camera={camera}, "
+                            f"{last_size[0]}x{last_size[1]} -> {size.width()}x{size.height()}"
+                        )
+                
+                self._last_widget_sizes[widget_id] = (size.width(), size.height())
+        
+    def resizeEvent(self, event):
+        """Обработка изменения размера виджета сетки"""
+        super().resizeEvent(event)
+        self.logger.debug(f"VideoGridWidget resizeEvent: new size = {event.size().width()}x{event.size().height()}")
+        self._log_widget_sizes("on resizeEvent")
+    
+    def _log_widget_sizes(self, context: str):
+        """Логировать размеры всех виджетов в сетке"""
+        self.logger.info(f"=== Widget sizes {context} ===")
+        self.logger.info(f"Grid size: {self._rows}x{self._cols}")
+        self.logger.info(f"VideoGridWidget size: {self.width()}x{self.height()}")
+        
+        for grid_idx, widget in self._grid_cell_widgets.items():
+            if widget:
+                widget_id = id(widget)
+                size = widget.size()
+                geometry = widget.geometry()
+                camera = self._grid_cell_sources.get(grid_idx, "unknown")
+                
+                # Проверить изменение размера
+                last_size = self._last_widget_sizes.get(widget_id)
+                if last_size and (last_size[0] != size.width() or last_size[1] != size.height()):
+                    self.logger.warning(
+                        f"  Widget {grid_idx} ({camera}) SIZE CHANGED: "
+                        f"{last_size[0]}x{last_size[1]} -> {size.width()}x{size.height()}, "
+                        f"geometry: {geometry.x()},{geometry.y()} {geometry.width()}x{geometry.height()}"
+                    )
+                else:
+                    self.logger.info(
+                        f"  Widget {grid_idx} ({camera}): "
+                        f"size={size.width()}x{size.height()}, "
+                        f"geometry={geometry.x()},{geometry.y()} {geometry.width()}x{geometry.height()}"
+                    )
+                
+                self._last_widget_sizes[widget_id] = (size.width(), size.height())
+        
+        # Логировать размеры split players
+        for camera, player in self._video_players.items():
+            if isinstance(player, SplitVideoPlayerWidget):
+                size = player.size()
+                geometry = player.geometry()
+                self.logger.info(
+                    f"  SplitPlayer {camera}: "
+                    f"size={size.width()}x{size.height()}, "
+                    f"geometry={geometry.x()},{geometry.y()} {geometry.width()}x{geometry.height()}"
+                )
         
     def _clear_grid(self):
         """Очистить сетку"""
@@ -494,11 +965,24 @@ class VideoGridWidget(QWidget):
         self._grid_cell_sources.clear()
         self._grid_cell_widgets.clear()
         
+        # Остановить таймер проверки размеров
+        if hasattr(self, '_size_check_timer'):
+            self._size_check_timer.stop()
+        
         # Удалить все виджеты из layout
         while self.grid_layout.count():
             item = self.grid_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+        
+        # Сбросить stretch factors для предотвращения накопления
+        self.logger.debug(f"Clearing stretch factors: rows={self._rows}, cols={self._cols}")
+        for col in range(self._cols):
+            self.grid_layout.setColumnStretch(col, 0)
+        for row in range(self._rows):
+            self.grid_layout.setRowStretch(row, 0)
+        
+        self._last_widget_sizes.clear()
     
     def _on_context_menu(self, position: QPoint):
         """Обработка правого клика для выбора источника"""
@@ -550,7 +1034,7 @@ class VideoGridWidget(QWidget):
                 if not hasattr(player, 'video_path') or not player.video_path:
                     # Видео не загружено - попытаться загрузить первый сегмент
                     if camera in self._camera_segments and self._camera_segments[camera]:
-                        first_segment = self._camera_segments[camera][0][2]
+                        first_segment = self._camera_segments[camera][0][2] if isinstance(self._camera_segments[camera][0], tuple) else self._camera_segments[camera][0]
                         if not os.path.isabs(first_segment):
                             first_segment = os.path.abspath(first_segment)
                         if os.path.exists(first_segment) and os.path.getsize(first_segment) > 1024:
@@ -636,6 +1120,15 @@ class VideoGridWidget(QWidget):
             segments = self._camera_segments[camera]
             if not segments:
                 continue
+            
+            # segments может быть списком кортежей (start_time, end_time, path) или списком путей
+            # Проверить формат
+            if isinstance(segments[0], tuple):
+                # Формат кортежей
+                pass
+            else:
+                # Формат путей - преобразовать в кортежи для совместимости
+                segments = [(None, None, seg) for seg in segments]
             
             # Найти нужный сегмент
             target_segment_idx = None
@@ -762,15 +1255,15 @@ class TimelineWidget(QWidget):
         layout.setContentsMargins(5, 5, 5, 5)
         
         # Фильтры событий
-        filters_group = QGroupBox("Фильтры событий")
+        filters_group = QGroupBox("Event Filters")
         filters_layout = QHBoxLayout()
         
         self.filter_checkboxes = {}
         event_types = {
-            'camera_events': 'События камер',
-            'system_events': 'Системные события',
-            'zone_events_entered': 'Вход в зону',
-            'zone_events_left': 'Выход из зоны'
+            'camera_events': 'Camera Events',
+            'system_events': 'System Events',
+            'zone_events_entered': 'Zone Entered',
+            'zone_events_left': 'Zone Left'
         }
         
         for event_type, label in event_types.items():
@@ -785,21 +1278,21 @@ class TimelineWidget(QWidget):
         layout.addWidget(filters_group)
         
         # Временная шкала
-        timeline_group = QGroupBox("Временная шкала")
+        timeline_group = QGroupBox("Timeline")
         timeline_layout = QVBoxLayout()
         
         # Верхняя строка: метки даты-времени начала и конца, текущее время в центре
         time_labels_layout = QHBoxLayout()
         
         # Метка начала (слева)
-        self.start_time_label = QLabel("Начало: --")
+        self.start_time_label = QLabel("--")
         self.start_time_label.setStyleSheet("font-weight: bold; color: blue;")
         time_labels_layout.addWidget(self.start_time_label)
         
         time_labels_layout.addStretch()
         
         # Текущее время (в центре)
-        self.current_time_label = QLabel("Текущее: --")
+        self.current_time_label = QLabel("--")
         self.current_time_label.setStyleSheet("font-weight: bold; font-size: 12pt; color: green;")
         self.current_time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         time_labels_layout.addWidget(self.current_time_label)
@@ -807,7 +1300,7 @@ class TimelineWidget(QWidget):
         time_labels_layout.addStretch()
         
         # Метка конца (справа)
-        self.end_time_label = QLabel("Конец: --")
+        self.end_time_label = QLabel("--")
         self.end_time_label.setStyleSheet("font-weight: bold; color: blue;")
         time_labels_layout.addWidget(self.end_time_label)
         
@@ -817,21 +1310,21 @@ class TimelineWidget(QWidget):
         seek_buttons_layout = QHBoxLayout()
         seek_buttons_layout.addStretch()
         
-        self.seek_back_5min_btn = QPushButton("← 5 мин")
+        self.seek_back_5min_btn = QPushButton("← 5 min")
         self.seek_back_5min_btn.clicked.connect(lambda: self._seek_relative(-5 * 60 * 1000))
         seek_buttons_layout.addWidget(self.seek_back_5min_btn)
         
-        self.seek_back_1min_btn = QPushButton("← 1 мин")
+        self.seek_back_1min_btn = QPushButton("← 1 min")
         self.seek_back_1min_btn.clicked.connect(lambda: self._seek_relative(-1 * 60 * 1000))
         seek_buttons_layout.addWidget(self.seek_back_1min_btn)
         
         seek_buttons_layout.addStretch()
         
-        self.seek_forward_1min_btn = QPushButton("1 мин →")
+        self.seek_forward_1min_btn = QPushButton("1 min →")
         self.seek_forward_1min_btn.clicked.connect(lambda: self._seek_relative(1 * 60 * 1000))
         seek_buttons_layout.addWidget(self.seek_forward_1min_btn)
         
-        self.seek_forward_5min_btn = QPushButton("5 мин →")
+        self.seek_forward_5min_btn = QPushButton("5 min →")
         self.seek_forward_5min_btn.clicked.connect(lambda: self._seek_relative(5 * 60 * 1000))
         seek_buttons_layout.addWidget(self.seek_forward_5min_btn)
         
@@ -882,9 +1375,9 @@ class TimelineWidget(QWidget):
         
         # Обновить метки даты-времени
         if start_time:
-            self.start_time_label.setText(f"Начало: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+            self.start_time_label.setText(start_time.strftime('%Y-%m-%d %H:%M:%S'))
         if end_time:
-            self.end_time_label.setText(f"Конец: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+            self.end_time_label.setText(end_time.strftime('%Y-%m-%d %H:%M:%S'))
         
         # Обновить виджет доступности записей
         if hasattr(self, 'availability_widget'):
@@ -929,7 +1422,7 @@ class TimelineWidget(QWidget):
         
         current_time = self._start_time + datetime.timedelta(milliseconds=self._current_position_ms)
         current_str = current_time.strftime('%Y-%m-%d %H:%M:%S')
-        self.current_time_label.setText(f"Текущее: {current_str}")
+        self.current_time_label.setText(current_str)
     
     def _seek_relative(self, delta_ms: int):
         """Перемотка на указанное количество миллисекунд"""
@@ -1110,6 +1603,7 @@ class PlaybackControlsWidget(QWidget):
         self.logger = get_module_logger("playback_controls")
         
         self._current_speed = 1.0
+        self._current_state = 'idle'  # 'idle', 'playing', 'paused'
         
         self._init_ui()
         
@@ -1131,10 +1625,13 @@ class PlaybackControlsWidget(QWidget):
         self.stop_btn.clicked.connect(self.stop_clicked.emit)
         layout.addWidget(self.stop_btn)
         
+        # Установить начальные стили
+        self._update_button_styles()
+        
         layout.addStretch()
         
         # Выбор скорости
-        layout.addWidget(QLabel("Скорость:"))
+        layout.addWidget(QLabel("Speed:"))
         self.speed_combo = QComboBox()
         self.speed_combo.addItems(["x0.5", "x1", "x2", "x4", "x8"])
         self.speed_combo.setCurrentIndex(1)  # x1 по умолчанию
@@ -1159,6 +1656,30 @@ class PlaybackControlsWidget(QWidget):
             self.logger.warning(f"Invalid speed value: {speed}, using default 1.0")
             self.speed_combo.setCurrentIndex(1)
             self._current_speed = 1.0
+    
+    def set_state(self, state: str):
+        """Установить состояние воспроизведения и обновить стили кнопок"""
+        self._current_state = state
+        self._update_button_styles()
+    
+    def _update_button_styles(self):
+        """Обновить стили кнопок в зависимости от текущего состояния"""
+        # Базовый стиль для неактивных кнопок
+        base_style = "QPushButton { background-color: #f0f0f0; border: 1px solid #ccc; padding: 5px 15px; }"
+        active_style = "QPushButton { background-color: #4CAF50; color: white; border: 2px solid #45a049; padding: 5px 15px; font-weight: bold; }"
+        
+        # Сбросить все кнопки к базовому стилю
+        self.play_btn.setStyleSheet(base_style)
+        self.pause_btn.setStyleSheet(base_style)
+        self.stop_btn.setStyleSheet(base_style)
+        
+        # Выделить активную кнопку
+        if self._current_state == 'playing':
+            self.play_btn.setStyleSheet(active_style)
+        elif self._current_state == 'paused':
+            self.pause_btn.setStyleSheet(active_style)
+        elif self._current_state == 'idle':
+            self.stop_btn.setStyleSheet(active_style)
 
 
 class SplitVideoPlayerWidget(QWidget):
@@ -1210,7 +1731,9 @@ class SplitVideoPlayerWidget(QWidget):
         for i in range(num_split):
             # Контейнер для области
             region_container = QWidget()
-            region_container.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+            region_container.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+            region_container.setStyleSheet("border: 2px solid #888888;")
+            region_container.setMinimumSize(100, 100)  # Минимальный размер для предотвращения слишком маленьких виджетов
             region_layout = QVBoxLayout(region_container)
             region_layout.setContentsMargins(0, 0, 0, 0)
             region_layout.setSpacing(0)
@@ -1226,7 +1749,7 @@ class SplitVideoPlayerWidget(QWidget):
             region_widget = QLabel()
             region_widget.setAlignment(Qt.AlignmentFlag.AlignCenter)
             region_widget.setStyleSheet("background-color: black;")
-            region_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+            region_widget.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
             region_layout.addWidget(region_widget, stretch=1)
             
             self._region_widgets.append({
@@ -1296,10 +1819,29 @@ class SplitVideoPlayerWidget(QWidget):
         if not self._video_player:
             return
         
-        # Получить сохраненный кадр из VideoPlayerWidget
+        frame = None
+        
+        # Попытаться получить сохраненный кадр из VideoPlayerWidget
         if hasattr(self._video_player, '_current_frame') and self._video_player._current_frame is not None:
-            frame = self._video_player._current_frame
-            # Разделить кадр на области
+            frame = self._video_player._current_frame.copy()
+        
+        # Fallback: прочитать кадр напрямую из cap если _current_frame недоступен
+        if frame is None and hasattr(self._video_player, 'cap') and self._video_player.cap:
+            cap = self._video_player.cap
+            if cap.isOpened():
+                # Сохранить текущую позицию кадра
+                current_pos = cap.get(cv2.CAP_PROP_POS_FRAMES)
+                ret, frame = cap.read()
+                if ret and frame is not None:
+                    # Вернуть позицию обратно (кадр уже был прочитан в _update_frame_opencv)
+                    # Но для разделения нам нужен текущий кадр, поэтому оставляем позицию как есть
+                    pass
+                else:
+                    # Если не удалось прочитать, вернуть позицию
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, current_pos)
+        
+        # Разделить кадр на области если он доступен
+        if frame is not None:
             self._split_frame(frame)
     
     def _update_split_frames_opencv(self):
@@ -1311,17 +1853,20 @@ class SplitVideoPlayerWidget(QWidget):
         if not cap or not cap.isOpened():
             return
         
-        # Получить текущий кадр
-        # Используем текущую позицию кадра из VideoPlayerWidget
-        # Не читаем кадр заново, а используем тот, который уже был прочитан
-        # Для этого нужно получить кадр из внутреннего буфера или использовать другой подход
+        # Попытаться получить сохраненный кадр из VideoPlayerWidget
+        frame = None
+        if hasattr(self._video_player, '_current_frame') and self._video_player._current_frame is not None:
+            frame = self._video_player._current_frame.copy()
         
-        # Альтернативный подход: читать кадр напрямую (это переместит позицию, но это нормально для синхронизации)
-        ret, frame = cap.read()
-        if ret and frame is not None:
-            # Разделить кадр на области
+        # Fallback: прочитать кадр напрямую из cap
+        if frame is None:
+            ret, frame = cap.read()
+            if not ret or frame is None:
+                return
+        
+        # Разделить кадр на области
+        if frame is not None:
             self._split_frame(frame)
-            # Не возвращаем позицию - пусть VideoPlayerWidget сам управляет позицией
     
     def _split_frame(self, frame):
         """Разделить кадр на области согласно конфигурации"""
