@@ -19,7 +19,8 @@
                 "source": "IpCamera",
                 "camera": "rtsp://10.245.1.200",
                 "apiPreference": "CAP_GSTREAMER",
-                "source_fps": null
+                "gstreamer_available": true,
+                "source_fps": 14.597565856561642
             },
             {
                 "split": true,
@@ -51,7 +52,8 @@
                 "source": "IpCamera",
                 "camera": "rtsp://10.245.1.199",
                 "apiPreference": "CAP_GSTREAMER",
-                "source_fps": null
+                "gstreamer_available": true,
+                "source_fps": 27.256093836306334
             },
             {
                 "split": true,
@@ -83,7 +85,8 @@
                 "source": "IpCamera",
                 "camera": "rtsp://10.245.1.202",
                 "apiPreference": "CAP_GSTREAMER",
-                "source_fps": null
+                "gstreamer_available": true,
+                "source_fps": 23.064001539688213
             }
         ],
         "detectors": [
