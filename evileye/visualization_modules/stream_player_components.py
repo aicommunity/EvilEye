@@ -280,6 +280,10 @@ class VideoGridWidget(QWidget):
         self._grid_cell_widgets = {}  # {grid_index: widget} - виджеты в ячейках
         self._last_widget_sizes = {}  # {widget_id: (width, height)} - для отслеживания изменений размеров
         
+        # Состояние полноэкранного режима
+        self._fullscreen_cell_index = None  # Индекс ячейки в полноэкранном режиме
+        self._saved_grid_state = {}  # Сохраненное состояние сетки: {grid_idx: {'widget': widget, 'row': row, 'col': col, 'rowspan': rowspan, 'colspan': colspan, 'visible': visible}}
+        
         # Таймер для периодической проверки размеров виджетов
         try:
             from PyQt6.QtCore import QTimer
@@ -292,6 +296,7 @@ class VideoGridWidget(QWidget):
         self._init_ui()
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._on_context_menu)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)  # Для получения событий клавиатуры
         
     def _init_ui(self):
         """Инициализация интерфейса"""
@@ -598,15 +603,14 @@ class VideoGridWidget(QWidget):
                 continue
             
             if is_split:
-                # Разделенный поток - создать SplitVideoPlayerWidget
-                # Определить позицию в сетке
+                # Разделенный поток - создать отдельные ячейки для каждой области
+                num_split = split_config.get('num_split', 1)
+                source_names = split_config.get('source_names', [])
                 
-                # Создать SplitVideoPlayerWidget
+                # Создать один SplitVideoPlayerWidget для декодирования (скрытый)
                 split_player = SplitVideoPlayerWidget(parent=self)
-                split_player.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
-                split_player.setStyleSheet("border: 2px solid #888888;")
-                split_player.setMinimumSize(100, 100)  # Минимальный размер для предотвращения слишком маленьких виджетов
-                split_player.setMaximumSize(16777215, 16777215)  # Установить максимальный размер (Qt default)
+                split_player.hide()  # Скрыть основной виджет
+                split_player._external_mode = True  # Режим внешнего использования виджетов
                 
                 # Загрузить первый сегмент
                 if segments_to_use:
@@ -626,44 +630,78 @@ class VideoGridWidget(QWidget):
                             self._current_segment_indices[camera_folder] = 0
                             self.logger.info(f"Split player {camera_folder} configured successfully")
                             
-                            # Добавить в сетку (занимает несколько ячеек по вертикали)
-                            num_split = split_config.get('num_split', 1)
-                            # Проверить, помещается ли виджет в сетку
-                            if row + num_split > rows:
-                                self.logger.warning(
-                                    f"Split player {camera_folder} (rowspan={num_split}) doesn't fit in grid "
-                                    f"(rows={rows}), adjusting rowspan"
-                                )
-                                num_split = max(1, rows - row)
-                            
-                            self.logger.info(
-                                f"Adding split player for {camera_folder} (actual={actual_camera_name}) "
-                                f"at row={row}, col={col}, rowspan={num_split}, colspan=1"
-                            )
-                            self.grid_layout.addWidget(split_player, row, col, num_split, 1)
-                            
-                            # Отметить занятые ячейки
-                            for r in range(row, min(row + num_split, rows)):
-                                occupied[r][col] = True
-                            
-                            # Сохранить виджет в маппинге ТОЛЬКО для первой ячейки
-                            grid_idx = row * cols + col
-                            self._grid_cell_sources[grid_idx] = camera_folder
-                            self._grid_cell_widgets[grid_idx] = split_player
-                            
-                            # Добавить обработчик изменения размера для диагностики
-                            original_split_resize = split_player.resizeEvent
-                            def on_split_resize(event, cam=camera_folder, r=row, c=col):
-                                size = split_player.size()
-                                geometry = split_player.geometry()
-                                self.logger.warning(
-                                    f"SplitPlayer widget resize: camera={cam}, row={r}, col={c}, "
-                                    f"size={size.width()}x{size.height()}, "
-                                    f"geometry={geometry.x()},{geometry.y()} {geometry.width()}x{geometry.height()}"
-                                )
-                                original_split_resize(event)
-                            
-                            split_player.resizeEvent = on_split_resize
+                            # Создать отдельные контейнеры для каждой области
+                            for i in range(num_split):
+                                # Найти свободную позицию для этой области
+                                region_row, region_col = -1, -1
+                                for r in range(rows):
+                                    for c in range(cols):
+                                        if not occupied[r][c]:
+                                            region_row, region_col = r, c
+                                            break
+                                    if region_row >= 0:
+                                        break
+                                
+                                if region_row < 0 or region_col < 0:
+                                    self.logger.warning(f"No free position in grid for split region {i} of {camera_folder}")
+                                    continue
+                                
+                                # Получить виджет области из split_player
+                                if i < len(split_player._region_widgets):
+                                    region_info = split_player._region_widgets[i]
+                                    region_widget = region_info['widget']
+                                    source_name = region_info.get('source_name', source_names[i] if i < len(source_names) else f"Source{i}")
+                                    
+                                    # Удалить виджет из его текущего контейнера (если он там есть)
+                                    if region_info['container'].layout():
+                                        region_info['container'].layout().removeWidget(region_widget)
+                                    
+                                    # Создать новый контейнер для этой области
+                                    region_container = QWidget()
+                                    region_container.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+                                    region_container.setStyleSheet("border: 2px solid #888888;")
+                                    region_container.setMinimumSize(100, 100)
+                                    region_layout = QVBoxLayout(region_container)
+                                    region_layout.setContentsMargins(0, 0, 0, 0)
+                                    region_layout.setSpacing(0)
+                                    
+                                    # Метка с именем источника
+                                    label = QLabel(source_name)
+                                    label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                                    label.setStyleSheet("background-color: rgba(0, 0, 0, 200); color: white; padding: 3px; font-weight: bold;")
+                                    region_layout.addWidget(label)
+                                    
+                                    # Добавить виджет области в новый контейнер
+                                    region_layout.addWidget(region_widget, stretch=1)
+                                    
+                                    # Обновить ссылку на контейнер в region_info
+                                    region_info['container'] = region_container
+                                    
+                                    # Добавить контейнер в сетку как отдельную ячейку
+                                    grid_idx = region_row * cols + region_col
+                                    self.grid_layout.addWidget(region_container, region_row, region_col)
+                                    occupied[region_row][region_col] = True
+                                    
+                                    # Сохранить в маппинге
+                                    self._grid_cell_sources[grid_idx] = source_name
+                                    self._grid_cell_widgets[grid_idx] = region_container
+                                    
+                                    # Добавить обработчик двойного клика для полноэкранного режима
+                                    def on_region_double_click(event, grid_idx=grid_idx):
+                                        if self._fullscreen_cell_index is None:
+                                            # Войти в полноэкранный режим
+                                            self._enter_fullscreen_mode(grid_idx)
+                                        elif self._fullscreen_cell_index == grid_idx:
+                                            # Выйти из полноэкранного режима
+                                            self._exit_fullscreen_mode()
+                                        event.accept()
+                                    
+                                    region_container.mouseDoubleClickEvent = on_region_double_click
+                                    
+                                    self.logger.info(
+                                        f"Added split region {i} ({source_name}) for {camera_folder} "
+                                        f"at row={region_row}, col={region_col}, grid_idx={grid_idx}"
+                                    )
                         else:
                             self.logger.error(f"Failed to configure split player for {camera_folder}")
                     else:
@@ -700,6 +738,18 @@ class VideoGridWidget(QWidget):
                     original_resize(event)
                 
                 container_widget.resizeEvent = on_container_resize
+                
+                # Добавить обработчик двойного клика для полноэкранного режима
+                def on_container_double_click(event, grid_idx=grid_idx):
+                    if self._fullscreen_cell_index is None:
+                        # Войти в полноэкранный режим
+                        self._enter_fullscreen_mode(grid_idx)
+                    elif self._fullscreen_cell_index == grid_idx:
+                        # Выйти из полноэкранного режима
+                        self._exit_fullscreen_mode()
+                    event.accept()
+                
+                container_widget.mouseDoubleClickEvent = on_container_double_click
                 
                 container_layout = QVBoxLayout(container_widget)
                 container_layout.setContentsMargins(0, 0, 0, 0)
@@ -1238,6 +1288,158 @@ class VideoGridWidget(QWidget):
                     new_interval = int(base_interval / speed)
                     if new_interval > 0:
                         player.timer.setInterval(new_interval)
+    
+    def _enter_fullscreen_mode(self, grid_idx: int):
+        """Войти в полноэкранный режим для указанной ячейки"""
+        if grid_idx not in self._grid_cell_widgets:
+            self.logger.warning(f"Invalid grid_idx for fullscreen: {grid_idx}")
+            return
+        
+        widget = self._grid_cell_widgets[grid_idx]
+        if not widget:
+            self.logger.warning(f"Widget is None for grid_idx: {grid_idx}")
+            return
+        
+        # Сохранить текущее состояние сетки
+        self._saved_grid_state = {}
+        rows = self.grid_layout.rowCount()
+        cols = self.grid_layout.columnCount()
+        
+        # Сохранить состояние всех виджетов
+        for idx, w in self._grid_cell_widgets.items():
+            if w:
+                # Получить позицию виджета в сетке
+                position = None
+                for i in range(self.grid_layout.count()):
+                    item = self.grid_layout.itemAt(i)
+                    if item and item.widget() == w:
+                        position = self.grid_layout.getItemPosition(i)
+                        break
+                
+                if position:
+                    row, col, rowspan, colspan = position
+                    self._saved_grid_state[idx] = {
+                        'widget': w,
+                        'row': row,
+                        'col': col,
+                        'rowspan': rowspan,
+                        'colspan': colspan,
+                        'visible': w.isVisible()
+                    }
+        
+        # Скрыть все виджеты кроме выбранного
+        for idx, w in self._grid_cell_widgets.items():
+            if w and idx != grid_idx:
+                w.setVisible(False)
+        
+        # Развернуть выбранный виджет на всю сетку
+        # Сначала удалить виджет из текущей позиции
+        self.grid_layout.removeWidget(widget)
+        
+        # Добавить виджет на всю сетку
+        self.grid_layout.addWidget(widget, 0, 0, rows, cols)
+        widget.setVisible(True)
+        
+        # Установить stretch factors для того, чтобы виджет занимал всю доступную область
+        for r in range(rows):
+            self.grid_layout.setRowStretch(r, 1)
+        for c in range(cols):
+            self.grid_layout.setColumnStretch(c, 1)
+        
+        # Убрать ограничения размера для полноэкранного виджета
+        widget.setMaximumSize(16777215, 16777215)  # Qt maximum size
+        
+        self._fullscreen_cell_index = grid_idx
+        
+        # Установить фокус для обработки клавиатуры
+        self.setFocus()
+        
+        # Обновить layout
+        self.grid_layout.update()
+        
+        self.logger.info(f"Entered fullscreen mode for grid_idx={grid_idx}")
+    
+    def _exit_fullscreen_mode(self):
+        """Выйти из полноэкранного режима"""
+        if self._fullscreen_cell_index is None:
+            return
+        
+        grid_idx = self._fullscreen_cell_index
+        widget = self._grid_cell_widgets.get(grid_idx)
+        
+        if not widget:
+            self.logger.warning(f"Widget is None for grid_idx: {grid_idx}")
+            self._fullscreen_cell_index = None
+            self._saved_grid_state = {}
+            return
+        
+        # Удалить виджет из текущей позиции
+        self.grid_layout.removeWidget(widget)
+        
+        # Сбросить stretch factors
+        rows = self.grid_layout.rowCount()
+        cols = self.grid_layout.columnCount()
+        for r in range(rows):
+            self.grid_layout.setRowStretch(r, 0)
+        for c in range(cols):
+            self.grid_layout.setColumnStretch(c, 0)
+        
+        # Восстановить сохраненное состояние
+        for idx, state in self._saved_grid_state.items():
+            w = state['widget']
+            row = state['row']
+            col = state['col']
+            rowspan = state['rowspan']
+            colspan = state['colspan']
+            visible = state['visible']
+            
+            # Добавить виджет обратно в исходную позицию
+            self.grid_layout.addWidget(w, row, col, rowspan, colspan)
+            w.setVisible(visible)
+        
+        # Восстановить stretch factors для обычной сетки
+        # Определить, какие строки содержат split players
+        rows_with_split_players = set()
+        for i in range(self.grid_layout.count()):
+            item = self.grid_layout.itemAt(i)
+            if item and item.widget():
+                try:
+                    position = self.grid_layout.getItemPosition(i)
+                    row, col, rowspan, colspan = position
+                    if rowspan > 1:
+                        for r in range(row, min(row + rowspan, rows)):
+                            rows_with_split_players.add(r)
+                except (AttributeError, TypeError):
+                    pass
+        
+        # Установить stretch factors: строки с split players получают 2, остальные 1
+        for r in range(rows):
+            if r in rows_with_split_players:
+                self.grid_layout.setRowStretch(r, 2)
+            else:
+                self.grid_layout.setRowStretch(r, 1)
+        
+        # Столбцы равномерно
+        for c in range(cols):
+            self.grid_layout.setColumnStretch(c, 1)
+        
+        self._fullscreen_cell_index = None
+        self._saved_grid_state = {}
+        
+        # Обновить layout
+        self.grid_layout.update()
+        
+        self.logger.info(f"Exited fullscreen mode")
+    
+    def keyPressEvent(self, event):
+        """Обработка нажатий клавиш"""
+        if event.key() == Qt.Key.Key_Escape:
+            if self._fullscreen_cell_index is not None:
+                self._exit_fullscreen_mode()
+                event.accept()
+                return
+        
+        super().keyPressEvent(event)
 
 
 class TimelineWidget(QWidget):
@@ -1701,6 +1903,7 @@ class SplitVideoPlayerWidget(QWidget):
         self._video_player = None  # VideoPlayerWidget для основного потока
         self._split_config = None  # Конфигурация разделения
         self._region_widgets = []  # Виджеты для отображения областей
+        self._region_pixmaps = {}  # {widget_id: pixmap} - последние pixmap для каждого виджета области
         self._current_frame = None  # Текущий кадр для разделения
         self._extraction_timer = None  # Таймер для извлечения кадров
         
@@ -1762,7 +1965,35 @@ class SplitVideoPlayerWidget(QWidget):
             region_widget.setAlignment(Qt.AlignmentFlag.AlignCenter)
             region_widget.setStyleSheet("background-color: black;")
             region_widget.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
-            region_layout.addWidget(region_widget, stretch=1)
+            
+            # Добавить обработчик resizeEvent для перемасштабирования
+            original_resize = region_widget.resizeEvent
+            widget_id = id(region_widget)
+            def on_region_resize(event, widget_id=widget_id):
+                original_resize(event)
+                # Перемасштабировать последний pixmap если он есть
+                if widget_id in self._region_pixmaps:
+                    pixmap = self._region_pixmaps[widget_id]
+                    widget_size = event.size()
+                    if widget_size.width() > 0 and widget_size.height() > 0:
+                        scaled_pixmap = pixmap.scaled(
+                            widget_size,
+                            Qt.AspectRatioMode.KeepAspectRatio,
+                            Qt.TransformationMode.SmoothTransformation
+                        )
+                        # Найти виджет по id
+                        for region_info in self._region_widgets:
+                            if id(region_info['widget']) == widget_id:
+                                region_info['widget'].setPixmap(scaled_pixmap)
+                                break
+            
+            region_widget.resizeEvent = on_region_resize
+            
+            # Добавить виджет в layout только если не используется внешний режим
+            # (внешний режим определяется через атрибут _external_mode)
+            if not getattr(self, '_external_mode', False):
+                region_layout.addWidget(region_widget, stretch=1)
+                layout.addWidget(region_container)
             
             self._region_widgets.append({
                 'container': region_container,
@@ -1771,8 +2002,6 @@ class SplitVideoPlayerWidget(QWidget):
                 'coords': src_coords[i] if i < len(src_coords) else None,
                 'source_name': source_name
             })
-            
-            layout.addWidget(region_container)
         
         # Загрузить видео в основной плеер
         if video_path and os.path.exists(video_path):
@@ -2013,6 +2242,10 @@ class SplitVideoPlayerWidget(QWidget):
         q_image = QImage(region.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
         pixmap = QPixmap.fromImage(q_image)
         
+        # Сохранить оригинальный pixmap для перемасштабирования при изменении размера
+        widget_id = id(widget)
+        self._region_pixmaps[widget_id] = pixmap
+        
         # Масштабировать под размер виджета
         widget_size = widget.size()
         if widget_size.width() > 0 and widget_size.height() > 0:
@@ -2032,6 +2265,9 @@ class SplitVideoPlayerWidget(QWidget):
             self._extraction_timer.stop()
             self._extraction_timer.deleteLater()
             self._extraction_timer = None
+        
+        # Очистить сохраненные pixmap
+        self._region_pixmaps = {}
         
         layout = self.layout()
         if layout:

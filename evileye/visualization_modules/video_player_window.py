@@ -55,6 +55,7 @@ class VideoPlayerWidget(QWidget):
         self.video_path: Optional[str] = None
         self._is_playing = False
         self._current_frame = None  # Текущий кадр для разделения потоков
+        self._last_pixmap = None  # Последний отображенный pixmap для перемасштабирования
         self._source_name = None  # Имя источника для метаданных
         self._base_dir = None  # Базовая директория для загрузки метаданных
         self._date_folder = None  # Папка даты для метаданных
@@ -177,7 +178,7 @@ class VideoPlayerWidget(QWidget):
         self.stop_button.raise_()  # Ensure button is on top
     
     def resizeEvent(self, event):
-        """Reposition stop button when widget is resized"""
+        """Reposition stop button when widget is resized and rescale video frame"""
         super().resizeEvent(event)
         if self.stop_button:
             # Position in top-right corner with small margin
@@ -185,6 +186,17 @@ class VideoPlayerWidget(QWidget):
             button_y = 5
             self.stop_button.move(button_x, button_y)
             self.stop_button.raise_()
+        
+        # Перемасштабировать последний кадр если используется OpenCV и виджет видим
+        if self._use_opencv and self.isVisible() and self._last_pixmap is not None:
+            widget_size = self.video_widget.size()
+            if widget_size.width() > 0 and widget_size.height() > 0:
+                scaled_pixmap = self._last_pixmap.scaled(
+                    widget_size,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation
+                )
+                self.video_widget.setPixmap(scaled_pixmap)
         
         # Обновить размер и позицию overlay метаданных
         if self._metadata_overlay:
@@ -365,6 +377,8 @@ class VideoPlayerWidget(QWidget):
                 Qt.TransformationMode.SmoothTransformation
             )
             self.video_widget.setPixmap(scaled_pixmap)
+            # Сохранить оригинальный pixmap для перемасштабирования при изменении размера
+            self._last_pixmap = pixmap
             
             # Обновить размер overlay и метаданные
             if self._metadata_overlay:
