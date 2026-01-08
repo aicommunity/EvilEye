@@ -7,6 +7,7 @@ OpenCV re-encoding.
 
 __all__ = [
     "recording_params",
+    "VideoValidator",
 ]
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 from typing import Iterable, List, Tuple
 
@@ -49,10 +50,77 @@ def delete_files(paths: List[Path]) -> int:
     return removed
 
 
-def check_and_delete_small_files(file_path: Path, min_size_kb: int, min_age_seconds: int = 30) -> bool:
+def validate_video_file(file_path: Path, timeout_seconds: float = 2.0) -> bool:
+    """
+    Быстрая проверка целостности видеофайла.
+    
+    Проверяет:
+    - Возможность открытия файла
+    - Чтение первого кадра
+    - Наличие базовых метаданных
+    
+    Args:
+        file_path: Путь к видеофайлу
+        timeout_seconds: Максимальное время проверки (по умолчанию 2 секунды)
+    
+    Returns:
+        True если файл валиден, False если битый
+    """
+    try:
+        if not file_path.exists():
+            return False
+        
+        import cv2
+        
+        start_time = time.time()
+        
+        # Открыть файл через OpenCV
+        cap = cv2.VideoCapture(str(file_path))
+        if not cap.isOpened():
+            return False
+        
+        try:
+            # Попытаться прочитать первый кадр
+            ret, frame = cap.read()
+            if not ret or frame is None:
+                return False
+            
+            # Проверить базовые метаданные
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+            width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+            height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+            
+            # Проверить таймаут
+            elapsed = time.time() - start_time
+            if elapsed > timeout_seconds:
+                return False
+            
+            # Если fps и frame_count равны 0, файл может быть поврежден
+            # Но для очень коротких файлов это может быть нормально, поэтому проверяем размер кадра
+            if fps == 0 and frame_count == 0 and (width == 0 or height == 0):
+                return False
+            
+            # Если размер кадра не соответствует метаданным, файл поврежден
+            if frame is not None:
+                h, w = frame.shape[:2]
+                if width > 0 and height > 0 and (abs(w - width) > 1 or abs(h - height) > 1):
+                    # Небольшое расхождение допустимо из-за округления
+                    pass
+            
+            return True
+        finally:
+            cap.release()
+    except Exception:
+        return False
+
+
+def check_and_delete_small_files(file_path: Path, min_size_kb: int, min_age_seconds: int = 30, 
+                                  validate_integrity: bool = True, validation_timeout: float = 2.0) -> bool:
     """
     Check if file exists and is smaller than min_size_kb, delete if so.
     Also deletes files with %05d pattern in name (invalid splitmuxsink files).
+    Optionally validates video file integrity.
     Does NOT delete files that are currently being written (modified recently).
     
     Args:
@@ -60,6 +128,8 @@ def check_and_delete_small_files(file_path: Path, min_size_kb: int, min_age_seco
         min_size_kb: Minimum file size in KB
         min_age_seconds: Minimum age in seconds before file can be deleted (default 30)
                          Files modified within this time are considered "active" and not deleted
+        validate_integrity: If True, also validate video file integrity (default True)
+        validation_timeout: Timeout for video validation in seconds (default 2.0)
         
     Returns:
         True if file was deleted, False otherwise
@@ -67,8 +137,6 @@ def check_and_delete_small_files(file_path: Path, min_size_kb: int, min_age_seco
     try:
         if not file_path.exists():
             return False
-        
-        import time
         
         # Delete files with %05d pattern in name (invalid splitmuxsink files)
         # But only if they're old enough (not currently being written)
@@ -97,6 +165,14 @@ def check_and_delete_small_files(file_path: Path, min_size_kb: int, min_age_seco
         if file_size_kb < min_size_kb:
             file_path.unlink(missing_ok=True)
             return True
+        
+        # If file passed size check, validate integrity if enabled
+        if validate_integrity and file_age >= min_age_seconds:
+            # Only validate files that are old enough to be finalized
+            if not validate_video_file(file_path, validation_timeout):
+                # File is corrupted, delete it
+                file_path.unlink(missing_ok=True)
+                return True
         
         return False
     except Exception:

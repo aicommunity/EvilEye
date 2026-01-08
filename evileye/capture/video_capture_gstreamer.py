@@ -744,10 +744,17 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         try:
             msg_type = message.type
             if msg_type == Gst.MessageType.EOS:
-                self.logger.info("GStreamer EOS received")
+                self.logger.info(f"GStreamer EOS received for {self.source_names} (is_inited={self.is_inited}, is_working={self.is_working})")
                 if self.source_type == CaptureDeviceType.VideoFile and self.loop_play:
+                    # Prevent multiple simultaneous reconnection attempts
+                    if self._reconnecting:
+                        self.logger.debug(f"EOS handler: Reconnection already in progress for {self.source_names}, skipping")
+                        return
+                    
+                    self._reconnecting = True
                     try:
                         # Restart pipeline instead of seek to avoid TIME/BYTES format mismatch
+                        self.logger.debug(f"EOS handler: Before restart - is_inited={self.is_inited}, is_working={self.is_working}, pipeline={self.pipeline is not None}")
                         with self.pipeline_lock:
                             try:
                                 if self.pipeline is not None:
@@ -755,11 +762,37 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                             except Exception:
                                 pass
                             self.pipeline = None
+                            self.is_inited = False
+                            self.is_working = False
                         time.sleep(0.1)
+                        
+                        # Reinitialize pipeline
                         self._init_pipeline()
-                        self.logger.info("Looping video: pipeline restarted")
+                        
+                        # Verify pipeline is actually initialized and playing
+                        with self.pipeline_lock:
+                            if self.pipeline is not None:
+                                ret, state, pending = self.pipeline.get_state(0)
+                                if ret == Gst.StateChangeReturn.SUCCESS and state == Gst.State.PLAYING:
+                                    # CRITICAL: Set flags after successful _init_pipeline() - this was missing!
+                                    self.is_inited = True
+                                    self.is_working = True
+                                    self.logger.info(f"Looping video: pipeline restarted successfully (is_inited={self.is_inited}, is_working={self.is_working}, state={state})")
+                                else:
+                                    self.logger.warning(f"Loop restart: pipeline created but not PLAYING (state={state}, ret={ret})")
+                                    self.is_inited = False
+                                    self.is_working = False
+                            else:
+                                self.logger.error("Loop restart: pipeline is None after _init_pipeline()")
+                                self.is_inited = False
+                                self.is_working = False
                     except Exception as e:
-                        self.logger.error(f"Loop restart failed: {e}")
+                        self.logger.error(f"Loop restart failed: {e} (is_inited={self.is_inited}, is_working={self.is_working})", exc_info=True)
+                        # Mark as not initialized on failure
+                        self.is_inited = False
+                        self.is_working = False
+                    finally:
+                        self._reconnecting = False
                 elif self.source_type == CaptureDeviceType.IpCamera:
                     # For IP cameras, EOS means disconnect - but ignore early EOS (within 5 seconds of init)
                     # This prevents false positives when pipeline is still initializing
@@ -1145,26 +1178,34 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         """
         while self.run_flag:
             if not self.is_inited or self.pipeline is None:
+                # Check if reconnection is already in progress (for both IP cameras and video files)
+                if hasattr(self, '_reconnecting') and self._reconnecting:
+                    self.logger.debug(f"Reconnection already in progress for {self.source_names}, waiting...")
+                    time.sleep(1.0)
+                    continue
+                
                 # For IP cameras, use reconnect loop instead of direct init()
                 if self.source_type == CaptureDeviceType.IpCamera:
-                    if not (hasattr(self, '_reconnecting') and self._reconnecting):
-                        self.logger.info(f"Source {self.source_names} not initialized, starting reconnect loop")
-                        threading.Thread(target=self._reconnect_loop, daemon=True).start()
+                    self.logger.info(f"Source {self.source_names} not initialized (is_inited={self.is_inited}, pipeline={self.pipeline is not None}), starting reconnect loop")
+                    threading.Thread(target=self._reconnect_loop, daemon=True).start()
                     # Wait a bit before checking again
                     time.sleep(2.0)
                 else:
-                    # For video files, try direct init
+                    # For video files, try direct init (but only if not already reconnecting via EOS handler)
+                    self.logger.debug(f"Video file {self.source_names} not initialized (is_inited={self.is_inited}, pipeline={self.pipeline is not None}), attempting reconnect")
                     time.sleep(0.1)
                     if self.run_flag:
                         try:
                             if self.init():
                                 timestamp = datetime.datetime.now()
-                                self.logger.info(f"Reconnected to source: {self.source_names}")
+                                self.logger.info(f"Reconnected to source: {self.source_names} (is_inited={self.is_inited}, is_working={self.is_working})")
                                 self.reconnects.append((self.source_address, timestamp, self.is_working))
                                 for sub in self.subscribers:
                                     sub.update()
+                            else:
+                                self.logger.warning(f"Reconnection attempt failed for {self.source_names} (init() returned False)")
                         except Exception as e:
-                            self.logger.error(f"Reconnection failed: {e}")
+                            self.logger.error(f"Reconnection failed: {e} (is_inited={self.is_inited}, is_working={self.is_working})")
                 continue
             
             # Poll bus for messages (no GLib MainLoop running)
@@ -1189,19 +1230,39 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                             if last_frame_time > 0 and (now - last_frame_time) > 15.0:
                                 # No frames for 15 seconds - mark as not working
                                 if self.is_working:
-                                    self.logger.warning(f"Pipeline PLAYING but no frames received after 10s, marking as not working")
+                                    self.logger.warning(f"Pipeline PLAYING but no frames received after 15s for {self.source_names}, marking as not working")
                                     self.is_working = False
                         else:
+                            # Pipeline not in PLAYING state
+                            if self.is_working:
+                                self.logger.debug(f"Pipeline state changed to {state} for {self.source_names}, marking as not working")
                             self.is_working = False
+                    else:
+                        # Failed to get state
+                        if self.is_working:
+                            self.logger.debug(f"Failed to get pipeline state (ret={ret}) for {self.source_names}, marking as not working")
+                        self.is_working = False
             except Exception as e:
                 self.logger.debug(f"Error checking pipeline state: {e}")
             
-            # Check if pipeline is still working
-            if not self.is_working and self.source_type == CaptureDeviceType.IpCamera:
-                # Try to reconnect (but don't create multiple threads)
-                if self.run_flag and not (hasattr(self, '_reconnecting') and self._reconnecting):
-                    self.logger.info(f"Pipeline not working, starting reconnect loop for {self.source_names}")
-                    threading.Thread(target=self._reconnect_loop, daemon=True).start()
+            # Check if pipeline is still working and needs reconnection
+            if not self.is_working:
+                # For IP cameras, use reconnect loop
+                if self.source_type == CaptureDeviceType.IpCamera:
+                    if self.run_flag and not (hasattr(self, '_reconnecting') and self._reconnecting):
+                        self.logger.info(f"Pipeline not working, starting reconnect loop for {self.source_names}")
+                        threading.Thread(target=self._reconnect_loop, daemon=True).start()
+                # For video files with loop_play, check if reconnection is needed
+                elif self.source_type == CaptureDeviceType.VideoFile and self.loop_play:
+                    # Don't reconnect if already reconnecting (via EOS handler or previous attempt)
+                    if not (hasattr(self, '_reconnecting') and self._reconnecting):
+                        # Check if pipeline exists and is in valid state
+                        with self.pipeline_lock:
+                            pipeline_valid = (self.pipeline is not None)
+                        if not pipeline_valid or not self.is_inited:
+                            self.logger.debug(f"Video file {self.source_names} needs reconnection (pipeline_valid={pipeline_valid}, is_inited={self.is_inited})")
+                            # Let the next iteration handle reconnection via init()
+                            # Don't start separate thread to avoid conflicts with EOS handler
             
             # Sleep according to monitor interval
             try:
@@ -1457,14 +1518,35 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                         
                         # Get all video files in recording directory
                         from evileye.video_recorder.utils import check_and_delete_small_files
+                        validate_integrity = getattr(self.recording_params, 'validate_video_integrity', True)
+                        validation_timeout = getattr(self.recording_params, 'video_validation_timeout', 2.0)
+                        
                         for file_path in self._recording_out_dir.glob(f"*.{self._recording_container}"):
                             if file_path in self._recording_checked_files:
                                 continue
                             
                             # Try to delete small/invalid files (only if not active per util's min_age rule)
-                            deleted = check_and_delete_small_files(file_path, self._recording_min_file_size_kb)
+                            # Also validate integrity if enabled
+                            deleted = check_and_delete_small_files(
+                                file_path, 
+                                self._recording_min_file_size_kb,
+                                validate_integrity=validate_integrity,
+                                validation_timeout=validation_timeout
+                            )
                             if deleted:
-                                reason = "invalid name pattern" if '%' in file_path.name else f"size < {self._recording_min_file_size_kb} KB"
+                                # Determine reason for deletion
+                                if '%' in file_path.name:
+                                    reason = "invalid name pattern"
+                                else:
+                                    try:
+                                        stat = file_path.stat()
+                                        file_size_kb = stat.st_size / 1024.0
+                                        if file_size_kb < self._recording_min_file_size_kb:
+                                            reason = f"size < {self._recording_min_file_size_kb} KB"
+                                        else:
+                                            reason = "corrupted/invalid video file"
+                                    except Exception:
+                                        reason = "corrupted/invalid video file"
                                 self.logger.info(f"Deleted recording file: {file_path} ({reason})")
                                 continue
                             

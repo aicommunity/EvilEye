@@ -16,10 +16,10 @@
                     "Cam1"
                 ],
                 "loop_play": true,
-                "source": "IpCamera",
-                "camera": "rtsp://10.245.1.200",
+                "source": "VideoFile",
+                "camera": "/home/user/Videos/Test3Cam/1/139932-video_trim.mp4",
                 "apiPreference": "CAP_FFMPEG",
-                "source_fps": 25.166666666666668
+                "source_fps": 15.082956259426847
             },
             {
                 "split": true,
@@ -48,10 +48,10 @@
                     "Cam3"
                 ],
                 "loop_play": true,
-                "source": "IpCamera",
-                "camera": "rtsp://10.245.1.199",
+                "source": "VideoFile",
+                "camera": "/home/user/Videos/Test3Cam/2/139931-video_trim.mp4",
                 "apiPreference": "CAP_FFMPEG",
-                "source_fps": 10.0
+                "source_fps": 10.410160316468874
             },
             {
                 "split": true,
@@ -80,10 +80,10 @@
                     "Cam5"
                 ],
                 "loop_play": true,
-                "source": "IpCamera",
-                "camera": "rtsp://10.245.1.202",
+                "source": "VideoFile",
+                "camera": "/home/user/Videos/Test3Cam/3/139930-video_trim.mp4",
                 "apiPreference": "CAP_FFMPEG",
-                "source_fps": 10.0
+                "source_fps": 10.422094841063053
             }
         ],
         "detectors": [
@@ -368,40 +368,44 @@
                 "0": [
                     [
                         [
-                            0.4759463922764227,
-                            0.11245876045716975
+                            0.4741568906857547,
+                            0.1771459290679863
                         ],
                         [
-                            0.5517019596147049,
-                            0.09549163426416869
+                            0.5642284707493814,
+                            0.1686623659714858
                         ],
                         [
-                            0.7622666467833157,
-                            0.7667535642747733
+                            0.662054557705903,
+                            0.4422572758336279
                         ],
                         [
-                            0.4007873254683634,
-                            0.8568914221750913
+                            0.45327937212796043,
+                            0.4464990573818782
+                        ],
+                        [
+                            0.45327937212796043,
+                            0.4464990573818782
                         ]
                     ]
                 ],
-                "2": [
+                "3": [
                     [
                         [
-                            0.08105549295982087,
-                            0.06940418071565284
+                            0.3913591190939083,
+                            0.21567419854800557
                         ],
                         [
-                            0.46282687860846,
-                            0.6229566727623125
+                            0.5307727075232709,
+                            0.2114324169997553
                         ],
                         [
-                            0.35340953443501827,
-                            0.7597541276933836
+                            0.6761697117650525,
+                            0.8222489599477933
                         ],
                         [
-                            0.054295816395663915,
-                            0.09591531539221704
+                            0.2531422138270296,
+                            0.7936169344971041
                         ]
                     ]
                 ]
@@ -575,7 +579,8 @@
         "show_memory_usage": false,
         "max_memory_usage_mb": 16384,
         "auto_restart": true,
-        "use_database": true
+        "use_database": false
     },
+    "pipeline_class": "PipelineSurveillance",
     "database": {}
 }

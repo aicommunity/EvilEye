@@ -1,0 +1,49 @@
+{
+  "pipeline": {
+    "pipeline_class": "PipelineSurveillance",
+    "sources": [
+      {
+        "camera": "images/sequence_%03d.jpg",
+        "source": "ImageSequence",
+        "type": "VideoCaptureGStreamer",
+        "split": false,
+        "num_split": 0,
+        "src_coords": [0],
+        "source_ids": [0],
+        "source_names": ["Image Sequence"],
+        "desired_fps": 10
+      }
+    ],
+    "detectors": [
+      {
+        "model": "models/yolo11n.pt",
+        "classes": [0, 1, 24, 25, 63, 66, 67],
+        "source_ids": [0],
+        "roi": [[]],
+        "type": "ObjectDetectorRtdetr"
+      }
+    ],
+    "trackers": [
+      {
+        "type": "ObjectTrackingBotsort",
+        "source_ids": [0]
+      }
+    ],
+    "handlers": [
+      {
+        "type": "ObjectsHandler",
+        "source_ids": [0]
+      }
+    ],
+    "visualizers": [
+      {
+        "type": "BoundingBoxVisualizer",
+        "source_ids": [0]
+      }
+    ],
+    "display": {
+      "type": "display",
+      "source_ids": [0]
+    }
+  }
+}

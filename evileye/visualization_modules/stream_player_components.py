@@ -467,8 +467,27 @@ class VideoGridWidget(QWidget):
     def _clear_grid(self):
         """Очистить сетку"""
         for camera, player in self._video_players.items():
-            player.stop()
-            player.deleteLater()
+            try:
+                # Правильная последовательность очистки: stop() → освобождение ресурсов → deleteLater()
+                if hasattr(player, 'stop'):
+                    player.stop()
+                
+                # Для QMediaPlayer освободить ресурсы
+                if hasattr(player, 'player') and player.player:
+                    try:
+                        if pyqt_version == 6:
+                            from PyQt6.QtCore import QUrl
+                            player.player.setSource(QUrl())
+                        else:
+                            from PyQt5.QtMultimedia import QMediaContent
+                            player.player.setMedia(QMediaContent())
+                    except Exception as e:
+                        self.logger.debug(f"Error clearing player resources for {camera}: {e}")
+                
+                player.deleteLater()
+            except Exception as e:
+                self.logger.warning(f"Error clearing player for {camera}: {e}")
+        
         self._video_players.clear()
         self._current_segments.clear()
         self._current_segment_indices.clear()

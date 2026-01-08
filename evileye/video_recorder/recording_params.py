@@ -29,6 +29,10 @@ class RecordingParams:
     event_pre_seconds: int = 10  # Seconds before event to save
     event_post_seconds: int = 10  # Seconds after event to save
     event_buffer_fps: Optional[float] = None  # FPS for event buffer (None = use source FPS)
+    
+    # Video validation settings
+    validate_video_integrity: bool = True  # Enable video file integrity validation
+    video_validation_timeout: float = 2.0  # Timeout for video validation in seconds
 
     @staticmethod
     def from_config(config: Dict[str, Any] | None) -> "RecordingParams":
@@ -53,6 +57,8 @@ class RecordingParams:
                 event_pre_seconds=int(record_cfg.get("event_pre_seconds", 10)),
                 event_post_seconds=int(record_cfg.get("event_post_seconds", 10)),
                 event_buffer_fps=event_buffer_fps,
+                validate_video_integrity=bool(record_cfg.get("validate_video_integrity", True)),
+                video_validation_timeout=float(record_cfg.get("video_validation_timeout", 2.0)),
             )
         # Config may place record at top-level already
         cfg = config
@@ -73,6 +79,8 @@ class RecordingParams:
             event_pre_seconds=int(cfg.get("event_pre_seconds", 10)),
             event_post_seconds=int(cfg.get("event_post_seconds", 10)),
             event_buffer_fps=event_buffer_fps,
+            validate_video_integrity=bool(cfg.get("validate_video_integrity", True)),
+            video_validation_timeout=float(cfg.get("video_validation_timeout", 2.0)),
         )
 
     def merge_overrides(self, overrides: Optional[Dict[str, Any]]) -> "RecordingParams":
@@ -95,6 +103,8 @@ class RecordingParams:
             event_pre_seconds=int(overrides.get("event_pre_seconds", self.event_pre_seconds)),
             event_post_seconds=int(overrides.get("event_post_seconds", self.event_post_seconds)),
             event_buffer_fps=event_buffer_fps,
+            validate_video_integrity=bool(overrides.get("validate_video_integrity", self.validate_video_integrity)),
+            video_validation_timeout=float(overrides.get("video_validation_timeout", self.video_validation_timeout)),
         )
         return merged
 

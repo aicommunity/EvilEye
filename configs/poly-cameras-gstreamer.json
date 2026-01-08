@@ -420,7 +420,7 @@
     "record": {
         "enabled": true,
         "continuous_recording_enabled": true,
-        "event_recording_enabled": false,
+        "event_recording_enabled": true,
         "event_pre_seconds": 10,
         "event_post_seconds": 10,
         "event_buffer_fps": null,
@@ -452,7 +452,32 @@
         "num_height": 2,
         "num_width": 3,
         "visual_buffer_num_frames": 10,
-        "text_config": {},
+        "text_config": {
+            "font_size_pt": 42,
+            "font_face": 0,
+            "color": [
+                0,
+                0,
+                255
+            ],
+            "thickness": null,
+            "background_color": [
+                0,
+                0,
+                0
+            ],
+            "background_enabled": false,
+            "padding_percent": 1.5,
+            "position_offset_percent": [
+                0,
+                -8
+            ],
+            "font_scale_method": "resolution_based",
+            "base_resolution": [
+                1920,
+                1080
+            ]
+        },
         "display_zones": true
     },
     "objects_handler": {

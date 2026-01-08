@@ -1,0 +1,62 @@
+{
+  "example_attributes_config": {
+    "description": "Примеры конфигурации атрибутов для разных моделей",
+    
+    "y8mhardhats_example": {
+      "model": "models/y8mhardhats.pt",
+      "attrs": ["hard_hat", "no_hard_hat"],
+      "class_mapping": {
+        "hard_hat": 0,
+        "no_hard_hat": 1
+      },
+      "confidence_thresholds": {
+        "hard_hat": 0.3,
+        "no_hard_hat": 0.3
+      }
+    },
+    
+    "yolo11n_coco_example": {
+      "model": "models/yolo11n.pt",
+      "attrs": ["person", "bottle", "backpack"],
+      "class_mapping": {
+        "person": 0,
+        "bottle": 39,
+        "backpack": 24
+      },
+      "confidence_thresholds": {
+        "person": 0.5,
+        "bottle": 0.3,
+        "backpack": 0.4
+      }
+    },
+    
+    "custom_model_example": {
+      "model": "models/custom_model.pt",
+      "attrs": ["safety_vest", "helmet", "gloves"],
+      "class_mapping": {
+        "safety_vest": 0,
+        "helmet": 1,
+        "gloves": 2
+      },
+      "confidence_thresholds": {
+        "safety_vest": 0.4,
+        "helmet": 0.5,
+        "gloves": 0.3
+      }
+    },
+    
+    "sequential_mapping_example": {
+      "model": "models/sequential_model.pt",
+      "attrs": ["attr1", "attr2", "attr3"],
+      "class_mapping": {},
+      "confidence_thresholds": {
+        "attr1": 0.3,
+        "attr2": 0.3,
+        "attr3": 0.3
+      },
+      "note": "Если class_mapping пустой, используется последовательный маппинг (0, 1, 2, ...)"
+    }
+  }
+}
+
+

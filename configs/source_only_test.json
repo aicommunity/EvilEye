@@ -1,0 +1,33 @@
+{
+  "pipeline": {
+    "pipeline_class": "PipelineSurveillance",
+    "sources": [
+      {
+        "camera": "videos/sample_video.mp4",
+        "source": "VideoFile",
+        "split": false,
+        "num_split": 0,
+        "src_coords": [0],
+        "source_ids": [0],
+        "source_names": ["Cam1"]
+      }
+    ]
+  },
+  "controller": {
+    "fps": 30,
+    "enable_close_from_gui": true,
+    "class_names": ["person"]
+  },
+  "visualizer": {
+    "num_width": 1,
+    "num_height": 1,
+    "visual_buffer_num_frames": 10,
+    "source_ids": [0],
+    "fps": [5],
+    "gui_enabled": false,
+    "show_debug_info": true,
+    "objects_journal_enabled": false
+  }
+}
+
+

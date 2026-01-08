@@ -71,6 +71,7 @@ class VideoPlayerWidget(QWidget):
         
         # Try to use QMediaPlayer first
         self._use_opencv = False
+        self._supported_mime_types = set()  # Кэш поддерживаемых MIME-типов
         if pyqt_version == 6:
             try:
                 self.player = QMediaPlayer()
@@ -83,6 +84,13 @@ class VideoPlayerWidget(QWidget):
                 self.player.mediaStatusChanged.connect(self._on_media_status_changed)
                 # Connect error signal to detect FFmpeg errors
                 self.player.errorOccurred.connect(self._on_player_error)
+                # Получить список поддерживаемых MIME-типов
+                try:
+                    from PyQt6.QtMultimedia import QMediaPlayer
+                    self._supported_mime_types = set(QMediaPlayer.supportedMimeTypes())
+                    self.logger.debug(f"QMediaPlayer supports {len(self._supported_mime_types)} MIME types")
+                except Exception as e:
+                    self.logger.debug(f"Could not get supported MIME types: {e}")
             except Exception as e:
                 self.logger.warning(f"QMediaPlayer not available, falling back to OpenCV: {e}")
                 self._use_opencv = True
@@ -97,6 +105,21 @@ class VideoPlayerWidget(QWidget):
                     self.player.mediaStatusChanged.connect(self._on_media_status_changed_pyqt5)
                     # Connect error signal to detect FFmpeg errors
                     self.player.error.connect(self._on_player_error)
+                    # Получить список поддерживаемых форматов (PyQt5 использует supportedFormats)
+                    try:
+                        from PyQt5.QtMultimedia import QMediaPlayer
+                        # PyQt5 может не иметь supportedMimeTypes, используем supportedFormats
+                        if hasattr(QMediaPlayer, 'supportedMimeTypes'):
+                            self._supported_mime_types = set(QMediaPlayer.supportedMimeTypes())
+                        else:
+                            # Fallback: используем известные MIME-типы для видео
+                            self._supported_mime_types = {
+                                'video/mp4', 'video/x-msvideo', 'video/quicktime',
+                                'video/x-matroska', 'video/webm', 'video/ogg'
+                            }
+                        self.logger.debug(f"QMediaPlayer supports {len(self._supported_mime_types)} MIME types")
+                    except Exception as e:
+                        self.logger.debug(f"Could not get supported MIME types: {e}")
                 except Exception as e:
                     self.logger.warning(f"QMediaPlayer not available, falling back to OpenCV: {e}")
                     self._use_opencv = True
@@ -167,6 +190,38 @@ class VideoPlayerWidget(QWidget):
         if self._metadata_overlay:
             self._metadata_overlay.setGeometry(0, 0, self.width(), self.height())
             self._metadata_overlay.lower()  # Под кнопкой, но поверх видео
+    
+    def _get_mime_type_from_file(self, file_path: str) -> str:
+        """Определить MIME-тип файла по расширению"""
+        ext = os.path.splitext(file_path)[1].lower()
+        mime_map = {
+            '.mp4': 'video/mp4',
+            '.avi': 'video/x-msvideo',
+            '.mov': 'video/quicktime',
+            '.mkv': 'video/x-matroska',
+            '.webm': 'video/webm',
+            '.ogv': 'video/ogg',
+            '.m4v': 'video/mp4',
+            '.flv': 'video/x-flv',
+            '.wmv': 'video/x-ms-wmv',
+            '.3gp': 'video/3gpp',
+            '.3g2': 'video/3gpp2',
+        }
+        return mime_map.get(ext, 'video/mp4')  # По умолчанию mp4
+    
+    def _is_mime_type_supported(self, mime_type: str) -> bool:
+        """Проверить, поддерживается ли MIME-тип QMediaPlayer"""
+        if not self._supported_mime_types:
+            # Если список пуст, предполагаем поддержку (fallback на проверку во время воспроизведения)
+            return True
+        # Проверить точное совпадение или частичное (например, video/*)
+        if mime_type in self._supported_mime_types:
+            return True
+        # Проверить общий тип (например, video/*)
+        base_type = mime_type.split('/')[0] + '/*'
+        if base_type in self._supported_mime_types:
+            return True
+        return False
     
     def _on_player_error(self, error, error_string=""):
         """Handle QMediaPlayer errors (FFmpeg errors, etc.)"""
@@ -326,20 +381,40 @@ class VideoPlayerWidget(QWidget):
         self.video_path = video_path
         self._is_playing = True
         
-        # Проверить размер видео перед использованием QMediaPlayer
+        # Проверить поддержку MIME-типа перед использованием QMediaPlayer
+        if not self._use_opencv and self._supported_mime_types:
+            mime_type = self._get_mime_type_from_file(video_path)
+            if not self._is_mime_type_supported(mime_type):
+                self.logger.info(f"MIME type {mime_type} not supported by QMediaPlayer, using OpenCV fallback: {video_path}")
+                self._use_opencv = True
+        
+        # Проверить валидность файла и размер видео перед использованием QMediaPlayer
         # CUDA декодер mpeg4 не поддерживает ширину > 2048
+        # Также проверяем, можно ли открыть файл через OpenCV (быстрая проверка на поврежденные файлы)
         if not self._use_opencv and cv2 is not None:
             try:
                 cap_test = cv2.VideoCapture(video_path)
                 if cap_test.isOpened():
-                    width = int(cap_test.get(cv2.CAP_PROP_FRAME_WIDTH))
-                    cap_test.release()
-                    # Если ширина > 2048, использовать OpenCV напрямую (CUDA не поддерживает)
-                    if width > 2048:
-                        self.logger.info(f"Video width {width} exceeds CUDA limit (2048), using OpenCV fallback")
+                    # Проверить, можно ли прочитать первый кадр (проверка на поврежденные файлы)
+                    ret, frame = cap_test.read()
+                    if not ret or frame is None:
+                        # Файл поврежден или неполный - использовать OpenCV напрямую
+                        self.logger.warning(f"Video file appears corrupted or incomplete (cannot read frames), using OpenCV fallback: {video_path}")
+                        cap_test.release()
                         self._use_opencv = True
+                    else:
+                        width = int(cap_test.get(cv2.CAP_PROP_FRAME_WIDTH))
+                        cap_test.release()
+                        # Если ширина > 2048, использовать OpenCV напрямую (CUDA не поддерживает)
+                        if width > 2048:
+                            self.logger.info(f"Video width {width} exceeds CUDA limit (2048), using OpenCV fallback")
+                            self._use_opencv = True
+                else:
+                    # Не удалось открыть файл через OpenCV - попробовать через QMediaPlayer
+                    # (может быть проблема с кодеками, но файл валиден)
+                    cap_test.release()
             except Exception as e:
-                self.logger.debug(f"Could not check video dimensions: {e}")
+                self.logger.debug(f"Could not check video file validity: {e}")
         
         if self._use_opencv:
             # Use OpenCV
@@ -387,8 +462,14 @@ class VideoPlayerWidget(QWidget):
                 
                 # Start timer for frame updates (30 FPS)
                 # Create timer if it doesn't exist (fallback from QMediaPlayer)
+                # QTimer is imported at module level - use it directly
                 if self.timer is None:
-                    self.timer = QTimer()
+                    # Import QTimer explicitly to avoid scope issues
+                    if pyqt_version == 6:
+                        from PyQt6.QtCore import QTimer as QtTimer
+                    else:
+                        from PyQt5.QtCore import QTimer as QtTimer
+                    self.timer = QtTimer()
                     self.timer.timeout.connect(self._update_frame_opencv)
                 fps = self.cap.get(cv2.CAP_PROP_FPS) or 30
                 interval = int(1000 / fps)
@@ -399,6 +480,13 @@ class VideoPlayerWidget(QWidget):
                 return True
             except Exception as e:
                 self.logger.error(f"Error opening video with OpenCV: {e}")
+                # Clean up on error
+                if self.cap:
+                    try:
+                        self.cap.release()
+                    except:
+                        pass
+                    self.cap = None
                 return False
         else:
             # Use QMediaPlayer
@@ -538,7 +626,17 @@ class VideoPlayerWidget(QWidget):
                     self.video_widget.setText("")
         else:
             if self.player:
-                self.player.stop()
+                # Правильная последовательность очистки: stop() → setSource(None)
+                try:
+                    self.player.stop()
+                    # Освободить ресурсы медиаплеера
+                    if pyqt_version == 6:
+                        self.player.setSource(QUrl())
+                    else:
+                        from PyQt5.QtMultimedia import QMediaContent
+                        self.player.setMedia(QMediaContent())
+                except Exception as e:
+                    self.logger.debug(f"Error during player cleanup: {e}")
             if self.video_widget:
                 # QVideoWidget doesn't have clear(), just hide it
                 self.video_widget.hide()
@@ -606,6 +704,7 @@ class VideoPlayerWindow(QWidget):
         
         # Try to use QMediaPlayer first
         self._use_opencv = False
+        self._supported_mime_types = set()  # Кэш поддерживаемых MIME-типов
         if pyqt_version == 6:
             try:
                 self.player = QMediaPlayer()
@@ -618,6 +717,13 @@ class VideoPlayerWindow(QWidget):
                 self.player.mediaStatusChanged.connect(self._on_media_status_changed)
                 # Connect error signal to detect FFmpeg errors
                 self.player.errorOccurred.connect(self._on_player_error)
+                # Получить список поддерживаемых MIME-типов
+                try:
+                    from PyQt6.QtMultimedia import QMediaPlayer
+                    self._supported_mime_types = set(QMediaPlayer.supportedMimeTypes())
+                    self.logger.debug(f"QMediaPlayer supports {len(self._supported_mime_types)} MIME types")
+                except Exception as e:
+                    self.logger.debug(f"Could not get supported MIME types: {e}")
             except Exception as e:
                 self.logger.warning(f"QMediaPlayer not available, falling back to OpenCV: {e}")
                 self._use_opencv = True
@@ -632,6 +738,21 @@ class VideoPlayerWindow(QWidget):
                     self.player.mediaStatusChanged.connect(self._on_media_status_changed_pyqt5)
                     # Connect error signal to detect FFmpeg errors
                     self.player.error.connect(self._on_player_error)
+                    # Получить список поддерживаемых форматов (PyQt5 использует supportedFormats)
+                    try:
+                        from PyQt5.QtMultimedia import QMediaPlayer
+                        # PyQt5 может не иметь supportedMimeTypes, используем supportedFormats
+                        if hasattr(QMediaPlayer, 'supportedMimeTypes'):
+                            self._supported_mime_types = set(QMediaPlayer.supportedMimeTypes())
+                        else:
+                            # Fallback: используем известные MIME-типы для видео
+                            self._supported_mime_types = {
+                                'video/mp4', 'video/x-msvideo', 'video/quicktime',
+                                'video/x-matroska', 'video/webm', 'video/ogg'
+                            }
+                        self.logger.debug(f"QMediaPlayer supports {len(self._supported_mime_types)} MIME types")
+                    except Exception as e:
+                        self.logger.debug(f"Could not get supported MIME types: {e}")
                 except Exception as e:
                     self.logger.warning(f"QMediaPlayer not available, falling back to OpenCV: {e}")
                     self._use_opencv = True
@@ -664,6 +785,38 @@ class VideoPlayerWindow(QWidget):
         layout.addWidget(self.stop_button)
         
         self.setLayout(layout)
+    
+    def _get_mime_type_from_file(self, file_path: str) -> str:
+        """Определить MIME-тип файла по расширению"""
+        ext = os.path.splitext(file_path)[1].lower()
+        mime_map = {
+            '.mp4': 'video/mp4',
+            '.avi': 'video/x-msvideo',
+            '.mov': 'video/quicktime',
+            '.mkv': 'video/x-matroska',
+            '.webm': 'video/webm',
+            '.ogv': 'video/ogg',
+            '.m4v': 'video/mp4',
+            '.flv': 'video/x-flv',
+            '.wmv': 'video/x-ms-wmv',
+            '.3gp': 'video/3gpp',
+            '.3g2': 'video/3gpp2',
+        }
+        return mime_map.get(ext, 'video/mp4')  # По умолчанию mp4
+    
+    def _is_mime_type_supported(self, mime_type: str) -> bool:
+        """Проверить, поддерживается ли MIME-тип QMediaPlayer"""
+        if not self._supported_mime_types:
+            # Если список пуст, предполагаем поддержку (fallback на проверку во время воспроизведения)
+            return True
+        # Проверить точное совпадение или частичное (например, video/*)
+        if mime_type in self._supported_mime_types:
+            return True
+        # Проверить общий тип (например, video/*)
+        base_type = mime_type.split('/')[0] + '/*'
+        if base_type in self._supported_mime_types:
+            return True
+        return False
     
     def _on_player_error(self, error, error_string=""):
         """Handle QMediaPlayer errors (FFmpeg errors, etc.)"""
@@ -810,6 +963,13 @@ class VideoPlayerWindow(QWidget):
         self.video_path = video_path
         self._is_playing = True
         
+        # Проверить поддержку MIME-типа перед использованием QMediaPlayer
+        if not self._use_opencv and self._supported_mime_types:
+            mime_type = self._get_mime_type_from_file(video_path)
+            if not self._is_mime_type_supported(mime_type):
+                self.logger.info(f"MIME type {mime_type} not supported by QMediaPlayer, using OpenCV fallback: {video_path}")
+                self._use_opencv = True
+        
         if self._use_opencv:
             # Use OpenCV
             if cv2 is None:
@@ -917,12 +1077,35 @@ class VideoPlayerWindow(QWidget):
             self.video_widget.setText("Stopped")
         else:
             if self.player:
-                self.player.stop()
+                # Правильная последовательность очистки: stop() → setSource(None)
+                try:
+                    self.player.stop()
+                    # Освободить ресурсы медиаплеера
+                    if pyqt_version == 6:
+                        self.player.setSource(QUrl())
+                    else:
+                        from PyQt5.QtMultimedia import QMediaContent
+                        self.player.setMedia(QMediaContent())
+                except Exception as e:
+                    self.logger.debug(f"Error during player cleanup: {e}")
         
         self.stopped.emit()
         self.close()
     
     def closeEvent(self, event):
         """Handle window close"""
+        # Убедиться, что все ресурсы освобождены
         self.stop()
+        
+        # Дополнительная очистка для QMediaPlayer
+        if not self._use_opencv and self.player:
+            try:
+                if pyqt_version == 6:
+                    self.player.setSource(QUrl())
+                else:
+                    from PyQt5.QtMultimedia import QMediaContent
+                    self.player.setMedia(QMediaContent())
+            except Exception as e:
+                self.logger.debug(f"Error during final cleanup: {e}")
+        
         super().closeEvent(event)

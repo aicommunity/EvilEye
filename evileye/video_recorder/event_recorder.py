@@ -459,16 +459,38 @@ class EventRecorder:
             # Reset thread reference
             self._recording_thread = None
         
-        # Check file size and delete if too small
+        # Check file size and delete if too small or corrupted
         if output_path and output_path.exists():
             try:
                 from evileye.video_recorder.utils import check_and_delete_small_files
-                deleted = check_and_delete_small_files(output_path, self.params.min_file_size_kb, min_age_seconds=0)
+                validate_integrity = getattr(self.params, 'validate_video_integrity', True)
+                validation_timeout = getattr(self.params, 'video_validation_timeout', 2.0)
+                
+                # Check file size before deletion to determine reason
+                try:
+                    stat = output_path.stat()
+                    file_size_kb = stat.st_size / 1024.0
+                    was_large_enough = file_size_kb >= self.params.min_file_size_kb
+                except Exception:
+                    was_large_enough = False
+                
+                deleted = check_and_delete_small_files(
+                    output_path, 
+                    self.params.min_file_size_kb, 
+                    min_age_seconds=0,
+                    validate_integrity=validate_integrity,
+                    validation_timeout=validation_timeout
+                )
                 if deleted:
-                    self.logger.info(f"Deleted small event recording: {output_path}")
+                    # Determine reason for deletion
+                    if was_large_enough:
+                        reason = "corrupted/invalid video file"
+                    else:
+                        reason = f"size < {self.params.min_file_size_kb} KB"
+                    self.logger.info(f"Deleted event recording: {output_path} ({reason})")
                     return None
             except Exception as e:
-                self.logger.debug(f"Error checking file size: {e}")
+                self.logger.debug(f"Error checking file size/integrity: {e}")
             
             self.logger.info(f"Event recording completed: event_id={self._event_id}, "
                            f"event_name={self._event_name}, post_frames={self._post_event_frame_count}, "

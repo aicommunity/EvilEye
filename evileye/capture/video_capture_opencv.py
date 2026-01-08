@@ -142,15 +142,17 @@ class VideoCaptureOpencv(VideoCaptureBase):
         self.capture.release()
 
     def reset_impl(self):
+        self.logger.debug(f"reset_impl called for {self.source_names} (is_inited={self.is_inited}, is_working={self.is_working})")
         self.release()
-        self.init()
+        init_result = self.init()
         timestamp = datetime.datetime.now()
-        if self.get_init_flag() and self.is_opened():
-            self.logger.info(f"Reconnected to a sources: {self.source_names}")
+        if init_result and self.get_init_flag() and self.is_opened():
+            self.logger.info(f"Reconnected to a sources: {self.source_names} (is_inited={self.is_inited}, is_working={self.is_working})")
             self.is_working = True
             self.reconnects.append((self.params['camera'], timestamp, self.is_working))
         else:
-            self.logger.info(f"Could not connect to sources: {self.source_names}")
+            self.logger.warning(f"Could not reconnect to sources: {self.source_names} (init_result={init_result}, is_inited={self.is_inited}, is_opened={self.is_opened()})")
+            self.is_working = False
         for sub in self.subscribers:
             sub.update()
 
@@ -158,14 +160,16 @@ class VideoCaptureOpencv(VideoCaptureBase):
         while self.run_flag:
             begin_it = timer()
             if not self.is_inited or self.capture is None:
+                self.logger.debug(f"Source {self.source_names} not initialized (is_inited={self.is_inited}, capture={self.capture is not None}), attempting reconnect")
                 time.sleep(0.1)
                 if self.init():
                     timestamp = datetime.datetime.now()
-                    self.logger.info(f"Reconnected to a sources: {self.source_names}")
+                    self.logger.info(f"Reconnected to a sources: {self.source_names} (is_inited={self.is_inited}, is_working={self.is_working})")
                     self.reconnects.append((self.params['camera'], timestamp, self.is_working))
                     for sub in self.subscribers:
                         sub.update()
                 else:
+                    self.logger.debug(f"Reconnection attempt failed for {self.source_names} (init() returned False)")
                     continue
 
             if not self.is_opened():
@@ -177,12 +181,19 @@ class VideoCaptureOpencv(VideoCaptureBase):
                 is_grabbed = self.capture.grab()
             if not is_grabbed:
                 if self.source_type != CaptureDeviceType.VideoFile or self.loop_play:
+                    self.logger.debug(f"grab() failed for {self.source_names} (is_inited={self.is_inited}, is_working={self.is_working}, loop_play={self.loop_play})")
                     self.is_working = False
                     timestamp = datetime.datetime.now()
                     self.disconnects.append((self.params['camera'], timestamp, self.is_working))
                     for sub in self.subscribers:
                         sub.update()
+                    # For video files with loop_play, reset will restart from beginning
                     self.reset()
+                    # Verify reset was successful
+                    if self.is_inited and self.is_opened():
+                        self.logger.debug(f"Reset successful for {self.source_names} (is_inited={self.is_inited}, is_working={self.is_working})")
+                    else:
+                        self.logger.warning(f"Reset may have failed for {self.source_names} (is_inited={self.is_inited}, is_opened={self.is_opened()})")
                 else:
                     self.finished = True
 
