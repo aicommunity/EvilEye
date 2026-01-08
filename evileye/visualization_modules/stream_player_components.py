@@ -16,6 +16,7 @@ try:
         QGroupBox, QScrollArea, QButtonGroup, QDateEdit, QSizePolicy, QMenu
     )
     from PyQt6.QtCore import Qt, pyqtSignal, QDate, QPoint
+    from PyQt6.QtGui import QPixmap
     pyqt_version = 6
 except ImportError:
     from PyQt5.QtWidgets import (
@@ -24,6 +25,7 @@ except ImportError:
         QGroupBox, QScrollArea, QButtonGroup, QDateEdit, QSizePolicy, QMenu
     )
     from PyQt5.QtCore import Qt, pyqtSignal, QDate, QPoint
+    from PyQt5.QtGui import QPixmap
     pyqt_version = 5
 
 # Add parent directory to path for imports
@@ -279,6 +281,8 @@ class VideoGridWidget(QWidget):
         self._grid_cell_sources = {}  # {grid_index: source_name} - маппинг ячеек к источникам
         self._grid_cell_widgets = {}  # {grid_index: widget} - виджеты в ячейках
         self._last_widget_sizes = {}  # {widget_id: (width, height)} - для отслеживания изменений размеров
+        self._folder_to_sources = {}  # {camera_folder: [source_names]} - маппинг папок камер к источникам
+        self._camera_folder_to_player_key = {}  # {camera_folder: player_key} - маппинг папок камер к ключам в _video_players
         
         # Состояние полноэкранного режима
         self._fullscreen_cell_index = None  # Индекс ячейки в полноэкранном режиме
@@ -528,6 +532,7 @@ class VideoGridWidget(QWidget):
                 folder_to_sources[camera].append(camera)
         
         unique_camera_folders = list(folder_to_sources.keys())
+        self._folder_to_sources = folder_to_sources  # Сохранить маппинг для использования в seek_all
         self.logger.info(f"Grouped cameras into folders: {folder_to_sources}")
         
         # Создать виджеты видео для каждой уникальной папки камеры
@@ -579,11 +584,60 @@ class VideoGridWidget(QWidget):
                                             split_config = config
                                             break
             
-            if not actual_camera_name or not segments_to_use:
+            if not actual_camera_name:
                 self.logger.warning(
-                    f"Could not find camera segments for folder: {camera_folder}, "
-                    f"actual_camera_name={actual_camera_name}, segments_to_use={segments_to_use is not None}"
+                    f"Could not find camera name for folder: {camera_folder}"
                 )
+                continue
+            
+            # Если нет сегментов, создать виджет с сообщением "No video available"
+            if not segments_to_use or len(segments_to_use) == 0:
+                self.logger.info(f"No video segments found for folder: {camera_folder}, creating placeholder widget")
+                
+                # Найти первую свободную позицию в сетке
+                row, col = -1, -1
+                for r in range(rows):
+                    for c in range(cols):
+                        if not occupied[r][c]:
+                            row, col = r, c
+                            break
+                    if row >= 0:
+                        break
+                
+                if row >= 0 and col >= 0:
+                    # Создать контейнер с сообщением
+                    container_widget = QWidget()
+                    container_widget.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+                    container_widget.setStyleSheet("border: 2px solid #888888; background-color: black;")
+                    container_widget.setMinimumSize(100, 100)
+                    
+                    container_layout = QVBoxLayout(container_widget)
+                    container_layout.setContentsMargins(0, 0, 0, 0)
+                    container_layout.setSpacing(0)
+                    
+                    # Метка с именем камеры
+                    label = QLabel(camera_folder)
+                    label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                    label.setStyleSheet("background-color: rgba(0, 0, 0, 200); color: white; padding: 3px; font-weight: bold;")
+                    container_layout.addWidget(label)
+                    
+                    # Виджет с сообщением "No video available"
+                    message_widget = QLabel("No video available")
+                    message_widget.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                    message_widget.setStyleSheet("background-color: black; color: white; font-size: 16px; padding: 20px;")
+                    container_layout.addWidget(message_widget, stretch=1)
+                    
+                    # Добавить контейнер в сетку
+                    grid_idx = row * cols + col
+                    self.grid_layout.addWidget(container_widget, row, col)
+                    occupied[row][col] = True
+                    
+                    # Сохранить в маппинге
+                    self._grid_cell_sources[grid_idx] = camera_folder
+                    self._grid_cell_widgets[grid_idx] = container_widget
+                    
+                    self.logger.info(f"Created placeholder widget for {camera_folder} at row={row}, col={col}, grid_idx={grid_idx}")
+                
                 continue
             
             is_split = split_config and split_config.get('split', False)
@@ -626,6 +680,7 @@ class VideoGridWidget(QWidget):
                         if config_result:
                             # Сохранить информацию о плеере (использовать имя папки как ключ)
                             self._video_players[camera_folder] = split_player
+                            self._camera_folder_to_player_key[camera_folder] = camera_folder
                             self._current_segments[camera_folder] = first_segment
                             self._current_segment_indices[camera_folder] = 0
                             self.logger.info(f"Split player {camera_folder} configured successfully")
@@ -706,6 +761,61 @@ class VideoGridWidget(QWidget):
                             self.logger.error(f"Failed to configure split player for {camera_folder}")
                     else:
                         self.logger.warning(f"Video file not found for split camera {camera_folder}")
+                else:
+                    # Нет сегментов для split video - создать placeholder виджеты для каждой области
+                    self.logger.info(f"No video segments found for split camera folder: {camera_folder}, creating placeholder widgets")
+                    num_split = split_config.get('num_split', 1)
+                    source_names = split_config.get('source_names', [])
+                    
+                    for i in range(num_split):
+                        # Найти свободную позицию для этой области
+                        region_row, region_col = -1, -1
+                        for r in range(rows):
+                            for c in range(cols):
+                                if not occupied[r][c]:
+                                    region_row, region_col = r, c
+                                    break
+                            if region_row >= 0:
+                                break
+                        
+                        if region_row < 0 or region_col < 0:
+                            self.logger.warning(f"No free position in grid for split region {i} of {camera_folder}")
+                            continue
+                        
+                        source_name = source_names[i] if i < len(source_names) else f"Source{i}"
+                        
+                        # Создать контейнер с сообщением
+                        region_container = QWidget()
+                        region_container.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+                        region_container.setStyleSheet("border: 2px solid #888888; background-color: black;")
+                        region_container.setMinimumSize(100, 100)
+                        
+                        region_layout = QVBoxLayout(region_container)
+                        region_layout.setContentsMargins(0, 0, 0, 0)
+                        region_layout.setSpacing(0)
+                        
+                        # Метка с именем источника
+                        label = QLabel(source_name)
+                        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                        label.setStyleSheet("background-color: rgba(0, 0, 0, 200); color: white; padding: 3px; font-weight: bold;")
+                        region_layout.addWidget(label)
+                        
+                        # Виджет с сообщением "No video available"
+                        message_widget = QLabel("No video available")
+                        message_widget.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                        message_widget.setStyleSheet("background-color: black; color: white; font-size: 16px; padding: 20px;")
+                        region_layout.addWidget(message_widget, stretch=1)
+                        
+                        # Добавить контейнер в сетку
+                        grid_idx = region_row * cols + region_col
+                        self.grid_layout.addWidget(region_container, region_row, region_col)
+                        occupied[region_row][region_col] = True
+                        
+                        # Сохранить в маппинге
+                        self._grid_cell_sources[grid_idx] = source_name
+                        self._grid_cell_widgets[grid_idx] = region_container
+                        
+                        self.logger.info(f"Created placeholder widget for split region {i} ({source_name}) of {camera_folder} at row={region_row}, col={region_col}, grid_idx={grid_idx}")
             else:
                 # Обычный поток - создать обычный VideoPlayerWidget
                 # Найти первую свободную позицию (уже найдена выше)
@@ -764,7 +874,9 @@ class VideoGridWidget(QWidget):
                 # Создать виджет видео
                 video_widget = VideoPlayerWidget(parent=container_widget, logger_name=f"camera_{camera_name}")
                 video_widget.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
-                self._video_players[camera_name] = video_widget
+                # Сохранить плеер под camera_folder для единообразия с split videos
+                self._video_players[camera_folder] = video_widget
+                self._camera_folder_to_player_key[camera_folder] = camera_folder
                 container_layout.addWidget(video_widget, stretch=1)
                 
                 # Настроить метаданные для плеера
@@ -1017,6 +1129,8 @@ class VideoGridWidget(QWidget):
         self._current_segment_indices.clear()
         self._grid_cell_sources.clear()
         self._grid_cell_widgets.clear()
+        self._folder_to_sources.clear()
+        self._camera_folder_to_player_key.clear()
         
         # Остановить таймер проверки размеров
         if hasattr(self, '_size_check_timer'):
@@ -1079,32 +1193,46 @@ class VideoGridWidget(QWidget):
         """Запустить воспроизведение всех видео"""
         self.logger.info(f"play_all() called with {len(self._video_players)} players")
         
-        for camera, player in self._video_players.items():
+        # Итерировать по всем камерам из _video_players (используя camera_folder как ключ)
+        for camera_folder, player in self._video_players.items():
             player_type = "SplitVideoPlayerWidget" if isinstance(player, SplitVideoPlayerWidget) else "VideoPlayerWidget"
-            self.logger.info(f"play_all(): Processing camera={camera}, type={player_type}")
+            self.logger.info(f"play_all(): Processing camera_folder={camera_folder}, type={player_type}")
             
             # Проверить тип плеера
             if isinstance(player, SplitVideoPlayerWidget):
-                self.logger.info(f"play_all(): Calling play() for split player {camera}")
+                self.logger.info(f"play_all(): Calling play() for split player {camera_folder}")
                 player.play()
             else:
                 # Обычный VideoPlayerWidget
+                # Найти источники для этой папки
+                sources_for_folder = self._folder_to_sources.get(camera_folder, [camera_folder])
+                first_source = sources_for_folder[0] if sources_for_folder else camera_folder
+                
                 # Проверить, загружено ли видео
                 if not hasattr(player, 'video_path') or not player.video_path:
                     # Видео не загружено - попытаться загрузить первый сегмент
-                    if camera in self._camera_segments and self._camera_segments[camera]:
-                        first_segment = self._camera_segments[camera][0][2] if isinstance(self._camera_segments[camera][0], tuple) else self._camera_segments[camera][0]
+                    # Попробовать найти сегменты по first_source или camera_folder
+                    segments = None
+                    if first_source in self._camera_segments:
+                        segments = self._camera_segments[first_source]
+                    elif camera_folder in self._camera_segments:
+                        segments = self._camera_segments[camera_folder]
+                    
+                    if segments and len(segments) > 0:
+                        first_segment = segments[0][2] if isinstance(segments[0], tuple) else segments[0]
                         if not os.path.isabs(first_segment):
                             first_segment = os.path.abspath(first_segment)
                         if os.path.exists(first_segment) and os.path.getsize(first_segment) > 1024:
                             if player.play_video(first_segment):
-                                self._current_segments[camera] = first_segment
-                                self._current_segment_indices[camera] = 0
+                                self._current_segments[camera_folder] = first_segment
+                                self._current_segment_indices[camera_folder] = 0
                             else:
-                                self.logger.warning(f"Failed to play video for camera {camera}: {first_segment}")
+                                self.logger.warning(f"Failed to play video for camera_folder {camera_folder}: {first_segment}")
                                 continue
+                        else:
+                            self.logger.warning(f"Video file not found or too small for camera_folder {camera_folder}: {first_segment}")
                     else:
-                        self.logger.warning(f"No segments available for camera {camera}")
+                        self.logger.warning(f"No segments available for camera_folder {camera_folder}")
                         continue
                 
                 # Запустить воспроизведение
@@ -1172,12 +1300,29 @@ class VideoGridWidget(QWidget):
         # Вычислить абсолютное время
         target_time = self._start_time + datetime.timedelta(milliseconds=position_ms)
         
-        for camera in self._cameras:
-            if camera not in self._camera_segments:
-                continue
-                
-            segments = self._camera_segments[camera]
-            if not segments:
+        # Итерировать по всем уникальным папкам камер из _video_players
+        # Это включает как обычные камеры, так и split videos (которые используют camera_folder как ключ)
+        for camera_folder in self._video_players.keys():
+            # Найти источники для этой папки
+            sources_for_folder = self._folder_to_sources.get(camera_folder, [camera_folder])
+            
+            # Использовать первый источник для получения сегментов
+            # Для split videos это будет первый source_name из списка
+            # Для обычных камер это будет само имя камеры
+            first_source = sources_for_folder[0] if sources_for_folder else camera_folder
+            
+            # Получить сегменты для первого источника
+            if first_source not in self._camera_segments:
+                # Попробовать использовать camera_folder напрямую
+                if camera_folder not in self._camera_segments:
+                    self.logger.debug(f"No segments found for camera_folder {camera_folder} or source {first_source}, skipping seek")
+                    continue
+                segments = self._camera_segments[camera_folder]
+            else:
+                segments = self._camera_segments[first_source]
+            
+            if not segments or len(segments) == 0:
+                self.logger.debug(f"No segments available for camera_folder {camera_folder}, skipping seek")
                 continue
             
             # segments может быть списком кортежей (start_time, end_time, path) или списком путей
@@ -1192,21 +1337,99 @@ class VideoGridWidget(QWidget):
             # Найти нужный сегмент
             target_segment_idx = None
             for idx, (start_time, end_time, path) in enumerate(segments):
-                if start_time <= target_time < end_time:
-                    target_segment_idx = idx
+                if start_time and end_time:
+                    if start_time <= target_time < end_time:
+                        target_segment_idx = idx
+                        break
+                else:
+                    # Если нет временной информации, использовать первый сегмент
+                    target_segment_idx = 0
                     break
             
             if target_segment_idx is None:
                 # Вне диапазона, использовать ближайший
-                if target_time < segments[0][0]:
+                if segments and segments[0][0] and target_time < segments[0][0]:
                     target_segment_idx = 0
-                elif target_time >= segments[-1][1]:
+                elif segments and segments[-1][1] and target_time >= segments[-1][1]:
                     target_segment_idx = len(segments) - 1
                 else:
+                    # Нет подходящего сегмента для этого времени - остановить плеер и показать черный экран
+                    self.logger.debug(f"No segment found for camera_folder {camera_folder} at time {target_time}, showing placeholder")
+                    player = self._video_players.get(camera_folder)
+                    if player:
+                        # Остановить плеер
+                        if isinstance(player, SplitVideoPlayerWidget):
+                            player.stop()
+                            # Для split videos нужно скрыть все регионы и показать сообщение
+                            if hasattr(player, '_region_widgets'):
+                                for region_info in player._region_widgets:
+                                    region_widget = region_info.get('widget')
+                                    if region_widget:
+                                        # Найти контейнер региона
+                                        region_container = region_widget.parent()
+                                        if region_container:
+                                            # Создать или показать метку с сообщением
+                                            message_label = None
+                                            for child in region_container.findChildren(QLabel):
+                                                if child.text() == "No video available":
+                                                    message_label = child
+                                                    break
+                                            if not message_label:
+                                                # Создать метку с сообщением
+                                                message_label = QLabel("No video available")
+                                                message_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                                                message_label.setStyleSheet("background-color: black; color: white; font-size: 16px; padding: 20px;")
+                                                if region_container.layout():
+                                                    region_container.layout().addWidget(message_label)
+                                            message_label.show()
+                                            region_widget.hide()
+                        else:
+                            # Обычный VideoPlayerWidget
+                            player.stop()
+                            # Очистить видео виджет и показать черный экран
+                            if hasattr(player, 'video_widget') and player.video_widget:
+                                widget_size = player.video_widget.size()
+                                width = widget_size.width() if widget_size.width() > 0 else 640
+                                height = widget_size.height() if widget_size.height() > 0 else 480
+                                
+                                if hasattr(player.video_widget, 'setPixmap'):
+                                    # QLabel - установить черный pixmap
+                                    black_pixmap = QPixmap(width, height)
+                                    black_pixmap.fill(Qt.GlobalColor.black)
+                                    player.video_widget.setPixmap(black_pixmap)
+                                    
+                                    # Добавить текст поверх
+                                    if hasattr(player.video_widget, 'setText'):
+                                        player.video_widget.setText("No video available")
+                                        player.video_widget.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                                        player.video_widget.setStyleSheet("color: white; font-size: 16px; background-color: black;")
+                                elif hasattr(player.video_widget, 'clear'):
+                                    # QVideoWidget - очистить и скрыть
+                                    player.video_widget.clear()
+                                    player.video_widget.hide()
+                                    
+                                    # Показать сообщение в контейнере
+                                    if hasattr(player, 'parent') and player.parent():
+                                        container = player.parent()
+                                        if isinstance(container, QWidget):
+                                            # Найти или создать метку с сообщением
+                                            message_label = None
+                                            for child in container.findChildren(QLabel):
+                                                if child.text() == "No video available":
+                                                    message_label = child
+                                                    break
+                                            if not message_label:
+                                                # Создать метку с сообщением
+                                                message_label = QLabel("No video available")
+                                                message_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                                                message_label.setStyleSheet("background-color: black; color: white; font-size: 16px; padding: 20px;")
+                                                if container.layout():
+                                                    container.layout().addWidget(message_label)
+                                            message_label.show()
                     continue
             
             # Переключить сегмент если нужно
-            current_idx = self._current_segment_indices.get(camera, 0)
+            current_idx = self._current_segment_indices.get(camera_folder, 0)
             if target_segment_idx != current_idx:
                 new_segment = segments[target_segment_idx][2]
                 # Преобразовать в абсолютный путь если нужно
@@ -1214,34 +1437,41 @@ class VideoGridWidget(QWidget):
                     new_segment = os.path.abspath(new_segment)
                 
                 if os.path.exists(new_segment) and os.path.getsize(new_segment) > 1024:
-                    player = self._video_players.get(camera)
+                    player = self._video_players.get(camera_folder)
                     if player:
                         if isinstance(player, SplitVideoPlayerWidget):
                             # Для разделенного потока нужно перезагрузить конфигурацию
-                            split_config = self._source_config.get(camera)
+                            split_config = self._source_config.get(camera_folder)
+                            if not split_config:
+                                # Попробовать найти по первому источнику
+                                split_config = self._source_config.get(first_source)
                             if split_config:
                                 player.stop()
                                 if player.set_split_config(split_config, new_segment):
-                                    self._current_segments[camera] = new_segment
-                                    self._current_segment_indices[camera] = target_segment_idx
+                                    self._current_segments[camera_folder] = new_segment
+                                    self._current_segment_indices[camera_folder] = target_segment_idx
                                 else:
-                                    self.logger.warning(f"Failed to switch split segment for camera {camera}: {new_segment}")
+                                    self.logger.warning(f"Failed to switch split segment for camera_folder {camera_folder}: {new_segment}")
                         else:
                             player.stop()
                             if player.play_video(new_segment):
-                                self._current_segments[camera] = new_segment
-                                self._current_segment_indices[camera] = target_segment_idx
+                                self._current_segments[camera_folder] = new_segment
+                                self._current_segment_indices[camera_folder] = target_segment_idx
                             else:
-                                self.logger.warning(f"Failed to switch to segment for camera {camera}: {new_segment}")
+                                self.logger.warning(f"Failed to switch to segment for camera_folder {camera_folder}: {new_segment}")
                 else:
-                    self.logger.debug(f"Segment file not found or invalid for camera {camera}: {new_segment}")
+                    self.logger.debug(f"Segment file not found or invalid for camera_folder {camera_folder}: {new_segment}")
             
             # Установить позицию в сегменте
             segment_start = segments[target_segment_idx][0]
-            segment_offset = (target_time - segment_start).total_seconds()
-            segment_offset_ms = int(segment_offset * 1000)
+            if segment_start:
+                segment_offset = (target_time - segment_start).total_seconds()
+                segment_offset_ms = int(segment_offset * 1000)
+            else:
+                # Если нет временной информации, использовать позицию относительно начала файла
+                segment_offset_ms = position_ms
             
-            player = self._video_players.get(camera)
+            player = self._video_players.get(camera_folder)
             if player:
                 self._seek_player(player, segment_offset_ms)
     

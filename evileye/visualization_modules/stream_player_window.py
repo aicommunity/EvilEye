@@ -626,6 +626,31 @@ class StreamPlayerWindow(QMainWindow):
             if hasattr(player, 'update_metadata_for_time'):
                 player.update_metadata_for_time(timestamp)
     
+    def _find_next_available_time(self, target_time: datetime.datetime) -> Optional[datetime.datetime]:
+        """Найти следующий момент времени, где есть записи для всех камер"""
+        if not self._camera_segment_times:
+            return None
+        
+        next_times = []
+        
+        # Для каждой камеры найти следующий сегмент после target_time
+        for camera, segments in self._camera_segment_times.items():
+            if not segments:
+                continue
+            
+            # segments может быть списком кортежей (start_time, end_time, path)
+            for start_time, end_time, path in segments:
+                if start_time and start_time > target_time:
+                    next_times.append(start_time)
+                    break
+        
+        if not next_times:
+            # Все сегменты закончились
+            return None
+        
+        # Вернуть минимальное время начала следующего сегмента
+        return min(next_times)
+    
     def _sync_playback(self):
         """Синхронизация воспроизведения всех видео"""
         if not self._is_playing:
@@ -638,6 +663,36 @@ class StreamPlayerWindow(QMainWindow):
             self._current_position_ms = self._total_duration_ms
             self._on_stop_clicked()
             return
+        
+        # Проверить, есть ли записи для текущего момента времени
+        if self._start_time:
+            current_time = self._start_time + datetime.timedelta(milliseconds=self._current_position_ms)
+            
+            # Проверить, есть ли хотя бы одна запись для текущего времени
+            has_recording = False
+            for camera, segments in self._camera_segment_times.items():
+                if not segments:
+                    continue
+                for start_time, end_time, path in segments:
+                    if start_time and end_time and start_time <= current_time < end_time:
+                        has_recording = True
+                        break
+                if has_recording:
+                    break
+            
+            # Если нет записи, найти следующий доступный момент
+            if not has_recording:
+                next_time = self._find_next_available_time(current_time)
+                if next_time:
+                    # Вычислить новую позицию в миллисекундах
+                    time_diff = (next_time - self._start_time).total_seconds()
+                    self._current_position_ms = int(time_diff * 1000)
+                    self.logger.debug(f"Jumped to next available time: {next_time}, position_ms={self._current_position_ms}")
+                else:
+                    # Нет больше записей, остановить воспроизведение
+                    self._current_position_ms = self._total_duration_ms
+                    self._on_stop_clicked()
+                    return
         
         # Синхронизировать все видео (только если позиция изменилась значительно)
         # Избегаем частых обновлений для производительности
