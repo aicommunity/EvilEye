@@ -615,11 +615,16 @@ class VideoGridWidget(QWidget):
                         first_segment = os.path.abspath(first_segment)
                     
                     if os.path.exists(first_segment) and os.path.getsize(first_segment) > 1024:
-                        if split_player.set_split_config(split_config, first_segment):
+                        self.logger.info(f"Calling set_split_config for {camera_folder} with video: {first_segment}")
+                        config_result = split_player.set_split_config(split_config, first_segment)
+                        self.logger.info(f"set_split_config returned: {config_result} for {camera_folder}")
+                        
+                        if config_result:
                             # Сохранить информацию о плеере (использовать имя папки как ключ)
                             self._video_players[camera_folder] = split_player
                             self._current_segments[camera_folder] = first_segment
                             self._current_segment_indices[camera_folder] = 0
+                            self.logger.info(f"Split player {camera_folder} configured successfully")
                             
                             # Добавить в сетку (занимает несколько ячеек по вертикали)
                             num_split = split_config.get('num_split', 1)
@@ -660,11 +665,9 @@ class VideoGridWidget(QWidget):
                             
                             split_player.resizeEvent = on_split_resize
                         else:
-                            self.logger.warning(f"Failed to setup split player for {camera_folder}")
-                            grid_idx += 1
+                            self.logger.error(f"Failed to configure split player for {camera_folder}")
                     else:
                         self.logger.warning(f"Video file not found for split camera {camera_folder}")
-                        grid_idx += 1
             else:
                 # Обычный поток - создать обычный VideoPlayerWidget
                 # Найти первую свободную позицию (уже найдена выше)
@@ -1024,9 +1027,15 @@ class VideoGridWidget(QWidget):
     
     def play_all(self):
         """Запустить воспроизведение всех видео"""
+        self.logger.info(f"play_all() called with {len(self._video_players)} players")
+        
         for camera, player in self._video_players.items():
+            player_type = "SplitVideoPlayerWidget" if isinstance(player, SplitVideoPlayerWidget) else "VideoPlayerWidget"
+            self.logger.info(f"play_all(): Processing camera={camera}, type={player_type}")
+            
             # Проверить тип плеера
             if isinstance(player, SplitVideoPlayerWidget):
+                self.logger.info(f"play_all(): Calling play() for split player {camera}")
                 player.play()
             else:
                 # Обычный VideoPlayerWidget
@@ -1705,6 +1714,7 @@ class SplitVideoPlayerWidget(QWidget):
         
     def set_split_config(self, split_config: Dict, video_path: str):
         """Установить конфигурацию разделения и загрузить видео"""
+        self.logger.info(f"SplitVideoPlayerWidget.set_split_config called with video_path={video_path}")
         self._split_config = split_config
         
         if not split_config or not split_config.get('split', False):
@@ -1714,6 +1724,8 @@ class SplitVideoPlayerWidget(QWidget):
         num_split = split_config.get('num_split', 0)
         src_coords = split_config.get('src_coords', [])
         source_names = split_config.get('source_names', [])
+        
+        self.logger.info(f"Split config: num_split={num_split}, src_coords count={len(src_coords)}, source_names={source_names}")
         
         if num_split == 0 or len(src_coords) < num_split:
             self.logger.warning(f"Invalid split config: num_split={num_split}, src_coords={len(src_coords)}")
@@ -1767,35 +1779,71 @@ class SplitVideoPlayerWidget(QWidget):
             if not os.path.isabs(video_path):
                 video_path = os.path.abspath(video_path)
             
-            if self._video_player.play_video(video_path):
+            file_size = os.path.getsize(video_path) if os.path.exists(video_path) else 0
+            self.logger.info(f"Loading video for split player: path={video_path}, size={file_size} bytes")
+            
+            play_result = self._video_player.play_video(video_path)
+            self.logger.info(f"play_video() returned: {play_result}")
+            
+            if play_result:
                 # Подключить обработчик обновления кадров для разделения
                 # Использовать таймер для периодического извлечения кадров
+                self.logger.info("Video loaded successfully, setting up frame extraction")
                 self._setup_frame_extraction()
+                self.logger.info("Frame extraction setup completed")
                 return True
             else:
                 self.logger.error(f"Failed to load video: {video_path}")
                 return False
+        else:
+            self.logger.error(f"Video file not found: {video_path}")
         
         return False
     
     def _setup_frame_extraction(self):
         """Настроить извлечение кадров для разделения"""
+        self.logger.info("Setting up frame extraction")
+        
+        # Проверить состояние VideoPlayerWidget
+        if not self._video_player:
+            self.logger.error("_video_player is None, cannot setup frame extraction")
+            return
+        
+        has_opencv = hasattr(self._video_player, '_use_opencv') and self._video_player._use_opencv
+        self.logger.info(f"VideoPlayerWidget._use_opencv = {has_opencv}")
+        
         # Для OpenCV - перехватывать кадры через переопределение метода обновления
-        if hasattr(self._video_player, '_use_opencv') and self._video_player._use_opencv:
+        if has_opencv:
             # Сохранить оригинальный метод обновления кадра
             if hasattr(self._video_player, '_update_frame_opencv'):
+                self.logger.info("Found _update_frame_opencv method, creating wrapper")
                 # Создать обертку для перехвата кадров
                 original_update = self._video_player._update_frame_opencv
                 
                 def wrapped_update():
                     # Вызвать оригинальный метод
+                    self.logger.info("wrapped_update() called - calling original_update()")
                     original_update()
                     # Извлечь кадр для разделения (кадр уже прочитан в оригинальном методе)
+                    self.logger.info("wrapped_update() - calling _extract_current_frame()")
                     self._extract_current_frame()
                 
-                self._video_player._update_frame_opencv = wrapped_update
+                # ВАЖНО: Переподключить таймер к новому wrapper методу
+                # Таймер был подключен к старому методу, нужно переподключить
+                if hasattr(self._video_player, 'timer') and self._video_player.timer:
+                    self.logger.info("Reconnecting timer to wrapped_update method")
+                    self._video_player.timer.timeout.disconnect()  # Отключить старое подключение
+                    self._video_player._update_frame_opencv = wrapped_update  # Установить новый метод
+                    self._video_player.timer.timeout.connect(wrapped_update)  # Подключить к wrapper
+                    self.logger.info(f"Timer reconnected. timer.isActive: {self._video_player.timer.isActive()}")
+                else:
+                    # Если таймера нет, просто заменить метод
+                    self._video_player._update_frame_opencv = wrapped_update
+                    self.logger.info("Wrapper installed (no timer to reconnect)")
                 self._extraction_timer = None  # Не нужен отдельный таймер
+                self.logger.info("Frame extraction wrapper created successfully")
             else:
+                self.logger.warning("_update_frame_opencv method not found, using fallback timer")
                 # Fallback: использовать таймер
                 try:
                     from PyQt6.QtCore import QTimer
@@ -1808,15 +1856,20 @@ class SplitVideoPlayerWidget(QWidget):
                 if hasattr(self._video_player, 'timer') and self._video_player.timer:
                     interval = self._video_player.timer.interval()
                     self._extraction_timer.start(interval)
+                    self.logger.info(f"Extraction timer started with interval {interval}ms")
+                else:
+                    self.logger.warning("VideoPlayerWidget timer not found, extraction timer not started")
         else:
             # QMediaPlayer режим - использовать QVideoSink для перехвата кадров
             # Пока используем только OpenCV режим
-            self.logger.debug("QMediaPlayer mode - frame extraction will be handled differently")
+            self.logger.warning("QMediaPlayer mode - frame extraction may not work correctly")
             self._extraction_timer = None
     
     def _extract_current_frame(self):
         """Извлечь текущий кадр из VideoPlayerWidget для разделения"""
+        self.logger.info("_extract_current_frame() called")
         if not self._video_player:
+            self.logger.warning("_extract_current_frame: _video_player is None")
             return
         
         frame = None
@@ -1824,6 +1877,9 @@ class SplitVideoPlayerWidget(QWidget):
         # Попытаться получить сохраненный кадр из VideoPlayerWidget
         if hasattr(self._video_player, '_current_frame') and self._video_player._current_frame is not None:
             frame = self._video_player._current_frame.copy()
+            self.logger.info(f"_extract_current_frame: Got frame from _current_frame, size={frame.shape if frame is not None else None}")
+        else:
+            self.logger.debug("_extract_current_frame: _current_frame is None or not available")
         
         # Fallback: прочитать кадр напрямую из cap если _current_frame недоступен
         if frame is None and hasattr(self._video_player, 'cap') and self._video_player.cap:
@@ -1833,44 +1889,66 @@ class SplitVideoPlayerWidget(QWidget):
                 current_pos = cap.get(cv2.CAP_PROP_POS_FRAMES)
                 ret, frame = cap.read()
                 if ret and frame is not None:
+                    self.logger.debug(f"_extract_current_frame: Read frame from cap, size={frame.shape}")
                     # Вернуть позицию обратно (кадр уже был прочитан в _update_frame_opencv)
                     # Но для разделения нам нужен текущий кадр, поэтому оставляем позицию как есть
                     pass
                 else:
+                    self.logger.debug(f"_extract_current_frame: Failed to read frame from cap, ret={ret}")
                     # Если не удалось прочитать, вернуть позицию
                     cap.set(cv2.CAP_PROP_POS_FRAMES, current_pos)
+            else:
+                self.logger.debug("_extract_current_frame: cap is not opened")
+        else:
+            if not hasattr(self._video_player, 'cap'):
+                self.logger.debug("_extract_current_frame: _video_player has no cap attribute")
+            elif not self._video_player.cap:
+                self.logger.debug("_extract_current_frame: _video_player.cap is None")
         
         # Разделить кадр на области если он доступен
         if frame is not None:
+            self.logger.info(f"_extract_current_frame: Calling _split_frame with frame size={frame.shape}")
             self._split_frame(frame)
+        else:
+            self.logger.warning("_extract_current_frame: Frame is None, cannot split")
     
     def _update_split_frames_opencv(self):
         """Обновить разделенные кадры для OpenCV режима"""
         if not self._video_player or not hasattr(self._video_player, 'cap'):
+            self.logger.debug("_update_split_frames_opencv: _video_player or cap not available")
             return
         
         cap = self._video_player.cap
         if not cap or not cap.isOpened():
+            self.logger.debug(f"_update_split_frames_opencv: cap is None or not opened. cap={cap}, isOpened={cap.isOpened() if cap else False}")
             return
         
         # Попытаться получить сохраненный кадр из VideoPlayerWidget
         frame = None
         if hasattr(self._video_player, '_current_frame') and self._video_player._current_frame is not None:
             frame = self._video_player._current_frame.copy()
+            self.logger.debug(f"_update_split_frames_opencv: Got frame from _current_frame, size={frame.shape if frame is not None else None}")
         
         # Fallback: прочитать кадр напрямую из cap
         if frame is None:
             ret, frame = cap.read()
             if not ret or frame is None:
+                self.logger.debug(f"_update_split_frames_opencv: Failed to read frame from cap, ret={ret}")
                 return
+            self.logger.debug(f"_update_split_frames_opencv: Read frame from cap, size={frame.shape}")
         
         # Разделить кадр на области
         if frame is not None:
+            self.logger.debug(f"_update_split_frames_opencv: Calling _split_frame with frame size={frame.shape}")
             self._split_frame(frame)
+        else:
+            self.logger.debug("_update_split_frames_opencv: Frame is None, cannot split")
     
     def _split_frame(self, frame):
         """Разделить кадр на области согласно конфигурации"""
+        self.logger.info(f"_split_frame() called with frame shape={frame.shape if frame is not None else None}")
         if not self._split_config or not self._region_widgets:
+            self.logger.warning(f"_split_frame: Missing config or widgets. config={self._split_config is not None}, widgets={len(self._region_widgets) if self._region_widgets else 0}")
             return
         
         if cv2 is None:
@@ -1878,6 +1956,8 @@ class SplitVideoPlayerWidget(QWidget):
             return
         
         try:
+            self.logger.info(f"_split_frame: Processing frame with shape={frame.shape}, num_regions={len(self._region_widgets)}")
+            
             # Конвертировать в RGB если нужно
             if len(frame.shape) == 3 and frame.shape[2] == 3:
                 # BGR to RGB для отображения
@@ -1886,12 +1966,17 @@ class SplitVideoPlayerWidget(QWidget):
                 frame_rgb = frame
             
             # Разделить на области
-            for region_info in self._region_widgets:
+            for idx, region_info in enumerate(self._region_widgets):
                 coords = region_info['coords']
+                source_name = region_info.get('source_name', f'region_{idx}')
+                
                 if not coords or len(coords) < 4:
+                    self.logger.warning(f"_split_frame: Region {idx} ({source_name}) has invalid coords: {coords}")
                     continue
                 
                 x, y, w, h = int(coords[0]), int(coords[1]), int(coords[2]), int(coords[3])
+                self.logger.info(f"_split_frame: Extracting region {idx} ({source_name}) at x={x}, y={y}, w={w}, h={h}")
+                self.logger.debug(f"_split_frame: Region {idx} ({source_name}) coords: x={x}, y={y}, w={w}, h={h}")
                 
                 # Проверить границы
                 frame_h, frame_w = frame_rgb.shape[:2]
@@ -1901,19 +1986,22 @@ class SplitVideoPlayerWidget(QWidget):
                 h = min(h, frame_h - y)
                 
                 if w <= 0 or h <= 0:
+                    self.logger.warning(f"_split_frame: Region {idx} ({source_name}) has invalid dimensions after clipping: w={w}, h={h}")
                     continue
                 
                 # Извлечь область
                 region = frame_rgb[y:y+h, x:x+w].copy()
+                self.logger.debug(f"_split_frame: Extracted region {idx} ({source_name}) with shape={region.shape}")
                 
                 # Отобразить в виджете
-                self._display_region(region_info['widget'], region)
+                self._display_region(region_info['widget'], region, source_name)
                 
         except Exception as e:
-            self.logger.error(f"Error splitting frame: {e}")
+            self.logger.error(f"Error splitting frame: {e}", exc_info=True)
     
-    def _display_region(self, widget: QLabel, region):
+    def _display_region(self, widget: QLabel, region, source_name: str = "unknown"):
         """Отобразить область в виджете"""
+        self.logger.info(f"_display_region() called for {source_name}: region shape={region.shape if region is not None else None}, widget size={widget.size().width()}x{widget.size().height()}")
         try:
             from PyQt6.QtGui import QImage, QPixmap
         except ImportError:
@@ -1934,6 +2022,9 @@ class SplitVideoPlayerWidget(QWidget):
                 Qt.TransformationMode.SmoothTransformation
             )
             widget.setPixmap(scaled_pixmap)
+            self.logger.info(f"_display_region ({source_name}): Pixmap set successfully, scaled size={scaled_pixmap.size().width()}x{scaled_pixmap.size().height()}")
+        else:
+            self.logger.warning(f"_display_region ({source_name}): Widget size is invalid: {widget_size.width()}x{widget_size.height()}, cannot scale pixmap")
     
     def _clear_regions(self):
         """Очистить виджеты областей"""
@@ -1958,19 +2049,44 @@ class SplitVideoPlayerWidget(QWidget):
     
     def play(self):
         """Запустить воспроизведение"""
-        if self._video_player:
-            if hasattr(self._video_player, 'player') and self._video_player.player:
-                if pyqt_version == 6:
-                    self._video_player.player.play()
-                else:
-                    self._video_player.player.play()
-            elif hasattr(self._video_player, 'timer') and self._video_player.timer:
-                if not self._video_player.timer.isActive():
-                    self._video_player.timer.start()
-            
-            # Запустить таймер извлечения кадров если есть
-            if self._extraction_timer and not self._extraction_timer.isActive():
+        self.logger.info("SplitVideoPlayerWidget.play() called")
+        
+        if not self._video_player:
+            self.logger.error("play(): _video_player is None")
+            return
+        
+        self.logger.info(f"play(): _video_player exists, _is_playing={getattr(self._video_player, '_is_playing', 'unknown')}")
+        
+        if hasattr(self._video_player, 'player') and self._video_player.player:
+            self.logger.info("play(): Using QMediaPlayer")
+            if pyqt_version == 6:
+                self._video_player.player.play()
+            else:
+                self._video_player.player.play()
+            self.logger.info("play(): QMediaPlayer.play() called")
+        elif hasattr(self._video_player, 'timer') and self._video_player.timer:
+            self.logger.info("play(): Using OpenCV timer")
+            if not self._video_player.timer.isActive():
+                self._video_player.timer.start()
+                self.logger.info("play(): VideoPlayerWidget timer started")
+            else:
+                self.logger.info("play(): VideoPlayerWidget timer already active")
+        else:
+            self.logger.warning("play(): No player or timer found in _video_player")
+            if hasattr(self._video_player, 'cap'):
+                self.logger.info(f"play(): _video_player.cap exists: {self._video_player.cap is not None}")
+                if self._video_player.cap:
+                    self.logger.info(f"play(): cap.isOpened() = {self._video_player.cap.isOpened()}")
+        
+        # Запустить таймер извлечения кадров если есть
+        if self._extraction_timer:
+            if not self._extraction_timer.isActive():
                 self._extraction_timer.start()
+                self.logger.info("play(): Extraction timer started")
+            else:
+                self.logger.info("play(): Extraction timer already active")
+        else:
+            self.logger.info("play(): No extraction timer (using wrapper method)")
     
     def pause(self):
         """Приостановить воспроизведение"""

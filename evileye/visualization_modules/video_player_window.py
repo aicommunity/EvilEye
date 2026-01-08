@@ -309,10 +309,21 @@ class VideoPlayerWidget(QWidget):
     
     def _update_frame_opencv(self):
         """Update frame using OpenCV (fallback method) with continuous looping"""
+        # Логирование для диагностики split players
+        logger_name = getattr(self.logger, 'name', '')
+        is_split_player = 'split_main' in logger_name
+        
+        if is_split_player:
+            self.logger.info(f"_update_frame_opencv called: _is_playing={self._is_playing}, cap={self.cap is not None}, cap.isOpened={self.cap.isOpened() if self.cap else False}")
+        
         if not self._is_playing:
+            if is_split_player:
+                self.logger.info("_update_frame_opencv: _is_playing is False, returning")
             return
         
         if not self.cap or not self.cap.isOpened():
+            if is_split_player:
+                self.logger.info("_update_frame_opencv: cap is None or not opened, stopping timer")
             self.timer.stop()
             return
         
@@ -322,11 +333,15 @@ class VideoPlayerWidget(QWidget):
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
             ret, frame = self.cap.read()
             if not ret:
+                if is_split_player:
+                    self.logger.info("_update_frame_opencv: Failed to read frame even after restart, stopping timer")
                 self.timer.stop()
                 return
         
-        # Сохранить текущий кадр для разделения потоков
+        # Сохранить текущий кадр для разделения потоков (ВАЖНО: всегда сохранять, даже если виджет скрыт)
         self._current_frame = frame.copy() if frame is not None else None
+        if is_split_player:
+            self.logger.info(f"_update_frame_opencv: Frame read successfully, size={frame.shape if frame is not None else None}, _current_frame saved={self._current_frame is not None}")
         
         # Convert BGR to RGB
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -341,7 +356,7 @@ class VideoPlayerWidget(QWidget):
         q_image = QImage(frame_rgb.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
         pixmap = QPixmap.fromImage(q_image)
         
-        # Scale to fit widget
+        # Scale to fit widget (только если виджет видим и имеет размер)
         widget_size = self.video_widget.size()
         if widget_size.width() > 0 and widget_size.height() > 0:
             scaled_pixmap = pixmap.scaled(
