@@ -454,7 +454,8 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self.events_journal)
         view_menu.addAction(self.toggle_signal)
         view_menu.addSeparator()
-        view_menu.addAction(self.open_stream_player)
+        # Stream Player menu item hidden
+        # view_menu.addAction(self.open_stream_player)
         self.menu_height = view_menu.frameGeometry().height()
 
         edit_menu = QMenu('&Edit', self)

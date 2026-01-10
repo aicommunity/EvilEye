@@ -18,9 +18,9 @@
                 "loop_play": true,
                 "source": "IpCamera",
                 "camera": "rtsp://10.245.1.200",
+                "type": "VideoCaptureGStreamer",
                 "apiPreference": "CAP_GSTREAMER",
-                "gstreamer_available": true,
-                "source_fps": 14.597565856561642
+                "source_fps": null
             },
             {
                 "split": true,
@@ -51,9 +51,9 @@
                 "loop_play": true,
                 "source": "IpCamera",
                 "camera": "rtsp://10.245.1.199",
+                "type": "VideoCaptureGStreamer",
                 "apiPreference": "CAP_GSTREAMER",
-                "gstreamer_available": true,
-                "source_fps": 27.256093836306334
+                "source_fps": null
             },
             {
                 "split": true,
@@ -84,9 +84,9 @@
                 "loop_play": true,
                 "source": "IpCamera",
                 "camera": "rtsp://10.245.1.202",
+                "type": "VideoCaptureGStreamer",
                 "apiPreference": "CAP_GSTREAMER",
-                "gstreamer_available": true,
-                "source_fps": 23.064001539688213
+                "source_fps": null
             }
         ],
         "detectors": [

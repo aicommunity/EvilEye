@@ -571,7 +571,8 @@ class StreamPlayerWindow(QMainWindow):
     def _on_timeline_position_changed(self, position_ms: int):
         """Обработка изменения позиции на временной шкале"""
         self._current_position_ms = position_ms
-        self.video_grid.seek_all(position_ms)
+        # Передать состояние воспроизведения в seek_all, чтобы восстановить воспроизведение после перезагрузки видео
+        self.video_grid.seek_all(position_ms, should_play=self._is_playing)
         
     def _on_video_position_changed(self, position_ms: int):
         """Обработка изменения позиции в видео"""
@@ -686,24 +687,27 @@ class StreamPlayerWindow(QMainWindow):
                 if next_time:
                     # Вычислить новую позицию в миллисекундах
                     time_diff = (next_time - self._start_time).total_seconds()
-                    self._current_position_ms = int(time_diff * 1000)
-                    self.logger.debug(f"Jumped to next available time: {next_time}, position_ms={self._current_position_ms}")
+                    new_position_ms = int(time_diff * 1000)
+                    # Вызвать seek_all только если позиция действительно изменилась значительно
+                    if abs(new_position_ms - self._current_position_ms) > 1000:  # Разница больше 1 секунды
+                        self._current_position_ms = new_position_ms
+                        self.logger.debug(f"Jumped to next available time: {next_time}, position_ms={self._current_position_ms}")
+                        # Вызвать seek_all для перемотки на новую позицию
+                        self.video_grid.seek_all(self._current_position_ms, should_play=self._is_playing)
                 else:
                     # Нет больше записей, остановить воспроизведение
                     self._current_position_ms = self._total_duration_ms
                     self._on_stop_clicked()
                     return
         
-        # Синхронизировать все видео (только если позиция изменилась значительно)
-        # Избегаем частых обновлений для производительности
-        if self._current_position_ms % 100 == 0:  # Обновлять каждые 100мс
-            self.video_grid.seek_all(self._current_position_ms)
-            self.timeline.set_position(self._current_position_ms)
-            
-            # Обновить метаданные для текущего времени
-            if self._start_time and hasattr(self, 'show_metadata_checkbox') and self.show_metadata_checkbox.isChecked():
-                current_time = self._start_time + datetime.timedelta(milliseconds=self._current_position_ms)
-                self._update_metadata_for_time(current_time)
+        # Обновить позицию на timeline (без вызова seek_all, чтобы избежать постоянной перемотки)
+        # seek_all вызывается только при явной перемотке пользователем или при начальной загрузке
+        self.timeline.set_position(self._current_position_ms)
+        
+        # Обновить метаданные для текущего времени
+        if self._start_time and hasattr(self, 'show_metadata_checkbox') and self.show_metadata_checkbox.isChecked():
+            current_time = self._start_time + datetime.timedelta(milliseconds=self._current_position_ms)
+            self._update_metadata_for_time(current_time)
         
     def save_state(self):
         """Сохранить состояние плеера в params"""

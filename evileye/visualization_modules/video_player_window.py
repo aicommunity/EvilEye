@@ -65,6 +65,7 @@ class VideoPlayerWidget(QWidget):
         # Initialize OpenCV-related attributes (will be set if OpenCV is used)
         self.cap = None
         self.timer = None
+        self._timer_interval = None  # Store timer interval for reuse
         
         # Cell position for tracking which cell this player belongs to
         self._cell_row = None
@@ -73,6 +74,11 @@ class VideoPlayerWidget(QWidget):
         # Try to use QMediaPlayer first
         self._use_opencv = False
         self._supported_mime_types = set()  # Кэш поддерживаемых MIME-типов
+        
+        # Initialize player attributes (will be set based on backend)
+        self.player = None  # QMediaPlayer instance (if using QMediaPlayer)
+        self.audio_output = None  # QAudioOutput instance (PyQt6 only)
+        self.video_widget = None  # QVideoWidget or QLabel instance
         if pyqt_version == 6:
             try:
                 self.player = QMediaPlayer()
@@ -142,6 +148,7 @@ class VideoPlayerWidget(QWidget):
             # Initialize timer for OpenCV (cap is already None from __init__)
             self.timer = QTimer()
             self.timer.timeout.connect(self._update_frame_opencv)
+            self._timer_interval = None  # Store timer interval for reuse
         
         # Layout - video widget fills the cell
         layout = QVBoxLayout()
@@ -322,21 +329,22 @@ class VideoPlayerWidget(QWidget):
     def _update_frame_opencv(self):
         """Update frame using OpenCV (fallback method) with continuous looping"""
         # Логирование для диагностики split players
-        logger_name = getattr(self.logger, 'name', '')
-        is_split_player = 'split_main' in logger_name
-        
-        if is_split_player:
-            self.logger.info(f"_update_frame_opencv called: _is_playing={self._is_playing}, cap={self.cap is not None}, cap.isOpened={self.cap.isOpened() if self.cap else False}")
+        timer_was_active = self.timer.isActive() if self.timer else False
+        cap_opened = self.cap.isOpened() if self.cap else False
+        self.logger.debug(f"_update_frame_opencv: Entry - _is_playing={self._is_playing}, timer_active={timer_was_active}, cap_opened={cap_opened}, source={getattr(self, '_source_name', 'unknown')}")
         
         if not self._is_playing:
-            if is_split_player:
-                self.logger.info("_update_frame_opencv: _is_playing is False, returning")
+            if timer_was_active:
+                self.logger.warning(f"_update_frame_opencv: Timer was active but _is_playing=False, stopping timer (source={getattr(self, '_source_name', 'unknown')})")
             return
         
         if not self.cap or not self.cap.isOpened():
-            if is_split_player:
-                self.logger.info("_update_frame_opencv: cap is None or not opened, stopping timer")
-            self.timer.stop()
+            cap_exists = self.cap is not None
+            cap_opened = self.cap.isOpened() if self.cap else False
+            if timer_was_active:
+                self.logger.warning(f"_update_frame_opencv: Timer was active but cap not opened (cap={cap_exists}, isOpened={cap_opened}), stopping timer (source={getattr(self, '_source_name', 'unknown')})")
+            if self.timer:
+                self.timer.stop()
             return
         
         ret, frame = self.cap.read()
@@ -345,15 +353,13 @@ class VideoPlayerWidget(QWidget):
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
             ret, frame = self.cap.read()
             if not ret:
-                if is_split_player:
-                    self.logger.info("_update_frame_opencv: Failed to read frame even after restart, stopping timer")
-                self.timer.stop()
+                self.logger.warning(f"_update_frame_opencv: Failed to read frame even after restart, stopping timer (source={getattr(self, '_source_name', 'unknown')})")
+                if self.timer:
+                    self.timer.stop()
                 return
         
         # Сохранить текущий кадр для разделения потоков (ВАЖНО: всегда сохранять, даже если виджет скрыт)
         self._current_frame = frame.copy() if frame is not None else None
-        if is_split_player:
-            self.logger.info(f"_update_frame_opencv: Frame read successfully, size={frame.shape if frame is not None else None}, _current_frame saved={self._current_frame is not None}")
         
         # Convert BGR to RGB
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -502,7 +508,12 @@ class VideoPlayerWidget(QWidget):
                     self.timer.timeout.connect(self._update_frame_opencv)
                 fps = self.cap.get(cv2.CAP_PROP_FPS) or 30
                 interval = int(1000 / fps)
+                # Сохранить интервал для последующего использования
+                self._timer_interval = interval
+                timer_was_active = self.timer.isActive() if self.timer else False
                 self.timer.start(interval)
+                timer_is_active = self.timer.isActive() if self.timer else False
+                self.logger.debug(f"play_video: Timer started (was_active={timer_was_active}, is_active={timer_is_active}, interval={interval}ms, fps={fps}, source={getattr(self, '_source_name', 'unknown')})")
                 # Ensure stop button is visible
                 if self.stop_button:
                     self.stop_button.raise_()

@@ -6,6 +6,7 @@ import os
 import sys
 import datetime
 import glob
+import time
 from pathlib import Path
 from typing import Optional, List, Dict, Tuple
 
@@ -13,7 +14,7 @@ try:
     from PyQt6.QtWidgets import (
         QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
         QLabel, QPushButton, QSlider, QCheckBox, QComboBox, QSpinBox,
-        QGroupBox, QScrollArea, QButtonGroup, QDateEdit, QSizePolicy, QMenu
+        QGroupBox, QScrollArea, QButtonGroup, QDateEdit, QSizePolicy, QMenu, QApplication
     )
     from PyQt6.QtCore import Qt, pyqtSignal, QDate, QPoint
     from PyQt6.QtGui import QPixmap
@@ -22,7 +23,7 @@ except ImportError:
     from PyQt5.QtWidgets import (
         QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
         QLabel, QPushButton, QSlider, QCheckBox, QComboBox, QSpinBox,
-        QGroupBox, QScrollArea, QButtonGroup, QDateEdit, QSizePolicy, QMenu
+        QGroupBox, QScrollArea, QButtonGroup, QDateEdit, QSizePolicy, QMenu, QApplication
     )
     from PyQt5.QtCore import Qt, pyqtSignal, QDate, QPoint
     from PyQt5.QtGui import QPixmap
@@ -283,6 +284,7 @@ class VideoGridWidget(QWidget):
         self._last_widget_sizes = {}  # {widget_id: (width, height)} - для отслеживания изменений размеров
         self._folder_to_sources = {}  # {camera_folder: [source_names]} - маппинг папок камер к источникам
         self._camera_folder_to_player_key = {}  # {camera_folder: player_key} - маппинг папок камер к ключам в _video_players
+        self._no_video_cameras = set()  # Камеры, которые показывают черный экран
         
         # Состояние полноэкранного режима
         self._fullscreen_cell_index = None  # Индекс ячейки в полноэкранном режиме
@@ -1131,6 +1133,7 @@ class VideoGridWidget(QWidget):
         self._grid_cell_widgets.clear()
         self._folder_to_sources.clear()
         self._camera_folder_to_player_key.clear()
+        self._no_video_cameras.clear()
         
         # Остановить таймер проверки размеров
         if hasattr(self, '_size_check_timer'):
@@ -1243,12 +1246,26 @@ class VideoGridWidget(QWidget):
                         player.player.play()
                 elif hasattr(player, 'timer') and player.timer:
                     if not player.timer.isActive():
-                        player.timer.start()
+                        # Получить интервал таймера или использовать значение по умолчанию
+                        if hasattr(player, '_timer_interval') and player._timer_interval:
+                            interval = player._timer_interval
+                        else:
+                            import cv2
+                            fps = player.cap.get(cv2.CAP_PROP_FPS) if player.cap else 30
+                            interval = int(1000 / fps) if fps > 0 else 33
+                        player.timer.start(interval)
                 elif hasattr(player, '_use_opencv') and player._use_opencv:
                     # OpenCV режим - запустить таймер если он есть
                     if hasattr(player, 'timer') and player.timer:
                         if not player.timer.isActive():
-                            player.timer.start()
+                            # Получить интервал таймера или использовать значение по умолчанию
+                            if hasattr(player, '_timer_interval') and player._timer_interval:
+                                interval = player._timer_interval
+                            else:
+                                import cv2
+                                fps = player.cap.get(cv2.CAP_PROP_FPS) if player.cap else 30
+                                interval = int(1000 / fps) if fps > 0 else 33
+                            player.timer.start(interval)
                     elif hasattr(player, 'cap') and player.cap and player.cap.isOpened():
                         # Таймер не создан - создать и запустить
                         try:
@@ -1260,6 +1277,7 @@ class VideoGridWidget(QWidget):
                         if cv2:
                             fps = player.cap.get(cv2.CAP_PROP_FPS) or 30
                             interval = int(1000 / fps)
+                            player._timer_interval = interval  # Сохранить интервал
                             player.timer.start(interval)
     
     def pause_all(self):
@@ -1292,38 +1310,71 @@ class VideoGridWidget(QWidget):
             else:
                 player.stop()
     
-    def seek_all(self, position_ms: int):
-        """Перемотать все видео на указанную позицию"""
+    def _find_segments_for_folder(self, camera_folder: str) -> Optional[List[Tuple]]:
+        """Найти сегменты для папки камеры"""
+        # Проверить конфигурацию split video для camera_folder
+        split_config = self._source_config.get(camera_folder)
+        if split_config and split_config.get('split', False):
+            parent_folder = split_config.get('parent_folder')
+            if parent_folder and parent_folder in self._camera_segments:
+                self.logger.debug(f"Found segments for {camera_folder} via parent_folder {parent_folder} from camera_folder config")
+                return self._camera_segments[parent_folder]
+        
+        # Попробовать найти по camera_folder напрямую
+        if camera_folder in self._camera_segments:
+            self.logger.debug(f"Found segments for {camera_folder} directly")
+            return self._camera_segments[camera_folder]
+        
+        # Попробовать найти по первому источнику
+        sources_for_folder = self._folder_to_sources.get(camera_folder, [camera_folder])
+        if sources_for_folder:
+            first_source = sources_for_folder[0]
+            
+            # Проверить конфигурацию split video для первого источника
+            first_source_config = self._source_config.get(first_source)
+            if first_source_config and first_source_config.get('split', False):
+                parent_folder = first_source_config.get('parent_folder')
+                if parent_folder and parent_folder in self._camera_segments:
+                    self.logger.debug(f"Found segments for {camera_folder} via parent_folder {parent_folder} from first_source config")
+                    return self._camera_segments[parent_folder]
+            
+            # Попробовать найти сегменты по первому источнику напрямую
+            if first_source in self._camera_segments:
+                self.logger.debug(f"Found segments for {camera_folder} via first_source {first_source}")
+                return self._camera_segments[first_source]
+        
+        self.logger.warning(f"No segments found for camera_folder {camera_folder}, sources={sources_for_folder}")
+        return None
+    
+    def seek_all(self, position_ms: int, should_play: bool = False):
+        """Перемотать все видео на указанную позицию
+        
+        Args:
+            position_ms: Позиция в миллисекундах
+            should_play: Запустить воспроизведение после перемотки (если True)
+        """
+        self.logger.debug(f"seek_all called: position_ms={position_ms}, should_play={should_play}, _start_time={self._start_time}")
         if self._start_time is None:
+            self.logger.debug("seek_all: _start_time is None, returning")
             return
         
         # Вычислить абсолютное время
         target_time = self._start_time + datetime.timedelta(milliseconds=position_ms)
+        self.logger.debug(f"seek_all: Calculated target_time={target_time} from _start_time={self._start_time} + {position_ms}ms")
         
         # Итерировать по всем уникальным папкам камер из _video_players
         # Это включает как обычные камеры, так и split videos (которые используют camera_folder как ключ)
         for camera_folder in self._video_players.keys():
-            # Найти источники для этой папки
-            sources_for_folder = self._folder_to_sources.get(camera_folder, [camera_folder])
-            
-            # Использовать первый источник для получения сегментов
-            # Для split videos это будет первый source_name из списка
-            # Для обычных камер это будет само имя камеры
-            first_source = sources_for_folder[0] if sources_for_folder else camera_folder
-            
-            # Получить сегменты для первого источника
-            if first_source not in self._camera_segments:
-                # Попробовать использовать camera_folder напрямую
-                if camera_folder not in self._camera_segments:
-                    self.logger.debug(f"No segments found for camera_folder {camera_folder} or source {first_source}, skipping seek")
-                    continue
-                segments = self._camera_segments[camera_folder]
-            else:
-                segments = self._camera_segments[first_source]
+            # Найти сегменты для этой папки
+            segments = self._find_segments_for_folder(camera_folder)
             
             if not segments or len(segments) == 0:
                 self.logger.debug(f"No segments available for camera_folder {camera_folder}, skipping seek")
                 continue
+            
+            # Найти источники для этой папки (для использования в дальнейшей логике)
+            sources_for_folder = self._folder_to_sources.get(camera_folder, [camera_folder])
+            first_source = sources_for_folder[0] if sources_for_folder else camera_folder
             
             # segments может быть списком кортежей (start_time, end_time, path) или списком путей
             # Проверить формат
@@ -1340,31 +1391,123 @@ class VideoGridWidget(QWidget):
                 if start_time and end_time:
                     if start_time <= target_time < end_time:
                         target_segment_idx = idx
+                        self.logger.debug(f"seek_all for {camera_folder}: Found segment {idx} for target_time {target_time} (start={start_time}, end={end_time})")
                         break
                 else:
                     # Если нет временной информации, использовать первый сегмент
                     target_segment_idx = 0
                     break
             
+            # Логировать результат поиска сегмента
+            if target_segment_idx is None:
+                if segments:
+                    first_start = segments[0][0] if segments[0][0] else None
+                    last_end = segments[-1][1] if segments[-1][1] else None
+                    self.logger.debug(f"seek_all for {camera_folder}: No segment found for target_time {target_time}, first_start={first_start}, last_end={last_end}")
+            
             if target_segment_idx is None:
                 # Вне диапазона, использовать ближайший
                 if segments and segments[0][0] and target_time < segments[0][0]:
+                    # Время до начала первого сегмента - использовать первый сегмент
+                    # Позиция будет установлена в 0ms в сегменте (начало записи камеры)
+                    # Это нормально, если камера начала запись позже других
                     target_segment_idx = 0
+                    self.logger.info(f"target_time {target_time} is before first segment start {segments[0][0]} for {camera_folder}, using first segment at position 0")
                 elif segments and segments[-1][1] and target_time >= segments[-1][1]:
-                    target_segment_idx = len(segments) - 1
-                else:
-                    # Нет подходящего сегмента для этого времени - остановить плеер и показать черный экран
-                    self.logger.debug(f"No segment found for camera_folder {camera_folder} at time {target_time}, showing placeholder")
+                    # Время после конца последнего сегмента - остановить плеер и показать "No video available"
+                    self.logger.info(f"target_time {target_time} is after last segment end {segments[-1][1]} for {camera_folder}, showing 'No video available'")
+                    # Обработать показ "No video available" аналогично случаю в блоке else
+                    self._no_video_cameras.add(camera_folder)
+                    # Очистить текущий сегмент
+                    if camera_folder in self._current_segments:
+                        del self._current_segments[camera_folder]
+                    if camera_folder in self._current_segment_indices:
+                        del self._current_segment_indices[camera_folder]
                     player = self._video_players.get(camera_folder)
                     if player:
                         # Остановить плеер
                         if isinstance(player, SplitVideoPlayerWidget):
                             player.stop()
                             # Для split videos нужно скрыть все регионы и показать сообщение
-                            if hasattr(player, '_region_widgets'):
+                            if player._region_widgets:
                                 for region_info in player._region_widgets:
                                     region_widget = region_info.get('widget')
                                     if region_widget:
+                                        if isinstance(region_widget, QLabel):
+                                            region_widget.clear()
+                                            region_widget.setText("")
+                                        region_container = region_widget.parent()
+                                        if region_container:
+                                            message_label = None
+                                            for child in region_container.findChildren(QLabel):
+                                                if child.text() == "No video available":
+                                                    message_label = child
+                                                    break
+                                            if not message_label:
+                                                message_label = QLabel("No video available")
+                                                message_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                                                message_label.setStyleSheet("background-color: black; color: white; font-size: 16px; padding: 20px;")
+                                                if region_container.layout():
+                                                    region_container.layout().addWidget(message_label)
+                                            message_label.show()
+                                            region_widget.hide()
+                        else:
+                            # Обычный VideoPlayerWidget
+                            player.stop()
+                            if player.video_widget:
+                                widget_size = player.video_widget.size()
+                                width = widget_size.width() if widget_size.width() > 0 else 640
+                                height = widget_size.height() if widget_size.height() > 0 else 480
+                                if isinstance(player.video_widget, QLabel):
+                                    player.video_widget.clear()
+                                    black_pixmap = QPixmap(width, height)
+                                    black_pixmap.fill(Qt.GlobalColor.black)
+                                    player.video_widget.setPixmap(black_pixmap)
+                                    player.video_widget.setText("No video available")
+                                    player.video_widget.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                                    player.video_widget.setStyleSheet("color: white; font-size: 16px; background-color: black;")
+                                else:
+                                    player.video_widget.hide()
+                                    container = player.parent()
+                                    if container and isinstance(container, QWidget):
+                                        message_label = None
+                                        for child in container.findChildren(QLabel):
+                                            if child.text() == "No video available":
+                                                message_label = child
+                                                break
+                                        if not message_label:
+                                            message_label = QLabel("No video available")
+                                            message_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                                            message_label.setStyleSheet("background-color: black; color: white; font-size: 16px; padding: 20px;")
+                                            if container.layout():
+                                                container.layout().addWidget(message_label)
+                                        message_label.show()
+                    continue
+                else:
+                    # Нет подходящего сегмента для этого времени - остановить плеер и показать черный экран
+                    # Это может произойти только если segments пустой или нет временной информации
+                    self.logger.debug(f"No segment found for camera_folder {camera_folder} at time {target_time}, showing placeholder")
+                    self._no_video_cameras.add(camera_folder)  # Отметить, что эта камера показывает черный экран
+                    # Очистить текущий сегмент, чтобы при возврате к области с видео мы перезагрузили его
+                    if camera_folder in self._current_segments:
+                        del self._current_segments[camera_folder]
+                    if camera_folder in self._current_segment_indices:
+                        del self._current_segment_indices[camera_folder]
+                    player = self._video_players.get(camera_folder)
+                    if player:
+                        # Остановить плеер
+                        if isinstance(player, SplitVideoPlayerWidget):
+                            player.stop()
+                            # Для split videos нужно скрыть все регионы и показать сообщение
+                            if player._region_widgets:
+                                for region_info in player._region_widgets:
+                                    region_widget = region_info.get('widget')
+                                    if region_widget:
+                                        # Очистить pixmap перед скрытием, чтобы не оставался последний кадр
+                                        if isinstance(region_widget, QLabel):
+                                            region_widget.clear()
+                                            region_widget.setText("")
+                                        
                                         # Найти контейнер региона
                                         region_container = region_widget.parent()
                                         if region_container:
@@ -1387,51 +1530,94 @@ class VideoGridWidget(QWidget):
                             # Обычный VideoPlayerWidget
                             player.stop()
                             # Очистить видео виджет и показать черный экран
-                            if hasattr(player, 'video_widget') and player.video_widget:
+                            if player.video_widget:
                                 widget_size = player.video_widget.size()
                                 width = widget_size.width() if widget_size.width() > 0 else 640
                                 height = widget_size.height() if widget_size.height() > 0 else 480
                                 
-                                if hasattr(player.video_widget, 'setPixmap'):
-                                    # QLabel - установить черный pixmap
+                                # Проверить тип виджета
+                                if isinstance(player.video_widget, QLabel):
+                                    # QLabel - сначала очистить, чтобы убрать последний кадр
+                                    player.video_widget.clear()
+                                    # Установить черный pixmap
                                     black_pixmap = QPixmap(width, height)
                                     black_pixmap.fill(Qt.GlobalColor.black)
                                     player.video_widget.setPixmap(black_pixmap)
                                     
                                     # Добавить текст поверх
-                                    if hasattr(player.video_widget, 'setText'):
-                                        player.video_widget.setText("No video available")
-                                        player.video_widget.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                                        player.video_widget.setStyleSheet("color: white; font-size: 16px; background-color: black;")
-                                elif hasattr(player.video_widget, 'clear'):
+                                    player.video_widget.setText("No video available")
+                                    player.video_widget.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                                    player.video_widget.setStyleSheet("color: white; font-size: 16px; background-color: black;")
+                                else:
                                     # QVideoWidget - очистить и скрыть
-                                    player.video_widget.clear()
                                     player.video_widget.hide()
                                     
                                     # Показать сообщение в контейнере
-                                    if hasattr(player, 'parent') and player.parent():
-                                        container = player.parent()
-                                        if isinstance(container, QWidget):
-                                            # Найти или создать метку с сообщением
-                                            message_label = None
-                                            for child in container.findChildren(QLabel):
-                                                if child.text() == "No video available":
-                                                    message_label = child
-                                                    break
-                                            if not message_label:
-                                                # Создать метку с сообщением
-                                                message_label = QLabel("No video available")
-                                                message_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                                                message_label.setStyleSheet("background-color: black; color: white; font-size: 16px; padding: 20px;")
-                                                if container.layout():
-                                                    container.layout().addWidget(message_label)
-                                            message_label.show()
+                                    container = self.parent() if hasattr(self, 'parent') else None
+                                    if container and isinstance(container, QWidget):
+                                        # Найти или создать метку с сообщением
+                                        message_label = None
+                                        for child in container.findChildren(QLabel):
+                                            if child.text() == "No video available":
+                                                message_label = child
+                                                break
+                                        if not message_label:
+                                            # Создать метку с сообщением
+                                            message_label = QLabel("No video available")
+                                            message_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                                            message_label.setStyleSheet("background-color: black; color: white; font-size: 16px; padding: 20px;")
+                                            if container.layout():
+                                                container.layout().addWidget(message_label)
+                                        message_label.show()
                     continue
+            
+            # Если target_segment_idx is None, это означает, что нет подходящего сегмента
+            # (время после конца последнего сегмента или нет временной информации)
+            # В этом случае мы уже обработали показ "No video available" выше и можем пропустить дальнейшую обработку
+            if target_segment_idx is None:
+                # Уже обработано выше - показан "No video available"
+                continue
             
             # Переключить сегмент если нужно
             current_idx = self._current_segment_indices.get(camera_folder, 0)
-            if target_segment_idx != current_idx:
+            player = self._video_players.get(camera_folder)
+
+            # Проверить, нужно ли перезагрузить видео (если оно было остановлено при показе черного экрана)
+            needs_reload = camera_folder in self._no_video_cameras
+            self.logger.debug(f"seek_all for {camera_folder}: needs_reload={needs_reload} (in _no_video_cameras={camera_folder in self._no_video_cameras}), should_play={should_play}")
+            if not needs_reload and player:
+                # Проверить, загружено ли видео в плеер и воспроизводится ли оно
+                if isinstance(player, SplitVideoPlayerWidget):
+                    # Для split videos проверить внутренний video_player
+                    if player._video_player:
+                        has_video_path = player._video_player.video_path is not None and player._video_player.video_path != ""
+                        is_playing = player._video_player._is_playing
+                        needs_reload = not has_video_path or not is_playing
+                        self.logger.debug(f"seek_all for {camera_folder} (split): has_video_path={has_video_path}, is_playing={is_playing}, needs_reload={needs_reload}")
+                    else:
+                        needs_reload = True
+                        self.logger.debug(f"seek_all for {camera_folder} (split): _video_player missing, needs_reload=True")
+                else:
+                    # Для обычных VideoPlayerWidget проверить video_path и _is_playing
+                    has_video_path = player.video_path is not None and player.video_path != ""
+                    is_playing = player._is_playing
+                    needs_reload = not has_video_path or not is_playing
+                    self.logger.debug(f"seek_all for {camera_folder} (regular): has_video_path={has_video_path}, is_playing={is_playing}, needs_reload={needs_reload}")
+
+            if target_segment_idx != current_idx or needs_reload:
+                # Всегда использовать сегмент из списка, даже если индекс не изменился
+                # Это гарантирует, что мы перезагрузим видео после показа черного экрана
                 new_segment = segments[target_segment_idx][2]
+                
+                # Если камера была в состоянии "no video", удалить её из этого множества
+                # так как мы перезагружаем видео
+                if camera_folder in self._no_video_cameras:
+                    self._no_video_cameras.remove(camera_folder)
+                    self.logger.info(f"seek_all for {camera_folder}: Removing from _no_video_cameras, reloading video")
+                
+                if target_segment_idx == current_idx and needs_reload:
+                    self.logger.debug(f"seek_all for {camera_folder}: Segment index unchanged ({target_segment_idx}), but needs_reload=True, reloading segment: {new_segment}")
+                
                 # Преобразовать в абсолютный путь если нужно
                 if not os.path.isabs(new_segment):
                     new_segment = os.path.abspath(new_segment)
@@ -1441,56 +1627,482 @@ class VideoGridWidget(QWidget):
                     if player:
                         if isinstance(player, SplitVideoPlayerWidget):
                             # Для разделенного потока нужно перезагрузить конфигурацию
+                            # Использовать конфигурацию из camera_folder или parent_folder
                             split_config = self._source_config.get(camera_folder)
                             if not split_config:
                                 # Попробовать найти по первому источнику
                                 split_config = self._source_config.get(first_source)
+                            if not split_config:
+                                # Попробовать найти через parent_folder из конфигурации первого источника
+                                # Если у первого источника есть parent_folder, использовать его конфигурацию
+                                first_source_config = self._source_config.get(first_source)
+                                if first_source_config and first_source_config.get('split', False):
+                                    parent_folder = first_source_config.get('parent_folder')
+                                    if parent_folder:
+                                        split_config = self._source_config.get(parent_folder)
+                            
                             if split_config:
+                                self.logger.info(f"Switching split segment for {camera_folder} to {new_segment}")
+                                # Проверить, была ли камера в _no_video_cameras (показывала черный экран)
+                                was_no_video = camera_folder in self._no_video_cameras
                                 player.stop()
                                 if player.set_split_config(split_config, new_segment):
                                     self._current_segments[camera_folder] = new_segment
                                     self._current_segment_indices[camera_folder] = target_segment_idx
+                                    self._no_video_cameras.discard(camera_folder)  # Убрать из списка камер с черным экраном
+                                    self.logger.info(f"Successfully switched split segment for {camera_folder}")
+                                    
+                                    # Остановить таймер сразу после set_split_config(), чтобы позиция не продвигалась
+                                    # перед установкой нужной позиции в _seek_player()
+                                    if player._video_player and player._video_player.timer and player._video_player.timer.isActive():
+                                        player._video_player.timer.stop()
+                                        self.logger.debug(f"seek_all for {camera_folder}: Stopped timer immediately after set_split_config()")
+                                    
+                                    # Восстановить регионы (скрыть сообщение "No video available", показать регионы)
+                                    if player._region_widgets:
+                                        for region_info in player._region_widgets:
+                                            region_widget = region_info.get('widget')
+                                            if region_widget:
+                                                region_container = region_widget.parent()
+                                                if region_container:
+                                                    # Скрыть метку "No video available"
+                                                    for child in region_container.findChildren(QLabel):
+                                                        if child.text() == "No video available":
+                                                            child.hide()
+                                                            break
+                                                    # Показать регион
+                                                    region_widget.show()
+                                    
+                                    # Явно запустить воспроизведение после переключения сегмента
+                                    # set_split_config() вызывает play_video(), но после stop() таймер может быть не активен
+                                    # Если камера показывала черный экран, всегда запускать воспроизведение явно
+                                    if should_play:
+                                        # Проверить состояние воспроизведения
+                                        is_playing = False
+                                        timer_active = False
+                                        if player._video_player:
+                                            is_playing = player._video_player._is_playing
+                                            timer_active = player._video_player.timer.isActive() if player._video_player.timer else False
+                                        
+                                        # Если камера показывала черный экран, всегда запускать воспроизведение явно
+                                        if was_no_video or not is_playing or not timer_active:
+                                            self.logger.info(f"Explicitly starting playback for split player {camera_folder} after segment switch (was_no_video={was_no_video}, is_playing={is_playing}, timer_active={timer_active})")
+                                            # Если камера показывала черный экран и таймер активен, остановить его перед вызовом play()
+                                            # Это гарантирует, что play() перезапустит таймер правильно
+                                            if was_no_video and timer_active and player._video_player and player._video_player.timer:
+                                                self.logger.info(f"Stopping timer for split player {camera_folder} before restart (was_no_video=True)")
+                                                player._video_player.timer.stop()
+                                                # Убедиться, что _is_playing установлен правильно
+                                                player._video_player._is_playing = True
+                                            
+                                            # Всегда вызывать play() для правильной инициализации
+                                            player.play()
+                                        else:
+                                            self.logger.info(f"Split player {camera_folder} already playing, no need to restart (was_no_video={was_no_video})")
                                 else:
                                     self.logger.warning(f"Failed to switch split segment for camera_folder {camera_folder}: {new_segment}")
+                            else:
+                                self.logger.warning(f"No split config found for camera_folder {camera_folder}, cannot switch segment")
                         else:
+                            # Обычный VideoPlayerWidget
+                            self.logger.info(f"Switching segment for {camera_folder} to {new_segment}")
+                            # Проверить, была ли камера в _no_video_cameras (показывала черный экран)
+                            was_no_video = camera_folder in self._no_video_cameras
                             player.stop()
                             if player.play_video(new_segment):
                                 self._current_segments[camera_folder] = new_segment
                                 self._current_segment_indices[camera_folder] = target_segment_idx
+                                self._no_video_cameras.discard(camera_folder)  # Убрать из списка камер с черным экраном
+                                self.logger.info(f"Successfully switched segment for {camera_folder}")
+                                
+                                # Остановить таймер сразу после play_video(), чтобы позиция не продвигалась
+                                # перед установкой нужной позиции в _seek_player()
+                                if player.timer and player.timer.isActive():
+                                    player.timer.stop()
+                                    self.logger.debug(f"seek_all for {camera_folder}: Stopped timer immediately after play_video()")
+                                
+                                # Восстановить видео виджет (скрыть сообщение "No video available", показать video_widget)
+                                if player.video_widget:
+                                    # Скрыть метку "No video available" если она есть
+                                    container = player.parent()
+                                    if container:
+                                        if isinstance(container, QWidget):
+                                            for child in container.findChildren(QLabel):
+                                                if child.text() == "No video available":
+                                                    child.hide()
+                                                    break
+                                    
+                                    # Показать видео виджет
+                                    if isinstance(player.video_widget, QLabel):
+                                        # Для QLabel очистить текст и показать видео
+                                        player.video_widget.setText("")
+                                        player.video_widget.setStyleSheet("")
+                                    player.video_widget.show()
+                                
+                                # Явно запустить воспроизведение после переключения сегмента
+                                # play_video() может запустить воспроизведение, но после stop() таймер может быть не активен
+                                # Если камера показывала черный экран, всегда запускать воспроизведение явно
+                                if should_play:
+                                    # Проверить, запущено ли воспроизведение
+                                    is_playing = player._is_playing
+                                    player_has_timer = player.timer is not None
+                                    timer_active = player_has_timer and player.timer.isActive()
+                                    player_has_qmedia = player.player is not None
+                                    
+                                    # Если камера показывала черный экран, всегда запускать воспроизведение явно
+                                    if was_no_video or not is_playing or (player_has_timer and not timer_active):
+                                        self.logger.info(f"Explicitly starting playback for player {camera_folder} after segment switch (was_no_video={was_no_video}, is_playing={is_playing}, timer_active={timer_active})")
+                                        if player_has_qmedia:
+                                            if pyqt_version == 6:
+                                                player.player.play()
+                                            else:
+                                                player.player.play()
+                                        elif player_has_timer:
+                                            # Получить интервал таймера или использовать значение по умолчанию
+                                            if hasattr(player, '_timer_interval') and player._timer_interval:
+                                                interval = player._timer_interval
+                                            else:
+                                                import cv2
+                                                fps = player.cap.get(cv2.CAP_PROP_FPS) if player.cap else 30
+                                                interval = int(1000 / fps) if fps > 0 else 33
+                                            
+                                            if not timer_active:
+                                                player.timer.start(interval)
+                                            # Даже если таймер активен, но камера показывала черный экран, перезапустить для надежности
+                                            elif was_no_video:
+                                                player.timer.stop()
+                                                player.timer.start(interval)
+                                                self.logger.info(f"Restarted timer for player {camera_folder} after no-video state (interval={interval})")
                             else:
                                 self.logger.warning(f"Failed to switch to segment for camera_folder {camera_folder}: {new_segment}")
                 else:
                     self.logger.debug(f"Segment file not found or invalid for camera_folder {camera_folder}: {new_segment}")
             
-            # Установить позицию в сегменте
-            segment_start = segments[target_segment_idx][0]
-            if segment_start:
-                segment_offset = (target_time - segment_start).total_seconds()
-                segment_offset_ms = int(segment_offset * 1000)
-            else:
-                # Если нет временной информации, использовать позицию относительно начала файла
-                segment_offset_ms = position_ms
-            
+            # Установить позицию в сегменте (даже если сегмент не изменился, но видео было перезагружено)
+            # Получить player из _video_players, так как он может быть не найден в блоке выше
+            # ВАЖНО: вызывать _seek_player для ВСЕХ камер, даже если сегмент не изменился
+            # Это гарантирует, что все камеры перематываются синхронно
             player = self._video_players.get(camera_folder)
             if player:
+                segment_start = segments[target_segment_idx][0]
+                camera_has_started = True  # Флаг, что камера уже начала запись
+                if segment_start:
+                    segment_offset = (target_time - segment_start).total_seconds()
+                    segment_offset_ms = int(segment_offset * 1000)
+                    # Если target_time < segment_start (камера начала запись позже), использовать позицию 0
+                    # Это нормально - камера просто начнет показывать видео с начала своего первого сегмента
+                    if segment_offset_ms < 0:
+                        self.logger.info(f"seek_all for {camera_folder}: target_time {target_time} is before segment_start {segment_start} (diff: {segment_offset_ms}ms), using position 0ms (camera started recording later)")
+                        segment_offset_ms = 0
+                        camera_has_started = False  # Камера еще не начала запись
+                    else:
+                        self.logger.debug(f"seek_all for {camera_folder}: target_time {target_time}, segment_start {segment_start}, offset={segment_offset_ms}ms")
+                else:
+                    # Если нет временной информации, использовать позицию относительно начала файла
+                    segment_offset_ms = position_ms
+                    if segment_offset_ms < 0:
+                        segment_offset_ms = 0
+                    self.logger.debug(f"seek_all for {camera_folder}: No segment_start time, using position_ms={segment_offset_ms}ms")
+                
+                # Установить позицию и запустить воспроизведение после перезагрузки видео
+                # ВАЖНО: если видео было перезагружено, убедиться, что cap готов перед установкой позиции
+                if needs_reload:
+                    # Подождать, пока cap откроется (для OpenCV)
+                    if isinstance(player, SplitVideoPlayerWidget):
+                        if player._video_player and player._video_player.cap:
+                            max_wait = 10  # Максимум 10 попыток
+                            for wait_attempt in range(max_wait):
+                                if player._video_player.cap.isOpened():
+                                    break
+                                time.sleep(0.05)  # 50ms между попытками
+                                QApplication.processEvents()
+                            # Остановить таймер перед установкой позиции, чтобы избежать продвижения позиции
+                            if player._video_player.timer and player._video_player.timer.isActive():
+                                player._video_player.timer.stop()
+                                self.logger.debug(f"seek_all for {camera_folder}: Stopped timer before seek after reload")
+                    elif isinstance(player, VideoPlayerWidget):
+                        if player.cap:
+                            max_wait = 10
+                            for wait_attempt in range(max_wait):
+                                if player.cap.isOpened():
+                                    break
+                                time.sleep(0.05)
+                                QApplication.processEvents()
+                            # Остановить таймер перед установкой позиции, чтобы избежать продвижения позиции
+                            if player.timer and player.timer.isActive():
+                                player.timer.stop()
+                                self.logger.debug(f"seek_all for {camera_folder}: Stopped timer before seek after reload")
+                
+                self.logger.info(f"seek_all for {camera_folder}: Setting position to {segment_offset_ms}ms, should_play={should_play}, camera_has_started={camera_has_started}")
+                # ВАЖНО: вызывать _seek_player для ВСЕХ камер, даже если needs_reload=False
+                # Это гарантирует, что позиция установится для всех камер при перемотке
                 self._seek_player(player, segment_offset_ms)
+                
+                # После установки позиции проверить, что она действительно установилась (для OpenCV)
+                if needs_reload:
+                    if isinstance(player, SplitVideoPlayerWidget):
+                        if player._video_player and player._video_player.cap and player._video_player.cap.isOpened():
+                            import cv2
+                            fps = player._video_player.cap.get(cv2.CAP_PROP_FPS) or 30
+                            expected_frame = int((segment_offset_ms / 1000.0) * fps)
+                            actual_frame = player._video_player.cap.get(cv2.CAP_PROP_POS_FRAMES)
+                            if abs(actual_frame - expected_frame) > 1:  # Допуск 1 кадр
+                                self.logger.warning(f"seek_all for {camera_folder}: Position mismatch after seek - expected frame {expected_frame}, got {actual_frame}, retrying")
+                                # Повторно установить позицию
+                                player._video_player.cap.set(cv2.CAP_PROP_POS_FRAMES, expected_frame)
+                                # Прочитать кадр для применения позиции
+                                if player._video_player.cap.isOpened():
+                                    player._video_player.cap.read()
+                    elif isinstance(player, VideoPlayerWidget):
+                        if player.cap and player.cap.isOpened():
+                            import cv2
+                            fps = player.cap.get(cv2.CAP_PROP_FPS) or 30
+                            expected_frame = int((segment_offset_ms / 1000.0) * fps)
+                            actual_frame = player.cap.get(cv2.CAP_PROP_POS_FRAMES)
+                            if abs(actual_frame - expected_frame) > 1:  # Допуск 1 кадр
+                                self.logger.warning(f"seek_all for {camera_folder}: Position mismatch after seek - expected frame {expected_frame}, got {actual_frame}, retrying")
+                                # Повторно установить позицию
+                                player.cap.set(cv2.CAP_PROP_POS_FRAMES, expected_frame)
+                                # Прочитать кадр для применения позиции
+                                if player.cap.isOpened():
+                                    player.cap.read()
+                
+                # Запустить воспроизведение если нужно (после установки позиции)
+                # ВАЖНО: для камер с поздним стартом (camera_has_started=False) мы все равно запускаем воспроизведение,
+                # но с позиции 0, так как камера уже записывает, просто началась позже
+                if should_play:
+                    self.logger.info(f"seek_all for {camera_folder}: should_play=True, checking playback state")
+                    if isinstance(player, SplitVideoPlayerWidget):
+                        # Для split videos проверить, запущено ли воспроизведение
+                        if player._video_player:
+                            is_playing = player._video_player._is_playing
+                            # Проверить фактическое состояние таймера
+                            timer_active = player._video_player.timer.isActive() if player._video_player.timer else False
+                            
+                            self.logger.info(f"seek_all for {camera_folder} (split): is_playing={is_playing}, timer_active={timer_active}")
+                            if not is_playing or not timer_active:
+                                self.logger.info(f"Resuming playback for split player {camera_folder} after seek (is_playing={is_playing}, timer_active={timer_active})")
+                                
+                                # Убедиться, что _is_playing установлен перед вызовом play()
+                                if not is_playing and player._video_player:
+                                    player._video_player._is_playing = True
+                                    self.logger.debug(f"seek_all for {camera_folder}: Set _video_player._is_playing=True before calling play()")
+                                
+                                # Проверить состояние таймера до и после play()
+                                timer_before_play = timer_active
+                                player.play()
+                                
+                                # Подождать немного перед проверкой, чтобы таймер успел активироваться
+                                QApplication.processEvents()
+                                time.sleep(0.01)  # 10ms задержка
+                                QApplication.processEvents()
+                                
+                                # Проверить состояние таймера после play()
+                                timer_after_play = False
+                                if player._video_player and player._video_player.timer:
+                                    timer_after_play = player._video_player.timer.isActive()
+                                
+                                if not timer_after_play and timer_before_play == False:
+                                    self.logger.warning(f"seek_all for {camera_folder}: Timer did not start after play() (before={timer_before_play}, after={timer_after_play}, cap_opened={player._video_player.cap.isOpened() if player._video_player and player._video_player.cap else False})")
+                                    # Попробовать запустить таймер напрямую, если play() не сработал
+                                    if player._video_player and player._video_player.timer and player._video_player.cap and player._video_player.cap.isOpened():
+                                        # Получить интервал таймера
+                                        if hasattr(player._video_player, '_timer_interval') and player._video_player._timer_interval:
+                                            interval = player._video_player._timer_interval
+                                        else:
+                                            import cv2
+                                            fps = player._video_player.cap.get(cv2.CAP_PROP_FPS) if player._video_player.cap else 30
+                                            interval = int(1000 / fps) if fps > 0 else 33
+                                        
+                                        player._video_player.timer.stop()
+                                        player._video_player.timer.start(interval)
+                                        QApplication.processEvents()
+                                        time.sleep(0.01)
+                                        QApplication.processEvents()
+                                        
+                                        timer_after_retry = player._video_player.timer.isActive()
+                                        if timer_after_retry:
+                                            self.logger.info(f"seek_all for {camera_folder}: Timer started successfully after direct start (interval={interval})")
+                                        else:
+                                            self.logger.error(f"seek_all for {camera_folder}: Timer failed to start even after direct start")
+                                else:
+                                    self.logger.debug(f"seek_all for {camera_folder}: Timer state after play() (before={timer_before_play}, after={timer_after_play})")
+                                
+                                self.logger.info(f"Resumed playback for split player {camera_folder} after seek")
+                            else:
+                                self.logger.info(f"Split player {camera_folder} already playing, no need to resume")
+                        else:
+                            self.logger.warning(f"seek_all for {camera_folder} (split): _video_player not found")
+                    else:
+                        # Для обычных VideoPlayerWidget проверить, запущено ли воспроизведение
+                        is_playing = player._is_playing
+                        player_has_timer = player.timer is not None
+                        timer_active = player_has_timer and player.timer.isActive()
+                        player_has_qmedia = player.player is not None
+                        
+                        self.logger.info(f"seek_all for {camera_folder} (regular): is_playing={is_playing}, timer_active={timer_active}, has_qmedia={player_has_qmedia}")
+                        
+                        if not is_playing or (player_has_timer and not timer_active):
+                            # Если воспроизведение не запущено, запустить его
+                            if player_has_qmedia:
+                                self.logger.info(f"Resuming playback for player {camera_folder} (QMediaPlayer) after seek")
+                                if pyqt_version == 6:
+                                    player.player.play()
+                                else:
+                                    player.player.play()
+                                self.logger.info(f"Resumed playback for player {camera_folder} (QMediaPlayer) after seek")
+                            elif player_has_timer:
+                                self.logger.info(f"Resuming playback for player {camera_folder} (OpenCV timer) after seek")
+                                if not timer_active:
+                                    # Убедиться, что _is_playing установлен
+                                    if not player._is_playing:
+                                        player._is_playing = True
+                                        self.logger.debug(f"seek_all for {camera_folder}: Set _is_playing=True before starting timer")
+                                    
+                                    # Убедиться, что cap открыт
+                                    if player.cap and not player.cap.isOpened():
+                                        self.logger.warning(f"seek_all for {camera_folder}: cap not opened, cannot start timer")
+                                    else:
+                                        # Получить интервал таймера или использовать значение по умолчанию
+                                        if hasattr(player, '_timer_interval') and player._timer_interval:
+                                            interval = player._timer_interval
+                                        else:
+                                            import cv2
+                                            fps = player.cap.get(cv2.CAP_PROP_FPS) if player.cap else 30
+                                            interval = int(1000 / fps) if fps > 0 else 33
+                                        
+                                        timer_before_start = player.timer.isActive()
+                                        player.timer.start(interval)  # Явно указать интервал
+                                        
+                                        # Подождать немного перед проверкой
+                                        QApplication.processEvents()
+                                        time.sleep(0.01)  # 10ms задержка
+                                        QApplication.processEvents()
+                                        
+                                        timer_after_start = player.timer.isActive()
+                                        
+                                        self.logger.info(f"seek_all for {camera_folder}: Timer start attempt - before={timer_before_start}, after={timer_after_start}, interval={interval}, cap_opened={player.cap.isOpened() if player.cap else False}")
+                                        
+                                        # Проверить, что таймер действительно запустился
+                                        if not timer_after_start:
+                                            self.logger.warning(f"seek_all for {camera_folder}: Timer did not start, retrying with explicit interval={interval}")
+                                            # Повторить попытку
+                                            player.timer.stop()
+                                            player.timer.start(interval)
+                                            QApplication.processEvents()
+                                            time.sleep(0.01)
+                                            QApplication.processEvents()
+                                            timer_after_retry = player.timer.isActive()
+                                            
+                                            if not timer_after_retry:
+                                                self.logger.error(f"seek_all for {camera_folder}: Timer failed to start after retry (cap_opened={player.cap.isOpened() if player.cap else False}, _is_playing={player._is_playing})")
+                                            else:
+                                                self.logger.info(f"seek_all for {camera_folder}: Timer started successfully after retry")
+                                        else:
+                                            self.logger.debug(f"seek_all for {camera_folder}: Timer started successfully (before={timer_before_start}, after={timer_after_start})")
+                                else:
+                                    self.logger.debug(f"seek_all for {camera_folder}: Timer already active, no need to start")
+                                self.logger.info(f"Resumed playback for player {camera_folder} (OpenCV timer) after seek")
+                        else:
+                            self.logger.info(f"Player {camera_folder} already playing, no need to resume")
+                else:
+                    self.logger.info(f"seek_all for {camera_folder}: should_play=False, skipping playback resume")
+            else:
+                self.logger.warning(f"seek_all for {camera_folder}: player is None, cannot set position or resume playback")
     
     def _seek_player(self, player, position_ms: int):
         """Перемотать конкретный плеер на позицию"""
+        self.logger.info(f"_seek_player called: player={type(player).__name__}, position_ms={position_ms}")
+        
         if isinstance(player, SplitVideoPlayerWidget):
+            timer_state_before = None
+            cap_opened_before = False
+            if player._video_player:
+                if player._video_player.timer:
+                    timer_state_before = player._video_player.timer.isActive()
+                if player._video_player.cap:
+                    cap_opened_before = player._video_player.cap.isOpened()
+            
+            self.logger.info(f"_seek_player for SplitVideoPlayerWidget: timer_active={timer_state_before}, cap_opened={cap_opened_before}")
+            
+            # Вызвать seek на SplitVideoPlayerWidget
             player.seek(position_ms)
-        elif hasattr(player, 'player') and player.player:
+            
+            timer_state_after = None
+            cap_opened_after = False
+            if player._video_player:
+                if player._video_player.timer:
+                    timer_state_after = player._video_player.timer.isActive()
+                if player._video_player.cap:
+                    cap_opened_after = player._video_player.cap.isOpened()
+            
+            self.logger.info(f"_seek_player: Called seek({position_ms}) on SplitVideoPlayerWidget (timer: {timer_state_before} -> {timer_state_after}, cap: {cap_opened_before} -> {cap_opened_after})")
+        elif player.player:
             # QMediaPlayer
             if pyqt_version == 6:
                 player.player.setPosition(position_ms)
             else:
                 player.player.setPosition(position_ms)
-        elif hasattr(player, 'cap') and player.cap:
+            self.logger.debug(f"_seek_player: Set QMediaPlayer position to {position_ms}ms")
+        elif player.cap:
             # OpenCV
             import cv2
+            # Проверить, что cap открыт и готов перед установкой позиции
+            if not player.cap.isOpened():
+                self.logger.warning(f"_seek_player: cap is not opened for player {type(player).__name__}, cannot set position")
+                return
+            
+            # Остановить таймер перед установкой позиции, чтобы избежать продвижения позиции во время seek
+            was_playing = False
+            timer_state_before = False
+            if player.timer:
+                timer_state_before = player.timer.isActive()
+                if timer_state_before:
+                    was_playing = True
+                    player.timer.stop()
+                    self.logger.debug(f"_seek_player: Stopped timer before seek (was_active={timer_state_before}, _is_playing={player._is_playing})")
+                else:
+                    self.logger.debug(f"_seek_player: Timer was not active before seek (_is_playing={player._is_playing})")
+            
             fps = player.cap.get(cv2.CAP_PROP_FPS) or 30
             frame_number = int((position_ms / 1000.0) * fps)
+            if frame_number < 0:
+                frame_number = 0
+            
+            # Установить позицию
             player.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+            
+            # Проверить, что позиция установилась
+            actual_frame_before = player.cap.get(cv2.CAP_PROP_POS_FRAMES)
+            
+            # Прочитать кадр после установки позиции, чтобы позиция действительно установилась
+            # Это важно для некоторых кодеков/форматов видео
+            try:
+                if player.cap.isOpened():
+                    ret = player.cap.read()
+                    if isinstance(ret, tuple) and len(ret) == 2 and ret[0]:
+                        # После чтения кадра позиция продвинулась на 1 кадр, вернем её обратно
+                        # Но сначала проверим, что позиция действительно продвинулась
+                        actual_frame_after = player.cap.get(cv2.CAP_PROP_POS_FRAMES)
+                        if actual_frame_after != frame_number:
+                            # Вернуть позицию обратно к нужному кадру
+                            player.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+                            self.logger.debug(f"_seek_player: Reset position after read (was {actual_frame_after}, set to {frame_number})")
+            except Exception as e:
+                # Если чтение не удалось (например, в тестах с моками), просто продолжить
+                self.logger.debug(f"_seek_player: Could not read frame after seek (this is OK in some cases): {e}")
+            
+            # Проверить финальную позицию
+            actual_frame_final = player.cap.get(cv2.CAP_PROP_POS_FRAMES)
+            self.logger.debug(f"_seek_player: Set OpenCV position to frame {frame_number} (before read: {actual_frame_before}, final: {actual_frame_final}), fps={fps}, position_ms={position_ms}")
+            
+            # Проверить состояние таймера после установки позиции
+            timer_state_after = False
+            if player.timer:
+                timer_state_after = player.timer.isActive()
+            self.logger.debug(f"_seek_player: Timer state after seek - was_active={timer_state_before}, is_active={timer_state_after}, _is_playing={player._is_playing}, cap_opened={player.cap.isOpened() if player.cap else False}")
+            
+            # НЕ перезапускаем таймер здесь - это будет сделано в seek_all если should_play=True
     
     def set_playback_speed(self, speed: float):
         """Установить скорость воспроизведения"""
@@ -2275,26 +2887,21 @@ class SplitVideoPlayerWidget(QWidget):
         if has_opencv:
             # Сохранить оригинальный метод обновления кадра
             if hasattr(self._video_player, '_update_frame_opencv'):
-                self.logger.info("Found _update_frame_opencv method, creating wrapper")
                 # Создать обертку для перехвата кадров
                 original_update = self._video_player._update_frame_opencv
                 
                 def wrapped_update():
                     # Вызвать оригинальный метод
-                    self.logger.info("wrapped_update() called - calling original_update()")
                     original_update()
                     # Извлечь кадр для разделения (кадр уже прочитан в оригинальном методе)
-                    self.logger.info("wrapped_update() - calling _extract_current_frame()")
                     self._extract_current_frame()
                 
                 # ВАЖНО: Переподключить таймер к новому wrapper методу
                 # Таймер был подключен к старому методу, нужно переподключить
                 if hasattr(self._video_player, 'timer') and self._video_player.timer:
-                    self.logger.info("Reconnecting timer to wrapped_update method")
                     self._video_player.timer.timeout.disconnect()  # Отключить старое подключение
                     self._video_player._update_frame_opencv = wrapped_update  # Установить новый метод
                     self._video_player.timer.timeout.connect(wrapped_update)  # Подключить к wrapper
-                    self.logger.info(f"Timer reconnected. timer.isActive: {self._video_player.timer.isActive()}")
                 else:
                     # Если таймера нет, просто заменить метод
                     self._video_player._update_frame_opencv = wrapped_update
@@ -2315,7 +2922,6 @@ class SplitVideoPlayerWidget(QWidget):
                 if hasattr(self._video_player, 'timer') and self._video_player.timer:
                     interval = self._video_player.timer.interval()
                     self._extraction_timer.start(interval)
-                    self.logger.info(f"Extraction timer started with interval {interval}ms")
                 else:
                     self.logger.warning("VideoPlayerWidget timer not found, extraction timer not started")
         else:
@@ -2326,7 +2932,6 @@ class SplitVideoPlayerWidget(QWidget):
     
     def _extract_current_frame(self):
         """Извлечь текущий кадр из VideoPlayerWidget для разделения"""
-        self.logger.info("_extract_current_frame() called")
         if not self._video_player:
             self.logger.warning("_extract_current_frame: _video_player is None")
             return
@@ -2336,9 +2941,6 @@ class SplitVideoPlayerWidget(QWidget):
         # Попытаться получить сохраненный кадр из VideoPlayerWidget
         if hasattr(self._video_player, '_current_frame') and self._video_player._current_frame is not None:
             frame = self._video_player._current_frame.copy()
-            self.logger.info(f"_extract_current_frame: Got frame from _current_frame, size={frame.shape if frame is not None else None}")
-        else:
-            self.logger.debug("_extract_current_frame: _current_frame is None or not available")
         
         # Fallback: прочитать кадр напрямую из cap если _current_frame недоступен
         if frame is None and hasattr(self._video_player, 'cap') and self._video_player.cap:
@@ -2366,10 +2968,7 @@ class SplitVideoPlayerWidget(QWidget):
         
         # Разделить кадр на области если он доступен
         if frame is not None:
-            self.logger.info(f"_extract_current_frame: Calling _split_frame with frame size={frame.shape}")
             self._split_frame(frame)
-        else:
-            self.logger.warning("_extract_current_frame: Frame is None, cannot split")
     
     def _update_split_frames_opencv(self):
         """Обновить разделенные кадры для OpenCV режима"""
@@ -2405,7 +3004,6 @@ class SplitVideoPlayerWidget(QWidget):
     
     def _split_frame(self, frame):
         """Разделить кадр на области согласно конфигурации"""
-        self.logger.info(f"_split_frame() called with frame shape={frame.shape if frame is not None else None}")
         if not self._split_config or not self._region_widgets:
             self.logger.warning(f"_split_frame: Missing config or widgets. config={self._split_config is not None}, widgets={len(self._region_widgets) if self._region_widgets else 0}")
             return
@@ -2415,8 +3013,6 @@ class SplitVideoPlayerWidget(QWidget):
             return
         
         try:
-            self.logger.info(f"_split_frame: Processing frame with shape={frame.shape}, num_regions={len(self._region_widgets)}")
-            
             # Конвертировать в RGB если нужно
             if len(frame.shape) == 3 and frame.shape[2] == 3:
                 # BGR to RGB для отображения
@@ -2434,8 +3030,6 @@ class SplitVideoPlayerWidget(QWidget):
                     continue
                 
                 x, y, w, h = int(coords[0]), int(coords[1]), int(coords[2]), int(coords[3])
-                self.logger.info(f"_split_frame: Extracting region {idx} ({source_name}) at x={x}, y={y}, w={w}, h={h}")
-                self.logger.debug(f"_split_frame: Region {idx} ({source_name}) coords: x={x}, y={y}, w={w}, h={h}")
                 
                 # Проверить границы
                 frame_h, frame_w = frame_rgb.shape[:2]
@@ -2460,7 +3054,6 @@ class SplitVideoPlayerWidget(QWidget):
     
     def _display_region(self, widget: QLabel, region, source_name: str = "unknown"):
         """Отобразить область в виджете"""
-        self.logger.info(f"_display_region() called for {source_name}: region shape={region.shape if region is not None else None}, widget size={widget.size().width()}x{widget.size().height()}")
         try:
             from PyQt6.QtGui import QImage, QPixmap
         except ImportError:
@@ -2485,7 +3078,6 @@ class SplitVideoPlayerWidget(QWidget):
                 Qt.TransformationMode.SmoothTransformation
             )
             widget.setPixmap(scaled_pixmap)
-            self.logger.info(f"_display_region ({source_name}): Pixmap set successfully, scaled size={scaled_pixmap.size().width()}x{scaled_pixmap.size().height()}")
         else:
             self.logger.warning(f"_display_region ({source_name}): Widget size is invalid: {widget_size.width()}x{widget_size.height()}, cannot scale pixmap")
     
@@ -2533,8 +3125,21 @@ class SplitVideoPlayerWidget(QWidget):
         elif hasattr(self._video_player, 'timer') and self._video_player.timer:
             self.logger.info("play(): Using OpenCV timer")
             if not self._video_player.timer.isActive():
-                self._video_player.timer.start()
-                self.logger.info("play(): VideoPlayerWidget timer started")
+                # Получить интервал таймера или использовать значение по умолчанию
+                if hasattr(self._video_player, '_timer_interval') and self._video_player._timer_interval:
+                    interval = self._video_player._timer_interval
+                else:
+                    import cv2
+                    if self._video_player.cap:
+                        fps = self._video_player.cap.get(cv2.CAP_PROP_FPS) if self._video_player.cap else 30
+                        interval = int(1000 / fps) if fps > 0 else 33
+                    else:
+                        interval = 33  # Значение по умолчанию
+                
+                timer_before = self._video_player.timer.isActive()
+                self._video_player.timer.start(interval)  # Явно указать интервал
+                timer_after = self._video_player.timer.isActive()
+                self.logger.info(f"play(): VideoPlayerWidget timer started (before={timer_before}, after={timer_after}, interval={interval})")
             else:
                 self.logger.info("play(): VideoPlayerWidget timer already active")
         else:
@@ -2586,22 +3191,61 @@ class SplitVideoPlayerWidget(QWidget):
     
     def seek(self, position_ms: int):
         """Перемотать на позицию"""
+        # Убедиться, что позиция не отрицательная
+        if position_ms < 0:
+            self.logger.warning(f"seek(): Negative position {position_ms}ms, setting to 0ms")
+            position_ms = 0
+        
         if self._video_player:
-            if hasattr(self._video_player, 'player') and self._video_player.player:
+            if self._video_player.player:
                 if pyqt_version == 6:
                     self._video_player.player.setPosition(position_ms)
                 else:
                     self._video_player.player.setPosition(position_ms)
-            elif hasattr(self._video_player, 'cap') and self._video_player.cap:
+            elif self._video_player.cap:
                 import cv2
+                # Проверить, что cap открыт и готов перед установкой позиции
+                if not self._video_player.cap.isOpened():
+                    self.logger.warning(f"seek(): cap is not opened for SplitVideoPlayerWidget, cannot set position")
+                    return
+                
+                # Остановить таймер перед установкой позиции
+                was_playing = False
+                if self._video_player.timer and self._video_player.timer.isActive():
+                    was_playing = True
+                    self._video_player.timer.stop()
+                    self.logger.debug(f"seek(): Stopped timer before seek")
+                
                 fps = self._video_player.cap.get(cv2.CAP_PROP_FPS) or 30
                 frame_number = int((position_ms / 1000.0) * fps)
+                # Убедиться, что номер кадра не отрицательный
+                if frame_number < 0:
+                    frame_number = 0
+                
+                # Установить позицию
                 self._video_player.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+                
+                # Прочитать кадр после установки позиции, чтобы позиция действительно установилась
+                # Это важно для некоторых кодеков/форматов видео
+                try:
+                    if self._video_player.cap.isOpened():
+                        ret = self._video_player.cap.read()
+                        if isinstance(ret, tuple) and len(ret) == 2 and ret[0]:
+                            # После чтения кадра позиция продвинулась на 1 кадр, вернем её обратно
+                            actual_frame_after = self._video_player.cap.get(cv2.CAP_PROP_POS_FRAMES)
+                            if actual_frame_after != frame_number:
+                                self._video_player.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+                                self.logger.debug(f"seek(): Reset position after read (was {actual_frame_after}, set to {frame_number})")
+                except Exception as e:
+                    # Если чтение не удалось, просто продолжить
+                    self.logger.debug(f"seek(): Could not read frame after seek (this is OK in some cases): {e}")
+                
+                # НЕ перезапускаем таймер здесь - это будет сделано вызывающим кодом если нужно
     
     def set_playback_speed(self, speed: float):
         """Установить скорость воспроизведения"""
         if self._video_player:
-            if hasattr(self._video_player, 'player') and self._video_player.player:
+            if self._video_player.player:
                 try:
                     if pyqt_version == 6:
                         self._video_player.player.setPlaybackRate(speed)
@@ -2609,7 +3253,7 @@ class SplitVideoPlayerWidget(QWidget):
                         self._video_player.player.setPlaybackRate(speed)
                 except Exception:
                     pass
-            elif hasattr(self._video_player, 'timer') and self._video_player.timer:
+            elif self._video_player.timer:
                 if hasattr(self._video_player, 'cap') and self._video_player.cap:
                     import cv2
                     fps = self._video_player.cap.get(cv2.CAP_PROP_FPS) or 30
