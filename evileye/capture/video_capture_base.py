@@ -213,6 +213,14 @@ class VideoCaptureBase(EvilEyeBase):
         params['loop_play'] = self.loop_play
         params['source'] = self.source_type.name
         params['camera'] = self.source_address
+        # CRITICAL: Save 'type' field to preserve VideoCaptureGStreamer vs VideoCaptureOpencv
+        # Use class name from registry if available, otherwise use __class__.__name__
+        # Prefer saved type from params if it was explicitly set
+        if hasattr(self, 'params') and self.params and 'type' in self.params:
+            params['type'] = self.params['type']
+        else:
+            # Use class name - this is the registered name in EvilEyeBase._registry
+            params['type'] = self.__class__.__name__
         return params
 
     def get_disconnects_info(self) -> list[tuple[str, datetime.datetime, bool]]:
