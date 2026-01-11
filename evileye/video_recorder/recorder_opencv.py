@@ -137,14 +137,41 @@ class OpenCVRecorder(VideoRecorderBase):
             if self._writer is not None:
                 # Get path to current file before closing
                 current_path = self._current_file_path
-                self._writer.release()
-                self._writer = None
-                self._current_file_path = None
+                old_writer = self._writer
+                
+                # Release writer and verify it's closed
+                try:
+                    old_writer.release()
+                    # Verify writer is closed
+                    if old_writer.isOpened():
+                        self.logger.warning("VideoWriter still opened after release(), forcing close")
+                        # Try to release again
+                        try:
+                            old_writer.release()
+                        except Exception as e:
+                            self.logger.debug(f"Error on second release attempt: {e}")
+                except Exception as e:
+                    self.logger.error(f"Error releasing VideoWriter: {e}", exc_info=True)
+                finally:
+                    # Clear references regardless of errors
+                    self._writer = None
+                    old_writer = None
+                    self._current_file_path = None
                 
                 # Check and delete if file is too small
                 if current_path and current_path.exists():
                     if check_and_delete_small_files(current_path, self.params.min_file_size_kb):
                         self.logger.info(f"Deleted small file: {current_path} (size < {self.params.min_file_size_kb} KB)")
+                
+                # Optional: force garbage collection to free memory immediately
+                # This can help with memory leaks in long-running processes
+                try:
+                    import gc
+                    # Only collect if we're in a memory-constrained environment
+                    # Uncomment the next line if memory leaks persist
+                    # gc.collect()
+                except Exception:
+                    pass
                 
             self._seq += 1
             self._segment_started_ts = time.time()
@@ -155,13 +182,30 @@ class OpenCVRecorder(VideoRecorderBase):
             if self._writer is not None:
                 # Check and delete last file if too small
                 current_path = self._current_file_path
-                self._writer.release()
-                self._writer = None
-                self._current_file_path = None
+                old_writer = self._writer
+                
+                # Release writer and verify it's closed
+                try:
+                    old_writer.release()
+                    # Verify writer is closed
+                    if old_writer.isOpened():
+                        self.logger.warning("VideoWriter still opened after release() in stop(), forcing close")
+                        try:
+                            old_writer.release()
+                        except Exception as e:
+                            self.logger.debug(f"Error on second release attempt in stop(): {e}")
+                except Exception as e:
+                    self.logger.error(f"Error releasing VideoWriter in stop(): {e}", exc_info=True)
+                finally:
+                    # Clear references regardless of errors
+                    self._writer = None
+                    old_writer = None
+                    self._current_file_path = None
                 
                 if current_path and current_path.exists():
                     if check_and_delete_small_files(current_path, self.params.min_file_size_kb):
                         self.logger.info(f"Deleted small file: {current_path} (size < {self.params.min_file_size_kb} KB)")
             self.is_running = False
+            self.logger.debug("OpenCV recorder stopped and resources released")
 
 

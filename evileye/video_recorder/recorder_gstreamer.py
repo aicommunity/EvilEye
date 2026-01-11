@@ -25,6 +25,7 @@ class GStreamerRecorder(VideoRecorderBase):
         super().__init__()
         self.logger = get_module_logger("recorder_gst")
         self._pipeline = None
+        self._bus = None
         self._loop: Optional[GLib.MainLoop] = None
         self._thread: Optional[threading.Thread] = None
 
@@ -172,10 +173,10 @@ class GStreamerRecorder(VideoRecorderBase):
             raise RuntimeError("Failed to create GStreamer recording pipeline")
         
         # Setup bus to handle errors
-        bus = self._pipeline.get_bus()
-        if bus:
-            bus.add_signal_watch()
-            bus.connect("message", self._on_bus_message)
+        self._bus = self._pipeline.get_bus()
+        if self._bus:
+            self._bus.add_signal_watch()
+            self._bus.connect("message", self._on_bus_message)
         
         # Set state to playing
         ret = self._pipeline.set_state(Gst.State.PLAYING)
@@ -200,13 +201,71 @@ class GStreamerRecorder(VideoRecorderBase):
     def stop(self) -> None:
         if not self.is_running:
             return
+        
+        pipeline = None
+        bus = None
+        
         try:
-            if self._pipeline is not None:
-                self._pipeline.set_state(Gst.State.NULL)
+            # Get references before cleanup (no need for lock here as stop() should be called from main thread)
+            pipeline = self._pipeline
+            bus = self._bus
+            self._pipeline = None
+            self._bus = None
+            
+            if pipeline is not None:
+                # Stop pipeline and wait for state change with timeout
+                ret = pipeline.set_state(Gst.State.NULL)
+                if ret == Gst.StateChangeReturn.ASYNC:
+                    # Wait for state change to complete (timeout: 5 seconds)
+                    state_ret = pipeline.get_state(Gst.CLOCK_TIME_NONE)
+                    if state_ret[0] == Gst.StateChangeReturn.ASYNC:
+                        # Still async, wait a bit more
+                        import time
+                        timeout = 5.0
+                        start_time = time.time()
+                        while time.time() - start_time < timeout:
+                            state_ret = pipeline.get_state(Gst.SECOND)
+                            if state_ret[0] != Gst.StateChangeReturn.ASYNC:
+                                break
+                            time.sleep(0.1)
+                        if state_ret[0] == Gst.StateChangeReturn.ASYNC:
+                            self.logger.warning("Pipeline state change still async after timeout")
+                
+                # Explicitly flush and release bus resources
+                if bus is not None:
+                    try:
+                        bus.remove_signal_watch()
+                    except Exception as e:
+                        self.logger.debug(f"Error removing bus signal watch: {e}")
+                    try:
+                        bus.set_flushing(True)
+                    except Exception as e:
+                        self.logger.debug(f"Error flushing bus: {e}")
+                    # Bus will be released when pipeline is released
+                
+                # Release pipeline resources
+                try:
+                    # Send EOS event to unblock any waiting threads
+                    pipeline.send_event(Gst.Event.new_eos())
+                except Exception as e:
+                    self.logger.debug(f"Error sending EOS event: {e}")
+                
+                # Pipeline will be released by GStreamer when set to NULL state
+                # But we can explicitly unref it if needed
+                try:
+                    # Clear any remaining references
+                    pipeline = None
+                except Exception as e:
+                    self.logger.debug(f"Error releasing pipeline: {e}")
+        except Exception as e:
+            self.logger.error(f"Error stopping GStreamer recorder: {e}", exc_info=True)
         finally:
+            # Clean up all references
             self._loop = None
             self._thread = None
             self._pipeline = None
+            self._bus = None
             self.is_running = False
+            self.logger.debug("GStreamer recorder stopped and resources released")
 
 

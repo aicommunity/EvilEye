@@ -134,15 +134,31 @@ class EventBuffer:
         if not self.buffer:
             return
         
-        current_time = time.time()
-        cutoff_time = current_time - self.max_duration_seconds
+        # Determine cutoff time based on buffer type
+        # For absolute timestamps (live sources), use current time
+        # For relative timestamps (video files), use newest timestamp
+        newest_ts = self.buffer[-1][1] if self.buffer else None
+        if newest_ts is None:
+            return
         
-        # If buffer has maxlen, it auto-removes oldest, but we still need to check timestamps
-        # for dynamic buffers
-        if self.buffer.maxlen is None:
-            # Remove old frames from the left (oldest)
-            while self.buffer and self.buffer[0][1] < cutoff_time:
-                self.buffer.popleft()
+        # If newest timestamp is large (> 1 day), it's absolute time (live source)
+        # Otherwise it's relative time (video file)
+        if newest_ts > 86400:  # Absolute timestamp (live source)
+            current_time = time.time()
+            cutoff_time = current_time - self.max_duration_seconds
+        else:  # Relative timestamp (video file)
+            cutoff_time = newest_ts - self.max_duration_seconds
+        
+        # Remove old frames from the left (oldest)
+        # For buffers with maxlen, deque auto-removes, but we still clean up by timestamp
+        # to ensure we don't keep frames beyond max_duration_seconds
+        removed_count = 0
+        while self.buffer and self.buffer[0][1] < cutoff_time:
+            self.buffer.popleft()
+            removed_count += 1
+        
+        if removed_count > 0:
+            self.logger.debug(f"Cleaned up {removed_count} old frames from buffer (cutoff_time={cutoff_time:.3f})")
     
     def clear(self) -> None:
         """Clear all frames from the buffer."""
@@ -175,3 +191,42 @@ class EventBuffer:
         if oldest is None or newest is None:
             return 0.0
         return newest - oldest
+    
+    def clear_old_frames(self, older_than_seconds: Optional[float] = None) -> int:
+        """
+        Explicitly clear old frames from buffer.
+        
+        Args:
+            older_than_seconds: Remove frames older than this many seconds from newest frame.
+                                If None, uses max_duration_seconds.
+        
+        Returns:
+            Number of frames removed
+        """
+        if not self.buffer:
+            return 0
+        
+        if older_than_seconds is None:
+            older_than_seconds = self.max_duration_seconds
+        
+        newest_ts = self.buffer[-1][1] if self.buffer else None
+        if newest_ts is None:
+            return 0
+        
+        # Determine cutoff time
+        if newest_ts > 86400:  # Absolute timestamp
+            current_time = time.time()
+            cutoff_time = current_time - older_than_seconds
+        else:  # Relative timestamp
+            cutoff_time = newest_ts - older_than_seconds
+        
+        removed_count = 0
+        with self.lock:
+            while self.buffer and self.buffer[0][1] < cutoff_time:
+                self.buffer.popleft()
+                removed_count += 1
+        
+        if removed_count > 0:
+            self.logger.debug(f"Explicitly cleared {removed_count} old frames (older than {older_than_seconds}s)")
+        
+        return removed_count

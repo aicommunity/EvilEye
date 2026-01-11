@@ -49,7 +49,8 @@ class EventRecorder:
         
         # Async recording attributes
         self._recording_thread: Optional[threading.Thread] = None
-        self._frame_queue: queue.Queue = queue.Queue()
+        # Limit queue size to prevent memory leaks (100 frames should be enough for ~4 seconds at 25fps)
+        self._frame_queue: queue.Queue = queue.Queue(maxsize=100)
         self._stop_recording: threading.Event = threading.Event()
     
     def _fourcc_candidates(self, container: str) -> List[str]:
@@ -173,6 +174,8 @@ class EventRecorder:
                     last_written_time = frame_timestamp
                 
                 self.logger.info(f"Written {len(sorted_frames)} pre-event frames")
+                # Clear pre-event frames to free memory after writing
+                self._pre_event_frames.clear()
             else:
                 # No pre-event frames, set last timestamp to event time
                 last_written_time = self._event_start_time
@@ -417,7 +420,21 @@ class EventRecorder:
             self._frame_queue.put_nowait((frame.copy(), timestamp))
             return True
         except queue.Full:
-            self.logger.warning("Frame queue is full, dropping frame")
+            # Queue is full - try to remove oldest frame and add new one
+            try:
+                # Remove oldest frame to make room
+                try:
+                    self._frame_queue.get_nowait()
+                except queue.Empty:
+                    pass
+                # Try to add new frame again
+                try:
+                    self._frame_queue.put_nowait((frame.copy(), timestamp))
+                    self.logger.debug("Frame queue was full, dropped oldest frame and added new one")
+                except queue.Full:
+                    self.logger.warning("Frame queue is still full after removing oldest frame, dropping new frame")
+            except Exception as e:
+                self.logger.debug(f"Error handling full queue: {e}")
             return True  # Continue recording, just drop this frame
     
     def stop_event_recording(self) -> Optional[Path]:
@@ -455,6 +472,9 @@ class EventRecorder:
                     self._frame_queue.get_nowait()
                 except queue.Empty:
                     break
+            
+            # Clear pre-event frames to free memory
+            self._pre_event_frames.clear()
             
             # Reset thread reference
             self._recording_thread = None
