@@ -205,9 +205,12 @@ class Visualizer(EvilEyeBase):
                 self.processing_frames[frame.source_id] = []
             self.processing_frames[frame.source_id].append(frame)
 
+            # Remove excess frames to prevent memory leak
+            # Keep only the most recent visual_buffer_num_frames
             exceed_frames_num = len(self.processing_frames[frame.source_id]) - self.visual_buffer_num_frames
-            if 0 < exceed_frames_num < len(self.processing_frames[frame.source_id]):
-                del self.processing_frames[frame.source_id][exceed_frames_num:]
+            if exceed_frames_num > 0:
+                # Remove oldest frames (from the beginning)
+                del self.processing_frames[frame.source_id][:exceed_frames_num]
 
         self.objects = objects
         # Process visualization
@@ -268,9 +271,27 @@ class Visualizer(EvilEyeBase):
             start_remove = timer()
             remove_processed_idx[source_id].sort(reverse=True)
             for index in remove_processed_idx[source_id]:
-                del proc_frames[index]
+                if index < len(proc_frames):
+                    del proc_frames[index]
+
+            # Additional cleanup: remove frames for sources that are not in source_ids (inactive sources)
+            if source_id not in self.source_ids:
+                # Clear all frames for inactive source
+                if source_id in self.processing_frames:
+                    del self.processing_frames[source_id]
+                    self.logger.debug(f"Cleared processing_frames for inactive source {source_id}")
 
             end_update = timer()
             # self.logger.debug(f"Time: update=[{end_update-start_update}] secs")
 
             #self.logger.debug(f"{datetime.now()}: Visual Queue size: {len(self.processing_frames)}. Processed sources: {processed_sources}")
+        
+        # Cleanup: remove frames for sources that are no longer active
+        active_source_ids = set(self.source_ids)
+        sources_to_remove = []
+        for source_id in self.processing_frames.keys():
+            if source_id not in active_source_ids:
+                sources_to_remove.append(source_id)
+        for source_id in sources_to_remove:
+            del self.processing_frames[source_id]
+            self.logger.debug(f"Cleared processing_frames for removed source {source_id}")

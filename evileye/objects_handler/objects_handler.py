@@ -394,6 +394,8 @@ class ObjectsHandler(EvilEyeBase):
                 track_object.class_id = track.class_id
                 track_object.track = track
                 track_object.time_stamp = tracking_results.time_stamp
+                # Store reference to image instead of copying to save memory
+                # The image will be used for saving, then cleared when object is lost
                 track_object.last_image = image
                 track_object.cur_video_pos = image.current_video_position
                 track_object.history.append(track_object.get_current_history_element())
@@ -410,6 +412,8 @@ class ObjectsHandler(EvilEyeBase):
                 obj.frame_id = tracking_results.frame_id
                 obj.object_id = self.object_id_counter
                 obj.global_id = track.tracking_data.get('global_id', None)
+                # Store reference to image instead of copying to save memory
+                # The image will be used for saving, then cleared when object is lost
                 obj.last_image = image
                 obj.cur_video_pos = image.current_video_position
                 self.object_id_counter += 1
@@ -508,6 +512,9 @@ class ObjectsHandler(EvilEyeBase):
                     except Exception as e:
                         self.logger.error(f"Labeling data saving error for lost object: {e}")
                     
+                    # Clear last_image to free memory when object is moved to lost
+                    # The image has already been saved, so we don't need to keep it in memory
+                    active_obj.last_image = None
                     self.lost_objs.objects.append(active_obj)
                 else:
                     filtered_active_objects.append(active_obj)
@@ -521,11 +528,20 @@ class ObjectsHandler(EvilEyeBase):
                 start_index_for_remove = i
                 break
         if start_index_for_remove is not None:
+            # Clear last_image for objects being removed to free memory
+            for obj in self.lost_objs.objects[:start_index_for_remove]:
+                obj.last_image = None
             self.lost_objs.objects = self.lost_objs.objects[start_index_for_remove:]
 
         if len(self.active_objs.objects) > self.max_active_objects:
+            # Clear last_image for objects being removed to free memory
+            for obj in self.active_objs.objects[:-self.max_active_objects]:
+                obj.last_image = None
             self.active_objs.objects = self.active_objs.objects[-self.max_active_objects:]
         if len(self.lost_objs.objects) > self.max_lost_objects:
+            # Clear last_image for objects being removed to free memory
+            for obj in self.lost_objs.objects[:-self.max_lost_objects]:
+                obj.last_image = None
             self.lost_objs.objects = self.lost_objs.objects[-self.max_lost_objects:]
 
     def _prepare_for_saving(self, obj: ObjectResult, image_width, image_height) -> tuple[list, list, str, str]:

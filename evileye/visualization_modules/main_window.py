@@ -1036,11 +1036,14 @@ class MainWindow(QMainWindow):
         # Сохраняем оригинальное OpenCV изображение в last_clean_cv_images (они содержат одинаковые данные)
         source_id = self.labels_sources_ids.get(label_id)
         if source_id is not None:
-            # Создаем копию OpenCV изображения
-            import copy
-            self.last_clean_cv_images[source_id] = copy.deepcopy(original_cv_image)
-            h, w = original_cv_image.shape[:2]
-            self.logger.debug(f"Saved original CV image for source {source_id}: {w}x{h}")
+            # Use copy() instead of deepcopy() for numpy arrays - much more memory efficient
+            # numpy arrays are already contiguous, so copy() is sufficient
+            if original_cv_image is not None:
+                self.last_clean_cv_images[source_id] = original_cv_image.copy()
+                h, w = original_cv_image.shape[:2]
+                self.logger.debug(f"Saved original CV image for source {source_id}: {w}x{h}")
+            else:
+                self.last_clean_cv_images[source_id] = None
 
     @pyqtSlot(int, object)
     def clean_image_available(self, label_id: int, clean_cv_image):
@@ -1049,11 +1052,14 @@ class MainWindow(QMainWindow):
             # Сохраняем чистое изображение для ROI Editor
             source_id = self.labels_sources_ids.get(label_id)
             if source_id is not None:
-                # Создаем копию чистого OpenCV изображения
-                import copy
-                self.last_clean_cv_images[source_id] = copy.deepcopy(clean_cv_image)
-                h, w = clean_cv_image.shape[:2]
-                self.logger.debug(f"Saved clean CV image for source {source_id}: {w}x{h}")
+                # Use copy() instead of deepcopy() for numpy arrays - much more memory efficient
+                # numpy arrays are already contiguous, so copy() is sufficient
+                if clean_cv_image is not None:
+                    self.last_clean_cv_images[source_id] = clean_cv_image.copy()
+                    h, w = clean_cv_image.shape[:2]
+                    self.logger.debug(f"Saved clean CV image for source {source_id}: {w}x{h}")
+                else:
+                    self.last_clean_cv_images[source_id] = None
         except Exception as e:
             self.logger.error(f"Error updating clean CV image: {e}")
 
