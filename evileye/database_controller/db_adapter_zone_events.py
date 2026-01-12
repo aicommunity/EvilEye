@@ -171,12 +171,13 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
                                'preview_path_left': self._get_img_path('preview', 'zone_left', event, time_lost=event.time_left),
                                'video_path_left': getattr(event, 'video_path_left', None)}
 
-        image_height, image_width, _ = event.img_left.image.shape
-        fields_for_updating['box_left'] = copy.deepcopy(fields_for_updating['box_left'])
-        fields_for_updating['box_left'][0] /= image_width
-        fields_for_updating['box_left'][1] /= image_height
-        fields_for_updating['box_left'][2] /= image_width
-        fields_for_updating['box_left'][3] /= image_height
+        if event.box_left is not None and event.img_left is not None and hasattr(event.img_left, 'image'):
+            image_height, image_width, _ = event.img_left.image.shape
+            fields_for_updating['box_left'] = copy.deepcopy(fields_for_updating['box_left'])
+            fields_for_updating['box_left'][0] /= image_width
+            fields_for_updating['box_left'][1] /= image_height
+            fields_for_updating['box_left'][2] /= image_width
+            fields_for_updating['box_left'][3] /= image_height
         return (list(fields_for_updating.keys()), list(fields_for_updating.values()),
                 fields_for_updating['preview_path_left'], fields_for_updating['frame_path_left'])
 
