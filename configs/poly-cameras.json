@@ -18,7 +18,9 @@
                 "loop_play": true,
                 "source": "IpCamera",
                 "camera": "rtsp://10.245.1.200",
-                "apiPreference": "CAP_FFMPEG",
+                "type": "VideoCaptureGStreamer",
+                "apiPreference": "CAP_GSTREAMER",
+                "gstreamer_available": true,
                 "source_fps": 25.166666666666668
             },
             {
@@ -50,7 +52,9 @@
                 "loop_play": true,
                 "source": "IpCamera",
                 "camera": "rtsp://10.245.1.199",
-                "apiPreference": "CAP_FFMPEG",
+                "type": "VideoCaptureGStreamer",
+                "apiPreference": "CAP_GSTREAMER",
+                "gstreamer_available": true,
                 "source_fps": 10.0
             },
             {
@@ -82,7 +86,9 @@
                 "loop_play": true,
                 "source": "IpCamera",
                 "camera": "rtsp://10.245.1.202",
-                "apiPreference": "CAP_FFMPEG",
+                "type": "VideoCaptureGStreamer",
+                "apiPreference": "CAP_GSTREAMER",
+                "gstreamer_available": true,
                 "source_fps": 10.0
             }
         ],
@@ -345,7 +351,7 @@
         ],
         "mc_trackers": [
             {
-                "enable": true,
+                "enable": false,
                 "source_ids": [
                     0,
                     1,
@@ -365,26 +371,7 @@
         },
         "ZoneEventsDetector": {
             "sources": {
-                "0": [
-                    [
-                        [
-                            0.4759463922764227,
-                            0.11245876045716975
-                        ],
-                        [
-                            0.5517019596147049,
-                            0.09549163426416869
-                        ],
-                        [
-                            0.7622666467833157,
-                            0.7667535642747733
-                        ],
-                        [
-                            0.4007873254683634,
-                            0.8568914221750913
-                        ]
-                    ]
-                ],
+                "0": [],
                 "2": [
                     [
                         [
@@ -414,6 +401,38 @@
         }
     },
     "events_processor": {},
+    "record": {
+        "enabled": true,
+        "continuous_recording_enabled": true,
+        "event_recording_enabled": true,
+        "event_pre_seconds": 10,
+        "event_post_seconds": 10,
+        "event_buffer_fps": null,
+        "enabled_sources": [],
+        "container": "mp4",
+        "segment_length_sec": 300,
+        "retention_days": 3,
+        "min_free_space_pct": 80,
+        "out_dir": "EvilEyeData/Streams",
+        "filename_tmpl": "{source_name}_{start_time}_{seq}.{ext}"
+    },
+    "database_adapters": {
+        "DatabaseAdapterObjects": {
+            "table_name": "objects"
+        },
+        "DatabaseAdapterCamEvents": {
+            "table_name": "camera_events",
+            "event_name": "CameraEvent"
+        },
+        "DatabaseAdapterFieldOfViewEvents": {
+            "table_name": "fov_events",
+            "event_name": "FieldOfViewEvent"
+        },
+        "DatabaseAdapterZoneEvents": {
+            "table_name": "zone_events",
+            "event_name": "ZoneEvent"
+        }
+    },
     "visualizer": {
         "source_ids": [
             0,
@@ -434,7 +453,32 @@
         "num_height": 2,
         "num_width": 3,
         "visual_buffer_num_frames": 10,
-        "text_config": {},
+        "text_config": {
+            "font_size_pt": 42,
+            "font_face": 0,
+            "color": [
+                0,
+                0,
+                255
+            ],
+            "thickness": null,
+            "background_color": [
+                0,
+                0,
+                0
+            ],
+            "background_enabled": false,
+            "padding_percent": 1.5,
+            "position_offset_percent": [
+                0,
+                -8
+            ],
+            "font_scale_method": "resolution_based",
+            "base_resolution": [
+                1920,
+                1080
+            ]
+        },
         "display_zones": true
     },
     "objects_handler": {
@@ -537,5 +581,8 @@
         "auto_restart": true,
         "use_database": true
     },
-    "database": {}
+    "database": {
+       "port": 5433,
+       "image_dir": "/media/user/Data8/EvilEyeData"
+    }
 }

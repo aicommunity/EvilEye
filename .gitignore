@@ -149,7 +149,7 @@ x64/
 yolov8n.pt
 credentials.json
 
-EvilEyeData/
+EvilEyeData*/
 *.mp4
 *.avi
 logs/

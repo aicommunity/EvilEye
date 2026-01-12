@@ -224,13 +224,28 @@ class VideoThread(QThread):
             frame, track_info, source_name, source_duration_secs, debug_info = self.queue.get()
             begin_it = timer()
             
-            # Create a copy of the image for display to avoid modifying the original
-            import copy
-            display_frame = copy.deepcopy(frame)
+            # Create a shallow copy of frame and copy only the image array (numpy array)
+            # This is much more memory-efficient than deepcopy
+            from ..capture.video_capture_base import CaptureImage
+            display_frame = CaptureImage()
+            display_frame.source_id = frame.source_id
+            display_frame.time_stamp = frame.time_stamp
+            display_frame.frame_id = frame.frame_id
+            display_frame.current_video_frame = frame.current_video_frame
+            display_frame.current_video_position = frame.current_video_position
+            # Copy only the image numpy array, not the entire frame object
+            if frame.image is not None:
+                display_frame.image = frame.image.copy()
+            else:
+                display_frame.image = None
             
             # Store clean image in thread-safe storage (before any drawing)
+            # Use copy() instead of deepcopy() for numpy arrays - much more efficient
             self.clean_image_mutex.lock()
-            self.last_clean_image = copy.deepcopy(frame.image)
+            if frame.image is not None:
+                self.last_clean_image = frame.image.copy()
+            else:
+                self.last_clean_image = None
             self.clean_image_mutex.unlock()
             # Remember original size to normalize pixel bboxes to display size correctly
             try:
@@ -351,6 +366,7 @@ class VideoThread(QThread):
     def get_clean_image(self):
         """Получить чистое изображение (до любых отрисовок) thread-safe способом"""
         self.clean_image_mutex.lock()
-        clean_image = copy.deepcopy(self.last_clean_image) if self.last_clean_image is not None else None
+        # Use copy() instead of deepcopy() for numpy arrays - much more efficient
+        clean_image = self.last_clean_image.copy() if self.last_clean_image is not None else None
         self.clean_image_mutex.unlock()
         return clean_image

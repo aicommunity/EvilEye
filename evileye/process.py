@@ -35,6 +35,9 @@ def create_args_parser():
                       help="Automatic close application when video ends")
     pars.add_argument('--sources_preset', nargs='?', const="", type=str,
                       help="Use preset for multiple video sources")
+    # Recording is configured only via config file; no CLI overrides
+    pars.add_argument('--log-level', type=str, default="INFO",
+                      help="Log level: DEBUG, INFO, WARNING, ERROR")
 
     result = pars.parse_args()
     return result
@@ -49,10 +52,9 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
 
 def main():
     """Main entry point for the EvilEye process application"""
-    # Инициализация логирования
-    logger = setup_evileye_logging(log_level="INFO", log_to_console=True, log_to_file=True)
-
     args = create_args_parser()
+    # Инициализация логирования после парсинга аргументов
+    logger = setup_evileye_logging(log_level=args.log_level.upper(), log_to_console=True, log_to_file=True)
 
     logger.info(f"Starting system with CLI arguments: {args}")
     log_system_info(logger)

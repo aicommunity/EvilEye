@@ -44,31 +44,69 @@ class Visualizer(EvilEyeBase):
         pass
 
     def init_impl(self):
+        """
+        Initialize visualizer - create video threads for each source.
+        Returns True on success, False on failure.
+        """
+        # Останавливаем существующие потоки перед пересозданием
         if len(self.visual_threads) > 0:
+            self.logger.info(f"Stopping {len(self.visual_threads)} existing visual threads before reinitialization")
+            for thr in self.visual_threads:
+                try:
+                    thr.stop_thread()
+                except Exception:
+                    pass
             self.visual_threads = []
+        
+        # Check if source_ids are set
+        if not self.source_ids:
+            self.logger.warning("Cannot initialize visualizer: source_ids is empty")
+            return False
+        
+        self.logger.info(f"Initializing visualizer with {len(self.source_ids)} source(s): {self.source_ids}")
+        
         for i in range(len(self.source_ids)):
             logger_name = f"src{self.source_ids[i]}"
-            self.visual_threads.append(VideoThread(self.source_ids[i], self.fps[i], self.num_height,
-                                                           self.num_width, self.show_debug_info,
-                                                   self.font_params[i] if self.font_params is not None else None,
-                                                   text_config=self.text_config, class_mapping=self.class_mapping,
-                                                   logger_name=logger_name, parent_logger=self.logger))
-            # give thread access to visualizer for active events
             try:
-                self.visual_threads[-1].visualizer_ref = self
-            except Exception:
-                pass
-            self.visual_threads[-1].update_image_signal.connect(
-                self.pyqt_slots['update_image'])  # Сигнал из потока для обновления label на новое изображение
-            self.visual_threads[-1].update_original_cv_image_signal.connect(
-                self.pyqt_slots['update_original_cv_image'])  # Сигнал с оригинальным OpenCV изображением для ROI Editor
-            self.visual_threads[-1].clean_image_available_signal.connect(
-                self.pyqt_slots['clean_image_available'])  # Сигнал с чистым OpenCV изображением для ROI Editor
-            self.visual_threads[-1].add_zone_signal.connect(self.pyqt_slots['open_zone_win'])
-            self.visual_threads[-1].add_roi_signal.connect(self.pyqt_slots['open_roi_win'])
-            self.pyqt_signals['display_zones_signal'].connect(self.visual_threads[-1].display_zones)
-            self.pyqt_signals['add_zone_signal'].connect(self.visual_threads[-1].add_zone_clicked)
-            self.pyqt_signals['add_roi_signal'].connect(self.visual_threads[-1].add_roi_clicked)
+                # Get fps for this source (with fallback)
+                fps_value = self.fps[i] if self.fps and i < len(self.fps) else 30
+                # Get font_params for this source (with fallback)
+                font_params_value = self.font_params[i] if self.font_params and i < len(self.font_params) else None
+                
+                self.visual_threads.append(VideoThread(
+                    self.source_ids[i], 
+                    fps_value,
+                    self.num_height, 
+                    self.num_width, 
+                    self.show_debug_info,
+                    font_params_value,
+                    text_config=self.text_config, 
+                    class_mapping=self.class_mapping,
+                    logger_name=logger_name, 
+                    parent_logger=self.logger
+                ))
+                # give thread access to visualizer for active events
+                try:
+                    self.visual_threads[-1].visualizer_ref = self
+                except Exception:
+                    pass
+                self.visual_threads[-1].update_image_signal.connect(
+                    self.pyqt_slots['update_image'])  # Сигнал из потока для обновления label на новое изображение
+                self.visual_threads[-1].update_original_cv_image_signal.connect(
+                    self.pyqt_slots['update_original_cv_image'])  # Сигнал с оригинальным OpenCV изображением для ROI Editor
+                self.visual_threads[-1].clean_image_available_signal.connect(
+                    self.pyqt_slots['clean_image_available'])  # Сигнал с чистым OpenCV изображением для ROI Editor
+                self.visual_threads[-1].add_zone_signal.connect(self.pyqt_slots['open_zone_win'])
+                self.visual_threads[-1].add_roi_signal.connect(self.pyqt_slots['open_roi_win'])
+                self.pyqt_signals['display_zones_signal'].connect(self.visual_threads[-1].display_zones)
+                self.pyqt_signals['add_zone_signal'].connect(self.visual_threads[-1].add_zone_clicked)
+                self.pyqt_signals['add_roi_signal'].connect(self.visual_threads[-1].add_roi_clicked)
+            except Exception as e:
+                self.logger.error(f"Error creating video thread for source {self.source_ids[i]}: {e}", exc_info=True)
+                return False
+        
+        self.logger.info(f"Visualizer initialized with {len(self.visual_threads)} video thread(s)")
+        return True
 
     def release_impl(self):
         for thr in self.visual_threads:
@@ -167,9 +205,12 @@ class Visualizer(EvilEyeBase):
                 self.processing_frames[frame.source_id] = []
             self.processing_frames[frame.source_id].append(frame)
 
+            # Remove excess frames to prevent memory leak
+            # Keep only the most recent visual_buffer_num_frames
             exceed_frames_num = len(self.processing_frames[frame.source_id]) - self.visual_buffer_num_frames
-            if 0 < exceed_frames_num < len(self.processing_frames[frame.source_id]):
-                del self.processing_frames[frame.source_id][exceed_frames_num:]
+            if exceed_frames_num > 0:
+                # Remove oldest frames (from the beginning)
+                del self.processing_frames[frame.source_id][:exceed_frames_num]
 
         self.objects = objects
         # Process visualization
@@ -230,9 +271,27 @@ class Visualizer(EvilEyeBase):
             start_remove = timer()
             remove_processed_idx[source_id].sort(reverse=True)
             for index in remove_processed_idx[source_id]:
-                del proc_frames[index]
+                if index < len(proc_frames):
+                    del proc_frames[index]
+
+            # Additional cleanup: remove frames for sources that are not in source_ids (inactive sources)
+            if source_id not in self.source_ids:
+                # Clear all frames for inactive source
+                if source_id in self.processing_frames:
+                    del self.processing_frames[source_id]
+                    self.logger.debug(f"Cleared processing_frames for inactive source {source_id}")
 
             end_update = timer()
             # self.logger.debug(f"Time: update=[{end_update-start_update}] secs")
 
             #self.logger.debug(f"{datetime.now()}: Visual Queue size: {len(self.processing_frames)}. Processed sources: {processed_sources}")
+        
+        # Cleanup: remove frames for sources that are no longer active
+        active_source_ids = set(self.source_ids)
+        sources_to_remove = []
+        for source_id in self.processing_frames.keys():
+            if source_id not in active_source_ids:
+                sources_to_remove.append(source_id)
+        for source_id in sources_to_remove:
+            del self.processing_frames[source_id]
+            self.logger.debug(f"Cleared processing_frames for removed source {source_id}")

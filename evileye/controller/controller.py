@@ -203,6 +203,12 @@ class Controller:
 
         self.stream_pipeline_id = os.getenv('EVILEYE_PIPELINE_ID', 'default')
         self.logger.info(f"Controller initialized with stream pipeline id: {self.stream_pipeline_id}")
+        
+        # Event-based recording components
+        self.event_buffers = {}  # source_id -> EventBuffer
+        self.event_recorders = {}  # source_id -> EventRecorder
+        self.event_video_paths = {}  # event_id -> relative_video_path (for storing video paths in DB)
+        self.recording_params = None  # Global recording parameters
     
     def get_fps(self) -> int:
         return self.fps
@@ -280,6 +286,47 @@ class Controller:
                 self.obj_handler.put(track_info)
                 processing_frames.append(image)
                 self.source_last_processed_frame_id[image.source_id] = image.frame_id
+                
+                # Add frame to event buffer if event recording is enabled
+                if self.recording_params and self.recording_params.event_recording_enabled:
+                    if image.source_id in self.event_buffers and hasattr(image, 'image') and image.image is not None:
+                        try:
+                            # For video files, use current_video_position (in milliseconds) for accurate timestamps
+                            # For live sources (IP cameras, devices), use time_stamp
+                            if (hasattr(image, 'current_video_position') and 
+                                image.current_video_position is not None and 
+                                image.current_video_position >= 0):
+                                # Use video position in seconds as relative timestamp
+                                # This gives accurate frame intervals from the source video
+                                # Convert milliseconds to seconds
+                                timestamp = image.current_video_position / 1000.0
+                            else:
+                                # For live sources, use capture timestamp
+                                timestamp = image.time_stamp if hasattr(image, 'time_stamp') and image.time_stamp else time.time()
+                            self.event_buffers[image.source_id].add_frame(image.image, timestamp)
+                        except Exception as e:
+                            self.logger.debug(f"Error adding frame to event buffer: {e}")
+                    
+                    # Add post-event frames to active recorders
+                    if image.source_id in self.event_recorders:
+                        try:
+                            event_recorder = self.event_recorders[image.source_id]
+                            if event_recorder.is_recording() and hasattr(image, 'image') and image.image is not None:
+                                # For video files, use current_video_position (in milliseconds) for accurate timestamps
+                                # For live sources (IP cameras, devices), use time_stamp
+                                if (hasattr(image, 'current_video_position') and 
+                                    image.current_video_position is not None and 
+                                    image.current_video_position >= 0):
+                                    # Use video position in seconds as relative timestamp
+                                    # This gives accurate frame intervals from the source video
+                                    # Convert milliseconds to seconds
+                                    timestamp = image.current_video_position / 1000.0
+                                else:
+                                    # For live sources, use capture timestamp
+                                    timestamp = image.time_stamp if hasattr(image, 'time_stamp') and image.time_stamp else time.time()
+                                event_recorder.add_post_event_frame(image.image, timestamp)
+                        except Exception as e:
+                            self.logger.debug(f"Error adding post-event frame: {e}")
             
             self.logger.debug(f"Collected {len(processing_frames)} frames for processing")
 
@@ -421,6 +468,16 @@ class Controller:
             self.events_processor.put(events)
         self.events_detectors_controller.stop()
         self.events_processor.stop()
+        
+        # Stop event recording
+        for source_id, event_recorder in self.event_recorders.items():
+            try:
+                if event_recorder.is_recording():
+                    event_recorder.stop_event_recording()
+            except Exception:
+                pass
+        self.event_recorders.clear()
+        self.event_buffers.clear()
 
         # Stop database components only if database is enabled
         if self.use_database and self.db_controller:
@@ -482,6 +539,71 @@ class Controller:
 
         # Initialize processing pipeline (sources, preprocessors, detectors, trackers)
         pipeline_params = self.params.get("pipeline", {})
+        # Propagate global recording config into each source (so capture can access it)
+        try:
+            record_cfg = (self.params or {}).get("record", {}) or {}
+            if isinstance(record_cfg, dict) and record_cfg:
+                # Default recordings base dir from database.image_dir if out_dir not specified
+                db_image_dir = (((self.params or {}).get('database', {}) or {}).get('image_dir')) or 'EvilEyeData'
+                import datetime as _dt
+                today = _dt.datetime.now().strftime('%Y-%m-%d')
+                default_out_dir = str(Path(db_image_dir) / 'Streams' / today)
+
+                srcs = pipeline_params.get("sources", []) or []
+                enabled_list = record_cfg.get("enabled_sources")
+                for idx, s in enumerate(srcs):
+                    if not isinstance(s, dict):
+                        continue
+                    # Merge: keep per-source overrides, fill missing from root
+                    per = dict(s.get("record", {})) if isinstance(s.get("record", {}), dict) else {}
+                    merged = {**record_cfg, **per}
+                    # Ensure out_dir present -> base/Streams/YYYY-MM-DD when missing
+                    if not merged.get('out_dir'):
+                        merged['out_dir'] = default_out_dir
+                    # Apply enabled per source if list provided
+                    if enabled_list and len(enabled_list) > 0:
+                        # If enabled_sources list is provided, only enable matching sources
+                        enabled = False
+                        # Match by numeric source id (first in source_ids) or by source_names
+                        try:
+                            sid = (s.get('source_ids') or [idx])[0]
+                        except Exception:
+                            sid = idx
+                        sname = None
+                        try:
+                            sname = (s.get('source_names') or [None])[0]
+                        except Exception:
+                            sname = None
+                        for it in enabled_list:
+                            if isinstance(it, int) and it == sid:
+                                enabled = True
+                                break
+                            if isinstance(it, str) and sname and it == sname:
+                                enabled = True
+                                break
+                        merged['enabled'] = enabled
+                    else:
+                        # If enabled_sources is empty/None, use root enabled flag
+                        # For backward compatibility: if 'enabled' is set but new flags are not,
+                        # treat it as continuous_recording_enabled
+                        if 'continuous_recording_enabled' not in merged and 'event_recording_enabled' not in merged:
+                            if 'enabled' in merged:
+                                merged['continuous_recording_enabled'] = merged.get('enabled', False)
+                            else:
+                                merged['enabled'] = record_cfg.get('enabled', True)
+                                merged['continuous_recording_enabled'] = record_cfg.get('enabled', True)
+                        elif 'enabled' not in merged:
+                            # If new flags are set, keep 'enabled' for backward compatibility
+                            merged['enabled'] = merged.get('continuous_recording_enabled', False) or merged.get('event_recording_enabled', False)
+                    s['record'] = merged
+                    try:
+                        sid_log = (s.get('source_ids') or [idx])[0]
+                        sname_log = (s.get('source_names') or [None])[0]
+                        self.logger.info(f"Record config for source id={sid_log} name={sname_log}: enabled={merged.get('enabled')} out_dir={merged.get('out_dir')} container={merged.get('container')}")
+                    except Exception:
+                        pass
+        except Exception:
+            pass
         pipeline_class_name = pipeline_params.get("pipeline_class")
         self.logger.info(f"Using EVILEYE_PIPELINE_ID for streaming: {self.stream_pipeline_id}")
         
@@ -536,43 +658,13 @@ class Controller:
                             self.source_last_processed_frame_id[source_id] = 0
 
         # Initialize database configuration only if database is enabled
-        if self.use_database:
-            database_creds = self.credentials.get("database", None)
-            if not database_creds:
-                database_creds = dict()
-
-            try:
-                with open(os.path.join(os.path.dirname(__file__), "..", "database_config.json")) as data_config_file:
-                    self.database_config = json.load(data_config_file)
-            except FileNotFoundError as ex:
-                pass
-
-            database_creds["user_name"] = database_creds.get("user_name", "postgres")
-            database_creds["password"] = database_creds.get("password", "")
-            database_creds["database_name"] = database_creds.get("database_name", "evil_eye_db")
-            database_creds["host_name"] = database_creds.get("host_name", "localhost")
-            database_creds["port"] = database_creds.get("port", 5432)
-            database_creds["admin_user_name"] = database_creds.get("admin_user_name", "postgres")
-            database_creds["admin_password"] = database_creds.get("admin_password", "")
-
-            self.database_config["database"]["user_name"] = self.database_config["database"].get("user_name", database_creds["user_name"])
-            self.database_config["database"]["password"] = self.database_config["database"].get("password", database_creds["password"])
-            self.database_config["database"]["database_name"] = self.database_config["database"].get("database_name", database_creds["database_name"])
-            self.database_config["database"]["host_name"] = self.database_config["database"].get("host_name", database_creds["host_name"])
-            self.database_config["database"]["port"] = self.database_config["database"].get("port", database_creds["port"])
-            self.database_config["database"]["admin_user_name"] = self.database_config["database"].get("admin_user_name", database_creds["admin_user_name"])
-            self.database_config["database"]["admin_password"] = self.database_config["database"].get("admin_password", database_creds["admin_password"])
-
-            if 'database' in self.params.keys():
-                self.database_config["database"]['database_name'] = self.params['database'].get('database_name', self.database_config["database"]['database_name'])
-                self.database_config["database"]['host_name'] = self.params['database'].get('host_name', self.database_config["database"]['host_name'])
-                self.database_config["database"]['port'] = self.params['database'].get('port', self.database_config["database"]['port'])
-                self.database_config["database"]['image_dir'] = self.params['database'].get('image_dir', self.database_config["database"]['image_dir'])
-                self.database_config["database"]['preview_width'] = self.params['database'].get('preview_width', self.database_config["database"]['preview_width'])
-                self.database_config["database"]['preview_height'] = self.params['database'].get('preview_height', self.database_config["database"]['preview_height'])
-        else:
-            # Initialize empty database config when database is disabled
-            self.database_config = {"database": {}, "database_adapters": {}}
+        # Используем утилиту для вычисления database_config
+        from evileye.utils.database_config_utils import compute_database_config
+        self.database_config = compute_database_config(
+            use_database=self.use_database,
+            credentials=self.credentials,
+            params=self.params
+        )
 
         # Initialize database components only if use_database is True
         if self.use_database:
@@ -600,6 +692,9 @@ class Controller:
             self._init_events_detectors_without_db(self.params.get('events_detectors', dict()))
             self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
             self._init_events_processor_without_db(self.params.get('events_processor', dict()))
+        
+        # Initialize event-based recording components
+        self._init_event_recording(params)
 
     def init_main_window(self, main_window: QMainWindow, pyqt_slots: dict, pyqt_signals: dict):
         self.main_window = main_window
@@ -1105,8 +1200,11 @@ class Controller:
 
     def _get_event_adapters(self):
         """Build list of event adapters depending on database mode."""
+        adapters = []
+        
+        # DB adapters if database enabled
         if self.use_database and self.db_controller:
-            adapters = [self.db_adapter_fov_events, self.db_adapter_cam_events, self.db_adapter_zone_events]
+            adapters.extend([self.db_adapter_fov_events, self.db_adapter_cam_events, self.db_adapter_zone_events])
             if self.db_adapter_attr_events:
                 adapters.append(self.db_adapter_attr_events)
             if self.db_adapter_system_events:
@@ -1115,9 +1213,8 @@ class Controller:
                 self.logger.info(f"DB adapters: {[a.get_event_name() for a in adapters if a]}")
             except Exception:
                 pass
-            return adapters
-        # JSON adapters when DB disabled or unavailable
-        adapters = []
+        
+        # JSON adapters - always add for JSON metadata backup (parallel to DB)
         img_dir = self.params.get('database', {}).get('image_dir', 'EvilEyeData')
         for adapter_cls in (JsonAdapterAttributeEvents, JsonAdapterFovEvents, JsonAdapterZoneEvents, JsonAdapterCamEvents, JsonAdapterSystemEvents):
             try:
@@ -1135,6 +1232,7 @@ class Controller:
                     self.logger.error(f"Failed to start JSON adapter {adapter_cls.__name__}: {e}")
                 except Exception:
                     pass
+        
         return adapters
 
     def _init_events_processor_unified(self, params):
@@ -1159,6 +1257,178 @@ class Controller:
                 self.visualizer.set_event_state(source_id, object_id, event_name, is_on, bbox_px)
         except Exception:
             pass
+    
+    def _init_event_recording(self, params):
+        """Initialize event-based recording components (EventBuffer and EventRecorder)."""
+        try:
+            from evileye.video_recorder.recording_params import RecordingParams
+            from evileye.video_recorder.event_buffer import EventBuffer
+            from evileye.video_recorder.event_recorder import EventRecorder
+            from evileye.video_recorder.recorder_base import SourceMeta
+            
+            # Load recording parameters
+            self.recording_params = RecordingParams.from_config(params)
+            
+            # Check if event recording is enabled
+            if not self.recording_params.event_recording_enabled:
+                self.logger.info("Event-based recording is disabled")
+                return
+            
+            # Get sources from pipeline
+            if not hasattr(self.pipeline, "get_sources"):
+                self.logger.warning("Pipeline does not support get_sources(), event recording disabled")
+                return
+            
+            sources = self.pipeline.get_sources()
+            if not sources:
+                self.logger.warning("No sources found, event recording disabled")
+                return
+            
+            # Initialize EventBuffer and EventRecorder for each source
+            max_buffer_duration = self.recording_params.event_pre_seconds + self.recording_params.event_post_seconds + 5.0  # 5s margin
+            
+            for source in sources:
+                if not hasattr(source, 'source_ids') or not source.source_ids:
+                    continue
+                
+                # Get source metadata
+                source_id = source.source_ids[0] if source.source_ids else 0
+                source_name = source.source_names[0] if (hasattr(source, 'source_names') and source.source_names) else f"source_{source_id}"
+                
+                # Get FPS for buffer
+                buffer_fps = self.recording_params.event_buffer_fps
+                if buffer_fps is None:
+                    # Try to get FPS from source
+                    if hasattr(source, 'source_fps') and source.source_fps:
+                        buffer_fps = source.source_fps
+                    else:
+                        buffer_fps = 25.0  # Default
+                
+                # Create EventBuffer
+                event_buffer = EventBuffer(max_buffer_duration, buffer_fps)
+                self.event_buffers[source_id] = event_buffer
+                
+                # Create SourceMeta for EventRecorder
+                source_meta = SourceMeta(
+                    source_name=source_name,
+                    source_address=getattr(source, 'source_address', None),
+                    source_type=str(getattr(source, 'source_type', 'unknown')),
+                    width=getattr(source, 'width', None),
+                    height=getattr(source, 'height', None),
+                    fps=buffer_fps,
+                    username=getattr(source, 'username', None),
+                    password=getattr(source, 'password', None),
+                    source_names=getattr(source, 'source_names', None),
+                    source_ids=getattr(source, 'source_ids', None),
+                )
+                
+                # Create EventRecorder
+                event_recorder = EventRecorder(source_meta, self.recording_params, event_buffer)
+                self.event_recorders[source_id] = event_recorder
+                
+                self.logger.info(f"Initialized event recording for source {source_id} ({source_name}): "
+                               f"buffer_duration={max_buffer_duration}s, fps={buffer_fps}")
+            
+            # Set callback for EventsProcessor
+            if self.events_processor:
+                self.events_processor.set_event_recording_callback(self._on_event_recording)
+                self.logger.info("Event recording callback registered with EventsProcessor")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to initialize event recording: {e}", exc_info=True)
+            # Clear partial initialization
+            self.event_buffers.clear()
+            self.event_recorders.clear()
+    
+    def _on_event_recording(self, event_id: int, event_name: str, event_timestamp: float, 
+                           source_id: int, is_on: bool, bbox: list | None = None):
+        """Callback for event-based recording from EventsProcessor.
+        
+        Also stores video path in event object if available, and in event_video_paths dict.
+        """
+        try:
+            if source_id not in self.event_recorders:
+                return
+            
+            event_recorder = self.event_recorders[source_id]
+            
+            # Convert timestamp to float (seconds) if it's datetime.datetime
+            if isinstance(event_timestamp, datetime.datetime):
+                event_timestamp = event_timestamp.timestamp()
+            elif not isinstance(event_timestamp, (int, float)):
+                # Try to convert to float
+                try:
+                    event_timestamp = float(event_timestamp)
+                except (ValueError, TypeError):
+                    self.logger.warning(f"Invalid timestamp type for event {event_id}: {type(event_timestamp)}")
+                    return
+            
+            if is_on:
+                # Event started - start recording
+                if not event_recorder.is_recording():
+                    success, relative_video_path = event_recorder.start_event_recording(
+                        event_id, event_name, event_timestamp, source_id, bbox
+                    )
+                    if success and relative_video_path:
+                        # Store video path for this event_id
+                        self.event_video_paths[event_id] = relative_video_path
+                        self.logger.debug(f"Stored video path for event {event_id}: {relative_video_path}")
+                        
+                        # Try to store video path in event object if available
+                        if self.events_processor:
+                            # Find event in long_term_events
+                            for event_type, events_list in self.events_processor.long_term_events.items():
+                                for event in events_list:
+                                    if event.event_id == event_id:
+                                        # Store video path based on event type
+                                        if event_name == 'ZoneEvent':
+                                            if not hasattr(event, 'video_path_entered'):
+                                                event.video_path_entered = None
+                                            event.video_path_entered = relative_video_path
+                                        elif event_name == 'AttributeEvent':
+                                            if not hasattr(event, 'video_path_found'):
+                                                event.video_path_found = None
+                                            event.video_path_found = relative_video_path
+                                        elif event_name == 'FOVEvent':
+                                            if not hasattr(event, 'video_path'):
+                                                event.video_path = None
+                                            event.video_path = relative_video_path
+                                        self.logger.debug(f"Stored video path in event object {event_id}: {relative_video_path}")
+                                        break
+            else:
+                # Event ended - stop recording
+                if event_recorder.is_recording():
+                    video_path = event_recorder.stop_event_recording()
+                    # If video was deleted due to small size, remove from dict
+                    if video_path is None and event_id in self.event_video_paths:
+                        del self.event_video_paths[event_id]
+                        self.logger.debug(f"Removed video path for event {event_id} (file deleted)")
+                    elif video_path is not None:
+                        # Update video path for finished events (e.g., video_path_left for ZoneEvent)
+                        if self.events_processor:
+                            # Find event in finished_events or long_term_events
+                            for event_type, events_list in list(self.events_processor.finished_events.items()) + list(self.events_processor.long_term_events.items()):
+                                for event in events_list:
+                                    if event.event_id == event_id:
+                                        # Store video path for finished event based on event type
+                                        if event_name == 'ZoneEvent':
+                                            if not hasattr(event, 'video_path_left'):
+                                                event.video_path_left = None
+                                            event.video_path_left = self.event_video_paths.get(event_id)
+                                        elif event_name == 'AttributeEvent':
+                                            if not hasattr(event, 'video_path_finished'):
+                                                event.video_path_finished = None
+                                            event.video_path_finished = self.event_video_paths.get(event_id)
+                                        elif event_name == 'FOVEvent':
+                                            if not hasattr(event, 'video_path_lost'):
+                                                event.video_path_lost = None
+                                            event.video_path_lost = self.event_video_paths.get(event_id)
+                                        break
+        except Exception as e:
+            try:
+                self.logger.error(f"Error in event recording callback: {e}", exc_info=True)
+            except Exception:
+                pass
 
     def _init_visualizer(self, params):
         self.visualizer = Visualizer(self.pyqt_slots, self.pyqt_signals)

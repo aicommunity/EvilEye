@@ -31,10 +31,10 @@ class ROIEditorWindow(QWidget):
     roi_updated = pyqtSignal(list)  # Сигнал с обновленными ROI (список словарей {'coords': [x1,y1,x2,y2]})
     roi_editor_closed = pyqtSignal(list, int, int, bool)  # rois_xyxy, source_id, detector_index, accepted
 
-    def __init__(self, params, parent=None):
+    def __init__(self, parent=None):
         super().__init__(parent)
         self.logger = get_module_logger("roi_editor_window")
-        self.params = params
+        self.params = {}
 
         self.setWindowTitle("ROI Editor")
         self.resize(1200, 800)
@@ -52,6 +52,10 @@ class ROIEditorWindow(QWidget):
         self._create_actions()
         self._create_toolbar()
         self._setup_ui()
+    
+    def set_params(self, params):
+        """Установить параметры (вызывается после controller.init())"""
+        self.params = params
 
     # UI
     def _setup_ui(self):
@@ -273,6 +277,8 @@ class ROIEditorWindow(QWidget):
 
     def set_rois_from_config(self, params, source_id):
         """Совместимый слой: делегируем на диалоговую логику, но без диалога."""
+        if not params:
+            return
         try:
             # Воспользуемся теми же методами, что и в диалоге
             # 1) Загрузим ROI

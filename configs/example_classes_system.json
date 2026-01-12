@@ -1,0 +1,67 @@
+{
+  "pipeline": {
+    "sources": [
+      {
+        "source_ids": [0],
+        "source_names": ["test_video"],
+        "type": "video_file",
+        "path": "videos/test.mp4"
+      }
+    ],
+    "detectors": [
+      {
+        "source_ids": [0],
+        "model": "models/yolov8n.pt",
+        "classes": ["person", "car", "bicycle", "truck"],
+        "conf_thresh": 0.5,
+        "num_detection_threads": 1
+      }
+    ],
+    "trackers": [
+      {
+        "source_ids": [0],
+        "type": "botsort",
+        "track_thresh": 0.5,
+        "match_thresh": 0.8,
+        "num_tracking_threads": 1
+      }
+    ]
+  },
+  "controller": {
+    "fps": 30
+  },
+  "objects_handler": {
+    "attributes_detection": {
+      "primary_by_name": ["person"],
+      "primary_by_id": [],
+      "classifier": {
+        "confidence_thresholds": {
+          "helmet": 0.5,
+          "no_helmet": 0.5
+        },
+        "time_thresholds": {
+          "helmet": {
+            "min_time_ms": 1000,
+            "confirm_time_ms": 2000
+          },
+          "no_helmet": {
+            "min_time_ms": 1000,
+            "confirm_time_ms": 2000
+          }
+        },
+        "ema_alpha": 0.7,
+        "attrs": ["helmet", "no_helmet"]
+        ]
+      }
+    }
+  },
+  "visualizer": {
+    "gui_enabled": true,
+    "num_width": 1,
+    "num_height": 1,
+    "source_ids": [0],
+    "fps": [30],
+    "show_debug_info": true,
+    "objects_journal_enabled": true
+  }
+}

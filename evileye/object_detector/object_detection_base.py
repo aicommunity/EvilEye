@@ -32,7 +32,8 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         super().__init__()
 
         self.run_flag = False
-        self.queue_in = Queue(maxsize=2)
+        # Increased queue size to prevent overflow during startup when models are loading
+        self.queue_in = Queue(maxsize=10)
         self.queue_out = Queue()
         self.source_ids = []
         self.classes = []
@@ -316,6 +317,55 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         self.run_flag = True
         if self.processing_thread:
             self.processing_thread.start()
+        # Pre-load models in detection threads to avoid queue overflow
+        # Models are loaded lazily in _process_impl, but we want them ready before sources start
+        # Wait a bit for threads to start, then preload models
+        import time
+        time.sleep(0.2)  # Give threads time to start
+        self._preload_models()
+    
+    def _preload_models(self):
+        """Pre-load models in all detection threads to ensure they're ready"""
+        if not hasattr(self, 'detection_threads') or not self.detection_threads:
+            self.logger.debug("No detection threads available for pre-loading")
+            return
+        self.logger.info(f"Pre-loading models in {len(self.detection_threads)} detection thread(s)...")
+        for i, thread in enumerate(self.detection_threads):
+            if hasattr(thread, 'init_detection_implementation'):
+                try:
+                    # Call init_detection_implementation to load model
+                    thread.init_detection_implementation()
+                    if hasattr(thread, 'model') and thread.model is not None:
+                        self.logger.info(f"Pre-loaded model in detection thread {i} ({thread.__class__.__name__})")
+                    else:
+                        self.logger.warning(f"Model pre-load called but model is still None in thread {i}")
+                except Exception as e:
+                    self.logger.warning(f"Failed to pre-load model in detection thread {i}: {e}", exc_info=True)
+    
+    def is_ready(self, timeout=30.0):
+        """
+        Check if detector is ready to process frames (models loaded).
+        Returns True if all detection threads have loaded their models.
+        """
+        import time
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            if not self.is_inited:
+                time.sleep(0.1)
+                continue
+            if not hasattr(self, 'detection_threads') or not self.detection_threads:
+                time.sleep(0.1)
+                continue
+            # Check if all detection threads have loaded models
+            all_ready = True
+            for thread in self.detection_threads:
+                if not hasattr(thread, 'model') or thread.model is None:
+                    all_ready = False
+                    break
+            if all_ready:
+                return True
+            time.sleep(0.1)
+        return False
 
     def stop(self):
         self.run_flag = False

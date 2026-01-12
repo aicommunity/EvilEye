@@ -63,17 +63,17 @@ class ObjectsJournalJson(QWidget):
 
         self.layout.addLayout(toolbar)
 
-        # Use objects journal structure: Name, Event, Information, Time, Time lost, Preview, Lost preview
+        # Use objects journal structure: Time, Event, Information, Source, Time lost, Preview, Lost preview
         self.table = QTableWidget(0, 7)
-        self.table.setHorizontalHeaderLabels(['Source', 'Event', 'Information', 'Time', 'Time lost', 'Preview', 'Lost preview'])
+        self.table.setHorizontalHeaderLabels(['Time', 'Event', 'Information', 'Source', 'Time lost', 'Preview', 'Lost preview'])
         h = self.table.horizontalHeader()
-        h.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        h.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        h.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        h.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        h.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
-        h.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
-        h.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
+        h.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)  # Time
+        h.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)  # Event
+        h.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)  # Information
+        h.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # Source
+        h.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)  # Time lost
+        h.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)  # Preview
+        h.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)  # Lost preview
         h.setDefaultSectionSize(300)  # Set default size for image columns
         self.layout.addWidget(self.table)
 
@@ -84,7 +84,7 @@ class ObjectsJournalJson(QWidget):
 
         # Set up datetime delegate for time columns
         self.datetime_delegate = events_journal_json.DateTimeDelegate(self.table)
-        self.table.setItemDelegateForColumn(3, self.datetime_delegate)  # Time
+        self.table.setItemDelegateForColumn(0, self.datetime_delegate)  # Time
         self.table.setItemDelegateForColumn(4, self.datetime_delegate)  # Time lost
 
         # Connect double click signal - use cellDoubleClicked for QTableWidget
@@ -176,8 +176,8 @@ class ObjectsJournalJson(QWidget):
             
             self.table.setRowCount(len(table_rows))
             for r, row_data in enumerate(table_rows):
-                # Name column (0)
-                self.table.setItem(r, 0, QTableWidgetItem(row_data['name']))
+                # Time column (0)
+                self.table.setItem(r, 0, QTableWidgetItem(str(row_data['time'])))
                 
                 # Event column (1)
                 self.table.setItem(r, 1, QTableWidgetItem(row_data['event']))
@@ -185,8 +185,8 @@ class ObjectsJournalJson(QWidget):
                 # Information column (2)
                 self.table.setItem(r, 2, QTableWidgetItem(row_data['information']))
                 
-                # Time column (3)
-                self.table.setItem(r, 3, QTableWidgetItem(str(row_data['time'])))
+                # Source column (3)
+                self.table.setItem(r, 3, QTableWidgetItem(str(row_data.get('name', ''))))
                 
                 # Time lost column (4)
                 self.table.setItem(r, 4, QTableWidgetItem(str(row_data['time_lost'])))
@@ -293,7 +293,12 @@ class ObjectsJournalJson(QWidget):
                 else:
                     if img_path.startswith(self.base_dir + os.sep) or img_path.startswith(self.base_dir + '/'):
                         img_path_abs = img_path
+                    elif img_path.startswith('Detections' + os.sep) or img_path.startswith('Detections/'):
+                        img_path_abs = os.path.join(self.base_dir, img_path)
+                    elif img_path.startswith('Events' + os.sep) or img_path.startswith('Events/'):
+                        img_path_abs = os.path.join(self.base_dir, img_path)
                     elif img_path.startswith('images' + os.sep) or img_path.startswith('images/'):
+                        # Legacy path support
                         img_path_abs = os.path.join(self.base_dir, img_path)
                     elif img_path.startswith(self.base_dir):
                         img_path_abs = img_path
@@ -302,7 +307,13 @@ class ObjectsJournalJson(QWidget):
                 if not os.path.exists(img_path_abs):
                     ev = item.data(Qt.ItemDataRole.UserRole)
                     date_folder = ev.get('date_folder', '') if ev else ''
-                    alt = os.path.join(self.base_dir, 'images', date_folder, os.path.basename(img_path))
+                    # Try new structure first
+                    alt = os.path.join(self.base_dir, 'Detections', date_folder, 'Images', 'FoundFrames', os.path.basename(img_path))
+                    if not os.path.exists(alt):
+                        alt = os.path.join(self.base_dir, 'Detections', date_folder, 'Images', 'LostFrames', os.path.basename(img_path))
+                    if not os.path.exists(alt):
+                        # Legacy path
+                        alt = os.path.join(self.base_dir, 'images', date_folder, os.path.basename(img_path))
                     self.logger.info(f"_open: resolved={img_path_abs}, alt={alt}")
                     if os.path.exists(alt):
                         img_path_abs = alt

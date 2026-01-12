@@ -52,15 +52,28 @@ class EvilEyeLoggingConfig:
         # Создаем папку для логов если она не существует
         self._ensure_log_directory()
         
+        # Генерируем уникальный идентификатор сессии
+        self.session_id = self._generate_session_id()
+        
         # Настройка форматов
         self.console_format = "%(asctime)s - %(levelname)s - %(message)s"
         self.file_format = "%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s"
         
-        # Пути к файлам логов
-        self.main_log_file = self.log_dir / "evileye_main.log"
-        self.debug_log_file = self.log_dir / "evileye_debug.log"
-        self.error_log_file = self.log_dir / "evileye_errors.log"
-        self.performance_log_file = self.log_dir / "evileye_performance.log"
+        # Пути к файлам логов с идентификатором сессии
+        self.main_log_file = self.log_dir / f"{self.session_id}_evileye_main.log"
+        self.debug_log_file = self.log_dir / f"{self.session_id}_evileye_debug.log"
+        self.error_log_file = self.log_dir / f"{self.session_id}_evileye_errors.log"
+        self.performance_log_file = self.log_dir / f"{self.session_id}_evileye_performance.log"
+    
+    def _generate_session_id(self) -> str:
+        """
+        Генерирует уникальный идентификатор сессии в формате YYYYMMDD_HHMMSS
+        
+        Returns:
+            Строка с идентификатором сессии (например, "20260112_103000")
+        """
+        now = datetime.now()
+        return now.strftime("%Y%m%d_%H%M%S")
     
     def _ensure_log_directory(self):
         """Creates logs folder if it doesn't exist"""
@@ -171,6 +184,7 @@ class EvilEyeLoggingConfig:
         return {
             "log_level": logging.getLevelName(self.log_level),
             "log_dir": str(self.log_dir),
+            "session_id": self.session_id,
             "log_to_console": self.log_to_console,
             "log_to_file": self.log_to_file,
             "max_file_size": self.max_file_size,

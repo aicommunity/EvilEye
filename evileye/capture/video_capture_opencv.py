@@ -8,6 +8,7 @@ from .video_capture_base import VideoCaptureBase, CaptureImage, CaptureDeviceTyp
 from enum import IntEnum
 
 from ..core.base_class import EvilEyeBase
+from ..video_recorder.recording_params import RecordingParams
 
 
 @EvilEyeBase.register("VideoCaptureOpencv")
@@ -17,6 +18,9 @@ class VideoCaptureOpencv(VideoCaptureBase):
         CAP_GSTREAMER = 1800
         CAP_FFMPEG = 1900
         CAP_IMAGES = 2000
+    
+    # Класс-переменная для отслеживания уже залогированных ошибок GStreamer
+    _gstreamer_error_logged = set()  # Множество source_names, для которых уже залогирована ошибка
 
     def __init__(self):
         super().__init__()
@@ -29,9 +33,38 @@ class VideoCaptureOpencv(VideoCaptureBase):
 
     def set_params_impl(self):
         super().set_params_impl()
+        try:
+            rec_cfg = self.params.get('record', None)
+            if isinstance(rec_cfg, dict):
+                self.recording_params = RecordingParams.from_config({'record': rec_cfg})
+        except Exception:
+            pass
 
     def init_impl(self):
         api_pref = self.params.get('apiPreference','CAP_FFMPEG')
+        
+        # Check if GStreamer is requested but OpenCV doesn't support it
+        if api_pref == "CAP_GSTREAMER":
+            build_info = cv2.getBuildInformation()
+            if "GStreamer:                   NO" in build_info or "GStreamer:                      NO" in build_info:
+                # Логируем ошибку только один раз для каждого набора источников
+                source_names_key = tuple(sorted(self.source_names)) if isinstance(self.source_names, list) else str(self.source_names)
+                if source_names_key not in VideoCaptureOpencv._gstreamer_error_logged:
+                    self.logger.error(
+                        f"ERROR: apiPreference='CAP_GSTREAMER' is specified for {self.source_names}, "
+                        f"but OpenCV was compiled WITHOUT GStreamer support. "
+                        f"Please either:\n"
+                        f"  1. Use 'type': 'VideoCaptureGStreamer' in source configuration instead of VideoCaptureOpencv, OR\n"
+                        f"  2. Change apiPreference to 'CAP_FFMPEG' for VideoCaptureOpencv"
+                    )
+                    VideoCaptureOpencv._gstreamer_error_logged.add(source_names_key)
+                else:
+                    # Логируем только на уровне debug при повторных попытках
+                    self.logger.debug(
+                        f"GStreamer not supported for {self.source_names} (error already logged, using reconnect logic)"
+                    )
+                return False
+        
         if self.source_type == CaptureDeviceType.IpCamera and api_pref == "CAP_GSTREAMER":  # Приведение rtsp ссылки к формату gstreamer
             if '!' not in self.source_address:
                 str_h265 = (' ! rtph265depay ! h265parse ! avdec_h265 ! decodebin ! videoconvert ! '  # Указание кодеков и форматов
@@ -54,7 +87,26 @@ class VideoCaptureOpencv(VideoCaptureBase):
                     self.capture.open(source, VideoCaptureOpencv.VideoCaptureAPIs[api_pref])
             else:
                 self.capture.open(self.source_address, VideoCaptureOpencv.VideoCaptureAPIs[api_pref])
+        elif self.source_type == CaptureDeviceType.VideoFile and api_pref == "CAP_GSTREAMER":
+            # Для видеофайлов с GStreamer нужен специальный pipeline
+            if '!' not in self.source_address:
+                # Строим GStreamer pipeline для видеофайла
+                # Используем decodebin для автоматического определения кодека
+                pipeline = f'filesrc location={self.source_address} ! decodebin ! videoconvert ! video/x-raw,format=BGR ! appsink'
+                self.logger.debug(f"Attempting to open video file with GStreamer pipeline: {pipeline[:100]}...")
+                result = self.capture.open(pipeline, VideoCaptureOpencv.VideoCaptureAPIs[api_pref])
+                self.logger.debug(f"GStreamer open() returned: {result}, isOpened(): {self.capture.isOpened()}")
+                if not self.capture.isOpened():
+                    self.logger.warning(f"Failed to open video file with GStreamer for {self.source_names}. Pipeline: {pipeline}")
+            else:
+                # Если pipeline уже задан, используем его напрямую
+                self.logger.debug(f"Using provided GStreamer pipeline: {self.source_address[:100]}...")
+                result = self.capture.open(self.source_address, VideoCaptureOpencv.VideoCaptureAPIs[api_pref])
+                self.logger.debug(f"GStreamer open() returned: {result}, isOpened(): {self.capture.isOpened()}")
+                if not self.capture.isOpened():
+                    self.logger.warning(f"Failed to open video file with provided GStreamer pipeline for {self.source_names}")
         else:
+            # Для FFMPEG и других API используем прямой путь к файлу
             self.capture.open(self.source_address, VideoCaptureOpencv.VideoCaptureAPIs[api_pref])
 
         self.source_fps = None
@@ -90,15 +142,17 @@ class VideoCaptureOpencv(VideoCaptureBase):
         self.capture.release()
 
     def reset_impl(self):
+        self.logger.debug(f"reset_impl called for {self.source_names} (is_inited={self.is_inited}, is_working={self.is_working})")
         self.release()
-        self.init()
+        init_result = self.init()
         timestamp = datetime.datetime.now()
-        if self.get_init_flag() and self.is_opened():
-            self.logger.info(f"Reconnected to a sources: {self.source_names}")
+        if init_result and self.get_init_flag() and self.is_opened():
+            self.logger.info(f"Reconnected to a sources: {self.source_names} (is_inited={self.is_inited}, is_working={self.is_working})")
             self.is_working = True
             self.reconnects.append((self.params['camera'], timestamp, self.is_working))
         else:
-            self.logger.info(f"Could not connect to sources: {self.source_names}")
+            self.logger.warning(f"Could not reconnect to sources: {self.source_names} (init_result={init_result}, is_inited={self.is_inited}, is_opened={self.is_opened()})")
+            self.is_working = False
         for sub in self.subscribers:
             sub.update()
 
@@ -106,14 +160,16 @@ class VideoCaptureOpencv(VideoCaptureBase):
         while self.run_flag:
             begin_it = timer()
             if not self.is_inited or self.capture is None:
+                self.logger.debug(f"Source {self.source_names} not initialized (is_inited={self.is_inited}, capture={self.capture is not None}), attempting reconnect")
                 time.sleep(0.1)
                 if self.init():
                     timestamp = datetime.datetime.now()
-                    self.logger.info(f"Reconnected to a sources: {self.source_names}")
+                    self.logger.info(f"Reconnected to a sources: {self.source_names} (is_inited={self.is_inited}, is_working={self.is_working})")
                     self.reconnects.append((self.params['camera'], timestamp, self.is_working))
                     for sub in self.subscribers:
                         sub.update()
                 else:
+                    self.logger.debug(f"Reconnection attempt failed for {self.source_names} (init() returned False)")
                     continue
 
             if not self.is_opened():
@@ -125,12 +181,19 @@ class VideoCaptureOpencv(VideoCaptureBase):
                 is_grabbed = self.capture.grab()
             if not is_grabbed:
                 if self.source_type != CaptureDeviceType.VideoFile or self.loop_play:
+                    self.logger.debug(f"grab() failed for {self.source_names} (is_inited={self.is_inited}, is_working={self.is_working}, loop_play={self.loop_play})")
                     self.is_working = False
                     timestamp = datetime.datetime.now()
                     self.disconnects.append((self.params['camera'], timestamp, self.is_working))
                     for sub in self.subscribers:
                         sub.update()
+                    # For video files with loop_play, reset will restart from beginning
                     self.reset()
+                    # Verify reset was successful
+                    if self.is_inited and self.is_opened():
+                        self.logger.debug(f"Reset successful for {self.source_names} (is_inited={self.is_inited}, is_working={self.is_working})")
+                    else:
+                        self.logger.warning(f"Reset may have failed for {self.source_names} (is_inited={self.is_inited}, is_opened={self.is_opened()})")
                 else:
                     self.finished = True
 
@@ -162,6 +225,15 @@ class VideoCaptureOpencv(VideoCaptureBase):
                     self.last_frame_time = datetime.datetime.now()
                 self.frames_queue.put([is_read, src_image, self.frame_id_counter, self.video_current_frame, self.video_current_position])
                 self.frame_id_counter += 1
+                # Feed OpenCV recorder if present
+                try:
+                    if self.recorder_manager and getattr(self.recorder_manager, 'recorder', None):
+                        rec = self.recorder_manager.recorder
+                        on_frame = getattr(rec, 'on_frame', None)
+                        if callable(on_frame):
+                            on_frame(src_image)
+                except Exception:
+                    pass
 
             end_it = timer()
             elapsed_seconds = end_it - begin_it
@@ -223,8 +295,6 @@ class VideoCaptureOpencv(VideoCaptureBase):
         try:
             # Prefer the explicitly set parameter; default aligns with init_impl default
             params['apiPreference'] = self.params.get('apiPreference', 'CAP_FFMPEG')
-            # Дополнительно отражаем текущий детектированный FPS источника (если есть)
-            params['source_fps'] = self.source_fps
             params['loop_play'] = self.loop_play
             params['split'] = self.split_stream
             params['num_split'] = self.num_split
