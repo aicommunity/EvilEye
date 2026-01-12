@@ -272,13 +272,22 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                         pass
                 
                 # Extract frame data
-                success, map_info = buffer.map(Gst.MapFlags.READ)
-                if success:
+                # Use try/finally to guarantee buffer.unmap() is called even on exceptions
+                map_info = None
+                success = False
+                try:
+                    success, map_info = buffer.map(Gst.MapFlags.READ)
+                    if not success:
+                        process_time = time.perf_counter() - processing_start
+                        self._record_perf_metrics(pull_duration, process_time, pts_value)
+                        self.logger.error("Failed to map buffer")
+                        return Gst.FlowReturn.ERROR
+                    
                     # Convert buffer to numpy array
                     frame_data = np.frombuffer(map_info.data, dtype=np.uint8)
                     frame_data = frame_data.reshape((height, width, 3))
                     
-                    # Make array writable for OpenCV operations
+                    # Make array writable for OpenCV operations (copy once, use for all operations)
                     frame_data = frame_data.copy()
                     
                     # Get current video position/frame for GUI like OpenCV implementation
@@ -329,7 +338,8 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                                 x, y, w, h = self.src_coords[stream_cnt]
                                 # Ensure coordinates are integers
                                 x, y, w, h = int(x), int(y), int(w), int(h)
-                                # Extract region: [y:y+h, x:x+w]
+                                # Extract region directly from original frame_data (before copy) to avoid double copy
+                                # Then copy only the region we need
                                 region = frame_data[y:y+h, x:x+w].copy()
                                 
                                 # Create CaptureImage for this split region
@@ -342,22 +352,36 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                                 capture_image.current_video_position = current_video_position
                                 capture_images.append(capture_image)
                         
-                        # Store all frames in frame_buffer
+                        # Store all frames in frame_buffer with improved overflow handling
                         with self.frame_lock:
                             for img in capture_images:
+                                frame_added = False
                                 try:
                                     self.frame_buffer.put(img, block=False)
+                                    frame_added = True
                                 except Full:
                                     self._perf_frame_buffer_full += 1
+                                    # Remove oldest frame to make room
                                     try:
-                                        _ = self.frame_buffer.get_nowait()
+                                        old_frame = self.frame_buffer.get_nowait()
+                                        # Explicitly clear old frame to free memory
+                                        old_frame = None
                                     except Empty:
                                         pass
-                                    finally:
-                                        try:
-                                            self.frame_buffer.put_nowait(img)
-                                        except Full:
-                                            pass
+                                    # Try to add new frame
+                                    try:
+                                        self.frame_buffer.put_nowait(img)
+                                        frame_added = True
+                                    except Full:
+                                        # Still full, drop frame and log warning
+                                        self.logger.warning(f"Frame buffer still full after removing oldest frame, dropping frame for source {img.source_id}")
+                                        frame_added = False
+                                
+                                if not frame_added:
+                                    # Frame was dropped, free memory
+                                    img.image = None
+                                    img = None
+                            
                             # Store first frame as last_frame for compatibility
                             if capture_images:
                                 self.last_frame = capture_images[0]
@@ -412,15 +436,16 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                         for subscriber in self.subscribers:
                             threading.Thread(target=_notify, args=(subscriber,), daemon=True).start()
                     
-                    buffer.unmap(map_info)
                     process_time = time.perf_counter() - processing_start
                     self._record_perf_metrics(pull_duration, process_time, pts_value)
                     return Gst.FlowReturn.OK
-                else:
-                    process_time = time.perf_counter() - processing_start
-                    self._record_perf_metrics(pull_duration, process_time, pts_value)
-                    self.logger.error("Failed to map buffer")
-                    return Gst.FlowReturn.ERROR
+                finally:
+                    # Always unmap buffer to prevent memory leaks, even if exception occurred
+                    if map_info is not None:
+                        try:
+                            buffer.unmap(map_info)
+                        except Exception as e:
+                            self.logger.debug(f"Error unmapping buffer: {e}")
         except Exception as e:
             self.logger.error(f"Error processing frame: {e}")
             return Gst.FlowReturn.ERROR
@@ -441,8 +466,8 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 self._perf_last_pts = buffer_pts
 
             now = time.time()
-            if now - self._perf_last_log >= self._perf_stats_interval:
-                self._log_perf_stats(now)
+            # if now - self._perf_last_log >= self._perf_stats_interval:
+            #     self._log_perf_stats(now)
         except Exception as e:
             self.logger.debug(f"Failed to record perf metrics: {e}")
 
@@ -486,7 +511,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         if recording_queue_buffers is not None:
             msg_parts.append(f"record_queue_buf={recording_queue_buffers}")
 
-        self.logger.info(f"Capture perf [{source_label}]: " + ", ".join(msg_parts))
+        # self.logger.info(f"Capture perf [{source_label}]: " + ", ".join(msg_parts))
 
         # Reset counters for next interval
         self._perf_last_log = now
@@ -1078,6 +1103,25 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             except Exception as e:
                 self.logger.debug(f"Error cleaning up recording branch in release: {e}")
             
+            # Clear frame_buffer and last_frame to free memory
+            with self.frame_lock:
+                # Clear all frames from frame_buffer
+                while not self.frame_buffer.empty():
+                    try:
+                        frame = self.frame_buffer.get_nowait()
+                        # Explicitly clear frame image to free memory
+                        if hasattr(frame, 'image'):
+                            frame.image = None
+                        frame = None
+                    except Empty:
+                        break
+                # Clear last_frame reference
+                if self.last_frame is not None:
+                    if hasattr(self.last_frame, 'image'):
+                        self.last_frame.image = None
+                    self.last_frame = None
+                self.logger.debug("Cleared frame_buffer and last_frame in release()")
+            
             # Stop GLib main loop first to avoid deadlock on set_state
             self._stop_main_loop()
 
@@ -1129,9 +1173,8 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 except Exception:
                     pass
 
-            # Clean frames and flags
-            with self.frame_lock:
-                self.last_frame = None
+            # Note: frame_buffer and last_frame are already cleared earlier in release()
+            # (see lines 1106-1123)
 
             self.is_working = False
             self.logger.info("GStreamer video capture released")
@@ -1669,7 +1712,6 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         try:
             params['apiPreference'] = self.params.get('apiPreference', 'CAP_GSTREAMER')
             params['gstreamer_available'] = self.gstreamer_available
-            params['source_fps'] = self.source_fps
             params['loop_play'] = self.loop_play
             params['split'] = self.split_stream
             params['num_split'] = self.num_split

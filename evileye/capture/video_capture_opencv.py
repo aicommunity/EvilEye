@@ -295,8 +295,6 @@ class VideoCaptureOpencv(VideoCaptureBase):
         try:
             # Prefer the explicitly set parameter; default aligns with init_impl default
             params['apiPreference'] = self.params.get('apiPreference', 'CAP_FFMPEG')
-            # Дополнительно отражаем текущий детектированный FPS источника (если есть)
-            params['source_fps'] = self.source_fps
             params['loop_play'] = self.loop_play
             params['split'] = self.split_stream
             params['num_split'] = self.num_split
