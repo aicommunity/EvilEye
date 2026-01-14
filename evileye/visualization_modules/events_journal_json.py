@@ -119,15 +119,22 @@ class ImageDelegate(QStyledItemDelegate):
                         cur_path = img_filename_item.text() if img_filename_item else ''
                         candidates = []
                         if cur_path:
+                            # New structure: FoundPreviews/FoundFrames/LostPreviews/LostFrames
+                            candidates.append(cur_path.replace('FoundPreviews', 'FoundFrames').replace('_preview.', '_frame.'))
+                            candidates.append(cur_path.replace('LostPreviews', 'LostFrames').replace('_preview.', '_frame.'))
+                            # Legacy support
                             candidates.append(cur_path.replace('previews', 'frames').replace('_preview.', '_frame.'))
                             candidates.append(cur_path.replace('/found_previews/', '/found_frames/').replace('_preview.', '_frame.'))
                             candidates.append(cur_path.replace('/lost_previews/', '/lost_frames/').replace('_preview.', '_frame.'))
-                            candidates.append(cur_path.replace('detected_previews', 'found_frames').replace('_preview.', '_frame.'))
                         # Also try constructing from event date_folder
                         ev = table.item(row, 5).data(Qt.ItemDataRole.UserRole) if index.column() == 5 else table.item(row, 6).data(Qt.ItemDataRole.UserRole)
                         if ev:
                             date_folder = ev.get('date_folder', '')
                             base_name = os.path.basename(cur_path).replace('_preview.', '_frame.')
+                            # New structure: Events/YYYY-MM-DD/Images/FoundFrames or LostFrames
+                            candidates.append(os.path.join(self.base_dir, 'Events', date_folder, 'Images', 'FoundFrames', base_name))
+                            candidates.append(os.path.join(self.base_dir, 'Events', date_folder, 'Images', 'LostFrames', base_name))
+                            # Legacy support
                             candidates.append(os.path.join(self.base_dir, 'images', date_folder, 'found_frames', base_name))
                             candidates.append(os.path.join(self.base_dir, 'images', date_folder, 'lost_frames', base_name))
                         for cand in candidates:
@@ -329,6 +336,7 @@ class EventsJournalJson(QWidget):
         # Store last data hash for efficient updates
         self.last_data_hash = None
         self.is_visible = False
+        self._is_closing = False  # Flag to prevent operations during closing
         
         # Real-time update timer
         self.update_timer = QTimer()
@@ -360,18 +368,18 @@ class EventsJournalJson(QWidget):
 
         self.layout.addLayout(toolbar)
 
-        # Use database journal structure: Time, Event, Event Details, Time lost, Information, Preview, Lost preview
+        # Use objects journal structure: Time, Event, Information, Source, Time lost, Preview, Lost preview
         self.table = QTableWidget(0, 7)
-        self.table.setHorizontalHeaderLabels(['Time', 'Event', 'Event Details', 'Time lost', 'Information', 'Preview', 'Lost preview'])
+        self.table.setHorizontalHeaderLabels(['Time', 'Event', 'Information', 'Source', 'Time lost', 'Preview', 'Lost preview'])
         h = self.table.horizontalHeader()
         v = self.table.verticalHeader()
-        h.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        h.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        h.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        h.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
-        h.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
-        h.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
-        h.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)
+        h.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)  # Time
+        h.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)  # Event
+        h.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)  # Information
+        h.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)  # Source
+        h.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)  # Time lost
+        h.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)  # Preview
+        h.setSectionResizeMode(6, QHeaderView.ResizeMode.Fixed)  # Lost preview
         # Match aspect ratio with other journals: width=300, height=150
         try:
             h.resizeSection(5, 300)
@@ -392,7 +400,7 @@ class EventsJournalJson(QWidget):
         # Set up datetime delegate for time columns
         self.datetime_delegate = DateTimeDelegate(self.table)
         self.table.setItemDelegateForColumn(0, self.datetime_delegate)  # Time
-        self.table.setItemDelegateForColumn(3, self.datetime_delegate)  # Time lost
+        self.table.setItemDelegateForColumn(4, self.datetime_delegate)  # Time lost
 
         # Connect double click signal - use cellDoubleClicked for QTableWidget
         self.table.cellDoubleClicked.connect(self._display_image)
@@ -451,6 +459,15 @@ class EventsJournalJson(QWidget):
     def _check_for_updates(self):
         """Check if data has changed and reload if necessary"""
         try:
+            # Check if widget is closing or destroyed
+            if self._is_closing:
+                return
+            # Check if widget still exists and is valid
+            if not hasattr(self, 'table') or self.table is None:
+                return
+            if not hasattr(self, 'ds') or self.ds is None:
+                return
+            
             # Get current data hash
             filters = {k: v for k, v in self.filters.items() if v}
             current_data = self.ds.fetch(self.page, self.page_size, filters, [])
@@ -472,14 +489,24 @@ class EventsJournalJson(QWidget):
                 #    self.logger.debug(f"🔄 Forcing update for visible window. Hash: {current_hash}")
                 
                 self._reload_table()
-                # Force widget repaint
-                self.table.viewport().update()
-                self.table.repaint()
+                # Force widget repaint only if widget still exists
+                if hasattr(self, 'table') and self.table is not None:
+                    self.table.viewport().update()
+                    self.table.repaint()
         except Exception as e:
             self.logger.error(f"Update check error: {e}")
 
     def _reload_table(self):
         try:
+            # Check if widget is closing or destroyed
+            if self._is_closing:
+                return
+            # Check if widget still exists and is valid
+            if not hasattr(self, 'table') or self.table is None:
+                return
+            if not hasattr(self, 'ds') or self.ds is None:
+                return
+            
             filters = {k: v for k, v in self.filters.items() if v}
             # Use empty sort list to avoid sorting errors with None values
             rows = self.ds.fetch(self.page, self.page_size, filters, [])
@@ -535,20 +562,17 @@ class EventsJournalJson(QWidget):
                     continue
                 if kind == 'attr':
                     event_name = 'AttributeEvent'
-                    event_details = base.get('event_name','')
                     info = f"AttributeEvent name={base.get('event_name','')}; obj={base.get('object_id')}; class={base.get('class_name', base.get('class_id',''))}; attrs={base.get('attrs', [])}"
                 elif kind == 'zone':
                     event_name = 'ZoneEvent'
-                    event_details = str(base.get('source_id',''))
                     info = f"ZoneEvent obj={base.get('object_id')} zone={base.get('zone_id','')}"
                 else:
                     event_name = 'FOVEvent'
-                    event_details = str(base.get('source_id',''))
                     info = f"FOVEvent obj={base.get('object_id')}"
 
                 row_data = {
+                    'source': base.get('source_name') or str(base.get('source_id', '')),
                     'event': event_name,
-                    'event_details': event_details,
                     'information': info,
                     'time': (found_ev.get('ts') if found_ev else base.get('ts','')),
                     'time_lost': (lost_ev.get('ts') if lost_ev else ''),
@@ -562,8 +586,8 @@ class EventsJournalJson(QWidget):
             # Add camera events as standalone rows
             for ev in cam_events:
                 table_rows.append({
+                    'source': ev.get('camera_full_address', ''),
                     'event': 'CameraEvent',
-                    'event_details': ev.get('camera_full_address',''),
                     'information': f"Camera {ev.get('camera_full_address')} status={ev.get('connection_status')}",
                     'time': ev.get('ts',''),
                     'time_lost': '',
@@ -576,8 +600,8 @@ class EventsJournalJson(QWidget):
             # Добавляем системные события отдельными строками
             for ev in sys_events:
                 table_rows.append({
+                    'source': 'System',
                     'event': 'SystemEvent',
-                    'event_details': ev.get('system_event',''),
                     'information': f"System {ev.get('system_event','')}",
                     'time': ev.get('ts',''),
                     'time_lost': '',
@@ -601,18 +625,19 @@ class EventsJournalJson(QWidget):
                 # Event column (1)
                 self.table.setItem(r, 1, QTableWidgetItem(row_data['event']))
                 
-                # Event Details column (2)
-                self.table.setItem(r, 2, QTableWidgetItem(row_data['event_details']))
+                # Information column (2)
+                self.table.setItem(r, 2, QTableWidgetItem(row_data['information']))
                 
-                # Time lost column (3)
-                self.table.setItem(r, 3, QTableWidgetItem(str(row_data['time_lost'])))
+                # Source column (3)
+                self.table.setItem(r, 3, QTableWidgetItem(str(row_data.get('source', ''))))
                 
-                # Information column (4)
-                self.table.setItem(r, 4, QTableWidgetItem(row_data['information']))
+                # Time lost column (4)
+                self.table.setItem(r, 4, QTableWidgetItem(str(row_data['time_lost'])))
                 
                 # Preview column (found image)
                 if row_data['preview']:
-                    date_folder = row_data['found_event'].get('date_folder', '')
+                    found_event = row_data.get('found_event')
+                    date_folder = found_event.get('date_folder', '') if found_event else ''
                     prev = row_data['preview']
                     if os.path.isabs(prev):
                         img_path = prev
@@ -622,16 +647,20 @@ class EventsJournalJson(QWidget):
                         img_path = os.path.join(self.base_dir, 'images', date_folder, prev)
                     item = QTableWidgetItem(img_path)
                     # Store event data for double click functionality
-                    item.setData(Qt.ItemDataRole.UserRole, row_data['found_event'])
+                    item.setData(Qt.ItemDataRole.UserRole, found_event)
                     self.table.setItem(r, 5, item)
                 else:
                     # Store empty string but still create item for delegate
                     item = QTableWidgetItem('')
+                    found_event = row_data.get('found_event')
+                    if found_event:
+                        item.setData(Qt.ItemDataRole.UserRole, found_event)
                     self.table.setItem(r, 5, item)
                 
                 # Lost preview column
                 if row_data['lost_preview']:
-                    date_folder = row_data['lost_event'].get('date_folder', '')
+                    lost_event = row_data.get('lost_event')
+                    date_folder = lost_event.get('date_folder', '') if lost_event else ''
                     prev = row_data['lost_preview']
                     if os.path.isabs(prev):
                         img_path = prev
@@ -641,27 +670,33 @@ class EventsJournalJson(QWidget):
                         img_path = os.path.join(self.base_dir, 'images', date_folder, prev)
                     item = QTableWidgetItem(img_path)
                     # Store event data for double click functionality
-                    item.setData(Qt.ItemDataRole.UserRole, row_data['lost_event'])
+                    item.setData(Qt.ItemDataRole.UserRole, lost_event)
                     self.table.setItem(r, 6, item)
                 else:
                     # Store empty string but still create item for delegate
                     item = QTableWidgetItem('')
+                    lost_event = row_data.get('lost_event')
+                    if lost_event:
+                        item.setData(Qt.ItemDataRole.UserRole, lost_event)
                     self.table.setItem(r, 6, item)
                 
                 # Set row height for image display
                 self.table.setRowHeight(r, 150)
             
             # Force widget update to ensure changes are visible
-            self.table.viewport().update()
-            self.table.update()
-            
-            # Force repaint and process events
-            self.table.repaint()
-            try:
-                from PyQt6.QtWidgets import QApplication
-            except ImportError:
-                from PyQt5.QtWidgets import QApplication
-            QApplication.processEvents()
+            # Only update if widget still exists and is not closing
+            if not self._is_closing and hasattr(self, 'table') and self.table is not None:
+                try:
+                    self.table.viewport().update()
+                    self.table.update()
+                    
+                    # Force repaint
+                    self.table.repaint()
+                    # Don't call processEvents() here as it can cause segfault
+                    # Events will be processed naturally by the event loop
+                except (RuntimeError, AttributeError):
+                    # Widget may have been destroyed
+                    pass
             
         except Exception as e:
             self.logger.error(f"Table data loading error: {e}")
@@ -703,9 +738,19 @@ class EventsJournalJson(QWidget):
             self.update_timer.stop()
 
     def closeEvent(self, event):
+        # Устанавливаем флаг закрытия перед остановкой таймера
+        self._is_closing = True
+        
+        # Останавливаем таймер перед закрытием
         if hasattr(self, 'update_timer'):
             self.update_timer.stop()
-        self.ds.close()
+            # Не вызываем processEvents() здесь, так как это может вызвать segfault
+        # Закрываем data source
+        if hasattr(self, 'ds') and self.ds:
+            try:
+                self.ds.close()
+            except Exception:
+                pass
         super().closeEvent(event)
 
     @pyqtSlot(int, int)
@@ -775,8 +820,15 @@ class EventsJournalJson(QWidget):
                 # Replace 'preview' with 'frame' in filename
                 new_filename = filename.replace('preview', 'frame')
                 
-                # Convert directory path from 'previews' to 'frames'
-                if 'previews' in dir_path:
+                # Convert directory path: new structure FoundPreviews->FoundFrames, LostPreviews->LostFrames
+                if 'FoundPreviews' in dir_path:
+                    new_dir_path = dir_path.replace('FoundPreviews', 'FoundFrames')
+                    image_path = os.path.join(new_dir_path, new_filename)
+                elif 'LostPreviews' in dir_path:
+                    new_dir_path = dir_path.replace('LostPreviews', 'LostFrames')
+                    image_path = os.path.join(new_dir_path, new_filename)
+                elif 'previews' in dir_path:
+                    # Legacy support
                     new_dir_path = dir_path.replace('previews', 'frames')
                     image_path = os.path.join(new_dir_path, new_filename)
                 else:

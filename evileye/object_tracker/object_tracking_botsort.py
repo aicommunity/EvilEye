@@ -56,20 +56,37 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
         self.cfg_dict["with_reid"] = False
 
     def init_impl(self, **kwargs):
-        encoders = kwargs.get('encoders', None)
-        if encoders is not None:
-            onnx_path = self.params.get("tracker_onnx", "models/osnet_ain_x1_0_M.onnx")
-            if onnx_path in encoders:
-                encoder = encoders[onnx_path]
-                self.encoders = [encoder]
+        try:
+            encoders = kwargs.get('encoders', None)
+            if encoders is not None:
+                onnx_path = self.params.get("tracker_onnx", "models/osnet_ain_x1_0_M.onnx")
+                if onnx_path in encoders:
+                    encoder = encoders[onnx_path]
+                    self.encoders = [encoder]
+                    self.logger.debug(f"Using encoder from encoders dict: {onnx_path}")
+                else:
+                    self.encoders = None
+                    self.logger.debug(f"Encoder {onnx_path} not found in encoders dict, ReID disabled")
             else:
                 self.encoders = None
-        super().init_impl(**kwargs)
-        if not self.botsort_cfg:
+                self.logger.debug("No encoders provided, ReID disabled")
+            
+            super().init_impl(**kwargs)
+            
+            # Ensure botsort_cfg is set (should be set by set_params_impl, but check anyway)
+            if not self.botsort_cfg:
+                # Try to set default config if not set
+                self.logger.warning("botsort_cfg not set, using default configuration")
+                self.botsort_cfg = BostSortCfg()
+            
+            self.logger.debug(f"Initializing BOTSORT with fps={self.fps}, with_reid={self.botsort_cfg.with_reid}")
+            self.tracker = BOTSORT(self.botsort_cfg, self.encoders, frame_rate=self.fps)
+            self.logger.debug("BOTSORT tracker initialized successfully")
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to initialize ObjectTrackingBotsort: {e}", exc_info=True)
             self.tracker = None
             return False
-
-        self.tracker = BOTSORT(self.botsort_cfg, self.encoders, frame_rate=self.fps)
 
     def release_impl(self):
         super().init_impl()

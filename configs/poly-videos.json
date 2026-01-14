@@ -1,5 +1,5 @@
 {
-    "pipeline" : {
+    "pipeline": {
         "sources": [
             {
                 "source": "VideoFile",
@@ -76,7 +76,6 @@
                 ]
             }
         ],
-
         "detectors": [
             {
                 "source_ids": [
@@ -367,12 +366,15 @@
         "mc_trackers": [
             {
                 "source_ids": [
-                    0, 1, 2, 3, 4
+                    0,
+                    1,
+                    2,
+                    3,
+                    4
                 ],
                 "enable": true
             }
         ]
-
     },
     "events_detectors": {
         "CamEventsDetector": {},
@@ -412,19 +414,47 @@
         "show_debug_info": true,
         "objects_journal_enabled": true,
         "text_config": {
-          "font_size_pt": 42,
-          "font_face": 0,
-          "color": [0, 0, 255],
-          "thickness": null,
-          "background_color": [0, 0, 0],
-          "background_enabled": false,
-          "padding_percent": 1.5,
-          "position_offset_percent": [0, -8],
-          "font_scale_method": "resolution_based",
-          "base_resolution": [1920, 1080]
+            "font_size_pt": 42,
+            "font_face": 0,
+            "color": [
+                0,
+                0,
+                255
+            ],
+            "thickness": null,
+            "background_color": [
+                0,
+                0,
+                0
+            ],
+            "background_enabled": false,
+            "padding_percent": 1.5,
+            "position_offset_percent": [
+                0,
+                -8
+            ],
+            "font_scale_method": "resolution_based",
+            "base_resolution": [
+                1920,
+                1080
+            ]
         }
     },
-
+    "record": {
+        "enabled": true,
+        "continuous_recording_enabled": true,
+        "event_recording_enabled": false,
+        "event_pre_seconds": 10,
+        "event_post_seconds": 10,
+        "event_buffer_fps": null,
+        "enabled_sources": [],
+        "container": "mp4",
+        "segment_length_sec": 300,
+        "retention_days": 3,
+        "min_free_space_pct": 80,
+        "out_dir": "EvilEyeData/Streams",
+        "filename_tmpl": "{source_name}_{start_time}_{seq}.{ext}"
+    },
     "objects_handler": {
         "history_len": 30,
         "lost_store_time_secs": 60,
@@ -517,6 +547,12 @@
             "teddy bear",
             "hair drier",
             "toothbrush"
-        ]
+        ],
+        "scheduled_restart": {
+            "enabled": false,
+            "mode": "daily_time",
+            "time": "01:00",
+            "interval_minutes": 0
+        }
     }
 }

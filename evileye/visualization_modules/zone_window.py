@@ -76,8 +76,8 @@ class GraphicsView(QGraphicsView):
         self.polygon_coords = []
         self.pix = None
         self.source_id = None
-        self.sources_zones = sources_zones
-        self.params = params
+        self.sources_zones = sources_zones or {}
+        self.params = params or {}
 
         self.red_brush = QBrush(QColor(255, 0, 0, 128))
         self.red_pen = QPen(Qt.GlobalColor.red)
@@ -162,10 +162,17 @@ class GraphicsView(QGraphicsView):
             poly.append(img_point)
             self.polygon.setPolygon(poly)
             self.sources_zones[self.source_id].append(['poly', self.polygon_coords, self.polygon.boundingRect()])
-            if str(self.source_id) not in self.params['events_detectors']['ZoneEventsDetector']['sources']:
-                self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.source_id)] = [self.polygon_coords]
-            else:
-                self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.source_id)].append(self.polygon_coords)
+            if self.params:
+                if str(self.source_id) not in self.params.get('events_detectors', {}).get('ZoneEventsDetector', {}).get('sources', {}):
+                    if 'events_detectors' not in self.params:
+                        self.params['events_detectors'] = {}
+                    if 'ZoneEventsDetector' not in self.params['events_detectors']:
+                        self.params['events_detectors']['ZoneEventsDetector'] = {}
+                    if 'sources' not in self.params['events_detectors']['ZoneEventsDetector']:
+                        self.params['events_detectors']['ZoneEventsDetector']['sources'] = {}
+                    self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.source_id)] = [self.polygon_coords]
+                else:
+                    self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.source_id)].append(self.polygon_coords)
             # Оповещаем о добавлении зоны
             threading_events.notify('new zone', self.source_id, self.polygon_coords, 'poly')
             # Отправляем сигнал об изменении
@@ -212,7 +219,14 @@ class GraphicsView(QGraphicsView):
                     else:
                         threading_events.notify('zone deleted', self.source_id, zone_coords)
             self.sources_zones[self.source_id] = filtered_zones
-            self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.source_id)] = filtered_coords
+            if self.params:
+                if 'events_detectors' not in self.params:
+                    self.params['events_detectors'] = {}
+                if 'ZoneEventsDetector' not in self.params['events_detectors']:
+                    self.params['events_detectors']['ZoneEventsDetector'] = {}
+                if 'sources' not in self.params['events_detectors']['ZoneEventsDetector']:
+                    self.params['events_detectors']['ZoneEventsDetector']['sources'] = {}
+                self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.source_id)] = filtered_coords
             # Отправляем сигнал об изменении
             self.zone_removed.emit()
         event.accept()
@@ -244,10 +258,17 @@ class GraphicsView(QGraphicsView):
                                 bottom_left.y() / self.pix.pixmap().height())
             norm_zone_coords = [(norm_top_left[0], norm_top_left[1]), (norm_top_right[0], norm_top_right[1]),
                                 (norm_bottom_right[0], norm_bottom_right[1]), (norm_bottom_left[0], norm_bottom_left[1])]
-            if str(self.source_id) not in self.params['events_detectors']['ZoneEventsDetector']['sources']:
-                self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.source_id)] = [norm_zone_coords]
-            else:
-                self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.source_id)].append(norm_zone_coords)
+            if self.params:
+                if str(self.source_id) not in self.params.get('events_detectors', {}).get('ZoneEventsDetector', {}).get('sources', {}):
+                    if 'events_detectors' not in self.params:
+                        self.params['events_detectors'] = {}
+                    if 'ZoneEventsDetector' not in self.params['events_detectors']:
+                        self.params['events_detectors']['ZoneEventsDetector'] = {}
+                    if 'sources' not in self.params['events_detectors']['ZoneEventsDetector']:
+                        self.params['events_detectors']['ZoneEventsDetector']['sources'] = {}
+                    self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.source_id)] = [norm_zone_coords]
+                else:
+                    self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.source_id)].append(norm_zone_coords)
             self.sources_zones[self.source_id].append(['rect', norm_zone_coords, self.rectangle.boundingRect()])
             # Оповещаем о добавлении зоны
             threading_events.notify('new zone', self.source_id, norm_zone_coords, 'rect')
@@ -306,19 +327,14 @@ class ZoneWindow(QWidget):
     zones_updated = pyqtSignal(list)  # zones
     zone_editor_closed = pyqtSignal(dict, int, bool)  # zones_data, source_id, accepted
     
-    def __init__(self, params):
-        super().__init__()
+    def __init__(self, parent=None):
+        super().__init__(parent)
         self.logger = get_module_logger("zone_window")
-        self.params = params
-        self.zone_params = self.params['events_detectors'].get('ZoneEventsDetector', dict()).get('sources', list())
-        self.vis_params = self.params['visualizer']
+        self.params = {}
+        
+        # Инициализация пустого UI
         sources_zones = {}
-        for source_id in self.zone_params:  # Приводим зоны, заданные координатами в json, к необходимому виду
-            sources_zones[int(source_id)] = []
-            for zones_coords in self.zone_params[source_id]:
-                sources_zones[int(source_id)].append(['poly', zones_coords, None])
-
-        self.view = GraphicsView(self, sources_zones=sources_zones, params=self.params)
+        self.view = GraphicsView(self, sources_zones=sources_zones, params=None)
         self.pixmap = None
 
         self.is_rect_clicked = False
@@ -337,6 +353,21 @@ class ZoneWindow(QWidget):
         self.layout.addWidget(self.drawing_toolbar)
         self.layout.addWidget(self.view)
         self.setLayout(self.layout)
+    
+    def set_params(self, params):
+        """Установить параметры (вызывается после controller.init())"""
+        self.params = params
+        if params:
+            self.zone_params = params.get('events_detectors', {}).get('ZoneEventsDetector', dict()).get('sources', {})
+            self.vis_params = params.get('visualizer', {})
+            # Обновляем sources_zones из параметров
+            sources_zones = {}
+            for source_id in self.zone_params:  # Приводим зоны, заданные координатами в json, к необходимому виду
+                sources_zones[int(source_id)] = []
+                for zones_coords in self.zone_params[source_id]:
+                    sources_zones[int(source_id)].append(['poly', zones_coords, None])
+            self.view.sources_zones = sources_zones
+            self.view.params = params
 
     def set_cv_image(self, source_id, cv_image):
         """
@@ -386,6 +417,8 @@ class ZoneWindow(QWidget):
 
     def load_zones_from_config(self, params, source_id):
         """Загрузить зоны из конфигурации для указанного источника"""
+        if not params:
+            return []
         try:
             zone_params = params.get('events_detectors', {}).get('ZoneEventsDetector', {}).get('sources', {})
             if str(source_id) in zone_params:
@@ -556,13 +589,21 @@ class ZoneWindow(QWidget):
     
     def _restore_initial_zones_state(self):
         """Восстанавливает исходное состояние зон"""
-        if self.current_source_id is not None and self.saved_zones_data is not None:
+        if self.current_source_id is not None and self.saved_zones_data is not None and self.params:
             # Очищаем текущие зоны
-            if str(self.current_source_id) in self.params['events_detectors']['ZoneEventsDetector']['sources']:
-                del self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.current_source_id)]
+            if 'events_detectors' in self.params and 'ZoneEventsDetector' in self.params['events_detectors']:
+                if 'sources' in self.params['events_detectors']['ZoneEventsDetector']:
+                    if str(self.current_source_id) in self.params['events_detectors']['ZoneEventsDetector']['sources']:
+                        del self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.current_source_id)]
             
             # Восстанавливаем исходные зоны
             if self.saved_zones_data:
+                if 'events_detectors' not in self.params:
+                    self.params['events_detectors'] = {}
+                if 'ZoneEventsDetector' not in self.params['events_detectors']:
+                    self.params['events_detectors']['ZoneEventsDetector'] = {}
+                if 'sources' not in self.params['events_detectors']['ZoneEventsDetector']:
+                    self.params['events_detectors']['ZoneEventsDetector']['sources'] = {}
                 self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.current_source_id)] = self.saved_zones_data
             
             # Обновляем внутреннее состояние view

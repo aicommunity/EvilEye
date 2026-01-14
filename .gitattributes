@@ -1,0 +1,16 @@
+# Git LFS для больших бинарных файлов в tests/data
+# Используем LFS для изображений и других больших файлов (>100KB)
+
+# Изображения в tests/data (большие файлы через LFS)
+tests/data/images/*.jpg filter=lfs diff=lfs merge=lfs -text
+tests/data/images/*.jpeg filter=lfs diff=lfs merge=lfs -text
+tests/data/images/*.png filter=lfs diff=lfs merge=lfs -text
+tests/data/images/*.gif filter=lfs diff=lfs merge=lfs -text
+tests/data/images/*.bmp filter=lfs diff=lfs merge=lfs -text
+
+# JSON файлы в tests/data (обычные файлы, не через LFS)
+tests/data/**/*.json text eol=lf
+
+# Все остальные файлы в tests/data - обычные
+tests/data/** text eol=lf
+

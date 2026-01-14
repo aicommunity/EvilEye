@@ -7,9 +7,14 @@ Provides command-line tools for running the EvilEye surveillance system.
 
 import json
 import sys
+import os
+import shutil
+import subprocess
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
+from datetime import datetime, timedelta
+import time
 
 import typer
 from rich.console import Console
@@ -19,6 +24,172 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from evileye.utils.utils import normalize_config_path
 from evileye.core.logging_config import setup_evileye_logging, log_system_info
 from evileye.core.logger import get_module_logger
+
+
+def _get_scheduled_restart_defaults() -> dict:
+    """Return default scheduled restart configuration."""
+    return {
+        "enabled": False,
+        "mode": "daily_time",
+        "time": "01:00",
+        "interval_minutes": 0,
+    }
+
+
+def _load_scheduled_restart_config(config_path: Path, logger: logging.Logger) -> dict:
+    """Load scheduled_restart section from controller config, with safe defaults."""
+    cfg = _get_scheduled_restart_defaults()
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        controller_cfg = data.get("controller") or {}
+        sched_cfg = controller_cfg.get("scheduled_restart") or {}
+        if isinstance(sched_cfg, dict):
+            cfg.update({k: sched_cfg.get(k, cfg[k]) for k in cfg.keys()})
+    except Exception as e:
+        try:
+            logger.warning(f"Failed to load scheduled_restart from {config_path}: {e}")
+        except Exception:
+            pass
+    # Normalize types
+    cfg["enabled"] = bool(cfg.get("enabled"))
+    cfg["mode"] = str(cfg.get("mode") or "daily_time")
+    cfg["time"] = str(cfg.get("time") or "01:00")
+    try:
+        cfg["interval_minutes"] = int(cfg.get("interval_minutes") or 0)
+    except Exception:
+        cfg["interval_minutes"] = 0
+    return cfg
+
+
+def _parse_time_str(time_str: str) -> Tuple[int, int]:
+    """Parse HH:MM string into (hour, minute)."""
+    try:
+        parts = time_str.strip().split(":")
+        if len(parts) != 2:
+            raise ValueError(f"Invalid time format: {time_str}")
+        hour = int(parts[0])
+        minute = int(parts[1])
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError(f"Invalid time value: {time_str}")
+        return hour, minute
+    except Exception as e:
+        raise ValueError(f"Invalid time string '{time_str}': {e}") from e
+
+
+def _get_next_daily_time(now: datetime, time_str: str) -> datetime:
+    """Return next datetime for given HH:MM after 'now'."""
+    hour, minute = _parse_time_str(time_str)
+    candidate = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if candidate <= now:
+        candidate = candidate + timedelta(days=1)
+    return candidate
+
+
+def _get_next_interval(now: datetime, interval_minutes: int) -> datetime:
+    """Return next datetime after given interval (in minutes)."""
+    if interval_minutes <= 0:
+        interval_minutes = 1
+    return now + timedelta(minutes=interval_minutes)
+
+
+def _run_with_scheduler(
+    base_cmd: list,
+    config_path: Path,
+    logger: logging.Logger,
+) -> None:
+    """Run process.py in a loop according to scheduled_restart section in config."""
+    sched_cfg = _load_scheduled_restart_config(config_path, logger)
+    if not sched_cfg.get("enabled"):
+        # Fallback to single run if scheduler is disabled
+        logger.info("Scheduled restart is disabled in config, running single process.")
+        subprocess.run(base_cmd, check=True, cwd=os.getcwd())
+        return
+
+    mode = (sched_cfg.get("mode") or "daily_time").lower()
+    time_str = sched_cfg.get("time") or "01:00"
+    interval_minutes = int(sched_cfg.get("interval_minutes") or 0)
+
+    logger.info(
+        f"Starting scheduled restart loop: enabled={sched_cfg.get('enabled')}, "
+        f"mode={mode}, time={time_str}, interval_minutes={interval_minutes}"
+    )
+
+    iteration = 0
+    while True:
+        iteration += 1
+        logger.info(f"[scheduler] Iteration {iteration}: launching process: {' '.join(base_cmd)}")
+        console.print(f"[green][scheduler] Iteration {iteration}: launching[/green] {' '.join(base_cmd)}")
+
+        try:
+            # Запускаем дочерний процесс без блокирующего ожидания
+            proc = subprocess.Popen(base_cmd, cwd=os.getcwd())
+        except Exception as e:
+            logger.error(f"[scheduler] Failed to start process: {e}", exc_info=True)
+            console.print(f"[red]Failed to start process: {e}[/red]")
+            raise typer.Exit(1)
+
+        start_time = datetime.now()
+
+        # Время следующего запуска по расписанию
+        if mode == "interval":
+            next_run = _get_next_interval(start_time, interval_minutes)
+        else:
+            next_run = _get_next_daily_time(start_time, time_str)
+
+        logger.info(f"[scheduler] Next launch scheduled at {next_run.isoformat()}")
+        console.print(f"[blue][scheduler] Next launch at {next_run.isoformat()}[/blue]")
+
+        try:
+            # Цикл до естественного завершения процесса ИЛИ до наступления времени перезапуска
+            while True:
+                now = datetime.now()
+                retcode = proc.poll()
+
+                if retcode is not None:
+                    duration = (now - start_time).total_seconds()
+                    logger.info(
+                        f"[scheduler] Iteration {iteration} finished with return code={retcode} "
+                        f"(duration={duration:.1f}s)"
+                    )
+                    break
+
+                if now >= next_run:
+                    # Наступило время планового перезапуска — аккуратно останавливаем текущий процесс
+                    logger.info(
+                        f"[scheduler] Time {now.isoformat()} reached, terminating process pid={proc.pid} "
+                        f"for scheduled restart"
+                    )
+                    console.print(
+                        f"[yellow][scheduler] Stopping current run (pid={proc.pid}) for scheduled restart[/yellow]"
+                    )
+                    try:
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=30)
+                        except Exception:
+                            logger.warning(
+                                f"[scheduler] Process {proc.pid} did not exit after SIGTERM, killing"
+                            )
+                            proc.kill()
+                    except Exception as e:
+                        logger.error(f"[scheduler] Error terminating process {proc.pid}: {e}", exc_info=True)
+                    break
+
+                time.sleep(1.0)
+
+        except KeyboardInterrupt:
+            logger.info("[scheduler] Interrupted by user, terminating child and stopping loop")
+            if proc.poll() is None:
+                try:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=10)
+                    except Exception:
+                        proc.kill()
+                except Exception:
+                    pass
+            raise typer.Exit(0)
 
 
 # Create CLI app
@@ -52,9 +223,6 @@ def run(
         evileye run configs/test_sources_detectors_trackers_mc.json
         evileye run --video /path/to/video.mp4
     """
-    import subprocess
-    import os
-
     # Setup logging
     setup_logging(verbose=verbose)
     logger = get_module_logger("cli")
@@ -62,6 +230,7 @@ def run(
 
     # Build command arguments
     cmd = [sys.executable, str(Path(__file__).parent / "process.py")]
+    config_path: Optional[Path] = None
 
     if config:
         # Normalize config path and check if it exists
@@ -72,6 +241,7 @@ def run(
             raise typer.Exit(1)
         cmd.extend(["--config", str(normalized_config)])
         logger.info(f"Using configuration: {normalized_config}")
+        config_path = normalized_config
     elif video:
         cmd.extend(["--video", video])
         logger.info(f"Using video file: {video}")
@@ -81,6 +251,7 @@ def run(
         if default_config.exists():
             cmd.extend(["--config", str(default_config)])
             logger.info(f"Using default configuration: {default_config}")
+            config_path = default_config
         else:
             logger.error("Configuration file not specified and default configuration not found")
             console.print("[red]No configuration file specified and default not found[/red]")
@@ -103,11 +274,17 @@ def run(
         cmd.append("--no-autoclose")
         logger.info("Auto-close disabled")
 
+    # Recording is configured only via config file; no CLI flags
+
     try:
         logger.info(f"Launching command: {' '.join(cmd)}")
         console.print(f"[green]Launching with command:[/green] {' '.join(cmd)}")
-        # Run command in current working directory (where CLI was launched from)
-        subprocess.run(cmd, check=True, cwd=os.getcwd())
+        # If we have a configuration file, check for scheduled_restart section
+        if config_path is not None:
+            _run_with_scheduler(cmd, config_path, logger)
+        else:
+            # No configuration file -> no scheduler, run once
+            subprocess.run(cmd, check=True, cwd=os.getcwd())
         logger.info("Command executed successfully")
     except subprocess.CalledProcessError as e:
         logger.error(f"Launch error: {e}")
@@ -118,6 +295,56 @@ def run(
         console.print("[yellow]Launch interrupted by user[/yellow]")
         raise typer.Exit(0)
 
+@app.command("server")
+def start_api(
+        host: str = typer.Option("127.0.0.1", "--host", help="Bind host"),
+        port: int = typer.Option(8080, "--port", help="Bind port"),
+        reload: bool = typer.Option(True, "--reload/--no-reload", help="Auto-reload on code changes"),
+        workers: int = typer.Option(1, "--workers", help="Number of worker processes"),
+        verbose: bool = typer.Option(False, "--verbose", help="Enable verbose logging"),
+        log_level: str = typer.Option("info", "--log-level", help="Logging level"),
+        config: Optional[str] = typer.Option(None, "--config", help="Auto-run selected config after server starts (name or file path)")
+
+) -> None:
+    """
+    Start EvilEye FastAPI web server.
+
+    Examples:
+        evileye server --host 0.0.0.0 --port 8000
+        evileye server --config poly-videos.json
+        evileye server --config ./configs/poly-videos.json
+    """
+    
+    import time
+    import urllib.request
+    import urllib.error
+
+    setup_logging(verbose=verbose)
+    logger = get_module_logger("cli")
+    log_system_info(logger)
+
+    # Use server.py instead of process.py for API server
+    cmd = [sys.executable, str(Path(__file__).parent / "server.py")]
+    cmd.extend(["--host", host, "--port", str(port), "--log-level", log_level])
+    
+    if not reload:
+        cmd.append("--no-reload")
+
+    if config:
+        cmd.extend(["--config", config])
+
+    try:
+        logger.info(f"Starting web server (server.py): {' '.join(cmd)}")
+        console.print(f"[green]Starting web server on {host}:{port}[/green]")
+        subprocess.run(cmd, check=True, cwd=os.getcwd())
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Web server failed: {e}")
+        console.print(f"[red]Web server failed: {e}[/red]")
+        raise typer.Exit(1)
+    except KeyboardInterrupt:
+        logger.info("Web server interrupted by user")
+        console.print("[yellow]Web server interrupted by user[/yellow]")
+        raise typer.Exit(0)
 
 @app.command()
 def validate(
@@ -198,7 +425,6 @@ def deploy() -> None:
     1. Copies credentials_proto.json to credentials.json (if credentials.json doesn't exist)
     2. Creates configs folder if it doesn't exist
     """
-    import shutil
     
     current_dir = Path.cwd()
     console.print(f"[blue]Deploying EvilEye files to: {current_dir}[/blue]")
@@ -247,8 +473,6 @@ def deploy_samples() -> None:
     3. Copies pre-configured sample configurations
     4. Creates documentation for samples
     """
-    import shutil
-    
     current_dir = Path.cwd()
     console.print(f"[blue]Deploying EvilEye sample configurations to: {current_dir}[/blue]")
     

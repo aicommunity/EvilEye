@@ -1,0 +1,89 @@
+{
+    "example_clean_attributes_config": {
+        "description": "Пример чистой конфигурации атрибутов без дублирования",
+        "attributes_classifier": [
+            {
+                "source_ids": [
+                    0
+                ],
+                "enabled": true,
+                "model": "models/y8mhardhats.pt",
+                "attrs": [
+                    "hard_hat",
+                    "no_hard_hat"
+                ],
+                "class_mapping": {
+                    "hard_hat": 0,
+                    "no_hard_hat": 1
+                },
+                "conf_threshold": 0.3
+            }
+        ],
+        "objects_handler": {
+            "attributes_detection": {
+                "primary_by_name": [
+                    "person"
+                ],
+                "primary_by_id": [
+                    0
+                ],
+                "secondary_by_name": [
+                    "hard_hat",
+                    "no_hard_hat"
+                ],
+                "secondary_by_id": [
+                    0,
+                    1
+                ],
+                "roi": {
+                    "padding": 0.15,
+                    "size": [
+                        224,
+                        224
+                    ],
+                    "every_n_frames": 2
+                },
+                "classifier": {
+                    "enabled": true,
+                    "model": "models/y8mhardhats.pt",
+                    "attrs": [
+                        "hard_hat",
+                        "no_hard_hat"
+                    ],
+                    "class_mapping": {
+                        "hard_hat": 0,
+                        "no_hard_hat": 1
+                    },
+                    "confidence_thresholds": {
+                        "hard_hat": 0.3,
+                        "no_hard_hat": 0.3
+                    },
+                    "time_thresholds": {
+                        "hard_hat": {
+                            "min_time_ms": 50,
+                            "confirm_time_ms": 100
+                        },
+                        "no_hard_hat": {
+                            "min_time_ms": 50,
+                            "confirm_time_ms": 100
+                        }
+                    },
+                    "ema_alpha": 0.7
+                }
+            }
+        },
+        "explanation": {
+            "attributes_classifier": "Конфигурация для AttributeClassifier - только параметры YOLO детекции",
+            "objects_handler.attributes_detection.classifier": "Конфигурация для AttributeManager - параметры управления состояниями атрибутов",
+            "no_duplication": "Нет дублирования - каждый параметр используется только в одном месте"
+        }
+    },
+    "controller": {
+        "scheduled_restart": {
+            "enabled": false,
+            "mode": "daily_time",
+            "time": "01:00",
+            "interval_minutes": 0
+        }
+    }
+}

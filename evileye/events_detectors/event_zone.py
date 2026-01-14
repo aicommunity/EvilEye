@@ -15,6 +15,8 @@ class ZoneEvent(Event):
             self.box_left = None
             self.time_entered = obj.time_stamp
             self.time_left = None
+            self.video_path_entered = None
+            self.video_path_left = None
         else:
             self.img_entered = None
             self.img_left = copy.deepcopy(obj.last_image)
@@ -22,6 +24,8 @@ class ZoneEvent(Event):
             self.box_left = obj.track.bounding_box
             self.time_entered = None
             self.time_left = obj.time_stamp
+            self.video_path_entered = None
+            self.video_path_left = None
 
         self.long_term = True
 
@@ -38,6 +42,7 @@ class ZoneEvent(Event):
         self.time_left = finished_event.time_left
         self.img_left = finished_event.img_left
         self.box_left = finished_event.box_left
+        self.video_path_left = getattr(finished_event, 'video_path_left', None)
 
     def get_time_finished(self):
         return self.time_left

@@ -18,6 +18,9 @@ class AttributeEvent(Event):
         self.box_found = None
         self.box_finished = None
         self.class_id = None
+        # Video paths
+        self.video_path_found = None
+        self.video_path_finished = None
 
         if obj is not None:
             if not is_finished:
@@ -40,6 +43,7 @@ class AttributeEvent(Event):
         self.time_finished = finished_event.timestamp
         self.img_finished = finished_event.img_finished
         self.box_finished = finished_event.box_finished
+        self.video_path_finished = getattr(finished_event, 'video_path_finished', None)
 
     def get_time_finished(self):
         return self.time_finished

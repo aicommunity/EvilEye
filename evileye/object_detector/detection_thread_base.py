@@ -113,15 +113,35 @@ class DetectionThreadBase:
         images = []
         for img in split_image:
             images.append(img[0].image)
+        
         # Pass sensible classes to model (IDs only) to avoid Ultralytics errors
         classes_arg = self._get_classes_arg_for_model()
-        predict_results = self.predict(images) if classes_arg is None else self.predict(images)
+        try:
+            predict_results = self.predict(images) if classes_arg is None else self.predict(images)
+        except Exception as e:
+            self.logger.error(f"Error during prediction in process_stride: {e}")
+            self.logger.debug("Prediction error in process_stride", exc_info=True)
+            predict_results = [None] * len(split_image)
+
+        # Обработка результатов предсказания с проверкой на None
+        if predict_results is None:
+            self.logger.debug("Predict results is None, returning empty detection result list")
+            predict_results = [None] * len(split_image)
+        elif not isinstance(predict_results, list):
+            self.logger.warning(f"Unexpected predict_results type: {type(predict_results)}, treating as single result")
+            predict_results = [predict_results]
 
         for i in range(len(split_image)):
-            roi_bboxes, roi_confs, roi_ids = self.get_bboxes(predict_results[i], split_image[i])
-            confidences.extend(roi_confs)
-            class_ids.extend(roi_ids)
-            bboxes_coords.extend(roi_bboxes)
+            try:
+                result = predict_results[i] if i < len(predict_results) else None
+                roi_bboxes, roi_confs, roi_ids = self.get_bboxes(result, split_image[i])
+                confidences.extend(roi_confs)
+                class_ids.extend(roi_ids)
+                bboxes_coords.extend(roi_bboxes)
+            except Exception as e:
+                self.logger.warning(f"Error processing bboxes for split image {i}: {e}")
+                self.logger.debug("Bbox processing error", exc_info=True)
+                # Продолжаем обработку остальных изображений
 
         utils_module = get_utils()
         bboxes_coords, confidences, class_ids = utils_module.merge_roi_boxes(self.roi[0], bboxes_coords, confidences, class_ids)  # Объединение рамок из разных ROI

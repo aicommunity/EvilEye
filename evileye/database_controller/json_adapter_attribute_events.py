@@ -28,7 +28,7 @@ class JsonAdapterAttributeEvents(DatabaseAdapterBase):
     def set_params_impl(self):
         # prefer controller.database.image_dir if present
         self.image_dir = self.params.get('image_dir', 'EvilEyeData')
-        self.base_dir = os.path.join(self.image_dir, 'images')
+        self.base_dir = os.path.join(self.image_dir, 'Events')
         self.table_name = 'attribute_events_json'
         self.event_name = 'AttributeEvent'
 
@@ -61,11 +61,12 @@ class JsonAdapterAttributeEvents(DatabaseAdapterBase):
                 event_dt = getattr(event, 'timestamp', None)
             if event_dt is None:
                 event_dt = datetime.datetime.now()
-            date_folder = event_dt.date().strftime('%Y_%m_%d')
+            date_folder = event_dt.date().strftime('%Y-%m-%d')
             day_dir = os.path.join(self.base_dir, date_folder)
-            os.makedirs(day_dir, exist_ok=True)
+            metadata_dir = os.path.join(day_dir, 'Metadata')
+            os.makedirs(metadata_dir, exist_ok=True)
             file_name = 'attribute_events_finished.json' if is_update else 'attribute_events_found.json'
-            file_path = os.path.join(day_dir, file_name)
+            file_path = os.path.join(metadata_dir, file_name)
 
             data = []
             if os.path.isfile(file_path):
@@ -116,15 +117,21 @@ class JsonAdapterAttributeEvents(DatabaseAdapterBase):
 
     def _save_images(self, day_dir: str, event, is_update: bool):
         try:
-            # Унифицированные каталоги: events_found_* / events_lost_*
-            tag = 'events_lost' if is_update else 'events_found'
+            # Новые каталоги: Events/.../Images/FoundFrames/FoundPreviews/LostFrames/LostPreviews
             ts = (event.get_time_finished() if is_update else event.timestamp)
             if ts is None:
                 ts = datetime.datetime.now()
-            # Имя с тем же форматом, как и в других адаптерах
-            ts_str = ts.strftime('%Y_%m_%d_%H_%M_%S_%f') if is_update else ts.strftime('%Y_%m_%d_%H_%M_%S.%f')
-            previews_dir = os.path.join(day_dir, f'{tag}_previews')
-            frames_dir = os.path.join(day_dir, f'{tag}_frames')
+            # Имя с новым форматом без подчеркиваний в дате
+            ts_str = ts.strftime('%Y-%m-%d_%H-%M-%S-%f') if is_update else ts.strftime('%Y-%m-%d_%H-%M-%S.%f')
+            images_dir = os.path.join(day_dir, 'Images')
+            if is_update:
+                # Lost event (finished)
+                previews_dir = os.path.join(images_dir, 'LostPreviews')
+                frames_dir = os.path.join(images_dir, 'LostFrames')
+            else:
+                # Found event
+                previews_dir = os.path.join(images_dir, 'FoundPreviews')
+                frames_dir = os.path.join(images_dir, 'FoundFrames')
             os.makedirs(previews_dir, exist_ok=True)
             os.makedirs(frames_dir, exist_ok=True)
 

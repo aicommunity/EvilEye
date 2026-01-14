@@ -53,9 +53,21 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
         pass
 
     def insert(self, data):
+        # Проверяем, что БД подключена перед выполнением операций (только для БД адаптеров)
+        # JSON адаптеры не имеют db_controller с методом is_connected(), поэтому проверяем наличие метода
+        if self.db_controller and hasattr(self.db_controller, 'is_connected'):
+            if not self.db_controller.is_connected():
+                return  # БД недоступна, просто игнорируем операцию
+        # Для JSON адаптеров (db_controller может быть None или self) всегда выполняем операцию
         self._insert_impl(data)
 
     def update(self, data):
+        # Проверяем, что БД подключена перед выполнением операций (только для БД адаптеров)
+        # JSON адаптеры не имеют db_controller с методом is_connected(), поэтому проверяем наличие метода
+        if self.db_controller and hasattr(self.db_controller, 'is_connected'):
+            if not self.db_controller.is_connected():
+                return  # БД недоступна, просто игнорируем операцию
+        # Для JSON адаптеров (db_controller может быть None или self) всегда выполняем операцию
         self._update_impl(data)
 
     def get_db_params(self):

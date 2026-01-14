@@ -38,9 +38,17 @@ class ProcessorBase(ABC):
         return processors_params
 
     def init(self, **kwargs):
+        init_success = True
         for i, processor in enumerate(self.processors):
-            processor.init(**kwargs)
-        return True
+            try:
+                result = processor.init(**kwargs)
+                if not result:
+                    init_success = False
+                    self.logger.warning(f"Processor {i} ({self.class_name}) init failed; reconnect logic will retry")
+            except Exception as e:
+                init_success = False
+                self.logger.warning(f"Processor {i} ({self.class_name}) init raised exception: {e}; reconnect logic will retry")
+        return init_success
 
     def release(self):
         for processor in self.processors:

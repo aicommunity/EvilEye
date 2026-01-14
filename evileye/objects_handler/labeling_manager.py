@@ -24,33 +24,36 @@ class LabelingManager:
     - objects_lost.json: For objects that were lost (tracking ended)
     """
     
-    def __init__(self, base_dir: str = 'EvilEyeData', cameras_params: list = None):
+    def __init__(self, base_dir: str = 'EvilEyeData', cameras_params: list = None, preload_data: bool = True):
         """
         Initialize the labeling manager.
         
         Args:
             base_dir: Base directory for saving labels and images
             cameras_params: List of camera parameters for source name mapping
+            preload_data: Whether to pre-load existing data on initialization (default: True)
+                          Set to False to avoid potential hangs during initialization
         """
         self.logger = get_module_logger("labeling_manager")
         self.base_dir = base_dir
-        self.images_dir = os.path.join(base_dir, 'images')
+        self.detections_dir = os.path.join(base_dir, 'Detections')
         self.cameras_params = cameras_params or []
         
         # Create base directory if it doesn't exist
-        os.makedirs(self.images_dir, exist_ok=True)
+        os.makedirs(self.detections_dir, exist_ok=True)
         
         # Current date for file naming
         self.current_date = datetime.date.today()
-        self.date_str = self.current_date.strftime('%Y_%m_%d')
+        self.date_str = self.current_date.strftime('%Y-%m-%d')
         
         # Create date-specific directory
-        self.current_day_dir = os.path.join(self.images_dir, self.date_str)
-        os.makedirs(self.current_day_dir, exist_ok=True)
+        self.current_day_dir = os.path.join(self.detections_dir, self.date_str)
+        metadata_dir = os.path.join(self.current_day_dir, 'Metadata')
+        os.makedirs(metadata_dir, exist_ok=True)
         
-        # File paths - now in the same directory as images
-        self.found_labels_file = os.path.join(self.current_day_dir, 'objects_found.json')
-        self.lost_labels_file = os.path.join(self.current_day_dir, 'objects_lost.json')
+        # File paths - in Metadata subdirectory
+        self.found_labels_file = os.path.join(metadata_dir, 'objects_found.json')
+        self.lost_labels_file = os.path.join(metadata_dir, 'objects_lost.json')
         
         # File locks to prevent simultaneous read/write access
         self.found_file_lock = Lock()
@@ -68,8 +71,14 @@ class LabelingManager:
         self.running = True
         self.buffer_lock = Lock()
         
-        # Pre-load existing data into buffers to avoid clearing files
-        self._preload_existing_data()
+        # Pre-load existing data into buffers to avoid clearing files (optional)
+        # This can be disabled to avoid hangs during initialization
+        if preload_data:
+            try:
+                self._preload_existing_data()
+            except Exception as e:
+                self.logger.warning(f"Warning: Failed to pre-load existing data: {e}")
+                self.logger.info("Continuing with fresh start")
         
         # Start background save thread
         self.save_thread = Thread(target=self._save_worker, daemon=True)
@@ -104,37 +113,104 @@ class LabelingManager:
             }
             self._save_json(self.lost_labels_file, lost_data, self.lost_file_lock)
     
-    def _load_json(self, file_path: str, file_lock: Lock = None) -> Dict[str, Any]:
-        """Load JSON file safely with optional file locking."""
+    def _load_json(self, file_path: str, file_lock: Lock = None, timeout: float = 5.0) -> Dict[str, Any]:
+        """
+        Load JSON file safely with optional file locking and timeout.
+        
+        Args:
+            file_path: Path to JSON file
+            file_lock: Optional lock for thread-safe access
+            timeout: Maximum time to wait for file read (default: 5 seconds)
+        
+        Returns:
+            Dictionary with loaded data or default structure if file doesn't exist or is corrupted
+        """
         if file_lock:
-            file_lock.acquire()
+            # Try to acquire lock with timeout to prevent deadlocks
+            lock_acquired = False
             try:
-                return self._load_json_internal(file_path)
-            finally:
-                file_lock.release()
-        else:
-            return self._load_json_internal(file_path)
-    
-    def _load_json_internal(self, file_path: str) -> Dict[str, Any]:
-        """Internal JSON loading method."""
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                # Ensure the data has the required structure
-                if not isinstance(data, dict):
-                    data = {}
-                if "metadata" not in data:
-                    data["metadata"] = {
-                        "version": "1.0",
-                        "created": datetime.datetime.now().isoformat(),
-                        "description": "Object detection labels",
-                        "total_objects": 0
+                # Try to acquire lock with timeout (Python 3.2+)
+                # For older Python versions, use blocking acquire
+                try:
+                    lock_acquired = file_lock.acquire(timeout=min(timeout, 1.0))  # Max 1 second for lock
+                except TypeError:
+                    # Python < 3.2 doesn't support timeout, use blocking acquire
+                    file_lock.acquire()
+                    lock_acquired = True
+                
+                if lock_acquired:
+                    return self._load_json_internal(file_path, timeout=timeout)
+                else:
+                    self.logger.warning(f"Could not acquire lock for {file_path} within timeout")
+                    # Return default structure if lock cannot be acquired
+                    return {
+                        "metadata": {
+                            "version": "1.0",
+                            "created": datetime.datetime.now().isoformat(),
+                            "description": "Object detection labels",
+                            "total_objects": 0
+                        },
+                        "objects": []
                     }
-                if "objects" not in data:
-                    data["objects"] = []
-                return data
-        except (FileNotFoundError, json.JSONDecodeError):
-            # Return default structure if file doesn't exist or is corrupted
+            finally:
+                if lock_acquired:
+                    file_lock.release()
+        else:
+            return self._load_json_internal(file_path, timeout=timeout)
+    
+    def _load_json_internal(self, file_path: str, timeout: float = 5.0) -> Dict[str, Any]:
+        """
+        Internal JSON loading method with timeout to prevent hangs.
+        
+        Args:
+            file_path: Path to JSON file
+            timeout: Maximum time to wait for file read (default: 5 seconds)
+        
+        Returns:
+            Dictionary with loaded data or default structure if file doesn't exist or is corrupted
+        """
+        try:
+            # Use threading with timeout for file operations to prevent hangs
+            # signal.SIGALRM only works in main thread, so we use threading for all cases
+            import threading
+            result = [None]
+            exception = [None]
+            
+            def read_file():
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        result[0] = json.load(f)
+                except Exception as e:
+                    exception[0] = e
+            
+            thread = threading.Thread(target=read_file, daemon=True)
+            thread.start()
+            thread.join(timeout=timeout)
+            
+            if exception[0]:
+                raise exception[0]
+            if result[0] is None:
+                raise TimeoutError(f"File read timeout: {file_path}")
+            
+            data = result[0]
+            
+            # Ensure the data has the required structure
+            if not isinstance(data, dict):
+                data = {}
+            if "metadata" not in data:
+                data["metadata"] = {
+                    "version": "1.0",
+                    "created": datetime.datetime.now().isoformat(),
+                    "description": "Object detection labels",
+                    "total_objects": 0
+                }
+            if "objects" not in data:
+                data["objects"] = []
+            return data
+        except (FileNotFoundError, json.JSONDecodeError, TimeoutError) as e:
+            # Return default structure if file doesn't exist, is corrupted, or read timed out
+            if isinstance(e, TimeoutError):
+                self.logger.warning(f"File read timeout for {file_path}: {e}")
             return {
                 "metadata": {
                     "version": "1.0",
@@ -159,6 +235,11 @@ class LabelingManager:
     def _save_json_internal(self, file_path: str, data: Dict[str, Any]):
         """Internal JSON saving method."""
         try:
+            # Create directory if it doesn't exist
+            file_dir = os.path.dirname(file_path)
+            if file_dir and not os.path.exists(file_dir):
+                os.makedirs(file_dir, exist_ok=True)
+            
             # Create temporary file first
             temp_file = f"{file_path}.tmp"
             with open(temp_file, 'w', encoding='utf-8') as f:
@@ -568,35 +649,60 @@ class LabelingManager:
         if self.save_thread.is_alive():
             self.save_thread.join(timeout=5)
     
-    def _preload_existing_data(self):
-        """Pre-load existing data from JSON files to avoid clearing them on startup."""
+    def _preload_existing_data(self, timeout: float = 5.0):
+        """
+        Pre-load existing data from JSON files to avoid clearing them on startup.
+        Uses timeouts to prevent hangs during file operations.
+        
+        Args:
+            timeout: Maximum time to wait for file operations (default: 5 seconds)
+        
+        Returns:
+            Maximum object_id found, or 0 if no objects exist or operation timed out
+        """
         try:
             self.logger.info(f"Pre-loading existing data from {self.date_str}...")
             
-            # Check and repair JSON files if needed
-            self._check_and_repair_json_files()
+            # Check and repair JSON files if needed (with timeout)
+            try:
+                self._check_and_repair_json_files(timeout=timeout)
+            except Exception as e:
+                self.logger.warning(f"Warning: Error checking/repairing JSON files: {e}")
+                # Continue anyway
             
-            # Load found objects with file lock
-            found_data = self._load_json(self.found_labels_file, self.found_file_lock)
-            existing_found = found_data.get("objects", [])
-            if existing_found:
-                self.logger.info(f"Found {len(existing_found)} existing found objects")
-                # Don't add to buffer, just ensure file is preserved
+            # Load found objects with file lock (with timeout)
+            existing_found = []
+            try:
+                found_data = self._load_json(self.found_labels_file, self.found_file_lock)
+                existing_found = found_data.get("objects", [])
+                if existing_found:
+                    self.logger.info(f"Found {len(existing_found)} existing found objects")
+            except (Exception, TimeoutError) as e:
+                self.logger.warning(f"Warning: Error loading found objects: {e}")
+                existing_found = []
             
-            # Load lost objects with file lock
-            lost_data = self._load_json(self.lost_labels_file, self.lost_file_lock)
-            existing_lost = lost_data.get("objects", [])
-            if existing_lost:
-                self.logger.info(f"Found {len(existing_lost)} existing lost objects")
-                # Don't add to buffer, just ensure file is preserved
+            # Load lost objects with file lock (with timeout)
+            existing_lost = []
+            try:
+                lost_data = self._load_json(self.lost_labels_file, self.lost_file_lock)
+                existing_lost = lost_data.get("objects", [])
+                if existing_lost:
+                    self.logger.info(f"Found {len(existing_lost)} existing lost objects")
+            except (Exception, TimeoutError) as e:
+                self.logger.warning(f"Warning: Error loading lost objects: {e}")
+                existing_lost = []
             
             total_existing = len(existing_found) + len(existing_lost)
             if total_existing > 0:
                 self.logger.info(f"Successfully pre-loaded {total_existing} existing objects")
                 
                 # Return the maximum object_id found for counter initialization
-                max_object_id = self._get_max_object_id(existing_found, existing_lost)
-                return max_object_id
+                try:
+                    max_object_id = self._get_max_object_id(existing_found, existing_lost)
+                    return max_object_id
+                except Exception as e:
+                    self.logger.warning(f"Warning: Error getting max object_id: {e}")
+                    return 0
             else:
                 self.logger.info(f"No existing objects found, starting fresh")
                 return 0
@@ -641,30 +747,47 @@ class LabelingManager:
         
         return max_id
     
-    def _check_and_repair_json_files(self):
-        """Check and repair corrupted JSON files."""
+    def _check_and_repair_json_files(self, timeout: float = 5.0):
+        """
+        Check and repair corrupted JSON files with timeout to prevent hangs.
+        
+        Args:
+            timeout: Maximum time to wait for file operations (default: 5 seconds)
+        """
         try:
-            # Check found objects file
+            # Check found objects file with timeout
             if os.path.exists(self.found_labels_file):
                 try:
-                    with open(self.found_labels_file, 'r', encoding='utf-8') as f:
-                        json.load(f)
+                    # Use _load_json_internal which has timeout protection
+                    self._load_json_internal(self.found_labels_file, timeout=timeout)
                     self.logger.info(f"Found objects file is valid")
-                except json.JSONDecodeError as e:
-                    self.logger.warning(f"Found objects file is corrupted: {e}")
+                except (json.JSONDecodeError, TimeoutError) as e:
+                    if isinstance(e, TimeoutError):
+                        self.logger.warning(f"Found objects file read timeout: {e}")
+                    else:
+                        self.logger.warning(f"Found objects file is corrupted: {e}")
                     self.logger.info(f"Attempting recovery...")
-                    self._repair_json_file(self.found_labels_file, "found")
+                    try:
+                        self._repair_json_file(self.found_labels_file, "found")
+                    except Exception as repair_e:
+                        self.logger.warning(f"Failed to repair found objects file: {repair_e}")
             
-            # Check lost objects file
+            # Check lost objects file with timeout
             if os.path.exists(self.lost_labels_file):
                 try:
-                    with open(self.lost_labels_file, 'r', encoding='utf-8') as f:
-                        json.load(f)
+                    # Use _load_json_internal which has timeout protection
+                    self._load_json_internal(self.lost_labels_file, timeout=timeout)
                     self.logger.info(f"Lost objects file is valid")
-                except json.JSONDecodeError as e:
-                    self.logger.warning(f"Lost objects file is corrupted: {e}")
+                except (json.JSONDecodeError, TimeoutError) as e:
+                    if isinstance(e, TimeoutError):
+                        self.logger.warning(f"Lost objects file read timeout: {e}")
+                    else:
+                        self.logger.warning(f"Lost objects file is corrupted: {e}")
                     self.logger.info(f"Attempting recovery...")
-                    self._repair_json_file(self.lost_labels_file, "lost")
+                    try:
+                        self._repair_json_file(self.lost_labels_file, "lost")
+                    except Exception as repair_e:
+                        self.logger.warning(f"Failed to repair lost objects file: {repair_e}")
                     
         except Exception as e:
             self.logger.warning(f"Warning: Error checking JSON files: {e}")

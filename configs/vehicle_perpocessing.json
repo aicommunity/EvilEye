@@ -526,6 +526,12 @@
             "teddy bear",
             "hair drier",
             "toothbrush"
-        ]
+        ],
+        "scheduled_restart": {
+            "enabled": false,
+            "mode": "daily_time",
+            "time": "01:00",
+            "interval_minutes": 0
+        }
     }
 }

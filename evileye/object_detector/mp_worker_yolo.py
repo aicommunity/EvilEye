@@ -19,7 +19,13 @@ class MpWorkerYolo(MpWorker):
 
     def init_worker(self):
         self.model = YOLO(self.model_name)
-        self.model.fuse()  # Fuse Conv+BN layers
+        # Try to fuse Conv+BN layers (optimization, not required)
+        try:
+            self.model.fuse()  # Fuse Conv+BN layers
+        except Exception as e:
+            # Fuse may fail with mixed precision models, continue without it
+            # Note: logger may not be available in multiprocessing context
+            pass
         if self.inf_params.get('half', True):
             self.model.half()
 

@@ -320,18 +320,37 @@ class GMC:
         # Find the keypoints
         keypoints = cv2.goodFeaturesToTrack(frame, mask=None, **self.feature_params)
 
+        # Normalize None to empty array for uniform handling
+        if keypoints is None:
+            keypoints = np.array([])
+        
+        # Check if keypoints are valid (not empty)
+        has_valid_keypoints = len(keypoints) > 0
+
         # Handle first frame
         if not self.initializedFirstFrame:
-            self.prevFrame = frame.copy()
-            self.prevKeyPoints = copy.copy(keypoints)
-            self.initializedFirstFrame = True
+            if has_valid_keypoints:
+                self.prevFrame = frame.copy()
+                self.prevKeyPoints = copy.copy(keypoints)
+                self.initializedFirstFrame = True
+            else:
+                # Don't initialize if no keypoints found, will retry on next iteration
+                self.logger.debug("No keypoints found on first frame, skipping initialization")
             return H
 
         # Find correspondences
+        # Check if prevKeyPoints is valid
         if self.prevKeyPoints is not None and len(self.prevKeyPoints) > 0:
             matchedKeypoints, status, _ = cv2.calcOpticalFlowPyrLK(self.prevFrame, frame, self.prevKeyPoints, None)
         else:
-            self.logger.error(f"Correspondences search faild: self.prevKeyPoint={self.prevKeyPoints}")
+            # Invalid prevKeyPoints detected - reset state to allow recovery on next iteration
+            self.logger.warning(f"Invalid prevKeyPoints detected (None or empty), resetting state for recovery. prevKeyPoints={self.prevKeyPoints}")
+            self.initializedFirstFrame = False
+            # Try to initialize with current frame if it has valid keypoints
+            if has_valid_keypoints:
+                self.prevFrame = frame.copy()
+                self.prevKeyPoints = copy.copy(keypoints)
+                self.initializedFirstFrame = True
             return H
 
         # Leave good correspondences only
@@ -356,8 +375,13 @@ class GMC:
         else:
             LOGGER.warning("WARNING: not enough matching points")
 
+        # Update state only if current keypoints are valid
+        # This prevents saving invalid state that would cause errors on next iteration
         self.prevFrame = frame.copy()
-        self.prevKeyPoints = copy.copy(keypoints)
+        if has_valid_keypoints:
+            self.prevKeyPoints = copy.copy(keypoints)
+        # If keypoints are invalid, keep previous valid state (if it exists)
+        # This allows system to recover when valid keypoints appear again
 
         return H
 

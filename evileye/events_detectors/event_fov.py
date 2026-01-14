@@ -9,6 +9,9 @@ class FieldOfViewEvent(Event):
         self.time_obj_detected = obj.time_detected
         self.time_lost = obj.time_lost
         self.long_term = True
+        # Video paths
+        self.video_path = None
+        self.video_path_lost = None
 
     def __str__(self):
         return f'Id: {self.event_id}, Source: {self.source_id}, Obj_id: {self.object_id}, Time: {self.time_obj_detected}'
@@ -18,6 +21,7 @@ class FieldOfViewEvent(Event):
 
     def update_on_finished(self, finished_event):
         self.time_lost = finished_event.time_lost
+        self.video_path_lost = getattr(finished_event, 'video_path_lost', None)
 
     def get_time_finished(self):
         return self.time_lost

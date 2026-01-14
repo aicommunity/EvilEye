@@ -1,0 +1,65 @@
+{
+    "pipeline": {
+        "pipeline_class": "PipelineSurveillance",
+        "sources": [
+            {
+                "camera": "videos/sample_video.mp4",
+                "source": "VideoFile",
+                "split": false,
+                "num_split": 0,
+                "src_coords": [
+                    0
+                ],
+                "source_ids": [
+                    0
+                ],
+                "source_names": [
+                    "Cam1"
+                ]
+            }
+        ],
+        "detectors": [
+            {
+                "model": "models/yolo11n.pt",
+                "classes": [
+                    0
+                ],
+                "source_ids": [
+                    0
+                ],
+                "roi": [
+                    []
+                ],
+                "vid_stride": 1,
+                "num_detection_threads": 1
+            }
+        ]
+    },
+    "controller": {
+        "fps": 30,
+        "enable_close_from_gui": true,
+        "class_names": [
+            "person"
+        ],
+        "scheduled_restart": {
+            "enabled": false,
+            "mode": "daily_time",
+            "time": "01:00",
+            "interval_minutes": 0
+        }
+    },
+    "visualizer": {
+        "num_width": 1,
+        "num_height": 1,
+        "visual_buffer_num_frames": 10,
+        "source_ids": [
+            0
+        ],
+        "fps": [
+            5
+        ],
+        "gui_enabled": false,
+        "show_debug_info": true,
+        "objects_journal_enabled": false
+    }
+}

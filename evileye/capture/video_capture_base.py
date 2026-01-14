@@ -8,6 +8,8 @@ from urllib.parse import urlparse
 from threading import Lock
 from collections import deque
 from ..core.base_class import EvilEyeBase
+from ..video_recorder.recording_params import RecordingParams
+from ..video_recorder.recorder_manager import RecorderManager
 from ..core.frame import CaptureImage, Frame
 
 
@@ -48,6 +50,10 @@ class VideoCaptureBase(EvilEyeBase):
         self.reconnects = []
         self.subscribers = []
 
+        # Recording
+        self.recording_params: RecordingParams | None = None
+        self.recorder_manager: RecorderManager | None = None
+
         self.capture_thread = None
         self.grab_thread = None
         self.retrieve_thread = None
@@ -71,8 +77,8 @@ class VideoCaptureBase(EvilEyeBase):
         return captured_images
 
     def start(self):
-        if not self.is_inited:
-            return
+        # Always start threads, even if not initialized - reconnect logic will handle it
+        # This allows reconnect logic to work from the start
         self.run_flag = True
         # self.capture_thread = threading.Thread(target=self._capture_frames)
         # self.capture_thread.start()
@@ -80,9 +86,73 @@ class VideoCaptureBase(EvilEyeBase):
         self.retrieve_thread = threading.Thread(target=self._retrieve_frames)
         self.grab_thread.start()
         self.retrieve_thread.start()
+        # Start recording if configured
+        # For GStreamer backend, recording is integrated into capture pipeline via tee
+        # For OpenCV backend, use separate recorder
+        try:
+            continuous_enabled = (self.recording_params and 
+                                  (self.recording_params.continuous_recording_enabled or 
+                                   (self.recording_params.enabled and not self.recording_params.event_recording_enabled)))
+            self.logger.debug(f"Checking recording: params={self.recording_params is not None}, continuous_enabled={continuous_enabled}")
+            if continuous_enabled:
+                # Check if recording is integrated in pipeline (GStreamer) or separate (OpenCV)
+                is_gstreamer = 'gstreamer' in self.__class__.__name__.lower()
+                if is_gstreamer:
+                    # GStreamer: recording is integrated in capture pipeline via tee
+                    self.logger.info(f"Recording integrated in GStreamer capture pipeline for {self.source_names}")
+                else:
+                    # OpenCV: use separate recorder
+                    backend = "opencv"
+                    from ..video_recorder.recorder_base import SourceMeta
+                    meta = SourceMeta(
+                        source_name=(self.source_names[0] if self.source_names else "source"),
+                        source_address=self.source_address,
+                        source_type=str(self.source_type.value) if hasattr(self.source_type, 'value') else str(self.source_type),
+                        width=None,
+                        height=None,
+                        fps=self.source_fps,
+                        username=getattr(self, 'username', None),
+                        password=getattr(self, 'password', None),
+                        source_names=getattr(self, 'source_names', None),
+                        source_ids=getattr(self, 'source_ids', None),
+                    )
+                    try:
+                        # Sanitize credentials in URL for logs
+                        url = str(meta.source_address)
+                        try:
+                            import re
+                            # Mask rtsp://user:pass@host → rtsp://****:****@host
+                            url = re.sub(r"rtsp:\/\/[^:@\/]+:[^@]+@", "rtsp://****:****@", url)
+                            # Mask rtsp://user@host → rtsp://****@host
+                            url = re.sub(r"rtsp:\/\/[^:@\/]+@", "rtsp://****@", url)
+                        except Exception:
+                            pass
+                        self.logger.info(f"Starting recording: backend={backend} name={meta.source_name} url={url} out_dir={getattr(self.recording_params,'out_dir',None)}")
+                    except Exception as e:
+                        self.logger.error(f"Error logging recording start: {e}")
+                    try:
+                        self.recorder_manager = self.recorder_manager or RecorderManager()
+                        self.recorder_manager.configure(self.recording_params)
+                        self.recorder_manager.start(backend, meta)
+                        self.logger.info(f"Recording started successfully for {meta.source_name}")
+                    except Exception as e:
+                        self.logger.error(f"Failed to start recording for {meta.source_name}: {e}", exc_info=True)
+            else:
+                continuous_enabled = (self.recording_params and 
+                                      (self.recording_params.continuous_recording_enabled or 
+                                       (self.recording_params.enabled and not self.recording_params.event_recording_enabled)))
+                self.logger.debug(f"Recording not enabled or params missing: params={self.recording_params is not None}, continuous_enabled={continuous_enabled}")
+        except Exception as e:
+            self.logger.error(f"Error starting recording: {e}", exc_info=True)
 
     def stop(self):
         self.run_flag = False
+        # Stop recording if running
+        try:
+            if self.recorder_manager:
+                self.recorder_manager.stop()
+        except Exception:
+            pass
         # if self.capture_thread:
         #     self.capture_thread.join()
         #     self.capture_thread = None
@@ -124,6 +194,13 @@ class VideoCaptureBase(EvilEyeBase):
             self.username = None
             self.password = None
             self.pure_url = None
+        # Recording params
+        try:
+            rec_cfg = self.params.get('record', None)
+            if isinstance(rec_cfg, dict):
+                self.recording_params = RecordingParams.from_config({'record': rec_cfg})
+        except Exception:
+            self.recording_params = None
 
     def get_params_impl(self):
         params = dict()
@@ -136,6 +213,14 @@ class VideoCaptureBase(EvilEyeBase):
         params['loop_play'] = self.loop_play
         params['source'] = self.source_type.name
         params['camera'] = self.source_address
+        # CRITICAL: Save 'type' field to preserve VideoCaptureGStreamer vs VideoCaptureOpencv
+        # Use class name from registry if available, otherwise use __class__.__name__
+        # Prefer saved type from params if it was explicitly set
+        if hasattr(self, 'params') and self.params and 'type' in self.params:
+            params['type'] = self.params['type']
+        else:
+            # Use class name - this is the registered name in EvilEyeBase._registry
+            params['type'] = self.__class__.__name__
         return params
 
     def get_disconnects_info(self) -> list[tuple[str, datetime.datetime, bool]]:

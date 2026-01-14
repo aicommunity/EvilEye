@@ -4,6 +4,8 @@ import sys
 import os
 from pathlib import Path
 import onnxruntime as ort
+import atexit
+import signal
 
 try:
     from PyQt6 import QtCore
@@ -33,85 +35,26 @@ def create_args_parser():
                       help="Automatic close application when video ends")
     pars.add_argument('--sources_preset', nargs='?', const="", type=str,
                       help="Use preset for multiple video sources")
+    # Recording is configured only via config file; no CLI overrides
+    pars.add_argument('--log-level', type=str, default="INFO",
+                      help="Log level: DEBUG, INFO, WARNING, ERROR")
 
     result = pars.parse_args()
     return result
 
 
-def run_pipeline(config_path: str, gui: bool = True, autoclose: bool = False) -> int:
-    """Run EvilEye pipeline using provided configuration.
 
-    Returns Qt application exit code.
-    """
-    logger = get_module_logger("process")
 
-    # Change working directory to the parent directory of configs folder
-    config_file_name = normalize_config_path(config_path)
-    config_dir = os.path.dirname(os.path.abspath(config_file_name))
-    if config_dir:
-        if os.path.basename(config_dir) == 'configs':
-            parent_dir = os.path.dirname(config_dir)
-            os.chdir(parent_dir)
-            logger.info(f"Changed working directory to parent of configs folder: {parent_dir}")
-        else:
-            os.chdir(config_dir)
-            logger.info(f"Changed working directory to: {config_dir}")
-
-    with open(config_file_name) as config_file:
-        config_data = json.load(config_file)
-
-    logger.info("Configuration loaded successfully")
-
-    if not "controller" in config_data.keys():
-        config_data["controller"] = dict()
-    if not gui:
-        config_data["controller"]["gui_enabled"] = False
-        config_data["controller"]["show_main_gui"] = False
-        logger.info("GUI disabled")
-    else:
-        config_data["controller"]["gui_enabled"] = True
-        logger.info("GUI enabled")
-
-    if autoclose:
-        sources = config_data.get("pipeline", {}).get("sources", [])
-        for source in sources:
-            source["loop_play"] = False
-        config_data["autoclose"] = True
-        logger.info("Auto-close enabled")
-
-    logger.info("Initializing PyQt application")
-    qt_app = QApplication.instance() or QApplication(sys.argv)
-
-    logger.info("Creating controller")
-    controller_instance = controller.Controller()
-    controller_instance.init(config_data)
-
-    logger.info("Creating main window")
-    a = MainWindow(controller_instance, config_file_name, config_data, 1600, 720)
-    controller_instance.init_main_window(a, a.slots, a.signals)
-    if controller_instance.show_main_gui:
-        a.show()
-        logger.info("Main window displayed")
-
-    if controller_instance.show_journal:
-        a.open_journal()
-        logger.info("Journal opened")
-
-    logger.info("Starting controller")
-    controller_instance.start()
-
-    logger.info("Starting main application loop")
-    ret = qt_app.exec()
-    logger.info(f"Application finished with code: {ret}")
-    return ret
+def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> int:
+    from evileye.run_config_helper import run_config as _run
+    return _run(config_path=config_path, gui=gui, autoclose=autoclose)
 
 
 def main():
     """Main entry point for the EvilEye process application"""
-    # Инициализация логирования
-    logger = setup_evileye_logging(log_level="INFO", log_to_console=True, log_to_file=True)
-
     args = create_args_parser()
+    # Инициализация логирования после парсинга аргументов
+    logger = setup_evileye_logging(log_level=args.log_level.upper(), log_to_console=True, log_to_file=True)
 
     logger.info(f"Starting system with CLI arguments: {args}")
     log_system_info(logger)
@@ -120,7 +63,7 @@ def main():
         logger.error("Configuration file not specified")
         sys.exit(1)
 
-    ret = run_pipeline(args.config, gui=args.gui, autoclose=args.autoclose)
+    ret = run_config(args.config, gui=args.gui, autoclose=args.autoclose)
     sys.exit(ret)
 
 

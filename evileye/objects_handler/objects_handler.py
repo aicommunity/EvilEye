@@ -394,6 +394,8 @@ class ObjectsHandler(EvilEyeBase):
                 track_object.class_id = track.class_id
                 track_object.track = track
                 track_object.time_stamp = tracking_results.time_stamp
+                # Store reference to image instead of copying to save memory
+                # The image will be used for saving, then cleared when object is lost
                 track_object.last_image = image
                 track_object.cur_video_pos = image.current_video_position
                 track_object.history.append(track_object.get_current_history_element())
@@ -410,6 +412,8 @@ class ObjectsHandler(EvilEyeBase):
                 obj.frame_id = tracking_results.frame_id
                 obj.object_id = self.object_id_counter
                 obj.global_id = track.tracking_data.get('global_id', None)
+                # Store reference to image instead of copying to save memory
+                # The image will be used for saving, then cleared when object is lost
                 obj.last_image = image
                 obj.cur_video_pos = image.current_video_position
                 self.object_id_counter += 1
@@ -508,6 +512,9 @@ class ObjectsHandler(EvilEyeBase):
                     except Exception as e:
                         self.logger.error(f"Labeling data saving error for lost object: {e}")
                     
+                    # Clear last_image to free memory when object is moved to lost
+                    # The image has already been saved, so we don't need to keep it in memory
+                    active_obj.last_image = None
                     self.lost_objs.objects.append(active_obj)
                 else:
                     filtered_active_objects.append(active_obj)
@@ -521,11 +528,20 @@ class ObjectsHandler(EvilEyeBase):
                 start_index_for_remove = i
                 break
         if start_index_for_remove is not None:
+            # Clear last_image for objects being removed to free memory
+            for obj in self.lost_objs.objects[:start_index_for_remove]:
+                obj.last_image = None
             self.lost_objs.objects = self.lost_objs.objects[start_index_for_remove:]
 
         if len(self.active_objs.objects) > self.max_active_objects:
+            # Clear last_image for objects being removed to free memory
+            for obj in self.active_objs.objects[:-self.max_active_objects]:
+                obj.last_image = None
             self.active_objs.objects = self.active_objs.objects[-self.max_active_objects:]
         if len(self.lost_objs.objects) > self.max_lost_objects:
+            # Clear last_image for objects being removed to free memory
+            for obj in self.lost_objs.objects[:-self.max_lost_objects]:
+                obj.last_image = None
             self.lost_objs.objects = self.lost_objs.objects[-self.max_lost_objects:]
 
     def _prepare_for_saving(self, obj: ObjectResult, image_width, image_height) -> tuple[list, list, str, str]:
@@ -633,25 +649,35 @@ class ObjectsHandler(EvilEyeBase):
             save_dir = self.db_params['image_dir']
         else:
             save_dir = 'EvilEyeData'  # Default directory
-        img_dir = os.path.join(save_dir, 'images')
+        detections_dir = os.path.join(save_dir, 'Detections')
         cur_date = datetime.date.today()
-        cur_date_str = cur_date.strftime('%Y_%m_%d')
+        cur_date_str = cur_date.strftime('%Y-%m-%d')
 
-        current_day_path = os.path.join(img_dir, cur_date_str)
-        # Unified folders for objects: found_*/lost_* (frames/previews)
+        current_day_path = os.path.join(detections_dir, cur_date_str)
+        images_dir = os.path.join(current_day_path, 'Images')
+        # New folders for objects: FoundFrames/FoundPreviews/LostFrames/LostPreviews
         if obj_event_type == 'detected':
-            tag = 'found'
+            if image_type == 'preview':
+                subdir = 'FoundPreviews'
+            else:
+                subdir = 'FoundFrames'
         elif obj_event_type == 'lost':
-            tag = 'lost'
+            if image_type == 'preview':
+                subdir = 'LostPreviews'
+            else:
+                subdir = 'LostFrames'
         else:
-            tag = obj_event_type  # fallback, should not happen
-        subdir = f"{tag}_{'previews' if image_type == 'preview' else 'frames'}"
-        obj_type_path = os.path.join(current_day_path, subdir)
+            # Fallback for other types
+            tag = obj_event_type
+            subdir = f"{tag}{'Previews' if image_type == 'preview' else 'Frames'}"
+        obj_type_path = os.path.join(images_dir, subdir)
         # obj_event_path = os.path.join(current_day_path, obj_event_type)
-        if not os.path.exists(img_dir):
-            os.makedirs(img_dir, exist_ok=True)
+        if not os.path.exists(detections_dir):
+            os.makedirs(detections_dir, exist_ok=True)
         if not os.path.exists(current_day_path):
             os.makedirs(current_day_path, exist_ok=True)
+        if not os.path.exists(images_dir):
+            os.makedirs(images_dir, exist_ok=True)
         if not os.path.exists(obj_type_path):
             os.makedirs(obj_type_path, exist_ok=True)
         # if not os.path.exists(obj_event_path):
@@ -666,9 +692,9 @@ class ObjectsHandler(EvilEyeBase):
                 break
         
         if obj_event_type == 'detected':
-            timestamp = obj.time_stamp.strftime('%Y_%m_%d_%H_%M_%S.%f')
+            timestamp = obj.time_stamp.strftime('%Y-%m-%d_%H-%M-%S.%f')
             img_path = os.path.join(obj_type_path, f'{timestamp}_{source_name}_{image_type}.jpeg')
         elif obj_event_type == 'lost':
-            timestamp = obj.time_lost.strftime('%Y_%m_%d_%H_%M_%S_%f')
+            timestamp = obj.time_lost.strftime('%Y-%m-%d_%H-%M-%S-%f')
             img_path = os.path.join(obj_type_path, f'{timestamp}_{source_name}_{image_type}.jpeg')
         return os.path.relpath(img_path, save_dir)

@@ -170,6 +170,32 @@ EvilEye uses JSON configuration files for the **PipelineSurveillance** class. Th
 }
 ```
 
+### Scheduled Restart Configuration
+
+Для управления плановым перезапуском при запуске через `evileye run` можно использовать секцию `controller.scheduled_restart`:
+
+```json
+"controller": {
+  "fps": 30,
+  "show_main_gui": true,
+  "scheduled_restart": {
+    "enabled": false,
+    "mode": "daily_time",
+    "time": "01:00",
+    "interval_minutes": 0
+  }
+}
+```
+
+- **enabled**: включает/выключает автоматический перезапуск (по умолчанию `false`).
+- **mode**: режим работы планировщика:
+  - `"daily_time"` — перезапуск один раз в сутки в заданное время `time`.
+  - `"interval"` — перезапуск через каждые `interval_minutes` минут после завершения предыдущего запуска (удобно для тестирования, например 5 минут).
+- **time**: время суточного перезапуска в формате `HH:MM` (по умолчанию `"01:00"`).
+- **interval_minutes**: интервал в минутах для режима `"interval"`.
+
+Плановый перезапуск действует только при запуске через CLI `evileye run` и не влияет на прямой запуск `evileye-process`/`process.py`.
+
 ### Sources Configuration
 
 The `sources` section defines video input sources. Each source can be configured with different types and splitting options.
@@ -542,7 +568,7 @@ EvilEye provides several command-line entry points for different operations:
 | `evileye-process` | Direct process launcher with GUI | `evileye-process [OPTIONS]` |
 | `evileye-configure` | Configuration editor GUI | `evileye-configure [CONFIG_FILE]` |
 | `evileye-launch` | Main application launcher GUI | `evileye-launch [CONFIG_FILE]` |
-| `evileye create` | Configuration file creator | `evileye create [NAME] [OPTIONS]` |
+| `evileye-srv` | FastAPI web server launcher | `evileye-srv [OPTIONS]` |
 
 ### Main CLI Commands (`evileye`)
 
@@ -560,6 +586,9 @@ evileye create my_config --sources 2 --source-type video_file
 
 # Run with configuration
 evileye run configs/my_config.json
+
+# Start FastAPI web server
+evileye server --host 0.0.0.0 --port 8080
 
 # Validate configuration file
 evileye validate configs/my_config.json
@@ -635,6 +664,47 @@ evileye-launch configs/my_config.json
 - Real-time status monitoring
 - Log display and management
 - Tabbed interface for different functions
+
+### Web Server (`evileye server` / `evileye-srv`)
+
+FastAPI web server for remote access and API integration:
+
+```bash
+# Start web server with default settings (127.0.0.1:8080)
+evileye server
+
+# Start on specific host and port
+evileye server --host 0.0.0.0 --port 8000
+
+# Start with auto-run configuration
+evileye server --config poly-videos.json
+
+# Disable auto-reload
+evileye server --no-reload
+
+# Set log level
+evileye server --log-level debug
+```
+
+**Options:**
+- `--host HOST` - Bind host (default: 127.0.0.1)
+- `--port PORT` - Bind port (default: 8080)
+- `--reload` / `--no-reload` - Auto-reload on code changes (default: enabled)
+- `--workers N` - Number of worker processes (default: 1)
+- `--config CONFIG` - Auto-run selected config after server starts
+- `--log-level LEVEL` - Logging level (default: info)
+- `--verbose` - Enable verbose logging
+
+**API Documentation:**
+- Interactive API docs: `http://localhost:8080/docs`
+- ReDoc documentation: `http://localhost:8080/redoc`
+- OpenAPI schema: `http://localhost:8080/openapi.json`
+
+**Alternative entry point:**
+```bash
+# Use evileye-srv as alternative entry point
+evileye-srv --host 0.0.0.0 --port 8080
+```
 
 ### Configuration Creator (`evileye create`)
 
@@ -779,6 +849,9 @@ evileye run configs/automated_config.json
 
 # Use process launcher for headless operation
 evileye-process --config configs/headless_config.json --no-gui
+
+# Use web server for API integration
+evileye server --host 0.0.0.0 --port 8080 --config configs/api_config.json
 ```
 
 ## Development
@@ -859,6 +932,27 @@ class MyCustomPipeline(Pipeline):
 ```
 
 Each pipeline class can define its own configuration structure and processing logic.
+
+## Documentation
+
+Подробная документация находится в папке [docs/](docs/):
+
+- **[Главный индекс документации](docs/README.md)** - Навигация по всей документации
+- **[Установка и настройка](docs/README.md#-установка-и-настройка)** - Руководства по установке и настройке системы
+- **[Архитектура системы](docs/README.md#-архитектура-системы)** - Техническая документация по архитектуре
+- **[Функциональность](docs/README.md#-функциональность)** - Описание основных функций и возможностей
+- **[Руководства пользователя](docs/README.md#-руководства-пользователя)** - Пошаговые инструкции по использованию
+
+### Основные разделы документации
+
+- [Настройка базы данных](docs/DATABASE_SETUP_GUIDE.md) - Подробное руководство по настройке PostgreSQL
+- [Архитектура Pipeline](docs/PIPELINE_REFACTORING_README.md) - Описание архитектуры pipeline
+- [Система детекции атрибутов](docs/ATTRIBUTES_DETECTION_README.md) - Детекция и трекинг атрибутов объектов
+- [Система меток объектов](docs/LABELING_SYSTEM_README.md) - Автоматическое сохранение меток
+- [Использование GStreamer](docs/VideoCaptureGStreamer_Usage.md) - Работа с различными источниками видео
+- [UML диаграммы](docs/UML_DIAGRAMS_README.md) - Диаграммы классов и архитектуры
+
+Исторические отчеты о разработке находятся в папке [reports/](reports/).
 
 ## Contributing
 

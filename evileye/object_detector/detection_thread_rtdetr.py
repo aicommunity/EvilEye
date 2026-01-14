@@ -30,7 +30,12 @@ class DetectionThreadRtdetr(DetectionThreadBase):
     def init_detection_implementation(self):
         if self.model is None:
             self.model = RTDETR(self.model_name)
-            self.model.fuse()  # Fuse Conv+BN layers
+            # Try to fuse Conv+BN layers (optimization, not required)
+            try:
+                self.model.fuse()  # Fuse Conv+BN layers
+            except Exception as e:
+                # Fuse may fail with mixed precision models, continue without it
+                self.logger.debug(f"Model fuse() failed (non-critical): {e}")
             if self.inf_params.get('half', True):
                 self.model.half()
             self.logger.info(f"Model names: {self.model.names}")
