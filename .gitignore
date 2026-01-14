@@ -153,3 +153,8 @@ EvilEyeData*/
 *.mp4
 *.avi
 logs/
+images/
+mixed_images/
+models/
+*.json.backup
+test_install/
