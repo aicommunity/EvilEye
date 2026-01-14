@@ -1,25 +1,35 @@
 {
-  "pipeline": {
-    "sources": [
-      {
-        "source": "IPcam",
-        "camera": "rtsp://10.215.1.252:554/Streaming/Channels/101/",
-        "apiPreference": "CAP_GSTREAMER",
-        "split": false,
-        "num_split": 0,
-        "src_coords": []
-      }
-    ],
-    "mc_trackers": [{
-        "source_ids": [
-          0],
-        "enable": true
-      }
-    ]
-  },
-  "sub_params": {
-    "history": 500,
-    "varThreshold": 16.0,
-    "detectShadows": true
-  }
+    "pipeline": {
+        "sources": [
+            {
+                "source": "IPcam",
+                "camera": "rtsp://10.215.1.252:554/Streaming/Channels/101/",
+                "apiPreference": "CAP_GSTREAMER",
+                "split": false,
+                "num_split": 0,
+                "src_coords": []
+            }
+        ],
+        "mc_trackers": [
+            {
+                "source_ids": [
+                    0
+                ],
+                "enable": true
+            }
+        ]
+    },
+    "sub_params": {
+        "history": 500,
+        "varThreshold": 16.0,
+        "detectShadows": true
+    },
+    "controller": {
+        "scheduled_restart": {
+            "enabled": false,
+            "mode": "daily_time",
+            "time": "01:00",
+            "interval_minutes": 0
+        }
+    }
 }

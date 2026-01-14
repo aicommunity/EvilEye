@@ -1,37 +1,45 @@
 {
-  "preprocessing_sequence": [
-    {
-      "name": "Input",
-      "params": {}
-    },
-    {
-      "name": "Normalize",
-      "params": {
-        "alpha": 0,
-        "beta": 255
-      }
-    },
-    {
-      "name": "Inpaint",
-      "params": {
-        "thresholdMin": 220,
-        "thresholdMax": 255,
-        "inpaintRadius": 0.1
-      }
-    },
-    {
-      "name": "Clahe",
-      "params": {
-        "clipLimit": 2.0,
-        "tileGridSize": [
-          8,
-          8
-        ]
-      }
-    },
-    {
-      "name": "Output",
-      "params": {}
+    "preprocessing_sequence": [
+        {
+            "name": "Input",
+            "params": {}
+        },
+        {
+            "name": "Normalize",
+            "params": {
+                "alpha": 0,
+                "beta": 255
+            }
+        },
+        {
+            "name": "Inpaint",
+            "params": {
+                "thresholdMin": 220,
+                "thresholdMax": 255,
+                "inpaintRadius": 0.1
+            }
+        },
+        {
+            "name": "Clahe",
+            "params": {
+                "clipLimit": 2.0,
+                "tileGridSize": [
+                    8,
+                    8
+                ]
+            }
+        },
+        {
+            "name": "Output",
+            "params": {}
+        }
+    ],
+    "controller": {
+        "scheduled_restart": {
+            "enabled": false,
+            "mode": "daily_time",
+            "time": "01:00",
+            "interval_minutes": 0
+        }
     }
-  ]
 }

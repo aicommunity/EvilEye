@@ -1,11 +1,10 @@
-#opencv-python-headless
-#opencv-contrib-python-headless
+# Основные зависимости для компьютерного зрения и ML
 ultralytics
 psycopg2-binary
 lapx
 albumentations
 scikit-learn
-onnxruntime
+onnxruntime-gpu>=1.15.0
 tqdm
 shapely
 pympler
@@ -13,3 +12,36 @@ PyQt6
 rfdetr>=0.1.0
 supervision>=0.16.0
 
+# OpenCV (критически важен, используется везде)
+opencv-python>=4.8.0
+opencv-contrib-python>=4.8.0
+
+# YAML для конфигураций
+pyyaml>=6.0
+
+# API зависимости (для server.py и api/)
+fastapi>=0.115.0
+uvicorn>=0.30.0
+pydantic>=2.0.0
+
+# CLI зависимости (для cli.py)
+typer>=0.9.0
+rich>=13.0.0
+
+# Системные утилиты
+psutil>=5.9.0
+
+# PyQt5 для совместимости с aarch64 Linux
+PyQt5>=5.15.11
+
+# Примечание: следующие пакеты устанавливаются автоматически как транзитивные зависимости
+# и не требуют явного указания:
+# - numpy (устанавливается с ultralytics, lapx, albumentations, scikit-learn, shapely, rfdetr, supervision)
+# - pillow (устанавливается с ultralytics, supervision)
+# - requests (устанавливается с ultralytics, supervision)
+# - pandas (устанавливается с ultralytics, rfdetr)
+# - matplotlib (устанавливается с ultralytics, rfdetr, supervision)
+# - scipy (устанавливается с ultralytics, albumentations, scikit-learn, rfdetr, supervision)
+# - opencv-python (устанавливается с ultralytics, rfdetr, supervision, но указан явно для контроля версии)
+# - pyyaml (устанавливается с albumentations, rfdetr, supervision, но указан явно для контроля версии)
+# - pydantic (устанавливается с albumentations, rfdetr, но указан явно для контроля версии)

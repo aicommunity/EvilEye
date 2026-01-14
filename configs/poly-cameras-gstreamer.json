@@ -20,8 +20,7 @@
                 "camera": "rtsp://10.245.1.200",
                 "type": "VideoCaptureGStreamer",
                 "apiPreference": "CAP_GSTREAMER",
-                "gstreamer_available": true,
-                "source_fps": 11.448242355426602
+                "gstreamer_available": true
             },
             {
                 "split": true,
@@ -54,8 +53,7 @@
                 "camera": "rtsp://10.245.1.199",
                 "type": "VideoCaptureGStreamer",
                 "apiPreference": "CAP_GSTREAMER",
-                "gstreamer_available": true,
-                "source_fps": 24.620384012585188
+                "gstreamer_available": true
             },
             {
                 "split": true,
@@ -88,8 +86,7 @@
                 "camera": "rtsp://10.245.1.202",
                 "type": "VideoCaptureGStreamer",
                 "apiPreference": "CAP_GSTREAMER",
-                "gstreamer_available": true,
-                "source_fps": 18.555172642615407
+                "gstreamer_available": true
             }
         ],
         "detectors": [
@@ -581,7 +578,13 @@
         "show_memory_usage": false,
         "max_memory_usage_mb": 16384,
         "auto_restart": true,
-        "use_database": true
+        "use_database": true,
+        "scheduled_restart": {
+            "enabled": false,
+            "mode": "daily_time",
+            "time": "01:00",
+            "interval_minutes": 0
+        }
     },
     "database": {}
 }

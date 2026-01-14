@@ -51,19 +51,28 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
 
     logger.info("Configuration loaded successfully")
 
-    if "controller" not in config_data:
-        config_data["controller"] = {}
+    # Ensure controller section exists
+    controller_cfg = config_data.setdefault("controller", {})
+
+    # Scheduled restart defaults (used by CLI-level scheduler and potential future GUI integration)
+    sched_cfg = controller_cfg.setdefault("scheduled_restart", {})
+    sched_cfg.setdefault("enabled", False)
+    sched_cfg.setdefault("mode", "daily_time")          # daily_time | interval
+    sched_cfg.setdefault("time", "01:00")               # HH:MM, local time
+    sched_cfg.setdefault("interval_minutes", 0)         # used for interval mode
     
     # Determine GUI mode from config and CLI arguments
     gui_mode = determine_gui_mode(config_data, cli_gui=gui if gui is not None else None)
     logger.info(f"GUI mode determined: {gui_mode.value}")
 
     if autoclose:
+        # Disable looping for all sources so that video files actually finish
         sources = config_data.get("pipeline", {}).get("sources", [])
         for source in sources:
             source["loop_play"] = False
-        config_data["autoclose"] = True
-        logger.info("Auto-close enabled")
+        # Ensure controller section exists and propagate autoclose flag
+        controller_cfg["autoclose"] = True
+        logger.info("Auto-close enabled (loop_play disabled, controller.autoclose=True)")
 
     # No CLI recording overrides; use only config
 
@@ -176,16 +185,39 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
     
     # Step 4: Start application event loop
     if gui_mode == GUIMode.HEADLESS:
-        logger.info("Headless mode: no event loop needed")
-        # In headless mode, controller runs until sources end
-        # We still need a minimal event loop for signals
+        logger.info("Headless mode: no visible GUI, starting minimal event loop")
+        # In headless mode, controller runs until sources end; we still need a minimal
+        # Qt event loop for timers and signal delivery.
         try:
             import os as _os
             _os.environ.setdefault("QT_NO_GLIB", "1")
         except Exception:
             pass
         qt_app = QApplication.instance() or QApplication(sys.argv)
-        logger.info("Controller started in headless mode, waiting for completion...")
+
+        # Periodically check controller state and quit the event loop when it stops.
+        # This is required so that headless runs with --autoclose (or other stop
+        # conditions) actually terminate and allow the CLI scheduler to start the
+        # next run.
+        if qt_app is not None and controller_instance is not None:
+            def _check_controller_finished():
+                try:
+                    if not controller_instance.is_running():
+                        logger.info("Controller stopped in headless mode, quitting Qt event loop")
+                        qt_app.quit()
+                except Exception as e:
+                    try:
+                        logger.error(f"Error while checking controller state in headless mode: {e}", exc_info=True)
+                    except Exception:
+                        # Avoid cascading failures during shutdown
+                        pass
+
+            timer = QTimer(qt_app)
+            timer.setInterval(1000)  # check every second
+            timer.timeout.connect(_check_controller_finished)
+            timer.start()
+
+        logger.info("Controller started in headless mode, entering Qt event loop...")
         ret = qt_app.exec()
     else:
         logger.info("Starting main application loop")

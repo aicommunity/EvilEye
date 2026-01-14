@@ -1,3 +1,11 @@
 {
-  "additionalProp1": {}
+    "additionalProp1": {},
+    "controller": {
+        "scheduled_restart": {
+            "enabled": false,
+            "mode": "daily_time",
+            "time": "01:00",
+            "interval_minutes": 0
+        }
+    }
 }

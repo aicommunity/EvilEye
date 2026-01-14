@@ -7,15 +7,23 @@
                 "apiPreference": "CAP_FFMPEG",
                 "split": false,
                 "num_split": 0,
-                "src_coords": [0],
-                "source_ids": [0],
-                "source_names": ["Cam1"],
+                "src_coords": [
+                    0
+                ],
+                "source_ids": [
+                    0
+                ],
+                "source_names": [
+                    "Cam1"
+                ],
                 "loop_play": true
             }
         ],
         "detectors": [
             {
-                "source_ids": [0],
+                "source_ids": [
+                    0
+                ],
                 "model": "yolov8n.pt",
                 "show": false,
                 "inference_size": 1280,
@@ -24,9 +32,32 @@
                 "save": false,
                 "stride_type": "frames",
                 "vid_stride": 1,
-                "classes": [0],
+                "classes": [
+                    0
+                ],
                 "num_detection_threads": 3,
-                "roi": [[[1790, 0, 500, 400], [1700, 0, 1000, 1045], [1500, 0, 2340, 2160]]]
+                "roi": [
+                    [
+                        [
+                            1790,
+                            0,
+                            500,
+                            400
+                        ],
+                        [
+                            1700,
+                            0,
+                            1000,
+                            1045
+                        ],
+                        [
+                            1500,
+                            0,
+                            2340,
+                            2160
+                        ]
+                    ]
+                ]
             }
         ],
         "trackers": [
@@ -62,8 +93,12 @@
         "num_width": 1,
         "num_height": 1,
         "visual_buffer_num_frames": 10,
-        "source_ids": [0],
-        "fps": [5],
+        "source_ids": [
+            0
+        ],
+        "fps": [
+            5
+        ],
         "gui_enabled": true,
         "show_debug_info": true,
         "objects_journal_enabled": true
@@ -177,6 +212,12 @@
             "teddy bear",
             "hair drier",
             "toothbrush"
-        ]
+        ],
+        "scheduled_restart": {
+            "enabled": false,
+            "mode": "daily_time",
+            "time": "01:00",
+            "interval_minutes": 0
+        }
     }
 }

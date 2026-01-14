@@ -1,43 +1,65 @@
 {
-  "pipeline": {
-    "sources": [{
+    "pipeline": {
+        "sources": [
+            {
+                "source_ids": [
+                    0
+                ],
+                "source_names": [
+                    "test_video"
+                ],
+                "type": "video_file",
+                "path": "videos/test.mp4"
+            }
+        ],
+        "detectors": [
+            {
+                "source_ids": [
+                    0
+                ],
+                "model": "models/yolov8n.pt",
+                "classes": [
+                    "person",
+                    "car",
+                    "bicycle",
+                    "truck"
+                ],
+                "conf_thresh": 0.5,
+                "num_detection_threads": 1
+            }
+        ],
+        "trackers": [
+            {
+                "source_ids": [
+                    0
+                ],
+                "type": "botsort",
+                "track_thresh": 0.5,
+                "match_thresh": 0.8,
+                "num_tracking_threads": 1
+            }
+        ]
+    },
+    "controller": {
+        "fps": 30,
+        "scheduled_restart": {
+            "enabled": false,
+            "mode": "daily_time",
+            "time": "01:00",
+            "interval_minutes": 0
+        }
+    },
+    "visualizer": {
+        "gui_enabled": true,
+        "num_width": 1,
+        "num_height": 1,
         "source_ids": [
-          0],
-        "source_names": ["test_video"],
-        "type": "video_file",
-        "path": "videos/test.mp4"
-      }
-    ],
-    "detectors": [{
-        "source_ids": [
-          0],
-        "model": "models/yolov8n.pt",
-        "classes": ["person", "car", "bicycle", "truck"],
-        "conf_thresh": 0.5,
-        "num_detection_threads": 1
-      }
-    ],
-    "trackers": [{
-        "source_ids": [
-          0],
-        "type": "botsort",
-        "track_thresh": 0.5,
-        "match_thresh": 0.8,
-        "num_tracking_threads": 1
-      }
-    ]
-  },
-  "controller": {
-    "fps": 30
-  },
-  "visualizer": {
-    "gui_enabled": true,
-    "num_width": 1,
-    "num_height": 1,
-    "source_ids": [0],
-    "fps": [30],
-    "show_debug_info": true,
-    "objects_journal_enabled": true
-  }
+            0
+        ],
+        "fps": [
+            30
+        ],
+        "show_debug_info": true,
+        "objects_journal_enabled": true
+    }
 }
-

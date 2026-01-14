@@ -170,6 +170,32 @@ EvilEye uses JSON configuration files for the **PipelineSurveillance** class. Th
 }
 ```
 
+### Scheduled Restart Configuration
+
+Для управления плановым перезапуском при запуске через `evileye run` можно использовать секцию `controller.scheduled_restart`:
+
+```json
+"controller": {
+  "fps": 30,
+  "show_main_gui": true,
+  "scheduled_restart": {
+    "enabled": false,
+    "mode": "daily_time",
+    "time": "01:00",
+    "interval_minutes": 0
+  }
+}
+```
+
+- **enabled**: включает/выключает автоматический перезапуск (по умолчанию `false`).
+- **mode**: режим работы планировщика:
+  - `"daily_time"` — перезапуск один раз в сутки в заданное время `time`.
+  - `"interval"` — перезапуск через каждые `interval_minutes` минут после завершения предыдущего запуска (удобно для тестирования, например 5 минут).
+- **time**: время суточного перезапуска в формате `HH:MM` (по умолчанию `"01:00"`).
+- **interval_minutes**: интервал в минутах для режима `"interval"`.
+
+Плановый перезапуск действует только при запуске через CLI `evileye run` и не влияет на прямой запуск `evileye-process`/`process.py`.
+
 ### Sources Configuration
 
 The `sources` section defines video input sources. Each source can be configured with different types and splitting options.
