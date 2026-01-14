@@ -616,13 +616,13 @@ class Controller:
             record_cfg = (self.params or {}).get("record", {}) or {}
             if isinstance(record_cfg, dict) and record_cfg:
                 # Recording base dir policy:
-                # - By default, Streams path is derived from database.image_dir (even if record.out_dir is set)
+                # - By default, base path is database.image_dir (even if record.out_dir is set)
                 # - For backward compatibility (tests/custom setups), set record.allow_custom_out_dir=true
                 allow_custom_out_dir = bool(record_cfg.get("allow_custom_out_dir", False))
                 db_image_dir = (((self.params or {}).get('database', {}) or {}).get('image_dir')) or 'EvilEyeData'
-                # Base path for continuous recording: image_dir/Streams
-                # Per-day subfolder (YYYY-MM-DD) is added later by recorder implementations
-                default_out_dir = str(Path(db_image_dir) / 'Streams')
+                # Base path for ALL recordings (continuous and event-based): image_dir
+                # Concrete recorders add their own subfolders: Streams/... or Events/.../Videos/...
+                default_out_dir = str(Path(db_image_dir))
 
                 srcs = pipeline_params.get("sources", []) or []
                 enabled_list = record_cfg.get("enabled_sources")

@@ -19,8 +19,6 @@ class FfmpegRecorder(VideoRecorderBase):
         self._proc: Optional[subprocess.Popen] = None
 
     def _segment_pattern(self, start_dt: _dt.datetime) -> str:
-        date_dir = start_dt.strftime("%Y-%m-%d")
-        
         # Compose camera folder name from all source_names or source_ids
         if self.source and self.source.source_names and len(self.source.source_names) > 0:
             camera_folder = "-".join(self.source.source_names)
@@ -31,9 +29,10 @@ class FfmpegRecorder(VideoRecorderBase):
         else:
             camera_folder = "source"
         
-        # Create path: out_dir/YYYY-MM-DD/CameraName/
-        base_out_dir = Path(self.params.out_dir) if self.params.out_dir else Path(".")
-        out_dir = base_out_dir / date_dir / camera_folder
+        # Create path: base/Streams/YYYY-MM-DD/CameraName/
+        base_dir = Path(self.params.out_dir) if self.params.out_dir else Path(".")
+        date_dir = start_dt.strftime("%Y-%m-%d")
+        out_dir = base_dir / "Streams" / date_dir / camera_folder
         out_dir.mkdir(parents=True, exist_ok=True)
         
         ts = start_dt.strftime("%Y%m%d_%H%M%S")

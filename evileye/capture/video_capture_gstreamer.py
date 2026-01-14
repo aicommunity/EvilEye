@@ -1512,8 +1512,6 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             splitmuxsink.set_property("muxer-factory", "mp4mux" if self.recording_params.container.lower() == "mp4" else "matroskamux")
             splitmuxsink.set_property("async-finalize", True)
             
-            # Build output path with camera name subfolder
-            date_dir = _dt.datetime.now().strftime("%Y-%m-%d")
             
             # Compose camera folder name from all source_names or source_ids
             if self.source_names and len(self.source_names) > 0:
@@ -1523,9 +1521,11 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             else:
                 camera_folder = "source"
             
-            # Create path: out_dir/YYYY-MM-DD/CameraName/
-            base_out_dir = Path(self.recording_params.out_dir) if self.recording_params.out_dir else Path(".")
-            out_dir = base_out_dir / date_dir / camera_folder
+            # Build output path with camera name subfolder
+            # Create path: base/Streams/YYYY-MM-DD/CameraName/
+            base_dir = Path(self.recording_params.out_dir) if self.recording_params.out_dir else Path(".")
+            date_dir = _dt.datetime.now().strftime("%Y-%m-%d")
+            out_dir = base_dir / "Streams" / date_dir / camera_folder
             out_dir.mkdir(parents=True, exist_ok=True)
             
             ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
