@@ -615,11 +615,14 @@ class Controller:
         try:
             record_cfg = (self.params or {}).get("record", {}) or {}
             if isinstance(record_cfg, dict) and record_cfg:
-                # Default recordings base dir from database.image_dir if out_dir not specified
+                # Recording base dir policy:
+                # - By default, Streams path is derived from database.image_dir (even if record.out_dir is set)
+                # - For backward compatibility (tests/custom setups), set record.allow_custom_out_dir=true
+                allow_custom_out_dir = bool(record_cfg.get("allow_custom_out_dir", False))
                 db_image_dir = (((self.params or {}).get('database', {}) or {}).get('image_dir')) or 'EvilEyeData'
-                import datetime as _dt
-                today = _dt.datetime.now().strftime('%Y-%m-%d')
-                default_out_dir = str(Path(db_image_dir) / 'Streams' / today)
+                # Base path for continuous recording: image_dir/Streams
+                # Per-day subfolder (YYYY-MM-DD) is added later by recorder implementations
+                default_out_dir = str(Path(db_image_dir) / 'Streams')
 
                 srcs = pipeline_params.get("sources", []) or []
                 enabled_list = record_cfg.get("enabled_sources")
@@ -629,8 +632,13 @@ class Controller:
                     # Merge: keep per-source overrides, fill missing from root
                     per = dict(s.get("record", {})) if isinstance(s.get("record", {}), dict) else {}
                     merged = {**record_cfg, **per}
-                    # Ensure out_dir present -> base/Streams/YYYY-MM-DD when missing
-                    if not merged.get('out_dir'):
+                    # Ensure out_dir:
+                    # - default behavior: always force Streams under database.image_dir
+                    # - compatibility: if allow_custom_out_dir=true, keep existing out_dir if provided
+                    if allow_custom_out_dir:
+                        if not merged.get('out_dir'):
+                            merged['out_dir'] = default_out_dir
+                    else:
                         merged['out_dir'] = default_out_dir
                     # Apply enabled per source if list provided
                     if enabled_list and len(enabled_list) > 0:
