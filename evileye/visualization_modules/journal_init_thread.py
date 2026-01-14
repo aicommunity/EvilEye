@@ -33,31 +33,86 @@ class JournalInitThread(QThread):
         
     def run(self):
         """Выполнить инициализацию БД контроллера"""
+        import platform
+        import sys
+        
         try:
             self.progress_updated.emit("Initializing database controller...")
             self.logger.info("Creating DatabaseControllerPg...")
             
             # Создание контроллера БД
-            self.db_controller = database_controller_pg.DatabaseControllerPg(self.params, controller_type='Receiver')
-            self.logger.info("DatabaseControllerPg instance created")
+            try:
+                self.db_controller = database_controller_pg.DatabaseControllerPg(self.params, controller_type='Receiver')
+                self.logger.info("DatabaseControllerPg instance created")
+            except Exception as e:
+                error_msg = f"Failed to create DatabaseControllerPg: {str(e)}"
+                self.logger.error(error_msg, exc_info=True)
+                self.initialization_failed.emit(error_msg)
+                return
             
-            self.db_controller.set_params(**self.database_params['database'])
-            self.logger.info("DatabaseControllerPg params set")
+            # Установка параметров БД
+            try:
+                self.db_controller.set_params(**self.database_params['database'])
+                self.logger.info("DatabaseControllerPg params set")
+            except Exception as e:
+                error_msg = f"Failed to set database parameters: {str(e)}"
+                self.logger.error(error_msg, exc_info=True)
+                self.initialization_failed.emit(error_msg)
+                return
             
+            # Инициализация БД контроллера
             self.progress_updated.emit("Connecting to database...")
             self.logger.info("About to call db_controller.init()...")
-            self.db_controller.init()
-            self.logger.info("db_controller.init() completed")
+            try:
+                self.db_controller.init()
+                self.logger.info("db_controller.init() completed")
+            except Exception as e:
+                error_msg = f"Database initialization failed: {str(e)}"
+                self.logger.warning(error_msg, exc_info=True)
+                # Продолжаем попытку подключения даже если init() не удался
+                self.logger.info("Continuing with connection attempt despite init() failure...")
             
+            # Подключение к БД
             self.progress_updated.emit("Establishing database connection...")
             self.logger.info("About to connect to database...")
-            self.db_controller.connect()
-            self.logger.info("Database connected successfully")
-            
-            # Отправляем сигнал об успешном завершении
-            self.initialization_complete.emit(self.db_controller)
+            try:
+                self.db_controller.connect()
+                self.logger.info("Database connected successfully")
+                
+                # Отправляем сигнал об успешном завершении
+                self.initialization_complete.emit(self.db_controller)
+                
+            except Exception as e:
+                # Детальное логирование ошибки подключения
+                db_params = self.database_params.get('database', {})
+                error_context = {
+                    'error_type': type(e).__name__,
+                    'error_message': str(e),
+                    'host': db_params.get('host_name', 'unknown'),
+                    'port': db_params.get('port', 'unknown'),
+                    'database': db_params.get('database_name', 'unknown'),
+                    'user': db_params.get('user_name', 'unknown'),
+                    'platform': f"{platform.system()} {platform.release()}",
+                    'python_version': sys.version.split()[0]
+                }
+                
+                error_msg = f"Journal initialization error: {str(e)}"
+                self.logger.error(error_msg, exc_info=True)
+                self.logger.debug(f"Database connection context: {error_context}")
+                
+                # Убеждаемся, что контроллер БД в безопасном состоянии
+                if self.db_controller:
+                    self.db_controller.conn_pool = None
+                
+                self.initialization_failed.emit(error_msg)
             
         except Exception as e:
-            error_msg = f"Journal initialization error: {str(e)}"
+            # Перехватываем любые неожиданные ошибки
+            error_msg = f"Unexpected error during journal initialization: {str(e)}"
             self.logger.error(error_msg, exc_info=True)
+            
+            # Убеждаемся, что контроллер БД в безопасном состоянии
+            if hasattr(self, 'db_controller') and self.db_controller:
+                self.db_controller.conn_pool = None
+            
             self.initialization_failed.emit(error_msg)

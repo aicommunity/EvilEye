@@ -415,18 +415,90 @@ class Controller:
         # Start database components only if database is enabled
         if self.use_database and self.db_controller:
             try:
+                import platform
+                import sys
+                
+                # Логируем попытку подключения к БД
+                db_params = getattr(self.db_controller, 'params', {})
+                self.logger.info(f"Attempting to connect to database at startup: "
+                               f"host={db_params.get('host_name', 'unknown')}, "
+                               f"port={db_params.get('port', 'unknown')}, "
+                               f"database={db_params.get('database_name', 'unknown')}, "
+                               f"platform={platform.system()} {platform.release()}")
+                
+                # Пытаемся подключиться к БД
                 self.db_controller.connect()
-                self.db_adapter_obj.start()
-                self.db_adapter_zone_events.start()
-                self.db_adapter_fov_events.start()
-                self.db_adapter_cam_events.start()
-                if self.db_adapter_attr_events:
-                    self.db_adapter_attr_events.start()
-                if self.db_adapter_system_events:
-                    self.db_adapter_system_events.start()
+                
+                # Проверяем, что подключение действительно установлено
+                if not self.db_controller.is_connected():
+                    raise Exception("Database connection failed: connection pool is None")
+                
+                self.logger.info("Database connected successfully at startup")
+                
+                # Запускаем адаптеры БД только если подключение успешно
+                try:
+                    self.db_adapter_obj.start()
+                    self.db_adapter_zone_events.start()
+                    self.db_adapter_fov_events.start()
+                    self.db_adapter_cam_events.start()
+                    if self.db_adapter_attr_events:
+                        self.db_adapter_attr_events.start()
+                    if self.db_adapter_system_events:
+                        self.db_adapter_system_events.start()
+                    self.logger.info("Database adapters started successfully")
+                except Exception as adapter_error:
+                    self.logger.warning(f"Error starting database adapters: {adapter_error}. "
+                                      f"Database connection is active but adapters disabled.")
+                    # Не отключаем БД полностью, только адаптеры
+                    
             except Exception as e:
+                # Детальное логирование ошибки подключения к БД
+                import platform
+                import sys
+                
+                error_context = {
+                    'error_type': type(e).__name__,
+                    'error_message': str(e),
+                    'platform': f"{platform.system()} {platform.release()}",
+                    'python_version': sys.version.split()[0]
+                }
+                
+                if hasattr(self.db_controller, 'params'):
+                    db_params = self.db_controller.params
+                    error_context.update({
+                        'host': db_params.get('host_name', 'unknown'),
+                        'port': db_params.get('port', 'unknown'),
+                        'database': db_params.get('database_name', 'unknown'),
+                        'user': db_params.get('user_name', 'unknown')
+                    })
+                
                 self.logger.warning(f"Database connection error at startup. Disabling database functionality. Reason: {e}")
+                self.logger.debug(f"Database connection context: {error_context}")
+                self.logger.info("System will continue operating in JSON-only mode. "
+                              "Events will be saved to JSON files.")
+                
+                # Полностью отключаем функциональность БД
                 self.use_database = False
+                # Останавливаем адаптеры БД, если они были запущены
+                try:
+                    if self.db_adapter_obj:
+                        self.db_adapter_obj.stop()
+                    if self.db_adapter_zone_events:
+                        self.db_adapter_zone_events.stop()
+                    if self.db_adapter_fov_events:
+                        self.db_adapter_fov_events.stop()
+                    if self.db_adapter_cam_events:
+                        self.db_adapter_cam_events.stop()
+                    if self.db_adapter_attr_events:
+                        self.db_adapter_attr_events.stop()
+                    if self.db_adapter_system_events:
+                        self.db_adapter_system_events.stop()
+                except Exception:
+                    pass  # Игнорируем ошибки при остановке адаптеров
+                
+                # Убеждаемся, что контроллер БД в безопасном состоянии
+                if self.db_controller:
+                    self.db_controller.conn_pool = None
                 self.db_controller = None
         
         self.zone_events_detector.start()
@@ -670,6 +742,29 @@ class Controller:
         if self.use_database:
             try:
                 self._init_db_controller(self.database_config['database'], system_params=self.params)
+                
+                # Пытаемся подключиться к БД сразу при инициализации
+                # connect() больше не пробрасывает исключения, только устанавливает conn_pool = None при ошибке
+                self.db_controller.connect()
+                if not self.db_controller.is_connected():
+                    self.logger.warning("Database connection failed during initialization. "
+                                      "Connection pool is None - database is unavailable.")
+                    self.logger.info("Switching to JSON-only mode. Database functionality will be disabled.")
+                    # Fallback to no-database mode
+                    self.use_database = False
+                    if self.db_controller:
+                        self.db_controller.conn_pool = None
+                    self.db_controller = None
+                    self.database_config = {"database": {}, "database_adapters": {}}
+                    self._init_object_handler_without_db(params.get('objects_handler') or dict())
+                    self._init_events_detectors_without_db(self.params.get('events_detectors', dict()))
+                    self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
+                    self._init_events_processor_without_db(self.params.get('events_processor', dict()))
+                    return  # Выходим, не создавая адаптеры БД
+                
+                self.logger.info("Database connected successfully during initialization")
+                
+                # Если подключение успешно, создаем адаптеры БД
                 self._init_db_adapters(self.database_config['database_adapters'])
                 self._init_object_handler(self.db_controller, params.get('objects_handler') or dict())
                 self._init_events_detectors(self.params.get('events_detectors', dict()))
@@ -677,8 +772,11 @@ class Controller:
                 self._init_events_processor(self.params.get('events_processor', dict()))
             except Exception as e:
                 self.logger.warning(f"Database enabled but unavailable. Working without database. Reason: {e}")
+                self.logger.info("Switching to JSON-only mode. Database functionality will be disabled.")
                 # Fallback to no-database mode
                 self.use_database = False
+                if self.db_controller:
+                    self.db_controller.conn_pool = None
                 self.db_controller = None
                 self.database_config = {"database": {}, "database_adapters": {}}
                 self._init_object_handler_without_db(params.get('objects_handler') or dict())
@@ -1202,8 +1300,8 @@ class Controller:
         """Build list of event adapters depending on database mode."""
         adapters = []
         
-        # DB adapters if database enabled
-        if self.use_database and self.db_controller:
+        # DB adapters if database enabled AND connected
+        if self.use_database and self.db_controller and self.db_controller.is_connected():
             adapters.extend([self.db_adapter_fov_events, self.db_adapter_cam_events, self.db_adapter_zone_events])
             if self.db_adapter_attr_events:
                 adapters.append(self.db_adapter_attr_events)
@@ -1213,6 +1311,9 @@ class Controller:
                 self.logger.info(f"DB adapters: {[a.get_event_name() for a in adapters if a]}")
             except Exception:
                 pass
+        elif self.use_database and self.db_controller:
+            # БД была включена, но подключение не удалось - работаем только в JSON режиме
+            self.logger.info("Database was enabled but connection failed. Using JSON-only mode for events.")
         
         # JSON adapters - always add for JSON metadata backup (parallel to DB)
         img_dir = self.params.get('database', {}).get('image_dir', 'EvilEyeData')

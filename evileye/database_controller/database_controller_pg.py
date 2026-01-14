@@ -101,30 +101,115 @@ class DatabaseControllerPg(DatabaseControllerBase):
         pass
 
     def connect_impl(self):
+        """
+        Подключение к БД.
+        ВАЖНО: Любые ошибки подключения логируются, но не пробрасываются дальше,
+        чтобы не приводить к падению приложения. Признак неуспешного подключения —
+        self.conn_pool is None.
+        """
+        import platform
+        import sys
+
         try:
-            self.conn_pool = pool.ThreadedConnectionPool(1, 10, user=self.user_name,
-                                                         password=self.password, host=self.host_name,
-                                                         port=self.port, database=self.database_name)
-        except Exception as ex:
-            self.logger.info(f"Can't connect to database: {ex}")
+            # Логируем контекст подключения для диагностики
+            host_display = self.host_name if self.host_name else "localhost"
+            password_display = "***" if self.password else "(empty)"
+            platform_info = f"{platform.system()} {platform.release()}"
+
+            self.logger.info(
+                "Attempting to connect to PostgreSQL database: "
+                f"host={host_display}, port={self.port}, "
+                f"database={self.database_name}, user={self.user_name}, "
+                f"password={password_display}, platform={platform_info}"
+            )
+
+            self.conn_pool = pool.ThreadedConnectionPool(
+                1,
+                10,
+                user=self.user_name,
+                password=self.password,
+                host=self.host_name,
+                port=self.port,
+                database=self.database_name,
+            )
+
+            self.logger.info("Database connection pool created successfully")
+
+        except psycopg2.OperationalError as ex:
+            # Детальное логирование ошибок подключения, но без проброса исключения
+            error_details = {
+                "error_type": "OperationalError",
+                "error_message": str(ex),
+                "host": self.host_name,
+                "port": self.port,
+                "database": self.database_name,
+                "user": self.user_name,
+                "platform": f"{platform.system()} {platform.release()}",
+                "python_version": sys.version,
+            }
+            self.logger.error(
+                f"Database connection failed (OperationalError): {ex}"
+            )
+            self.logger.debug(f"Connection details: {error_details}")
             self.conn_pool = None
-            raise
+            # НЕ raise — позволяем вызывающему коду обработать ситуацию через is_connected()
 
-        for table_name in self.tables.keys():
-            self.create_table(table_name)
+        except psycopg2.Error as ex:
+            # Обработка других ошибок psycopg2 без проброса исключения
+            self.logger.error(
+                f"Database connection failed (psycopg2.Error): {ex}"
+            )
+            self.logger.debug(
+                "Connection parameters: "
+                f"host={self.host_name}, port={self.port}, "
+                f"database={self.database_name}, user={self.user_name}"
+            )
+            self.conn_pool = None
 
-        project_id = 0
-        if not DatabaseControllerPg.new_project_created:
-            project_id = self._create_new_project()
-            DatabaseControllerPg.new_project_created = True
-            DatabaseControllerPg.cur_project_id = project_id
+        except Exception as ex:
+            # Обработка любых других исключений без проброса
+            self.logger.error(
+                f"Unexpected error during database connection: {ex}",
+                exc_info=True,
+            )
+            self.logger.debug(
+                "Connection parameters: "
+                f"host={self.host_name}, port={self.port}, "
+                f"database={self.database_name}, user={self.user_name}"
+            )
+            self.conn_pool = None
 
-        if not DatabaseControllerPg.new_job_created:
-            job_id = self._create_new_job(project_id)
-            DatabaseControllerPg.new_job_created = True
-            DatabaseControllerPg.cur_job_id = job_id
+        # Если подключение успешно, продолжаем инициализацию таблиц/проектов
+        if self.conn_pool is None:
+            # Подключения нет — просто выходим, журнал/БД будут отключены снаружи
+            return
 
-        self._insert_cam_info(self.cameras_params)
+        try:
+            for table_name in self.tables.keys():
+                self.create_table(table_name)
+
+            project_id = 0
+            if not DatabaseControllerPg.new_project_created:
+                project_id = self._create_new_project()
+                DatabaseControllerPg.new_project_created = True
+                DatabaseControllerPg.cur_project_id = project_id
+
+            if not DatabaseControllerPg.new_job_created:
+                job_id = self._create_new_job(project_id)
+                DatabaseControllerPg.new_job_created = True
+                DatabaseControllerPg.cur_job_id = job_id
+
+            self._insert_cam_info(self.cameras_params)
+
+        except Exception as ex:
+            # Если ошибка при инициализации таблиц, логируем, но не рушим подключение
+            self.logger.warning(
+                f"Error during database initialization (tables/projects): {ex}"
+            )
+            self.logger.debug(
+                "Database connection established but initialization incomplete",
+                exc_info=True,
+            )
 
     def disconnect_impl(self):
         self.stop()

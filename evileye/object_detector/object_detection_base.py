@@ -326,21 +326,85 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
     
     def _preload_models(self):
         """Pre-load models in all detection threads to ensure they're ready"""
+        import platform
+        import sys
+        
         if not hasattr(self, 'detection_threads') or not self.detection_threads:
             self.logger.debug("No detection threads available for pre-loading")
             return
+        
         self.logger.info(f"Pre-loading models in {len(self.detection_threads)} detection thread(s)...")
+        
+        successful_loads = 0
+        failed_loads = 0
+        
         for i, thread in enumerate(self.detection_threads):
             if hasattr(thread, 'init_detection_implementation'):
                 try:
+                    # Логируем попытку загрузки модели для этого потока
+                    thread_name = thread.__class__.__name__
+                    model_name = getattr(thread, 'model_name', 'unknown')
+                    self.logger.debug(f"Pre-loading model in detection thread {i} ({thread_name}): {model_name}")
+                    
                     # Call init_detection_implementation to load model
                     thread.init_detection_implementation()
+                    
+                    # Проверяем, что модель действительно загружена
                     if hasattr(thread, 'model') and thread.model is not None:
-                        self.logger.info(f"Pre-loaded model in detection thread {i} ({thread.__class__.__name__})")
+                        self.logger.info(f"Pre-loaded model in detection thread {i} ({thread_name})")
+                        successful_loads += 1
                     else:
-                        self.logger.warning(f"Model pre-load called but model is still None in thread {i}")
+                        # Модель не загружена, но это не критическая ошибка - поток может загрузить её позже
+                        self.logger.warning(f"Model pre-load called but model is still None in thread {i} ({thread_name}). "
+                                         f"Model will be loaded on first use.")
+                        failed_loads += 1
+                        
+                except RuntimeError as e:
+                    # Обработка ошибок загрузки модели (поврежденный файл и т.д.)
+                    error_msg = str(e)
+                    thread_name = thread.__class__.__name__
+                    model_name = getattr(thread, 'model_name', 'unknown')
+                    
+                    if 'zip archive' in error_msg.lower() or 'central directory' in error_msg.lower():
+                        self.logger.warning(f"Failed to pre-load model in detection thread {i} ({thread_name}): "
+                                          f"Model file appears corrupted (ZIP archive error). "
+                                          f"Thread will continue without model. Error: {e}")
+                    else:
+                        self.logger.warning(f"Failed to pre-load model in detection thread {i} ({thread_name}): {e}")
+                    
+                    self.logger.debug(f"Pre-load error context: thread={thread_name}, model={model_name}, "
+                                    f"platform={platform.system()} {platform.release()}", exc_info=True)
+                    failed_loads += 1
+                    # Поток продолжит работу, модель может быть загружена позже
+                    
                 except Exception as e:
-                    self.logger.warning(f"Failed to pre-load model in detection thread {i}: {e}", exc_info=True)
+                    # Обработка любых других ошибок предзагрузки
+                    thread_name = thread.__class__.__name__
+                    model_name = getattr(thread, 'model_name', 'unknown')
+                    
+                    error_context = {
+                        'error_type': type(e).__name__,
+                        'error_message': str(e),
+                        'thread_index': i,
+                        'thread_name': thread_name,
+                        'model_name': model_name,
+                        'platform': f"{platform.system()} {platform.release()}",
+                        'python_version': sys.version.split()[0]
+                    }
+                    
+                    self.logger.warning(f"Failed to pre-load model in detection thread {i} ({thread_name}): {e}")
+                    self.logger.debug(f"Pre-load error context: {error_context}", exc_info=True)
+                    failed_loads += 1
+                    # Поток продолжит работу, модель может быть загружена позже
+        
+        # Итоговая статистика предзагрузки
+        if successful_loads > 0:
+            self.logger.info(f"Model pre-loading completed: {successful_loads} successful, {failed_loads} failed")
+        elif failed_loads > 0:
+            self.logger.warning(f"Model pre-loading completed with errors: {failed_loads} threads failed to load models. "
+                              f"Models will be loaded on first use if possible.")
+        else:
+            self.logger.info("Model pre-loading completed: no models to pre-load")
     
     def is_ready(self, timeout=30.0):
         """

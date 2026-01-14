@@ -70,9 +70,37 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
             if query_string is None:
                 continue
 
+            # Если контроллер БД не подключен, аккуратно пропускаем запись
+            if (
+                not hasattr(self.db_controller, "is_connected")
+                or not self.db_controller.is_connected()
+            ):
+                self.logger.warning(
+                    "Database is not connected in db_adapter_objects._execute_query; "
+                    "skipping DB write operation."
+                )
+                continue
+
             record = self.db_controller.query(query_string, data)
-            row_num = record[0][0]
-            box = record[0][1]
+
+            # query() мог вернуть None (ошибка БД или нет данных) — проверяем это
+            if not record:
+                self.logger.warning(
+                    "Database query returned no records in db_adapter_objects._execute_query; "
+                    "skipping image save and notifications."
+                )
+                continue
+
+            try:
+                row_num = record[0][0]
+                box = record[0][1]
+            except Exception as ex:
+                self.logger.error(
+                    f"Unexpected record format in db_adapter_objects._execute_query: {record}. "
+                    f"Error: {ex}"
+                )
+                continue
+
             start_save_it = timer()
             self._save_image(preview_path, frame_path, image, box)
             end_save_it = timer()
