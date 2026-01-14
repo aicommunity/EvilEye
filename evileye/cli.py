@@ -140,6 +140,9 @@ def _run_with_scheduler(
         logger.info(f"[scheduler] Next launch scheduled at {next_run.isoformat()}")
         console.print(f"[blue][scheduler] Next launch at {next_run.isoformat()}[/blue]")
 
+        # Флаг: нужно ли продолжать внешний цикл (ещё один запуск) после этой итерации
+        continue_scheduler = True
+
         try:
             # Цикл до естественного завершения процесса ИЛИ до наступления времени перезапуска
             while True:
@@ -152,6 +155,15 @@ def _run_with_scheduler(
                         f"[scheduler] Iteration {iteration} finished with return code={retcode} "
                         f"(duration={duration:.1f}s)"
                     )
+                    # Если процесс завершился сам ДО наступления времени next_run,
+                    # считаем это штатным/ручным завершением и выходим из планировщика,
+                    # чтобы не перезапускать приложение против воли пользователя.
+                    if now < next_run:
+                        logger.info(
+                            "[scheduler] Process finished before next scheduled time — "
+                            "stopping scheduler loop (respecting manual/normal shutdown)"
+                        )
+                        continue_scheduler = False
                     break
 
                 if now >= next_run:
@@ -190,6 +202,11 @@ def _run_with_scheduler(
                 except Exception:
                     pass
             raise typer.Exit(0)
+
+        # Если процесс завершился сам до наступления следующего планового запуска —
+        # выходим из основного цикла и НЕ перезапускаем приложение снова.
+        if not continue_scheduler:
+            break
 
 
 # Create CLI app

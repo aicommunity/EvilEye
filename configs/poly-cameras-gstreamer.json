@@ -578,13 +578,7 @@
         "show_memory_usage": false,
         "max_memory_usage_mb": 16384,
         "auto_restart": true,
-        "use_database": true,
-        "scheduled_restart": {
-            "enabled": false,
-            "mode": "daily_time",
-            "time": "01:00",
-            "interval_minutes": 0
-        }
+        "use_database": true
     },
     "database": {}
 }
