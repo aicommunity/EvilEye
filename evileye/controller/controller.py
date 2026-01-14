@@ -621,8 +621,14 @@ class Controller:
                 allow_custom_out_dir = bool(record_cfg.get("allow_custom_out_dir", False))
                 db_image_dir = (((self.params or {}).get('database', {}) or {}).get('image_dir')) or 'EvilEyeData'
                 # Base path for ALL recordings (continuous and event-based): image_dir
+                # Resolve relative paths relative to working directory, keep absolute paths as-is
                 # Concrete recorders add their own subfolders: Streams/... or Events/.../Videos/...
-                default_out_dir = str(Path(db_image_dir))
+                image_dir_path = Path(db_image_dir)
+                if image_dir_path.is_absolute():
+                    default_out_dir = str(image_dir_path)
+                else:
+                    # Resolve relative path relative to current working directory
+                    default_out_dir = str(image_dir_path.resolve())
 
                 srcs = pipeline_params.get("sources", []) or []
                 enabled_list = record_cfg.get("enabled_sources")
@@ -1377,6 +1383,17 @@ class Controller:
             
             # Load recording parameters
             self.recording_params = RecordingParams.from_config(params)
+            
+            # Override out_dir with database.image_dir if available (always use image_dir as base)
+            # Resolve relative paths relative to working directory, keep absolute paths as-is
+            db_image_dir = (((params or {}).get('database', {}) or {}).get('image_dir')) or 'EvilEyeData'
+            image_dir_path = Path(db_image_dir)
+            if image_dir_path.is_absolute():
+                self.recording_params.out_dir = str(image_dir_path)
+            else:
+                # Resolve relative path relative to current working directory
+                self.recording_params.out_dir = str(image_dir_path.resolve())
+            self.logger.info(f"Event recording out_dir set to database.image_dir: {self.recording_params.out_dir}")
             
             # Check if event recording is enabled
             if not self.recording_params.event_recording_enabled:

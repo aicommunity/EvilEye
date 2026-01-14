@@ -45,7 +45,8 @@ class GStreamerRecorder(VideoRecorderBase):
             camera_folder = "source"
         
         # Create path: base/Streams/YYYY-MM-DD/CameraName/
-        base_dir = Path(self.params.out_dir) if self.params.out_dir else Path(".")
+        # params.out_dir should always be set to database.image_dir by Controller
+        base_dir = Path(self.params.out_dir) if self.params.out_dir else Path("EvilEyeData")
         date_dir = start_time.strftime("%Y-%m-%d")
         out_dir = base_dir / "Streams" / date_dir / camera_folder
         try:
