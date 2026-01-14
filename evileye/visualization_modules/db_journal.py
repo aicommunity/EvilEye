@@ -106,6 +106,17 @@ class DatabaseJournalWindow(QWidget):
             
         self.adapter_params = self.database_params['database_adapters']
         self.db_params = self.database_params['database']
+        
+        # Логируем ключевые параметры подключения для отладки
+        db_section = self.db_params
+        host = db_section.get('host_name', 'localhost')
+        port = db_section.get('port', 5432)
+        database_name = db_section.get('database_name', 'evil_eye_db')
+        user_name = db_section.get('user_name', 'postgres')
+        self.logger.info(
+            f"Database journal will use connection parameters: "
+            f"host={host}, port={port}, database={database_name}, user={user_name}"
+        )
         self.vis_params = self.params.get('visualizer', {})
         self.obj_journal_enabled = self.vis_params.get('objects_journal_enabled', True)
         
