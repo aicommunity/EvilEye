@@ -185,5 +185,18 @@
                 1080
             ]
         }
+    },
+    "storage_monitor": {
+        "enabled": true,
+        "check_interval_seconds": 300,
+        "max_dir_size_gb": 200,
+        "min_free_space_percent": 10,
+        "retention_days": {
+            "streaming_video": 7,
+            "event_videos": 7,
+            "object_images": 180,
+            "event_images": 180
+        },
+        "active_file_age_seconds": 60
     }
 }

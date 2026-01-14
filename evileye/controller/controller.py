@@ -103,6 +103,8 @@ class Controller:
         self.db_adapter_attr_events = None
         self.db_adapter_system_events = None
         
+        self.storage_monitor = None
+        
         # Initialize centralized class manager
         self.class_manager = ClassManager()
         
@@ -510,6 +512,13 @@ class Controller:
             self.system_events_detector.start()
         self.events_detectors_controller.start()
         self.events_processor.start()
+        
+        # Start storage monitor
+        if self.storage_monitor:
+            try:
+                self.storage_monitor.start()
+            except Exception as e:
+                self.logger.warning(f"Failed to start storage monitor: {e}", exc_info=True)
 
         self.run_flag = True
         self.logger.info(f"Starting control thread for stream_pipeline_id: {self.stream_pipeline_id}")
@@ -562,6 +571,13 @@ class Controller:
                 self.db_adapter_system_events.stop()
             self.db_adapter_obj.stop()
             self.db_controller.disconnect()
+        
+        # Stop storage monitor
+        if self.storage_monitor:
+            try:
+                self.storage_monitor.stop()
+            except Exception as e:
+                self.logger.warning(f"Error stopping storage monitor: {e}", exc_info=True)
         
         # Stop pipeline components
         self.pipeline.stop()
@@ -901,6 +917,22 @@ class Controller:
         else:
             # Set empty database config when database is disabled
             self.params['database'] = {}
+        
+        # Initialize storage monitor (enabled by default)
+        try:
+            from evileye.core.storage_monitor import StorageMonitor
+            storage_monitor_config = self.params.get('storage_monitor', {})
+            # Ensure enabled by default if not explicitly set
+            if not storage_monitor_config or 'enabled' not in storage_monitor_config:
+                if not storage_monitor_config:
+                    storage_monitor_config = {}
+                storage_monitor_config['enabled'] = True
+            # Get image_dir from database config or use default
+            image_dir = self.params.get('database', {}).get('image_dir', 'EvilEyeData')
+            self.storage_monitor = StorageMonitor(image_dir, storage_monitor_config)
+        except Exception as e:
+            self.logger.warning(f"Failed to initialize storage monitor: {e}", exc_info=True)
+            self.storage_monitor = None
 
         # Collect visualizer params with safe fallback
         vis_params = None

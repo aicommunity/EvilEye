@@ -76,6 +76,9 @@ def roi_to_image(roi_box_coords, x0, y0):
 def create_roi(capture_image: CaptureImage, coords):
     rois = []
     img = capture_image.image
+    if img is None:
+        # Return empty list if image is None to avoid TypeError
+        return rois
     for x, y, w, h in coords:
         roi_img = img[y:y+h, x:x+w]
         roi_capture = CaptureImage()

@@ -128,14 +128,27 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
             if self.tracker is None:
                 continue
             detection_result, image = detections
-            cam_id, boxes = self._parse_det_info(detection_result, image.image)
-            tracks = self.tracker.update(boxes, image.image)
-            if len(tracks) > 0:
-                pass
-            tracks_info = self._create_tracks_info(cam_id, detection_result.frame_id, None, tracks)
-            self.queue_out.put((tracks_info, image))
+            
+            # Check if image is valid
+            if image is None or image.image is None:
+                self.logger.warning(f"Received None image for source {detection_result.source_id if detection_result else 'unknown'}, skipping")
+                continue
+            
+            try:
+                cam_id, boxes = self._parse_det_info(detection_result, image.image)
+                tracks = self.tracker.update(boxes, image.image)
+                if len(tracks) > 0:
+                    pass
+                tracks_info = self._create_tracks_info(cam_id, detection_result.frame_id, None, tracks)
+                self.queue_out.put((tracks_info, image))
+            except Exception as e:
+                self.logger.error(f"Error processing detection for source {detection_result.source_id if detection_result else 'unknown'}: {e}", exc_info=True)
+                continue
 
     def _parse_det_info(self, det_info: DetectionResultList, image: np.ndarray) -> tuple:
+        if image is None:
+            raise ValueError("image cannot be None")
+        
         cam_id = det_info.source_id
         objects = det_info.detections
 
@@ -157,6 +170,11 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
         class_ids = np.array(class_ids)
         
         boxes_array = np.concatenate([bboxes_xyxy, confidences, class_ids], axis=1)
+        
+        # Validate image shape
+        if not hasattr(image, 'shape') or len(image.shape) < 2:
+            raise ValueError(f"Invalid image shape: {image.shape if hasattr(image, 'shape') else 'no shape attribute'}")
+        
         orig_shape = (image.shape[1], image.shape[0])
         boxes = Boxes(boxes_array, orig_shape)
         return cam_id, boxes
