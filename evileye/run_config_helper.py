@@ -204,7 +204,22 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
                 try:
                     if not controller_instance.is_running():
                         logger.info("Controller stopped in headless mode, quitting Qt event loop")
-                        qt_app.quit()
+                        # Check if restart is requested due to memory leak
+                        restart_requested = controller_instance.get_restart_flag()
+                        cli_launched = os.environ.get('EVILEYE_CLI_LAUNCHED') == '1'
+                        
+                        if restart_requested:
+                            if cli_launched:
+                                logger.info("Memory leak detected: restart requested, CLI will handle restart")
+                                qt_app.quit()
+                                # Exit code 2 signals CLI scheduler to restart immediately
+                                sys.exit(2)
+                            else:
+                                logger.warning("Memory leak detected but restart impossible: not launched via CLI")
+                                qt_app.quit()
+                                sys.exit(1)
+                        else:
+                            qt_app.quit()
                 except Exception as e:
                     try:
                         logger.error(f"Error while checking controller state in headless mode: {e}", exc_info=True)
@@ -222,6 +237,20 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
     else:
         logger.info("Starting main application loop")
         ret = qt_app.exec()
+        
+        # Check if restart is requested due to memory leak (GUI mode)
+        if controller_instance is not None:
+            restart_requested = controller_instance.get_restart_flag()
+            cli_launched = os.environ.get('EVILEYE_CLI_LAUNCHED') == '1'
+            
+            if restart_requested:
+                if cli_launched:
+                    logger.info("Memory leak detected: restart requested, CLI will handle restart")
+                    # Exit code 2 signals CLI scheduler to restart immediately
+                    sys.exit(2)
+                else:
+                    logger.warning("Memory leak detected but restart impossible: not launched via CLI")
+                    sys.exit(1)
     
     logger.info(f"Application finished with code: {ret}")
     return ret

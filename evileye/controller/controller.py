@@ -239,6 +239,10 @@ class Controller:
     def is_running(self):
         return self.run_flag
 
+    def get_restart_flag(self) -> bool:
+        """Check if restart is requested (e.g., due to memory leak)."""
+        return self.restart_flag
+
     def run(self):
         self.logger.info(f"Controller main loop started, stream_pipeline_id: {self.stream_pipeline_id}")
         # Emit system started via detector (unified path)

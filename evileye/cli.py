@@ -103,7 +103,10 @@ def _run_with_scheduler(
     if not sched_cfg.get("enabled"):
         # Fallback to single run if scheduler is disabled
         logger.info("Scheduled restart is disabled in config, running single process.")
-        subprocess.run(base_cmd, check=True, cwd=os.getcwd())
+        # Устанавливаем переменную окружения для определения запуска через CLI
+        env = os.environ.copy()
+        env['EVILEYE_CLI_LAUNCHED'] = '1'
+        subprocess.run(base_cmd, check=True, cwd=os.getcwd(), env=env)
         return
 
     mode = (sched_cfg.get("mode") or "daily_time").lower()
@@ -123,7 +126,10 @@ def _run_with_scheduler(
 
         try:
             # Запускаем дочерний процесс без блокирующего ожидания
-            proc = subprocess.Popen(base_cmd, cwd=os.getcwd())
+            # Устанавливаем переменную окружения для определения запуска через CLI
+            env = os.environ.copy()
+            env['EVILEYE_CLI_LAUNCHED'] = '1'
+            proc = subprocess.Popen(base_cmd, cwd=os.getcwd(), env=env)
         except Exception as e:
             logger.error(f"[scheduler] Failed to start process: {e}", exc_info=True)
             console.print(f"[red]Failed to start process: {e}[/red]")
@@ -155,6 +161,20 @@ def _run_with_scheduler(
                         f"[scheduler] Iteration {iteration} finished with return code={retcode} "
                         f"(duration={duration:.1f}s)"
                     )
+                    
+                    # Return code 2 = memory leak restart requested
+                    if retcode == 2:
+                        logger.info(
+                            "[scheduler] Memory leak detected: restarting immediately "
+                            "(skipping scheduled wait)"
+                        )
+                        console.print(
+                            "[yellow][scheduler] Memory leak restart: launching next iteration immediately[/yellow]"
+                        )
+                        # Continue to next iteration immediately (skip wait logic)
+                        continue_scheduler = True
+                        break
+                    
                     # Если процесс завершился сам ДО наступления времени next_run,
                     # считаем это штатным/ручным завершением и выходим из планировщика,
                     # чтобы не перезапускать приложение против воли пользователя.
@@ -327,7 +347,10 @@ def run(
             _run_with_scheduler(cmd, config_path, logger)
         else:
             # No configuration file -> no scheduler, run once
-            subprocess.run(cmd, check=True, cwd=os.getcwd())
+            # Устанавливаем переменную окружения для определения запуска через CLI
+            env = os.environ.copy()
+            env['EVILEYE_CLI_LAUNCHED'] = '1'
+            subprocess.run(cmd, check=True, cwd=os.getcwd(), env=env)
         logger.info("Command executed successfully")
     except subprocess.CalledProcessError as e:
         logger.error(f"Launch error: {e}")
