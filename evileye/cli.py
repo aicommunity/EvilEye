@@ -208,6 +208,32 @@ def _run_with_scheduler(
         if not continue_scheduler:
             break
 
+        # Если процесс был завершён по расписанию, вычисляем следующее время запуска
+        # и ждём до этого времени перед запуском следующей итерации
+        now = datetime.now()
+        if mode == "interval":
+            next_run = _get_next_interval(now, interval_minutes)
+        else:  # daily_time
+            next_run = _get_next_daily_time(now, time_str)
+
+        # Ждём до следующего времени запуска
+        sleep_seconds = max(0.0, (next_run - now).total_seconds())
+        if sleep_seconds > 0:
+            logger.info(
+                f"[scheduler] Waiting {sleep_seconds:.1f} seconds until next scheduled launch "
+                f"at {next_run.isoformat()}"
+            )
+            console.print(
+                f"[blue][scheduler] Waiting {sleep_seconds:.1f}s until next launch at "
+                f"{next_run.isoformat()}[/blue]"
+            )
+            try:
+                time.sleep(sleep_seconds)
+            except KeyboardInterrupt:
+                logger.info("[scheduler] Interrupted during wait, stopping scheduler loop")
+                console.print("[yellow][scheduler] Interrupted during wait, stopping loop[/yellow]")
+                raise typer.Exit(0)
+
 
 # Create CLI app
 app = typer.Typer(
