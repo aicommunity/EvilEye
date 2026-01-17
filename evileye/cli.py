@@ -199,13 +199,47 @@ def _run_with_scheduler(
                         proc.terminate()
                         try:
                             proc.wait(timeout=30)
-                        except Exception:
+                            logger.info(f"[scheduler] Process {proc.pid} terminated gracefully")
+                        except subprocess.TimeoutExpired:
                             logger.warning(
-                                f"[scheduler] Process {proc.pid} did not exit after SIGTERM, killing"
+                                f"[scheduler] Process {proc.pid} did not exit after SIGTERM within 30s, killing"
                             )
                             proc.kill()
+                            # Ждём завершения после kill
+                            try:
+                                proc.wait(timeout=10)
+                                logger.info(f"[scheduler] Process {proc.pid} killed and terminated")
+                            except subprocess.TimeoutExpired:
+                                logger.error(
+                                    f"[scheduler] Process {proc.pid} did not exit after SIGKILL within 10s, "
+                                    f"but continuing anyway"
+                                )
+                        except Exception as e:
+                            logger.warning(
+                                f"[scheduler] Error waiting for process {proc.pid} after terminate: {e}, killing"
+                            )
+                            try:
+                                proc.kill()
+                                proc.wait(timeout=10)
+                                logger.info(f"[scheduler] Process {proc.pid} killed after error")
+                            except Exception as e2:
+                                logger.error(
+                                    f"[scheduler] Failed to kill process {proc.pid}: {e2}"
+                                )
                     except Exception as e:
                         logger.error(f"[scheduler] Error terminating process {proc.pid}: {e}", exc_info=True)
+                    
+                    # Финальная проверка, что процесс действительно завершился
+                    final_retcode = proc.poll()
+                    if final_retcode is None:
+                        logger.error(
+                            f"[scheduler] Process {proc.pid} is still running after termination attempts, "
+                            f"but continuing to next iteration"
+                        )
+                    else:
+                        logger.info(
+                            f"[scheduler] Process {proc.pid} confirmed terminated with return code {final_retcode}"
+                        )
                     break
 
                 time.sleep(1.0)
@@ -248,7 +282,18 @@ def _run_with_scheduler(
                 f"{next_run.isoformat()}[/blue]"
             )
             try:
-                time.sleep(sleep_seconds)
+                # Разбиваем длительное ожидание на интервалы по 60 секунд для лучшей отзывчивости
+                # и возможности корректно обработать сигналы
+                remaining_seconds = sleep_seconds
+                while remaining_seconds > 0:
+                    sleep_interval = min(60.0, remaining_seconds)  # Спим максимум 60 секунд за раз
+                    time.sleep(sleep_interval)
+                    remaining_seconds -= sleep_interval
+                    # Периодически логируем оставшееся время (каждые 5 минут)
+                    if remaining_seconds > 0 and int(remaining_seconds) % 300 == 0:
+                        logger.debug(
+                            f"[scheduler] Still waiting: {remaining_seconds:.1f}s remaining until next launch"
+                        )
             except KeyboardInterrupt:
                 logger.info("[scheduler] Interrupted during wait, stopping scheduler loop")
                 console.print("[yellow][scheduler] Interrupted during wait, stopping loop[/yellow]")
