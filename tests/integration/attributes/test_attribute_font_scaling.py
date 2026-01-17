@@ -71,9 +71,12 @@ def test_font_scaling():
         # draw_object_attributes(image, obj, bbox, font_face, font_scale, thickness)
         draw_object_attributes(image, obj, bbox, config['font_face'], main_font_scale, config['thickness'])
         
-        # Сохранить результат
-        output_filename = f"test_attributes_{width}x{height}.jpg"
-        cv2.imwrite(output_filename, image)
+        # Сохранить результат в tests/data/images/
+        from pathlib import Path
+        output_dir = Path(__file__).parent.parent.parent.parent / "data" / "images"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_filename = output_dir / f"test_attributes_{width}x{height}.jpg"
+        cv2.imwrite(str(output_filename), image)
         print(f"Сохранено: {output_filename}")
         
         # Проверить размер текста
