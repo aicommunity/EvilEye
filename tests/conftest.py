@@ -32,6 +32,42 @@ def evil_eye_data_dir(project_root_path):
     """Возвращает путь к директории EvilEyeData."""
     return project_root_path / "EvilEyeData"
 
+@pytest.fixture(scope="session")
+def ensure_test_videos(project_root_path):
+    """Автоматически загружает тестовые видео из deploy-samples если их нет."""
+    videos_dir = project_root_path / "videos"
+    videos_dir.mkdir(exist_ok=True)
+    
+    # Проверить наличие ключевых файлов
+    required_videos = ["planes_sample.mp4", "sample_split.mp4", "6p-c0.avi", "6p-c1.avi"]
+    missing = [v for v in required_videos if not (videos_dir / v).exists()]
+    
+    # Если есть отсутствующие файлы, попытаться загрузить
+    if missing:
+        try:
+            from evileye.utils.download_samples import download_sample_videos
+            # Загрузить видео если их нет
+            results = download_sample_videos(str(videos_dir), force=False, parallel=False)
+            
+            # Проверить результат загрузки
+            for video_name in missing:
+                if video_name in results:
+                    status = results[video_name].get("status", "failed")
+                    if status not in ("downloaded", "exists"):
+                        # Если загрузка не удалась, проверить наличие файла
+                        if not (videos_dir / video_name).exists():
+                            # Пропустить тест если критичный файл отсутствует
+                            if video_name == "planes_sample.mp4":
+                                pytest.skip(f"Required test video not available: {video_name}. "
+                                           f"Run 'evileye deploy-samples' to download it.")
+        except Exception as e:
+            # Если не удалось загрузить, но planes_sample.mp4 есть - продолжить
+            if not (videos_dir / "planes_sample.mp4").exists():
+                pytest.skip(f"Could not ensure test videos are available: {e}. "
+                           f"Run 'evileye deploy-samples' to download them.")
+    
+    return videos_dir
+
 @pytest.fixture(autouse=True)
 def setup_logging():
     """Настраивает логирование для тестов."""
