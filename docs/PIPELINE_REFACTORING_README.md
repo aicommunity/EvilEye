@@ -25,9 +25,10 @@ PipelineBase (abstract)
 - `generate_default_structure(num_sources: int)` - генерирует структуру конфигурации по умолчанию
 
 **Общая функциональность:**
-- Управление результатами (`_results_list`, `_current_results`)
-- Методы для работы с результатами (`add_result`, `get_results_list`, etc.)
+- Управление результатами (`_results_queue`, `_current_results`)
+- Методы для работы с результатами (`add_result`, `get_results_list`, `get_current_results`, etc.)
 - Управление учетными данными (`_credentials`)
+- Очередь результатов с автоматическим управлением размером (maxsize=2)
 
 ### PipelineSimple
 
