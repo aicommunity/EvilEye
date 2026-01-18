@@ -94,18 +94,26 @@ Converts percentage to pixels.
 
 ### Text Configuration in JSON
 
-Add a `text_config` section to your pipeline configuration:
+Секция `text_config` размещается внутри секции `visualizer` в конфигурационном файле. Примеры полных конфигураций с `text_config`:
+
+- [single_video.json](../evileye/samples_configs/single_video.json)
+- [single_ip_camera.json](../evileye/samples_configs/single_ip_camera.json)
+- [multi_videos.json](../evileye/samples_configs/multi_videos.json)
+
+**Базовая структура**:
 
 ```json
 {
-  "text_config": {
-    "font_size_pt": 14,
-    "font_face": 0,
-    "color": [255, 255, 255],
-    "thickness": null,
-    "background_color": [0, 0, 0],
-    "padding_percent": 1.5,
-    "position_offset_percent": [0, -8]
+  "visualizer": {
+    "text_config": {
+      "font_size_pt": 14,
+      "font_face": 0,
+      "color": [255, 255, 255],
+      "thickness": null,
+      "background_color": [0, 0, 0],
+      "padding_percent": 1.5,
+      "position_offset_percent": [0, -8]
+    }
   }
 }
 ```
@@ -197,7 +205,17 @@ All existing code continues to work without changes. The new text configuration 
 
 ## Sample Configurations
 
-### High-Resolution Display (4K)
+Все примеры конфигураций в `evileye/samples_configs/` содержат секцию `text_config` в разделе `visualizer`. Примеры:
+
+- **Базовый пример**: [single_video.json](../evileye/samples_configs/single_video.json) - содержит `text_config` с font_size_pt: 42
+- **Несколько видео**: [multi_videos.json](../evileye/samples_configs/multi_videos.json) - настройки для мультикамерного отображения
+- **IP камера**: [single_ip_camera.json](../evileye/samples_configs/single_ip_camera.json) - пример для IP камеры
+
+Подробное описание всех параметров `text_config` см. в [Configuration Guide](CONFIGURATION_GUIDE.md#секция-visualizer).
+
+### Примеры секции text_config
+
+#### High-Resolution Display (4K)
 ```json
 {
   "text_config": {
@@ -210,7 +228,7 @@ All existing code continues to work without changes. The new text configuration 
 }
 ```
 
-### Small Display (VGA)
+#### Small Display (VGA)
 ```json
 {
   "text_config": {
@@ -223,7 +241,7 @@ All existing code continues to work without changes. The new text configuration 
 }
 ```
 
-### Multi-Camera Setup
+#### Multi-Camera Setup
 ```json
 {
   "text_config": {

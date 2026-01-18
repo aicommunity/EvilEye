@@ -170,6 +170,8 @@ EvilEye uses JSON configuration files for the **PipelineSurveillance** class. Th
 }
 ```
 
+**Detailed Description**: Complete description of all configuration parameters, configuration examples, and links to real working files are available in the [Configuration Guide](docs/CONFIGURATION_GUIDE.md).
+
 ### Scheduled Restart Configuration
 
 To manage scheduled restarts when running via `evileye run`, you can use the `controller.scheduled_restart` section:
@@ -324,41 +326,29 @@ The `detectors` section configures object detection for each source.
 
 #### RT-DETR Detector Configuration
 
-RT-DETR (Real-Time Detection Transformer) provides high-accuracy object detection with transformer architecture:
+RT-DETR (Real-Time Detection Transformer) provides high-accuracy object detection with transformer architecture.
 
-```json
-{
-  "type": "ObjectDetectorRtdetr",
-  "source_ids": [0],
-  "model": "rtdetr-l.pt",
-  "inference_size": 640,
-  "conf": 0.25,
-  "device": "cpu",
-  "classes": [0, 1, 24, 25, 63, 66, 67],
-  "roi": [[]],
-  "vid_stride": 1,
-  "num_detection_threads": 1
-}
-```
+**Configuration Example**: [single_video_rtdetr.json](evileye/samples_configs/single_video_rtdetr.json)
+
+Main parameters:
+- `type`: `"ObjectDetectorRtdetr"`
+- `model`: `"rtdetr-l.pt"` or `"rtdetr-x.pt"`
+- `inference_size`: Input image size (usually 640)
+- `conf`: Confidence threshold (usually 0.25)
+
+**Example for multiple videos**: [multi_videos_rtdetr.json](evileye/samples_configs/multi_videos_rtdetr.json)
 
 #### RF-DETR Detector Configuration
 
-RF-DETR (Roboflow Detection Transformer) provides optimized transformer-based detection:
+RF-DETR (Roboflow Detection Transformer) provides optimized transformer-based detection.
 
-```json
-{
-  "type": "ObjectDetectorRfdetr",
-  "source_ids": [0],
-  "model": "rfdetr-nano",
-  "inference_size": 640,
-  "conf": 0.25,
-  "device": "cpu",
-  "classes": [0, 1, 24, 25, 63, 66, 67],
-  "roi": [[]],
-  "vid_stride": 1,
-  "num_detection_threads": 1
-}
-```
+**Configuration Example**: [single_video_rfdetr.json](evileye/samples_configs/single_video_rfdetr.json)
+
+Main parameters:
+- `type`: `"ObjectDetectorRfdetr"`
+- `model`: `"rfdetr-nano"` or other RF-DETR models
+- `inference_size`: Input image size (usually 640)
+- `conf`: Confidence threshold (usually 0.25)
 
 #### Detector Types
 
@@ -424,135 +414,66 @@ The `mc_trackers` section configures cross-camera object tracking.
 
 ### Complete Configuration Examples
 
-#### IP Camera Configuration (poly-cameras.json)
+Detailed description of all configuration parameters and complete examples are available in the [Configuration Guide](docs/CONFIGURATION_GUIDE.md).
 
-```json
-{
-  "pipeline": {
-    "sources": [
-      {
-        "source": "IpCamera",
-        "camera": "rtsp://url1",
-        "apiPreference": "CAP_FFMPEG",
-        "split": false,
-        "num_split": 0,
-        "src_coords": [0],
-        "source_ids": [0],
-        "source_names": ["Cam1"]
-      },
-      {
-        "source": "IpCamera",
-        "camera": "rtsp://url2",
-        "apiPreference": "CAP_FFMPEG",
-        "split": true,
-        "num_split": 2,
-        "src_coords": [
-          [0, 0, 2304, 1300],
-          [0, 1300, 2304, 1292]
-        ],
-        "source_ids": [1, 2],
-        "source_names": ["Cam2", "Cam3"]
-      }
-    ],
-    "detectors": [
-      {
-        "source_ids": [0],
-        "model": "models/yolov8n.pt",
-        "show": false,
-        "inference_size": 640,
-        "device": null,
-        "conf": 0.4,
-        "save": false,
-        "stride_type": "frames",
-        "vid_stride": 1,
-        "classes": [0, 1, 24, 25, 63, 66, 67]
-      }
-    ],
-    "trackers": [
-      {
-        "source_ids": [0],
-        "fps": 30,
-        "tracker_type": "botsort"
-      }
-    ],
-    "mc_trackers": [
-      {
-        "source_ids": [0, 1, 2],
-        "enable": true
-      }
-    ]
-  },
-  "controller": {
-    "fps": 30,
-    "show_main_gui": true
-  }
-}
+#### IP Camera Configuration
+
+**Configuration Example**: [single_ip_camera.json](evileye/samples_configs/single_ip_camera.json)
+
+Main features:
+- Single IP camera source (RTSP stream)
+- YOLO detector (yolo11n.pt)
+- BoTSORT tracker
+- Database enabled
+- Authentication support via `username` and `password` or `credentials.json`
+
+**Usage**:
+```bash
+evileye run configs/single_ip_camera.json
 ```
 
-#### Video File Configuration (poly-videos.json)
+**Note**: Before using, update the camera URL in the configuration file or use `credentials.json` to store credentials.
 
-```json
-{
-  "pipeline": {
-    "sources": [
-      {
-        "source": "VideoFile",
-        "camera": "/path/to/video1.mp4",
-        "apiPreference": "CAP_FFMPEG",
-        "split": false,
-        "num_split": 0,
-        "src_coords": [0],
-        "source_ids": [0],
-        "source_names": ["Video1"]
-      },
-      {
-        "source": "VideoFile",
-        "camera": "/path/to/video2.mp4",
-        "apiPreference": "CAP_FFMPEG",
-        "split": true,
-        "num_split": 2,
-        "src_coords": [
-          [0, 0, 2304, 1300],
-          [0, 1300, 2304, 1292]
-        ],
-        "source_ids": [1, 2],
-        "source_names": ["Video2_1", "Video2_2"]
-      }
-    ],
-    "detectors": [
-      {
-        "source_ids": [0],
-        "model": "models/yolov8n.pt",
-        "show": false,
-        "inference_size": 640,
-        "device": null,
-        "conf": 0.4,
-        "save": false,
-        "stride_type": "frames",
-        "vid_stride": 1,
-        "classes": [0, 1, 24, 25, 63, 66, 67]
-      }
-    ],
-    "trackers": [
-      {
-        "source_ids": [0],
-        "fps": 30,
-        "tracker_type": "botsort"
-      }
-    ],
-    "mc_trackers": [
-      {
-        "source_ids": [0, 1, 2],
-        "enable": true
-      }
-    ]
-  },
-  "controller": {
-    "fps": 30,
-    "show_main_gui": true
-  }
-}
+#### Video File Configuration
+
+**Configuration Example**: [single_video.json](evileye/samples_configs/single_video.json)
+
+Main features:
+- Single video file source
+- YOLO detector
+- BoTSORT tracker
+- Database enabled
+
+**Example with multiple videos**: [multi_videos.json](evileye/samples_configs/multi_videos.json)
+
+Configuration for processing multiple video files with multi-camera tracking:
+- Two or more video files
+- Separate detectors and trackers for each source
+- Multi-camera tracking enabled
+
+**Example with video splitting**: [single_video_split.json](evileye/samples_configs/single_video_split.json)
+
+Configuration for processing a single video file split into multiple regions:
+- Single video file split into multiple regions
+- Separate detectors and trackers for each region
+- Useful for videos with multiple cameras in one file
+
+**Usage**:
+```bash
+evileye run configs/single_video.json
+evileye run configs/multi_videos.json
+evileye run configs/single_video_split.json
 ```
+
+#### Other Configuration Examples
+
+- **RT-DETR detector**: [single_video_rtdetr.json](evileye/samples_configs/single_video_rtdetr.json), [multi_videos_rtdetr.json](evileye/samples_configs/multi_videos_rtdetr.json)
+- **RF-DETR detector**: [single_video_rfdetr.json](evileye/samples_configs/single_video_rfdetr.json)
+- **GStreamer backend**: [single_video_gstreamer.json](evileye/samples_configs/single_video_gstreamer.json), [ip_camera_gstreamer.json](evileye/samples_configs/ip_camera_gstreamer.json)
+- **With attributes**: [single_video_with_attributes.json](evileye/samples_configs/single_video_with_attributes.json)
+- **PipelineCapture**: [pipeline_capture.json](evileye/samples_configs/pipeline_capture.json)
+
+All configuration examples are located in the `evileye/samples_configs/` folder and can be obtained using the `evileye deploy-samples` command.
 
 ## CLI Commands
 
@@ -677,7 +598,7 @@ evileye server
 evileye server --host 0.0.0.0 --port 8000
 
 # Start with auto-run configuration
-evileye server --config poly-videos.json
+evileye server --config configs/single_video.json
 
 # Disable auto-reload
 evileye server --no-reload
@@ -982,6 +903,7 @@ Detailed documentation is located in the [docs/](docs/) folder:
 
 - **[Database Setup Guide](docs/DATABASE_SETUP_GUIDE.md)** - Detailed PostgreSQL setup guide
 - **[Deploy Command](docs/CLI_DEPLOY_COMMAND.md)** - Using the `evileye deploy` command to deploy the system
+- **[Configuration Guide](docs/CONFIGURATION_GUIDE.md)** - Complete guide to configuration files structure, parameters, and examples
 - **[Configuration Creation](docs/CREATE_SCRIPT_README.md)** - Using the `evileye create` command to create new configurations
 
 #### Functionality

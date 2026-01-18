@@ -169,6 +169,16 @@ class MyProcessorPipeline(PipelineProcessors):
 
 ### PipelineCapture
 
+**Пример конфигурации**: [pipeline_capture.json](../evileye/samples_configs/pipeline_capture.json)
+
+**Особенности конфигурации:**
+- Параметры из секции `sources` передаются напрямую в `VideoCapture`
+- Нет дублирования параметров
+- Простая и понятная структура
+- Поддерживает только один источник видео
+- Минимальная конфигурация - только секции `pipeline` и `controller`
+
+**Базовая структура**:
 ```json
 {
   "pipeline": {
@@ -189,11 +199,7 @@ class MyProcessorPipeline(PipelineProcessors):
 }
 ```
 
-**Особенности конфигурации:**
-- Параметры из секции `sources` передаются напрямую в `VideoCapture`
-- Нет дублирования параметров
-- Простая и понятная структура
-- Поддерживает только один источник видео
+Подробное описание конфигураций см. в [Configuration Guide](CONFIGURATION_GUIDE.md).
 
 ### PipelineSurveillance
 

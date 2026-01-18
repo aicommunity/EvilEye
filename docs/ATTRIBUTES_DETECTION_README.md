@@ -32,41 +32,31 @@ Sources → Preprocessors → Detectors → Trackers → RoiFeeder → Attribute
 
 ## Конфигурация
 
+### Пример конфигурации
+
+**Полный пример конфигурации**: [single_video_with_attributes.json](../evileye/samples_configs/single_video_with_attributes.json)
+
 ### Основные параметры
+
+Секция `objects_handler.attributes_detection` содержит настройки детекции атрибутов:
 
 ```json
 {
   "objects_handler": {
     "attributes_detection": {
-      "primary_by_name": ["person", "car"],
-      "primary_by_id": [0, 2],
-      "secondary_by_name": ["hard_hat", "backpack"],
-      "secondary_by_id": [27, 28],
-      "roi": {
-        "padding": 0.1,
-        "size": [224, 224],
-        "every_n_frames": 1
+      "primary_by_name": ["person"],
+      "primary_by_id": [0],
+      "secondary_by_name": ["hard_hat", "no_hard_hat"],
+      "secondary_by_id": [0, 1],
+      "confidence_thresholds": {
+        "hard_hat": 0.5,
+        "no_hard_hat": 0.5
       },
-      "classifier": {
-        "enabled": true,
-        "model": "models/ppe_classifier.onnx",
-        "attrs": ["hard_hat", "backpack"],
-        "confidence_thresholds": {
-          "hard_hat": 0.5,
-          "backpack": 0.5
-        },
-        "time_thresholds": {
-          "hard_hat": {
-            "min_time_ms": 600,
-            "confirm_time_ms": 2000
-          },
-          "backpack": {
-            "min_time_ms": 600,
-            "confirm_time_ms": 2000
-          }
-        },
-        "ema_alpha": 0.6
-      }
+      "time_thresholds": {
+        "min_time_ms": 600,
+        "confirm_time_ms": 2000
+      },
+      "ema_alpha": 0.7
     }
   }
 }
@@ -325,7 +315,13 @@ PYTHONPATH=/home/user/EvilEye python tests/test_attributes_detection.py
 
 ## Примеры использования
 
+**Полный пример конфигурации с атрибутами**: [single_video_with_attributes.json](../evileye/samples_configs/single_video_with_attributes.json)
+
+Подробное описание всех параметров конфигурации см. в [Configuration Guide](CONFIGURATION_GUIDE.md#секция-objects_handler).
+
 ### PPE (Personal Protective Equipment)
+
+Пример настройки секции `classifier` для детекции средств индивидуальной защиты:
 
 ```json
 {
@@ -346,6 +342,8 @@ PYTHONPATH=/home/user/EvilEye python tests/test_attributes_detection.py
 ```
 
 ### Retail Analytics
+
+Пример настройки для розничной аналитики:
 
 ```json
 {
