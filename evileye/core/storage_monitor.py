@@ -401,7 +401,8 @@ class StorageMonitor:
                         file_path.unlink(missing_ok=True)
                         deleted_count += 1
                         deleted_size += file_size
-                        self.logger.info(
+                        # Log detailed info at DEBUG level to avoid log flooding
+                        self.logger.debug(
                             f"Deleted file (retention priority): {file_path} "
                             f"(size: {file_size / (1024**2):.2f} MB, "
                             f"age: {file_age_days} days, retention: {retention_days} days)"
@@ -477,7 +478,8 @@ class StorageMonitor:
                     file_path.unlink(missing_ok=True)
                     deleted_count += 1
                     deleted_size += file_size
-                    self.logger.info(
+                    # Log detailed info at DEBUG level to avoid log flooding
+                    self.logger.debug(
                         f"Deleted file (constraints): {file_path} "
                         f"(size: {file_size / (1024**2):.2f} MB, "
                         f"modified: {file_mtime.strftime('%Y-%m-%d %H:%M:%S')})"
