@@ -6,22 +6,22 @@ The EvilEye Text Rendering System provides adaptive text positioning and sizing 
 
 ## Key Features
 
-### 🎯 **Resolution Independence**
+### **Resolution Independence**
 - Font sizes specified in points (pt) instead of pixels
 - Positions specified as percentages of image dimensions
 - Automatic scaling for different image resolutions
 
-### 📏 **Flexible Positioning**
+### **Flexible Positioning**
 - Absolute positioning using percentages
 - Relative positioning near bounding boxes
 - Automatic boundary checking and adjustment
 
-### 🎨 **Rich Styling**
+### **Rich Styling**
 - Configurable font faces, colors, and thickness
 - Optional background colors with padding
 - Auto-calculated thickness based on font size
 
-### ⚙️ **Easy Configuration**
+### **Easy Configuration**
 - JSON-based configuration in pipeline configs
 - Default values with override capability
 - Backward compatibility with existing code

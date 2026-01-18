@@ -142,7 +142,7 @@ The `credentials.json` file contains database and camera access credentials:
 }
 ```
 
-⚠️ **Security Warning**: The `credentials.json` file contains plain text passwords. Store this file securely and never commit it to version control. Consider using environment variables or a secure credential manager for production deployments.
+**Security Warning**: The `credentials.json` file contains plain text passwords. Store this file securely and never commit it to version control. Consider using environment variables or a secure credential manager for production deployments.
 
 
 
@@ -150,7 +150,7 @@ The `credentials.json` file contains database and camera access credentials:
 
 EvilEye uses JSON configuration files for the **PipelineSurveillance** class. The configuration is divided into sections that define different components of the surveillance pipeline.
 
-⚠️ **Important**: The configuration structure described above is specific to the **PipelineSurveillance** class. Other pipeline classes may have different configuration requirements and structure.
+**Important**: The configuration structure described above is specific to the **PipelineSurveillance** class. Other pipeline classes may have different configuration requirements and structure.
 
 ### Configuration Structure
 
@@ -974,9 +974,8 @@ Detailed documentation is located in the [docs/](docs/) folder:
 
 #### Architecture and Design
 
-- **[System Architecture](docs/ARCHITECTURE.md)** - Detailed architecture description at all levels (CLI, Controller, Pipeline, Video, Objects, Events, Database)
+- **[System Architecture](docs/ARCHITECTURE.md)** - Detailed architecture description at all levels (CLI, Controller, Pipeline, Video, Objects, Events, Database) with interactive Mermaid diagrams and static UML diagrams
 - **[Pipeline Architecture](docs/PIPELINE_REFACTORING_README.md)** - Pipeline architecture description, base classes, and ways to create custom pipelines
-- **[UML Diagrams](docs/UML_DIAGRAMS_README.md)** - Class diagrams, architecture, and data flow diagrams of the system
 - **[GUI Refactoring Guide](docs/GUI_REFACTORING_GUIDE.md)** - GUI system architecture, components, and best practices
 
 #### Installation and Setup
