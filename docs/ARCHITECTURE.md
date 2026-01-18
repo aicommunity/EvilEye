@@ -2071,6 +2071,6 @@ python scripts/uml/generate_uml_diagrams.py
 
 ## Связанные документы
 
-- [Pipeline Refactoring](PIPELINE_REFACTORING_README.md) - Детальное описание архитектуры pipeline
+- [Pipeline Architecture](PIPELINE_ARCHITECTURE.md) - Детальное описание архитектуры pipeline
 - [Attributes Detection](ATTRIBUTES_DETECTION_README.md) - Система детекции атрибутов
 - [Database Setup Guide](DATABASE_SETUP_GUIDE.md) - Руководство по настройке БД

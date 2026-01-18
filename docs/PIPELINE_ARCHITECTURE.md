@@ -1,8 +1,8 @@
-# Pipeline Refactoring
+# Архитектура Pipeline
 
 ## Обзор
 
-Рефакторинг pipeline архитектуры для разделения общей функциональности от процессор-специфичной логики.
+Архитектура pipeline системы EvilEye обеспечивает модульную и расширяемую обработку видео потоков. Система поддерживает различные типы pipeline - от простых до сложных процессор-базированных.
 
 > **См. также**: [Архитектура системы](ARCHITECTURE.md#уровень-3-pipeline-архитектура) - Полное описание архитектуры pipeline на уровне 3 с детальными схемами и диаграммами.
 
@@ -65,14 +65,14 @@ PipelineBase (abstract)
 - **Упрощенная обработка**: использует метод `get()` из VideoCapture для чтения кадров
 - **Метод `get_sources()`**: возвращает список с объектом VideoCapture
 
-**Упрощенная архитектура:**
+**Архитектура:**
 - `set_params_impl()`: сохраняет конфигурацию источника в `self.source_config`
 - `init_impl()`: создает `VideoCapture` и передает ему `self.source_config` напрямую
 - `process_logic()`: использует `self.video_capture.get()` для получения кадров
 - Нет дублирования параметров - используется конфигурация как есть
 - Нет ручного управления кадрами - все управляется VideoCapture
 
-**Упрощенная обработка кадров:**
+**Обработка кадров:**
 ```python
 def process_logic(self) -> Dict[str, Any]:
     # Get frames from VideoCapture using the get() method
@@ -103,7 +103,7 @@ evileye/
 ├── core/
 │   ├── pipeline_base.py          # PipelineBase
 │   ├── pipeline_simple.py        # PipelineSimple
-│   └── pipeline_processors.py    # PipelineProcessors (переименован из pipeline.py)
+│   └── pipeline_processors.py    # PipelineProcessors
 ├── pipelines/
 │   ├── pipeline_surveillance.py  # PipelineSurveillance
 │   └── pipeline_capture.py       # PipelineCapture
@@ -111,38 +111,59 @@ evileye/
     └── pipeline_capture.json     # Конфигурация для PipelineCapture
 ```
 
-## Миграция
+## Создание новых pipeline
 
-### Для существующих pipeline
+### Простая pipeline
 
-1. **Если pipeline наследуется от `Pipeline`:**
-   - Изменить наследование на `PipelineProcessors`
-   - Обновить импорты: `from evileye.core.pipeline_processors import PipelineProcessors`
+Для создания простой pipeline без процессоров:
 
-2. **Если pipeline простая (без процессоров):**
-   - Наследоваться от `PipelineSimple`
-   - Реализовать абстрактный метод `process_logic()`
+```python
+from evileye.core.pipeline_simple import PipelineSimple
 
-### Для новых pipeline
+class MySimplePipeline(PipelineSimple):
+    def process_logic(self) -> Dict[str, Any]:
+        # Реализация логики обработки
+        result = {
+            'source_id': 0,
+            'frame_id': self.frame_counter,
+            'image': processed_image,
+            'timestamp': time.time(),
+        }
+        return result
+```
 
-1. **Простая pipeline:**
-   ```python
-   from evileye.core.pipeline_simple import PipelineSimple
-   
-   class MySimplePipeline(PipelineSimple):
-       def process_logic(self) -> Dict[str, Any]:
-           # Реализация логики
-           return result
-   ```
+**Требования:**
+- Наследоваться от `PipelineSimple`
+- Реализовать абстрактный метод `process_logic()`
+- Метод должен возвращать словарь с результатами обработки
 
-2. **Процессор-базированная pipeline:**
-   ```python
-   from evileye.core.pipeline_processors import PipelineProcessors
-   
-   class MyProcessorPipeline(PipelineProcessors):
-       # Наследует всю функциональность PipelineProcessors
-       pass
-   ```
+### Процессор-базированная pipeline
+
+Для создания сложной pipeline с процессорами:
+
+```python
+from evileye.core.pipeline_processors import PipelineProcessors
+
+class MyProcessorPipeline(PipelineProcessors):
+    def _init_sources(self):
+        # Инициализация источников видео
+        pass
+    
+    def _init_detectors(self):
+        # Инициализация детекторов
+        pass
+    
+    def _init_trackers(self):
+        # Инициализация трекеров
+        pass
+    
+    # Дополнительные методы инициализации по необходимости
+```
+
+**Требования:**
+- Наследоваться от `PipelineProcessors`
+- Реализовать методы инициализации для используемых процессоров
+- Наследует всю функциональность обработки процессоров
 
 ## Конфигурация
 
@@ -168,10 +189,10 @@ evileye/
 }
 ```
 
-**Упрощенная конфигурация:**
+**Особенности конфигурации:**
 - Параметры из секции `sources` передаются напрямую в `VideoCapture`
 - Нет дублирования параметров
-- Более простая и понятная структура
+- Простая и понятная структура
 - Поддерживает только один источник видео
 
 ### PipelineSurveillance
@@ -205,7 +226,7 @@ evileye/
 
 > **Схема последовательности**: См. [PipelineSurveillance: Последовательность процессоров](ARCHITECTURE.md#pipelinesurveillance-последовательность-процессоров) в документации по архитектуре.
 
-## Совместимость с контроллером
+## Интеграция с контроллером
 
 Все pipeline классы должны реализовывать метод `get_sources()` для совместимости с контроллером:
 
@@ -228,26 +249,23 @@ python test_pipeline_capture_sources.py
 
 # Тест упрощенной инициализации
 python test_pipeline_capture_simple.py
-
-# Тест рефакторинга
-python test_pipeline_refactoring.py
 ```
 
-### Проверка совместимости
+### Проверка работы
 
 ```bash
 # Запуск с PipelineCapture
 python evileye/process.py --config configs/pipeline_capture.json --gui --no-autoclose
 ```
 
-## Преимущества рефакторинга
+## Преимущества архитектуры
 
 1. **Разделение ответственности**: общая функциональность отделена от специфичной логики
 2. **Переиспользование кода**: общие методы определены в базовых классах
 3. **Гибкость**: можно создавать как простые, так и сложные pipeline
 4. **Совместимость**: все pipeline работают с контроллером
 5. **Расширяемость**: легко добавлять новые типы pipeline
-6. **Упрощение**: удален избыточный PipelineCaptureProcessors, упрощена архитектура
+6. **Простота**: упрощенная архитектура для простых случаев использования
 7. **Простота конфигурации**: PipelineCapture использует параметры источников напрямую
 8. **Упрощенная обработка**: использует метод `get()` из VideoCapture для чтения кадров
 9. **Автоматическое управление**: VideoCapture сам управляет кадрами и временными метками

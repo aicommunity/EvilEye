@@ -961,7 +961,7 @@ class MyCustomPipeline(PipelineProcessors):
 
 Each pipeline class can define its own configuration structure and processing logic.
 
-For more details on creating pipelines, see [Pipeline Refactoring Guide](docs/PIPELINE_REFACTORING_README.md).
+For more details on creating pipelines, see [Pipeline Architecture Guide](docs/PIPELINE_ARCHITECTURE.md).
 
 ## Documentation
 
@@ -975,7 +975,7 @@ Detailed documentation is located in the [docs/](docs/) folder:
 #### Architecture and Design
 
 - **[System Architecture](docs/ARCHITECTURE.md)** - Detailed architecture description at all levels (CLI, Controller, Pipeline, Video, Objects, Events, Database) with interactive Mermaid diagrams and static UML diagrams
-- **[Pipeline Architecture](docs/PIPELINE_REFACTORING_README.md)** - Pipeline architecture description, base classes, and ways to create custom pipelines
+- **[Pipeline Architecture](docs/PIPELINE_ARCHITECTURE.md)** - Pipeline architecture description, base classes, and ways to create custom pipelines
 - **[GUI Refactoring Guide](docs/GUI_REFACTORING_GUIDE.md)** - GUI system architecture, components, and best practices
 
 #### Installation and Setup
@@ -999,7 +999,7 @@ Detailed documentation is located in the [docs/](docs/) folder:
 ### Quick Navigation
 
 - **For New Users**: Start with [database setup](docs/DATABASE_SETUP_GUIDE.md) and [deploy command](docs/CLI_DEPLOY_COMMAND.md)
-- **For Developers**: Study [system architecture](docs/ARCHITECTURE.md) and [pipeline architecture](docs/PIPELINE_REFACTORING_README.md)
+- **For Developers**: Study [system architecture](docs/ARCHITECTURE.md) and [pipeline architecture](docs/PIPELINE_ARCHITECTURE.md)
 - **For Integrators**: Familiarize yourself with [GStreamer usage](docs/VideoCaptureGStreamer_Usage.md) and [attributes detection system](docs/ATTRIBUTES_DETECTION_README.md)
 
 Historical development reports are located in the [reports/](reports/) folder.
