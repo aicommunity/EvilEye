@@ -11,6 +11,7 @@
 
 ### 🏗️ Архитектура системы
 
+- **[Архитектура системы](ARCHITECTURE.md)** - Полное описание архитектуры на 7 уровнях абстракции (CLI, Controller, Pipeline, Video, Objects, Events, Database) с детальными схемами и диаграммами
 - **[Архитектура Pipeline](PIPELINE_REFACTORING_README.md)** - Описание архитектуры pipeline, базовых классов и способов создания собственных pipeline
 - **[UML диаграммы](UML_DIAGRAMS_README.md)** - Диаграммы классов, архитектуры и потоков данных системы
 - **[Руководство по рефакторингу GUI](GUI_REFACTORING_GUIDE.md)** - Архитектура GUI системы, компоненты и лучшие практики
@@ -38,9 +39,10 @@
 
 ### Для разработчиков
 
-1. Изучите [архитектуру Pipeline](PIPELINE_REFACTORING_README.md)
-2. Просмотрите [UML диаграммы](UML_DIAGRAMS_README.md) для понимания структуры системы
-3. Ознакомьтесь с [руководством по рефакторингу GUI](GUI_REFACTORING_GUIDE.md)
+1. Изучите [архитектуру системы](ARCHITECTURE.md) для понимания общей структуры на всех уровнях
+2. Изучите [архитектуру Pipeline](PIPELINE_REFACTORING_README.md) для деталей реализации pipeline
+3. Просмотрите [UML диаграммы](UML_DIAGRAMS_README.md) для понимания структуры системы
+4. Ознакомьтесь с [руководством по рефакторингу GUI](GUI_REFACTORING_GUIDE.md)
 
 ### Для интеграторов
 

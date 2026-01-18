@@ -2,6 +2,8 @@
 
 This document describes all the UML diagrams generated for the EvilEye computer vision system.
 
+> **См. также**: [Архитектура системы](ARCHITECTURE.md) - Детальное описание архитектуры на 7 уровнях абстракции с интерактивными Mermaid диаграммами, которые дополняют статические UML диаграммы, описанные в этом документе.
+
 ## 📊 Generated Diagrams
 
 ### 1. **Class Diagrams**
@@ -37,6 +39,15 @@ This document describes all the UML diagrams generated for the EvilEye computer 
   - **Event Detection Layer**: FOV Detector, Zone Detector
   - **Output Layer**: Events Journal, File Storage
 
+> **Дополнительные схемы архитектуры**: См. [Архитектура системы](ARCHITECTURE.md) для интерактивных Mermaid диаграмм на разных уровнях абстракции:
+> - [Уровень 1: CLI и точки входа](ARCHITECTURE.md#уровень-1-cli-и-точки-входа)
+> - [Уровень 2: Контроллер и основные сущности](ARCHITECTURE.md#уровень-2-контроллер-и-основные-сущности)
+> - [Уровень 3: Pipeline архитектура](ARCHITECTURE.md#уровень-3-pipeline-архитектура)
+> - [Уровень 4: Видеозахват и запись](ARCHITECTURE.md#уровень-4-видеозахват-и-запись)
+> - [Уровень 5: Обработка объектов](ARCHITECTURE.md#уровень-5-обработка-объектов)
+> - [Уровень 6: Обработка событий](ARCHITECTURE.md#уровень-6-обработка-событий)
+> - [Уровень 7: Работа с базой данных](ARCHITECTURE.md#уровень-7-работа-с-базой-данных)
+
 ### 3. **Data Flow Diagrams**
 
 #### Data Flow (`evileye_data_flow.png`)
@@ -46,6 +57,12 @@ This document describes all the UML diagrams generated for the EvilEye computer 
   - Video Frames → Pipeline Processing → Object Detection → Object Tracking
   - Object Data → JSON Files, Image Files, Database (optional)
   - Data → Events Journal with Image Previews
+
+> **Детальные схемы потоков данных**: См. [Архитектура системы](ARCHITECTURE.md) для интерактивных диаграмм последовательности и потоков данных:
+> - [Поток данных в главном цикле](ARCHITECTURE.md#поток-данных-в-главном-цикле)
+> - [Процесс обработки PipelineSurveillance](ARCHITECTURE.md#процесс-обработки)
+> - [Обработка результатов трекинга](ARCHITECTURE.md#обработка-результатов-трекинга)
+> - [Поток сохранения данных](ARCHITECTURE.md#поток-сохранения-данных)
 
 ### 4. **PlantUML Diagrams**
 
@@ -198,11 +215,13 @@ Config Data    Processed   Detected   Object Data
 - **Understanding**: Clear view of system architecture
 - **Documentation**: Visual representation of code structure
 - **Maintenance**: Easy to identify relationships and dependencies
+- **Complementary**: Static UML diagrams complement interactive Mermaid diagrams in [ARCHITECTURE.md](ARCHITECTURE.md)
 
 ### For Architects
 - **Design Review**: Validate system design decisions
 - **Scalability**: Identify potential bottlenecks
 - **Integration**: Plan new feature integration
+- **Multi-level View**: Combine static UML with [multi-level architecture diagrams](ARCHITECTURE.md)
 
 ### For Stakeholders
 - **Communication**: Visual explanation of system complexity

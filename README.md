@@ -172,7 +172,7 @@ EvilEye uses JSON configuration files for the **PipelineSurveillance** class. Th
 
 ### Scheduled Restart Configuration
 
-Для управления плановым перезапуском при запуске через `evileye run` можно использовать секцию `controller.scheduled_restart`:
+To manage scheduled restarts when running via `evileye run`, you can use the `controller.scheduled_restart` section:
 
 ```json
 "controller": {
@@ -187,14 +187,14 @@ EvilEye uses JSON configuration files for the **PipelineSurveillance** class. Th
 }
 ```
 
-- **enabled**: включает/выключает автоматический перезапуск (по умолчанию `false`).
-- **mode**: режим работы планировщика:
-  - `"daily_time"` — перезапуск один раз в сутки в заданное время `time`.
-  - `"interval"` — перезапуск через каждые `interval_minutes` минут после завершения предыдущего запуска (удобно для тестирования, например 5 минут).
-- **time**: время суточного перезапуска в формате `HH:MM` (по умолчанию `"01:00"`).
-- **interval_minutes**: интервал в минутах для режима `"interval"`.
+- **enabled**: Enable/disable automatic restart (default: `false`).
+- **mode**: Scheduler operation mode:
+  - `"daily_time"` — restart once per day at the specified `time`.
+  - `"interval"` — restart every `interval_minutes` minutes after the previous run completes (useful for testing, e.g., 5 minutes).
+- **time**: Daily restart time in `HH:MM` format (default: `"01:00"`).
+- **interval_minutes**: Interval in minutes for `"interval"` mode.
 
-Плановый перезапуск действует только при запуске через CLI `evileye run` и не влияет на прямой запуск `evileye-process`/`process.py`.
+Scheduled restart only works when running via CLI `evileye run` and does not affect direct launch via `evileye-process`/`process.py`.
 
 ### Sources Configuration
 
@@ -885,13 +885,40 @@ evileye/
 
 ## Architecture
 
+EvilEye uses a modular pipeline architecture for processing video streams with support for object detection, tracking, and event analysis.
+
+### Architecture Overview
+
+The system is organized at several levels of abstraction:
+
+1. **CLI and Entry Points** - Various ways to launch the system (CLI, GUI, API)
+2. **Controller** - Central orchestrator coordinating all components
+3. **Pipeline** - Modular video processing through a sequence of processors
+4. **Video Capture and Recording** - Support for various backends (OpenCV, GStreamer)
+5. **Object Processing** - Management of detected objects lifecycle
+6. **Event Processing** - Detection and storage of various event types
+7. **Database** - Data storage in PostgreSQL or JSON files
+
+### Detailed Architecture Documentation
+
+**[Complete System Architecture Description](docs/ARCHITECTURE.md)** - Detailed description of all architecture levels with diagrams and schemas.
+
+The document includes:
+- Component interaction diagrams at each level
+- Data flow descriptions
+- Implementation details of key components
+- Class and sequence diagrams
+
+### Pipeline Architecture
+
 EvilEye uses a modular pipeline architecture:
 
 1. **Sources** - Video capture from cameras, files, or streams
 2. **Preprocessors** - Frame preprocessing and enhancement
-3. **Detectors** - Object detection using YOLO models
+3. **Detectors** - Object detection using YOLO, RT-DETR, RF-DETR models
 4. **Trackers** - Object tracking and trajectory analysis
 5. **Multi-camera Trackers** - Cross-camera object re-identification
+6. **Attributes** - Detection and tracking of object attributes
 
 Each component is implemented as a processor that can be configured and combined to create custom surveillance pipelines.
 
@@ -899,7 +926,8 @@ Each component is implemented as a processor that can be configured and combined
 
 EvilEye supports multiple pipeline implementations:
 
-- **PipelineSurveillance** - Full-featured pipeline with all components (sources, detectors, trackers, mc_trackers)
+- **PipelineSurveillance** - Full-featured pipeline with all components (sources, detectors, trackers, mc_trackers, attributes)
+- **PipelineCapture** - Simplified pipeline for video capture
 - **Custom Pipelines** - User-defined pipeline implementations
 
 Pipeline classes are automatically discovered from:
@@ -918,41 +946,64 @@ evileye create --list-pipelines
 Create custom pipelines by extending the base `Pipeline` class and placing them in a local `pipelines/` folder:
 
 ```python
-from evileye.core.pipeline_processors import Pipeline
+from evileye.core.pipeline_processors import PipelineProcessors
 
 
-class MyCustomPipeline(Pipeline):
+class MyCustomPipeline(PipelineProcessors):
     def __init__(self):
         super().__init__()
         # Custom initialization
 
     def generate_default_structure(self, num_sources: int):
-        # Custom configuration generation
+        # Configuration structure generation
         pass
 ```
 
 Each pipeline class can define its own configuration structure and processing logic.
 
+For more details on creating pipelines, see [Pipeline Refactoring Guide](docs/PIPELINE_REFACTORING_README.md).
+
 ## Documentation
 
-Подробная документация находится в папке [docs/](docs/):
+Detailed documentation is located in the [docs/](docs/) folder:
 
-- **[Главный индекс документации](docs/README.md)** - Навигация по всей документации
-- **[Установка и настройка](docs/README.md#-установка-и-настройка)** - Руководства по установке и настройке системы
-- **[Архитектура системы](docs/README.md#-архитектура-системы)** - Техническая документация по архитектуре
-- **[Функциональность](docs/README.md#-функциональность)** - Описание основных функций и возможностей
-- **[Руководства пользователя](docs/README.md#-руководства-пользователя)** - Пошаговые инструкции по использованию
+- **[Main Documentation Index](docs/README.md)** - Navigation for all documentation
+- **[System Architecture](docs/ARCHITECTURE.md)** - Complete architecture description at 7 levels of abstraction with diagrams
 
-### Основные разделы документации
+### Main Documentation Sections
 
-- [Настройка базы данных](docs/DATABASE_SETUP_GUIDE.md) - Подробное руководство по настройке PostgreSQL
-- [Архитектура Pipeline](docs/PIPELINE_REFACTORING_README.md) - Описание архитектуры pipeline
-- [Система детекции атрибутов](docs/ATTRIBUTES_DETECTION_README.md) - Детекция и трекинг атрибутов объектов
-- [Система меток объектов](docs/LABELING_SYSTEM_README.md) - Автоматическое сохранение меток
-- [Использование GStreamer](docs/VideoCaptureGStreamer_Usage.md) - Работа с различными источниками видео
-- [UML диаграммы](docs/UML_DIAGRAMS_README.md) - Диаграммы классов и архитектуры
+#### Architecture and Design
 
-Исторические отчеты о разработке находятся в папке [reports/](reports/).
+- **[System Architecture](docs/ARCHITECTURE.md)** - Detailed architecture description at all levels (CLI, Controller, Pipeline, Video, Objects, Events, Database)
+- **[Pipeline Architecture](docs/PIPELINE_REFACTORING_README.md)** - Pipeline architecture description, base classes, and ways to create custom pipelines
+- **[UML Diagrams](docs/UML_DIAGRAMS_README.md)** - Class diagrams, architecture, and data flow diagrams of the system
+- **[GUI Refactoring Guide](docs/GUI_REFACTORING_GUIDE.md)** - GUI system architecture, components, and best practices
+
+#### Installation and Setup
+
+- **[Database Setup Guide](docs/DATABASE_SETUP_GUIDE.md)** - Detailed PostgreSQL setup guide
+- **[Deploy Command](docs/CLI_DEPLOY_COMMAND.md)** - Using the `evileye deploy` command to deploy the system
+- **[Configuration Creation](docs/CREATE_SCRIPT_README.md)** - Using the `evileye create` command to create new configurations
+
+#### Functionality
+
+- **[Attributes Detection System](docs/ATTRIBUTES_DETECTION_README.md)** - Detection and tracking of object attributes (hard hat, backpack, etc.)
+- **[Object Labeling System](docs/LABELING_SYSTEM_README.md)** - Automatic saving of object labels in JSON format
+- **[Text Rendering System](docs/TEXT_RENDERING_SYSTEM.md)** - Adaptive text rendering with support for various resolutions
+- **[Configuration History](docs/CONFIG_HISTORY_USER_GUIDE.md)** - User guide for working with configuration history
+
+#### User Guides
+
+- **[GStreamer Usage for Video](docs/VideoCaptureGStreamer_Usage.md)** - Setup and usage of GStreamer for video capture from IP cameras, USB cameras, and files
+- **[GStreamer Usage for Image Sequences](docs/ImageSequence_GStreamer_Usage.md)** - Processing image sequences via GStreamer
+
+### Quick Navigation
+
+- **For New Users**: Start with [database setup](docs/DATABASE_SETUP_GUIDE.md) and [deploy command](docs/CLI_DEPLOY_COMMAND.md)
+- **For Developers**: Study [system architecture](docs/ARCHITECTURE.md) and [pipeline architecture](docs/PIPELINE_REFACTORING_README.md)
+- **For Integrators**: Familiarize yourself with [GStreamer usage](docs/VideoCaptureGStreamer_Usage.md) and [attributes detection system](docs/ATTRIBUTES_DETECTION_README.md)
+
+Historical development reports are located in the [reports/](reports/) folder.
 
 ## Contributing
 
