@@ -862,6 +862,25 @@ class Controller:
         self.params['controller']["max_memory_usage_mb"] = self.max_memory_usage_mb
         self.params['controller']["auto_restart"] = self.auto_restart
         self.params['controller']["use_database"] = self.use_database
+        
+        # Сохраняем scheduled_restart: сначала из текущих params, затем из loaded_config
+        try:
+            scheduled_restart = None
+            # Сначала проверяем текущие params
+            if isinstance(self.params, dict):
+                current_ctrl = self.params.get('controller', {})
+                if isinstance(current_ctrl, dict) and 'scheduled_restart' in current_ctrl:
+                    scheduled_restart = current_ctrl['scheduled_restart']
+            # Если не нашли в params, проверяем loaded_config
+            if scheduled_restart is None:
+                orig_ctrl = (self.loaded_config or {}).get('controller', {})
+                if isinstance(orig_ctrl, dict) and 'scheduled_restart' in orig_ctrl:
+                    scheduled_restart = orig_ctrl['scheduled_restart']
+            # Если нашли, сохраняем
+            if scheduled_restart is not None:
+                self.params['controller']["scheduled_restart"] = scheduled_restart
+        except Exception:
+            pass
 
         # Get pipeline parameters
         pipeline_params = self.pipeline.get_params()
