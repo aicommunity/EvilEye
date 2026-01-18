@@ -665,7 +665,7 @@ classDiagram
         +lost_objs: ObjectResultList
         +labeling_manager: LabelingManager
         +attribute_manager: AttributeManager
-        +subscribers[]
+        +subscribers: list
         +handle_objs()
         +_handle_active()
         +_handle_lost()
@@ -684,11 +684,11 @@ classDiagram
     }
     
     class ObjectResult {
-        +object_id
-        +track_id
-        +history[]
-        +last_image
-        +attributes{}
+        +object_id: int
+        +track_id: int
+        +history: list
+        +last_image: CaptureImage
+        +attributes: dict
     }
     
     ObjectsHandler --> LabelingManager
@@ -780,30 +780,30 @@ stateDiagram-v2
 classDiagram
     class EventsDetector {
         <<abstract>>
-        +run_flag
+        +run_flag: bool
         +process()*
         +init()*
     }
     
     class CamEventsDetector {
-        +sources[]
+        +sources: list
         +process()
     }
     
     class FieldOfViewEventsDetector {
-        +sources[]
-        +active_obj_ids{}
+        +sources: list
+        +active_obj_ids: dict
         +process()
     }
     
     class ZoneEventsDetector {
-        +zones{}
-        +obj_ids_zone{}
+        +zones: dict
+        +obj_ids_zone: dict
         +process()
     }
     
     class AttributeEventsDetector {
-        +sources{}
+        +sources: dict
         +process()
     }
     
@@ -1068,19 +1068,19 @@ erDiagram
         int last_record
         boolean is_terminated
         int configuration_id
-        json configuration_info
+        string configuration_info
     }
     
     camera_information {
         text full_address PK
         text short_address
-        int[] sources
-        int[][] roi
+        string sources
+        string roi
         int video_dur_frames
         int video_dur_ms
         timestamp creation_time
-        json calibration_info
-        json additional_info
+        string calibration_info
+        string additional_info
     }
     
     objects {
@@ -1093,15 +1093,15 @@ erDiagram
         timestamp time_stamp
         timestamp time_lost
         int object_id
-        real[] bounding_box
-        real[] lost_bounding_box
-        double precision confidence
+        string bounding_box
+        string lost_bounding_box
+        float confidence
         int class_id
         text preview_path
         text lost_preview_path
         text frame_path
         text lost_frame_path
-        json object_data
+        string object_data
     }
     
     camera_events {
@@ -1118,8 +1118,8 @@ erDiagram
         timestamp time_stamp
         int source_id
         int object_id
-        real[] bounding_box
-        double precision confidence
+        string bounding_box
+        float confidence
         int class_id
     }
     
@@ -1131,7 +1131,7 @@ erDiagram
         int object_id
         text event_type
         int zone_id
-        real[] bounding_box
+        string bounding_box
     }
     
     attribute_events {
@@ -1142,7 +1142,7 @@ erDiagram
         int object_id
         text attribute_name
         text event_type
-        double precision confidence
+        float confidence
     }
     
     system_events {
