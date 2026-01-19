@@ -142,7 +142,7 @@ The `credentials.json` file contains database and camera access credentials:
 }
 ```
 
-⚠️ **Security Warning**: The `credentials.json` file contains plain text passwords. Store this file securely and never commit it to version control. Consider using environment variables or a secure credential manager for production deployments.
+**Security Warning**: The `credentials.json` file contains plain text passwords. Store this file securely and never commit it to version control. Consider using environment variables or a secure credential manager for production deployments.
 
 
 
@@ -150,7 +150,7 @@ The `credentials.json` file contains database and camera access credentials:
 
 EvilEye uses JSON configuration files for the **PipelineSurveillance** class. The configuration is divided into sections that define different components of the surveillance pipeline.
 
-⚠️ **Important**: The configuration structure described above is specific to the **PipelineSurveillance** class. Other pipeline classes may have different configuration requirements and structure.
+**Important**: The configuration structure described above is specific to the **PipelineSurveillance** class. Other pipeline classes may have different configuration requirements and structure.
 
 ### Configuration Structure
 
@@ -170,9 +170,11 @@ EvilEye uses JSON configuration files for the **PipelineSurveillance** class. Th
 }
 ```
 
+**Detailed Description**: Complete description of all configuration parameters, configuration examples, and links to real working files are available in the [Configuration Guide](docs/CONFIGURATION_GUIDE.md).
+
 ### Scheduled Restart Configuration
 
-Для управления плановым перезапуском при запуске через `evileye run` можно использовать секцию `controller.scheduled_restart`:
+To manage scheduled restarts when running via `evileye run`, you can use the `controller.scheduled_restart` section:
 
 ```json
 "controller": {
@@ -187,14 +189,14 @@ EvilEye uses JSON configuration files for the **PipelineSurveillance** class. Th
 }
 ```
 
-- **enabled**: включает/выключает автоматический перезапуск (по умолчанию `false`).
-- **mode**: режим работы планировщика:
-  - `"daily_time"` — перезапуск один раз в сутки в заданное время `time`.
-  - `"interval"` — перезапуск через каждые `interval_minutes` минут после завершения предыдущего запуска (удобно для тестирования, например 5 минут).
-- **time**: время суточного перезапуска в формате `HH:MM` (по умолчанию `"01:00"`).
-- **interval_minutes**: интервал в минутах для режима `"interval"`.
+- **enabled**: Enable/disable automatic restart (default: `false`).
+- **mode**: Scheduler operation mode:
+  - `"daily_time"` — restart once per day at the specified `time`.
+  - `"interval"` — restart every `interval_minutes` minutes after the previous run completes (useful for testing, e.g., 5 minutes).
+- **time**: Daily restart time in `HH:MM` format (default: `"01:00"`).
+- **interval_minutes**: Interval in minutes for `"interval"` mode.
 
-Плановый перезапуск действует только при запуске через CLI `evileye run` и не влияет на прямой запуск `evileye-process`/`process.py`.
+Scheduled restart only works when running via CLI `evileye run` and does not affect direct launch via `evileye-process`/`process.py`.
 
 ### Sources Configuration
 
@@ -324,41 +326,29 @@ The `detectors` section configures object detection for each source.
 
 #### RT-DETR Detector Configuration
 
-RT-DETR (Real-Time Detection Transformer) provides high-accuracy object detection with transformer architecture:
+RT-DETR (Real-Time Detection Transformer) provides high-accuracy object detection with transformer architecture.
 
-```json
-{
-  "type": "ObjectDetectorRtdetr",
-  "source_ids": [0],
-  "model": "rtdetr-l.pt",
-  "inference_size": 640,
-  "conf": 0.25,
-  "device": "cpu",
-  "classes": [0, 1, 24, 25, 63, 66, 67],
-  "roi": [[]],
-  "vid_stride": 1,
-  "num_detection_threads": 1
-}
-```
+**Configuration Example**: [single_video_rtdetr.json](evileye/samples_configs/single_video_rtdetr.json)
+
+Main parameters:
+- `type`: `"ObjectDetectorRtdetr"`
+- `model`: `"rtdetr-l.pt"` or `"rtdetr-x.pt"`
+- `inference_size`: Input image size (usually 640)
+- `conf`: Confidence threshold (usually 0.25)
+
+**Example for multiple videos**: [multi_videos_rtdetr.json](evileye/samples_configs/multi_videos_rtdetr.json)
 
 #### RF-DETR Detector Configuration
 
-RF-DETR (Roboflow Detection Transformer) provides optimized transformer-based detection:
+RF-DETR (Roboflow Detection Transformer) provides optimized transformer-based detection.
 
-```json
-{
-  "type": "ObjectDetectorRfdetr",
-  "source_ids": [0],
-  "model": "rfdetr-nano",
-  "inference_size": 640,
-  "conf": 0.25,
-  "device": "cpu",
-  "classes": [0, 1, 24, 25, 63, 66, 67],
-  "roi": [[]],
-  "vid_stride": 1,
-  "num_detection_threads": 1
-}
-```
+**Configuration Example**: [single_video_rfdetr.json](evileye/samples_configs/single_video_rfdetr.json)
+
+Main parameters:
+- `type`: `"ObjectDetectorRfdetr"`
+- `model`: `"rfdetr-nano"` or other RF-DETR models
+- `inference_size`: Input image size (usually 640)
+- `conf`: Confidence threshold (usually 0.25)
 
 #### Detector Types
 
@@ -424,135 +414,66 @@ The `mc_trackers` section configures cross-camera object tracking.
 
 ### Complete Configuration Examples
 
-#### IP Camera Configuration (poly-cameras.json)
+Detailed description of all configuration parameters and complete examples are available in the [Configuration Guide](docs/CONFIGURATION_GUIDE.md).
 
-```json
-{
-  "pipeline": {
-    "sources": [
-      {
-        "source": "IpCamera",
-        "camera": "rtsp://url1",
-        "apiPreference": "CAP_FFMPEG",
-        "split": false,
-        "num_split": 0,
-        "src_coords": [0],
-        "source_ids": [0],
-        "source_names": ["Cam1"]
-      },
-      {
-        "source": "IpCamera",
-        "camera": "rtsp://url2",
-        "apiPreference": "CAP_FFMPEG",
-        "split": true,
-        "num_split": 2,
-        "src_coords": [
-          [0, 0, 2304, 1300],
-          [0, 1300, 2304, 1292]
-        ],
-        "source_ids": [1, 2],
-        "source_names": ["Cam2", "Cam3"]
-      }
-    ],
-    "detectors": [
-      {
-        "source_ids": [0],
-        "model": "models/yolov8n.pt",
-        "show": false,
-        "inference_size": 640,
-        "device": null,
-        "conf": 0.4,
-        "save": false,
-        "stride_type": "frames",
-        "vid_stride": 1,
-        "classes": [0, 1, 24, 25, 63, 66, 67]
-      }
-    ],
-    "trackers": [
-      {
-        "source_ids": [0],
-        "fps": 30,
-        "tracker_type": "botsort"
-      }
-    ],
-    "mc_trackers": [
-      {
-        "source_ids": [0, 1, 2],
-        "enable": true
-      }
-    ]
-  },
-  "controller": {
-    "fps": 30,
-    "show_main_gui": true
-  }
-}
+#### IP Camera Configuration
+
+**Configuration Example**: [single_ip_camera.json](evileye/samples_configs/single_ip_camera.json)
+
+Main features:
+- Single IP camera source (RTSP stream)
+- YOLO detector (yolo11n.pt)
+- BoTSORT tracker
+- Database enabled
+- Authentication support via `username` and `password` or `credentials.json`
+
+**Usage**:
+```bash
+evileye run configs/single_ip_camera.json
 ```
 
-#### Video File Configuration (poly-videos.json)
+**Note**: Before using, update the camera URL in the configuration file or use `credentials.json` to store credentials.
 
-```json
-{
-  "pipeline": {
-    "sources": [
-      {
-        "source": "VideoFile",
-        "camera": "/path/to/video1.mp4",
-        "apiPreference": "CAP_FFMPEG",
-        "split": false,
-        "num_split": 0,
-        "src_coords": [0],
-        "source_ids": [0],
-        "source_names": ["Video1"]
-      },
-      {
-        "source": "VideoFile",
-        "camera": "/path/to/video2.mp4",
-        "apiPreference": "CAP_FFMPEG",
-        "split": true,
-        "num_split": 2,
-        "src_coords": [
-          [0, 0, 2304, 1300],
-          [0, 1300, 2304, 1292]
-        ],
-        "source_ids": [1, 2],
-        "source_names": ["Video2_1", "Video2_2"]
-      }
-    ],
-    "detectors": [
-      {
-        "source_ids": [0],
-        "model": "models/yolov8n.pt",
-        "show": false,
-        "inference_size": 640,
-        "device": null,
-        "conf": 0.4,
-        "save": false,
-        "stride_type": "frames",
-        "vid_stride": 1,
-        "classes": [0, 1, 24, 25, 63, 66, 67]
-      }
-    ],
-    "trackers": [
-      {
-        "source_ids": [0],
-        "fps": 30,
-        "tracker_type": "botsort"
-      }
-    ],
-    "mc_trackers": [
-      {
-        "source_ids": [0, 1, 2],
-        "enable": true
-      }
-    ]
-  },
-  "controller": {
-    "fps": 30,
-    "show_main_gui": true
-  }
-}
+#### Video File Configuration
+
+**Configuration Example**: [single_video.json](evileye/samples_configs/single_video.json)
+
+Main features:
+- Single video file source
+- YOLO detector
+- BoTSORT tracker
+- Database enabled
+
+**Example with multiple videos**: [multi_videos.json](evileye/samples_configs/multi_videos.json)
+
+Configuration for processing multiple video files with multi-camera tracking:
+- Two or more video files
+- Separate detectors and trackers for each source
+- Multi-camera tracking enabled
+
+**Example with video splitting**: [single_video_split.json](evileye/samples_configs/single_video_split.json)
+
+Configuration for processing a single video file split into multiple regions:
+- Single video file split into multiple regions
+- Separate detectors and trackers for each region
+- Useful for videos with multiple cameras in one file
+
+**Usage**:
+```bash
+evileye run configs/single_video.json
+evileye run configs/multi_videos.json
+evileye run configs/single_video_split.json
 ```
+
+#### Other Configuration Examples
+
+- **RT-DETR detector**: [single_video_rtdetr.json](evileye/samples_configs/single_video_rtdetr.json), [multi_videos_rtdetr.json](evileye/samples_configs/multi_videos_rtdetr.json)
+- **RF-DETR detector**: [single_video_rfdetr.json](evileye/samples_configs/single_video_rfdetr.json)
+- **GStreamer backend**: [single_video_gstreamer.json](evileye/samples_configs/single_video_gstreamer.json), [ip_camera_gstreamer.json](evileye/samples_configs/ip_camera_gstreamer.json)
+- **With attributes**: [single_video_with_attributes.json](evileye/samples_configs/single_video_with_attributes.json)
+- **PipelineCapture**: [pipeline_capture.json](evileye/samples_configs/pipeline_capture.json)
+
+All configuration examples are located in the `evileye/samples_configs/` folder and can be obtained using the `evileye deploy-samples` command.
 
 ## CLI Commands
 
@@ -677,7 +598,7 @@ evileye server
 evileye server --host 0.0.0.0 --port 8000
 
 # Start with auto-run configuration
-evileye server --config poly-videos.json
+evileye server --config configs/single_video.json
 
 # Disable auto-reload
 evileye server --no-reload
@@ -885,13 +806,40 @@ evileye/
 
 ## Architecture
 
+EvilEye uses a modular pipeline architecture for processing video streams with support for object detection, tracking, and event analysis.
+
+### Architecture Overview
+
+The system is organized at several levels of abstraction:
+
+1. **CLI and Entry Points** - Various ways to launch the system (CLI, GUI, API)
+2. **Controller** - Central orchestrator coordinating all components
+3. **Pipeline** - Modular video processing through a sequence of processors
+4. **Video Capture and Recording** - Support for various backends (OpenCV, GStreamer)
+5. **Object Processing** - Management of detected objects lifecycle
+6. **Event Processing** - Detection and storage of various event types
+7. **Database** - Data storage in PostgreSQL or JSON files
+
+### Detailed Architecture Documentation
+
+**[Complete System Architecture Description](docs/ARCHITECTURE.md)** - Detailed description of all architecture levels with diagrams and schemas.
+
+The document includes:
+- Component interaction diagrams at each level
+- Data flow descriptions
+- Implementation details of key components
+- Class and sequence diagrams
+
+### Pipeline Architecture
+
 EvilEye uses a modular pipeline architecture:
 
 1. **Sources** - Video capture from cameras, files, or streams
 2. **Preprocessors** - Frame preprocessing and enhancement
-3. **Detectors** - Object detection using YOLO models
+3. **Detectors** - Object detection using YOLO, RT-DETR, RF-DETR models
 4. **Trackers** - Object tracking and trajectory analysis
 5. **Multi-camera Trackers** - Cross-camera object re-identification
+6. **Attributes** - Detection and tracking of object attributes
 
 Each component is implemented as a processor that can be configured and combined to create custom surveillance pipelines.
 
@@ -899,7 +847,8 @@ Each component is implemented as a processor that can be configured and combined
 
 EvilEye supports multiple pipeline implementations:
 
-- **PipelineSurveillance** - Full-featured pipeline with all components (sources, detectors, trackers, mc_trackers)
+- **PipelineSurveillance** - Full-featured pipeline with all components (sources, detectors, trackers, mc_trackers, attributes)
+- **PipelineCapture** - Simplified pipeline for video capture
 - **Custom Pipelines** - User-defined pipeline implementations
 
 Pipeline classes are automatically discovered from:
@@ -918,41 +867,64 @@ evileye create --list-pipelines
 Create custom pipelines by extending the base `Pipeline` class and placing them in a local `pipelines/` folder:
 
 ```python
-from evileye.core.pipeline_processors import Pipeline
+from evileye.core.pipeline_processors import PipelineProcessors
 
 
-class MyCustomPipeline(Pipeline):
+class MyCustomPipeline(PipelineProcessors):
     def __init__(self):
         super().__init__()
         # Custom initialization
 
     def generate_default_structure(self, num_sources: int):
-        # Custom configuration generation
+        # Configuration structure generation
         pass
 ```
 
 Each pipeline class can define its own configuration structure and processing logic.
 
+For more details on creating pipelines, see [Pipeline Architecture Guide](docs/PIPELINE_ARCHITECTURE.md).
+
 ## Documentation
 
-Подробная документация находится в папке [docs/](docs/):
+Detailed documentation is located in the [docs/](docs/) folder:
 
-- **[Главный индекс документации](docs/README.md)** - Навигация по всей документации
-- **[Установка и настройка](docs/README.md#-установка-и-настройка)** - Руководства по установке и настройке системы
-- **[Архитектура системы](docs/README.md#-архитектура-системы)** - Техническая документация по архитектуре
-- **[Функциональность](docs/README.md#-функциональность)** - Описание основных функций и возможностей
-- **[Руководства пользователя](docs/README.md#-руководства-пользователя)** - Пошаговые инструкции по использованию
+- **[Main Documentation Index](docs/README.md)** - Navigation for all documentation
+- **[System Architecture](docs/ARCHITECTURE.md)** - Complete architecture description at 7 levels of abstraction with diagrams
 
-### Основные разделы документации
+### Main Documentation Sections
 
-- [Настройка базы данных](docs/DATABASE_SETUP_GUIDE.md) - Подробное руководство по настройке PostgreSQL
-- [Архитектура Pipeline](docs/PIPELINE_REFACTORING_README.md) - Описание архитектуры pipeline
-- [Система детекции атрибутов](docs/ATTRIBUTES_DETECTION_README.md) - Детекция и трекинг атрибутов объектов
-- [Система меток объектов](docs/LABELING_SYSTEM_README.md) - Автоматическое сохранение меток
-- [Использование GStreamer](docs/VideoCaptureGStreamer_Usage.md) - Работа с различными источниками видео
-- [UML диаграммы](docs/UML_DIAGRAMS_README.md) - Диаграммы классов и архитектуры
+#### Architecture and Design
 
-Исторические отчеты о разработке находятся в папке [reports/](reports/).
+- **[System Architecture](docs/ARCHITECTURE.md)** - Detailed architecture description at all levels (CLI, Controller, Pipeline, Video, Objects, Events, Database) with interactive Mermaid diagrams and static UML diagrams
+- **[Pipeline Architecture](docs/PIPELINE_ARCHITECTURE.md)** - Pipeline architecture description, base classes, and ways to create custom pipelines
+- **[GUI Refactoring Guide](docs/GUI_REFACTORING_GUIDE.md)** - GUI system architecture, components, and best practices
+
+#### Installation and Setup
+
+- **[Database Setup Guide](docs/DATABASE_SETUP_GUIDE.md)** - Detailed PostgreSQL setup guide
+- **[Deploy Command](docs/CLI_DEPLOY_COMMAND.md)** - Using the `evileye deploy` command to deploy the system
+- **[Configuration Guide](docs/CONFIGURATION_GUIDE.md)** - Complete guide to configuration files structure, parameters, and examples
+- **[Configuration Creation](docs/CREATE_SCRIPT_README.md)** - Using the `evileye create` command to create new configurations
+
+#### Functionality
+
+- **[Attributes Detection System](docs/ATTRIBUTES_DETECTION_README.md)** - Detection and tracking of object attributes (hard hat, backpack, etc.)
+- **[Object Labeling System](docs/LABELING_SYSTEM_README.md)** - Automatic saving of object labels in JSON format
+- **[Text Rendering System](docs/TEXT_RENDERING_SYSTEM.md)** - Adaptive text rendering with support for various resolutions
+- **[Configuration History](docs/CONFIG_HISTORY_USER_GUIDE.md)** - User guide for working with configuration history
+
+#### User Guides
+
+- **[GStreamer Usage for Video](docs/VideoCaptureGStreamer_Usage.md)** - Setup and usage of GStreamer for video capture from IP cameras, USB cameras, and files
+- **[GStreamer Usage for Image Sequences](docs/ImageSequence_GStreamer_Usage.md)** - Processing image sequences via GStreamer
+
+### Quick Navigation
+
+- **For New Users**: Start with [database setup](docs/DATABASE_SETUP_GUIDE.md) and [deploy command](docs/CLI_DEPLOY_COMMAND.md)
+- **For Developers**: Study [system architecture](docs/ARCHITECTURE.md) and [pipeline architecture](docs/PIPELINE_ARCHITECTURE.md)
+- **For Integrators**: Familiarize yourself with [GStreamer usage](docs/VideoCaptureGStreamer_Usage.md) and [attributes detection system](docs/ATTRIBUTES_DETECTION_README.md)
+
+Historical development reports are located in the [reports/](reports/) folder.
 
 ## Contributing
 

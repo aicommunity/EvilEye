@@ -46,9 +46,10 @@ class OpenCVRecorder(VideoRecorderBase):
         else:
             camera_folder = "source"
         
-        # Create path: out_dir/YYYY-MM-DD/CameraName/
-        base_out_dir = Path(self.params.out_dir) if self.params.out_dir else Path(".")
-        out_dir = base_out_dir / date_dir / camera_folder
+        # Create path: base/Streams/YYYY-MM-DD/CameraName/
+        # params.out_dir should always be set to database.image_dir by Controller
+        base_out_dir = Path(self.params.out_dir) if self.params.out_dir else Path("EvilEyeData")
+        out_dir = base_out_dir / "Streams" / date_dir / camera_folder
         out_dir.mkdir(parents=True, exist_ok=True)
         
         ts = time.strftime("%Y%m%d_%H%M%S", time.localtime(self._segment_started_ts))

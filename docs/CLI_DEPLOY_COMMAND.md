@@ -38,9 +38,9 @@ evileye deploy
 ### Результат выполнения
 ```
 Deploying EvilEye files to: /path/to/current/directory
-✓ Copied credentials_proto.json to credentials.json
-✓ Created configs folder
-✓ Deployment completed successfully!
+Copied credentials_proto.json to credentials.json
+Created configs folder
+Deployment completed successfully!
 You can now create configurations with:
   evileye create my_config --sources 1
 ```
@@ -50,7 +50,7 @@ You can now create configurations with:
 Deploying EvilEye files to: /path/to/current/directory
 credentials.json already exists, skipping...
 configs folder already exists, skipping...
-✓ Deployment completed successfully!
+Deployment completed successfully!
 You can now create configurations with:
   evileye create my_config --sources 1
 ```

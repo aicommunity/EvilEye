@@ -129,8 +129,8 @@ def compute_database_config(
 
 def ensure_database_config_complete(database_config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """
-    Убедиться, что database_config содержит все необходимые ключи.
-    Загружает недостающие ключи из файла, если они отсутствуют.
+    Убедиться, что database_config содержит все необходимые ключи,
+    при этом не перетирая уже заданные пользователем значения.
     
     Args:
         database_config: Существующая конфигурация БД (может быть неполной)
@@ -141,19 +141,49 @@ def ensure_database_config_complete(database_config: Optional[Dict[str, Any]]) -
     if not database_config:
         database_config = {}
     
-    # Загружаем базовую конфигурацию из файла для дополнения
+    # Загружаем базовую конфигурацию из файла для ДОПОЛНЕНИЯ
     file_config = load_database_config_from_file()
     
-    # Убеждаемся, что есть ключ 'database'
+    # Набор ключей, по которым можно распознать "плоскую" секцию database
+    db_flat_keys = {
+        "user_name",
+        "password",
+        "database_name",
+        "host_name",
+        "port",
+        "admin_user_name",
+        "admin_password",
+        "image_dir",
+        "preview_width",
+        "preview_height",
+        "tables",
+    }
+    
+    # 1. Обеспечиваем наличие секции 'database'
     if "database" not in database_config:
-        if file_config and "database" in file_config:
+        # Возможен сценарий, когда нам передали уже «плоскую» секцию database
+        # (c ключами host_name/port и т.п.), но без обёртки 'database'
+        if any(k in database_config for k in db_flat_keys):
+            # Выделяем часть, похожую на секцию database, и оборачиваем её
+            db_section = {k: v for k, v in database_config.items() if k in db_flat_keys}
+            other_keys = {k: v for k, v in database_config.items() if k not in db_flat_keys}
+            database_config = {
+                **other_keys,
+                "database": db_section,
+            }
+            logger.info(
+                "Interpreting provided config as flattened 'database' section; "
+                "wrapping it into full database_config structure"
+            )
+        elif file_config and "database" in file_config:
+            # Если плоской секции нет, используем дефолты из файла
             database_config["database"] = file_config["database"].copy()
             logger.info("Loaded 'database' section from database_config.json file")
         else:
             database_config["database"] = {}
             logger.warning("'database' section not found, using empty dict")
     
-    # Убеждаемся, что есть ключ 'database_adapters'
+    # 2. Обеспечиваем наличие секции 'database_adapters'
     if "database_adapters" not in database_config:
         if file_config and "database_adapters" in file_config:
             database_config["database_adapters"] = file_config["database_adapters"].copy()
@@ -161,5 +191,14 @@ def ensure_database_config_complete(database_config: Optional[Dict[str, Any]]) -
         else:
             database_config["database_adapters"] = {}
             logger.warning("'database_adapters' section not found, using empty dict")
+    
+    # 3. Дополняем недостающие ключи внутри 'database' из файла,
+    # НЕ перезаписывая уже заданные значения (host, port и т.п.)
+    if file_config and "database" in file_config:
+        db_section = database_config.get("database") or {}
+        file_db_section = file_config.get("database") or {}
+        for key, value in file_db_section.items():
+            db_section.setdefault(key, value)
+        database_config["database"] = db_section
     
     return database_config

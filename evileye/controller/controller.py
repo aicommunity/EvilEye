@@ -103,6 +103,8 @@ class Controller:
         self.db_adapter_attr_events = None
         self.db_adapter_system_events = None
         
+        self.storage_monitor = None
+        
         # Initialize centralized class manager
         self.class_manager = ClassManager()
         
@@ -236,6 +238,10 @@ class Controller:
 
     def is_running(self):
         return self.run_flag
+
+    def get_restart_flag(self) -> bool:
+        """Check if restart is requested (e.g., due to memory leak)."""
+        return self.restart_flag
 
     def run(self):
         self.logger.info(f"Controller main loop started, stream_pipeline_id: {self.stream_pipeline_id}")
@@ -510,6 +516,13 @@ class Controller:
             self.system_events_detector.start()
         self.events_detectors_controller.start()
         self.events_processor.start()
+        
+        # Start storage monitor
+        if self.storage_monitor:
+            try:
+                self.storage_monitor.start()
+            except Exception as e:
+                self.logger.warning(f"Failed to start storage monitor: {e}", exc_info=True)
 
         self.run_flag = True
         self.logger.info(f"Starting control thread for stream_pipeline_id: {self.stream_pipeline_id}")
@@ -563,6 +576,13 @@ class Controller:
             self.db_adapter_obj.stop()
             self.db_controller.disconnect()
         
+        # Stop storage monitor
+        if self.storage_monitor:
+            try:
+                self.storage_monitor.stop()
+            except Exception as e:
+                self.logger.warning(f"Error stopping storage monitor: {e}", exc_info=True)
+        
         # Stop pipeline components
         self.pipeline.stop()
         self.logger.info('All controller components stopped')
@@ -615,11 +635,20 @@ class Controller:
         try:
             record_cfg = (self.params or {}).get("record", {}) or {}
             if isinstance(record_cfg, dict) and record_cfg:
-                # Default recordings base dir from database.image_dir if out_dir not specified
+                # Recording base dir policy:
+                # - By default, base path is database.image_dir (even if record.out_dir is set)
+                # - For backward compatibility (tests/custom setups), set record.allow_custom_out_dir=true
+                allow_custom_out_dir = bool(record_cfg.get("allow_custom_out_dir", False))
                 db_image_dir = (((self.params or {}).get('database', {}) or {}).get('image_dir')) or 'EvilEyeData'
-                import datetime as _dt
-                today = _dt.datetime.now().strftime('%Y-%m-%d')
-                default_out_dir = str(Path(db_image_dir) / 'Streams' / today)
+                # Base path for ALL recordings (continuous and event-based): image_dir
+                # Resolve relative paths relative to working directory, keep absolute paths as-is
+                # Concrete recorders add their own subfolders: Streams/... or Events/.../Videos/...
+                image_dir_path = Path(db_image_dir)
+                if image_dir_path.is_absolute():
+                    default_out_dir = str(image_dir_path)
+                else:
+                    # Resolve relative path relative to current working directory
+                    default_out_dir = str(image_dir_path.resolve())
 
                 srcs = pipeline_params.get("sources", []) or []
                 enabled_list = record_cfg.get("enabled_sources")
@@ -629,8 +658,13 @@ class Controller:
                     # Merge: keep per-source overrides, fill missing from root
                     per = dict(s.get("record", {})) if isinstance(s.get("record", {}), dict) else {}
                     merged = {**record_cfg, **per}
-                    # Ensure out_dir present -> base/Streams/YYYY-MM-DD when missing
-                    if not merged.get('out_dir'):
+                    # Ensure out_dir:
+                    # - default behavior: always force Streams under database.image_dir
+                    # - compatibility: if allow_custom_out_dir=true, keep existing out_dir if provided
+                    if allow_custom_out_dir:
+                        if not merged.get('out_dir'):
+                            merged['out_dir'] = default_out_dir
+                    else:
                         merged['out_dir'] = default_out_dir
                     # Apply enabled per source if list provided
                     if enabled_list and len(enabled_list) > 0:
@@ -828,6 +862,25 @@ class Controller:
         self.params['controller']["max_memory_usage_mb"] = self.max_memory_usage_mb
         self.params['controller']["auto_restart"] = self.auto_restart
         self.params['controller']["use_database"] = self.use_database
+        
+        # Сохраняем scheduled_restart: сначала из текущих params, затем из loaded_config
+        try:
+            scheduled_restart = None
+            # Сначала проверяем текущие params
+            if isinstance(self.params, dict):
+                current_ctrl = self.params.get('controller', {})
+                if isinstance(current_ctrl, dict) and 'scheduled_restart' in current_ctrl:
+                    scheduled_restart = current_ctrl['scheduled_restart']
+            # Если не нашли в params, проверяем loaded_config
+            if scheduled_restart is None:
+                orig_ctrl = (self.loaded_config or {}).get('controller', {})
+                if isinstance(orig_ctrl, dict) and 'scheduled_restart' in orig_ctrl:
+                    scheduled_restart = orig_ctrl['scheduled_restart']
+            # Если нашли, сохраняем
+            if scheduled_restart is not None:
+                self.params['controller']["scheduled_restart"] = scheduled_restart
+        except Exception:
+            pass
 
         # Get pipeline parameters
         pipeline_params = self.pipeline.get_params()
@@ -887,6 +940,22 @@ class Controller:
         else:
             # Set empty database config when database is disabled
             self.params['database'] = {}
+        
+        # Initialize storage monitor (enabled by default)
+        try:
+            from evileye.core.storage_monitor import StorageMonitor
+            storage_monitor_config = self.params.get('storage_monitor', {})
+            # Ensure enabled by default if not explicitly set
+            if not storage_monitor_config or 'enabled' not in storage_monitor_config:
+                if not storage_monitor_config:
+                    storage_monitor_config = {}
+                storage_monitor_config['enabled'] = True
+            # Get image_dir from database config or use default
+            image_dir = self.params.get('database', {}).get('image_dir', 'EvilEyeData')
+            self.storage_monitor = StorageMonitor(image_dir, storage_monitor_config)
+        except Exception as e:
+            self.logger.warning(f"Failed to initialize storage monitor: {e}", exc_info=True)
+            self.storage_monitor = None
 
         # Collect visualizer params with safe fallback
         vis_params = None
@@ -1369,6 +1438,17 @@ class Controller:
             
             # Load recording parameters
             self.recording_params = RecordingParams.from_config(params)
+            
+            # Override out_dir with database.image_dir if available (always use image_dir as base)
+            # Resolve relative paths relative to working directory, keep absolute paths as-is
+            db_image_dir = (((params or {}).get('database', {}) or {}).get('image_dir')) or 'EvilEyeData'
+            image_dir_path = Path(db_image_dir)
+            if image_dir_path.is_absolute():
+                self.recording_params.out_dir = str(image_dir_path)
+            else:
+                # Resolve relative path relative to current working directory
+                self.recording_params.out_dir = str(image_dir_path.resolve())
+            self.logger.info(f"Event recording out_dir set to database.image_dir: {self.recording_params.out_dir}")
             
             # Check if event recording is enabled
             if not self.recording_params.event_recording_enabled:

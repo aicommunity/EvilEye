@@ -73,21 +73,9 @@ class EventRecorder:
         else:
             camera_folder = self.source.source_name
         
-        # Create path: Events/YYYY-MM-DD/Videos/CameraName/
-        # Get base directory from out_dir (extract parent if it contains Streams)
-        base_out_dir = Path(self.params.out_dir) if self.params.out_dir else Path(".")
-        # If out_dir ends with Streams, extract base (EvilEyeData)
-        # If out_dir contains Streams/YYYY-MM-DD, extract base (EvilEyeData)
-        # Otherwise assume out_dir is already the base
-        parts = base_out_dir.parts
-        if len(parts) >= 1 and parts[-1] == 'Streams':
-            # out_dir = "EvilEyeData/Streams" -> base = "EvilEyeData"
-            base_dir = Path(*parts[:-1]) if len(parts) > 1 else Path('EvilEyeData')
-        elif len(parts) >= 2 and parts[-2] == 'Streams':
-            # out_dir = "EvilEyeData/Streams/2026-01-04" -> base = "EvilEyeData"
-            base_dir = Path(*parts[:-2]) if len(parts) > 2 else Path('EvilEyeData')
-        else:
-            base_dir = base_out_dir.parent if base_out_dir.parent != Path('.') else Path('EvilEyeData')
+        # Create path: base/Events/YYYY-MM-DD/Videos/CameraName/
+        # Here params.out_dir is the base image_dir configured by Controller/database.image_dir
+        base_dir = Path(self.params.out_dir) if self.params.out_dir else Path("EvilEyeData")
         out_dir = base_dir / "Events" / event_date / "Videos" / camera_folder
         out_dir.mkdir(parents=True, exist_ok=True)
         

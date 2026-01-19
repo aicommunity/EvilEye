@@ -85,61 +85,40 @@
 
 ## Configuration Examples
 
+Полные примеры конфигураций с GStreamer бэкендом доступны в папке `evileye/samples_configs/`:
+
 ### IP Camera with Authentication
-```json
-{
-  "pipeline": {
-    "sources": [
-      {
-        "camera": "rtsp://admin:password@192.168.1.100:554/stream1",
-        "source": "IpCamera",
-        "type": "VideoCaptureGStreamer",
-        "username": "admin",
-        "password": "password",
-        "desired_fps": 30,
-        "source_ids": [0],
-        "source_names": ["IP Camera"]
-      }
-    ]
-  }
-}
-```
+
+**Пример конфигурации**: [ip_camera_gstreamer.json](../evileye/samples_configs/ip_camera_gstreamer.json)
+
+Основные параметры:
+- `source`: `"IpCamera"`
+- `type`: `"VideoCaptureGStreamer"`
+- `camera`: RTSP URL камеры
+- `username` и `password`: Учетные данные для аутентификации (или используйте `credentials.json`)
+- `desired_fps`: Желаемый FPS (опционально)
 
 ### USB Camera
-```json
-{
-  "pipeline": {
-    "sources": [
-      {
-        "camera": "0",
-        "source": "Device",
-        "type": "VideoCaptureGStreamer", 
-        "desired_fps": 30,
-        "source_ids": [0],
-        "source_names": ["USB Camera"]
-      }
-    ]
-  }
-}
-```
+
+**Пример конфигурации**: [usb_camera_gstreamer.json](../evileye/samples_configs/usb_camera_gstreamer.json)
+
+Основные параметры:
+- `source`: `"Device"`
+- `type`: `"VideoCaptureGStreamer"`
+- `camera`: Индекс устройства (обычно `"0"` для первой камеры)
+- `desired_fps`: Желаемый FPS (опционально)
 
 ### Video File
-```json
-{
-  "pipeline": {
-    "sources": [
-      {
-        "camera": "videos/sample.mp4",
-        "source": "VideoFile",
-        "type": "VideoCaptureGStreamer",
-        "desired_fps": 30,
-        "source_ids": [0],
-        "source_names": ["Video File"]
-      }
-    ]
-  }
-}
-```
+
+**Пример конфигурации**: [single_video_gstreamer.json](../evileye/samples_configs/single_video_gstreamer.json)
+
+Основные параметры:
+- `source`: `"VideoFile"`
+- `type`: `"VideoCaptureGStreamer"`
+- `camera`: Путь к видео файлу
+- `desired_fps`: Желаемый FPS (опционально)
+
+Подробное описание всех параметров конфигурации см. в [Configuration Guide](CONFIGURATION_GUIDE.md).
 
 ## Troubleshooting
 

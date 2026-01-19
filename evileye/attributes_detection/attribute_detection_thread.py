@@ -41,8 +41,46 @@ class AttributeDetectionThread(DetectionThreadBase):
 
     def predict(self, images: list):
         """Run YOLO inference on ROI images"""
-        results = self.model.predict(source=images, classes=list(self.attr_class_mapping.keys()), verbose=False, **self.inf_params)
-        return results
+        # Filter out None images before passing to model
+        if not isinstance(images, list):
+            self.logger.warning(f"Expected list of images, got {type(images)}")
+            return None
+        
+        # Track which images are None to map results back correctly
+        valid_images = []
+        image_indices = []  # Track original indices of valid images
+        for i, img in enumerate(images):
+            if img is not None:
+                valid_images.append(img)
+                image_indices.append(i)
+        
+        # If all images are None, return None results
+        if len(valid_images) == 0:
+            self.logger.warning("All images are None, cannot perform prediction")
+            return [None] * len(images)
+        
+        try:
+            results = self.model.predict(source=valid_images, classes=list(self.attr_class_mapping.keys()), verbose=False, **self.inf_params)
+            
+            # Map results back to original positions (None for invalid images)
+            if results is None:
+                return [None] * len(images)
+            
+            # Convert results to list if needed
+            if not isinstance(results, list):
+                results = [results]
+            
+            # Create result list with None for invalid images
+            full_results = [None] * len(images)
+            for idx, result_idx in enumerate(image_indices):
+                if idx < len(results):
+                    full_results[result_idx] = results[idx]
+            
+            return full_results
+        except Exception as e:
+            self.logger.error(f"Error during attribute detection model prediction: {e}")
+            self.logger.debug("Prediction error details", exc_info=True)
+            return [None] * len(images)
 
     def get_bboxes(self, result, roi):
         """Process YOLO results and return attribute detections"""

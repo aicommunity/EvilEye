@@ -81,9 +81,12 @@ def test_gui_attribute_display():
     thickness = config['thickness']
     draw_object_attributes(image, obj, bbox, font_face, font_scale, thickness)
     
-    # Сохраняем результат
-    output_filename = "test_gui_attributes.jpg"
-    cv2.imwrite(output_filename, image)
+    # Сохраняем результат в tests/data/images/
+    from pathlib import Path
+    output_dir = Path(__file__).parent.parent.parent.parent / "data" / "images"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_filename = output_dir / "test_gui_attributes.jpg"
+    cv2.imwrite(str(output_filename), image)
     print(f"Сохранено: {output_filename}")
     
     print("\n--- Новый формат отображения ---")

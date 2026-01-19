@@ -478,7 +478,6 @@
         "segment_length_sec": 300,
         "retention_days": 3,
         "min_free_space_pct": 80,
-        "out_dir": "EvilEyeData/Streams",
         "filename_tmpl": "{source_name}_{start_time}_{seq}.{ext}"
     },
     "objects_handler": {
@@ -588,5 +587,18 @@
         }
     },
     "pipeline_class": "PipelineSurveillance",
-    "database": {}
+    "database": {},
+    "storage_monitor": {
+        "enabled": true,
+        "check_interval_seconds": 300,
+        "max_dir_size_gb": 200,
+        "min_free_space_percent": 10,
+        "retention_days": {
+            "streaming_video": 7,
+            "event_videos": 7,
+            "object_images": 180,
+            "event_images": 180
+        },
+        "active_file_age_seconds": 60
+    }
 }
