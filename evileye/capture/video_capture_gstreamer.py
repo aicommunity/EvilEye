@@ -631,17 +631,24 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                                 self._appsink_handler_id = None
                             
                             # Setup recording branch if continuous recording enabled
+                            # IMPORTANT: This must be done BEFORE setting pipeline to PLAYING state
+                            # Otherwise, RTSPSrc will see an incomplete pipeline and report "not-linked" error
                             continuous_enabled = (self.recording_params and 
                                                   (self.recording_params.continuous_recording_enabled or 
                                                    (self.recording_params.enabled and not self.recording_params.event_recording_enabled)))
                             if continuous_enabled:
                                 try:
                                     self._setup_recording_branch()
+                                    # _setup_recording_branch() already verifies the links, so we just log success
+                                    self.logger.debug("Recording branch setup completed and verified")
                                 except Exception as e:
                                     self.logger.error(f"Failed to setup recording branch: {e}", exc_info=True)
-                                    # Continue without recording
+                                    # Don't continue - recording branch must be set up before pipeline goes to PLAYING
+                                    # Otherwise RTSPSrc will report "not-linked" error
+                                    raise
                             
                             # Set pipeline to playing state - simple approach from api-refactoring
+                            # Recording branch must be fully set up before this point
                             ret = self.pipeline.set_state(Gst.State.PLAYING)
                             if ret == Gst.StateChangeReturn.FAILURE:
                                 # Get error message from bus
@@ -722,11 +729,24 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     if continuous_enabled:
                         try:
                             self._setup_recording_branch()
+                            # Verify that recording branch is properly linked before proceeding
+                            recording_queue = self.pipeline.get_by_name("recording_queue")
+                            if recording_queue:
+                                src_pad = recording_queue.get_static_pad("src")
+                                if src_pad:
+                                    peer = src_pad.get_peer()
+                                    if not peer:
+                                        self.logger.error("recording_queue src pad is not linked after setup!")
+                                        raise RuntimeError("Recording branch setup incomplete: recording_queue not linked")
+                                    else:
+                                        self.logger.debug(f"Verified recording_queue is linked to {peer.get_parent().get_name() if peer.get_parent() else 'unknown'}")
                         except Exception as e:
                             self.logger.error(f"Failed to setup recording branch: {e}", exc_info=True)
-                            # Continue without recording
+                            # Don't continue - recording branch must be set up before pipeline goes to PLAYING
+                            raise
                     
                     # Set pipeline to playing state - simple approach from api-refactoring
+                    # Recording branch must be fully set up before this point
                     ret = self.pipeline.set_state(Gst.State.PLAYING)
                     if ret == Gst.StateChangeReturn.FAILURE:
                         raise RuntimeError("Failed to start GStreamer pipeline")
@@ -1512,8 +1532,6 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             splitmuxsink.set_property("muxer-factory", "mp4mux" if self.recording_params.container.lower() == "mp4" else "matroskamux")
             splitmuxsink.set_property("async-finalize", True)
             
-            # Build output path with camera name subfolder
-            date_dir = _dt.datetime.now().strftime("%Y-%m-%d")
             
             # Compose camera folder name from all source_names or source_ids
             if self.source_names and len(self.source_names) > 0:
@@ -1523,9 +1541,12 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             else:
                 camera_folder = "source"
             
-            # Create path: out_dir/YYYY-MM-DD/CameraName/
-            base_out_dir = Path(self.recording_params.out_dir) if self.recording_params.out_dir else Path(".")
-            out_dir = base_out_dir / date_dir / camera_folder
+            # Build output path with camera name subfolder
+            # Create path: base/Streams/YYYY-MM-DD/CameraName/
+            # recording_params.out_dir should always be set to database.image_dir by Controller
+            base_dir = Path(self.recording_params.out_dir) if self.recording_params.out_dir else Path("EvilEyeData")
+            date_dir = _dt.datetime.now().strftime("%Y-%m-%d")
+            out_dir = base_dir / "Streams" / date_dir / camera_folder
             out_dir.mkdir(parents=True, exist_ok=True)
             
             ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1611,6 +1632,23 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             
             self.logger.info(f"Recording branch location: {location}")
             
+            # Check pipeline state before adding elements - elements should be added when pipeline is NULL or READY
+            # Note: This method is called from _init_pipeline() which already holds pipeline_lock, so we don't acquire it here
+            if not self.pipeline:
+                raise RuntimeError("Pipeline is None, cannot setup recording branch")
+            
+            # Get current pipeline state (use timeout to avoid blocking)
+            ret, current_state, pending_state = self.pipeline.get_state(Gst.SECOND)
+            if ret == Gst.StateChangeReturn.FAILURE:
+                raise RuntimeError("Failed to get pipeline state")
+            
+            self.logger.debug(f"Pipeline state before adding recording elements: {current_state.value_nick}")
+            
+            # If pipeline is PLAYING or PAUSED, we need to handle state change carefully
+            # Elements should ideally be added when pipeline is NULL or READY
+            if current_state in (Gst.State.PLAYING, Gst.State.PAUSED):
+                self.logger.warning(f"Pipeline is in {current_state.value_nick} state when adding recording elements - this may cause issues")
+            
             # Add elements to pipeline
             self.pipeline.add(videoconvert)
             self.pipeline.add(x264enc)
@@ -1618,15 +1656,147 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             self.pipeline.add(queue_before_mux)
             self.pipeline.add(splitmuxsink)
             
-            # Link elements
-            recording_queue.link(videoconvert)
-            videoconvert.link(x264enc)
-            x264enc.link(h264parse)
-            h264parse.link(queue_before_mux)
-            queue_before_mux.link(splitmuxsink)
+            # Check caps compatibility before linking
+            # Get src pad from recording_queue to check caps
+            try:
+                recording_queue_src = recording_queue.get_static_pad("src")
+                if recording_queue_src:
+                    caps = recording_queue_src.get_current_caps()
+                    if caps:
+                        self.logger.debug(f"Recording queue src caps: {caps.to_string()}")
+                    else:
+                        self.logger.debug("Recording queue src caps not yet available (will be negotiated)")
+            except Exception as e:
+                self.logger.debug(f"Could not check recording queue caps: {e}")
             
-            # Elements will sync state automatically when pipeline state changes
-            # Don't call sync_state_with_parent() here to avoid deadlocks
+            # Link elements with error checking
+            self.logger.debug("Linking recording branch elements...")
+            
+            # Check if recording_queue is already linked (should not be, but check anyway)
+            try:
+                recording_queue_src_pad = recording_queue.get_static_pad("src")
+                if recording_queue_src_pad:
+                    peer = recording_queue_src_pad.get_peer()
+                    if peer:
+                        self.logger.warning(f"recording_queue src pad is already linked to {peer.get_parent().get_name() if peer.get_parent() else 'unknown'}, unlinking first")
+                        recording_queue_src_pad.unlink(peer)
+            except Exception as check_err:
+                self.logger.debug(f"Could not check recording_queue src pad: {check_err}")
+            
+            link_ok = True
+            
+            try:
+                if not recording_queue.link(videoconvert):
+                    self.logger.error("Failed to link recording_queue -> videoconvert")
+                    link_ok = False
+                else:
+                    self.logger.debug("Successfully linked recording_queue -> videoconvert")
+            except Exception as link_err:
+                self.logger.error(f"Exception linking recording_queue -> videoconvert: {link_err}")
+                link_ok = False
+            
+            if link_ok:
+                try:
+                    if not videoconvert.link(x264enc):
+                        self.logger.error("Failed to link videoconvert -> x264enc")
+                        link_ok = False
+                    else:
+                        self.logger.debug("Successfully linked videoconvert -> x264enc")
+                except Exception as link_err:
+                    self.logger.error(f"Exception linking videoconvert -> x264enc: {link_err}")
+                    link_ok = False
+            
+            if link_ok:
+                try:
+                    if not x264enc.link(h264parse):
+                        self.logger.error("Failed to link x264enc -> h264parse")
+                        link_ok = False
+                    else:
+                        self.logger.debug("Successfully linked x264enc -> h264parse")
+                except Exception as link_err:
+                    self.logger.error(f"Exception linking x264enc -> h264parse: {link_err}")
+                    link_ok = False
+            
+            if link_ok:
+                try:
+                    if not h264parse.link(queue_before_mux):
+                        self.logger.error("Failed to link h264parse -> queue_before_mux")
+                        link_ok = False
+                    else:
+                        self.logger.debug("Successfully linked h264parse -> queue_before_mux")
+                except Exception as link_err:
+                    self.logger.error(f"Exception linking h264parse -> queue_before_mux: {link_err}")
+                    link_ok = False
+            
+            if link_ok:
+                try:
+                    if not queue_before_mux.link(splitmuxsink):
+                        self.logger.error("Failed to link queue_before_mux -> splitmuxsink")
+                        link_ok = False
+                    else:
+                        self.logger.debug("Successfully linked queue_before_mux -> splitmuxsink")
+                except Exception as link_err:
+                    self.logger.error(f"Exception linking queue_before_mux -> splitmuxsink: {link_err}")
+                    link_ok = False
+            
+            if not link_ok:
+                # Clean up partially linked elements
+                self.logger.error("Failed to link recording branch elements, cleaning up...")
+                try:
+                    self._cleanup_recording_branch()
+                except Exception as cleanup_err:
+                    self.logger.error(f"Error during cleanup after failed linking: {cleanup_err}")
+                raise RuntimeError("Failed to link recording branch elements")
+            
+            # Verify that all links are actually established
+            # Check the entire chain from recording_queue to splitmuxsink
+            try:
+                recording_queue_src = recording_queue.get_static_pad("src")
+                if not recording_queue_src:
+                    raise RuntimeError("recording_queue has no src pad")
+                
+                peer = recording_queue_src.get_peer()
+                if not peer:
+                    raise RuntimeError("recording_queue src pad is not linked")
+                
+                videoconvert_elem = peer.get_parent()
+                if videoconvert_elem != videoconvert:
+                    raise RuntimeError(f"recording_queue is linked to wrong element: {videoconvert_elem.get_name() if videoconvert_elem else 'None'}")
+                
+                # Check the rest of the chain
+                videoconvert_src = videoconvert.get_static_pad("src")
+                if videoconvert_src:
+                    x264enc_peer = videoconvert_src.get_peer()
+                    if not x264enc_peer or x264enc_peer.get_parent() != x264enc:
+                        raise RuntimeError("videoconvert is not properly linked to x264enc")
+                
+                self.logger.debug("Verified recording branch chain is properly linked")
+            except Exception as verify_err:
+                self.logger.error(f"Failed to verify recording branch links: {verify_err}")
+                try:
+                    self._cleanup_recording_branch()
+                except Exception as cleanup_err:
+                    self.logger.error(f"Error during cleanup after verification failure: {cleanup_err}")
+                raise RuntimeError(f"Recording branch verification failed: {verify_err}")
+            
+            # Sync state of elements with pipeline parent
+            # This is safe to do when pipeline is NULL or READY, but may cause issues if PLAYING
+            # We do it conditionally based on pipeline state
+            # Note: This method is called from _init_pipeline() which already holds pipeline_lock, so we don't acquire it here
+            ret, current_state, pending_state = self.pipeline.get_state(Gst.SECOND)
+            if ret != Gst.StateChangeReturn.FAILURE:
+                if current_state in (Gst.State.NULL, Gst.State.READY):
+                    # Safe to sync state when pipeline is NULL or READY
+                    try:
+                        for elem in self._recording_elements:
+                            elem.sync_state_with_parent()
+                        self.logger.debug("Synced recording elements state with pipeline parent")
+                    except Exception as sync_err:
+                        self.logger.warning(f"Failed to sync recording elements state: {sync_err}")
+                        # Don't fail setup if sync fails - elements will sync automatically when pipeline goes to PLAYING
+                else:
+                    # Pipeline is PLAYING or PAUSED - elements will sync automatically when pipeline state changes
+                    self.logger.debug("Pipeline is PLAYING/PAUSED - elements will sync automatically on state change")
             
             self.logger.info("Recording branch setup successfully")
             
@@ -1637,6 +1807,8 @@ class VideoCaptureGStreamer(VideoCaptureBase):
     def _cleanup_recording_branch(self):
         """Clean up recording branch elements"""
         try:
+            self.logger.debug("Cleaning up recording branch...")
+            
             # Stop periodic check thread
             if hasattr(self, '_recording_check_thread') and self._recording_check_thread:
                 self._recording_check_stop = True
@@ -1645,15 +1817,69 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 self._recording_check_thread = None
             
             # Clean up recording elements
+            # Note: Try to acquire lock, but don't block if it's already held (e.g., during pipeline shutdown)
+            # Standard threading.Lock doesn't support timeout, so we use non-blocking acquire
+            pipeline = None
+            try:
+                # Try to acquire lock without blocking to avoid deadlock
+                lock_acquired = self.pipeline_lock.acquire(blocking=False)
+                try:
+                    pipeline = self.pipeline
+                finally:
+                    if lock_acquired:
+                        self.pipeline_lock.release()
+                if not lock_acquired:
+                    # Lock is held, get pipeline reference without lock (may be None, but that's OK)
+                    # This is safe because we're only reading the reference, not modifying it
+                    pipeline = self.pipeline
+            except Exception as lock_err:
+                self.logger.debug(f"Could not acquire pipeline lock for cleanup: {lock_err}")
+                # Fallback: get pipeline reference without lock
+                pipeline = self.pipeline
+            
             if hasattr(self, '_recording_elements') and self._recording_elements:
                 for elem in self._recording_elements:
-                    try:
-                        if elem:
-                            elem.set_state(Gst.State.NULL)
-                            if self.pipeline:
-                                self.pipeline.remove(elem)
-                    except Exception as e:
-                        self.logger.debug(f"Error removing recording element: {e}")
+                        try:
+                            if not elem:
+                                continue
+                            
+                            # Check element state before cleanup
+                            try:
+                                ret, state, pending = elem.get_state(Gst.SECOND)
+                                if ret != Gst.StateChangeReturn.FAILURE:
+                                    self.logger.debug(f"Element {elem.get_name()} state before cleanup: {state.value_nick}")
+                            except Exception as state_err:
+                                self.logger.debug(f"Could not get state for element {elem.get_name()}: {state_err}")
+                            
+                            # Set element state to NULL before removing
+                            # This will automatically unlink all pads - no need to unlink manually
+                            try:
+                                ret = elem.set_state(Gst.State.NULL)
+                                if ret == Gst.StateChangeReturn.ASYNC:
+                                    # Wait for state change to complete
+                                    ret = elem.get_state(Gst.CLOCK_TIME_NONE)
+                                    if ret[0] == Gst.StateChangeReturn.FAILURE:
+                                        self.logger.debug(f"Failed to set {elem.get_name()} to NULL state")
+                            except Exception as state_err:
+                                self.logger.debug(f"Error setting {elem.get_name()} to NULL: {state_err}")
+                            
+                            # Remove element from pipeline if pipeline exists
+                            if pipeline:
+                                try:
+                                    # Check if element is still in pipeline before removing
+                                    parent = elem.get_parent()
+                                    if parent == pipeline:
+                                        pipeline.remove(elem)
+                                        self.logger.debug(f"Removed {elem.get_name()} from pipeline")
+                                    else:
+                                        self.logger.debug(f"Element {elem.get_name()} not in pipeline (already removed)")
+                                except Exception as remove_err:
+                                    # Element might already be removed or pipeline might be None
+                                    self.logger.debug(f"Error removing {elem.get_name()} from pipeline: {remove_err}")
+                            
+                        except Exception as e:
+                            self.logger.debug(f"Error cleaning up recording element {elem.get_name() if elem else 'unknown'}: {e}")
+                
                 self._recording_elements = []
             
             # Clear recording-related attributes
@@ -1661,8 +1887,11 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             self._recording_checked_files = set()
             self._recording_check_stop = False
             self._recording_queue_elem = None
+            
+            self.logger.debug("Recording branch cleanup completed")
+            
         except Exception as e:
-            self.logger.debug(f"Error cleaning up recording branch: {e}")
+            self.logger.error(f"Error cleaning up recording branch: {e}", exc_info=True)
     
     def _retrieve_frames(self):
         """

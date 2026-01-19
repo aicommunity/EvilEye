@@ -174,6 +174,52 @@ python3 tests/generate_tests_docs.py
 - pytest-xdist (опционально, для параллельного запуска)
 - pytest-cov (опционально, для покрытия кода)
 
+## Тестовые данные
+
+### Видео файлы
+
+Тесты, требующие видео файлов, автоматически используют файлы из `deploy-samples`:
+
+- `planes_sample.mp4` - основной тестовый файл
+- `sample_split.mp4` - для тестирования split
+- `6p-c0.avi` - для multi-camera tracking (камера 0)
+- `6p-c1.avi` - для multi-camera tracking (камера 1)
+
+**Автозагрузка видео:**
+
+Fixture `ensure_test_videos` автоматически загружает необходимые видео файлы из `deploy-samples`, если их нет в директории `videos/`. Это происходит при первом запуске тестов, требующих видео.
+
+Для ручной загрузки видео файлов:
+
+```bash
+evileye deploy-samples
+```
+
+Или используйте утилиту напрямую:
+
+```python
+from evileye.utils.download_samples import download_sample_videos
+download_sample_videos("videos", force=False)
+```
+
+**Приоритет поиска видео в тестах:**
+
+1. `videos/planes_sample.mp4` (из deploy-samples)
+2. `videos/sample_split.mp4` (из deploy-samples)
+3. Любой `.mp4` файл в `videos/`
+4. Старые файлы в `tests/data/videos/` (для обратной совместимости)
+
+**Структура тестовых данных:**
+
+```
+tests/
+├── data/
+│   ├── images/          # Тестовые изображения
+│   ├── videos/          # Старые тестовые видео (помечены !del_)
+│   └── configs/         # Тестовые конфигурации
+└── models/              # Модели для тестов (yolov8n.pt, rf-detr-nano.pth)
+```
+
 ## Использование pytest
 
 Все тесты используют pytest как единый фреймворк тестирования.
@@ -207,11 +253,22 @@ def test_multiply(input, expected):
 
 Общие fixtures доступны в `conftest.py`:
 - `project_root_path` - путь к корню проекта
-- `test_data_dir` - директория с тестовыми данными
+- `test_data_dir` - директория с тестовыми данными (`videos/`)
 - `sample_configs_dir` - директория с примерами конфигураций
 - `evil_eye_data_dir` - директория EvilEyeData
+- `ensure_test_videos` - автоматически загружает тестовые видео из deploy-samples (session scope)
 - `mock_db_controller` - моковый DB контроллер
 - `mock_db_adapter` - моковый DB адаптер
+
+**Использование fixture `ensure_test_videos`:**
+
+```python
+def test_my_video_test(ensure_test_videos):
+    # ensure_test_videos - это Path к директории videos/
+    # Видео файлы уже загружены и доступны
+    video_path = ensure_test_videos / "planes_sample.mp4"
+    assert video_path.exists()
+```
 
 ## Примечания
 

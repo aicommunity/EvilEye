@@ -1,0 +1,30 @@
+{
+  "metadata": {
+    "version": "1.0",
+    "created": "2026-01-17T22:34:47.923817",
+    "description": "Object detection labels",
+    "total_objects": 1,
+    "last_updated": "2026-01-17T22:34:47.923890"
+  },
+  "objects": [
+    {
+      "object_id": 1,
+      "frame_id": 1234,
+      "timestamp": "2026-01-17T22:34:17.781911",
+      "image_filename": "detected_frames/test_frame.jpeg",
+      "bounding_box": {
+        "x": 100,
+        "y": 150,
+        "width": 100,
+        "height": 150
+      },
+      "confidence": 0.95,
+      "class_id": 0,
+      "class_name": "person",
+      "source_id": 0,
+      "source_name": "camera_0",
+      "track_id": 1,
+      "global_id": null
+    }
+  ]
+}

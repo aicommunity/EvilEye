@@ -122,9 +122,43 @@ class DetectionThreadYolo(DetectionThreadBase):
             # Возвращаем пустой список результатов для каждого изображения
             return [None] * len(images) if isinstance(images, list) else None
         
+        # Filter out None images before passing to model
+        if not isinstance(images, list):
+            self.logger.warning(f"Expected list of images, got {type(images)}")
+            return None
+        
+        # Track which images are None to map results back correctly
+        valid_images = []
+        image_indices = []  # Track original indices of valid images
+        for i, img in enumerate(images):
+            if img is not None:
+                valid_images.append(img)
+                image_indices.append(i)
+        
+        # If all images are None, return None results
+        if len(valid_images) == 0:
+            self.logger.warning("All images are None, cannot perform prediction")
+            return [None] * len(images)
+        
         try:
             # Defer classes filtering to base; avoid passing names to model
-            return self.model.predict(source=images, classes=self._get_classes_arg_for_model(), verbose=False, **self.inf_params)
+            results = self.model.predict(source=valid_images, classes=self._get_classes_arg_for_model(), verbose=False, **self.inf_params)
+            
+            # Map results back to original positions (None for invalid images)
+            if results is None:
+                return [None] * len(images)
+            
+            # Convert results to list if needed
+            if not isinstance(results, list):
+                results = [results]
+            
+            # Create result list with None for invalid images
+            full_results = [None] * len(images)
+            for idx, result_idx in enumerate(image_indices):
+                if idx < len(results):
+                    full_results[result_idx] = results[idx]
+            
+            return full_results
         except Exception as e:
             self.logger.error(f"Error during model prediction: {e}")
             self.logger.debug("Prediction error details", exc_info=True)

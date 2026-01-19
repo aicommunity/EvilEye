@@ -5,28 +5,45 @@ from pathlib import Path
 import pytest
 
 
-def _find_existing_video(repo_root: Path) -> str:
-    # Prefer known sample files at repo root
-    candidates = [
-        repo_root / "12635-video-trim.mp4",
-        repo_root / "139932-video_trim.mp4",
-        repo_root / "40374-video_trim.mp4",
+def _find_existing_video(repo_root: Path, ensure_test_videos=None) -> str:
+    """
+    Находит существующее видео для тестов.
+    Приоритет: файлы из deploy-samples (videos/), затем старые файлы из tests/data/videos/.
+    """
+    videos_dir = repo_root / "videos"
+    test_videos_dir = repo_root / "tests" / "data" / "videos"
+    
+    # Приоритет 1: файлы из deploy-samples (videos/)
+    deploy_samples_candidates = [
+        videos_dir / "planes_sample.mp4",  # Основной тестовый файл из deploy-samples
+        videos_dir / "sample_split.mp4",   # Альтернативный файл из deploy-samples
     ]
-    for p in candidates:
+    for p in deploy_samples_candidates:
         if p.exists():
             return str(p)
-    # fallback: any mp4 under videos/
-    for p in (repo_root / "videos").glob("**/*.mp4"):
-        return str(p)
-    pytest.skip("No sample mp4 found in repository to test recording")
+    
+    # Приоритет 2: любой mp4 в videos/ (из deploy-samples)
+    if videos_dir.exists():
+        for p in videos_dir.glob("*.mp4"):
+            return str(p)
+    
+    # Приоритет 3: старые файлы из tests/data/videos/ (для обратной совместимости)
+    if test_videos_dir.exists():
+        for p in test_videos_dir.glob("*.mp4"):
+            # Пропустить файлы помеченные для удаления
+            if not p.name.startswith("!del_"):
+                return str(p)
+    
+    pytest.skip("No sample mp4 found in repository to test recording. "
+                "Run 'evileye deploy-samples' to download test videos.")
 
 
-def test_opencv_recording_basic(tmp_path: Path):
+def test_opencv_recording_basic(tmp_path: Path, ensure_test_videos):
     from evileye.capture.video_capture_opencv import VideoCaptureOpencv
 
     # Get project root (go up from tests/integration/capture/opencv/ to project root)
     repo_root = Path(__file__).resolve().parents[4]
-    video_path = _find_existing_video(repo_root)
+    video_path = _find_existing_video(repo_root, ensure_test_videos)
 
     cap = VideoCaptureOpencv()
     # Minimal params to start capture and enable recording
@@ -80,9 +97,17 @@ def test_opencv_recording_basic(tmp_path: Path):
     time.sleep(1.0)
 
     # Verify a file was written into daily subfolder
-    # Check all subdirectories (date folders)
-    date_dirs = list(tmp_path.glob("*/"))
-    assert len(date_dirs) > 0, f"Daily folder not created in {tmp_path}"
+    # Recording creates structure: out_dir/Streams/YYYY-MM-DD/CameraName/
+    # Check for Streams directory
+    streams_dir = tmp_path / "Streams"
+    if not streams_dir.exists():
+        # Fallback: check direct subdirectories (old structure)
+        date_dirs = list(tmp_path.glob("*/"))
+        assert len(date_dirs) > 0, f"Daily folder not created in {tmp_path}"
+    else:
+        # New structure: Streams/YYYY-MM-DD/CameraName/
+        date_dirs = list(streams_dir.glob("*/"))
+        assert len(date_dirs) > 0, f"Date folder not created in {streams_dir}"
     
     # Check for files in all date directories
     files = []
@@ -97,4 +122,4 @@ def test_opencv_recording_basic(tmp_path: Path):
             files.extend(list(camera_dir.glob("*.mp4")))
             files.extend(list(camera_dir.glob("*.mkv")))
     
-    assert len(files) >= 1, f"No recording files created. Checked: {tmp_path}, date_dirs: {date_dirs}, files: {files}"
+    assert len(files) >= 1, f"No recording files created. Checked: {tmp_path}, streams_dir: {streams_dir}, date_dirs: {date_dirs}, files: {files}"

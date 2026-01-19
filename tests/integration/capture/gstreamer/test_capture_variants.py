@@ -101,8 +101,17 @@ def test_gstreamer_capture_and_record_variants(
     time.sleep(0.5)
 
     # Проверяем создание файла записи (локальная проверка, без импорта conftest)
-    date_dirs = list(Path(tmp_path).glob("*/"))
-    assert len(date_dirs) > 0, f"Не создана папка с датой записи в {tmp_path}"
+    # Recording creates structure: out_dir/Streams/YYYY-MM-DD/CameraName/
+    streams_dir = Path(tmp_path) / "Streams"
+    if not streams_dir.exists():
+        # Fallback: check direct subdirectories (old structure)
+        date_dirs = list(Path(tmp_path).glob("*/"))
+        assert len(date_dirs) > 0, f"Не создана папка с датой записи в {tmp_path}"
+    else:
+        # New structure: Streams/YYYY-MM-DD/CameraName/
+        date_dirs = list(streams_dir.glob("*/"))
+        assert len(date_dirs) > 0, f"Не создана папка с датой записи в {streams_dir}"
+    
     files = []
     for date_dir in date_dirs:
         files.extend(list(date_dir.glob("*.mp4")))
@@ -110,6 +119,6 @@ def test_gstreamer_capture_and_record_variants(
         for camera_dir in date_dir.glob("*/"):
             files.extend(list(camera_dir.glob("*.mp4")))
             files.extend(list(camera_dir.glob("*.mkv")))
-    assert len(files) >= 1, f"Файлы записи не найдены. Проверено: {tmp_path}, date_dirs: {date_dirs}"
+    assert len(files) >= 1, f"Файлы записи не найдены. Проверено: {tmp_path}, streams_dir: {streams_dir}, date_dirs: {date_dirs}"
 
 

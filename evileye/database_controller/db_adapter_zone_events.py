@@ -147,6 +147,11 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
                 self.logger.warning(f'DB: Invalid box format in RETURNING: {box}, expected [x1, y1, x2, y2]; skipping image save')
                 continue
 
+            # Проверка на None для image
+            if image is None:
+                self.logger.warning('DB: Image is None in RETURNING; skipping image save')
+                continue
+
             self._save_image(preview_path, frame_path, image, box, zone_coords)
 
             if query_type == 'insert':
@@ -155,6 +160,15 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
                 threading_events.notify('update event')
 
     def _save_image(self, preview_path, frame_path, image, box, zone_coords):
+        # Дополнительная проверка на None и наличие атрибута image
+        if image is None:
+            self.logger.warning('DB: Image is None in _save_image; skipping image save')
+            return
+        
+        if not hasattr(image, 'image') or image.image is None:
+            self.logger.warning('DB: Image object has no image attribute or image.image is None; skipping image save')
+            return
+        
         preview_save_dir = os.path.join(self.image_dir, preview_path)
         frame_save_dir = os.path.join(self.image_dir, frame_path)
         preview = cv2.resize(copy.deepcopy(image.image), self.preview_size, cv2.INTER_NEAREST)

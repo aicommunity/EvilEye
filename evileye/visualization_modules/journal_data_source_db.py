@@ -63,10 +63,8 @@ class DatabaseJournalDataSource(EventJournalDataSource):
 
     def _init_db_connection(self):
         """Initialize Qt SQL database connection"""
-        # Use utility to ensure database_params completeness
-        from evileye.utils.database_config_utils import ensure_database_config_complete
-        self.database_params = ensure_database_config_complete(self.database_params)
-        
+        # На этом этапе database_params уже должен быть приведён к полному виду
+        # (через ensure_database_config_complete в вызывающем коде).
         db_section = self.database_params.get('database', {})
         self.username = db_section.get('user_name', 'postgres')
         self.password = db_section.get('password', '')
@@ -75,6 +73,13 @@ class DatabaseJournalDataSource(EventJournalDataSource):
         self.port = db_section.get('port', 5432)
         if not self.image_dir:
             self.image_dir = db_section.get('image_dir', 'EvilEyeData')
+        
+        # Логируем фактические параметры подключения для отладки
+        self.logger.info(
+            f"Initializing Qt database connection: "
+            f"host={self.host}, port={self.port}, "
+            f"database={self.db_name}, user={self.username}"
+        )
         
         # Check if connection already exists
         if self.db_connection_name in QSqlDatabase.connectionNames():
