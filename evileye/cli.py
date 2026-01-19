@@ -119,8 +119,21 @@ def _run_with_scheduler(
     )
 
     iteration = 0
+    prev_iteration_end_time = None
     while True:
         iteration += 1
+        iteration_start_time = datetime.now()
+        if prev_iteration_end_time is not None:
+            logger.info(
+                f"[scheduler] Starting iteration {iteration}: previous iteration ended at "
+                f"{prev_iteration_end_time.isoformat()}, starting at {iteration_start_time.isoformat()}, "
+                f"gap between iterations: {(iteration_start_time - prev_iteration_end_time).total_seconds():.1f}s"
+            )
+        else:
+            logger.info(
+                f"[scheduler] Starting iteration {iteration}: first iteration, starting at "
+                f"{iteration_start_time.isoformat()}"
+            )
         logger.info(f"[scheduler] Iteration {iteration}: launching process: {' '.join(base_cmd)}")
         console.print(f"[green][scheduler] Iteration {iteration}: launching[/green] {' '.join(base_cmd)}")
 
@@ -145,9 +158,44 @@ def _run_with_scheduler(
 
         logger.info(f"[scheduler] Next launch scheduled at {next_run.isoformat()}")
         console.print(f"[blue][scheduler] Next launch at {next_run.isoformat()}[/blue]")
+        
+        # Логируем информацию о времени до следующего запуска
+        time_until_next = (next_run - start_time).total_seconds()
+        hours_until_next = time_until_next / 3600.0
+        if hours_until_next > 12:
+            days_until_next = hours_until_next / 24.0
+            logger.info(
+                f"[scheduler] ===== NEXT SCHEDULED RESTART: {next_run.strftime('%Y-%m-%d %H:%M:%S')} "
+                f"({days_until_next:.1f} days / {hours_until_next:.1f} hours from now) ====="
+            )
+            console.print(
+                f"[green][scheduler] Next scheduled restart: {next_run.strftime('%Y-%m-%d %H:%M:%S')} "
+                f"({days_until_next:.1f} days / {hours_until_next:.1f} hours)[/green]"
+            )
+        elif hours_until_next > 1:
+            logger.info(
+                f"[scheduler] ===== NEXT SCHEDULED RESTART: {next_run.strftime('%Y-%m-%d %H:%M:%S')} "
+                f"({hours_until_next:.1f} hours from now) ====="
+            )
+            console.print(
+                f"[green][scheduler] Next scheduled restart: {next_run.strftime('%Y-%m-%d %H:%M:%S')} "
+                f"({hours_until_next:.1f} hours)[/green]"
+            )
+        else:
+            minutes_until_next = time_until_next / 60.0
+            logger.info(
+                f"[scheduler] ===== NEXT SCHEDULED RESTART: {next_run.strftime('%Y-%m-%d %H:%M:%S')} "
+                f"({minutes_until_next:.1f} minutes from now) ====="
+            )
+            console.print(
+                f"[green][scheduler] Next scheduled restart: {next_run.strftime('%Y-%m-%d %H:%M:%S')} "
+                f"({minutes_until_next:.1f} minutes)[/green]"
+            )
 
         # Флаг: нужно ли продолжать внешний цикл (ещё один запуск) после этой итерации
         continue_scheduler = True
+        # Флаг: был ли процесс завершен по расписанию (для немедленного перезапуска)
+        scheduled_termination = False
 
         try:
             # Цикл до естественного завершения процесса ИЛИ до наступления времени перезапуска
@@ -240,6 +288,19 @@ def _run_with_scheduler(
                         logger.info(
                             f"[scheduler] Process {proc.pid} confirmed terminated with return code {final_retcode}"
                         )
+                    
+                    # Логирование после завершения процесса по расписанию
+                    termination_time = datetime.now()
+                    logger.info(
+                        f"[scheduler] Process termination completed at {termination_time.isoformat()}, "
+                        f"continue_scheduler={continue_scheduler}, proceeding to next iteration immediately"
+                    )
+                    # После завершения по расписанию запускаем следующую итерацию немедленно
+                    # без ожидания до следующего дня
+                    continue_scheduler = True
+                    # Устанавливаем флаг, что процесс был завершен по расписанию
+                    # Это нужно для того, чтобы после завершения ожидания запустить новую итерацию
+                    scheduled_termination = True
                     break
 
                 time.sleep(1.0)
@@ -260,15 +321,47 @@ def _run_with_scheduler(
         # Если процесс завершился сам до наступления следующего планового запуска —
         # выходим из основного цикла и НЕ перезапускаем приложение снова.
         if not continue_scheduler:
+            prev_iteration_end_time = datetime.now()
+            logger.info(
+                f"[scheduler] Iteration {iteration} ended normally, scheduler loop stopping. "
+                f"End time: {prev_iteration_end_time.isoformat()}"
+            )
             break
 
-        # Если процесс был завершён по расписанию, вычисляем следующее время запуска
+        # Если процесс был завершён по расписанию, запускаем следующую итерацию немедленно
+        # без ожидания до следующего дня
+        if scheduled_termination:
+            logger.info(
+                f"[scheduler] Process was terminated by schedule, launching next iteration immediately"
+            )
+            # Переходим к следующей итерации цикла while True без ожидания
+            continue
+        
+        # Если процесс завершился сам (не по расписанию), вычисляем следующее время запуска
         # и ждём до этого времени перед запуском следующей итерации
         now = datetime.now()
+        prev_iteration_end_time = now  # Сохраняем время завершения итерации
+        
+        # Вычисляем следующее время запуска для следующей итерации
         if mode == "interval":
             next_run = _get_next_interval(now, interval_minutes)
         else:  # daily_time
+            # Для ежедневного перезапуска: если мы только что завершили процесс по расписанию,
+            # следующее время будет завтра в то же время.
             next_run = _get_next_daily_time(now, time_str)
+            # Проверяем, не слишком ли далеко следующее время (больше 12 часов = завтра)
+            time_until_next = (next_run - now).total_seconds()
+            if time_until_next > 12 * 3600:  # Больше 12 часов = точно завтра
+                logger.info(
+                    f"[scheduler] Next scheduled time is tomorrow ({next_run.isoformat()}), "
+                    f"process was just terminated by schedule. "
+                    f"Will wait until tomorrow for next iteration."
+                )
+            else:
+                logger.info(
+                    f"[scheduler] Next scheduled time is {next_run.isoformat()}, "
+                    f"waiting {time_until_next:.1f}s until next iteration"
+                )
 
         # Ждём до следующего времени запуска
         sleep_seconds = max(0.0, (next_run - now).total_seconds())
@@ -281,19 +374,55 @@ def _run_with_scheduler(
                 f"[blue][scheduler] Waiting {sleep_seconds:.1f}s until next launch at "
                 f"{next_run.isoformat()}[/blue]"
             )
+            
+            # Детальное логирование перед началом ожидания
+            logger.info(
+                f"[scheduler] Starting wait loop: current_time={now.isoformat()}, "
+                f"next_run={next_run.isoformat()}, sleep_seconds={sleep_seconds:.1f}"
+            )
+            num_intervals = int(sleep_seconds / 60.0) + (1 if sleep_seconds % 60.0 > 0 else 0)
+            logger.info(
+                f"[scheduler] Wait will be split into {num_intervals} interval(s) of up to 60 seconds each"
+            )
+            
             try:
                 # Разбиваем длительное ожидание на интервалы по 60 секунд для лучшей отзывчивости
                 # и возможности корректно обработать сигналы
                 remaining_seconds = sleep_seconds
+                interval_count = 0
                 while remaining_seconds > 0:
+                    interval_count += 1
                     sleep_interval = min(60.0, remaining_seconds)  # Спим максимум 60 секунд за раз
+                    logger.info(
+                        f"[scheduler] Wait interval {interval_count}: sleeping for {sleep_interval:.1f}s, "
+                        f"{remaining_seconds:.1f}s remaining until next launch"
+                    )
                     time.sleep(sleep_interval)
                     remaining_seconds -= sleep_interval
-                    # Периодически логируем оставшееся время (каждые 5 минут)
-                    if remaining_seconds > 0 and int(remaining_seconds) % 300 == 0:
-                        logger.debug(
-                            f"[scheduler] Still waiting: {remaining_seconds:.1f}s remaining until next launch"
+                    # Логируем прогресс после каждого интервала
+                    if remaining_seconds > 0:
+                        logger.info(
+                            f"[scheduler] Wait interval {interval_count} completed: "
+                            f"{remaining_seconds:.1f}s remaining until next launch at {next_run.isoformat()}"
                         )
+                    else:
+                        logger.info(
+                            f"[scheduler] Wait interval {interval_count} completed: "
+                            f"all wait time elapsed, ready for next launch"
+                        )
+                
+                # Логирование после завершения ожидания
+                wait_end_time = datetime.now()
+                logger.info(
+                    f"[scheduler] Wait loop completed: started at {now.isoformat()}, "
+                    f"ended at {wait_end_time.isoformat()}, total wait duration: "
+                    f"{(wait_end_time - now).total_seconds():.1f}s"
+                )
+                logger.info(
+                    f"[scheduler] Ready to start next iteration, next_run time: {next_run.isoformat()}"
+                )
+                # Сохраняем время завершения ожидания для следующей итерации
+                prev_iteration_end_time = wait_end_time
             except KeyboardInterrupt:
                 logger.info("[scheduler] Interrupted during wait, stopping scheduler loop")
                 console.print("[yellow][scheduler] Interrupted during wait, stopping loop[/yellow]")
