@@ -3,6 +3,7 @@ from threading import Thread
 from queue import Queue
 from abc import ABC, abstractmethod
 from ..core.base_class import EvilEyeBase
+from ..core.interfaces import IEventDetector
 
 
 class EventsDetector(EvilEyeBase):

@@ -24,12 +24,27 @@ class AttributeEvent(Event):
 
         if obj is not None:
             if not is_finished:
-                self.img_found = copy.deepcopy(obj.last_image)
+                # Use .copy() for numpy arrays in CaptureImage instead of deepcopy
+                if obj.last_image and hasattr(obj.last_image, 'image') and obj.last_image.image is not None:
+                    # Create shallow copy of CaptureImage and copy only numpy array
+                    import copy as cp
+                    self.img_found = cp.copy(obj.last_image)
+                    if hasattr(self.img_found, 'image'):
+                        self.img_found.image = obj.last_image.image.copy()
+                else:
+                    self.img_found = obj.last_image
                 self.box_found = obj.track.bounding_box if hasattr(obj, 'track') else None
                 self.time_found = timestamp
                 self.class_id = getattr(obj, 'class_id', None)
             else:
-                self.img_finished = copy.deepcopy(obj.last_image)
+                # Use .copy() for numpy arrays in CaptureImage instead of deepcopy
+                if obj.last_image and hasattr(obj.last_image, 'image') and obj.last_image.image is not None:
+                    import copy as cp
+                    self.img_finished = cp.copy(obj.last_image)
+                    if hasattr(self.img_finished, 'image'):
+                        self.img_finished.image = obj.last_image.image.copy()
+                else:
+                    self.img_finished = obj.last_image
                 self.box_finished = obj.track.bounding_box if hasattr(obj, 'track') else None
                 self.class_id = getattr(obj, 'class_id', None)
 

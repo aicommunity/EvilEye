@@ -43,6 +43,15 @@ from evileye.core import ProcessorSource, ProcessorStep, ProcessorFrame
 from evileye.core.class_manager import ClassManager
 from evileye.pipelines import PipelineSurveillance
 from evileye.core.logger import get_module_logger
+from evileye.controller.services import (
+    PipelineService,
+    DatabaseService,
+    EventsService,
+    VisualizationService,
+    ConfigurationService,
+    ObjectsHandlerService,
+    ServiceLocator,
+)
 import cv2
 
 
@@ -107,6 +116,18 @@ class Controller:
         
         # Initialize centralized class manager
         self.class_manager = ClassManager()
+        
+        # Initialize service locator and services
+        self.service_locator = ServiceLocator()
+        self.service_locator.create_all_services(class_manager=self.class_manager)
+        
+        # Get service references for convenience
+        self._pipeline_service = self.service_locator.get_pipeline_service()
+        self._database_service = self.service_locator.get_database_service()
+        self._events_service = self.service_locator.get_events_service()
+        self._visualization_service = self.service_locator.get_visualization_service()
+        self._config_service = self.service_locator.get_config_service()
+        self._objects_handler_service = self.service_locator.get_objects_handler_service()
         
         # Default COCO class mapping: class_name -> class_id
         self.class_mapping = {
@@ -243,6 +264,172 @@ class Controller:
         """Check if restart is requested (e.g., due to memory leak)."""
         return self.restart_flag
 
+    def _get_frame_timestamp_sec(self, image) -> float:
+        """Получить timestamp кадра в секундах (для записи событий)."""
+        try:
+            # Для видеофайлов используем current_video_position (мс) для точных интервалов
+            if (
+                hasattr(image, "current_video_position")
+                and image.current_video_position is not None
+                and image.current_video_position >= 0
+            ):
+                return float(image.current_video_position) / 1000.0
+        except Exception:
+            pass
+        # Для live-источников используем time_stamp, иначе текущее время
+        try:
+            if hasattr(image, "time_stamp") and image.time_stamp:
+                return float(image.time_stamp)
+        except Exception:
+            pass
+        return time.time()
+
+    def _process_tracking_results(self, mc_tracking_results) -> list:
+        """Положить результаты трекинга в ObjectsHandler и собрать кадры для визуализации/стриминга."""
+        processing_frames = []
+        self.logger.debug(f"Processing {len(mc_tracking_results)} tracking results")
+        for track_info in mc_tracking_results:
+            # Handle both tuples [tracking_result, image] and Frame objects
+            if isinstance(track_info, (tuple, list)) and len(track_info) == 2:
+                _, image = track_info
+            else:
+                # Assume it's a Frame object (from attributes processors)
+                image = track_info
+
+            self.obj_handler.put(track_info)
+            processing_frames.append(image)
+
+            try:
+                self.source_last_processed_frame_id[image.source_id] = image.frame_id
+            except Exception:
+                pass
+
+            # Event recording: add frames into per-source buffers/recorders (if enabled)
+            if self.recording_params and self.recording_params.event_recording_enabled:
+                try:
+                    if (
+                        image.source_id in self.event_buffers
+                        and hasattr(image, "image")
+                        and image.image is not None
+                    ):
+                        ts = self._get_frame_timestamp_sec(image)
+                        self.event_buffers[image.source_id].add_frame(image.image, ts)
+                except Exception as e:
+                    self.logger.debug(f"Error adding frame to event buffer: {e}")
+
+                try:
+                    if image.source_id in self.event_recorders:
+                        event_recorder = self.event_recorders[image.source_id]
+                        if (
+                            event_recorder.is_recording()
+                            and hasattr(image, "image")
+                            and image.image is not None
+                        ):
+                            ts = self._get_frame_timestamp_sec(image)
+                            event_recorder.add_post_event_frame(image.image, ts)
+                except Exception as e:
+                    self.logger.debug(f"Error adding post-event frame: {e}")
+
+        self.logger.debug(f"Collected {len(processing_frames)} frames for processing")
+        return processing_frames
+
+    def _process_events_once(self) -> None:
+        """Считать события из EventsDetectorsController и передать в EventsProcessor."""
+        try:
+            if not self.events_detectors_controller:
+                return
+            events = self.events_detectors_controller.get()
+            if events and self.events_processor:
+                self.events_processor.put(events)
+        except Exception:
+            # Не ломаем основной цикл контроллера из-за ошибок событий
+            pass
+
+    def _publish_latest_frame_to_broker(self, processing_frames: list) -> None:
+        """Опубликовать последний кадр в web broker (если доступно)."""
+        try:
+            if not processing_frames:
+                self.logger.debug("No processing frames available for publishing")
+                return
+            last_frame = processing_frames[-1]
+            if not (hasattr(last_frame, "image") and last_frame.image is not None):
+                self.logger.debug("Last frame has no image or image is None")
+                return
+            ok, buf = cv2.imencode(".jpg", last_frame.image)
+            if not ok:
+                self.logger.debug("JPEG encode returned false")
+                return
+            from evileye.api.core.broker_access import get_broker
+
+            payload = buf.tobytes()
+            get_broker().publish_jpeg(self.stream_pipeline_id, payload)
+            self.logger.debug(
+                f"Published frame to broker for pipeline '{self.stream_pipeline_id}', size: {len(payload)} bytes"
+            )
+        except Exception as e:
+            # Do not break controller loop if streaming is not initialized
+            self.logger.debug(f"Frame publish failed: {e}")
+
+    def _check_memory_and_maybe_stop(self) -> bool:
+        """Периодически проверять память; если лимит превышен — остановить цикл.
+
+        Returns:
+            True если цикл нужно прервать (run_flag уже сброшен).
+        """
+        try:
+            needs_check = (
+                not self.debug_info.get("controller")
+                or not self.debug_info["controller"].get("timestamp")
+                or (
+                    (
+                        datetime.datetime.now() - self.debug_info["controller"]["timestamp"]
+                    ).total_seconds()
+                    > self.memory_periodic_check_sec
+                )
+            )
+            if not needs_check:
+                return False
+
+            self.collect_memory_consumption()
+            if self.show_memory_usage:
+                pprint.pprint(self.debug_info)
+
+            total_memory_usage_mb = None
+            if self.debug_info.get("controller"):
+                total_memory_usage_mb = self.debug_info["controller"].get("total_memory_usage_mb")
+            if total_memory_usage_mb and total_memory_usage_mb >= self.max_memory_usage_mb:
+                self.logger.warning(
+                    f"Memory usage exceeded: {total_memory_usage_mb:.2f} Mb "
+                    f"(maximum: {self.max_memory_usage_mb:.2f} Mb)"
+                )
+                self.logger.debug(f"Debug info: {pprint.pformat(self.debug_info)}")
+                if self.auto_restart:
+                    self.restart_flag = True
+                self.run_flag = False
+                return True
+            return False
+        except Exception:
+            return False
+
+    def _maybe_update_visualization(self, processing_frames: list, dropped_frames) -> None:
+        """Обновить визуализацию (если GUI включен)."""
+        if not (self.show_main_gui and self.gui_enabled and self.visualizer):
+            return
+        try:
+            objects = []
+            for source_id in self.visualizer.source_ids:
+                objects.append(self.obj_handler.get("active", source_id))
+            self.visualizer.update(
+                processing_frames,
+                self.source_last_processed_frame_id,
+                objects,
+                dropped_frames,
+                self.debug_info,
+            )
+        except Exception:
+            # Визуализация не должна падать весь цикл
+            pass
+
     def run(self):
         self.logger.info(f"Controller main loop started, stream_pipeline_id: {self.stream_pipeline_id}")
         # Emit system started via detector (unified path)
@@ -257,139 +444,36 @@ class Controller:
             pipeline_results = self.pipeline.peek_latest_result()
             self.logger.debug(f"Pipeline results keys: {list(pipeline_results.keys()) if pipeline_results else 'None'}")
 
-            #mc_tracking_results = pipeline_results.get("mc_trackers", [])
             final_results_name = self.pipeline.get_final_results_name()
             self.logger.debug(f"Final results name: {final_results_name}")
-            mc_tracking_results = pipeline_results.get(final_results_name, [])
-            self.logger.debug(f"MC tracking results count: {len(mc_tracking_results)}")
-            if self.pipeline is not None and pipeline_results is not None:
-                mc_tracking_results = pipeline_results.get(self.pipeline.get_final_results_name(), [])
+            if pipeline_results is not None:
+                mc_tracking_results = pipeline_results.get(final_results_name, [])
             else:
                 mc_tracking_results = []
+            try:
+                self.logger.debug(f"MC tracking results count: {len(mc_tracking_results)}")
+            except Exception:
+                pass
 
-                # Insert debug info from pipeline components
+            # Insert debug info from pipeline components
             self.pipeline.insert_debug_info_by_id(self.debug_info)
 
             if self.autoclose and all_sources_finished:
                 self.run_flag = False
 
-            complete_capture_it = timer()
-            complete_detection_it = timer()
-            complete_tracking_it = timer()
-
-            # Process tracking results
-            processing_frames = []
-            self.logger.debug(f"Processing {len(mc_tracking_results)} tracking results")
-            for track_info in mc_tracking_results:
-                # Handle both tuples [tracking_result, image] and Frame objects
-                if isinstance(track_info, (tuple, list)) and len(track_info) == 2:
-                    tracking_result, image = track_info
-                else:
-                    # Assume it's a Frame object (from attributes processors)
-                    tracking_result = None
-                    image = track_info
-                
-                self.obj_handler.put(track_info)
-                processing_frames.append(image)
-                self.source_last_processed_frame_id[image.source_id] = image.frame_id
-                
-                # Add frame to event buffer if event recording is enabled
-                if self.recording_params and self.recording_params.event_recording_enabled:
-                    if image.source_id in self.event_buffers and hasattr(image, 'image') and image.image is not None:
-                        try:
-                            # For video files, use current_video_position (in milliseconds) for accurate timestamps
-                            # For live sources (IP cameras, devices), use time_stamp
-                            if (hasattr(image, 'current_video_position') and 
-                                image.current_video_position is not None and 
-                                image.current_video_position >= 0):
-                                # Use video position in seconds as relative timestamp
-                                # This gives accurate frame intervals from the source video
-                                # Convert milliseconds to seconds
-                                timestamp = image.current_video_position / 1000.0
-                            else:
-                                # For live sources, use capture timestamp
-                                timestamp = image.time_stamp if hasattr(image, 'time_stamp') and image.time_stamp else time.time()
-                            self.event_buffers[image.source_id].add_frame(image.image, timestamp)
-                        except Exception as e:
-                            self.logger.debug(f"Error adding frame to event buffer: {e}")
-                    
-                    # Add post-event frames to active recorders
-                    if image.source_id in self.event_recorders:
-                        try:
-                            event_recorder = self.event_recorders[image.source_id]
-                            if event_recorder.is_recording() and hasattr(image, 'image') and image.image is not None:
-                                # For video files, use current_video_position (in milliseconds) for accurate timestamps
-                                # For live sources (IP cameras, devices), use time_stamp
-                                if (hasattr(image, 'current_video_position') and 
-                                    image.current_video_position is not None and 
-                                    image.current_video_position >= 0):
-                                    # Use video position in seconds as relative timestamp
-                                    # This gives accurate frame intervals from the source video
-                                    # Convert milliseconds to seconds
-                                    timestamp = image.current_video_position / 1000.0
-                                else:
-                                    # For live sources, use capture timestamp
-                                    timestamp = image.time_stamp if hasattr(image, 'time_stamp') and image.time_stamp else time.time()
-                                event_recorder.add_post_event_frame(image.image, timestamp)
-                        except Exception as e:
-                            self.logger.debug(f"Error adding post-event frame: {e}")
-            
-            self.logger.debug(f"Collected {len(processing_frames)} frames for processing")
-
-            events = dict()
-            events = self.events_detectors_controller.get()
-            # self.logger.debug(f"Events: {events}")
-            if events:
-                self.events_processor.put(events)
-            complete_processing_it = timer()
+            processing_frames = self._process_tracking_results(mc_tracking_results)
+            self._process_events_once()
 
             # Get all dropped images from pipeline
             dropped_frames = self.pipeline.get_dropped_ids()
 
             # Publish latest frame to web streaming broker (if available)
-            try:
-                if processing_frames:
-                    last_frame = processing_frames[-1]
-                    if hasattr(last_frame, 'image') and last_frame.image is not None:
-                        ok, buf = cv2.imencode('.jpg', last_frame.image)
-                        if ok:
-                            from evileye.api.core.broker_access import get_broker
-                            get_broker().publish_jpeg(self.stream_pipeline_id, buf.tobytes())
-                            self.logger.debug(f"Published frame to broker for pipeline '{self.stream_pipeline_id}', size: {len(buf.tobytes())} bytes")
-                        else:
-                            self.logger.debug("JPEG encode returned false")
-                    else:
-                        self.logger.debug(f"Last frame has no image or image is None")
-                else:
-                    self.logger.debug("No processing frames available for publishing")
-            except Exception as e:
-                # Do not break controller loop if streaming is not initialized
-                self.logger.debug(f"Frame publish failed: {e}")
+            self._publish_latest_frame_to_broker(processing_frames)
 
-            if not self.debug_info.get("controller", None) or not self.debug_info["controller"].get("timestamp", None) or ((datetime.datetime.now() - self.debug_info["controller"]["timestamp"]).total_seconds() > self.memory_periodic_check_sec):
-                self.collect_memory_consumption()
-                if self.show_memory_usage:
-                    pprint.pprint(self.debug_info)
+            if self._check_memory_and_maybe_stop():
+                continue
 
-                if self.debug_info.get("controller", None):
-                    total_memory_usage_mb = self.debug_info["controller"].get("total_memory_usage_mb", None)
-                    if total_memory_usage_mb and total_memory_usage_mb >= self.max_memory_usage_mb:
-                        self.logger.warning(f"Memory usage exceeded: {total_memory_usage_mb:.2f} Mb (maximum: {self.max_memory_usage_mb:.2f} Mb)")
-                        self.logger.debug(f"Debug info: {pprint.pformat(self.debug_info)}")
-                        params = copy.deepcopy(self.params)
-                        if self.auto_restart:
-                            self.restart_flag = True
-                        self.run_flag = False
-                        continue
-
-            if self.show_main_gui and self.gui_enabled:
-                objects = []
-                for i in range(len(self.visualizer.source_ids)):
-                    objects.append(self.obj_handler.get('active', self.visualizer.source_ids[i]))
-                complete_read_objects_it = timer()
-                self.visualizer.update(processing_frames, self.source_last_processed_frame_id, objects, dropped_frames, self.debug_info)
-            else:
-                complete_read_objects_it = timer()
+            self._maybe_update_visualization(processing_frames, dropped_frames)
 
             end_it = timer()
             elapsed_seconds = end_it - begin_it
@@ -401,8 +485,6 @@ class Controller:
             else:
                 sleep_seconds = 0.03
 
-            #self.logger.debug(f"Time: cap[{complete_capture_it-begin_it}], det[{complete_detection_it-complete_capture_it}], track[{complete_tracking_it-complete_detection_it}], events[{complete_processing_it-complete_tracking_it}]], "
-            #       f"read=[{complete_read_objects_it-complete_processing_it}], vis[{end_it-complete_read_objects_it}] = {end_it-begin_it} secs, sleep {sleep_seconds} secs")
             time.sleep(sleep_seconds)
 
         if self.system_events_detector:
@@ -410,16 +492,21 @@ class Controller:
             time.sleep(0.2)
 
     def start(self):
-        # Start pipeline components
-        self.pipeline.start()
+        # Start pipeline через PipelineService
+        self._pipeline_service.start_pipeline()
         
-        # Start other components
-        self.obj_handler.start()
+        # Start ObjectsHandler через ObjectsHandlerService
+        if self.obj_handler:
+            self._objects_handler_service.start_objects_handler()
+        
+        # Start visualizer через VisualizationService
         if self.visualizer:
-            self.visualizer.start()
+            self._visualization_service.start_visualizer()
         
-        # Start database components only if database is enabled
-        if self.use_database and self.db_controller:
+        # Start database adapters через DatabaseService
+        if self.use_database and self._database_service.is_connected():
+            self._database_service.start_adapters()
+            self.db_controller = self._database_service.get_db_controller()
             try:
                 import platform
                 import sys
@@ -441,22 +528,6 @@ class Controller:
                 
                 self.logger.info("Database connected successfully at startup")
                 
-                # Запускаем адаптеры БД только если подключение успешно
-                try:
-                    self.db_adapter_obj.start()
-                    self.db_adapter_zone_events.start()
-                    self.db_adapter_fov_events.start()
-                    self.db_adapter_cam_events.start()
-                    if self.db_adapter_attr_events:
-                        self.db_adapter_attr_events.start()
-                    if self.db_adapter_system_events:
-                        self.db_adapter_system_events.start()
-                    self.logger.info("Database adapters started successfully")
-                except Exception as adapter_error:
-                    self.logger.warning(f"Error starting database adapters: {adapter_error}. "
-                                      f"Database connection is active but adapters disabled.")
-                    # Не отключаем БД полностью, только адаптеры
-                    
             except Exception as e:
                 # Детальное логирование ошибки подключения к БД
                 import platform
@@ -469,8 +540,8 @@ class Controller:
                     'python_version': sys.version.split()[0]
                 }
                 
-                if hasattr(self.db_controller, 'params'):
-                    db_params = self.db_controller.params
+                if self.db_controller:
+                    db_params = getattr(self.db_controller, 'params', {}) or {}
                     error_context.update({
                         'host': db_params.get('host_name', 'unknown'),
                         'port': db_params.get('port', 'unknown'),
@@ -507,15 +578,13 @@ class Controller:
                     self.db_controller.conn_pool = None
                 self.db_controller = None
         
-        self.zone_events_detector.start()
-        self.cam_events_detector.start()
-        self.fov_events_detector.start()
-        if self.attr_events_detector:
-            self.attr_events_detector.start()
-        if self.system_events_detector:
-            self.system_events_detector.start()
-        self.events_detectors_controller.start()
-        self.events_processor.start()
+        # Start events detectors и processor через EventsService
+        if self._events_service:
+            self._events_service.start_detectors()
+            if self.events_detectors_controller:
+                self.events_detectors_controller.start()
+            if self.events_processor:
+                self.events_processor.start()
         
         # Start storage monitor
         if self.storage_monitor:
@@ -535,24 +604,27 @@ class Controller:
         self.run_flag = False
         if self.control_thread.is_alive():
             self.control_thread.join()
+        
+        # Stop visualizer через VisualizationService
         if self.visualizer:
-            self.visualizer.stop()
-        self.obj_handler.stop()
+            self._visualization_service.stop_visualizer()
+        
+        # Stop ObjectsHandler через ObjectsHandlerService
+        if self.obj_handler:
+            self._objects_handler_service.stop_objects_handler()
 
-        self.cam_events_detector.stop()
-        self.fov_events_detector.stop()
-        self.zone_events_detector.stop()
-        if self.attr_events_detector:
-            self.attr_events_detector.stop()
-        if self.system_events_detector:
-            self.system_events_detector.stop()
-        # Flush events controller once before stopping and forward to processor
-        self.events_detectors_controller.flush_once()
-        events = self.events_detectors_controller.get()
-        if events:
-            self.events_processor.put(events)
-        self.events_detectors_controller.stop()
-        self.events_processor.stop()
+        # Stop events detectors через EventsService
+        if self._events_service:
+            self._events_service.stop_detectors()
+            # Flush events controller once before stopping
+            if self.events_detectors_controller:
+                self.events_detectors_controller.flush_once()
+                events = self.events_detectors_controller.get()
+                if events and self.events_processor:
+                    self.events_processor.put(events)
+                self.events_detectors_controller.stop()
+            if self.events_processor:
+                self.events_processor.stop()
         
         # Stop event recording
         for source_id, event_recorder in self.event_recorders.items():
@@ -564,17 +636,11 @@ class Controller:
         self.event_recorders.clear()
         self.event_buffers.clear()
 
-        # Stop database components only if database is enabled
-        if self.use_database and self.db_controller:
-            self.db_adapter_cam_events.stop()
-            self.db_adapter_fov_events.stop()
-            self.db_adapter_zone_events.stop()
-            if self.db_adapter_attr_events:
-                self.db_adapter_attr_events.stop()
-            if self.db_adapter_system_events:
-                self.db_adapter_system_events.stop()
-            self.db_adapter_obj.stop()
-            self.db_controller.disconnect()
+        # Stop database adapters через DatabaseService
+        if self.use_database and self._database_service.is_connected():
+            self._database_service.stop_adapters()
+            if self.db_controller:
+                self.db_controller.disconnect()
         
         # Stop storage monitor
         if self.storage_monitor:
@@ -583,8 +649,8 @@ class Controller:
             except Exception as e:
                 self.logger.warning(f"Error stopping storage monitor: {e}", exc_info=True)
         
-        # Stop pipeline components
-        self.pipeline.stop()
+        # Stop pipeline через PipelineService
+        self._pipeline_service.stop_pipeline()
         self.logger.info('All controller components stopped')
 
     def init(self, params):
@@ -710,41 +776,21 @@ class Controller:
                         pass
         except Exception:
             pass
+        # Инициализация pipeline через PipelineService
         pipeline_class_name = pipeline_params.get("pipeline_class")
         self.logger.info(f"Using EVILEYE_PIPELINE_ID for streaming: {self.stream_pipeline_id}")
         
-        if pipeline_class_name:
-            try:
-                self.pipeline = self._create_pipeline_instance(pipeline_class_name)
-                self.logger.info(f"Using pipeline class: {pipeline_class_name}")
-            except Exception as e:
-                self.logger.warning(f"Failed to create pipeline '{pipeline_class_name}': {e}")
-                self.logger.info("Using default PipelineSurveillance")
-                self.pipeline = PipelineSurveillance()
-        else:
-            self.logger.warning("Pipeline class not specified in parameters, using default PipelineSurveillance")
-            self.pipeline = PipelineSurveillance()
-        
-        self.pipeline.set_credentials(self.credentials)
-        self.pipeline.set_params(**pipeline_params)
-        self.pipeline.init()
+        self.pipeline = self._pipeline_service.create_pipeline(pipeline_class_name)
+        self.pipeline = self._pipeline_service.initialize_pipeline(
+            pipeline=self.pipeline,
+            pipeline_params=pipeline_params,
+            credentials=self.credentials,
+        )
         
         # Preload controller's class mapping into centralized ClassManager
-        # This allows detectors to convert class names to IDs immediately if provided
         try:
             if self.class_mapping:
                 self.class_manager.add_class_mapping(self.class_mapping, 'controller_default')
-        except Exception:
-            pass
-
-        # Set ClassManager for all detectors ASAP (before class mapping update)
-        try:
-            if hasattr(self.pipeline, 'processors'):
-                for processor in self.pipeline.processors:
-                    if hasattr(processor, 'get_processors'):
-                        for proc in processor.get_processors():
-                            if hasattr(proc, 'set_class_manager'):
-                                proc.set_class_manager(self.class_manager)
         except Exception:
             pass
 
@@ -752,19 +798,17 @@ class Controller:
         self.update_class_mapping_from_detectors()
 
         # Fill source maps for visualizer and bookkeeping
-        if hasattr(self.pipeline, "get_sources"):
-            sources = self.pipeline.get_sources()
-            if sources:
-                for source in sources:
-                    if hasattr(source, 'source_ids') and hasattr(source, 'source_names') and source.source_ids and source.source_names:
-                        for source_id, source_name in zip(source.source_ids, source.source_names):
-                            self.source_id_name_table[source_id] = source_name
-                            if hasattr(source, 'video_duration'):
-                                self.source_video_duration[source_id] = source.video_duration
-                            self.source_last_processed_frame_id[source_id] = 0
+        sources = self._pipeline_service.get_sources()
+        if sources:
+            for source in sources:
+                if hasattr(source, 'source_ids') and hasattr(source, 'source_names') and source.source_ids and source.source_names:
+                    for source_id, source_name in zip(source.source_ids, source.source_names):
+                        self.source_id_name_table[source_id] = source_name
+                        if hasattr(source, 'video_duration'):
+                            self.source_video_duration[source_id] = source.video_duration
+                        self.source_last_processed_frame_id[source_id] = 0
 
-        # Initialize database configuration only if database is enabled
-        # Используем утилиту для вычисления database_config
+        # Инициализация БД через DatabaseService
         from evileye.utils.database_config_utils import compute_database_config
         self.database_config = compute_database_config(
             use_database=self.use_database,
@@ -772,58 +816,118 @@ class Controller:
             params=self.params
         )
 
-        # Initialize database components only if use_database is True
+        db_initialized = False
         if self.use_database:
-            try:
-                self._init_db_controller(self.database_config['database'], system_params=self.params)
-                
-                # Пытаемся подключиться к БД сразу при инициализации
-                # connect() больше не пробрасывает исключения, только устанавливает conn_pool = None при ошибке
-                self.db_controller.connect()
-                if not self.db_controller.is_connected():
-                    self.logger.warning("Database connection failed during initialization. "
-                                      "Connection pool is None - database is unavailable.")
-                    self.logger.info("Switching to JSON-only mode. Database functionality will be disabled.")
-                    # Fallback to no-database mode
-                    self.use_database = False
-                    if self.db_controller:
-                        self.db_controller.conn_pool = None
-                    self.db_controller = None
-                    self.database_config = {"database": {}, "database_adapters": {}}
-                    self._init_object_handler_without_db(params.get('objects_handler') or dict())
-                    self._init_events_detectors_without_db(self.params.get('events_detectors', dict()))
-                    self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
-                    self._init_events_processor_without_db(self.params.get('events_processor', dict()))
-                    return  # Выходим, не создавая адаптеры БД
-                
-                self.logger.info("Database connected successfully during initialization")
-                
-                # Если подключение успешно, создаем адаптеры БД
-                self._init_db_adapters(self.database_config['database_adapters'])
-                self._init_object_handler(self.db_controller, params.get('objects_handler') or dict())
-                self._init_events_detectors(self.params.get('events_detectors', dict()))
-                self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
-                self._init_events_processor(self.params.get('events_processor', dict()))
-            except Exception as e:
-                self.logger.warning(f"Database enabled but unavailable. Working without database. Reason: {e}")
-                self.logger.info("Switching to JSON-only mode. Database functionality will be disabled.")
+            db_initialized = self._database_service.initialize_database(
+                db_config=self.database_config['database'],
+                system_params=self.params
+            )
+            if db_initialized:
+                self._database_service.initialize_adapters(self.database_config['database_adapters'])
+                self.db_controller = self._database_service.get_db_controller()
+                # Сохраняем ссылки на адаптеры для обратной совместимости
+                self.db_adapter_obj = self._database_service.get_adapter('DatabaseAdapterObjects')
+                self.db_adapter_cam_events = self._database_service.get_adapter('DatabaseAdapterCamEvents')
+                self.db_adapter_fov_events = self._database_service.get_adapter('DatabaseAdapterFieldOfViewEvents')
+                self.db_adapter_zone_events = self._database_service.get_adapter('DatabaseAdapterZoneEvents')
+                self.db_adapter_attr_events = self._database_service.get_adapter('DatabaseAdapterAttributeEvents')
+                self.db_adapter_system_events = self._database_service.get_adapter('DatabaseAdapterSystemEvents')
+            else:
                 # Fallback to no-database mode
                 self.use_database = False
-                if self.db_controller:
-                    self.db_controller.conn_pool = None
                 self.db_controller = None
                 self.database_config = {"database": {}, "database_adapters": {}}
-                self._init_object_handler_without_db(params.get('objects_handler') or dict())
-                self._init_events_detectors_without_db(self.params.get('events_detectors', dict()))
-                self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
-                self._init_events_processor_without_db(self.params.get('events_processor', dict()))
+        
+        # Инициализация ObjectsHandler через ObjectsHandlerService
+        if db_initialized:
+            db_adapter_obj = self._database_service.get_adapter('DatabaseAdapterObjects')
+            self.obj_handler = self._objects_handler_service.create_objects_handler(
+                db_controller=self.db_controller,
+                db_adapter=db_adapter_obj,
+            )
+            self.obj_handler = self._objects_handler_service.initialize_objects_handler(
+                objects_handler=self.obj_handler,
+                params=params.get('objects_handler') or dict(),
+                pipeline=self.pipeline,
+            )
+            # Инициализация событий через EventsService
+            self._events_service.initialize_detectors(
+                params=self.params.get('events_detectors', dict()),
+                pipeline=self.pipeline,
+                objects_handler=self.obj_handler,
+                use_database=True,
+            )
+            # Сохраняем ссылки для обратной совместимости
+            self.cam_events_detector = self._events_service.get_detector('CamEventsDetector')
+            self.fov_events_detector = self._events_service.get_detector('FieldOfViewEventsDetector')
+            self.zone_events_detector = self._events_service.get_detector('ZoneEventsDetector')
+            self.attr_events_detector = self._events_service.get_detector('AttributeEventsDetector')
+            self.system_events_detector = self._events_service.get_detector('SystemEventsDetector')
+            
+            # Инициализация атрибутных процессоров
+            self._events_service.initialize_attribute_processors(
+                pipeline=self.pipeline,
+                objects_handler=self.obj_handler,
+                params=self.params,
+            )
+            
+            self._events_service.initialize_controller(self.params.get('events_detectors', dict()))
+            self.events_detectors_controller = self._events_service.get_detectors_controller()
+            
+            # Инициализация процессора событий
+            adapters = self._get_event_adapters()
+            self._events_service.initialize_processor(
+                params=self.params.get('events_processor', dict()),
+                adapters=adapters,
+                db_controller=self.db_controller,
+                ui_callback=self._on_event_signalization,
+            )
+            self.events_processor = self._events_service.get_events_processor()
         else:
             self.logger.info("Database functionality disabled. Working without database connection.")
-            # Initialize minimal components for operation without database
-            self._init_object_handler_without_db(params.get('objects_handler') or dict())
-            self._init_events_detectors_without_db(self.params.get('events_detectors', dict()))
-            self._init_events_detectors_controller(self.params.get('events_detectors', dict()))
-            self._init_events_processor_without_db(self.params.get('events_processor', dict()))
+            # Инициализация ObjectsHandler без БД через ObjectsHandlerService
+            self.obj_handler = self._objects_handler_service.create_objects_handler(
+                db_controller=None,
+                db_adapter=None,
+            )
+            self.obj_handler = self._objects_handler_service.initialize_objects_handler(
+                objects_handler=self.obj_handler,
+                params=params.get('objects_handler') or dict(),
+                pipeline=self.pipeline,
+            )
+            # Инициализация событий без БД через EventsService
+            self._events_service.initialize_detectors(
+                params=self.params.get('events_detectors', dict()),
+                pipeline=self.pipeline,
+                objects_handler=self.obj_handler,
+                use_database=False,
+            )
+            # Сохраняем ссылки для обратной совместимости
+            self.cam_events_detector = self._events_service.get_detector('CamEventsDetector')
+            self.fov_events_detector = self._events_service.get_detector('FieldOfViewEventsDetector')
+            self.zone_events_detector = self._events_service.get_detector('ZoneEventsDetector')
+            self.attr_events_detector = self._events_service.get_detector('AttributeEventsDetector')
+            self.system_events_detector = self._events_service.get_detector('SystemEventsDetector')
+            
+            # Инициализация атрибутных процессоров
+            self._events_service.initialize_attribute_processors(
+                pipeline=self.pipeline,
+                objects_handler=self.obj_handler,
+                params=self.params,
+            )
+            
+            self._events_service.initialize_controller(self.params.get('events_detectors', dict()))
+            self.events_detectors_controller = self._events_service.get_detectors_controller()
+            
+            # Инициализация процессора событий без БД
+            adapters = self._get_event_adapters()
+            self._events_service.initialize_processor(
+                params=self.params.get('events_processor', dict()),
+                adapters=adapters,
+                db_controller=None,
+                ui_callback=self._on_event_signalization,
+            )
+            self.events_processor = self._events_service.get_events_processor()
         
         # Initialize event-based recording components
         self._init_event_recording(params)
@@ -1188,7 +1292,7 @@ class Controller:
             except Exception:
                 pass
 
-        if ok and self.use_database and hasattr(self, 'db_controller') and self.db_controller:
+        if ok and self.use_database and self.db_controller:
             try:
                 self.db_controller.save_job_configuration_info(final_params)
             except Exception as e:
@@ -1203,15 +1307,16 @@ class Controller:
         self.visualizer.set_current_main_widget_size(width, height)
 
     def _init_object_handler(self, db_controller, params):
+        """DEPRECATED: Используйте ObjectsHandlerService вместо этого метода."""
         self.obj_handler = objects_handler.ObjectsHandler(db_controller=db_controller, db_adapter=self.db_adapter_obj)
         safe_params = params or {}
         self.obj_handler.set_params(**safe_params)
         # Set class manager for ObjectsHandler
-        if hasattr(self.obj_handler, 'class_manager'):
-            self.obj_handler.class_manager = self.class_manager
+        self.obj_handler.class_manager = self.class_manager
         self.obj_handler.init()
 
     def _init_object_handler_without_db(self, params):
+        """DEPRECATED: Используйте ObjectsHandlerService вместо этого метода."""
         """Initialize object handler without database connection."""
         self.obj_handler = objects_handler.ObjectsHandler(db_controller=None, db_adapter=None)
         
@@ -1229,22 +1334,27 @@ class Controller:
                         }
                         cameras_params.append(camera_param)
                 
-                # Set cameras params in obj_handler
-                self.obj_handler.cameras_params = cameras_params
+                # Set cameras params in obj_handler using инкапсулированный API
+                try:
+                    self.obj_handler.set_cameras_params(cameras_params)
+                except Exception:
+                    # Fallback для старого API
+                    self.obj_handler.cameras_params = cameras_params
         
         safe_params = params or {}
         self.obj_handler.set_params(**safe_params)
         # Set class manager for ObjectsHandler
-        if hasattr(self.obj_handler, 'class_manager'):
-            self.obj_handler.class_manager = self.class_manager
+        self.obj_handler.class_manager = self.class_manager
         self.obj_handler.init()
 
     def _init_db_controller(self, params, system_params):
+        """DEPRECATED: Используйте DatabaseService вместо этого метода."""
         self.db_controller = DatabaseControllerPg(system_params)
         self.db_controller.set_params(**params)
         self.db_controller.init()
 
     def _init_db_adapters(self, params):
+        """DEPRECATED: Используйте DatabaseService вместо этого метода."""
         self.db_adapter_obj = DatabaseAdapterObjects(self.db_controller)
         self.db_adapter_obj.set_params(**params['DatabaseAdapterObjects'])
         self.db_adapter_obj.init()
@@ -1270,6 +1380,7 @@ class Controller:
         self.db_adapter_system_events.init()
 
     def _init_events_detectors(self, params):
+        """DEPRECATED: Используйте EventsService вместо этого метода."""
         self.cam_events_detector = CamEventsDetector(self.pipeline.get_sources())
         self.cam_events_detector.set_params(**params.get('CamEventsDetector', dict()))
         self.cam_events_detector.init()
@@ -1300,7 +1411,7 @@ class Controller:
         self._init_attributes_processors(params)
 
     def _init_attributes_processors(self, params):
-        """Инициализация атрибутных процессоров и связывание с ObjectsHandler."""
+        """DEPRECATED: Используйте EventsService.initialize_attribute_processors вместо этого метода."""
         # Проверяем, есть ли атрибутные процессоры в пайплайне
         if hasattr(self.pipeline, 'processors'):
             for processor in self.pipeline.processors:
@@ -1318,7 +1429,7 @@ class Controller:
                             self.logger.info(f"Attribute detection configured for {proc_name}")
 
     def _init_events_detectors_without_db(self, params):
-        """Initialize events detectors without database connection."""
+        """DEPRECATED: Используйте EventsService вместо этого метода."""
         self.cam_events_detector = CamEventsDetector(self.pipeline.get_sources())
         self.cam_events_detector.set_params(**params.get('CamEventsDetector', dict()))
         self.cam_events_detector.init()
@@ -1612,12 +1723,15 @@ class Controller:
                 pass
 
     def _init_visualizer(self, params):
-        self.visualizer = Visualizer(self.pyqt_slots, self.pyqt_signals)
-        self.visualizer.set_params(**params)
-        self.visualizer.source_id_name_table = self.source_id_name_table
-        self.visualizer.source_video_duration = self.source_video_duration
-        self.visualizer.class_mapping = self.class_mapping  # Pass class mapping to visualizer
-        self.visualizer.init()
+        # Инициализация визуализатора через VisualizationService
+        self.visualizer = self._visualization_service.initialize_visualizer(
+            params=params,
+            pyqt_slots=self.pyqt_slots,
+            pyqt_signals=self.pyqt_signals,
+            source_id_name_table=self.source_id_name_table,
+            source_video_duration=self.source_video_duration,
+            class_mapping=self.class_mapping,
+        )
         # If persistent zones display requested, push existing zones to threads immediately
         try:
             vis_wants_zones = bool(self.visualizer.get_params().get('display_zones', False))
@@ -1779,7 +1893,7 @@ class Controller:
     
     def update_class_mapping_from_detectors(self):
         """Update class_mapping from all detectors in the pipeline using ClassManager"""
-        if not hasattr(self, 'pipeline') or not self.pipeline:
+        if not self.pipeline:
             return
             
         # Get all detectors from pipeline
@@ -1813,7 +1927,7 @@ class Controller:
             self.logger.info(f"Updated controller class_mapping with {len(self.class_mapping)} classes from {len(detectors)} detectors")
             
             # Update visualizer if available
-            if hasattr(self, 'visualizer') and self.visualizer:
+            if self.visualizer:
                 self.visualizer.class_mapping = self.class_mapping
                 self.logger.info("Updated visualizer class_mapping")
             
@@ -1850,7 +1964,7 @@ class Controller:
                 attempt += 1
                 
                 # Check if we have detectors
-                if not hasattr(self, 'pipeline') or not self.pipeline:
+                if not self.pipeline:
                     continue
                     
                 # Get all detectors from pipeline

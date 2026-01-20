@@ -1,13 +1,22 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from .video_thread import VideoThread
 from ..core.base_class import EvilEyeBase
+from ..core.interfaces import IVisualizer
 import copy
 from ..capture.video_capture_base import CaptureImage
-from ..objects_handler.objects_handler import ObjectResultList
 from timeit import default_timer as timer
 from pympler import asizeof
+
+if TYPE_CHECKING:
+    # Импорт только для type checking, чтобы избежать циклических зависимостей
+    from ..objects_handler.object_result import ObjectResultList
+else:
+    # Для runtime используем строковую аннотацию или Any
+    from typing import Any
+    ObjectResultList = Any  # Fallback для runtime
 
 
 class Visualizer(EvilEyeBase):
@@ -17,19 +26,20 @@ class Visualizer(EvilEyeBase):
         self.pyqt_signals = pyqt_signals
         self.visual_threads: list[VideoThread] = []
         self.source_ids = []
-        self.source_id_name_table = dict()
-        self.source_video_duration = dict()
+        # Внутренние структуры, доступ к которым теперь осуществляется через методы
+        self._source_id_name_table: dict[int, str] = {}
+        self._source_video_duration: dict[int, float] = {}
         self.fps = []
         self.font_params = []
         self.num_height = 1
         self.num_width = 1
         self.show_debug_info = False
         self.processing_frames: dict[int, list[CaptureImage]] = {}
-        self.objects: list[ObjectResultList] = []
+        self.objects: list["ObjectResultList"] = []  # Используем строковую аннотацию для избежания циклических зависимостей
         self.last_displayed_frame = dict()
         self.visual_buffer_num_frames = 50
         self.text_config = {}  # Text configuration for rendering
-        self.class_mapping = {}  # Class mapping for displaying class names
+        self._class_mapping: dict[str, int] = {}  # Class mapping for displaying class names
         self.memory_consumption_detail = dict()
         # Centralized active events per source: { source_id: set((source_id, object_id, event_name)) }
         self.active_events: dict[int, set[tuple[int, int, str]]] = {}
@@ -162,6 +172,55 @@ class Visualizer(EvilEyeBase):
         for j in range(len(self.visual_threads)):
             self.visual_threads[j].set_main_widget_size(width, height)
 
+    # === Методы для инкапсуляции метаданных источников и отображения ===
+
+    @property
+    def source_id_name_table(self) -> dict[int, str]:
+        """Таблица соответствия ID источников и их имен (только для чтения)."""
+        return self._source_id_name_table
+
+    @source_id_name_table.setter
+    def source_id_name_table(self, value: dict[int, str]) -> None:
+        """Сеттер для обратной совместимости."""
+        self._source_id_name_table = dict(value or {})
+
+    def set_source_metadata(
+        self,
+        id_name_table: dict[int, str] | None = None,
+        video_duration: dict[int, float] | None = None,
+        class_mapping: dict[str, int] | None = None,
+    ) -> None:
+        """Обновить метаданные источников и маппинг классов.
+
+        Используется контроллером и другими компонентами вместо прямой записи в атрибуты.
+        """
+        if id_name_table is not None:
+            self._source_id_name_table = dict(id_name_table)
+        if video_duration is not None:
+            self._source_video_duration = dict(video_duration)
+        if class_mapping is not None:
+            self._class_mapping = dict(class_mapping)
+
+    @property
+    def source_video_duration(self) -> dict[int, float]:
+        """Длительность видео по источникам (только для чтения)."""
+        return self._source_video_duration
+
+    @source_video_duration.setter
+    def source_video_duration(self, value: dict[int, float]) -> None:
+        """Сеттер для обратной совместимости."""
+        self._source_video_duration = dict(value or {})
+
+    @property
+    def class_mapping(self) -> dict[str, int]:
+        """Маппинг классов для отображения (только для чтения)."""
+        return self._class_mapping
+
+    @class_mapping.setter
+    def class_mapping(self, value: dict[str, int]) -> None:
+        """Сеттер для обратной совместимости кода, использующего прямую установку."""
+        self._class_mapping = dict(value or {})
+
     # ==== Online event signalization API for Controller/MainWindow ====
     def set_signal_params(self, enabled: bool, color_rgb: tuple[int, int, int]):
         self.signal_enabled = enabled
@@ -197,7 +256,7 @@ class Visualizer(EvilEyeBase):
         debug_info['memory_consumption_detail'] = self.memory_consumption_detail
 
     def update(self, processing_frames: list[CaptureImage], source_last_processed_frame_id: dict,
-               objects: list[ObjectResultList], dropped_frames: list,  debug_info: dict):
+               objects: list["ObjectResultList"], dropped_frames: list,  debug_info: dict):
         start_update = timer()
         remove_processed_idx = dict()
         for frame in processing_frames:

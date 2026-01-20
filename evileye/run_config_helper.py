@@ -19,6 +19,7 @@ from evileye.visualization_modules.startup_progress_window import StartupProgres
 from evileye.visualization_modules.controller_init_thread import ControllerInitThread
 from evileye.utils.utils import normalize_config_path
 from evileye.core.logger import get_module_logger
+from evileye.core.config_validator import ConfigValidator
 from evileye.gui import GUIManager, GUIMode, determine_gui_mode
 
 
@@ -48,6 +49,15 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
 
     with open(config_file_name) as config_file:
         config_data = json.load(config_file)
+
+    # Валидация конфигурации
+    validator = ConfigValidator()
+    is_valid, error_msg = validator.validate_full_config(config_data)
+    if not is_valid:
+        logger.warning(f"Configuration validation warning: {error_msg}")
+        logger.info("Continuing with potentially invalid configuration...")
+    else:
+        logger.info("Configuration validated successfully")
 
     logger.info("Configuration loaded successfully")
 

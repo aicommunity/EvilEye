@@ -58,7 +58,13 @@ def non_max_sup(boxes_coords, confidences, class_ids):
             idx = sorted_idxs[i]
             iou, max_box = boxes_iou(boxes_coords[sorted_idxs[last]], boxes_coords[idx])
             if iou > iou_thresh:  # Если iou превышает порог, то добавляем данную рамку на удаление
-                boxes_coords[idx] = copy.deepcopy(max_box)
+                # Use list() or .copy() depending on type - more efficient than deepcopy
+                if hasattr(max_box, 'copy'):
+                    boxes_coords[idx] = max_box.copy()
+                elif isinstance(max_box, list):
+                    boxes_coords[idx] = list(max_box)
+                else:
+                    boxes_coords[idx] = max_box
                 suppress_idxs.append(i)
         sorted_idxs = np.delete(sorted_idxs, suppress_idxs)
     boxes_coords = boxes_coords[keep_idxs].tolist()

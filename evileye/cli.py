@@ -24,6 +24,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from evileye.utils.utils import normalize_config_path
 from evileye.core.logging_config import setup_evileye_logging, log_system_info
 from evileye.core.logger import get_module_logger
+from evileye.core.config_validator import ConfigValidator
 
 
 def _get_scheduled_restart_defaults() -> dict:
@@ -613,8 +614,17 @@ def validate(
         with open(normalized_config, 'r') as f:
             pipeline_config = json.load(f)
         
+        # Базовая валидация структуры
         validate_config(pipeline_config)
-        console.print(f"[green]Configuration {normalized_config} is valid![/green]")
+        
+        # Расширенная валидация через ConfigValidator
+        validator = ConfigValidator()
+        is_valid, error_msg = validator.validate_full_config(pipeline_config)
+        if not is_valid:
+            console.print(f"[yellow]Configuration validation warning: {error_msg}[/yellow]")
+            console.print("[yellow]Continuing with potentially invalid configuration...[/yellow]")
+        else:
+            console.print(f"[green]Configuration {normalized_config} is valid![/green]")
         
     except Exception as e:
         console.print(f"[red]Configuration validation failed: {e}[/red]")

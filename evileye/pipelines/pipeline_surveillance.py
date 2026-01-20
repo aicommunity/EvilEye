@@ -20,6 +20,8 @@ class PipelineSurveillance(PipelineProcessors):
     
     def __init__(self):
         super().__init__()
+        # Инициализация для избежания hasattr проверок
+        self.detectors = []
 
     def init_impl(self, **kwargs):
         """Initialize surveillance pipeline with specific processor sequence"""
@@ -239,11 +241,11 @@ class PipelineSurveillance(PipelineProcessors):
     def get_detectors(self):
         """Возвращает список инстансов детекторов, если они инициализированы."""
         try:
-            if hasattr(self, 'detectors') and isinstance(self.detectors, list):
+            if isinstance(self.detectors, list) and self.detectors:
                 return self.detectors
             # Попробуем получить из внутренних процессоров
-            if hasattr(self, '_processors'):
-                for proc in self._processors:
+            if self.processors:
+                for proc in self.processors:
                     try:
                         if getattr(proc, 'processor_name', '') == 'detectors' and hasattr(proc, 'processors'):
                             return proc.processors

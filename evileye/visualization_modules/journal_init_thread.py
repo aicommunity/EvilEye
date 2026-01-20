@@ -112,7 +112,7 @@ class JournalInitThread(QThread):
             self.logger.error(error_msg, exc_info=True)
             
             # Убеждаемся, что контроллер БД в безопасном состоянии
-            if hasattr(self, 'db_controller') and self.db_controller:
+            if self.db_controller:
                 self.db_controller.conn_pool = None
             
             self.initialization_failed.emit(error_msg)

@@ -329,7 +329,7 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         import platform
         import sys
         
-        if not hasattr(self, 'detection_threads') or not self.detection_threads:
+        if not self.detection_threads:
             self.logger.debug("No detection threads available for pre-loading")
             return
         
@@ -417,7 +417,7 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
             if not self.is_inited:
                 time.sleep(0.1)
                 continue
-            if not hasattr(self, 'detection_threads') or not self.detection_threads:
+            if not self.detection_threads:
                 time.sleep(0.1)
                 continue
             # Check if all detection threads have loaded models

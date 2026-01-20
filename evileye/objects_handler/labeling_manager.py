@@ -80,6 +80,9 @@ class LabelingManager:
                 self.logger.warning(f"Warning: Failed to pre-load existing data: {e}")
                 self.logger.info("Continuing with fresh start")
         
+        # Инъекция class_mapping от Controller (явная инициализация вместо hasattr)
+        self.class_mapping: dict = {}
+        
         # Start background save thread
         self.save_thread = Thread(target=self._save_worker, daemon=True)
         self.save_thread.start()
@@ -519,7 +522,7 @@ class LabelingManager:
             Class name string
         """
         # Use class_mapping if available
-        if hasattr(self, 'class_mapping') and self.class_mapping:
+        if self.class_mapping:
             for name, cid in self.class_mapping.items():
                 if cid == class_id:
                     return name

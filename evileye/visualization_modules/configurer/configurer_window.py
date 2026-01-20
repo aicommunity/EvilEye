@@ -89,6 +89,7 @@ class ConfigurerMainWindow(QDialog):
         self.config_history_manager = None
 
         self.is_db_connected = False
+        self.db_controller = None  # Инициализация для избежания hasattr проверок
 
         file_path = self.config_file_name  # 'configurer/initial_config.json'
         full_path = os.path.join(utils.get_project_root(), file_path)
@@ -352,7 +353,7 @@ class ConfigurerMainWindow(QDialog):
                 self.jobs_history.setVisible(False)
                 
                 # Интегрируем с ConfigHistoryManager, если доступен
-                if hasattr(self, 'db_controller') and self.db_controller:
+                if self.db_controller:
                     try:
                         from ...database.config_history_manager import ConfigHistoryManager
                         config_history_manager = ConfigHistoryManager(self.db_controller)
@@ -374,7 +375,7 @@ class ConfigurerMainWindow(QDialog):
         """Загрузить конфигурацию из истории"""
         try:
             # Проверяем доступность базы данных
-            if not hasattr(self, 'db_controller') or not self.db_controller:
+            if not self.db_controller:
                 QMessageBox.warning(
                     self,
                     "База данных недоступна",

@@ -139,7 +139,7 @@ class DatabaseAdapterAttributeEvents(DatabaseAdapterBase):
             preview_width = self.db_params.get('preview_width', 300)
             preview_height = self.db_params.get('preview_height', 150)
             # Save original (no debug overlays) for both preview and frame
-            preview = cv2.resize(copy.deepcopy(image.image), (preview_width, preview_height), cv2.INTER_NEAREST)
+            preview = cv2.resize(image.image.copy(), (preview_width, preview_height), cv2.INTER_NEAREST)
             os.makedirs(os.path.dirname(preview_save_dir), exist_ok=True)
             os.makedirs(os.path.dirname(frame_save_dir), exist_ok=True)
             cv2.imwrite(preview_save_dir, preview)

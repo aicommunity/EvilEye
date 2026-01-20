@@ -41,6 +41,11 @@ class RoiFeeder(EvilEyeBase):
         # Внутренняя книга учёта частоты
         self._frame_counters = {}  # Dict[int, int]
 
+        # Инъекции от Controller/ClassManager (явная инициализация вместо hasattr)
+        self.class_mapping: dict = {}
+        self.primary_by_id: list = []
+        self.primary_by_name: list = []
+
     def set_params_impl(self):
         self.source_ids = self.params.get('source_ids', [])
         self.padding = float(self.params.get('padding', 0.0))
@@ -178,7 +183,7 @@ class RoiFeeder(EvilEyeBase):
             return True
         
         # Check by class name using class_mapping if available
-        if hasattr(self, 'class_mapping') and self.class_mapping:
+        if self.class_mapping:
             for name, cid in self.class_mapping.items():
                 if cid == track.class_id and name in self.primary_by_name:
                     return True

@@ -1,4 +1,5 @@
 from ..core.base_class import EvilEyeBase
+from ..core.interfaces import IDatabaseAdapter
 from .database_controller_pg import DatabaseControllerPg
 from threading import Thread
 from queue import Queue
@@ -16,9 +17,15 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
         self.queue_in = Queue()
         self.table_name = None
         self.event_name = None
+        # Батчинг: размер батча и таймаут для сбора запросов (секунды)
+        self.batch_size = 10  # По умолчанию батчинг отключен (batch_size=1 означает обработку по одному)
+        self.batch_timeout = 0.1  # Максимальное время ожидания для формирования батча
 
     def set_params_impl(self):
         self.table_name = self.params['table_name']
+        # Параметры батчинга (опционально)
+        self.batch_size = self.params.get('batch_size', 10)
+        self.batch_timeout = self.params.get('batch_timeout', 0.1)
 
     def get_params_impl(self):
         params = dict()

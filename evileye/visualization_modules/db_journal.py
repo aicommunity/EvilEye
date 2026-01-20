@@ -370,7 +370,7 @@ class DatabaseJournalWindow(QWidget):
         self.logger.info('Database journal closed')
         
         # Only save and disconnect if database is available
-        if hasattr(self, 'database_available') and self.database_available and self.db_controller and self.params:
+        if self.database_available and self.db_controller and self.params:
             self.db_controller.save_job_configuration_info(self.params)
             self.db_controller.disconnect()
 

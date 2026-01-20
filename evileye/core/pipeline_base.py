@@ -1,4 +1,5 @@
 from .base_class import EvilEyeBase
+from .interfaces import IPipeline
 from abc import abstractmethod
 from typing import List, Dict, Any, Optional
 from queue import Queue

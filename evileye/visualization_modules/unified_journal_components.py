@@ -88,8 +88,7 @@ class UnifiedImageDelegate(QStyledItemDelegate):
         full_path = self._resolve_image_path(img_path, date_folder)
         if not full_path or not os.path.exists(full_path):
             # Log for debugging
-            if hasattr(self, 'logger'):
-                self.logger.debug(f"Image not found: img_path={img_path}, date_folder={date_folder}, base_dir={self.base_dir}, resolved={full_path}")
+            self.logger.debug(f"Image not found: img_path={img_path}, date_folder={date_folder}, base_dir={self.base_dir}, resolved={full_path}")
             return
             
         # Load image

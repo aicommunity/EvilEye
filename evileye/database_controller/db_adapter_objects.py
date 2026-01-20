@@ -113,7 +113,7 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
         preview_save_dir = os.path.join(self.image_dir, preview_path)
         frame_save_dir = os.path.join(self.image_dir, frame_path)
         # Save clean preview without overlays
-        preview = cv2.resize(copy.deepcopy(image.image), self.preview_size, cv2.INTER_NEAREST)
+        preview = cv2.resize(image.image.copy(), self.preview_size, cv2.INTER_NEAREST)
         preview_saved = cv2.imwrite(preview_save_dir, preview)
         # Save original frame without overlays
         frame_saved = cv2.imwrite(frame_save_dir, image.image)

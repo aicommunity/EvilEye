@@ -162,6 +162,7 @@ class MainWindow(QMainWindow):
         self.db_journal_win = None
         self._journal_init_thread = None
         self._journal_open_requested = False
+        self._deferred_journal_creation = None  # Инициализация для избежания hasattr проверок
         
         self.logger.info("About to create zone window...")
         self.zone_window = ZoneWindow()
@@ -183,6 +184,9 @@ class MainWindow(QMainWindow):
             self.logger.error(f"Failed to create ROIEditorWindow: {e}")
             self.roi_editor_window = None
         self.logger.info("ROI editor window creation completed")
+        
+        # Инициализация для избежания hasattr проверок
+        self._roi_editor_detector = None
 
         # Инициализация базового UI без данных
         self.logger.info("About to setup layout...")
@@ -597,7 +601,7 @@ class MainWindow(QMainWindow):
             available = False
             if self.db_journal_win is not None:
                 available = True
-            elif hasattr(self, '_deferred_journal_creation') and self._deferred_journal_creation:
+            elif self._deferred_journal_creation:
                 # Journal window отложен, но может быть создан - считаем доступным
                 # Проверяем, что journal creation был отложен и еще не создан
                 try:
@@ -660,9 +664,9 @@ class MainWindow(QMainWindow):
         """Ensure journal window is created. Create it if deferred."""
         if self.db_journal_win is None:
             # Check if journal creation was deferred
-            if hasattr(self, '_deferred_journal_creation') and self._deferred_journal_creation and not self._deferred_journal_creation['created']:
+            if self._deferred_journal_creation and not self._deferred_journal_creation['created']:
                 # Check if initialization is already in progress
-                if hasattr(self, '_journal_init_thread') and self._journal_init_thread and self._journal_init_thread.isRunning():
+                if self._journal_init_thread and self._journal_init_thread.isRunning():
                     self.logger.info("Journal initialization already in progress, waiting...")
                     return False
                 
@@ -765,7 +769,7 @@ class MainWindow(QMainWindow):
                 self.logger.warning("Falling back to JSON journal mode due to database journal initialization error")
                 self._create_json_journal_window()
                 # Clean up thread and return early
-                if hasattr(self, '_journal_init_thread'):
+                if self._journal_init_thread:
                     self._journal_init_thread.deleteLater()
                     self._journal_init_thread = None
                 if progress_dialog:
@@ -788,7 +792,7 @@ class MainWindow(QMainWindow):
                 self._journal_init_thread = None
             
             # If user requested to open journal during initialization, show it now
-            if hasattr(self, '_journal_open_requested') and self._journal_open_requested:
+            if self._journal_open_requested:
                 self.logger.info("Showing journal window (was requested during initialization)...")
                 self.open_journal()
                 self._journal_open_requested = False
@@ -1145,7 +1149,7 @@ class MainWindow(QMainWindow):
         """Автоматически выбрать источник для Zone Editor"""
         try:
             # Проверяем, есть ли активные источники
-            if not hasattr(self, 'labels') or not self.labels:
+            if not self.labels:
                 return
             
             # Выбираем первый доступный источник
@@ -1162,7 +1166,7 @@ class MainWindow(QMainWindow):
         """Автоматически выбрать источник для ROI Editor"""
         try:
             # Проверяем, есть ли активные источники
-            if not hasattr(self, 'labels') or not self.labels:
+            if not self.labels:
                 return
             
             # Выбираем первый доступный источник
@@ -1179,7 +1183,7 @@ class MainWindow(QMainWindow):
         """Автоматически выбрать указанный источник для ROI Editor"""
         try:
             # Проверяем, есть ли активные источники
-            if not hasattr(self, 'labels') or not self.labels:
+            if not self.labels:
                 return
             
             # Находим label_id для указанного source_id
@@ -1207,7 +1211,7 @@ class MainWindow(QMainWindow):
         """Автоматически выбрать указанный источник для Zone Editor"""
         try:
             # Проверяем, есть ли активные источники
-            if not hasattr(self, 'labels') or not self.labels:
+            if not self.labels:
                 return
             
             # Находим label_id для указанного source_id
@@ -1234,7 +1238,7 @@ class MainWindow(QMainWindow):
     def get_current_source_info(self):
         """Получить информацию о текущем выбранном источнике"""
         try:
-            if not hasattr(self, 'labels') or not self.labels:
+            if not self.labels:
                 return None
             
             # Возвращаем информацию о первом источнике как текущем
@@ -1477,7 +1481,7 @@ class MainWindow(QMainWindow):
                 return
             
             # Проверяем, есть ли доступ к базе данных
-            if not hasattr(self, 'db_journal_win') or self.db_journal_win is None:
+            if self.db_journal_win is None:
                 QMessageBox.warning(
                     self,
                     "База данных недоступна",
@@ -1566,7 +1570,7 @@ class MainWindow(QMainWindow):
                     self.logger.error(f"ROIEditorWindow lazy init failed: {e}")
                     return
 
-            if not hasattr(self, 'labels') or not self.labels:
+            if not self.labels:
                 self.logger.warning("No active sources available for ROI Editor")
                 return
 
@@ -1765,7 +1769,7 @@ class MainWindow(QMainWindow):
                         det = self.controller.pipeline.detectors[detector_index]
 
             # 2) Если не нашли — используем сохранённую ссылку
-            if det is None and hasattr(self, '_roi_editor_detector') and self._roi_editor_detector is not None:
+            if det is None and self._roi_editor_detector is not None:
                 det = self._roi_editor_detector
                 self.logger.info("Using stored detector reference for ROI apply")
 
@@ -1793,7 +1797,7 @@ class MainWindow(QMainWindow):
                         pass
                 # Централизованное сохранение конфигурации после применения ROI
                 try:
-                    if hasattr(self, 'controller') and hasattr(self.controller, 'save_config'):
+                    if self.controller and hasattr(self.controller, 'save_config'):
                         if not getattr(self.controller, 'params_path', None):
                             self.controller.params_path = self.params_path
                         self.controller.save_config()
@@ -1808,7 +1812,7 @@ class MainWindow(QMainWindow):
         """Единый метод для открытия Zone Editor с указанным источником"""
         try:
             # Проверяем, есть ли активные источники
-            if not hasattr(self, 'labels') or not self.labels:
+            if not self.labels:
                 self.logger.warning("No active sources available for Zone Editor")
                 return
             

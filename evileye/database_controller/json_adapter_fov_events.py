@@ -99,7 +99,7 @@ class JsonAdapterFovEvents(DatabaseAdapterBase):
         if image is None or not hasattr(image, 'image'):
             return '', ''
 
-        preview = cv2.resize(copy.deepcopy(image.image), (320, 240), cv2.INTER_NEAREST)
+        preview = cv2.resize(image.image.copy(), (320, 240), cv2.INTER_NEAREST)
         preview_name = f'{ts_str}_src{event.source_id}_preview.jpeg'
         frame_name = f'{ts_str}_src{event.source_id}_frame.jpeg'
         cv2.imwrite(os.path.join(previews_dir, preview_name), preview)

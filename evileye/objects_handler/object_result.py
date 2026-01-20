@@ -28,8 +28,16 @@ class ObjectResult(ObjectResultHistory):
     def __str__(self):
         return f'ID: {self.object_id}, Source: {self.source_id}, Updated: {self.last_update}, Lost: {self.lost_frames}'
 
-    def get_current_history_element(self):
-        result = ObjectResultHistory()
+    def get_current_history_element(self, history_pool=None):
+        """Получить текущий элемент истории объекта.
+        
+        Args:
+            history_pool: Опциональный пул объектов для переиспользования ObjectResultHistory
+        """
+        if history_pool:
+            result = history_pool.acquire()
+        else:
+            result = ObjectResultHistory()
         result.object_id = self.object_id
         result.global_id = self.global_id
         result.source_id = self.source_id

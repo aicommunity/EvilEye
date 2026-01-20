@@ -60,6 +60,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         self._rtsp_protocol = 'udp+tcp'  # Default: try UDP first, then TCP if UDP fails (GStreamer handles fallback)
         self._last_init_error = None
         self._init_time = None  # Track when pipeline was initialized to ignore early EOS
+        self._appsink_handler_id = None  # Инициализация для избежания hasattr проверок
         # Performance metrics
         now = time.time()
         self._perf_stats_interval = 5.0
@@ -853,7 +854,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     for sub in self.subscribers:
                         sub.update()
                     # Trigger reconnect loop if not already running
-                    if self.run_flag and not (hasattr(self, '_reconnecting') and self._reconnecting):
+                    if self.run_flag and not self._reconnecting:
                         threading.Thread(target=self._reconnect_loop, daemon=True).start()
                 else:
                     self.finished = True
@@ -955,7 +956,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 self.logger.info("GStreamer video capture initialized successfully")
                 
                 # Start recording check thread after pipeline is PLAYING
-                if hasattr(self, '_recording_check_thread') and self._recording_check_thread and not self._recording_check_thread.is_alive():
+                if self._recording_check_thread and not self._recording_check_thread.is_alive():
                     self._recording_check_thread.start()
                 
                 return True
@@ -1091,7 +1092,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                         except Exception:
                             pass
                         try:
-                            if hasattr(self, '_appsink_handler_id') and self._appsink_handler_id is not None:
+                            if self._appsink_handler_id is not None:
                                 self.appsink.disconnect(self._appsink_handler_id)
                         except Exception:
                             pass
@@ -1242,7 +1243,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         while self.run_flag:
             if not self.is_inited or self.pipeline is None:
                 # Check if reconnection is already in progress (for both IP cameras and video files)
-                if hasattr(self, '_reconnecting') and self._reconnecting:
+                if self._reconnecting:
                     self.logger.debug(f"Reconnection already in progress for {self.source_names}, waiting...")
                     time.sleep(1.0)
                     continue
@@ -1312,7 +1313,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             if not self.is_working:
                 # For IP cameras, use reconnect loop
                 if self.source_type == CaptureDeviceType.IpCamera:
-                    if self.run_flag and not (hasattr(self, '_reconnecting') and self._reconnecting):
+                    if self.run_flag and not self._reconnecting:
                         self.logger.info(f"Pipeline not working, starting reconnect loop for {self.source_names}")
                         threading.Thread(target=self._reconnect_loop, daemon=True).start()
                 # For video files with loop_play, check if reconnection is needed
@@ -1329,7 +1330,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             
             # Sleep according to monitor interval
             try:
-                cfg = (self.params or {}).get('reconnect', {}) if hasattr(self, 'params') else {}
+                cfg = (self.params or {}).get('reconnect', {})
                 monitor_sleep = float(cfg.get('monitor_interval_sec', 2.0))
             except Exception:
                 monitor_sleep = 2.0
@@ -1340,7 +1341,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         if not self.run_flag:
             return
         # Prevent multiple simultaneous reconnect attempts
-        if hasattr(self, '_reconnecting') and self._reconnecting:
+        if self._reconnecting:
             return
         self._reconnecting = True
         try:
@@ -1349,7 +1350,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             self.is_working = False
             # Read reconnect settings from params if provided
             try:
-                cfg = (self.params or {}).get('reconnect', {}) if hasattr(self, 'params') else {}
+                cfg = (self.params or {}).get('reconnect', {})
             except Exception:
                 cfg = {}
             max_attempts = int(cfg.get('max_attempts', 0))  # 0 => infinite by default
@@ -1491,7 +1492,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         try:
             self.logger.debug("Setting up recording branch...")
             # Clean up existing recording branch if any (prevent duplicates)
-            if hasattr(self, '_recording_elements') and self._recording_elements:
+            if self._recording_elements:
                 self.logger.debug("Cleaning up existing recording branch...")
                 self._cleanup_recording_branch()
             
@@ -1576,7 +1577,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 """Periodically check for newly created small files and delete them"""
                 while not self._recording_check_stop and self.run_flag:
                     try:
-                        if not hasattr(self, '_recording_out_dir') or not self._recording_out_dir or not self._recording_out_dir.exists():
+                        if not self._recording_out_dir or not self._recording_out_dir.exists():
                             time.sleep(5.0)
                             continue
                         
@@ -1810,7 +1811,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             self.logger.debug("Cleaning up recording branch...")
             
             # Stop periodic check thread
-            if hasattr(self, '_recording_check_thread') and self._recording_check_thread:
+            if self._recording_check_thread:
                 self._recording_check_stop = True
                 if self._recording_check_thread.is_alive():
                     self._recording_check_thread.join(timeout=2.0)
@@ -1837,7 +1838,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 # Fallback: get pipeline reference without lock
                 pipeline = self.pipeline
             
-            if hasattr(self, '_recording_elements') and self._recording_elements:
+            if self._recording_elements:
                 for elem in self._recording_elements:
                         try:
                             if not elem:

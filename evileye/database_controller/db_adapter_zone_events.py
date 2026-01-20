@@ -171,7 +171,8 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
         
         preview_save_dir = os.path.join(self.image_dir, preview_path)
         frame_save_dir = os.path.join(self.image_dir, frame_path)
-        preview = cv2.resize(copy.deepcopy(image.image), self.preview_size, cv2.INTER_NEAREST)
+        # Use .copy() for numpy arrays instead of deepcopy - much more efficient
+        preview = cv2.resize(image.image.copy(), self.preview_size, cv2.INTER_NEAREST)
         preview_boxes = utils.draw_preview_boxes_zones(preview, self.preview_width, self.preview_height, box, zone_coords)
         preview_saved = cv2.imwrite(preview_save_dir, preview_boxes)
         frame_saved = cv2.imwrite(frame_save_dir, image.image)
@@ -187,7 +188,8 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
 
         if event.box_left is not None and event.img_left is not None and hasattr(event.img_left, 'image'):
             image_height, image_width, _ = event.img_left.image.shape
-            fields_for_updating['box_left'] = copy.deepcopy(fields_for_updating['box_left'])
+            # Use list() instead of deepcopy for bounding box (list of numbers)
+            fields_for_updating['box_left'] = list(fields_for_updating['box_left'])
             fields_for_updating['box_left'][0] /= image_width
             fields_for_updating['box_left'][1] /= image_height
             fields_for_updating['box_left'][2] /= image_width
@@ -219,7 +221,8 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
         fields_for_saving['zone_coords'] = coords_rounded
 
         image_height, image_width, _ = event.img_entered.image.shape
-        fields_for_saving['box_entered'] = copy.deepcopy(fields_for_saving['box_entered'])
+        # Use list() instead of deepcopy for bounding box (list of numbers)
+        fields_for_saving['box_entered'] = list(fields_for_saving['box_entered'])
         fields_for_saving['box_entered'][0] /= image_width
         fields_for_saving['box_entered'][1] /= image_height
         fields_for_saving['box_entered'][2] /= image_width

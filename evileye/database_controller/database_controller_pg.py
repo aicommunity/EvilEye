@@ -295,7 +295,7 @@ class DatabaseControllerPg(DatabaseControllerBase):
         
         preview_save_dir = os.path.join(image_dir_resolved, preview_path)
         frame_save_dir = os.path.join(image_dir_resolved, frame_path)
-        preview = cv2.resize(copy.deepcopy(image.image), self.preview_size, cv2.INTER_NEAREST)
+        preview = cv2.resize(image.image.copy(), self.preview_size, cv2.INTER_NEAREST)
         preview_boxes = utils.utils.draw_preview_boxes(preview,
                                                        self.preview_width, self.preview_height, box)
         preview_saved = cv2.imwrite(preview_save_dir, preview_boxes)
