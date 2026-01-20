@@ -31,6 +31,8 @@ class StorageMonitor:
             image_dir: Base directory to monitor (e.g., 'EvilEyeData')
             config: Configuration dictionary with monitoring settings
         """
+        # Используем get_module_logger(), т.к. StorageMonitor не наследуется от EvilEyeBase
+        # и не имеет lifecycle. Это утилитный класс без состояния экземпляра в логгере.
         self.logger = get_module_logger("storage_monitor")
         self.image_dir = Path(image_dir)
         

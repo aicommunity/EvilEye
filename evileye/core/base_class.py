@@ -34,9 +34,19 @@ class EvilEyeBase(ABC):
         self.memory_measure_time = None
         # Автоматическая инициализация логгера для всех наследников
         # Имя логгера: evileye.{classlower}[{id}] или evileye.{classlower}[{id}].{logger_name}
+        # Используется для компонентов с lifecycle (наследники EvilEyeBase)
         self._init_logger()
 
     def _init_logger(self):
+        """
+        Инициализировать логгер для компонента с lifecycle.
+        
+        Этот метод используется компонентами, наследующимися от EvilEyeBase,
+        и создает логгер с уникальным идентификатором экземпляра в имени.
+        Формат: evileye.{classname}[{id}] или evileye.{classname}[{id}].{logger_name}
+        
+        Для модулей без lifecycle используйте get_module_logger() из logger.py
+        """
         try:
             base_name = f"evileye.{self.__class__.__name__.lower()}[{self.id}]"
             full_name = f"{base_name}.{self.logger_name}" if self.logger_name else base_name
@@ -120,3 +130,34 @@ class EvilEyeBase(ABC):
     @abstractmethod
     def get_params_impl(self):
         pass
+
+    def _check_interface_compliance(self, protocol_class) -> bool:
+        """
+        Проверить соответствие экземпляра Protocol интерфейсу (для отладки).
+        
+        Этот метод использует runtime проверку Protocol через isinstance().
+        Используется только для отладки и валидации соответствия интерфейсам.
+        
+        Args:
+            protocol_class: Класс Protocol (например, IPipeline, IObjectHandler)
+            
+        Returns:
+            True если экземпляр соответствует Protocol, False иначе
+            
+        Note:
+            Protocols в Python используют структурную типизацию, поэтому
+            isinstance() проверяет наличие методов, а не наследование.
+            Для production кода используйте type hints вместо runtime проверок.
+            
+        Example:
+            pipeline = PipelineSurveillance()
+            if pipeline._check_interface_compliance(IPipeline):
+                print("Pipeline соответствует IPipeline")
+        """
+        try:
+            from typing import Protocol
+            if isinstance(protocol_class, type) and issubclass(protocol_class, Protocol):
+                return isinstance(self, protocol_class)
+        except Exception:
+            pass
+        return False

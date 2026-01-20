@@ -52,15 +52,16 @@ class ObjectsHandlerService:
         """Инициализировать ObjectsHandler с параметрами.
 
         Args:
-            objects_handler: Экземпляр ObjectsHandler для инициализации
+            objects_handler: Экземпляр ObjectsHandler для инициализации (соответствует IObjectHandler)
             params: Параметры конфигурации
-            pipeline: Pipeline для получения параметров камер (опционально)
+            pipeline: Pipeline для получения параметров камер (опционально, соответствует IPipeline)
 
         Returns:
             Инициализированный ObjectsHandler
         """
+        # Protocol compliance: IPipeline гарантирует наличие метода get_sources()
         # Установить параметры камер из pipeline, если доступен
-        if pipeline and hasattr(pipeline, "get_sources"):
+        if pipeline:
             sources = pipeline.get_sources()
             if sources:
                 cameras_params = []

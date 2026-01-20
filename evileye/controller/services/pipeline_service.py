@@ -32,7 +32,7 @@ class PipelineService:
             pipeline_class_name: Имя класса pipeline, если None - используется PipelineSurveillance
 
         Returns:
-            Экземпляр pipeline
+            Экземпляр pipeline (соответствует IPipeline Protocol)
 
         Raises:
             ValueError: Если класс pipeline не найден

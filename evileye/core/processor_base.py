@@ -4,18 +4,44 @@ from .logger import get_module_logger
 
 class ProcessorBase(ABC):
     def __init__(self, processor_name, class_name, num_processors: int, order: int):
+        # Используем get_module_logger(), т.к. ProcessorBase не наследуется от EvilEyeBase
+        # и не имеет lifecycle (init/release). Это контейнер для процессоров, а не компонент с lifecycle.
         self.logger = get_module_logger("processor_base")
         self.processor_name = processor_name
         self.class_name = class_name
         self.params = None
         self.num_processors = num_processors
         self.order = order
-        self.dummy_processor = EvilEyeBase.create_instance(class_name)
+        # Создание процессоров вынесено в отдельный метод для снижения связности
+        self.dummy_processor = self._create_processor_instance(class_name)
         self.processors = []
         for i in range(0, num_processors):
-            processor = EvilEyeBase.create_instance(class_name)
+            processor = self._create_processor_instance(class_name)
             processor.set_id(i)
             self.processors.append(processor)
+
+    def _create_processor_instance(self, class_name: str) -> EvilEyeBase:
+        """
+        Создать экземпляр процессора через plugin-регистр.
+        
+        Этот метод изолирует создание процессоров от прямого вызова
+        EvilEyeBase.create_instance(), что позволяет в будущем заменить
+        механизм создания (например, для тестирования с моками).
+        
+        Args:
+            class_name: Имя класса процессора, зарегистрированного через @EvilEyeBase.register
+            
+        Returns:
+            Экземпляр процессора (наследник EvilEyeBase)
+            
+        Raises:
+            ValueError: Если класс не найден в plugin-регистре
+            
+        Note:
+            Зависит от EvilEyeBase._registry и декоратора @EvilEyeBase.register.
+            Для тестирования можно переопределить этот метод в подклассах.
+        """
+        return EvilEyeBase.create_instance(class_name)
 
     def get_processors(self):
         return self.processors

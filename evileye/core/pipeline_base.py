@@ -9,6 +9,23 @@ class PipelineBase(EvilEyeBase):
     """
     Base class for all pipeline implementations.
     Contains common functionality not related to processors.
+    
+    Protocol Compliance:
+    --------------------
+    Этот класс реализует интерфейс `IPipeline` через наследование от `EvilEyeBase`
+    и реализацию всех методов, определенных в `IPipeline`. Соответствие протоколу
+    обеспечивается автоматически благодаря структуре методов класса.
+    
+    PipelineBase соответствует IPipeline Protocol:
+    - Все методы IPipeline реализованы в этом классе или его наследниках
+    - Используйте `IPipeline` в type hints для указания контракта
+    - Явное наследование от `IPipeline` не требуется (это Protocol, не ABC)
+    - Для проверки соответствия используйте `_check_interface_compliance(IPipeline)`
+    
+    Использование:
+    - Наследуйтесь от этого класса для создания новых pipeline
+    - Используйте `IPipeline` в type hints: `def process(pipeline: IPipeline)`
+    - Type checker автоматически проверит соответствие контракту
     """
     
     def __init__(self):

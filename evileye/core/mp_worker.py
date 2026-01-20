@@ -10,6 +10,8 @@ from .logger import get_module_logger
 
 class MpWorker(ABC):
     def __init__(self, input_queue, output_queue):
+        # Используем get_module_logger(), т.к. MpWorker не наследуется от EvilEyeBase
+        # и работает в отдельном процессе multiprocessing без lifecycle EvilEyeBase.
         self.logger = get_module_logger("mp_worker")
         self.input_queue = input_queue
         self.output_queue = output_queue

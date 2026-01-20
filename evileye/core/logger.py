@@ -3,6 +3,26 @@
 Утилиты для логирования в EvilEye
 
 Предоставляет удобные функции для логирования в различных модулях приложения.
+
+Два подхода к логированию в EvilEye:
+------------------------------------
+
+1. EvilEyeBase._init_logger() - для компонентов с lifecycle
+   - Используется компонентами, наследующимися от EvilEyeBase
+   - Формат имени: evileye.{classname}[{id}] или evileye.{classname}[{id}].{logger_name}
+   - Включает уникальный ID экземпляра для различения нескольких экземпляров одного класса
+   - Автоматически вызывается в __init__() EvilEyeBase
+   - Примеры: PipelineBase, детекторы, трекеры, процессоры pipeline
+
+2. get_module_logger() - для модулей без lifecycle
+   - Используется модулями, которые не наследуются от EvilEyeBase
+   - Формат имени: evileye.{module_name}
+   - Простой статический логгер без идентификатора экземпляра
+   - Примеры: ProcessorBase (контейнер), StorageMonitor, MpWorker, сервисы контроллера
+
+Правила выбора:
+- Если класс наследуется от EvilEyeBase -> используйте self.logger (автоматически инициализируется)
+- Если класс НЕ наследуется от EvilEyeBase -> используйте get_module_logger(__name__)
 """
 
 import logging
@@ -14,13 +34,28 @@ from contextlib import contextmanager
 
 def get_module_logger(module_name: str) -> logging.Logger:
     """
-    Получить логгер для указанного модуля
+    Получить логгер для указанного модуля.
+    
+    Используется для модулей без lifecycle (не наследующихся от EvilEyeBase).
+    Для компонентов с lifecycle используйте EvilEyeBase._init_logger().
     
     Args:
-        module_name: Имя модуля (например, __name__)
+        module_name: Имя модуля (например, "processor_base" или __name__)
         
     Returns:
-        Логгер для модуля
+        Логгер для модуля с форматом имени: evileye.{module_name}
+        
+    Примеры:
+        # В модуле без EvilEyeBase
+        logger = get_module_logger(__name__)
+        logger.info("Message")
+        
+        # В классе, наследующемся от EvilEyeBase
+        class MyComponent(EvilEyeBase):
+            def __init__(self):
+                super().__init__()
+                # self.logger уже инициализирован через _init_logger()
+                self.logger.info("Message")
     """
     return logging.getLogger(f"evileye.{module_name.split('.')[-1]}")
 

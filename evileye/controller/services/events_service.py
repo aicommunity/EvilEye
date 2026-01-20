@@ -36,12 +36,13 @@ class EventsService:
 
         Args:
             params: Параметры конфигурации детекторов
-            pipeline: Pipeline для получения источников
-            objects_handler: Обработчик объектов для подписки
+            pipeline: Pipeline для получения источников (соответствует IPipeline)
+            objects_handler: Обработчик объектов для подписки (соответствует IObjectHandler)
             use_database: Использовать ли БД (влияет на инициализацию)
         """
+        # Protocol compliance: IPipeline гарантирует наличие метода get_sources()
         # CamEventsDetector
-        sources = pipeline.get_sources() if hasattr(pipeline, 'get_sources') else []
+        sources = pipeline.get_sources()
         self._detectors['CamEventsDetector'] = CamEventsDetector(sources)
         self._detectors['CamEventsDetector'].set_params(**params.get('CamEventsDetector', {}))
         self._detectors['CamEventsDetector'].init()
