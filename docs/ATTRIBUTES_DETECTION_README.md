@@ -16,9 +16,15 @@
 ### Компоненты
 
 1. **RoiFeeder** - извлекает ROI из bbox первичных объектов
+   - Инициализирует внутренние структуры явно: `primary_by_name`, `primary_by_id`, `class_mapping`
+   - Использует `ClassManager` для определения первичных объектов, если доступен
+   - Fallback на `class_mapping` для обратной совместимости
 2. **AttributeClassifier** - классифицирует атрибуты на ROI
 3. **AttributeManager** - управляет состояниями атрибутов
 4. **ObjectsHandler** - интегрирует атрибуты в основной поток
+   - Инициализирует `class_manager` и `class_mapping` явно в конструкторе
+   - Использует централизованную систему классов через `ClassManager` при наличии
+   - Fallback на `class_mapping` для определения классов объектов
 
 ### Поток данных
 
@@ -39,6 +45,12 @@ Sources → Preprocessors → Detectors → Trackers → RoiFeeder → Attribute
 ### Основные параметры
 
 Секция `objects_handler.attributes_detection` содержит настройки детекции атрибутов:
+
+**Примечание о системе классов:**
+- При наличии `ClassManager` в системе приоритет отдаётся централизованной системе классов
+- `ClassManager` автоматически преобразует имена классов (`primary_by_name`, `secondary_by_name`) в ID
+- Если `ClassManager` недоступен, используется fallback на `class_mapping` из конфигурации детектора
+- Компоненты (`RoiFeeder`, `ObjectsHandler`) явно инициализируют все необходимые структуры (`primary_by_name`, `primary_by_id`, `class_mapping`) в конструкторах, что делает поведение предсказуемым и устраняет скрытые зависимости от порядка инициализации
 
 ```json
 {
