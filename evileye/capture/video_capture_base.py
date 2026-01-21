@@ -117,10 +117,8 @@ class VideoCaptureBase(EvilEyeBase):
                 self.recording_params.continuous_recording_enabled or 
                 (self.recording_params.enabled and not self.recording_params.event_recording_enabled)
             )
-            self.logger.debug(f"Checking recording: params={self.recording_params is not None}, continuous_enabled={continuous_enabled}")
             
             if not continuous_enabled:
-                self.logger.debug(f"Recording not enabled or params missing: params={self.recording_params is not None}, continuous_enabled={continuous_enabled}")
                 return
             
             # Check if recording is integrated in pipeline (GStreamer) or separate (OpenCV)
@@ -195,8 +193,8 @@ class VideoCaptureBase(EvilEyeBase):
             try:
                 if hasattr(sub, 'update'):
                     sub.update()
-            except Exception as e:
-                self.logger.debug(f"Error notifying subscriber: {e}")
+            except Exception:
+                pass
 
     def start(self) -> None:
         """Start video capture threads and recording."""
