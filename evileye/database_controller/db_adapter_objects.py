@@ -2,6 +2,7 @@ import time
 
 from .database_controller_pg import DatabaseControllerPg
 from .db_adapter import DatabaseAdapterBase
+from .constants import QueryType, EventType
 import json
 from ..utils.utils import ObjectResultEncoder
 import copy
@@ -24,7 +25,7 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
 
     def _insert_impl(self, obj):
         fields, data, preview_path, frame_path = self._prepare_for_saving(obj)
-        query_type = 'insert'
+        query_type = QueryType.INSERT
         insert_query = sql.SQL("INSERT INTO {} ({}) VALUES ({}) RETURNING record_id, bounding_box").format(
             sql.Identifier('objects'),
             sql.SQL(",").join(map(sql.Identifier, fields)),
@@ -35,7 +36,7 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
     def _update_impl(self, obj):
         fields, data, preview_path, frame_path = self._prepare_for_updating(obj)
 
-        query_type = 'Update'
+        query_type = QueryType.UPDATE
         data = list(data)
         data.append(obj.object_id)
         data = tuple(data)
@@ -54,60 +55,46 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
             fields=sql.SQL(",").join(map(sql.Identifier, fields)))
         self.queue_in.put((query_type, update_query, data, preview_path, frame_path, obj.last_image))
 
-    def _execute_query(self):
-        while self.run_flag:
-            time.sleep(0.01)
-            try:
-                if not self.queue_in.empty():
-                    query_type, query_string, data, preview_path, frame_path, image = self.queue_in.get()
-                    if query_string is not None:
-                        pass
-                else:
-                    query_type = query_string = data = preview_path = frame_path = image = None
-            except ValueError:
-                break
+    def _process_queue_item(self, item):
+        query_type, query_string, data, preview_path, frame_path, image = item
 
-            if query_string is None:
-                continue
+        if query_string is None:
+            return
 
-            # Если контроллер БД не подключен, аккуратно пропускаем запись
-            if (
-                not hasattr(self.db_controller, "is_connected")
-                or not self.db_controller.is_connected()
-            ):
-                self.logger.warning(
-                    "Database is not connected in db_adapter_objects._execute_query; "
-                    "skipping DB write operation."
-                )
-                continue
+        if (
+            not hasattr(self.db_controller, "is_connected")
+            or not self.db_controller.is_connected()
+        ):
+            self.logger.warning(
+                "Database is not connected in db_adapter_objects._process_queue_item; "
+                "skipping DB write operation."
+            )
+            return
 
-            record = self.db_controller.query(query_string, data)
+        record = self.db_controller.query(query_string, data)
 
-            # query() мог вернуть None (ошибка БД или нет данных) — проверяем это
-            if not record:
-                self.logger.warning(
-                    "Database query returned no records in db_adapter_objects._execute_query; "
-                    "skipping image save and notifications."
-                )
-                continue
+        if not record:
+            self.logger.warning(
+                "Database query returned no records in db_adapter_objects._process_queue_item; "
+                "skipping image save and notifications."
+            )
+            return
 
-            try:
-                row_num = record[0][0]
-                box = record[0][1]
-            except Exception as ex:
-                self.logger.error(
-                    f"Unexpected record format in db_adapter_objects._execute_query: {record}. "
-                    f"Error: {ex}"
-                )
-                continue
+        try:
+            row_num = record[0][0]
+            box = record[0][1]
+        except Exception as ex:
+            self.logger.error(
+                f"Unexpected record format in db_adapter_objects._process_queue_item: {record}. "
+                f"Error: {ex}"
+            )
+            return
 
-            start_save_it = timer()
-            self._save_image(preview_path, frame_path, image, box)
-            end_save_it = timer()
-            if query_type == 'insert':
-                threading_events.notify('handler new object')
-            elif query_type == 'update':
-                threading_events.notify('handler update object')
+        self._save_image(preview_path, frame_path, image, box)
+        if query_type == QueryType.INSERT:
+            threading_events.notify(EventType.HANDLER_NEW_OBJECT)
+        elif query_type == QueryType.UPDATE:
+            threading_events.notify(EventType.HANDLER_UPDATE_OBJECT)
 
     def _save_image(self, preview_path, frame_path, image, box):
         preview_save_dir = os.path.join(self.image_dir, preview_path)

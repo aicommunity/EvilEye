@@ -1,5 +1,6 @@
 import time
 from .db_adapter import DatabaseAdapterBase
+from .constants import EventType
 from psycopg2 import sql
 from ..utils import threading_events
 
@@ -25,24 +26,14 @@ class DatabaseAdapterSystemEvents(DatabaseAdapterBase):
         # No updates for system events
         pass
 
-    def _execute_query(self):
-        while self.run_flag:
-            time.sleep(0.01)
-            try:
-                if not self.queue_in.empty():
-                    query_string, data = self.queue_in.get()
-                    if query_string is not None:
-                        pass
-                else:
-                    query_string = data = None
-            except ValueError:
-                break
+    def _process_queue_item(self, item):
+        query_string, data = item
 
-            if query_string is None:
-                continue
+        if query_string is None:
+            return
 
-            self.db_controller.query(query_string, data)
-            threading_events.notify('new event')
+        self.db_controller.query(query_string, data)
+        threading_events.notify(EventType.NEW_EVENT)
 
     def _prepare_for_saving(self, event) -> tuple[list, list]:
         fields_for_saving = {

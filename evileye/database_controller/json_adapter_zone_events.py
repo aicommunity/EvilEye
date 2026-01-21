@@ -33,6 +33,10 @@ class JsonAdapterZoneEvents(DatabaseAdapterBase):
     def start(self):
         self.run_flag = True
 
+    def _process_queue_item(self, item):
+        """JSON адаптер не использует очередь; метод требуется базовым классом."""
+        return
+
     def stop(self):
         self.run_flag = False
 

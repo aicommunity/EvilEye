@@ -1,5 +1,6 @@
 import time
 from .db_adapter import DatabaseAdapterBase
+from .constants import QueryType, EventType
 from ..utils.utils import ObjectResultEncoder
 import copy
 import datetime
@@ -26,7 +27,7 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
 
     def _insert_impl(self, event):
         fields, data, preview_path, frame_path = self._prepare_for_saving(event)
-        query_type = 'insert'
+        query_type = QueryType.INSERT
         insert_query = sql.SQL("INSERT INTO {} ({}) VALUES ({}) RETURNING box_entered, zone_coords").format(
             sql.Identifier(self.table_name),
             sql.SQL(",").join(map(sql.Identifier, fields)),
@@ -37,7 +38,7 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
     def _update_impl(self, event):
         fields, data, preview_path, frame_path = self._prepare_for_updating(event)
 
-        query_type = 'update'
+        query_type = QueryType.UPDATE
         # Надёжный поиск последней незавершённой записи события зоны
         # Ключ: (project_id, job_id, source_id, object_id, zone_coords), сортировка по time_entered DESC
         project_id = self.db_controller.get_project_id()
@@ -110,7 +111,7 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
                 # Пустой результат - это нормально для UPDATE, если запись не найдена
                 # (например, событие уже было обновлено или удалено)
                 # Для INSERT это не должно происходить, но проверяем тип запроса
-                if query_type == 'insert':
+                if query_type == QueryType.INSERT:
                     self.logger.warning('DB: ZoneEvents INSERT returned no data; skipping image save')
                 # Для UPDATE не логируем, так как это нормальная ситуация
                 continue
@@ -121,7 +122,7 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
                 
             if len(record) == 0:
                 # Пустой список - запись не найдена для обновления
-                if query_type == 'insert':
+                if query_type == QueryType.INSERT:
                     self.logger.warning('DB: ZoneEvents INSERT returned empty list; skipping image save')
                 continue
                 
@@ -154,10 +155,10 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
 
             self._save_image(preview_path, frame_path, image, box, zone_coords)
 
-            if query_type == 'insert':
-                threading_events.notify('new event')
-            elif query_type == 'update':
-                threading_events.notify('update event')
+            if query_type == QueryType.INSERT:
+                threading_events.notify(EventType.NEW_EVENT)
+            elif query_type == QueryType.UPDATE:
+                threading_events.notify(EventType.UPDATE_EVENT)
 
     def _save_image(self, preview_path, frame_path, image, box, zone_coords):
         # Дополнительная проверка на None и наличие атрибута image

@@ -1,5 +1,6 @@
 import time
 from .db_adapter import DatabaseAdapterBase
+from .constants import QueryType, EventType
 from ..utils import threading_events
 from ..utils import utils
 import os
@@ -19,7 +20,7 @@ class DatabaseAdapterAttributeEvents(DatabaseAdapterBase):
 
     def _insert_impl(self, event):
         fields, data, preview_path, frame_path = self._prepare_for_saving(event)
-        query_type = 'insert'
+        query_type = QueryType.INSERT
         insert_query = sql.SQL("INSERT INTO {} ({}) VALUES ({})").format(
             sql.Identifier(self.table_name),
             sql.SQL(",").join(map(sql.Identifier, fields)),
@@ -29,7 +30,7 @@ class DatabaseAdapterAttributeEvents(DatabaseAdapterBase):
 
     def _update_impl(self, event):
         fields, data, preview_path, frame_path = self._prepare_for_updating(event)
-        query_type = 'update'
+        query_type = QueryType.UPDATE
         data.append(event.event_id)
         data = tuple(data)
         update_query = sql.SQL('UPDATE {table} SET {data} WHERE event_id=({selected})').format(
@@ -40,49 +41,32 @@ class DatabaseAdapterAttributeEvents(DatabaseAdapterBase):
             fields=sql.SQL(",").join(map(sql.Identifier, fields)))
         self.queue_in.put((query_type, update_query, data, preview_path, frame_path, getattr(event, 'img_finished', None), getattr(event, 'box_finished', None)))
 
-    def _execute_query(self):
-        while self.run_flag:
-            time.sleep(0.01)
-            try:
-                if not self.queue_in.empty():
-                    query_type, query_string, data, preview_path, frame_path, image, box = self.queue_in.get()
-                    if query_string is not None:
-                        pass
-                else:
-                    query_type = query_string = data = preview_path = frame_path = image = box = None
-            except ValueError:
-                break
+    def _process_queue_item(self, item):
+        query_type, query_string, data, preview_path, frame_path, image, box = item
 
-            if query_string is None:
-                continue
+        if query_string is None:
+            return
 
-            try:
-                self.db_controller.query(query_string, data)
-            except Exception as e:
-                # Attempt to auto-migrate missing columns and retry once
-                msg = str(e)
-                if 'UndefinedColumn' in msg or 'does not exist' in msg:
-                    try:
-                        self._ensure_attribute_columns()
-                        self.logger.warning('DB: Missing columns in attribute_events detected. Applied auto-migration. Retrying query...')
-                        self.db_controller.query(query_string, data)
-                    except Exception as e2:
-                        self.logger.error(f'DB: AttributeEvents query failed after migration attempt: {e2}')
-                        continue
-                else:
-                    self.logger.error(f'DB: AttributeEvents query failed: {e}')
-                    continue
-            # Save images if available
-            try:
-                if image is not None and preview_path is not None and frame_path is not None and box is not None:
-                    self._save_image(preview_path, frame_path, image, box)
-            except Exception:
-                pass
-            # Log success write - removed to reduce log noise
-            if query_type == 'insert':
-                threading_events.notify('new event')
-            elif query_type == 'update':
-                threading_events.notify('update event')
+        try:
+            self.db_controller.query(query_string, data)
+        except Exception as e:
+            should_retry, last_error = self.error_handler.handle_query_error(
+                error=e,
+                query_string=str(query_string) if query_string else None,
+                retry_callback=lambda: self._ensure_attribute_columns() or self.db_controller.query(query_string, data),
+                max_retries=1,
+            )
+            if last_error:
+                return
+        try:
+            if image is not None and preview_path is not None and frame_path is not None and box is not None:
+                self._save_image(preview_path, frame_path, image, box)
+        except Exception:
+            pass
+        if query_type == QueryType.INSERT:
+            threading_events.notify(EventType.NEW_EVENT)
+        elif query_type == QueryType.UPDATE:
+            threading_events.notify(EventType.UPDATE_EVENT)
 
     def _prepare_for_saving(self, event) -> tuple[list, list, str, str]:
         # Payload with image paths for attribute event START

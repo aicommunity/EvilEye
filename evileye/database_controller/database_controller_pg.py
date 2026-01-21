@@ -15,15 +15,14 @@ from ..utils import threading_events
 from ..core.logger import get_module_logger
 
 from timeit import default_timer as timer
+from .constants import QueryType, EventType
+from .database_error_handler import DatabaseErrorHandler
+from .image_storage_service import ImageStorageService
+from .database_validator import DatabaseValidator
 # see https://ru.hexlet.io/blog/posts/python-postgresql
 
 
 class DatabaseControllerPg(DatabaseControllerBase):
-    new_project_created = False
-    new_job_created = False
-    cur_project_id = 0
-    cur_job_id = 0
-
     def __init__(self, system_params, controller_type='Writer'):
         self.logger = get_module_logger("database_controller_pg")
         super().__init__(controller_type)
@@ -43,6 +42,16 @@ class DatabaseControllerPg(DatabaseControllerBase):
         self.preview_height = 0
         self.preview_width = 0
         self.preview_size = (0, 0)
+        # Экземплярные переменные вместо статических
+        self._project_created = False
+        self._job_created = False
+        self._project_id = 0
+        self._job_id = 0
+        # Обработчик ошибок и валидатор
+        self.error_handler = DatabaseErrorHandler(logger=self.logger)
+        self.validator = DatabaseValidator(logger=self.logger)
+        # Сервис сохранения изображений
+        self._image_storage: ImageStorageService | None = None
 
     def set_params_impl(self):
         self.user_name = self.params['user_name']
@@ -58,6 +67,13 @@ class DatabaseControllerPg(DatabaseControllerBase):
         self.preview_width = self.params.get('preview_width', 150)
         self.preview_height = self.params.get('preview_height', 100)
         self.preview_size = (self.preview_width, self.preview_height)
+        # Инициализируем сервис сохранения изображений
+        self._image_storage = ImageStorageService(
+            image_dir=self.image_dir,
+            preview_width=self.preview_width,
+            preview_height=self.preview_height,
+            logger=self.logger,
+        )
 
     def get_params_impl(self):
         params = dict()
@@ -189,15 +205,15 @@ class DatabaseControllerPg(DatabaseControllerBase):
                 self.create_table(table_name)
 
             project_id = 0
-            if not DatabaseControllerPg.new_project_created:
+            if not self._project_created:
                 project_id = self._create_new_project()
-                DatabaseControllerPg.new_project_created = True
-                DatabaseControllerPg.cur_project_id = project_id
+                self._project_created = True
+                self._project_id = project_id
 
-            if not DatabaseControllerPg.new_job_created:
+            if not self._job_created:
                 job_id = self._create_new_job(project_id)
-                DatabaseControllerPg.new_job_created = True
-                DatabaseControllerPg.cur_job_id = job_id
+                self._job_created = True
+                self._job_id = job_id
 
             self._insert_cam_info(self.cameras_params)
 
@@ -225,41 +241,52 @@ class DatabaseControllerPg(DatabaseControllerBase):
         if self.conn_pool is None:
             return None
 
-        connection = None
-        try:
-            connection = self.conn_pool.getconn()
-            with connection:
-                with connection.cursor() as curs:
-                    # self.logger.info(query_string.as_string(curs))
-                    curs.execute(query_string, data)
-                    try:
-                        result = curs.fetchall()
-                    except psycopg2.ProgrammingError:
-                        result = None
-            return result
-        except psycopg2.OperationalError:
-            self.logger.info(f'Transaction ({query_string}) is not committed')
-        finally:
-            if connection:
-                self.conn_pool.putconn(connection)
+        def execute_query():
+            connection = None
+            try:
+                connection = self.conn_pool.getconn()
+                with connection:
+                    with connection.cursor() as curs:
+                        curs.execute(query_string, data)
+                        try:
+                            result = curs.fetchall()
+                        except psycopg2.ProgrammingError:
+                            result = None
+                return result
+            finally:
+                if connection:
+                    self.conn_pool.putconn(connection)
+
+        result, error = self.error_handler.execute_with_retry(
+            func=execute_query,
+            max_retries=3,
+            initial_delay=0.1,
+            max_delay=2.0,
+            retryable_errors=(psycopg2.OperationalError,),
+        )
+
+        if error:
+            self.logger.warning(
+                f'Transaction ({query_string}) failed after retries: {error}'
+            )
+            return None
+
+        return result
 
     def _insert_impl(self):
+        import queue
         while self.run_flag:
-            time.sleep(0.01)
-            if self.conn_pool is None:
-                continue
-
             try:
-                if not self.queue_in.empty():
-                    query_type, query_string, fields, data, preview_path, frame_path, image = self.queue_in.get()
-                    if query_string is not None:
-                        pass
-                else:
-                    query_type = query_string = data = preview_path = frame_path = image = None
+                query_type, query_string, fields, data, preview_path, frame_path, image = self.queue_in.get(timeout=0.1)
+            except queue.Empty:
+                continue
             except ValueError:
                 break
 
             if query_string is None:
+                continue
+
+            if self.conn_pool is None:
                 continue
 
             connection = None
@@ -271,16 +298,12 @@ class DatabaseControllerPg(DatabaseControllerBase):
                         record = curs.fetchone()
                         row_num = record[0]
                         box = record[1]
-                        start_save_it = timer()
-                        self._save_image(preview_path, frame_path, image, box)
-                        end_save_it = timer()
-                start_notify_it = timer()
-                if query_type == 'Insert':
-                    threading_events.notify('handler new object', row_num)
-                elif query_type == 'Update':
-                    threading_events.notify('handler update object', row_num)
-                end_notify_it = timer()
-                # self.logger.info(f'Notification:{end_notify_it-start_notify_it}; Saving:{end_save_it-start_save_it}')
+                        if self._image_storage:
+                            self._image_storage.save_image(preview_path, frame_path, image, box)
+                if query_type == QueryType.Insert:
+                    threading_events.notify(EventType.HANDLER_NEW_OBJECT, row_num)
+                elif query_type == QueryType.Update:
+                    threading_events.notify(EventType.HANDLER_UPDATE_OBJECT, row_num)
             except psycopg2.OperationalError:
                 self.logger.info(f'Transaction ({query_string}) is not committed')
             finally:
@@ -288,20 +311,8 @@ class DatabaseControllerPg(DatabaseControllerBase):
                     self.conn_pool.putconn(connection)
 
     def _save_image(self, preview_path, frame_path, image, box):
-        # Resolve relative image_dir path to current working directory for access
-        image_dir_resolved = self.image_dir
-        if not os.path.isabs(image_dir_resolved):
-            image_dir_resolved = os.path.join(os.getcwd(), image_dir_resolved)
-        
-        preview_save_dir = os.path.join(image_dir_resolved, preview_path)
-        frame_save_dir = os.path.join(image_dir_resolved, frame_path)
-        preview = cv2.resize(image.image.copy(), self.preview_size, cv2.INTER_NEAREST)
-        preview_boxes = utils.utils.draw_preview_boxes(preview,
-                                                       self.preview_width, self.preview_height, box)
-        preview_saved = cv2.imwrite(preview_save_dir, preview_boxes)
-        frame_saved = cv2.imwrite(frame_save_dir, image.image)
-        if not preview_saved or not frame_saved:
-            self.logger.info(f'ERROR: can\'t save image file {frame_save_dir}')
+        if self._image_storage:
+            self._image_storage.save_image(preview_path, frame_path, image, box)
 
     def get_fields_names(self, table_name):
         if self.conn_pool is None:
@@ -353,7 +364,11 @@ class DatabaseControllerPg(DatabaseControllerBase):
     def insert(self, table_name, fields, data, preview_path, frame_path, image):
         if self.conn_pool is None:
             return
-        query_type = 'Insert'
+        is_valid, error_msg = self.validator.validate_insert_params(table_name, fields, data)
+        if not is_valid:
+            self.logger.error(f"Invalid INSERT parameters: {error_msg}")
+            return
+        query_type = QueryType.Insert
         insert_query = sql.SQL("INSERT INTO {} ({}) VALUES ({}) RETURNING record_id, bounding_box").format(
             sql.Identifier(table_name),
             sql.SQL(",").join(map(sql.Identifier, fields)),
@@ -383,7 +398,12 @@ class DatabaseControllerPg(DatabaseControllerBase):
         if self.conn_pool is None:
             return
 
-        query_type = 'Update'
+        is_valid, error_msg = self.validator.validate_update_params(table_name, fields, data, obj_id)
+        if not is_valid:
+            self.logger.error(f"Invalid UPDATE parameters: {error_msg}")
+            return
+
+        query_type = QueryType.Update
         data = list(data)
         data.append(obj_id)
         data = tuple(data)
@@ -499,13 +519,11 @@ class DatabaseControllerPg(DatabaseControllerBase):
         job_id, config_id = records[0]
         return True, job_id, config_id
 
-    @staticmethod
-    def get_project_id():
-        return DatabaseControllerPg.cur_project_id
+    def get_project_id(self):
+        return self._project_id
 
-    @staticmethod
-    def get_job_id():
-        return DatabaseControllerPg.cur_job_id
+    def get_job_id(self):
+        return self._job_id
 
     def get_config_by_job_id(self, job_id: int) -> dict:
         """
