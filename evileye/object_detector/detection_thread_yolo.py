@@ -1,39 +1,41 @@
 from queue import Queue
 import threading
+from typing import Optional
 from ultralytics import YOLO
 from .detection_thread_base import DetectionThreadBase
 import logging
 
-# Import utils later to avoid circular imports
-utils = None
-
-def get_utils():
-    global utils
-    if utils is None:
-        from evileye.utils import utils as utils_module
-        utils = utils_module
-    return utils
-
 
 class DetectionThreadYolo(DetectionThreadBase):
-    id_cnt = 0  # Переменная для присвоения каждому детектору своего идентификатора
+    """Detection thread for YOLO models."""
 
-    def __init__(self, model_name: str, stride: int, classes: list, source_ids: list, roi: list, inf_params: dict, queue_out: Queue, logger_name: str | None = None, parent_logger: logging.Logger | None = None):
-        base_name = f"evileye.detection_thread_yolo"
+    def __init__(
+        self,
+        model_name: str,
+        stride: int,
+        classes: list,
+        source_ids: list,
+        roi: list,
+        inf_params: dict,
+        queue_out: Queue,
+        logger_name: Optional[str] = None,
+        parent_logger: Optional[logging.Logger] = None,
+    ):
+        base_name = "evileye.detection_thread_yolo"
         full_name = f"{base_name}.{logger_name}" if logger_name else base_name
         self.logger = parent_logger or logging.getLogger(full_name)
         self.model_name = model_name
         self.model = None
         super().__init__(stride, classes, source_ids, roi, inf_params, queue_out)
 
-    def init_detection_implementation(self):
+    def init_detection_implementation(self) -> None:
         import os
         import platform
         import sys
         
         if self.model is None:
             try:
-                # Логируем контекст загрузки модели
+                # Log model loading context
                 model_path = self.model_name
                 model_exists = os.path.exists(model_path) if model_path else False
                 model_size = os.path.getsize(model_path) if model_exists else 0
@@ -42,7 +44,7 @@ class DetectionThreadYolo(DetectionThreadBase):
                 self.logger.debug(f"Model file exists: {model_exists}, size: {model_size} bytes, "
                                 f"platform: {platform.system()} {platform.release()}")
                 
-                # Попытка загрузки модели
+                # Attempt to load model
                 self.model = YOLO(self.model_name)
                 
                 # Try to fuse Conv+BN layers (optimization, not required)
@@ -52,7 +54,7 @@ class DetectionThreadYolo(DetectionThreadBase):
                     # Fuse may fail with mixed precision models, continue without it
                     self.logger.debug(f"Model fuse() failed (non-critical): {e}")
                 
-                # Применение half precision если требуется
+                # Apply half precision if required
                 try:
                     if self.inf_params.get('half', True):
                         self.model.half()
@@ -65,7 +67,7 @@ class DetectionThreadYolo(DetectionThreadBase):
                 self._update_model_class_mapping_from_model()
                 
             except RuntimeError as e:
-                # Обработка ошибок загрузки модели (поврежденный файл, проблемы с ZIP архивом и т.д.)
+                # Handle model loading errors (corrupted file, ZIP archive issues, etc.)
                 error_msg = str(e)
                 error_context = {
                     'error_type': 'RuntimeError',
@@ -86,20 +88,20 @@ class DetectionThreadYolo(DetectionThreadBase):
                     self.logger.error(f"Failed to load YOLO model: {error_msg}")
                     self.logger.debug(f"Model loading context: {error_context}")
                 
-                # Устанавливаем модель в None, чтобы поток мог продолжать работу без модели
+                # Set model to None so thread can continue without model
                 self.model = None
-                # Не пробрасываем исключение дальше - поток продолжит работу
+                # Don't re-raise exception - thread will continue
                 
             except FileNotFoundError as e:
-                # Обработка ошибки отсутствия файла модели
+                # Handle missing model file error
                 self.logger.error(f"Model file not found: {self.model_name}")
                 self.logger.error(f"Error: {e}")
                 self.logger.warning("Model will not be loaded. Detection will be disabled for this thread.")
                 self.model = None
-                # Не пробрасываем исключение дальше
+                # Don't re-raise exception
                 
             except Exception as e:
-                # Обработка любых других ошибок загрузки модели
+                # Handle any other model loading errors
                 error_context = {
                     'error_type': type(e).__name__,
                     'error_message': str(e),
@@ -113,13 +115,12 @@ class DetectionThreadYolo(DetectionThreadBase):
                 self.logger.debug(f"Model loading context: {error_context}", exc_info=True)
                 self.logger.warning("Model will not be loaded. Detection will be disabled for this thread.")
                 self.model = None
-                # Не пробрасываем исключение дальше
+                # Don't re-raise exception
 
-    def predict(self, images: list):
-        # Проверяем, что модель загружена
+    def predict(self, images: list) -> list:
+        # Check if model is loaded
         if self.model is None:
             self.logger.warning("Model is not loaded, cannot perform prediction. Returning empty results.")
-            # Возвращаем пустой список результатов для каждого изображения
             return [None] * len(images) if isinstance(images, list) else None
         
         # Filter out None images before passing to model
@@ -162,15 +163,14 @@ class DetectionThreadYolo(DetectionThreadBase):
         except Exception as e:
             self.logger.error(f"Error during model prediction: {e}")
             self.logger.debug("Prediction error details", exc_info=True)
-            # Возвращаем пустой список результатов для каждого изображения
             return [None] * len(images) if isinstance(images, list) else None
 
-    def get_bboxes(self, result, roi):
+    def get_bboxes(self, result, roi: list) -> tuple[list, list, list]:
         bboxes_coords = []
         confidences = []
         ids = []
         
-        # Обработка случая, когда результат None (модель не загружена или ошибка предсказания)
+        # Handle case when result is None (model not loaded or prediction error)
         if result is None:
             self.logger.debug("Prediction result is None, returning empty bboxes")
             return bboxes_coords, confidences, ids
@@ -182,16 +182,16 @@ class DetectionThreadYolo(DetectionThreadBase):
             class_ids = boxes.cls
             
             for coord, class_id, conf in zip(coords, class_ids, confs):
-                utils_module = get_utils()
-                abs_coords = utils_module.roi_to_image(coord, roi[1][0], roi[1][1])  # Получаем координаты рамки в СК всего изображения
+                from ..utils import utils
+                abs_coords = utils.roi_to_image(coord, roi[1][0], roi[1][1])
                 bboxes_coords.append(abs_coords)
                 confidences.append(conf)
                 ids.append(class_id)
         except AttributeError as e:
-            # Обработка случая, когда у результата нет атрибута boxes
+            # Handle case when result doesn't have 'boxes' attribute
             self.logger.warning(f"Result does not have 'boxes' attribute: {e}. Returning empty bboxes.")
         except Exception as e:
-            # Обработка любых других ошибок при извлечении bboxes
+            # Handle any other errors when extracting bboxes
             self.logger.error(f"Error extracting bboxes from result: {e}")
             self.logger.debug("Bbox extraction error details", exc_info=True)
         
