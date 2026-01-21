@@ -22,13 +22,14 @@ except Exception:  # pragma: no cover - environment dependent
 
 
 class GStreamerRecorder(VideoRecorderBase):
-    def __init__(self) -> None:
+    def __init__(self, path_generator: PathGenerator | None = None) -> None:
         super().__init__()
         self.logger = get_module_logger("recorder_gst")
         self._pipeline = None
         self._bus = None
         self._loop: Optional[GLib.MainLoop] = None
         self._thread: Optional[threading.Thread] = None
+        self.path_generator = path_generator or PathGenerator()
 
         if _GST_OK and not Gst.is_initialized():
             Gst.init(None)
@@ -37,7 +38,7 @@ class GStreamerRecorder(VideoRecorderBase):
         """Generate next recording location pattern using PathGenerator."""
         # Convert datetime to timestamp for PathGenerator
         segment_started_ts = start_time.timestamp()
-        location = PathGenerator.generate_stream_path(
+        location = self.path_generator.generate_stream_path(
             source=self.source,
             params=self.params,
             segment_started_ts=segment_started_ts,
@@ -246,5 +247,9 @@ class GStreamerRecorder(VideoRecorderBase):
             self._bus = None
             self.is_running = False
             self.logger.debug("GStreamer recorder stopped and resources released")
+
+    def on_frame(self, frame) -> None:
+        """Frames are handled by the GStreamer pipeline; kept for interface compatibility."""
+        return None
 
 

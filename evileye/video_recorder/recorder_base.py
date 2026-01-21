@@ -107,8 +107,21 @@ class VideoRecorderBase(ABC):
         
         return False
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            self.stop()
+        except Exception:
+            pass
+
     @abstractmethod
     def start(self, source_meta: SourceMeta, params: RecordingParams) -> None:
+        ...
+
+    @abstractmethod
+    def on_frame(self, frame) -> None:
         ...
 
     @abstractmethod

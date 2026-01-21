@@ -1268,7 +1268,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         """
         Monitor pipeline state and reconnect if needed (similar to OpenCV reconnect logic).
         """
-        while self.run_flag:
+        while self.run_flag and not self.stop_event.is_set():
             if not self.is_inited or self.pipeline is None:
                 # Check if reconnection is already in progress (for both IP cameras and video files)
                 if self._reconnecting:
@@ -1386,7 +1386,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             max_delay_sec = float(cfg.get('max_delay_sec', 60.0))
             backoff_step_sec = float(cfg.get('backoff_step_sec', 6.0))
             attempt = 0
-            while self.run_flag and (max_attempts == 0 or attempt < max_attempts):
+            while self.run_flag and not self.stop_event.is_set() and (max_attempts == 0 or attempt < max_attempts):
                 # First attempt immediately; subsequent attempts with backoff
                 if attempt == 0:
                     wait_time = 0.0

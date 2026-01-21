@@ -16,7 +16,7 @@ from evileye.video_recorder.exceptions import RecorderInitializationError, Recor
 
 
 class OpenCVRecorder(VideoRecorderBase):
-    def __init__(self) -> None:
+    def __init__(self, path_generator: PathGenerator | None = None, writer_factory: VideoWriterFactory | None = None) -> None:
         super().__init__()
         self.logger = get_module_logger("recorder_cv")
         self._writer: Optional[cv2.VideoWriter] = None
@@ -26,43 +26,23 @@ class OpenCVRecorder(VideoRecorderBase):
         self._frame_size = (0, 0)
         self._fps = RecorderConstants.DEFAULT_FPS
         self._current_file_path: Optional[Path] = None
+        self.path_generator = path_generator or PathGenerator()
+        self.writer_factory = writer_factory or VideoWriterFactory()
 
     def _next_path(self) -> str:
-        # Daily subfolder YYYY-MM-DD inside out_dir, then camera name subfolder
-        date_dir = time.strftime("%Y-%m-%d", time.localtime(self._segment_started_ts))
-        
-        # Compose camera folder name from all source_names or source_ids
-        if self.source and self.source.source_names and len(self.source.source_names) > 0:
-            camera_folder = "-".join(self.source.source_names)
-        elif self.source and self.source.source_ids and len(self.source.source_ids) > 0:
-            camera_folder = "-".join(str(sid) for sid in self.source.source_ids)
-        elif self.source:
-            camera_folder = self.source.source_name
-        else:
-            camera_folder = "source"
-        
-        # Create path: base/Streams/YYYY-MM-DD/CameraName/
-        # params.out_dir should always be set to database.image_dir by Controller
-        base_out_dir = Path(self.params.out_dir) if self.params.out_dir else Path("EvilEyeData")
-        out_dir = base_out_dir / "Streams" / date_dir / camera_folder
-        out_dir.mkdir(parents=True, exist_ok=True)
-        
-        ts = time.strftime("%Y%m%d_%H%M%S", time.localtime(self._segment_started_ts))
-        source_name = (self.source.source_names[0] if self.source and self.source.source_names else 
-                       (self.source.source_name if self.source else "source"))
-        name = self.params.filename_tmpl.format(
-            source_name=source_name,
-            start_time=ts,
+        return self.path_generator.generate_stream_path(
+            source=self.source,
+            params=self.params,
+            segment_started_ts=self._segment_started_ts,
             seq=self._seq,
-            ext=self.params.container,
+            use_pattern=False,
         )
-        return str(out_dir / name)
 
     def _open_writer(self) -> None:
         """Open video writer using VideoWriterFactory."""
         path = self._next_path()
         
-        writer, codec, container = VideoWriterFactory.create_writer(
+        writer, codec, container = self.writer_factory.create_writer(
             path=path,
             fps=self._fps,
             frame_size=self._frame_size,

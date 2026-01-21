@@ -162,8 +162,19 @@ class VideoCaptureOpencv(VideoCaptureBase):
             sub.update()
 
     def _grab_frames(self):
-        while self.run_flag:
+        while self.run_flag and not self.stop_event.is_set():
             begin_it = timer()
+            # Health check: if no frames for too long, trigger reconnect/reset
+            if (
+                self.source_type == CaptureDeviceType.IpCamera
+                and self.last_frame_time
+                and (datetime.datetime.now() - self.last_frame_time).total_seconds() > self.capture_config.frame_timeout_seconds
+            ):
+                self.logger.warning(
+                    f"No frames for {self.capture_config.frame_timeout_seconds}s from {self.source_names}, forcing reset"
+                )
+                self.is_working = False
+                self.reset()
             if not self.is_inited or self.capture is None:
                 self.logger.debug(f"Source {self.source_names} not initialized (is_inited={self.is_inited}, capture={self.capture is not None}), attempting reconnect")
                 time.sleep(CaptureConstants.RECONNECT_SLEEP_SHORT)
@@ -185,22 +196,51 @@ class VideoCaptureOpencv(VideoCaptureBase):
             with self.mutex:
                 is_grabbed = self.capture.grab()
             if not is_grabbed:
-                if self.source_type != CaptureDeviceType.VideoFile or self.loop_play:
-                    self.logger.debug(f"grab() failed for {self.source_names} (is_inited={self.is_inited}, is_working={self.is_working}, loop_play={self.loop_play})")
-                    self.is_working = False
-                    timestamp = datetime.datetime.now()
-                    self.disconnects.append((self.params['camera'], timestamp, self.is_working))
-                    for sub in self.subscribers:
-                        sub.update()
-                    # For video files with loop_play, reset will restart from beginning
-                    self.reset()
-                    # Verify reset was successful
-                    if self.is_inited and self.is_opened():
-                        self.logger.debug(f"Reset successful for {self.source_names} (is_inited={self.is_inited}, is_working={self.is_working})")
+                # End-of-file / grab failure handling
+                if self.source_type == CaptureDeviceType.VideoFile:
+                    if self.loop_play:
+                        # Для роликов с зацикливанием не считаем это дисконнектом,
+                        # просто перематываем на начало без тяжёлого reset()
+                        try:
+                            self.logger.info(f"End of video for {self.source_names}, looping from start")
+                            self.capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                            self.video_current_frame = 0
+                            self.video_current_position = 0.0
+                            continue
+                        except Exception as e:
+                            self.logger.warning(f"Failed to loop video file for {self.source_names}, falling back to reset: {e}")
+                            # если не смогли перемотать, используем старую схему reset()
                     else:
-                        self.logger.warning(f"Reset may have failed for {self.source_names} (is_inited={self.is_inited}, is_opened={self.is_opened()})")
+                        self.finished = True
+                        self.run_flag = False
+                        self.stop_event.set()
+                        break
+
+                # Для живых источников (или fallback для роликов) — старая логика reconnection
+                self.logger.debug(
+                    f"grab() failed for {self.source_names} "
+                    f"(is_inited={self.is_inited}, is_working={self.is_working}, loop_play={self.loop_play})"
+                )
+                self.is_working = False
+                timestamp = datetime.datetime.now()
+                self.disconnects.append((self.params['camera'], timestamp, self.is_working))
+                for sub in self.subscribers:
+                    sub.update()
+                # reset() попытается восстановить поток
+                self.reset()
+                # Verify reset was successful
+                if self.is_inited and self.is_opened():
+                    self.logger.debug(
+                        f"Reset successful for {self.source_names} "
+                        f"(is_inited={self.is_inited}, is_working={self.is_working})"
+                    )
                 else:
-                    self.finished = True
+                    self.logger.warning(
+                        f"Reset may have failed for {self.source_names} "
+                        f"(is_inited={self.is_inited}, is_opened={self.is_opened()})"
+                    )
+                    self.run_flag = False
+                    self.stop_event.set()
 
             end_it = timer()
             elapsed_seconds = end_it - begin_it
@@ -208,7 +248,7 @@ class VideoCaptureOpencv(VideoCaptureBase):
             time.sleep(sleep_seconds)
 
     def _retrieve_frames(self) -> None:
-        while self.run_flag:
+        while self.run_flag and not self.stop_event.is_set():
             begin_it = timer()
             # Minimize lock hold time - only lock during actual retrieve operation
             with self.mutex:
@@ -216,7 +256,15 @@ class VideoCaptureOpencv(VideoCaptureBase):
             if is_read:
                 self._process_frame_metadata(is_read)
                 # DropOldestQueue automatically drops oldest when full
-                self.frames_queue.put([is_read, src_image, self.frame_id_counter, self.video_current_frame, self.video_current_position])
+                dropped = False
+                try:
+                    dropped = self.frames_queue.put([is_read, src_image, self.frame_id_counter, self.video_current_frame, self.video_current_position])
+                except TypeError:
+                    # Standard Queue for VideoFile returns None; keep behavior
+                    dropped = False
+                if dropped:
+                    self.dropped_frames += 1
+                    self.logger.debug(f"Dropped oldest frame (queue full) for {self.source_names}, total_dropped={self.dropped_frames}")
                 self.frame_id_counter += 1
                 # Feed OpenCV recorder if present
                 try:
@@ -231,7 +279,7 @@ class VideoCaptureOpencv(VideoCaptureBase):
             end_it = timer()
             elapsed_seconds = end_it - begin_it
 
-            retrieve_fps = self.desired_fps if self.desired_fps else self.source_fps if self.source_fps else CaptureConstants.DEFAULT_FPS_FALLBACK
+            retrieve_fps = self.desired_fps if self.desired_fps else self.source_fps if self.source_fps else self.capture_config.default_fps_fallback
             sleep_seconds = self._calculate_sleep_seconds(elapsed_seconds, retrieve_fps)
             time.sleep(sleep_seconds)
 

@@ -16,7 +16,7 @@ from ..core.base_class import EvilEyeBase
 from ..video_recorder.recording_params import RecordingParams
 from ..video_recorder.recorder_manager import RecorderManager
 from ..core.frame import CaptureImage, Frame
-from .constants import CaptureConstants
+from .constants import CaptureConstants, CaptureConfig
 from .queue_utils import DropOldestQueue
 
 
@@ -36,8 +36,9 @@ class VideoCaptureBase(EvilEyeBase):
         self.pure_url = None
         self.run_flag = False
         # Use optimized drop-oldest queue with deque for better performance
-        # Size remains 2 intentionally to avoid stale frames
-        self.frames_queue = DropOldestQueue(maxsize=CaptureConstants.DEFAULT_QUEUE_SIZE)
+        # Size remains intentionally small to avoid stale frames
+        self.capture_config = CaptureConfig()
+        self.frames_queue = DropOldestQueue(maxsize=self.capture_config.queue_size)
         self.frame_id_counter = 0
         self.source_type = CaptureDeviceType.NotSet
         self.source_fps = None
@@ -54,6 +55,9 @@ class VideoCaptureBase(EvilEyeBase):
         self.video_current_frame = None
         self.video_current_position = None
         self.is_working = False
+        self.stop_event = threading.Event()
+        self.dropped_frames = 0
+        self.last_frame_time: datetime.datetime | None = None
         # Use RLock for connection mutex to allow nested locking if needed
         self.conn_mutex = RLock()
         self.disconnects = []
@@ -92,9 +96,10 @@ class VideoCaptureBase(EvilEyeBase):
         Always starts threads, even if not initialized - reconnect logic will handle it.
         This allows reconnect logic to work from the start.
         """
+        self.stop_event.clear()
         self.run_flag = True
-        self.grab_thread = threading.Thread(target=self._grab_frames)
-        self.retrieve_thread = threading.Thread(target=self._retrieve_frames)
+        self.grab_thread = threading.Thread(target=self._grab_frames, daemon=True)
+        self.retrieve_thread = threading.Thread(target=self._retrieve_frames, daemon=True)
         self.grab_thread.start()
         self.retrieve_thread.start()
 
@@ -199,28 +204,31 @@ class VideoCaptureBase(EvilEyeBase):
         self._start_recording()
 
     def stop(self) -> None:
+        """Stop capture threads and recording, cleanup queues."""
         self.run_flag = False
-        # Stop recording if running
+        self.stop_event.set()
         try:
             if self.recorder_manager:
                 self.recorder_manager.stop()
         except Exception:
             pass
-        # if self.capture_thread:
-        #     self.capture_thread.join()
-        #     self.capture_thread = None
-        #     print('Capture stopped')
-        if self.grab_thread:
-            if self.grab_thread.is_alive():
-                self.grab_thread.join()
-            self.grab_thread = None
-        if self.retrieve_thread:
-            if self.retrieve_thread.is_alive():
-                self.retrieve_thread.join()
-            self.retrieve_thread = None
+        for thread_attr in ("grab_thread", "retrieve_thread"):
+            t = getattr(self, thread_attr, None)
+            if t:
+                try:
+                    t.join(timeout=2.0)
+                except Exception:
+                    pass
+            setattr(self, thread_attr, None)
+        self._cleanup_queue()
+        try:
+            self.logger.info(f"Capture stopped for {self.source_names}, dropped_frames={self.dropped_frames}")
+        except Exception:
+            pass
 
     def set_params_impl(self) -> None:
         self.release()
+        self.capture_config = CaptureConfig.from_dict(self.params.get('capture'))
         self.split_stream = self.params.get('split', False)
         self.num_split = self.params.get('num_split', None)
         self.src_coords = self.params.get('src_coords', None)
@@ -239,7 +247,7 @@ class VideoCaptureBase(EvilEyeBase):
         # DropOldestQueue remains for live sources to prefer fresh frames.
         if self.source_type == CaptureDeviceType.VideoFile:
             from queue import Queue  # local import to avoid circular import issues
-            self.frames_queue = Queue(maxsize=CaptureConstants.DEFAULT_QUEUE_SIZE)
+            self.frames_queue = Queue(maxsize=self.capture_config.queue_size)
 
         if self.source_type == CaptureDeviceType.IpCamera:
             parsed = urlparse(self.source_address)
@@ -318,7 +326,7 @@ class VideoCaptureBase(EvilEyeBase):
         """
         if not frame_read:
             return
-            
+
         if self.source_type == CaptureDeviceType.VideoFile:
             if self.video_current_frame is None:
                 self.video_current_frame = 0
@@ -446,9 +454,9 @@ class VideoCaptureBase(EvilEyeBase):
             fps_multiplier = CaptureConstants.FPS_MULTIPLIER_IP_CAMERA if source_type == CaptureDeviceType.IpCamera else CaptureConstants.FPS_MULTIPLIER_DEFAULT
             sleep_seconds = 1.0 / (fps_multiplier * fps) - elapsed_seconds
             if sleep_seconds <= 0.0:
-                sleep_seconds = CaptureConstants.MIN_SLEEP_SECONDS
+                sleep_seconds = self.capture_config.min_sleep_seconds
         else:
-            sleep_seconds = CaptureConstants.DEFAULT_SLEEP_SECONDS
+            sleep_seconds = self.capture_config.default_sleep_seconds
         
         return sleep_seconds
 
