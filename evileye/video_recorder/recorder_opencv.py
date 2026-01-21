@@ -9,7 +9,10 @@ from typing import Optional
 from evileye.core.logger import get_module_logger
 from evileye.video_recorder.recording_params import RecordingParams
 from evileye.video_recorder.recorder_base import VideoRecorderBase, SourceMeta
-from evileye.video_recorder.utils import check_and_delete_small_files
+from evileye.video_recorder.path_generator import PathGenerator
+from evileye.video_recorder.constants import RecorderConstants
+from evileye.video_recorder.writer_factory import VideoWriterFactory
+from evileye.video_recorder.exceptions import RecorderInitializationError, RecorderWriteError
 
 
 class OpenCVRecorder(VideoRecorderBase):
@@ -21,16 +24,8 @@ class OpenCVRecorder(VideoRecorderBase):
         self._segment_started_ts: float = 0.0
         self._lock = threading.Lock()
         self._frame_size = (0, 0)
-        self._fps = 25.0
+        self._fps = RecorderConstants.DEFAULT_FPS
         self._current_file_path: Optional[Path] = None
-
-    def _fourcc_candidates(self, container: str) -> list[str]:
-        c = container.lower()
-        if c == "mp4":
-            # Prefer widely available MPEG4; then try H264 variants
-            return ["mp4v", "avc1", "H264", "X264"]
-        # mkv or others
-        return ["XVID", "MJPG", "mp4v", "H264"]
 
     def _next_path(self) -> str:
         # Daily subfolder YYYY-MM-DD inside out_dir, then camera name subfolder
@@ -64,46 +59,31 @@ class OpenCVRecorder(VideoRecorderBase):
         return str(out_dir / name)
 
     def _open_writer(self) -> None:
-        # Try configured container + codecs, then fall back to mkv with common codecs
-        tried = []
-        containers_to_try = [self.params.container]
-        if self.params.container.lower() != "mkv":
-            containers_to_try.append("mkv")
-
-        for cont in containers_to_try:
-            for fourcc_code in self._fourcc_candidates(cont):
-                try:
-                    # When container differs, adjust extension used in path
-                    orig_container = self.params.container
-                    self.params.container = cont
-                    path = self._next_path()
-                    self.params.container = orig_container  # restore for next iteration
-
-                    cc = cv2.VideoWriter_fourcc(*fourcc_code)
-                    self.logger.info(f"Opening VideoWriter path={path} fps={self._fps} size={self._frame_size} fourcc={fourcc_code} container={cont}")
-                    writer = cv2.VideoWriter(path, cc, self._fps, self._frame_size)
-                    if writer and writer.isOpened():
-                        # Commit chosen container and writer
-                        self.params.container = cont
-                        self._writer = writer
-                        self._current_file_path = Path(path)
-                        self.logger.info(f"VideoWriter opened successfully fourcc={fourcc_code} container={cont}")
-                        return
-                    else:
-                        tried.append((cont, fourcc_code))
-                        if writer:
-                            writer.release()
-                except Exception as e:
-                    tried.append((cont, fourcc_code))
-                    continue
-
-        self.logger.error(f"Failed to open VideoWriter after tries: {tried}")
-        raise RuntimeError("Failed to open VideoWriter")
+        """Open video writer using VideoWriterFactory."""
+        path = self._next_path()
+        
+        writer, codec, container = VideoWriterFactory.create_writer(
+            path=path,
+            fps=self._fps,
+            frame_size=self._frame_size,
+            container=self.params.container,
+            fallback_container="mkv"
+        )
+        
+        if writer:
+            self.params.container = container
+            self._writer = writer
+            self._current_file_path = Path(path)
+            self.logger.info(f"VideoWriter opened successfully codec={codec} container={container}")
+        else:
+            error_msg = f"Failed to open VideoWriter for path={path}"
+            self.logger.error(error_msg)
+            raise RecorderInitializationError(error_msg)
 
     def start(self, source_meta: SourceMeta, params: RecordingParams) -> None:
         self.source = source_meta
         self.params = params
-        self._fps = float(source_meta.fps or 25.0)
+        self._fps = float(source_meta.fps or RecorderConstants.DEFAULT_FPS)
         w = int(source_meta.width or 0)
         h = int(source_meta.height or 0)
         if w <= 0 or h <= 0:
@@ -140,39 +120,20 @@ class OpenCVRecorder(VideoRecorderBase):
                 current_path = self._current_file_path
                 old_writer = self._writer
                 
-                # Release writer and verify it's closed
-                try:
-                    old_writer.release()
-                    # Verify writer is closed
-                    if old_writer.isOpened():
-                        self.logger.warning("VideoWriter still opened after release(), forcing close")
-                        # Try to release again
-                        try:
-                            old_writer.release()
-                        except Exception as e:
-                            self.logger.debug(f"Error on second release attempt: {e}")
-                except Exception as e:
-                    self.logger.error(f"Error releasing VideoWriter: {e}", exc_info=True)
-                finally:
-                    # Clear references regardless of errors
-                    self._writer = None
-                    old_writer = None
-                    self._current_file_path = None
+                # Release writer safely
+                self._release_writer_safe(old_writer, self.logger)
+                
+                # Clear references
+                self._writer = None
+                old_writer = None
+                self._current_file_path = None
                 
                 # Check and delete if file is too small
-                if current_path and current_path.exists():
-                    if check_and_delete_small_files(current_path, self.params.min_file_size_kb):
-                        self.logger.info(f"Deleted small file: {current_path} (size < {self.params.min_file_size_kb} KB)")
-                
-                # Optional: force garbage collection to free memory immediately
-                # This can help with memory leaks in long-running processes
-                try:
-                    import gc
-                    # Only collect if we're in a memory-constrained environment
-                    # Uncomment the next line if memory leaks persist
-                    # gc.collect()
-                except Exception:
-                    pass
+                self._validate_and_delete_small_file(
+                    current_path,
+                    self.params.min_file_size_kb,
+                    self.logger
+                )
                 
             self._seq += 1
             self._segment_started_ts = time.time()
@@ -185,27 +146,20 @@ class OpenCVRecorder(VideoRecorderBase):
                 current_path = self._current_file_path
                 old_writer = self._writer
                 
-                # Release writer and verify it's closed
-                try:
-                    old_writer.release()
-                    # Verify writer is closed
-                    if old_writer.isOpened():
-                        self.logger.warning("VideoWriter still opened after release() in stop(), forcing close")
-                        try:
-                            old_writer.release()
-                        except Exception as e:
-                            self.logger.debug(f"Error on second release attempt in stop(): {e}")
-                except Exception as e:
-                    self.logger.error(f"Error releasing VideoWriter in stop(): {e}", exc_info=True)
-                finally:
-                    # Clear references regardless of errors
-                    self._writer = None
-                    old_writer = None
-                    self._current_file_path = None
+                # Release writer safely
+                self._release_writer_safe(old_writer, self.logger)
                 
-                if current_path and current_path.exists():
-                    if check_and_delete_small_files(current_path, self.params.min_file_size_kb):
-                        self.logger.info(f"Deleted small file: {current_path} (size < {self.params.min_file_size_kb} KB)")
+                # Clear references
+                self._writer = None
+                old_writer = None
+                self._current_file_path = None
+                
+                # Validate and delete if too small
+                self._validate_and_delete_small_file(
+                    current_path,
+                    self.params.min_file_size_kb,
+                    self.logger
+                )
             self.is_running = False
             self.logger.debug("OpenCV recorder stopped and resources released")
 

@@ -3,9 +3,11 @@ import numpy as np
 import threading
 import time
 import datetime
-from typing import Optional, List
+from typing import Optional, List, Tuple, Any
 from queue import Queue, Empty, Full
 from .video_capture_base import VideoCaptureBase, CaptureDeviceType
+from .constants import CaptureConstants
+from .exceptions import CaptureInitializationError, CaptureConnectionError
 from ..core.frame import CaptureImage, Frame
 from ..core.base_class import EvilEyeBase
 
@@ -36,8 +38,10 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         self.main_loop_thread = None
         self.frame_buffer = Queue(maxsize=10)
         self.last_frame = None
-        self.frame_lock = threading.Lock()
-        self.pipeline_lock = threading.Lock()
+        # Use RLock for frame_lock to allow potential nested operations
+        self.frame_lock = threading.RLock()
+        # Use RLock for pipeline_lock to allow potential nested operations
+        self.pipeline_lock = threading.RLock()
         self.gstreamer_available = GSTREAMER_AVAILABLE
         
         # Initialize GStreamer if available
@@ -227,7 +231,157 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         
         return pipeline
     
-    def _on_new_sample(self, appsink):
+    def _extract_frame_data(self, sample: Any) -> Tuple[np.ndarray, int, int, Optional[float]]:
+        """Extract frame data from GStreamer sample.
+        
+        Args:
+            sample: GStreamer sample object
+            
+        Returns:
+            Tuple of (frame_data, width, height, pts_value)
+            
+        Raises:
+            Exception: If frame extraction fails
+        """
+        buffer = sample.get_buffer()
+        caps = sample.get_caps()
+        pts_value = buffer.pts if buffer else None
+        
+        # Get frame dimensions
+        structure = caps.get_structure(0)
+        width = structure.get_int("width")[1]
+        height = structure.get_int("height")[1]
+        
+        # Try to get FPS from caps if not set
+        if self.source_fps is None and structure is not None:
+            try:
+                if structure.has_field("framerate"):
+                    num, den = structure.get_fraction("framerate")
+                    if den != 0:
+                        self.source_fps = float(num) / float(den)
+            except Exception:
+                pass
+        
+        # Map buffer and extract frame data
+        map_info = None
+        try:
+            success, map_info = buffer.map(Gst.MapFlags.READ)
+            if not success:
+                raise RuntimeError("Failed to map buffer")
+            
+            # Convert buffer to numpy array
+            frame_data = np.frombuffer(map_info.data, dtype=np.uint8)
+            frame_data = frame_data.reshape((height, width, 3))
+            
+            # Copy is necessary: GStreamer buffer is read-only and may be reused
+            # Copy once here to avoid issues with split_stream, recording, and subscriber processing
+            frame_data = frame_data.copy()
+            
+            return frame_data, width, height, pts_value
+        finally:
+            # Always unmap buffer to prevent memory leaks
+            if map_info is not None:
+                try:
+                    buffer.unmap(map_info)
+                except Exception:
+                    pass
+
+    def _process_gstreamer_frame_metadata(self, buffer, frame_data: np.ndarray) -> tuple[int | None, float | None]:
+        """Process frame metadata for GStreamer (video position, frame number).
+        
+        Args:
+            buffer: GStreamer buffer object
+            frame_data: Extracted frame data
+            
+        Returns:
+            Tuple of (current_video_frame, current_video_position)
+        """
+        current_video_frame = None
+        current_video_position = None
+        
+        if self.source_type == CaptureDeviceType.VideoFile:
+            try:
+                # Prefer buffer PTS for accurate position
+                pts_ns = buffer.pts
+                if pts_ns is not None and pts_ns != Gst.CLOCK_TIME_NONE and pts_ns >= 0:
+                    self.video_current_position = float(pts_ns) / 1e6  # ms
+                else:
+                    ok, pos_ns = self.pipeline.query_position(Gst.Format.TIME)
+                    if ok and pos_ns is not None and pos_ns >= 0:
+                        self.video_current_position = float(pos_ns) / 1e6  # milliseconds
+                    else:
+                        self.video_current_position = None
+            except Exception:
+                self.video_current_position = None
+            
+            # Approximate current frame if fps is known
+            if self.source_fps and self.video_current_position is not None:
+                self.video_current_frame = int((self.video_current_position / 1000.0) * self.source_fps)
+            else:
+                if self.video_current_frame is None:
+                    self.video_current_frame = 0
+                else:
+                    self.video_current_frame += 1
+            current_video_frame = self.video_current_frame
+            current_video_position = self.video_current_position
+        
+        return current_video_frame, current_video_position
+
+    def _store_frame(self, capture_image: CaptureImage, is_split: bool = False) -> None:
+        """Store frame in buffer and update counters.
+        
+        Args:
+            capture_image: CaptureImage object to store
+            is_split: Whether this is a split stream frame
+        """
+        with self.frame_lock:
+            if is_split:
+                # For split streams, store in frame_buffer
+                try:
+                    self.frame_buffer.put(capture_image, block=False)
+                except Full:
+                    self._perf_frame_buffer_full += 1
+                    # Remove oldest frame to make room
+                    try:
+                        old_frame = self.frame_buffer.get_nowait()
+                        old_frame = None
+                    except Empty:
+                        pass
+                    # Try to add new frame
+                    try:
+                        self.frame_buffer.put_nowait(capture_image)
+                    except Full:
+                        self.logger.warning(f"Frame buffer still full after removing oldest frame, dropping frame for source {capture_image.source_id}")
+            else:
+                # For single stream, store as last_frame
+                self.last_frame = capture_image
+            self.frame_id_counter += 1
+
+    def _notify_subscribers_async(self, capture_images: List[CaptureImage]) -> None:
+        """Notify subscribers asynchronously about new frames.
+        
+        Args:
+            capture_images: List of CaptureImage objects to notify about
+        """
+        for capture_image in capture_images:
+            def _notify(sub, img=capture_image):
+                try:
+                    if callable(sub):
+                        sub(img)
+                    else:
+                        if hasattr(sub, 'process_frame'):
+                            sub.process_frame(img)
+                        elif hasattr(sub, 'update'):
+                            sub.update()
+                except Exception as ex:
+                    try:
+                        self.logger.error(f"Error notifying subscriber {type(sub)}: {ex}")
+                    except Exception:
+                        pass
+            for sub in self.subscribers:
+                threading.Thread(target=_notify, args=(sub,), daemon=True).start()
+
+    def _on_new_sample(self, appsink: Any) -> Any:
         """
         Callback for new frame from GStreamer pipeline.
         """
@@ -239,10 +393,9 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             if sample:
                 processing_start = time.perf_counter()
                 # Mark as working when we receive first frame after init
-                # Allow processing frames even if is_working is False (within 5 seconds of init)
                 if self._init_time and not self.is_working:
                     now = time.time()
-                    if (now - self._init_time) < 5.0:  # Within 5 seconds of init
+                    if (now - self._init_time) < CaptureConstants.INIT_GRACE_PERIOD_SECONDS:
                         self.logger.debug(f"First frame received {(now - self._init_time):.1f}s after init - marking as working")
                         self.is_working = True
                 
@@ -252,201 +405,72 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     buffer = sample.get_buffer()
                     pts_value = buffer.pts if buffer else None
                     self._record_perf_metrics(pull_duration, process_time, pts_value)
-                    return Gst.FlowReturn.OK  # Return OK to continue, but don't process frame
-                
-                buffer = sample.get_buffer()
-                caps = sample.get_caps()
-                pts_value = buffer.pts if buffer else None
-                
-                # Get frame dimensions
-                structure = caps.get_structure(0)
-                width = structure.get_int("width")[1]
-                height = structure.get_int("height")[1]
-                # Try to get FPS from caps if not set
-                if self.source_fps is None and structure is not None:
-                    try:
-                        if structure.has_field("framerate"):
-                            num, den = structure.get_fraction("framerate")
-                            if den != 0:
-                                self.source_fps = float(num) / float(den)
-                    except Exception:
-                        pass
+                    return Gst.FlowReturn.OK
                 
                 # Extract frame data
-                # Use try/finally to guarantee buffer.unmap() is called even on exceptions
-                map_info = None
-                success = False
                 try:
-                    success, map_info = buffer.map(Gst.MapFlags.READ)
-                    if not success:
-                        process_time = time.perf_counter() - processing_start
-                        self._record_perf_metrics(pull_duration, process_time, pts_value)
-                        self.logger.error("Failed to map buffer")
-                        return Gst.FlowReturn.ERROR
-                    
-                    # Convert buffer to numpy array
-                    frame_data = np.frombuffer(map_info.data, dtype=np.uint8)
-                    frame_data = frame_data.reshape((height, width, 3))
-                    
-                    # Make array writable for OpenCV operations (copy once, use for all operations)
-                    frame_data = frame_data.copy()
-                    
-                    # Get current video position/frame for GUI like OpenCV implementation
-                    current_video_frame = None
-                    current_video_position = None
-                    if self.source_type == CaptureDeviceType.VideoFile:
-                        try:
-                            # Prefer buffer PTS for accurate position
-                            pts_ns = buffer.pts
-                            if pts_ns is not None and pts_ns != Gst.CLOCK_TIME_NONE and pts_ns >= 0:
-                                self.video_current_position = float(pts_ns) / 1e6  # ms
-                            else:
-                                ok, pos_ns = self.pipeline.query_position(Gst.Format.TIME)
-                                if ok and pos_ns is not None and pos_ns >= 0:
-                                    self.video_current_position = float(pos_ns) / 1e6  # milliseconds
-                                else:
-                                    self.video_current_position = None
-                        except Exception:
-                            self.video_current_position = None
-                        # Approximate current frame if fps is known
-                        if self.source_fps and self.video_current_position is not None:
-                            self.video_current_frame = int((self.video_current_position / 1000.0) * self.source_fps)
-                        else:
-                            if self.video_current_frame is None:
-                                self.video_current_frame = 0
-                            else:
-                                self.video_current_frame += 1
-                        current_video_frame = self.video_current_frame
-                        current_video_position = self.video_current_position
-                    
-                    # Maintain rolling FPS estimate as fallback
-                    now = time.time()
-                    self._fps_times.append(now)
-                    if len(self._fps_times) > 30:
-                        self._fps_times.pop(0)
-                    if self.source_fps is None and len(self._fps_times) >= 2:
-                        dt = self._fps_times[-1] - self._fps_times[0]
-                        if dt > 0:
-                            self.source_fps = (len(self._fps_times) - 1) / dt
-                    
-                    # Handle split_stream - create multiple CaptureImage objects from single frame
-                    if self.split_stream and self.src_coords and self.num_split > 0:
-                        # Create multiple CaptureImage objects for split streams
-                        capture_images = []
-                        for stream_cnt in range(self.num_split):
-                            if stream_cnt < len(self.src_coords):
-                                # Extract region from frame using src_coords
-                                x, y, w, h = self.src_coords[stream_cnt]
-                                # Ensure coordinates are integers
-                                x, y, w, h = int(x), int(y), int(w), int(h)
-                                # Extract region directly from original frame_data (before copy) to avoid double copy
-                                # Then copy only the region we need
-                                region = frame_data[y:y+h, x:x+w].copy()
-                                
-                                # Create CaptureImage for this split region
-                                capture_image = CaptureImage()
-                                capture_image.image = region
-                                capture_image.frame_id = self.frame_id_counter
-                                capture_image.time_stamp = now
-                                capture_image.source_id = self.source_ids[stream_cnt] if self.source_ids and stream_cnt < len(self.source_ids) else stream_cnt
-                                capture_image.current_video_frame = current_video_frame
-                                capture_image.current_video_position = current_video_position
-                                capture_images.append(capture_image)
-                        
-                        # Store all frames in frame_buffer with improved overflow handling
-                        with self.frame_lock:
-                            for img in capture_images:
-                                frame_added = False
-                                try:
-                                    self.frame_buffer.put(img, block=False)
-                                    frame_added = True
-                                except Full:
-                                    self._perf_frame_buffer_full += 1
-                                    # Remove oldest frame to make room
-                                    try:
-                                        old_frame = self.frame_buffer.get_nowait()
-                                        # Explicitly clear old frame to free memory
-                                        old_frame = None
-                                    except Empty:
-                                        pass
-                                    # Try to add new frame
-                                    try:
-                                        self.frame_buffer.put_nowait(img)
-                                        frame_added = True
-                                    except Full:
-                                        # Still full, drop frame and log warning
-                                        self.logger.warning(f"Frame buffer still full after removing oldest frame, dropping frame for source {img.source_id}")
-                                        frame_added = False
-                                
-                                if not frame_added:
-                                    # Frame was dropped, free memory
-                                    img.image = None
-                                    img = None
-                            
-                            # Store first frame as last_frame for compatibility
-                            if capture_images:
-                                self.last_frame = capture_images[0]
-                            self.frame_id_counter += 1
-                        
-                        # Notify subscribers asynchronously for each split frame
-                        for capture_image in capture_images:
-                            def _notify(sub, img=capture_image):
-                                try:
-                                    if callable(sub):
-                                        sub(img)
-                                    else:
-                                        if hasattr(sub, 'process_frame'):
-                                            sub.process_frame(img)
-                                except Exception as ex:
-                                    try:
-                                        self.logger.error(f"Error notifying subscriber {type(sub)}: {ex}")
-                                    except Exception:
-                                        pass
-                            for sub in self.subscribers:
-                                threading.Thread(target=_notify, args=(sub,), daemon=True).start()
-                    else:
-                        # Single stream - create one CaptureImage
-                        capture_image = CaptureImage()
-                        capture_image.image = frame_data
-                        capture_image.frame_id = self.frame_id_counter
-                        capture_image.time_stamp = now
-                        capture_image.source_id = self.source_ids[0] if self.source_ids else 0
-                        capture_image.current_video_frame = current_video_frame
-                        capture_image.current_video_position = current_video_position
-                        
-                        # Store frame
-                        with self.frame_lock:
-                            self.last_frame = capture_image
-                            self.frame_id_counter += 1
-                        
-                        # Notify subscribers asynchronously to avoid blocking appsink thread
-                        def _notify(sub):
-                            try:
-                                if callable(sub):
-                                    sub(capture_image)
-                                else:
-                                    if hasattr(sub, 'process_frame'):
-                                        sub.process_frame(capture_image)
-                                    elif hasattr(sub, 'update'):
-                                        sub.update()
-                            except Exception as ex:
-                                try:
-                                    self.logger.error(f"Error notifying subscriber {type(sub)}: {ex}")
-                                except Exception:
-                                    pass
-                        for subscriber in self.subscribers:
-                            threading.Thread(target=_notify, args=(subscriber,), daemon=True).start()
-                    
+                    frame_data, width, height, pts_value = self._extract_frame_data(sample)
+                except Exception as e:
                     process_time = time.perf_counter() - processing_start
-                    self._record_perf_metrics(pull_duration, process_time, pts_value)
-                    return Gst.FlowReturn.OK
-                finally:
-                    # Always unmap buffer to prevent memory leaks, even if exception occurred
-                    if map_info is not None:
-                        try:
-                            buffer.unmap(map_info)
-                        except Exception as e:
-                            self.logger.debug(f"Error unmapping buffer: {e}")
+                    self._record_perf_metrics(pull_duration, process_time, None)
+                    self.logger.error(f"Failed to extract frame data: {e}")
+                    return Gst.FlowReturn.ERROR
+                
+                # Process frame metadata
+                buffer = sample.get_buffer()
+                current_video_frame, current_video_position = self._process_gstreamer_frame_metadata(buffer, frame_data)
+                
+                # Maintain rolling FPS estimate as fallback
+                now = time.time()
+                self._fps_times.append(now)
+                if len(self._fps_times) > 30:
+                    self._fps_times.pop(0)
+                if self.source_fps is None and len(self._fps_times) >= 2:
+                    dt = self._fps_times[-1] - self._fps_times[0]
+                    if dt > 0:
+                        self.source_fps = (len(self._fps_times) - 1) / dt
+                
+                # Create CaptureImage objects
+                if self.split_stream and self.src_coords and self.num_split > 0:
+                    capture_images = self._handle_split_stream(
+                        src_image=frame_data,
+                        frame_id=self.frame_id_counter,
+                        timestamp=now,
+                        current_video_frame=current_video_frame,
+                        current_video_position=current_video_position
+                    )
+                    
+                    # Store frames
+                    if capture_images:
+                        for img in capture_images:
+                            self._store_frame(img, is_split=True)
+                        # Store first frame as last_frame for compatibility
+                        with self.frame_lock:
+                            self.last_frame = capture_images[0]
+                    
+                    # Notify subscribers asynchronously
+                    self._notify_subscribers_async(capture_images)
+                else:
+                    # Single stream
+                    source_id = self.source_ids[0] if self.source_ids else 0
+                    capture_image = self._create_capture_image(
+                        image=frame_data,
+                        frame_id=self.frame_id_counter,
+                        timestamp=now,
+                        source_id=source_id,
+                        current_video_frame=current_video_frame,
+                        current_video_position=current_video_position
+                    )
+                    
+                    # Store frame
+                    self._store_frame(capture_image, is_split=False)
+                    
+                    # Notify subscribers asynchronously
+                    self._notify_subscribers_async([capture_image])
+                
+                process_time = time.perf_counter() - processing_start
+                self._record_perf_metrics(pull_duration, process_time, pts_value)
+                return Gst.FlowReturn.OK
         except Exception as e:
             self.logger.error(f"Error processing frame: {e}")
             return Gst.FlowReturn.ERROR
@@ -843,7 +867,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     # For IP cameras, EOS means disconnect - but ignore early EOS (within 5 seconds of init)
                     # This prevents false positives when pipeline is still initializing
                     now = time.time()
-                    if self._init_time and (now - self._init_time) < 5.0:
+                    if self._init_time and (now - self._init_time) < CaptureConstants.INIT_GRACE_PERIOD_SECONDS:
                         self.logger.debug(f"Ignoring early EOS ({(now - self._init_time):.1f}s after init) - pipeline may still be initializing")
                         return
                     # For IP cameras, EOS means disconnect - mark not working; monitor thread handles reconnect
@@ -960,13 +984,17 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     self._recording_check_thread.start()
                 
                 return True
+            except CaptureInitializationError:
+                # Re-raise initialization errors
+                raise
             except Exception as e:
-                self.logger.error(f"Failed to initialize GStreamer capture: {e}")
+                error_msg = f"Failed to initialize GStreamer capture: {e}"
+                self.logger.error(error_msg, exc_info=True)
                 self.is_inited = False
                 self.is_working = False
                 # Store error for protocol switching logic
                 self._last_init_error = e
-                return False
+                raise CaptureInitializationError(error_msg) from e
         else:
             # For non-IP cameras, use timeout to prevent hanging
             import threading as _thr_init
@@ -1073,7 +1101,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         except Exception as e:
             self.logger.debug(f"Error starting recording: {e}")
     
-    def release(self):
+    def release(self) -> None:
         """
         Release resources and stop pipeline.
         """
@@ -1245,7 +1273,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 # Check if reconnection is already in progress (for both IP cameras and video files)
                 if self._reconnecting:
                     self.logger.debug(f"Reconnection already in progress for {self.source_names}, waiting...")
-                    time.sleep(1.0)
+                    time.sleep(CaptureConstants.RECONNECT_SLEEP_LONG)
                     continue
                 
                 # For IP cameras, use reconnect loop instead of direct init()
@@ -1253,11 +1281,11 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     self.logger.info(f"Source {self.source_names} not initialized (is_inited={self.is_inited}, pipeline={self.pipeline is not None}), starting reconnect loop")
                     threading.Thread(target=self._reconnect_loop, daemon=True).start()
                     # Wait a bit before checking again
-                    time.sleep(2.0)
+                    time.sleep(CaptureConstants.RECONNECT_MONITOR_INTERVAL)
                 else:
                     # For video files, try direct init (but only if not already reconnecting via EOS handler)
                     self.logger.debug(f"Video file {self.source_names} not initialized (is_inited={self.is_inited}, pipeline={self.pipeline is not None}), attempting reconnect")
-                    time.sleep(0.1)
+                    time.sleep(CaptureConstants.RECONNECT_SLEEP_SHORT)
                     if self.run_flag:
                         try:
                             if self.init():
@@ -1291,8 +1319,8 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                             with self.frame_lock:
                                 last_frame_time = getattr(self.last_frame, 'time_stamp', 0) if self.last_frame else 0
                             now = time.time()
-                            if last_frame_time > 0 and (now - last_frame_time) > 15.0:
-                                # No frames for 15 seconds - mark as not working
+                            if last_frame_time > 0 and (now - last_frame_time) > CaptureConstants.FRAME_TIMEOUT_SECONDS:
+                                # No frames for timeout period - mark as not working
                                 if self.is_working:
                                     self.logger.warning(f"Pipeline PLAYING but no frames received after 15s for {self.source_names}, marking as not working")
                                     self.is_working = False
@@ -1331,9 +1359,9 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             # Sleep according to monitor interval
             try:
                 cfg = (self.params or {}).get('reconnect', {})
-                monitor_sleep = float(cfg.get('monitor_interval_sec', 2.0))
+                monitor_sleep = float(cfg.get('monitor_interval_sec', CaptureConstants.RECONNECT_MONITOR_INTERVAL))
             except Exception:
-                monitor_sleep = 2.0
+                monitor_sleep = CaptureConstants.RECONNECT_MONITOR_INTERVAL
             time.sleep(monitor_sleep)
     
     def _reconnect_loop(self):
@@ -1894,11 +1922,12 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         except Exception as e:
             self.logger.error(f"Error cleaning up recording branch: {e}", exc_info=True)
     
-    def _retrieve_frames(self):
+    def _retrieve_frames(self) -> None:
         """
         Retrieve frames (not used in this implementation).
+        
+        GStreamer handles frame retrieval automatically via callbacks.
         """
-        # GStreamer handles frame retrieval automatically via callbacks
         pass
     
     def default(self):
