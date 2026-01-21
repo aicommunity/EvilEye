@@ -1,7 +1,7 @@
-from typing import List
+from typing import List, Optional, Any
 from abc import ABC, abstractmethod
 from ..core.base_class import EvilEyeBase
-from queue import Queue
+from queue import Queue, Empty
 import threading
 from ..object_tracker.tracking_results import TrackingResult, TrackingResultList
 
@@ -16,7 +16,7 @@ class ObjectMultiCameraTrackingBase(EvilEyeBase):
         self.queue_out = Queue()
         self.source_ids = []
         self.enable = False
-        self.processing_thread = threading.Thread(target=self._process_impl)
+        self.processing_thread = None
 
     def set_params_impl(self):
         self.source_ids = self.params.get('source_ids', [])
@@ -30,21 +30,20 @@ class ObjectMultiCameraTrackingBase(EvilEyeBase):
 
         return params
 
-    def put(self, track_info: List[TrackingResultList]):
+    def put(self, track_info: List[TrackingResultList]) -> bool:
         if not self.queue_in.full():
             self.queue_in.put(track_info)
             return True
         
-        #designator = '; '.join(f"{t[0].source_id}:{t[0].frame_id}" for t in track_info)
-        #self.logger.info(f"Failed to put tracking info {designator} to ObjectMultiCameraTrackingBase queue. Queue is Full.")
-        #return False
+        return False
 
-    def get(self):
-        if self.queue_out.empty():
+    def get(self) -> Optional[Any]:
+        try:
+            return self.queue_out.get_nowait()
+        except Empty:
             return None
-        return self.queue_out.get()
 
-    def get_oueue_out_size(self):
+    def get_queue_out_size(self) -> int:
         return self.queue_out.qsize()
 
     def get_source_ids(self):
@@ -52,6 +51,8 @@ class ObjectMultiCameraTrackingBase(EvilEyeBase):
 
     def start(self):
         self.run_flag = True
+        if self.processing_thread is None or not self.processing_thread.is_alive():
+            self.processing_thread = threading.Thread(target=self._process_impl)
         self.processing_thread.start()
 
     def stop(self):

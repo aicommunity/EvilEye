@@ -98,11 +98,6 @@ class MCTrack:
         return smooth_feat
     
     @property
-    def age(self):
-        _age = min(t.tracklet_len for t in self.sc_tracks.values())
-        return _age
-
-    @property
     def age(self) -> int:
         if len(self.sc_tracks) == 0:
             return 0
