@@ -1,12 +1,15 @@
-import cv2
-from .step_abstract import StepAbstarct
+from __future__ import annotations
 
-class Input(StepAbstarct):
-    def __init__(self, aNextStep=None):
-        super().__init__(aNextStep)
-        
-    def _applyStep(self, aFrame):
-        return aFrame
+import numpy as np
 
-        
-          
+from .step_abstract import StepAbstract
+
+
+class Input(StepAbstract):
+    """Начальный шаг цепочки препроцессинга."""
+
+    def __init__(self, next_step: StepAbstract | None = None):
+        super().__init__(next_step)
+
+    def _applyStep(self, frame: np.ndarray) -> np.ndarray:
+        return frame

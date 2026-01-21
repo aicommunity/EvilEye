@@ -1,4 +1,4 @@
-from .step_abstract import StepAbstarct
+from .step_abstract import StepAbstract
 from .step_input import Input
 from .step_normalize import Normalize
 from .step_output import Output
