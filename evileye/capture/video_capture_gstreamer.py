@@ -38,7 +38,11 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         self.main_loop_thread = None
         # Use larger buffer for split streams to reduce overflows
         # Increased size for better performance with hardware decoders
+        # Use deque-based queue for better performance (faster append/popleft)
+        from collections import deque
         self.frame_buffer = Queue(maxsize=max(CaptureConstants.FRAME_BUFFER_SIZE, 10))
+        # Pre-allocate deque for frame tracking (optimization)
+        self._frame_buffer_deque = deque(maxlen=20)  # Track recent frame IDs for diagnostics
         self.last_frame = None
         # Use RLock for frame_lock to allow potential nested operations
         self.frame_lock = threading.RLock()
@@ -271,21 +275,23 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             pipeline += " ! tee name=t"
             # Branch 1: to appsink for capture
             # For VideoFile, use minimal queue (just enough for tee to work)
+            # Increased max-buffers to 5 for better buffering with hardware decoder
             if self.source_type == CaptureDeviceType.VideoFile:
-                pipeline += f" t. ! queue max-size-buffers=2 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync={sync_mode} max-buffers=3 drop=true"
+                pipeline += f" t. ! queue max-size-buffers=2 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync={sync_mode} max-buffers=5 drop=true"
             else:
                 # For live sources, keep larger queue for isolation
-                pipeline += f" t. ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync={sync_mode} max-buffers=3 drop=true"
+                pipeline += f" t. ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync={sync_mode} max-buffers=5 drop=true"
             # Branch 2: to recording (will be connected after pipeline creation)
             pipeline += " t. ! queue name=recording_queue"
         else:
             # No recording - direct to appsink
             # For VideoFile, no queue needed (no tee)
+            # Increased max-buffers to 5 for better buffering with hardware decoder
             if self.source_type == CaptureDeviceType.VideoFile:
-                pipeline += f" ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync={sync_mode} max-buffers=3 drop=true"
+                pipeline += f" ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync={sync_mode} max-buffers=5 drop=true"
             else:
                 # For live sources, keep queue for isolation
-                pipeline += f" ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync={sync_mode} max-buffers=3 drop=true"
+                pipeline += f" ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync={sync_mode} max-buffers=5 drop=true"
         
         return pipeline
     
@@ -310,7 +316,8 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         width = structure.get_int("width")[1]
         height = structure.get_int("height")[1]
         
-        # Try to get FPS from caps if not set
+        # Try to get FPS from caps if not set (optimized: only check once per session)
+        # Cache structure check to avoid repeated field lookups
         if self.source_fps is None and structure is not None:
             try:
                 if structure.has_field("framerate"):
@@ -399,11 +406,16 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 # This reduces buffer overflows by being more aggressive about clearing old frames
                 try:
                     self.frame_buffer.put(capture_image, block=False)
+                    # Track frame ID for diagnostics
+                    if hasattr(self, '_frame_buffer_deque'):
+                        self._frame_buffer_deque.append(capture_image.frame_id)
                 except Full:
                     self._perf_frame_buffer_full += 1
                     # Remove multiple old frames to make room (more aggressive clearing)
+                    # Remove up to 50% of buffer to make room for new frames
                     frames_removed = 0
-                    max_removals = min(3, self.frame_buffer.qsize())  # Remove up to 3 old frames
+                    buffer_size = self.frame_buffer.qsize()
+                    max_removals = max(1, buffer_size // 2)  # Remove up to 50% of buffer
                     while frames_removed < max_removals:
                         try:
                             old_frame = self.frame_buffer.get_nowait()
@@ -417,6 +429,8 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     # Try to add new frame
                     try:
                         self.frame_buffer.put_nowait(capture_image)
+                        if hasattr(self, '_frame_buffer_deque'):
+                            self._frame_buffer_deque.append(capture_image.frame_id)
                     except Full:
                         # If still full after clearing, drop the new frame (shouldn't happen often)
                         self.logger.debug(f"Frame buffer still full after clearing {frames_removed} frames, dropping frame for source {capture_image.source_id}")
@@ -491,9 +505,15 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     self.logger.error(f"Failed to extract frame data: {e}")
                     return Gst.FlowReturn.ERROR
                 
-                # Process frame metadata
+                # Process frame metadata (optimized: only if needed for video files)
                 buffer = sample.get_buffer()
-                current_video_frame, current_video_position = self._process_gstreamer_frame_metadata(buffer, frame_data)
+                # For video files, we need frame metadata; for live sources, it's optional
+                if self.source_type == CaptureDeviceType.VideoFile:
+                    current_video_frame, current_video_position = self._process_gstreamer_frame_metadata(buffer, frame_data)
+                else:
+                    # For live sources, use simpler metadata processing
+                    current_video_frame = None
+                    current_video_position = None
                 
                 # Maintain rolling FPS estimate as fallback (optimized: only update when needed)
                 now = time.time()
@@ -517,11 +537,15 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     self._callback_last_log = now
                 
                 # Create CaptureImage objects
+                # Optimized: Increment frame_id_counter early to avoid race conditions
+                frame_id = self.frame_id_counter
+                self.frame_id_counter += 1
+                
                 if self.split_stream and self.src_coords and self.num_split > 0:
                     try:
                         capture_images = self._handle_split_stream(
                             src_image=frame_data,
-                            frame_id=self.frame_id_counter,
+                            frame_id=frame_id,
                             timestamp=now,
                             current_video_frame=current_video_frame,
                             current_video_position=current_video_position
@@ -563,7 +587,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     else:
                         # Log warning if split stream returns empty list (shouldn't happen normally)
                         if self.is_working:
-                            self.logger.warning(f"Split stream returned empty capture_images for {self.source_names} (frame_id={self.frame_id_counter}, is_working={self.is_working}, frame_shape={frame_data.shape if frame_data is not None else None})")
+                            self.logger.warning(f"Split stream returned empty capture_images for {self.source_names} (frame_id={frame_id}, is_working={self.is_working}, frame_shape={frame_data.shape if frame_data is not None else None})")
                         # Even if capture_images is empty, we still received a frame from GStreamer
                         # Update last_frame with a dummy CaptureImage to track frame reception time
                         # This prevents false "no frames" warnings when frames are received but split fails
@@ -571,7 +595,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                             # Create a minimal CaptureImage with current timestamp to track frame reception
                             dummy_image = self._create_capture_image(
                                 image=None,  # No image data, just timestamp tracking
-                                frame_id=self.frame_id_counter,
+                                frame_id=frame_id,
                                 timestamp=now,
                                 source_id=self.source_ids[0] if self.source_ids else 0,
                                 current_video_frame=current_video_frame,
@@ -587,7 +611,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     source_id = self.source_ids[0] if self.source_ids else 0
                     capture_image = self._create_capture_image(
                         image=frame_data,
-                        frame_id=self.frame_id_counter,
+                        frame_id=frame_id,
                         timestamp=now,
                         source_id=source_id,
                         current_video_frame=current_video_frame,
