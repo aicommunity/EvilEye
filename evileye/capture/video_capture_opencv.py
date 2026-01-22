@@ -30,6 +30,12 @@ class VideoCaptureOpencv(VideoCaptureBase):
         self.capture = cv2.VideoCapture()
         self.mutex = Lock()
 
+        # Перф-метрики для оценки фактического FPS захвата (аналогично GStreamer)
+        now = time.time()
+        self._perf_stats_interval = 5.0
+        self._perf_last_log = now
+        self._perf_frame_count = 0
+
     def is_opened(self) -> bool:
         return self.capture.isOpened()
 
@@ -363,6 +369,23 @@ class VideoCaptureOpencv(VideoCaptureBase):
                 if dropped:
                     self.dropped_frames += 1
                 self.frame_id_counter += 1
+
+                # Обновляем перф-метрики для оценки фактического FPS
+                try:
+                    self._perf_frame_count += 1
+                    now = time.time()
+                    if now - self._perf_last_log >= self._perf_stats_interval:
+                        interval = now - self._perf_last_log
+                        if interval <= 0:
+                            interval = 1e-6
+                        fps = self._perf_frame_count / interval
+                        source_label = ",".join(str(name) for name in self.source_names) if self.source_names else str(self.source_address)
+                        self.logger.info(f"Capture perf [{source_label}]: FPS={fps:.2f}")
+                        self._perf_last_log = now
+                        self._perf_frame_count = 0
+                except Exception:
+                    # Перф-логирование не должно ломать захват
+                    pass
                 # Feed OpenCV recorder if present
                 try:
                     if self.recorder_manager and getattr(self.recorder_manager, 'recorder', None):

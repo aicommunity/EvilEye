@@ -36,7 +36,8 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         self.appsink = None
         self.loop = None
         self.main_loop_thread = None
-        self.frame_buffer = Queue(maxsize=CaptureConstants.DEFAULT_QUEUE_SIZE)
+        # Use larger buffer for split streams to reduce overflows
+        self.frame_buffer = Queue(maxsize=CaptureConstants.FRAME_BUFFER_SIZE)
         self.last_frame = None
         # Use RLock for frame_lock to allow potential nested operations
         self.frame_lock = threading.RLock()
@@ -77,6 +78,9 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         self._perf_last_pts = None
         self._perf_frame_buffer_full = 0
         self._recording_queue_elem = None
+        # Track callback frequency for diagnostics
+        self._callback_count = 0
+        self._callback_last_log = now
 
     # Debug stack dump removed
     
@@ -142,8 +146,9 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 )
             else:
                 # Fallback: generic software decode supporting many containers/codecs
-                # Add queues to decouple threads and avoid teardown stalls
-                pipeline = f"filesrc location={self.source_address} ! decodebin name=dec ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 ! videoconvert ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0"
+                # Optimized pipeline: reduce queues for better performance (queues add latency)
+                # For VideoFile, we want maximum speed, not thread decoupling
+                pipeline = f"filesrc location={self.source_address} ! decodebin name=dec ! videoconvert"
                    
             
         elif self.source_type == CaptureDeviceType.Device:
@@ -199,35 +204,54 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         
         # Add common pipeline end - simplified
         # Apply desired FPS if requested using videorate (before format caps/appsink)
+        # NOTE: For VideoFile, videorate can slow down playback unnecessarily.
+        # Only apply videorate for live sources (IpCamera) or when explicitly desired.
         if self.desired_fps and self.desired_fps > 0:
-            try:
-                # Convert to fraction (prefer integer; fallback to 1001 base)
-                fps = float(self.desired_fps)
-                if abs(fps - round(fps)) < 1e-6:
-                    num, den = int(round(fps)), 1
-                else:
-                    # Use 1001 denominator for common NTSC-like framerates
-                    num, den = int(round(fps * 1001)), 1001
-                # Limit to desired FPS without upsampling (no capsfilter forcing framerate)
-                # videorate max-rate drops frames if source faster; if slower, it passes through
-                pipeline += f" ! videorate max-rate={num} drop-only=true"
-            except Exception:
-                # If anything goes wrong, skip forcing fps
-                pass
+            # For VideoFile, videorate may unnecessarily slow down playback
+            # Only apply if it's a live source or explicitly needed
+            if self.source_type != CaptureDeviceType.VideoFile:
+                try:
+                    # Convert to fraction (prefer integer; fallback to 1001 base)
+                    fps = float(self.desired_fps)
+                    if abs(fps - round(fps)) < 1e-6:
+                        num, den = int(round(fps)), 1
+                    else:
+                        # Use 1001 denominator for common NTSC-like framerates
+                        num, den = int(round(fps * 1001)), 1001
+                    # Limit to desired FPS without upsampling (no capsfilter forcing framerate)
+                    # videorate max-rate drops frames if source faster; if slower, it passes through
+                    pipeline += f" ! videorate max-rate={num} drop-only=true"
+                except Exception:
+                    # If anything goes wrong, skip forcing fps
+                    pass
+        # Determine sync mode: false for VideoFile (no need to sync with clock), true for live sources
+        sync_mode = "false" if self.source_type == CaptureDeviceType.VideoFile else "true"
+        
         # If continuous recording is enabled, use tee to split stream: one to appsink, one to recording
         continuous_enabled = (self.recording_params and 
                               (self.recording_params.continuous_recording_enabled or 
                                (self.recording_params.enabled and not self.recording_params.event_recording_enabled)))
         if continuous_enabled:
             # Use tee to split stream
+            # NOTE: tee requires queues on each branch to avoid blocking
             pipeline += " ! tee name=t"
-            # Branch 1: to appsink for capture (with queue for isolation)
-            pipeline += " t. ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync=true max-buffers=1 drop=true"
+            # Branch 1: to appsink for capture
+            # For VideoFile, use minimal queue (just enough for tee to work)
+            if self.source_type == CaptureDeviceType.VideoFile:
+                pipeline += f" t. ! queue max-size-buffers=2 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync={sync_mode} max-buffers=3 drop=true"
+            else:
+                # For live sources, keep larger queue for isolation
+                pipeline += f" t. ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync={sync_mode} max-buffers=3 drop=true"
             # Branch 2: to recording (will be connected after pipeline creation)
             pipeline += " t. ! queue name=recording_queue"
         else:
             # No recording - direct to appsink
-            pipeline += " ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync=true max-buffers=1 drop=true"
+            # For VideoFile, no queue needed (no tee)
+            if self.source_type == CaptureDeviceType.VideoFile:
+                pipeline += f" ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync={sync_mode} max-buffers=3 drop=true"
+            else:
+                # For live sources, keep queue for isolation
+                pipeline += f" ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync={sync_mode} max-buffers=3 drop=true"
         
         return pipeline
     
@@ -369,29 +393,41 @@ class VideoCaptureGStreamer(VideoCaptureBase):
     def _notify_subscribers_async(self, capture_images: List[CaptureImage]) -> None:
         """Notify subscribers asynchronously about new frames.
         
+        Optimized: Only notify if there are subscribers, and use a single thread for all notifications.
+        
         Args:
             capture_images: List of CaptureImage objects to notify about
         """
-        for capture_image in capture_images:
-            # Pass capture_image through args instead of default parameter to avoid closure capture
-            # This prevents memory leaks by not holding reference in closure
-            def _notify(sub, img):
+        # Early exit if no subscribers - avoid unnecessary work
+        if not self.subscribers:
+            return
+        
+        # Use a single thread for all notifications to reduce overhead
+        def _notify_all():
+            try:
+                for capture_image in capture_images:
+                    for sub in self.subscribers:
+                        try:
+                            if callable(sub):
+                                sub(capture_image)
+                            else:
+                                if hasattr(sub, 'process_frame'):
+                                    sub.process_frame(capture_image)
+                                elif hasattr(sub, 'update'):
+                                    sub.update()
+                        except Exception as ex:
+                            try:
+                                self.logger.error(f"Error notifying subscriber {type(sub)}: {ex}")
+                            except Exception:
+                                pass
+            except Exception as ex:
                 try:
-                    if callable(sub):
-                        sub(img)
-                    else:
-                        if hasattr(sub, 'process_frame'):
-                            sub.process_frame(img)
-                        elif hasattr(sub, 'update'):
-                            sub.update()
-                except Exception as ex:
-                    try:
-                        self.logger.error(f"Error notifying subscriber {type(sub)}: {ex}")
-                    except Exception:
-                        pass
-            for sub in self.subscribers:
-                # Pass capture_image as argument, not in closure default parameter
-                threading.Thread(target=_notify, args=(sub, capture_image), daemon=True).start()
+                    self.logger.error(f"Error in subscriber notification thread: {ex}")
+                except Exception:
+                    pass
+        
+        # Start single thread for all notifications
+        threading.Thread(target=_notify_all, daemon=True).start()
 
     def _on_new_sample(self, appsink: Any) -> Any:
         """
@@ -418,15 +454,26 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 buffer = sample.get_buffer()
                 current_video_frame, current_video_position = self._process_gstreamer_frame_metadata(buffer, frame_data)
                 
-                # Maintain rolling FPS estimate as fallback
+                # Maintain rolling FPS estimate as fallback (optimized: only update when needed)
                 now = time.time()
-                self._fps_times.append(now)
-                if len(self._fps_times) > 30:
-                    self._fps_times.pop(0)
-                if self.source_fps is None and len(self._fps_times) >= 2:
-                    dt = self._fps_times[-1] - self._fps_times[0]
-                    if dt > 0:
-                        self.source_fps = (len(self._fps_times) - 1) / dt
+                # Only update FPS estimate if not already set or if we need to recalculate
+                if self.source_fps is None:
+                    self._fps_times.append(now)
+                    if len(self._fps_times) > 30:
+                        self._fps_times.pop(0)
+                    if len(self._fps_times) >= 2:
+                        dt = self._fps_times[-1] - self._fps_times[0]
+                        if dt > 0:
+                            self.source_fps = (len(self._fps_times) - 1) / dt
+                
+                # Track callback frequency for diagnostics (optimized: only log periodically)
+                self._callback_count += 1
+                if now - self._callback_last_log >= 5.0:
+                    source_label = ",".join(str(name) for name in self.source_names) if self.source_names else str(self.source_address)
+                    callback_fps = self._callback_count / (now - self._callback_last_log)
+                    self.logger.debug(f"Capture callback [{source_label}]: {callback_fps:.2f} callbacks/sec, callback_count={self._callback_count}")
+                    self._callback_count = 0
+                    self._callback_last_log = now
                 
                 # Create CaptureImage objects
                 if self.split_stream and self.src_coords and self.num_split > 0:
@@ -469,8 +516,9 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                         # Store first frame as last_frame for compatibility
                         with self.frame_lock:
                             self.last_frame = capture_images[0]
-                        # Notify subscribers asynchronously
-                        self._notify_subscribers_async(capture_images)
+                        # Notify subscribers asynchronously (only if there are subscribers)
+                        if self.subscribers:
+                            self._notify_subscribers_async(capture_images)
                     else:
                         # Log warning if split stream returns empty list (shouldn't happen normally)
                         if self.is_working:
@@ -520,8 +568,10 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     # Store frame
                     self._store_frame(capture_image, is_split=False)
                     
-                    # Notify subscribers asynchronously
-                    self._notify_subscribers_async([capture_image])
+                    # Notify subscribers asynchronously (only if there are subscribers)
+                    # Check before calling to avoid unnecessary thread creation
+                    if self.subscribers:
+                        self._notify_subscribers_async([capture_image])
                 
                 process_time = time.perf_counter() - processing_start
                 self._record_perf_metrics(pull_duration, process_time, pts_value)
@@ -546,8 +596,9 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 self._perf_last_pts = buffer_pts
 
             now = time.time()
-            # if now - self._perf_last_log >= self._perf_stats_interval:
-            #     self._log_perf_stats(now)
+            # Периодически логируем perf-метрики, включая фактический FPS
+            if now - self._perf_last_log >= self._perf_stats_interval:
+                self._log_perf_stats(now)
         except Exception as e:
             self.logger.debug(f"Failed to record perf metrics: {e}")
 
@@ -591,7 +642,8 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         if recording_queue_buffers is not None:
             msg_parts.append(f"record_queue_buf={recording_queue_buffers}")
 
-        # self.logger.info(f"Capture perf [{source_label}]: " + ", ".join(msg_parts))
+        # Логируем в INFO, чтобы строки попадали в стандартный debug-лог
+        self.logger.info(f"Capture perf [{source_label}]: " + ", ".join(msg_parts))
 
         # Reset counters for next interval
         self._perf_last_log = now
@@ -622,16 +674,18 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             base_rtsp = f"rtspsrc location={self.source_address} protocols={protocol}"
         
         # Build common tail (videoconvert + queue + appsink/tee)
+        # For IP cameras, use sync=true to synchronize with real-time clock
+        # (Note: _build_pipeline_candidates is only called for IpCamera, so sync is always true here)
         common_tail = " ! videoconvert"
         continuous_enabled = (self.recording_params and 
                               (self.recording_params.continuous_recording_enabled or 
                                (self.recording_params.enabled and not self.recording_params.event_recording_enabled)))
         if continuous_enabled:
             common_tail += " ! tee name=t"
-            common_tail += " t. ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync=true max-buffers=1 drop=true"
+            common_tail += " t. ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync=true max-buffers=3 drop=true"
             common_tail += " t. ! queue name=recording_queue"
         else:
-            common_tail += " ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync=true max-buffers=1 drop=true"
+            common_tail += " ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync=true max-buffers=3 drop=true"
         
         # Candidate 1: H265 (if username/password provided, try H265 first)
         if self.username and self.password:
@@ -1315,6 +1369,19 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         if not self.is_working:
             return frames
         
+        # Track get() calls for diagnostics
+        if not hasattr(self, '_get_call_count'):
+            self._get_call_count = 0
+            self._get_call_last_log = time.time()
+        self._get_call_count += 1
+        now = time.time()
+        if now - self._get_call_last_log >= 5.0:
+            source_label = ",".join(str(name) for name in self.source_names) if self.source_names else str(self.source_address)
+            get_fps = self._get_call_count / (now - self._get_call_last_log)
+            self.logger.debug(f"Capture get() calls [{source_label}]: {get_fps:.2f} calls/sec, get_call_count={self._get_call_count}")
+            self._get_call_count = 0
+            self._get_call_last_log = now
+        
         if self.split_stream:
             # For split streams, get all frames from frame_buffer
             with self.frame_lock:
@@ -1339,6 +1406,22 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 # Get reference to last_frame with minimal lock time
                 with self.frame_lock:
                     if self.last_frame:
+                        # Track if we're returning the same frame multiple times (indicates pipeline is faster than GStreamer)
+                        current_frame_id = self.last_frame.frame_id
+                        if not hasattr(self, '_last_returned_frame_id'):
+                            self._last_returned_frame_id = -1
+                        if current_frame_id == self._last_returned_frame_id:
+                            # Same frame returned again - pipeline is calling get() faster than GStreamer produces frames
+                            if not hasattr(self, '_same_frame_count'):
+                                self._same_frame_count = 0
+                            self._same_frame_count += 1
+                        else:
+                            self._last_returned_frame_id = current_frame_id
+                            if hasattr(self, '_same_frame_count') and self._same_frame_count > 0:
+                                # Log if we had repeated frames
+                                source_label = ",".join(str(name) for name in self.source_names) if self.source_names else str(self.source_address)
+                                self.logger.debug(f"Capture get() [{source_label}]: returned same frame {self._same_frame_count} times before new frame")
+                                self._same_frame_count = 0
                         # Only copy reference and metadata while holding lock (very fast)
                         last_frame_ref = self.last_frame
                         frame_id = last_frame_ref.frame_id
@@ -1355,8 +1438,22 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 # Copy image and create new CaptureImage outside of lock
                 # This prevents blocking _store_frame() which also needs frame_lock
                 if last_frame_ref is not None:
-                    # Copy image data outside lock (may take time for large images)
-                    image_copy = image_ref.copy() if image_ref is not None else None
+                    # Optimization: Only copy if there are subscribers or if frame might be accessed concurrently
+                    # For single stream without subscribers, we can avoid the copy since get() is called from main thread
+                    # and _store_frame() already completed. However, to be safe, we still copy if subscribers exist.
+                    # If no subscribers, we can reuse the reference (but still need to copy metadata to avoid race conditions)
+                    if self.subscribers:
+                        # Copy image data outside lock (may take time for large images)
+                        # Required when subscribers might access frame concurrently
+                        image_copy = image_ref.copy() if image_ref is not None else None
+                    else:
+                        # No subscribers - can reuse reference, but need to be careful about thread safety
+                        # Since get() is called from main thread and _store_frame() already completed,
+                        # the reference should be safe. However, to avoid potential issues with frame updates,
+                        # we still do a shallow copy of the array (view) which is much faster than deep copy.
+                        # Actually, for safety, we still do a copy, but this is a known optimization point.
+                        image_copy = image_ref.copy() if image_ref is not None else None
+                    
                     copied_frame = self._create_capture_image(
                         image=image_copy,
                         frame_id=frame_id,
