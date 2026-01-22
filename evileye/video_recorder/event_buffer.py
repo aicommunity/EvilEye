@@ -159,7 +159,10 @@ class EventBuffer:
         # to ensure we don't keep frames beyond max_duration_seconds
         removed_count = 0
         while self.buffer and self.buffer[0][1] < cutoff_time:
-            self.buffer.popleft()
+            old_frame, _ = self.buffer.popleft()
+            # Explicitly free memory from removed frame
+            if old_frame is not None:
+                del old_frame
             removed_count += 1
         
         if removed_count > 0:
@@ -168,6 +171,10 @@ class EventBuffer:
     def clear(self) -> None:
         """Clear all frames from the buffer."""
         with self.lock:
+            # Explicitly free memory from all frames before clearing
+            for frame, _ in self.buffer:
+                if frame is not None:
+                    del frame
             self.buffer.clear()
     
     def size(self) -> int:
@@ -228,7 +235,10 @@ class EventBuffer:
         removed_count = 0
         with self.lock:
             while self.buffer and self.buffer[0][1] < cutoff_time:
-                self.buffer.popleft()
+                old_frame, _ = self.buffer.popleft()
+                # Explicitly free memory from removed frame
+                if old_frame is not None:
+                    del old_frame
                 removed_count += 1
         
         if removed_count > 0:

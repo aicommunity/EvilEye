@@ -55,6 +55,8 @@ class EventRecorder:
         # Limit queue size to prevent memory leaks (100 frames should be enough for ~4 seconds at 25fps)
         self._frame_queue: queue.Queue = queue.Queue(maxsize=100)
         self._stop_recording: threading.Event = threading.Event()
+        self._last_queue_check_time = time.time()
+        self._queue_check_interval = 30.0  # Check queue size every 30 seconds
     
     def _get_event_output_path(self, event_id: int, event_name: str, event_timestamp: float) -> Path:
         """Generate output path for event recording using PathGenerator.
@@ -116,6 +118,7 @@ class EventRecorder:
             self.logger.debug(f"Written first pre-event frame at {first_timestamp:.3f}s")
             
             # Write subsequent frames with proper timing
+            frames_written = 0
             for frame, frame_timestamp in sorted_frames[1:]:
                 if self._stop_recording.is_set():
                     break
@@ -138,6 +141,10 @@ class EventRecorder:
             
             self.logger.info(f"Written {len(sorted_frames)} pre-event frames")
             # Clear pre-event frames to free memory after writing
+            # Explicitly free numpy arrays before clearing list
+            for frame, _ in self._pre_event_frames:
+                if frame is not None:
+                    del frame
             self._pre_event_frames.clear()
         else:
             # No pre-event frames, set last timestamp to event time
@@ -154,6 +161,26 @@ class EventRecorder:
         self.logger.debug("Starting to process post-event frames from queue")
         while not self._stop_recording.is_set():
             try:
+                # Periodic queue size monitoring and cleanup
+                current_time = time.time()
+                if current_time - self._last_queue_check_time >= self._queue_check_interval:
+                    queue_size = self._frame_queue.qsize()
+                    if queue_size > 80:  # Queue is 80% full
+                        self.logger.warning(f"EventRecorder frame queue is {queue_size}/100 full, forcing cleanup")
+                        # Remove oldest frames to prevent overflow
+                        removed = 0
+                        while self._frame_queue.qsize() > 50 and removed < 20:
+                            try:
+                                old_frame, _ = self._frame_queue.get_nowait()
+                                if old_frame is not None:
+                                    del old_frame
+                                removed += 1
+                            except queue.Empty:
+                                break
+                        if removed > 0:
+                            self.logger.info(f"Cleaned up {removed} frames from queue to prevent overflow")
+                    self._last_queue_check_time = current_time
+                
                 # Get frame from queue with timeout
                 frame_data = self._frame_queue.get(timeout=0.1)
                 frame, frame_timestamp = frame_data
@@ -229,7 +256,12 @@ class EventRecorder:
         )
         
         if not self._pre_event_frames:
-            self.logger.warning(f"No pre-event frames found for event {event_id}, recording anyway")
+            buffer_size = self.event_buffer.size() if self.event_buffer else 0
+            buffer_duration = self.event_buffer.get_duration() if self.event_buffer else 0.0
+            self.logger.warning(
+                f"No pre-event frames found for event {event_id}, recording anyway "
+                f"(EventBuffer: size={buffer_size}, duration={buffer_duration:.1f}s)"
+            )
         
         # Determine timestamp type (relative vs absolute)
         if self._pre_event_frames:
@@ -327,7 +359,10 @@ class EventRecorder:
         # Clear queue and reset stop event
         while not self._frame_queue.empty():
             try:
-                self._frame_queue.get_nowait()
+                old_frame, _ = self._frame_queue.get_nowait()
+                # Explicitly free memory from removed frame
+                if old_frame is not None:
+                    del old_frame
             except queue.Empty:
                 break
         self._stop_recording.clear()
@@ -446,7 +481,10 @@ class EventRecorder:
             try:
                 # Remove oldest frame to make room
                 try:
-                    self._frame_queue.get_nowait()
+                    old_frame, _ = self._frame_queue.get_nowait()
+                    # Explicitly free memory from removed frame
+                    if old_frame is not None:
+                        del old_frame
                 except queue.Empty:
                     pass
                 # Try to add new frame again
@@ -502,11 +540,18 @@ class EventRecorder:
             # Clear queue
             while not self._frame_queue.empty():
                 try:
-                    self._frame_queue.get_nowait()
+                    old_frame, _ = self._frame_queue.get_nowait()
+                    # Explicitly free memory from removed frame
+                    if old_frame is not None:
+                        del old_frame
                 except queue.Empty:
                     break
             
             # Clear pre-event frames to free memory
+            # Explicitly free numpy arrays before clearing list
+            for frame, _ in self._pre_event_frames:
+                if frame is not None:
+                    del frame
             self._pre_event_frames.clear()
             
             # Reset thread reference

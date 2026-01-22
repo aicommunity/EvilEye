@@ -36,7 +36,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         self.appsink = None
         self.loop = None
         self.main_loop_thread = None
-        self.frame_buffer = Queue(maxsize=10)
+        self.frame_buffer = Queue(maxsize=CaptureConstants.DEFAULT_QUEUE_SIZE)
         self.last_frame = None
         # Use RLock for frame_lock to allow potential nested operations
         self.frame_lock = threading.RLock()
@@ -344,6 +344,9 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     # Remove oldest frame to make room
                     try:
                         old_frame = self.frame_buffer.get_nowait()
+                        # Explicitly free memory from old frame
+                        if old_frame is not None:
+                            old_frame.image = None
                         old_frame = None
                     except Empty:
                         pass
@@ -354,7 +357,13 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                         self.logger.warning(f"Frame buffer still full after removing oldest frame, dropping frame for source {capture_image.source_id}")
             else:
                 # For single stream, store as last_frame
+                # Free memory from old last_frame AFTER storing new one
+                # Since get_frames_impl now creates copies, it's safe to free old frame
+                old_last_frame = self.last_frame
                 self.last_frame = capture_image
+                # Free old frame memory (safe now because get_frames_impl creates copies)
+                if old_last_frame is not None:
+                    old_last_frame.image = None
             self.frame_id_counter += 1
 
     def _notify_subscribers_async(self, capture_images: List[CaptureImage]) -> None:
@@ -364,7 +373,9 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             capture_images: List of CaptureImage objects to notify about
         """
         for capture_image in capture_images:
-            def _notify(sub, img=capture_image):
+            # Pass capture_image through args instead of default parameter to avoid closure capture
+            # This prevents memory leaks by not holding reference in closure
+            def _notify(sub, img):
                 try:
                     if callable(sub):
                         sub(img)
@@ -379,7 +390,8 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     except Exception:
                         pass
             for sub in self.subscribers:
-                threading.Thread(target=_notify, args=(sub,), daemon=True).start()
+                # Pass capture_image as argument, not in closure default parameter
+                threading.Thread(target=_notify, args=(sub, capture_image), daemon=True).start()
 
     def _on_new_sample(self, appsink: Any) -> Any:
         """
@@ -392,22 +404,8 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             pull_duration = time.perf_counter() - pull_start
             if sample:
                 processing_start = time.perf_counter()
-                # Mark as working when we receive first frame after init
-                if self._init_time and not self.is_working:
-                    now = time.time()
-                    if (now - self._init_time) < CaptureConstants.INIT_GRACE_PERIOD_SECONDS:
-                        self.logger.debug(f"First frame received {(now - self._init_time):.1f}s after init - marking as working")
-                        self.is_working = True
-                
-                # If still not working after init grace period, skip frame
-                if not self.is_working:
-                    process_time = time.perf_counter() - processing_start
-                    buffer = sample.get_buffer()
-                    pts_value = buffer.pts if buffer else None
-                    self._record_perf_metrics(pull_duration, process_time, pts_value)
-                    return Gst.FlowReturn.OK
-                
-                # Extract frame data
+                # Extract frame data first (before checking is_working)
+                # This allows us to process the frame even if is_working is False initially
                 try:
                     frame_data, width, height, pts_value = self._extract_frame_data(sample)
                 except Exception as e:
@@ -432,13 +430,37 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 
                 # Create CaptureImage objects
                 if self.split_stream and self.src_coords and self.num_split > 0:
-                    capture_images = self._handle_split_stream(
-                        src_image=frame_data,
-                        frame_id=self.frame_id_counter,
-                        timestamp=now,
-                        current_video_frame=current_video_frame,
-                        current_video_position=current_video_position
-                    )
+                    try:
+                        capture_images = self._handle_split_stream(
+                            src_image=frame_data,
+                            frame_id=self.frame_id_counter,
+                            timestamp=now,
+                            current_video_frame=current_video_frame,
+                            current_video_position=current_video_position
+                        )
+                    except Exception as e:
+                        self.logger.error(f"Error in _handle_split_stream for {self.source_names}: {e}", exc_info=True)
+                        capture_images = []
+                    
+                    # Mark as working when we receive first valid frame after init
+                    # IMPORTANT: For split streams, we mark as working even if capture_images is empty initially
+                    # This allows subsequent frames to be processed
+                    if self._init_time and not self.is_working:
+                        if (now - self._init_time) < CaptureConstants.INIT_GRACE_PERIOD_SECONDS:
+                            if capture_images:
+                                self.logger.info(f"First frame received {(now - self._init_time):.1f}s after init - marking as working")
+                                self.is_working = True
+                            else:
+                                # Even if split failed, we received a frame from GStreamer
+                                # Mark as working to allow subsequent frames to be processed
+                                self.logger.warning(f"First frame received but split returned empty for {self.source_names} - marking as working anyway")
+                                self.is_working = True
+                    
+                    # If still not working after init grace period, skip frame
+                    if not self.is_working:
+                        process_time = time.perf_counter() - processing_start
+                        self._record_perf_metrics(pull_duration, process_time, pts_value)
+                        return Gst.FlowReturn.OK
                     
                     # Store frames
                     if capture_images:
@@ -447,9 +469,30 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                         # Store first frame as last_frame for compatibility
                         with self.frame_lock:
                             self.last_frame = capture_images[0]
-                    
-                    # Notify subscribers asynchronously
-                    self._notify_subscribers_async(capture_images)
+                        # Notify subscribers asynchronously
+                        self._notify_subscribers_async(capture_images)
+                    else:
+                        # Log warning if split stream returns empty list (shouldn't happen normally)
+                        if self.is_working:
+                            self.logger.warning(f"Split stream returned empty capture_images for {self.source_names} (frame_id={self.frame_id_counter}, is_working={self.is_working}, frame_shape={frame_data.shape if frame_data is not None else None})")
+                        # Even if capture_images is empty, we still received a frame from GStreamer
+                        # Update last_frame with a dummy CaptureImage to track frame reception time
+                        # This prevents false "no frames" warnings when frames are received but split fails
+                        try:
+                            # Create a minimal CaptureImage with current timestamp to track frame reception
+                            dummy_image = self._create_capture_image(
+                                image=None,  # No image data, just timestamp tracking
+                                frame_id=self.frame_id_counter,
+                                timestamp=now,
+                                source_id=self.source_ids[0] if self.source_ids else 0,
+                                current_video_frame=current_video_frame,
+                                current_video_position=current_video_position
+                            )
+                            with self.frame_lock:
+                                # Always update to track latest frame reception time
+                                self.last_frame = dummy_image
+                        except Exception as e:
+                            self.logger.debug(f"Failed to create dummy frame for timestamp tracking: {e}")
                 else:
                     # Single stream
                     source_id = self.source_ids[0] if self.source_ids else 0
@@ -461,6 +504,18 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                         current_video_frame=current_video_frame,
                         current_video_position=current_video_position
                     )
+                    
+                    # Mark as working when we receive first frame after init
+                    if self._init_time and not self.is_working:
+                        if (now - self._init_time) < CaptureConstants.INIT_GRACE_PERIOD_SECONDS:
+                            self.logger.info(f"First frame received {(now - self._init_time):.1f}s after init - marking as working")
+                            self.is_working = True
+                    
+                    # If still not working after init grace period, skip frame
+                    if not self.is_working:
+                        process_time = time.perf_counter() - processing_start
+                        self._record_perf_metrics(pull_duration, process_time, pts_value)
+                        return Gst.FlowReturn.OK
                     
                     # Store frame
                     self._store_frame(capture_image, is_split=False)
@@ -828,6 +883,26 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                             self.pipeline = None
                             self.is_inited = False
                             self.is_working = False
+                        
+                        # Clear last_frame to free memory and reset state
+                        with self.frame_lock:
+                            if self.last_frame is not None:
+                                if self.last_frame.image is not None:
+                                    self.last_frame.image = None
+                                self.last_frame = None
+                            # Clear frame_buffer for split streams
+                            if self.split_stream:
+                                while not self.frame_buffer.empty():
+                                    try:
+                                        frame = self.frame_buffer.get_nowait()
+                                        if frame is not None:
+                                            frame.image = None
+                                    except Empty:
+                                        break
+                        
+                        # Reset init time to allow first frame detection after restart
+                        self._init_time = None
+                        
                         time.sleep(0.1)
                         
                         # Reinitialize pipeline
@@ -838,9 +913,9 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                             if self.pipeline is not None:
                                 ret, state, pending = self.pipeline.get_state(0)
                                 if ret == Gst.StateChangeReturn.SUCCESS and state == Gst.State.PLAYING:
-                                    # CRITICAL: Set flags after successful _init_pipeline() - this was missing!
+                                    # CRITICAL: Set is_inited flag after successful _init_pipeline()
+                                    # is_working will be set in _on_new_sample when first frame is received
                                     self.is_inited = True
-                                    self.is_working = True
                                     self.logger.info(f"Looping video: pipeline restarted successfully (is_inited={self.is_inited}, is_working={self.is_working}, state={state})")
                                 else:
                                     self.logger.warning(f"Loop restart: pipeline created but not PLAYING (state={state}, ret={ret})")
@@ -890,7 +965,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     # Store error for protocol switching logic
                     self._last_init_error = RuntimeError(f"{err}: {debug}")
                     # Trigger reconnect loop if not already running
-                    if not (hasattr(self, '_reconnecting') and self._reconnecting):
+                    if not self._reconnecting:
                         threading.Thread(target=self._reconnect_loop, daemon=True).start()
             elif msg_type == Gst.MessageType.WARNING:
                 warn, debug = message.parse_warning()
@@ -1152,16 +1227,17 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     try:
                         frame = self.frame_buffer.get_nowait()
                         # Explicitly clear frame image to free memory
-                        if hasattr(frame, 'image'):
+                        if frame is not None:
                             frame.image = None
                         frame = None
                     except Empty:
                         break
                 # Clear last_frame reference
                 if self.last_frame is not None:
-                    if hasattr(self.last_frame, 'image'):
-                        self.last_frame.image = None
+                    self.last_frame.image = None
                     self.last_frame = None
+                # Clear FPS tracking list to free memory
+                self._fps_times.clear()
             
             # Stop GLib main loop first to avoid deadlock on set_state
             self._stop_main_loop()
@@ -1233,7 +1309,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         """
         Get latest captured frames.
         For split_stream, returns all split frames from frame_buffer.
-        For single stream, returns last_frame.
+        For single stream, returns a copy of last_frame (like OpenCV implementation).
         """
         frames = []
         if not self.is_working:
@@ -1249,10 +1325,50 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     except Empty:
                         break
         else:
-            # For single stream, return last_frame
-            with self.frame_lock:
-                if self.last_frame:
-                    frames.append(self.last_frame)
+            # For single stream, create a copy of last_frame (like OpenCV does)
+            # This prevents race condition when old frame memory is freed in _store_frame
+            last_frame_ref = None
+            frame_id = None
+            timestamp = None
+            source_id = None
+            current_video_frame = None
+            current_video_position = None
+            image_copy = None
+            
+            try:
+                # Get reference to last_frame with minimal lock time
+                with self.frame_lock:
+                    if self.last_frame:
+                        # Only copy reference and metadata while holding lock (very fast)
+                        last_frame_ref = self.last_frame
+                        frame_id = last_frame_ref.frame_id
+                        timestamp = last_frame_ref.time_stamp
+                        source_id = last_frame_ref.source_id
+                        current_video_frame = last_frame_ref.current_video_frame
+                        current_video_position = last_frame_ref.current_video_position
+                        # Get reference to image (don't copy yet - do it outside lock)
+                        image_ref = last_frame_ref.image
+                    else:
+                        last_frame_ref = None
+                        image_ref = None
+                
+                # Copy image and create new CaptureImage outside of lock
+                # This prevents blocking _store_frame() which also needs frame_lock
+                if last_frame_ref is not None:
+                    # Copy image data outside lock (may take time for large images)
+                    image_copy = image_ref.copy() if image_ref is not None else None
+                    copied_frame = self._create_capture_image(
+                        image=image_copy,
+                        frame_id=frame_id,
+                        timestamp=timestamp,
+                        source_id=source_id,
+                        current_video_frame=current_video_frame,
+                        current_video_position=current_video_position
+                    )
+                    frames.append(copied_frame)
+            except Exception as e:
+                # Log error but don't break the flow - return empty list if copy fails
+                self.logger.error(f"Error creating frame copy in get_frames_impl: {e}", exc_info=True)
         
         return frames
     
@@ -1308,14 +1424,61 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     if ret == Gst.StateChangeReturn.SUCCESS:
                         if state == Gst.State.PLAYING:
                             # Check if we're actually receiving frames
-                            with self.frame_lock:
-                                last_frame_time = getattr(self.last_frame, 'time_stamp', 0) if self.last_frame else 0
                             now = time.time()
+                            last_frame_time = 0
+                            
+                            with self.frame_lock:
+                                if self.split_stream:
+                                    # For split streams, check last_frame which is updated when frames arrive
+                                    # last_frame is set to first frame of capture_images for split streams
+                                    if self.last_frame:
+                                        last_frame_time = getattr(self.last_frame, 'time_stamp', 0)
+                                    # Also check if frame_buffer has frames (as fallback)
+                                    elif not self.frame_buffer.empty():
+                                        # Try to peek at the most recent frame
+                                        # Since Queue doesn't support peek, we temporarily get and put back
+                                        try:
+                                            temp_frame = self.frame_buffer.get_nowait()
+                                            if temp_frame:
+                                                last_frame_time = getattr(temp_frame, 'time_stamp', 0)
+                                            # Put frame back
+                                            try:
+                                                self.frame_buffer.put_nowait(temp_frame)
+                                            except Full:
+                                                # If buffer is full, just drop the frame we got
+                                                pass
+                                        except Empty:
+                                            pass
+                                else:
+                                    # For single stream, check last_frame
+                                    if self.last_frame:
+                                        last_frame_time = getattr(self.last_frame, 'time_stamp', 0)
+                            
                             if last_frame_time > 0 and (now - last_frame_time) > CaptureConstants.FRAME_TIMEOUT_SECONDS:
-                                # No frames for timeout period - mark as not working
-                                if self.is_working:
-                                    self.logger.warning(f"Pipeline PLAYING but no frames received after 15s for {self.source_names}, marking as not working")
+                                # No frames for timeout period
+                                time_since_last_frame = now - last_frame_time
+                                
+                                # For VideoFile with loop_play, don't stop working - trigger restart instead
+                                if self.source_type == CaptureDeviceType.VideoFile and self.loop_play:
+                                    if self.is_working:
+                                        self.logger.warning(
+                                            f"Pipeline PLAYING but no frames received after {time_since_last_frame:.1f}s "
+                                            f"for {self.source_names} (VideoFile with loop_play), triggering restart "
+                                            f"(last_frame_time={last_frame_time:.3f}, now={now:.3f})"
+                                        )
+                                        # Don't set is_working = False for VideoFile with loop_play
+                                        # Instead, trigger restart immediately (handled below)
+                                    # Mark as not working temporarily to trigger restart logic
                                     self.is_working = False
+                                else:
+                                    # For IP cameras and other sources, mark as not working
+                                    if self.is_working:
+                                        self.logger.warning(
+                                            f"Pipeline PLAYING but no frames received after {time_since_last_frame:.1f}s "
+                                            f"for {self.source_names}, marking as not working "
+                                            f"(last_frame_time={last_frame_time:.3f}, now={now:.3f})"
+                                        )
+                                        self.is_working = False
                         else:
                             # Pipeline not in PLAYING state
                             if self.is_working:
@@ -1339,14 +1502,91 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 # For video files with loop_play, check if reconnection is needed
                 elif self.source_type == CaptureDeviceType.VideoFile and self.loop_play:
                     # Don't reconnect if already reconnecting (via EOS handler or previous attempt)
-                    if not (hasattr(self, '_reconnecting') and self._reconnecting):
-                        # Check if pipeline exists and is in valid state
+                    if not self._reconnecting:
+                        # For VideoFile with loop_play, always restart if not working
+                        # This handles cases where pipeline is valid but not receiving frames
                         with self.pipeline_lock:
                             pipeline_valid = (self.pipeline is not None)
-                        if not pipeline_valid or not self.is_inited:
-                            self.logger.debug(f"Video file {self.source_names} needs reconnection (pipeline_valid={pipeline_valid}, is_inited={self.is_inited})")
-                            # Let the next iteration handle reconnection via init()
-                            # Don't start separate thread to avoid conflicts with EOS handler
+                            pipeline_playing = False
+                            if pipeline_valid:
+                                try:
+                                    ret, state, pending = self.pipeline.get_state(0)
+                                    pipeline_playing = (ret == Gst.StateChangeReturn.SUCCESS and state == Gst.State.PLAYING)
+                                except Exception:
+                                    pass
+                        
+                        # For VideoFile with loop_play: always restart when not working
+                        # Even if pipeline appears valid and playing, if we're not receiving frames, restart
+                        # This ensures continuous playback even after temporary stalls
+                        # IMPORTANT: For VideoFile with loop_play, we always restart when is_working=False
+                        # because the timeout means we're not receiving frames, regardless of pipeline state
+                        should_restart = True  # Always restart for VideoFile with loop_play when not working
+                        
+                        if should_restart:
+                            # Trigger restart similar to EOS handler
+                            self._reconnecting = True
+                            try:
+                                self.logger.info(f"Auto-restarting pipeline for {self.source_names} after no frames (pipeline_valid={pipeline_valid}, is_inited={self.is_inited}, pipeline_playing={pipeline_playing})")
+                                # Restart pipeline
+                                with self.pipeline_lock:
+                                    try:
+                                        if self.pipeline is not None:
+                                            self.pipeline.set_state(Gst.State.NULL)
+                                            # Wait a bit for state change
+                                            time.sleep(0.1)
+                                    except Exception as e:
+                                        self.logger.debug(f"Error setting pipeline to NULL: {e}")
+                                    self.pipeline = None
+                                    self.is_inited = False
+                                    self.is_working = False
+                                
+                                # Clear frames to free memory and reset state
+                                with self.frame_lock:
+                                    if self.last_frame is not None:
+                                        if self.last_frame.image is not None:
+                                            self.last_frame.image = None
+                                        self.last_frame = None
+                                    # Clear frame_buffer for split streams
+                                    if self.split_stream:
+                                        while not self.frame_buffer.empty():
+                                            try:
+                                                frame = self.frame_buffer.get_nowait()
+                                                if frame is not None:
+                                                    frame.image = None
+                                            except Empty:
+                                                break
+                                
+                                # Reset init time to allow first frame detection after restart
+                                self._init_time = None
+                                
+                                time.sleep(0.1)
+                                
+                                # Reinitialize pipeline
+                                self._init_pipeline()
+                                
+                                # Verify pipeline is actually initialized and playing
+                                with self.pipeline_lock:
+                                    if self.pipeline is not None:
+                                        ret, state, pending = self.pipeline.get_state(0)
+                                        if ret == Gst.StateChangeReturn.SUCCESS and state == Gst.State.PLAYING:
+                                            # CRITICAL: Set is_inited flag after successful _init_pipeline()
+                                            # is_working will be set in _on_new_sample when first frame is received
+                                            self.is_inited = True
+                                            self.logger.info(f"Auto-restarted pipeline for {self.source_names} after no frames (is_inited={self.is_inited}, is_working={self.is_working}, state={state})")
+                                        else:
+                                            self.logger.warning(f"Auto-restart: pipeline created but not PLAYING (state={state}, ret={ret}) for {self.source_names}")
+                                            self.is_inited = False
+                                            self.is_working = False
+                                    else:
+                                        self.logger.error(f"Auto-restart: pipeline is None after _init_pipeline() for {self.source_names}")
+                                        self.is_inited = False
+                                        self.is_working = False
+                            except Exception as e:
+                                self.logger.error(f"Error during auto-restart for {self.source_names}: {e}", exc_info=True)
+                                self.is_inited = False
+                                self.is_working = False
+                            finally:
+                                self._reconnecting = False
             
             # Sleep according to monitor interval
             try:

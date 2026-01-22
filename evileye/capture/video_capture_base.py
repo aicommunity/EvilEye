@@ -30,6 +30,9 @@ class CaptureDeviceType(Enum):
 class VideoCaptureBase(EvilEyeBase):
     def __init__(self):
         super().__init__()
+        # Raw parameters passed from configuration / controller
+        # Initialized here to avoid hasattr checks in methods
+        self.params: dict | None = None
         self.source_address = None
         self.username = None
         self.password = None
@@ -243,9 +246,9 @@ class VideoCaptureBase(EvilEyeBase):
 
         # For video files use standard Queue to keep strict frame order (avoid aggressive dropping)
         # DropOldestQueue remains for live sources to prefer fresh frames.
-        if self.source_type == CaptureDeviceType.VideoFile:
-            from queue import Queue  # local import to avoid circular import issues
-            self.frames_queue = Queue(maxsize=self.capture_config.queue_size)
+        # NOTE: frames_queue is always DropOldestQueue.
+        # Раньше для VideoFile использовался стандартный Queue,
+        # теперь тип очереди унифицирован, чтобы не было разнородных реализаций.
 
         if self.source_type == CaptureDeviceType.IpCamera:
             parsed = urlparse(self.source_address)
@@ -282,7 +285,7 @@ class VideoCaptureBase(EvilEyeBase):
         # CRITICAL: Save 'type' field to preserve VideoCaptureGStreamer vs VideoCaptureOpencv
         # Use class name from registry if available, otherwise use __class__.__name__
         # Prefer saved type from params if it was explicitly set
-        if hasattr(self, 'params') and self.params and 'type' in self.params:
+        if self.params and 'type' in self.params:
             params['type'] = self.params['type']
         else:
             # Use class name - this is the registered name in EvilEyeBase._registry
@@ -425,6 +428,7 @@ class VideoCaptureBase(EvilEyeBase):
         This method is called when stopping capture to ensure no stale frames remain.
         """
         if not self.run_flag:
+            # frames_queue всегда DropOldestQueue, у неё есть clear()
             self.frames_queue.clear()
 
     def _calculate_sleep_seconds(
