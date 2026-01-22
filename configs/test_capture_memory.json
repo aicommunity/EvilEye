@@ -1,0 +1,53 @@
+{
+    "pipeline": {
+        "pipeline_class": "PipelineSurveillance",
+        "sources": [
+            {
+                "split": false,
+                "num_split": 0,
+                "src_coords": [],
+                "source_ids": [
+                    0
+                ],
+                "desired_fps": null,
+                "source_names": [
+                    "Test1"
+                ],
+                "loop_play": true,
+                "source": "VideoFile",
+                "camera": "/home/user/Videos/Test3Cam/1/139932-video_trim.mp4",
+                "type": "VideoCaptureGStreamer"
+            }
+        ],
+        "detectors": [],
+        "trackers": [],
+        "mc_trackers": []
+    },
+    "events_detectors": {},
+    "events_processor": {},
+    "visualizer": {
+        "source_ids": [
+            0
+        ],
+        "show_debug_info": false,
+        "fps": [
+            30
+        ],
+        "num_height": 1,
+        "num_width": 1
+    },
+    "record": {
+        "enabled": false,
+        "continuous_recording_enabled": false,
+        "event_recording_enabled": false,
+        "container": "mp4",
+        "segment_length_sec": 60,
+        "retention_days": 1
+    },
+    "controller": {
+        "autoclose": false,
+        "fps": 30,
+        "show_main_gui": false,
+        "gui_enabled": false
+    }
+}

@@ -39,10 +39,13 @@ import datetime
 import pprint
 import copy
 import math
+import gc
 from evileye.core import ProcessorSource, ProcessorStep, ProcessorFrame
 from evileye.core.class_manager import ClassManager
 from evileye.pipelines import PipelineSurveillance
 from evileye.core.logger import get_module_logger
+from evileye.core.system_diagnostics import SystemDiagnostics
+from evileye.core.memory_monitor import MemoryMonitor
 from evileye.controller.services import (
     PipelineService,
     DatabaseService,
@@ -113,6 +116,10 @@ class Controller:
         self.db_adapter_system_events = None
         
         self.storage_monitor = None
+        
+        # System diagnostics and memory monitoring
+        self.system_diagnostics = None
+        self.memory_monitor = None
         
         # Initialize centralized class manager
         self.class_manager = ClassManager()
@@ -503,6 +510,12 @@ class Controller:
         if self.visualizer:
             self._visualization_service.start_visualizer()
         
+        # Start system diagnostics and memory monitoring
+        if self.memory_monitor:
+            self.memory_monitor.start()
+        if self.system_diagnostics:
+            self.system_diagnostics.start()
+        
         # Start database adapters через DatabaseService
         if self.use_database and self._database_service.is_connected():
             self._database_service.start_adapters()
@@ -648,6 +661,12 @@ class Controller:
                 self.storage_monitor.stop()
             except Exception as e:
                 self.logger.warning(f"Error stopping storage monitor: {e}", exc_info=True)
+        
+        # Stop system diagnostics and memory monitoring
+        if self.system_diagnostics:
+            self.system_diagnostics.stop()
+        if self.memory_monitor:
+            self.memory_monitor.stop()
         
         # Stop pipeline через PipelineService
         self._pipeline_service.stop_pipeline()
@@ -1631,6 +1650,59 @@ class Controller:
             # Clear partial initialization
             self.event_buffers.clear()
             self.event_recorders.clear()
+    
+    def _init_system_diagnostics(self) -> None:
+        """Initialize system diagnostics and memory monitoring."""
+        try:
+            # Find latest debug log file
+            from pathlib import Path
+            import glob
+            logs_dir = Path("logs")
+            if logs_dir.exists():
+                log_files = sorted(glob.glob(str(logs_dir / "*_evileye_debug.log")), reverse=True)
+                log_file = log_files[0] if log_files else None
+            else:
+                log_file = None
+            
+            # Create memory monitor
+            self.memory_monitor = MemoryMonitor(
+                check_interval=30.0,
+                leak_threshold_mb=50.0,
+                leak_window_samples=20,
+                auto_cleanup=True
+            )
+            
+            # Create system diagnostics
+            self.system_diagnostics = SystemDiagnostics(
+                log_file=log_file,
+                check_interval=30.0,
+                auto_fix=True
+            )
+            
+            # Set callbacks
+            self.system_diagnostics.set_pipeline_getter(lambda: self.pipeline)
+            self.system_diagnostics.set_event_buffer_getter(lambda: self.event_buffers)
+            self.system_diagnostics.set_memory_monitor(self.memory_monitor)
+            
+            # Add cleanup callback to memory monitor
+            def cleanup_callback():
+                """Cleanup callback for memory monitor."""
+                # Force GC
+                gc.collect()
+                # Clear old frames from event buffers if they're too large
+                for source_id, buffer in self.event_buffers.items():
+                    if buffer and buffer.size() > 500:
+                        removed = buffer.clear_old_frames(older_than_seconds=buffer.max_duration_seconds / 2)
+                        if removed > 0:
+                            self.logger.info(f"Memory cleanup: cleared {removed} frames from EventBuffer for source {source_id}")
+            
+            self.memory_monitor.add_cleanup_callback(cleanup_callback)
+            
+            self.logger.info("System diagnostics and memory monitoring initialized")
+        except Exception as e:
+            self.logger.error(f"Failed to initialize system diagnostics: {e}", exc_info=True)
+            self.system_diagnostics = None
+            self.memory_monitor = None
     
     def _on_event_recording(self, event_id: int, event_name: str, event_timestamp: float, 
                            source_id: int, is_on: bool, bbox: list | None = None):
