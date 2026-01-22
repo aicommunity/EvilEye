@@ -262,8 +262,9 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 except Exception:
                     # If anything goes wrong, skip forcing fps
                     pass
-        # Determine sync mode: false for VideoFile (no need to sync with clock), true for live sources
-        sync_mode = "false" if self.source_type == CaptureDeviceType.VideoFile else "true"
+        # Determine sync mode: true for all sources to maintain correct playback speed
+        # sync=true ensures video files play at their native FPS rate
+        sync_mode = "true"
         
         # If continuous recording is enabled, use tee to split stream: one to appsink, one to recording
         continuous_enabled = (self.recording_params and 
