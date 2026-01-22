@@ -37,7 +37,8 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         self.loop = None
         self.main_loop_thread = None
         # Use larger buffer for split streams to reduce overflows
-        self.frame_buffer = Queue(maxsize=CaptureConstants.FRAME_BUFFER_SIZE)
+        # Increased size for better performance with hardware decoders
+        self.frame_buffer = Queue(maxsize=max(CaptureConstants.FRAME_BUFFER_SIZE, 10))
         self.last_frame = None
         # Use RLock for frame_lock to allow potential nested operations
         self.frame_lock = threading.RLock()
@@ -131,23 +132,56 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 pipeline = f"rtspsrc location={self.source_address} protocols={protocol} ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert"
             
         elif self.source_type == CaptureDeviceType.VideoFile:
-            # Video file pipeline
-            use_nv_decoder = (
+            # Video file pipeline - optimized with hardware acceleration support
+            # Step 1: Try hardware decoder (NVDEC for NVIDIA GPUs)
+            # Step 2: Fallback to explicit software decoder (faster than decodebin)
+            # Step 3: Last resort: decodebin (supports all formats)
+            
+            file_ext = str(self.source_address).lower()
+            is_mp4 = file_ext.endswith('.mp4')
+            is_mkv = file_ext.endswith('.mkv')
+            
+            # Check for NVIDIA hardware decoder (NVDEC)
+            use_nvdec = (
+                self._gst_has('nvh264dec') and
+                is_mp4  # NVDEC works best with MP4/H.264
+            )
+            
+            # Check for Jetson hardware decoder (older API)
+            use_nvv4l2 = (
                 self._gst_has('nvv4l2decoder') and
                 self._gst_has('nvvidconv') and
-                str(self.source_address).lower().endswith('.mp4')
+                is_mp4
             )
-
-            if use_nv_decoder:
-                # Prefer NV hardware decode path on Jetson/NVIDIA systems
+            
+            if use_nvdec:
+                # Use NVDEC hardware decoder (RTX/GTX series)
+                # This is the fastest path for H.264/MP4 files on NVIDIA GPUs
+                pipeline = (
+                    f"filesrc location={self.source_address} ! qtdemux ! h264parse ! nvh264dec "
+                    f"! videoconvert"
+                )
+                self.logger.info(f"Using NVDEC hardware decoder for {self.source_names}")
+            elif use_nvv4l2:
+                # Use Jetson hardware decoder (older API)
                 pipeline = (
                     f"filesrc location={self.source_address} ! qtdemux ! h264parse ! nvv4l2decoder "
                     f"! nvvidconv ! video/x-raw(memory:NVMM),format=BGRx ! nvvidconv ! video/x-raw,format=BGRx ! videoconvert"
                 )
+                self.logger.info(f"Using Jetson hardware decoder for {self.source_names}")
+            elif is_mp4:
+                # Use explicit software decoder for MP4 (faster than decodebin)
+                # qtdemux ! h264parse ! avdec_h264 is more efficient than decodebin
+                if self._gst_has('qtdemux') and self._gst_has('h264parse') and self._gst_has('avdec_h264'):
+                    pipeline = (
+                        f"filesrc location={self.source_address} ! qtdemux ! h264parse ! avdec_h264 ! videoconvert"
+                    )
+                    self.logger.info(f"Using explicit H.264 decoder for {self.source_names}")
+                else:
+                    # Fallback to decodebin if explicit decoder not available
+                    pipeline = f"filesrc location={self.source_address} ! decodebin name=dec ! videoconvert"
             else:
-                # Fallback: generic software decode supporting many containers/codecs
-                # Optimized pipeline: reduce queues for better performance (queues add latency)
-                # For VideoFile, we want maximum speed, not thread decoupling
+                # For other formats, use decodebin (supports all codecs)
                 pipeline = f"filesrc location={self.source_address} ! decodebin name=dec ! videoconvert"
                    
             
@@ -361,24 +395,31 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         with self.frame_lock:
             if is_split:
                 # For split streams, store in frame_buffer
+                # Optimized: Try to add frame, if full, remove multiple old frames to make room
+                # This reduces buffer overflows by being more aggressive about clearing old frames
                 try:
                     self.frame_buffer.put(capture_image, block=False)
                 except Full:
                     self._perf_frame_buffer_full += 1
-                    # Remove oldest frame to make room
-                    try:
-                        old_frame = self.frame_buffer.get_nowait()
-                        # Explicitly free memory from old frame
-                        if old_frame is not None:
-                            old_frame.image = None
-                        old_frame = None
-                    except Empty:
-                        pass
+                    # Remove multiple old frames to make room (more aggressive clearing)
+                    frames_removed = 0
+                    max_removals = min(3, self.frame_buffer.qsize())  # Remove up to 3 old frames
+                    while frames_removed < max_removals:
+                        try:
+                            old_frame = self.frame_buffer.get_nowait()
+                            # Explicitly free memory from old frame
+                            if old_frame is not None:
+                                old_frame.image = None
+                            old_frame = None
+                            frames_removed += 1
+                        except Empty:
+                            break
                     # Try to add new frame
                     try:
                         self.frame_buffer.put_nowait(capture_image)
                     except Full:
-                        self.logger.warning(f"Frame buffer still full after removing oldest frame, dropping frame for source {capture_image.source_id}")
+                        # If still full after clearing, drop the new frame (shouldn't happen often)
+                        self.logger.debug(f"Frame buffer still full after clearing {frames_removed} frames, dropping frame for source {capture_image.source_id}")
             else:
                 # For single stream, store as last_frame
                 # Free memory from old last_frame AFTER storing new one
