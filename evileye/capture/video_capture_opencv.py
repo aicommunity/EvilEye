@@ -1,7 +1,7 @@
 import datetime
 
 import cv2
-from threading import Lock, RLock
+from threading import Lock, RLock, Thread
 import time
 from timeit import default_timer as timer
 from .video_capture_base import VideoCaptureBase, CaptureImage, CaptureDeviceType
@@ -28,7 +28,12 @@ class VideoCaptureOpencv(VideoCaptureBase):
         super().__init__()
 
         self.capture = cv2.VideoCapture()
-        self.mutex = Lock()
+        self.mutex = RLock()
+        # Флаг для синхронизации: если True, значит произошла перемотка видео
+        # и retrieve() должен пропустить текущий кадр
+        self._video_rewound = False
+        # Счётчик пропущенных кадров после перемотки (для защиты от зависания retrieve())
+        self._frames_to_skip_after_rewind = 0
 
         # Перф-метрики для оценки фактического FPS захвата (аналогично GStreamer)
         now = time.time()
@@ -128,12 +133,12 @@ class VideoCaptureOpencv(VideoCaptureBase):
                 if self.source_fps == 0.0:
                     self.source_fps = None
                     self.video_duration = None
-                self.logger.info(f'FPS: {self.source_fps}')
+                self.logger.debug(f'FPS: {self.source_fps}')
 
                 if self.source_fps is not None and self.source_type == CaptureDeviceType.VideoFile:
                     self.video_duration = self.video_length * 1000.0 / self.source_fps
             except cv2.error as e:
-                self.logger.info(f"Failed to read source_fps: {e} for sources {self.source_names}")
+                self.logger.debug(f"Failed to read source_fps: {e} for sources {self.source_names}")
         else:
             error_msg = f"Could not connect to sources: {self.source_names}"
             self.logger.error(error_msg)
@@ -146,48 +151,43 @@ class VideoCaptureOpencv(VideoCaptureBase):
         return True
 
     def release_impl(self) -> None:
-        self.capture.release()
+        if self.capture is not None:
+            try:
+                self.capture.release()
+            except Exception:
+                pass
 
     def reset_impl(self) -> None:
-        self.release()
-        init_result = self.init()
-        timestamp = datetime.datetime.now()
-        if init_result and self.get_init_flag() and self.is_opened():
-            self.logger.info(f"Reconnected to a sources: {self.source_names} (is_inited={self.is_inited}, is_working={self.is_working})")
-            self.is_working = True
-            self.reconnects.append((self.params['camera'], timestamp, self.is_working))
-        else:
-            self.logger.warning(f"Could not reconnect to sources: {self.source_names} (init_result={init_result}, is_inited={self.is_inited}, is_opened={self.is_opened()})")
-            self.is_working = False
+        """Full reconnection: destroy old VideoCapture object and create a new one."""
+        # КРИТИЧНО: Весь реконнект должен быть под мьютексом, чтобы избежать race condition
+        # с потоками grab() и retrieve(), которые работают с self.capture
+        with self.mutex:
+            # For video files, when grab/retrieve stops working, we need to completely
+            # destroy and recreate the VideoCapture object, not just reopen it.
+            self.release()
+            # Completely destroy the old object
+            self.capture = None
+            # Add delay to allow OpenCV/FFmpeg to fully release resources
+            time.sleep(0.2)
+            # Create a completely new VideoCapture object
+            self.capture = cv2.VideoCapture()
+            # Now initialize it
+            init_result = self.init()
+            timestamp = datetime.datetime.now()
+            if init_result and self.get_init_flag() and self.is_opened():
+                self.logger.info(f"Reconnected to a sources: {self.source_names} (is_inited={self.is_inited}, is_working={self.is_working})")
+                self.is_working = True
+                self.reconnects.append((self.params['camera'], timestamp, self.is_working))
+                # Update last_frame_time to give reset time to start producing frames
+                self.last_frame_time = datetime.datetime.now()
+            else:
+                self.logger.warning(f"Could not reconnect to sources: {self.source_names} (init_result={init_result}, is_inited={self.is_inited}, is_opened={self.is_opened()})")
+                self.is_working = False
+        # Уведомляем подписчиков вне мьютекса, чтобы не держать его долго
         for sub in self.subscribers:
             sub.update()
 
     def _grab_frames(self):
-        # For video files we use read() in _retrieve_frames (single-threaded read path).
-        # Here we keep a lightweight watchdog to recover from occasional OpenCV stalls.
-        if self.source_type == CaptureDeviceType.VideoFile:
-            while self.run_flag and not self.stop_event.is_set():
-                try:
-                    if self.last_frame_time is not None:
-                        dt = (datetime.datetime.now() - self.last_frame_time).total_seconds()
-                        if dt > self.capture_config.frame_timeout_seconds:
-                            self.logger.warning(
-                                f"No frames for {dt:.1f}s from video file {self.source_names}; resetting capture"
-                            )
-                            try:
-                                # Request reopen; do the actual reset inside _retrieve_frames thread
-                                # to avoid races/crashes inside ffmpeg.
-                                self._reopen_requested = True
-                            except Exception:
-                                pass
-                            # After reset, give some time to start reading
-                            time.sleep(0.2)
-                            continue
-                except Exception:
-                    pass
-                time.sleep(0.5)
-            return
-
         while self.run_flag and not self.stop_event.is_set():
             begin_it = timer()
             # Health check: if no frames for too long, trigger reconnect/reset
@@ -223,17 +223,26 @@ class VideoCaptureOpencv(VideoCaptureBase):
                 # End-of-file / grab failure handling
                 if self.source_type == CaptureDeviceType.VideoFile:
                     if self.loop_play:
-                        # Для роликов с зацикливанием не считаем это дисконнектом,
-                        # просто перематываем на начало без тяжёлого reset()
+                        # Для роликов с зацикливанием используем полноценный реконнект
+                        # вместо простой перемотки, чтобы избежать зависаний
                         try:
-                            self.logger.info(f"End of video for {self.source_names}, looping from start")
-                            self.capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                            self.logger.info(f"End of video for {self.source_names}, reconnecting for loop")
+                            # Принудительно сбрасываем буферы логов перед реконнектом
+                            for handler in self.logger.handlers:
+                                if hasattr(handler, 'flush'):
+                                    handler.flush()
+                            # Используем полноценный реконнект вместо простой перемотки
+                            # Это полностью очищает состояние OpenCV/FFmpeg
+                            self.reset_impl()
+                            # Сбрасываем счетчики кадров
                             self.video_current_frame = 0
                             self.video_current_position = 0.0
                             continue
                         except Exception as e:
-                            self.logger.warning(f"Failed to loop video file for {self.source_names}, falling back to reset: {e}")
-                            # если не смогли перемотать, используем старую схему reset()
+                            self.logger.warning(f"Failed to reconnect video file for {self.source_names}: {e}")
+                            # Если реконнект не удался, продолжаем цикл - reconnect logic попытается снова
+                            time.sleep(self.capture_config.min_sleep_seconds * 2)
+                            continue
                     else:
                         self.finished = True
                         self.run_flag = False
@@ -263,100 +272,112 @@ class VideoCaptureOpencv(VideoCaptureBase):
             time.sleep(sleep_seconds)
 
     def _retrieve_frames(self) -> None:
-        consecutive_failures = 0
-        # For VideoFile sources, OpenCV/FFmpeg may occasionally block inside read().
-        # Use a single-worker executor + timeout to detect and recover from such stalls.
-        executor = None
-        if self.source_type == CaptureDeviceType.VideoFile:
-            try:
-                from concurrent.futures import ThreadPoolExecutor
-                executor = ThreadPoolExecutor(max_workers=1)
-            except Exception:
-                executor = None
-
         while self.run_flag and not self.stop_event.is_set():
             begin_it = timer()
+            
+            # Защита от зависания retrieve(): используем таймаут через threading
+            # ВАЖНО: retrieve() должен быть защищен мьютексом, так как OpenCV операции не потокобезопасны
+            # КРИТИЧНО: Захватываем мьютекс с таймаутом ПЕРЕД запуском потока, чтобы избежать deadlock
+            # Если мьютекс уже захвачен grab(), пропускаем кадр
+            mutex_acquired = False
             try:
-                if self.source_type == CaptureDeviceType.VideoFile:
-                    if getattr(self, "_reopen_requested", False):
-                        try:
-                            self.logger.info(f"Reopening video capture for {self.source_names} (watchdog requested)")
-                            self.reset_impl()
-                        except Exception as e:
-                            self.logger.warning(f"Failed to reopen capture for {self.source_names}: {e}")
-                        finally:
-                            self._reopen_requested = False
-                    # For file sources, use read() to avoid grab/retrieve desynchronization.
-                    # Intentionally do NOT hold mutex during read(): it may block in OpenCV.
-                    if executor is not None:
-                        try:
-                            fut = executor.submit(self.capture.read)
-                            is_read, src_image = fut.result(timeout=1.0)
-                        except Exception as e:
-                            # Timeout or worker exception — attempt to recover by reopening.
-                            consecutive_failures += 1
-                            self.logger.warning(f"Video read timeout/stall for {self.source_names}: {e}. Reopening capture.")
-                            try:
-                                self.reset_impl()
-                            except Exception:
-                                pass
-                            time.sleep(0.1)
-                            continue
-                    else:
-                        is_read, src_image = self.capture.read()
-                    if not is_read or src_image is None:
-                        consecutive_failures += 1
-                        if self.loop_play:
-                            # If we can't read for a while, perform a full reset (re-open file)
-                            if consecutive_failures >= 30:
-                                self.logger.warning(
-                                    f"Video read stalled for {self.source_names} (failures={consecutive_failures}), resetting capture"
-                                )
-                                try:
-                                    self.reset()
-                                except Exception:
-                                    pass
-                                consecutive_failures = 0
-                            else:
-                                try:
-                                    self.logger.info(f"End of video for {self.source_names}, looping from start")
-                                    with self.mutex:
-                                        self.capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                                    self.video_current_frame = 0
-                                    self.video_current_position = 0.0
-                                except Exception as e:
-                                    self.logger.warning(f"Failed to loop video file for {self.source_names}: {e}")
-                                    try:
-                                        self.reset()
-                                    except Exception:
-                                        pass
-                                    consecutive_failures = 0
-                            # small sleep to avoid tight loop
-                            time.sleep(self.capture_config.min_sleep_seconds)
-                            continue
-                        else:
-                            self.finished = True
-                            self.run_flag = False
-                            self.stop_event.set()
-                            break
-                    else:
-                        consecutive_failures = 0
-                        self.last_frame_time = datetime.datetime.now()
-                else:
-                    # Minimize lock hold time - only lock during actual retrieve operation
-                    with self.mutex:
-                        is_read, src_image = self.capture.retrieve()
+                mutex_acquired = self.mutex.acquire(timeout=0.05)  # 50ms таймаут
+                if not mutex_acquired:
+                    # Мьютекс занят grab(), пропускаем кадр чтобы избежать deadlock
+                    self.logger.debug(f"Mutex busy, skipping retrieve() for {self.source_names}")
+                    is_read = False
+                    src_image = None
+                    # Продолжаем цикл без обработки кадра
+                    end_it = timer()
+                    elapsed_seconds = end_it - begin_it
+                    retrieve_fps = self.desired_fps if self.desired_fps else self.source_fps if self.source_fps else self.capture_config.default_fps_fallback
+                    sleep_seconds = self._calculate_sleep_seconds(elapsed_seconds, retrieve_fps)
+                    time.sleep(sleep_seconds)
+                    continue
             except Exception as e:
-                consecutive_failures += 1
-                self.logger.error(f"Exception in _retrieve_frames for {self.source_names}: {e}", exc_info=True)
-                # Try to recover for video files
-                if self.source_type == CaptureDeviceType.VideoFile:
-                    try:
-                        self.reset()
-                    except Exception:
-                        pass
-                time.sleep(self.capture_config.min_sleep_seconds)
+                self.logger.warning(f"Failed to acquire mutex for retrieve() for {self.source_names}: {e}")
+                is_read = False
+                src_image = None
+                # Продолжаем цикл без обработки кадра
+                end_it = timer()
+                elapsed_seconds = end_it - begin_it
+                retrieve_fps = self.desired_fps if self.desired_fps else self.source_fps if self.source_fps else self.capture_config.default_fps_fallback
+                sleep_seconds = self._calculate_sleep_seconds(elapsed_seconds, retrieve_fps)
+                time.sleep(sleep_seconds)
                 continue
+            
+            # Теперь мьютекс захвачен, можем безопасно вызвать retrieve()
+            retrieve_result = [None, None]  # [is_read, src_image]
+            retrieve_exception = [None]
+            retrieve_start_time = timer()
+            
+            try:
+                def retrieve_with_timeout():
+                    try:
+                        # Мьютекс уже захвачен в основном потоке, просто вызываем retrieve()
+                        retrieve_result[0], retrieve_result[1] = self.capture.retrieve()
+                    except Exception as e:
+                        retrieve_exception[0] = e
+                
+                retrieve_thread = Thread(target=retrieve_with_timeout, daemon=True)
+                retrieve_thread.start()
+                retrieve_thread.join(timeout=1.0)  # Таймаут 1 секунда
+                
+                retrieve_elapsed = timer() - retrieve_start_time
+                
+                if retrieve_thread.is_alive():
+                    # retrieve() завис, пропускаем этот кадр
+                    self.logger.warning(
+                        f"retrieve() timeout (>1s) for {self.source_names}, "
+                        f"skipping frame. This may indicate a hang after video rewind."
+                    )
+                    is_read = False
+                    src_image = None
+                elif retrieve_exception[0]:
+                    # Произошло исключение
+                    self.logger.warning(f"retrieve() exception for {self.source_names}: {retrieve_exception[0]}")
+                    is_read = False
+                    src_image = None
+                else:
+                    # retrieve() завершился успешно
+                    is_read, src_image = retrieve_result[0], retrieve_result[1]
+                    if retrieve_elapsed > 0.1:  # Логируем медленные вызовы
+                        self.logger.debug(f"retrieve() took {retrieve_elapsed:.3f}s for {self.source_names}")
+            finally:
+                # Всегда освобождаем мьютекс, даже если retrieve() завис или произошло исключение
+                if mutex_acquired:
+                    self.mutex.release()
+            
+            if not is_read or src_image is None:
+                # End-of-file / retrieve failure handling
+                # NOTE: retrieve() returns False if grab() returned False (end of video)
+                # or if grab() was not called. For VideoFile, grab() in _grab_frames
+                # already handles looping, so we just continue here.
+                if self.source_type == CaptureDeviceType.VideoFile:
+                    # For VideoFile, grab() in _grab_frames already handles looping
+                    # If retrieve() returns False, it means grab() returned False (end of video)
+                    # and grab() already looped, so we just continue to next iteration
+                    # Small sleep to avoid tight loop
+                    time.sleep(self.capture_config.min_sleep_seconds)
+                    continue
+                # Для живых источников — логика reconnection
+                self.is_working = False
+                timestamp = datetime.datetime.now()
+                self.disconnects.append((self.params['camera'], timestamp, self.is_working))
+                for sub in self.subscribers:
+                    sub.update()
+                # reset() попытается восстановить поток
+                self.reset()
+                # Verify reset was successful
+                if not (self.is_inited and self.is_opened()):
+                    self.logger.warning(
+                        f"Reset may have failed for {self.source_names} "
+                        f"(is_inited={self.is_inited}, is_opened={self.is_opened()})"
+                    )
+                    self.run_flag = False
+                    self.stop_event.set()
+            else:
+                self.last_frame_time = datetime.datetime.now()
             if is_read:
                 self._process_frame_metadata(is_read)
                 # DropOldestQueue automatically drops oldest when full
@@ -368,23 +389,38 @@ class VideoCaptureOpencv(VideoCaptureBase):
                     dropped = False
                 if dropped:
                     self.dropped_frames += 1
+
+                # Счётчик кадров всегда растёт монотонно на всём жизненном цикле захвата
                 self.frame_id_counter += 1
 
-                # Обновляем перф-метрики для оценки фактического FPS
+                # Периодически логируем прогресс кадров, чтобы отлавливать "застывание" картинки
+                try:
+                    if self.frame_id_counter % 150 == 0:
+                        queue_size = None
+                        try:
+                            # DropOldestQueue обычно совместим с qsize()
+                            queue_size = self.frames_queue.qsize()
+                        except Exception:
+                            queue_size = "n/a"
+                        self.logger.debug(
+                            f"Frame ID progress [{self.source_names}]: "
+                            f"frame_id={self.frame_id_counter}, "
+                            f"video_frame={self.video_current_frame}, "
+                            f"queue_size={queue_size}"
+                        )
+                except Exception:
+                    # Диагностическое логирование не должно ломать захват
+                    pass
+
+                # Обновляем перф-метрики для оценки фактического FPS (без логирования)
                 try:
                     self._perf_frame_count += 1
                     now = time.time()
                     if now - self._perf_last_log >= self._perf_stats_interval:
-                        interval = now - self._perf_last_log
-                        if interval <= 0:
-                            interval = 1e-6
-                        fps = self._perf_frame_count / interval
-                        source_label = ",".join(str(name) for name in self.source_names) if self.source_names else str(self.source_address)
-                        self.logger.info(f"Capture perf [{source_label}]: FPS={fps:.2f}")
                         self._perf_last_log = now
                         self._perf_frame_count = 0
                 except Exception:
-                    # Перф-логирование не должно ломать захват
+                    # Перф-метрики не должны ломать захват
                     pass
                 # Feed OpenCV recorder if present
                 try:
