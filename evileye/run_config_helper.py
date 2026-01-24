@@ -104,7 +104,20 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
     
     if gui_mode == GUIMode.HEADLESS:
         logger.info("Headless mode: skipping GUI initialization")
-        # No GUI components, no QApplication
+        # IMPORTANT: still create a minimal QApplication early.
+        # ControllerInitThread is a QThread and delivers results via Qt signals;
+        # without a Qt event loop in the main thread those signals won't be processed,
+        # causing headless runs to hang during initialization.
+        try:
+            import os as _os
+            _os.environ.setdefault("QT_NO_GLIB", "1")
+        except Exception:
+            pass
+        qt_app = QApplication.instance() or QApplication(sys.argv)
+        try:
+            qt_app.setQuitOnLastWindowClosed(False)
+        except Exception:
+            pass
     else:
         # Create GUI manager for HIDDEN or VISIBLE modes
         logger.info(f"Step 2: Initializing GUI (mode: {gui_mode.value})")
@@ -177,11 +190,11 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
     
     # Wait for initialization to complete
     if qt_app:
-        # GUI mode: process events while waiting
+        # Process Qt events while waiting (required for signal delivery)
         while not initialization_result['completed'] or not main_window_created['done']:
             qt_app.processEvents()
     else:
-        # Headless mode: just wait (no event loop)
+        # Fallback (shouldn't happen): basic wait
         import time
         while not initialization_result['completed'] or not main_window_created['done']:
             time.sleep(0.01)

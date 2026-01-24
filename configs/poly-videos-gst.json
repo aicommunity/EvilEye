@@ -18,8 +18,9 @@
                 "loop_play": true,
                 "source": "VideoFile",
                 "camera": "/home/user/Videos/Test3Cam/1/139932-video_trim.mp4",
-                "apiPreference": "CAP_FFMPEG",
-                "source_fps": 15.082956259426847
+                "type": "VideoCaptureGStreamer",
+                "apiPreference": "CAP_GSTREAMER",
+                "gstreamer_available": true
             },
             {
                 "split": true,
@@ -50,8 +51,9 @@
                 "loop_play": true,
                 "source": "VideoFile",
                 "camera": "/home/user/Videos/Test3Cam/2/139931-video_trim.mp4",
-                "apiPreference": "CAP_FFMPEG",
-                "source_fps": 10.410160316468874
+                "type": "VideoCaptureGStreamer",
+                "apiPreference": "CAP_GSTREAMER",
+                "gstreamer_available": true
             },
             {
                 "split": true,
@@ -82,8 +84,9 @@
                 "loop_play": true,
                 "source": "VideoFile",
                 "camera": "/home/user/Videos/Test3Cam/3/139930-video_trim.mp4",
-                "apiPreference": "CAP_FFMPEG",
-                "source_fps": 10.422094841063053
+                "type": "VideoCaptureGStreamer",
+                "apiPreference": "CAP_GSTREAMER",
+                "gstreamer_available": true
             }
         ],
         "detectors": [
@@ -267,6 +270,7 @@
                     "track_high_thresh": 0.5,
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
+                    "fuse_score": true,
                     "with_reid": true
                 }
             },
@@ -285,6 +289,7 @@
                     "track_high_thresh": 0.5,
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
+                    "fuse_score": true,
                     "with_reid": true
                 }
             },
@@ -303,6 +308,7 @@
                     "track_high_thresh": 0.5,
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
+                    "fuse_score": true,
                     "with_reid": true
                 }
             },
@@ -321,6 +327,7 @@
                     "track_high_thresh": 0.5,
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
+                    "fuse_score": true,
                     "with_reid": true
                 }
             },
@@ -339,6 +346,7 @@
                     "track_high_thresh": 0.5,
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
+                    "fuse_score": true,
                     "with_reid": true
                 }
             }

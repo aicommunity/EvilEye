@@ -91,6 +91,12 @@ class DetectionThreadBase:
             if not image:
                 sleep(0.01)
                 continue
+            
+            # Check if image.image is None before processing
+            if image.image is None:
+                self.logger.debug(f"Image.image is None for source {image.source_id}, skipping detection")
+                sleep(0.01)
+                continue
 
             if not self.roi[0]:
                 split_image = [[image, [0, 0]]]
@@ -98,7 +104,25 @@ class DetectionThreadBase:
                 coords = self.roi_coords_per_camera[image.source_id]
                 utils_module = get_utils()
                 split_image = utils_module.create_roi(image, coords)
-            detection_result_list = self.process_stride(split_image)
+            
+            # Check if split_image is empty or invalid before processing
+            if not split_image or len(split_image) == 0:
+                self.logger.debug(f"split_image is empty for source {image.source_id}, skipping detection")
+                sleep(0.01)
+                continue
+            
+            # Validate that split_image contains valid entries
+            valid_split = []
+            for item in split_image:
+                if item and len(item) >= 2 and item[0] is not None and item[0].image is not None:
+                    valid_split.append(item)
+            
+            if not valid_split:
+                self.logger.debug(f"No valid images in split_image for source {image.source_id}, skipping detection")
+                sleep(0.01)
+                continue
+            
+            detection_result_list = self.process_stride(valid_split)
             if detection_result_list:
                 self.queue_out.put([detection_result_list, image])
             # finish_it = timer()
@@ -110,9 +134,19 @@ class DetectionThreadBase:
         class_ids = []
         detection_result_list = DetectionResultList()
 
+        # Validate split_image is not empty
+        if not split_image or len(split_image) == 0:
+            self.logger.warning("process_stride called with empty split_image, returning empty result")
+            return None
+
         images = []
         for img in split_image:
-            images.append(img[0].image)
+            # Validate img structure before accessing
+            if not img or len(img) < 1 or img[0] is None or img[0].image is None:
+                self.logger.warning(f"Invalid image entry in split_image: {img}, skipping")
+                images.append(None)
+            else:
+                images.append(img[0].image)
         
         # Pass sensible classes to model (IDs only) to avoid Ultralytics errors
         classes_arg = self._get_classes_arg_for_model()
@@ -133,6 +167,11 @@ class DetectionThreadBase:
 
         for i in range(len(split_image)):
             try:
+                # Validate split_image[i] before accessing
+                if i >= len(split_image) or not split_image[i] or len(split_image[i]) < 1 or split_image[i][0] is None:
+                    self.logger.warning(f"Invalid split_image entry at index {i}, skipping")
+                    continue
+                
                 result = predict_results[i] if i < len(predict_results) else None
                 roi_bboxes, roi_confs, roi_ids = self.get_bboxes(result, split_image[i])
                 confidences.extend(roi_confs)
@@ -150,6 +189,11 @@ class DetectionThreadBase:
         # Centralized filtering by classes (IDs or names via model_class_mapping)
         bboxes_coords, confidences, class_ids = self._filter_detections(bboxes_coords, confidences, class_ids)
 
+        # Validate split_image[0][0] exists before accessing
+        if not split_image or len(split_image) == 0 or not split_image[0] or len(split_image[0]) == 0 or split_image[0][0] is None:
+            self.logger.warning("Cannot set source_id and frame_id: split_image is empty or invalid")
+            return None
+        
         detection_result_list.source_id = split_image[0][0].source_id
         detection_result_list.time_stamp = time.time()
         detection_result_list.frame_id = split_image[0][0].frame_id
