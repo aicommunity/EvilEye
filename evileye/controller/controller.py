@@ -7,9 +7,12 @@ from time import sleep
 
 from evileye.capture import video_capture_opencv
 from evileye.object_detector import object_detection_yolo
+from evileye.object_detector.object_detection_base import DetectionResultList
 from evileye.object_tracker import object_tracking_botsort
 from evileye.object_tracker.trackers.onnx_encoder import OnnxEncoder
+from evileye.object_tracker.tracking_results import TrackingResultList, TrackingResult
 from evileye.objects_handler import objects_handler
+from evileye.objects_handler.object_result import ObjectResult, ObjectResultList
 import time
 from timeit import default_timer as timer
 from evileye.visualization_modules.visualizer import Visualizer
@@ -33,6 +36,7 @@ from evileye.events_detectors.fov_events_detector import FieldOfViewEventsDetect
 from evileye.events_detectors.zone_events_detector import ZoneEventsDetector
 from evileye.events_detectors.attribute_events_detector import AttributeEventsDetector
 from evileye.events_detectors.event_system import SystemEvent
+import datetime
 from evileye.events_detectors.system_events_detector import SystemEventsDetector
 import json
 import datetime
@@ -93,6 +97,7 @@ class Controller:
         self.show_main_gui = True
         self.show_journal = False
         self.enable_close_from_gui = True
+        self.skip_objects_handler = False
         self.memory_periodic_check_sec = 60*15*60
         self.max_memory_usage_mb = 1024*16
         self.show_memory_usage = False
@@ -295,6 +300,7 @@ class Controller:
         """Положить результаты трекинга в ObjectsHandler и собрать кадры для визуализации/стриминга."""
         processing_frames = []
         self.logger.debug(f"Processing {len(mc_tracking_results)} tracking results")
+        
         for track_info in mc_tracking_results:
             # Handle both tuples [tracking_result, image] and Frame objects
             if isinstance(track_info, (tuple, list)) and len(track_info) == 2:
@@ -303,7 +309,10 @@ class Controller:
                 # Assume it's a Frame object (from attributes processors)
                 image = track_info
 
-            self.obj_handler.put(track_info)
+            # Если skip_objects_handler включен, не передаем данные в obj_handler
+            if not self.skip_objects_handler and self.obj_handler:
+                self.obj_handler.put(track_info)
+            
             processing_frames.append(image)
 
             try:
@@ -439,14 +448,123 @@ class Controller:
         except Exception:
             return False
 
+    def _convert_results_for_visualization(self, mc_tracking_results) -> dict[int, ObjectResultList]:
+        """
+        Конвертировать результаты детекции/трекинга в ObjectResultList для визуализации.
+        
+        Args:
+            mc_tracking_results: Список результатов из пайплайна [TrackingResultList/DetectionResultList, image]
+            
+        Returns:
+            dict[source_id, ObjectResultList] - объекты по source_id
+        """
+        result_by_source = {}
+        
+        for track_info in mc_tracking_results:
+            if isinstance(track_info, (tuple, list)) and len(track_info) == 2:
+                tracking_result, image = track_info
+            else:
+                continue
+                
+            if image is None:
+                continue
+                
+            source_id = image.source_id
+            
+            if source_id not in result_by_source:
+                result_by_source[source_id] = ObjectResultList()
+            
+            # Конвертировать в зависимости от типа
+            if isinstance(tracking_result, DetectionResultList):
+                # Конвертировать DetectionResultList
+                for detection in tracking_result.detections:
+                    obj = self._create_object_from_detection(detection, tracking_result, image)
+                    result_by_source[source_id].objects.append(obj)
+            elif isinstance(tracking_result, TrackingResultList):
+                # Конвертировать TrackingResultList
+                for track in tracking_result.tracks:
+                    obj = self._create_object_from_track(track, tracking_result, image)
+                    result_by_source[source_id].objects.append(obj)
+        
+        return result_by_source
+
+    def _create_object_from_detection(self, detection, detection_list, image):
+        """Создать ObjectResult из DetectionResult"""
+        obj = ObjectResult()
+        obj.frame_id = detection_list.frame_id
+        obj.source_id = detection_list.source_id
+        obj.class_id = detection.class_id
+        # Конвертировать timestamp в datetime если нужно
+        if detection_list.time_stamp is not None:
+            if isinstance(detection_list.time_stamp, (int, float)):
+                obj.time_stamp = datetime.datetime.fromtimestamp(detection_list.time_stamp)
+            elif isinstance(detection_list.time_stamp, datetime.datetime):
+                obj.time_stamp = detection_list.time_stamp
+            else:
+                obj.time_stamp = datetime.datetime.now()
+        else:
+            obj.time_stamp = datetime.datetime.now()
+        obj.time_detected = obj.time_stamp
+        
+        # Создать временный TrackingResult
+        track = TrackingResult()
+        track.track_id = detection_list.frame_id if detection_list.frame_id is not None else 0  # Временный ID
+        track.bounding_box = detection.bounding_box
+        track.confidence = detection.confidence
+        track.class_id = detection.class_id
+        track.tracking_data = {}
+        
+        obj.track = track
+        return obj
+
+    def _create_object_from_track(self, track, tracking_list, image):
+        """Создать ObjectResult из TrackingResult"""
+        obj = ObjectResult()
+        obj.frame_id = tracking_list.frame_id
+        obj.source_id = tracking_list.source_id
+        obj.class_id = track.class_id
+        # Конвертировать timestamp в datetime если нужно
+        if tracking_list.time_stamp is not None:
+            if isinstance(tracking_list.time_stamp, (int, float)):
+                obj.time_stamp = datetime.datetime.fromtimestamp(tracking_list.time_stamp)
+            elif isinstance(tracking_list.time_stamp, datetime.datetime):
+                obj.time_stamp = tracking_list.time_stamp
+            else:
+                obj.time_stamp = datetime.datetime.now()
+        else:
+            obj.time_stamp = datetime.datetime.now()
+        obj.time_detected = obj.time_stamp
+        obj.track = track
+        obj.global_id = track.tracking_data.get('global_id', None) if track.tracking_data else None
+        return obj
+
     def _maybe_update_visualization(self, processing_frames: list, dropped_frames) -> None:
         """Обновить визуализацию (если GUI включен)."""
         if not (self.show_main_gui and self.gui_enabled and self.visualizer):
             return
         try:
             objects = []
-            for source_id in self.visualizer.source_ids:
-                objects.append(self.obj_handler.get("active", source_id))
+            if self.skip_objects_handler:
+                # Конвертируем результаты напрямую из пайплайна для визуализации
+                pipeline_results = self.pipeline.peek_latest_result()
+                if pipeline_results is not None:
+                    final_results_name = self.pipeline.get_final_results_name()
+                    mc_tracking_results = pipeline_results.get(final_results_name, [])
+                    converted_objects = self._convert_results_for_visualization(mc_tracking_results)
+                    # Создаем список ObjectResultList в порядке source_ids визуализатора
+                    for source_id in self.visualizer.source_ids:
+                        objects.append(converted_objects.get(source_id, ObjectResultList()))
+                else:
+                    # Если результатов нет, создаем пустые списки
+                    for source_id in self.visualizer.source_ids:
+                        objects.append(ObjectResultList())
+            else:
+                # Стандартная обработка - получаем из obj_handler
+                for source_id in self.visualizer.source_ids:
+                    if self.obj_handler:
+                        objects.append(self.obj_handler.get("active", source_id))
+                    else:
+                        objects.append(ObjectResultList())
             self.visualizer.update(
                 processing_frames,
                 self.source_last_processed_frame_id,
@@ -709,6 +827,7 @@ class Controller:
             self.fps = self.params['controller'].get("fps", self.fps)
             self.show_main_gui = self.params['controller'].get("show_main_gui", self.show_main_gui)
             self.gui_enabled = self.params['controller'].get("gui_enabled", self.gui_enabled)
+            self.skip_objects_handler = self.params['controller'].get("skip_objects_handler", self.skip_objects_handler)
 
             self.show_journal = self.params['controller'].get("show_journal", self.show_journal)
             self.enable_close_from_gui = self.params['controller'].get("enable_close_from_gui", self.enable_close_from_gui)
