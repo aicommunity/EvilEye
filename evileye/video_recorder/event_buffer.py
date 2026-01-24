@@ -7,6 +7,7 @@ from typing import List, Tuple, Optional
 import numpy as np
 
 from evileye.core.logger import get_module_logger
+from evileye.video_recorder.constants import RecorderConstants
 
 
 class EventBuffer:
@@ -53,7 +54,8 @@ class EventBuffer:
         if timestamp is None:
             timestamp = time.time()
         
-        # Make a copy to avoid reference issues
+        # Copy is necessary: frames may be modified after being added to buffer
+        # Buffer needs to maintain independent copies for pre-event frame retrieval
         frame_copy = frame.copy()
         
         with self.lock:
@@ -76,6 +78,7 @@ class EventBuffer:
         
         with self.lock:
             # Iterate from oldest to newest
+            # Copy is necessary: returned frames may be modified by caller
             for frame, frame_ts in self.buffer:
                 if cutoff_time <= frame_ts < timestamp:
                     result.append((frame.copy(), frame_ts))
@@ -100,6 +103,7 @@ class EventBuffer:
         
         with self.lock:
             # Iterate from oldest to newest
+            # Copy is necessary: returned frames may be modified by caller
             for frame, frame_ts in self.buffer:
                 if timestamp <= frame_ts <= cutoff_time:
                     result.append((frame.copy(), frame_ts))
@@ -122,6 +126,7 @@ class EventBuffer:
         result = []
         
         with self.lock:
+            # Copy is necessary: returned frames may be modified by caller
             for frame, frame_ts in self.buffer:
                 if start_timestamp <= frame_ts <= end_timestamp:
                     result.append((frame.copy(), frame_ts))
@@ -141,9 +146,9 @@ class EventBuffer:
         if newest_ts is None:
             return
         
-        # If newest timestamp is large (> 1 day), it's absolute time (live source)
+        # If newest timestamp is large (> threshold), it's absolute time (live source)
         # Otherwise it's relative time (video file)
-        if newest_ts > 86400:  # Absolute timestamp (live source)
+        if newest_ts > RecorderConstants.TIMESTAMP_THRESHOLD_ABSOLUTE:  # Absolute timestamp (live source)
             current_time = time.time()
             cutoff_time = current_time - self.max_duration_seconds
         else:  # Relative timestamp (video file)
@@ -154,7 +159,10 @@ class EventBuffer:
         # to ensure we don't keep frames beyond max_duration_seconds
         removed_count = 0
         while self.buffer and self.buffer[0][1] < cutoff_time:
-            self.buffer.popleft()
+            old_frame, _ = self.buffer.popleft()
+            # Explicitly free memory from removed frame
+            if old_frame is not None:
+                del old_frame
             removed_count += 1
         
         if removed_count > 0:
@@ -163,6 +171,10 @@ class EventBuffer:
     def clear(self) -> None:
         """Clear all frames from the buffer."""
         with self.lock:
+            # Explicitly free memory from all frames before clearing
+            for frame, _ in self.buffer:
+                if frame is not None:
+                    del frame
             self.buffer.clear()
     
     def size(self) -> int:
@@ -214,7 +226,7 @@ class EventBuffer:
             return 0
         
         # Determine cutoff time
-        if newest_ts > 86400:  # Absolute timestamp
+        if newest_ts > RecorderConstants.TIMESTAMP_THRESHOLD_ABSOLUTE:  # Absolute timestamp
             current_time = time.time()
             cutoff_time = current_time - older_than_seconds
         else:  # Relative timestamp
@@ -223,7 +235,10 @@ class EventBuffer:
         removed_count = 0
         with self.lock:
             while self.buffer and self.buffer[0][1] < cutoff_time:
-                self.buffer.popleft()
+                old_frame, _ = self.buffer.popleft()
+                # Explicitly free memory from removed frame
+                if old_frame is not None:
+                    del old_frame
                 removed_count += 1
         
         if removed_count > 0:

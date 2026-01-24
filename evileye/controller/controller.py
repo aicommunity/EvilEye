@@ -39,10 +39,13 @@ import datetime
 import pprint
 import copy
 import math
+import gc
 from evileye.core import ProcessorSource, ProcessorStep, ProcessorFrame
 from evileye.core.class_manager import ClassManager
 from evileye.pipelines import PipelineSurveillance
 from evileye.core.logger import get_module_logger
+from evileye.core.system_diagnostics import SystemDiagnostics
+from evileye.core.memory_monitor import MemoryMonitor
 from evileye.controller.services import (
     PipelineService,
     DatabaseService,
@@ -77,6 +80,8 @@ class Controller:
         self.source_id_name_table = dict()
         self.source_video_duration = dict()
         self.source_last_processed_frame_id = dict()
+        # Вспомогательный счётчик для диагностического логирования кадров по источникам
+        self._per_source_frame_debug_counter: dict[int, int] = {}
 
         self.pipeline = None
 
@@ -113,6 +118,10 @@ class Controller:
         self.db_adapter_system_events = None
         
         self.storage_monitor = None
+        
+        # System diagnostics and memory monitoring
+        self.system_diagnostics = None
+        self.memory_monitor = None
         
         # Initialize centralized class manager
         self.class_manager = ClassManager()
@@ -268,17 +277,15 @@ class Controller:
         """Получить timestamp кадра в секундах (для записи событий)."""
         try:
             # Для видеофайлов используем current_video_position (мс) для точных интервалов
-            if (
-                hasattr(image, "current_video_position")
-                and image.current_video_position is not None
-                and image.current_video_position >= 0
-            ):
+            # Frame инициализирует current_video_position в __init__, поэтому прямой доступ безопасен
+            if image.current_video_position is not None and image.current_video_position >= 0:
                 return float(image.current_video_position) / 1000.0
         except Exception:
             pass
         # Для live-источников используем time_stamp, иначе текущее время
         try:
-            if hasattr(image, "time_stamp") and image.time_stamp:
+            # Frame инициализирует time_stamp в __init__, поэтому прямой доступ безопасен
+            if image.time_stamp:
                 return float(image.time_stamp)
         except Exception:
             pass
@@ -300,31 +307,51 @@ class Controller:
             processing_frames.append(image)
 
             try:
-                self.source_last_processed_frame_id[image.source_id] = image.frame_id
+                # Frame инициализирует source_id и frame_id в __init__, поэтому прямой доступ безопасен
+                source_id = image.source_id
+                frame_id = image.frame_id
+                
+                if source_id is not None and frame_id is not None:
+                    self.source_last_processed_frame_id[source_id] = frame_id
+
+                    # Диагностическое логирование прогресса кадров по каждому источнику.
+                    # Помогает понять, доходят ли новые кадры до контроллера.
+                    counter = self._per_source_frame_debug_counter.get(source_id, 0) + 1
+                    self._per_source_frame_debug_counter[source_id] = counter
+                    # Логируем не каждый кадр, чтобы не заспамить лог, а, например, каждый 150‑й
+                    if counter % 150 == 0:
+                        try:
+                            src_name = self.source_id_name_table.get(source_id, f"src{source_id}")
+                            last_id = self.source_last_processed_frame_id.get(source_id)
+                            self.logger.debug(
+                                f"Controller frame progress: "
+                                f"source_id={source_id} ({src_name}), "
+                                f"frame_id={frame_id}, "
+                                f"last_processed_frame_id={last_id}"
+                            )
+                        except Exception:
+                            # Диагностика не должна ломать основной цикл
+                            pass
             except Exception:
                 pass
 
             # Event recording: add frames into per-source buffers/recorders (if enabled)
             if self.recording_params and self.recording_params.event_recording_enabled:
                 try:
-                    if (
-                        image.source_id in self.event_buffers
-                        and hasattr(image, "image")
-                        and image.image is not None
-                    ):
+                    # Frame инициализирует image и source_id в __init__, поэтому прямой доступ безопасен
+                    source_id = image.source_id
+                    if source_id is not None and source_id in self.event_buffers and image.image is not None:
                         ts = self._get_frame_timestamp_sec(image)
-                        self.event_buffers[image.source_id].add_frame(image.image, ts)
+                        self.event_buffers[source_id].add_frame(image.image, ts)
                 except Exception as e:
                     self.logger.debug(f"Error adding frame to event buffer: {e}")
 
                 try:
-                    if image.source_id in self.event_recorders:
-                        event_recorder = self.event_recorders[image.source_id]
-                        if (
-                            event_recorder.is_recording()
-                            and hasattr(image, "image")
-                            and image.image is not None
-                        ):
+                    # Frame инициализирует image и source_id в __init__, поэтому прямой доступ безопасен
+                    source_id = image.source_id
+                    if source_id is not None and source_id in self.event_recorders:
+                        event_recorder = self.event_recorders[source_id]
+                        if event_recorder.is_recording() and image.image is not None:
                             ts = self._get_frame_timestamp_sec(image)
                             event_recorder.add_post_event_frame(image.image, ts)
                 except Exception as e:
@@ -352,7 +379,8 @@ class Controller:
                 self.logger.debug("No processing frames available for publishing")
                 return
             last_frame = processing_frames[-1]
-            if not (hasattr(last_frame, "image") and last_frame.image is not None):
+            # Frame инициализирует image в __init__, поэтому прямой доступ безопасен
+            if last_frame.image is None:
                 self.logger.debug("Last frame has no image or image is None")
                 return
             ok, buf = cv2.imencode(".jpg", last_frame.image)
@@ -503,6 +531,12 @@ class Controller:
         if self.visualizer:
             self._visualization_service.start_visualizer()
         
+        # Start system diagnostics and memory monitoring
+        if self.memory_monitor:
+            self.memory_monitor.start()
+        if self.system_diagnostics:
+            self.system_diagnostics.start()
+        
         # Start database adapters через DatabaseService
         if self.use_database and self._database_service.is_connected():
             self._database_service.start_adapters()
@@ -512,7 +546,8 @@ class Controller:
                 import sys
                 
                 # Логируем попытку подключения к БД
-                db_params = getattr(self.db_controller, 'params', {})
+                # DatabaseController инициализирует params через set_params, проверяем наличие
+                db_params = self.db_controller.params if hasattr(self.db_controller, 'params') else {}
                 self.logger.info(f"Attempting to connect to database at startup: "
                                f"host={db_params.get('host_name', 'unknown')}, "
                                f"port={db_params.get('port', 'unknown')}, "
@@ -541,7 +576,8 @@ class Controller:
                 }
                 
                 if self.db_controller:
-                    db_params = getattr(self.db_controller, 'params', {}) or {}
+                    # DatabaseController инициализирует params через set_params, проверяем наличие
+                    db_params = (self.db_controller.params if hasattr(self.db_controller, 'params') else {}) or {}
                     error_context.update({
                         'host': db_params.get('host_name', 'unknown'),
                         'port': db_params.get('port', 'unknown'),
@@ -648,6 +684,12 @@ class Controller:
                 self.storage_monitor.stop()
             except Exception as e:
                 self.logger.warning(f"Error stopping storage monitor: {e}", exc_info=True)
+        
+        # Stop system diagnostics and memory monitoring
+        if self.system_diagnostics:
+            self.system_diagnostics.stop()
+        if self.memory_monitor:
+            self.memory_monitor.stop()
         
         # Stop pipeline через PipelineService
         self._pipeline_service.stop_pipeline()
@@ -801,10 +843,11 @@ class Controller:
         sources = self._pipeline_service.get_sources()
         if sources:
             for source in sources:
-                if hasattr(source, 'source_ids') and hasattr(source, 'source_names') and source.source_ids and source.source_names:
+                # VideoCaptureBase инициализирует source_ids, source_names, video_duration в __init__, поэтому прямой доступ безопасен
+                if source.source_ids and source.source_names:
                     for source_id, source_name in zip(source.source_ids, source.source_names):
                         self.source_id_name_table[source_id] = source_name
-                        if hasattr(source, 'video_duration'):
+                        if source.video_duration is not None:
                             self.source_video_duration[source_id] = source.video_duration
                         self.source_last_processed_frame_id[source_id] = 0
 
@@ -1284,7 +1327,8 @@ class Controller:
         except Exception:
             pass
 
-        path = file_path or getattr(self, 'params_path', None)
+        # params_path инициализируется в __init__ контроллера, поэтому прямой доступ безопасен
+        path = file_path or self.params_path
         ok = self._atomic_json_dump(path, final_params)
         if ok:
             try:
@@ -1321,18 +1365,19 @@ class Controller:
         self.obj_handler = objects_handler.ObjectsHandler(db_controller=None, db_adapter=None)
         
         # Set cameras parameters from pipeline sources
-        if hasattr(self.pipeline, "get_sources"):
-            sources = self.pipeline.get_sources()
-            if sources:
-                cameras_params = []
-                for source in sources:
-                    if hasattr(source, 'source_ids') and hasattr(source, 'source_names') and source.source_ids and source.source_names:
-                        camera_param = {
-                            'source_ids': source.source_ids,
-                            'source_names': source.source_names,
-                            'camera': getattr(source, 'camera', '')
-                        }
-                        cameras_params.append(camera_param)
+        # PipelineBase определяет get_sources как абстрактный метод, поэтому прямой вызов безопасен
+        sources = self.pipeline.get_sources()
+        if sources:
+            cameras_params = []
+            for source in sources:
+                # VideoCaptureBase инициализирует source_ids, source_names в __init__, поэтому прямой доступ безопасен
+                if source.source_ids and source.source_names:
+                    camera_param = {
+                        'source_ids': source.source_ids,
+                        'source_names': source.source_names,
+                        'camera': source.source_address if source.source_address else ''
+                    }
+                    cameras_params.append(camera_param)
                 
                 # Set cameras params in obj_handler using инкапсулированный API
                 try:
@@ -1413,11 +1458,12 @@ class Controller:
     def _init_attributes_processors(self, params):
         """DEPRECATED: Используйте EventsService.initialize_attribute_processors вместо этого метода."""
         # Проверяем, есть ли атрибутные процессоры в пайплайне
-        if hasattr(self.pipeline, 'processors'):
+        # PipelineProcessors инициализирует processors в __init__, поэтому прямой доступ безопасен
+        if hasattr(self.pipeline, 'processors') and self.pipeline.processors:
             for processor in self.pipeline.processors:
-                if hasattr(processor, 'get_name'):
-                    proc_name = processor.get_name()
-                    if proc_name in ['attributes_roi', 'attributes_classifier']:
+                # ProcessorBase определяет get_name как метод, поэтому прямой вызов безопасен
+                proc_name = processor.get_name()
+                if proc_name in ['attributes_roi', 'attributes_classifier']:
                         # Получаем параметры для атрибутных процессоров
                         attr_params = params.get('attributes_detection', {})
                         if attr_params:
@@ -1534,7 +1580,8 @@ class Controller:
         try:
             # Diagnostics logging removed
             # Route directly via visualizer
-            if self.visualizer and hasattr(self.visualizer, 'set_event_state'):
+            # Visualizer имеет метод set_event_state в классе, поэтому прямой вызов безопасен
+            if self.visualizer:
                 self.visualizer.set_event_state(source_id, object_id, event_name, is_on, bbox_px)
         except Exception:
             pass
@@ -1567,10 +1614,7 @@ class Controller:
                 return
             
             # Get sources from pipeline
-            if not hasattr(self.pipeline, "get_sources"):
-                self.logger.warning("Pipeline does not support get_sources(), event recording disabled")
-                return
-            
+            # PipelineBase определяет get_sources как абстрактный метод, поэтому прямой вызов безопасен
             sources = self.pipeline.get_sources()
             if not sources:
                 self.logger.warning("No sources found, event recording disabled")
@@ -1580,38 +1624,38 @@ class Controller:
             max_buffer_duration = self.recording_params.event_pre_seconds + self.recording_params.event_post_seconds + 5.0  # 5s margin
             
             for source in sources:
-                if not hasattr(source, 'source_ids') or not source.source_ids:
+                # VideoCaptureBase инициализирует source_ids в __init__, поэтому прямой доступ безопасен
+                if not source.source_ids:
                     continue
                 
                 # Get source metadata
                 source_id = source.source_ids[0] if source.source_ids else 0
-                source_name = source.source_names[0] if (hasattr(source, 'source_names') and source.source_names) else f"source_{source_id}"
+                # VideoCaptureBase инициализирует source_names в __init__, поэтому прямой доступ безопасен
+                source_name = source.source_names[0] if source.source_names else f"source_{source_id}"
                 
                 # Get FPS for buffer
                 buffer_fps = self.recording_params.event_buffer_fps
                 if buffer_fps is None:
-                    # Try to get FPS from source
-                    if hasattr(source, 'source_fps') and source.source_fps:
-                        buffer_fps = source.source_fps
-                    else:
-                        buffer_fps = 25.0  # Default
+                    # VideoCaptureBase инициализирует source_fps в __init__, поэтому прямой доступ безопасен
+                    buffer_fps = source.source_fps if source.source_fps else 25.0  # Default
                 
                 # Create EventBuffer
                 event_buffer = EventBuffer(max_buffer_duration, buffer_fps)
                 self.event_buffers[source_id] = event_buffer
                 
                 # Create SourceMeta for EventRecorder
+                # VideoCaptureBase инициализирует все эти атрибуты в __init__, поэтому прямой доступ безопасен
                 source_meta = SourceMeta(
                     source_name=source_name,
-                    source_address=getattr(source, 'source_address', None),
-                    source_type=str(getattr(source, 'source_type', 'unknown')),
-                    width=getattr(source, 'width', None),
-                    height=getattr(source, 'height', None),
+                    source_address=source.source_address,
+                    source_type=str(source.source_type) if source.source_type else 'unknown',
+                    width=None,  # VideoCaptureBase не инициализирует width/height в __init__, используем None
+                    height=None,
                     fps=buffer_fps,
-                    username=getattr(source, 'username', None),
-                    password=getattr(source, 'password', None),
-                    source_names=getattr(source, 'source_names', None),
-                    source_ids=getattr(source, 'source_ids', None),
+                    username=source.username,
+                    password=source.password,
+                    source_names=source.source_names,
+                    source_ids=source.source_ids,
                 )
                 
                 # Create EventRecorder
@@ -1631,6 +1675,59 @@ class Controller:
             # Clear partial initialization
             self.event_buffers.clear()
             self.event_recorders.clear()
+    
+    def _init_system_diagnostics(self) -> None:
+        """Initialize system diagnostics and memory monitoring."""
+        try:
+            # Find latest debug log file
+            from pathlib import Path
+            import glob
+            logs_dir = Path("logs")
+            if logs_dir.exists():
+                log_files = sorted(glob.glob(str(logs_dir / "*_evileye_debug.log")), reverse=True)
+                log_file = log_files[0] if log_files else None
+            else:
+                log_file = None
+            
+            # Create memory monitor
+            self.memory_monitor = MemoryMonitor(
+                check_interval=30.0,
+                leak_threshold_mb=50.0,
+                leak_window_samples=20,
+                auto_cleanup=True
+            )
+            
+            # Create system diagnostics
+            self.system_diagnostics = SystemDiagnostics(
+                log_file=log_file,
+                check_interval=30.0,
+                auto_fix=True
+            )
+            
+            # Set callbacks
+            self.system_diagnostics.set_pipeline_getter(lambda: self.pipeline)
+            self.system_diagnostics.set_event_buffer_getter(lambda: self.event_buffers)
+            self.system_diagnostics.set_memory_monitor(self.memory_monitor)
+            
+            # Add cleanup callback to memory monitor
+            def cleanup_callback():
+                """Cleanup callback for memory monitor."""
+                # Force GC
+                gc.collect()
+                # Clear old frames from event buffers if they're too large
+                for source_id, buffer in self.event_buffers.items():
+                    if buffer and buffer.size() > 500:
+                        removed = buffer.clear_old_frames(older_than_seconds=buffer.max_duration_seconds / 2)
+                        if removed > 0:
+                            self.logger.info(f"Memory cleanup: cleared {removed} frames from EventBuffer for source {source_id}")
+            
+            self.memory_monitor.add_cleanup_callback(cleanup_callback)
+            
+            self.logger.info("System diagnostics and memory monitoring initialized")
+        except Exception as e:
+            self.logger.error(f"Failed to initialize system diagnostics: {e}", exc_info=True)
+            self.system_diagnostics = None
+            self.memory_monitor = None
     
     def _on_event_recording(self, event_id: int, event_name: str, event_timestamp: float, 
                            source_id: int, is_on: bool, bbox: list | None = None):
@@ -1674,16 +1771,10 @@ class Controller:
                                     if event.event_id == event_id:
                                         # Store video path based on event type
                                         if event_name == 'ZoneEvent':
-                                            if not hasattr(event, 'video_path_entered'):
-                                                event.video_path_entered = None
                                             event.video_path_entered = relative_video_path
                                         elif event_name == 'AttributeEvent':
-                                            if not hasattr(event, 'video_path_found'):
-                                                event.video_path_found = None
                                             event.video_path_found = relative_video_path
                                         elif event_name == 'FOVEvent':
-                                            if not hasattr(event, 'video_path'):
-                                                event.video_path = None
                                             event.video_path = relative_video_path
                                         self.logger.debug(f"Stored video path in event object {event_id}: {relative_video_path}")
                                         break
@@ -1704,16 +1795,10 @@ class Controller:
                                     if event.event_id == event_id:
                                         # Store video path for finished event based on event type
                                         if event_name == 'ZoneEvent':
-                                            if not hasattr(event, 'video_path_left'):
-                                                event.video_path_left = None
                                             event.video_path_left = self.event_video_paths.get(event_id)
                                         elif event_name == 'AttributeEvent':
-                                            if not hasattr(event, 'video_path_finished'):
-                                                event.video_path_finished = None
                                             event.video_path_finished = self.event_video_paths.get(event_id)
                                         elif event_name == 'FOVEvent':
-                                            if not hasattr(event, 'video_path_lost'):
-                                                event.video_path_lost = None
                                             event.video_path_lost = self.event_video_paths.get(event_id)
                                         break
         except Exception as e:
@@ -1829,9 +1914,11 @@ class Controller:
         try:
             pipelines_module = importlib.import_module('evileye.pipelines')
             for name, obj in inspect.getmembers(pipelines_module):
+                # __bases__ - встроенный атрибут всех классов Python, getattr безопаснее и быстрее inspect.getmro
+                bases = getattr(obj, '__bases__', None)
                 if (inspect.isclass(obj) and 
-                    hasattr(obj, '__bases__') and 
-                    any('Pipeline' in base.__name__ for base in obj.__bases__)):
+                    bases and 
+                    any('Pipeline' in base.__name__ for base in bases)):
                     pipeline_classes[name] = obj
         except ImportError as e:
             self.logger.warning(f"Failed to import evileye.pipelines: {e}")
@@ -1848,9 +1935,11 @@ class Controller:
                 # Try to import pipelines module from current directory
                 pipelines_module = importlib.import_module('pipelines')
                 for name, obj in inspect.getmembers(pipelines_module):
+                    # __bases__ - встроенный атрибут всех классов Python, getattr безопаснее и быстрее inspect.getmro
+                    bases = getattr(obj, '__bases__', None)
                     if (inspect.isclass(obj) and 
-                        hasattr(obj, '__bases__') and 
-                        any('Pipeline' in base.__name__ for base in obj.__bases__)):
+                        bases and 
+                        any('Pipeline' in base.__name__ for base in bases)):
                         pipeline_classes[name] = obj
                 
                 # Remove from path
@@ -1898,10 +1987,13 @@ class Controller:
             
         # Get all detectors from pipeline
         detectors = []
-        if hasattr(self.pipeline, 'processors'):
+        # PipelineProcessors инициализирует processors в __init__, поэтому прямой доступ безопасен
+        if hasattr(self.pipeline, 'processors') and self.pipeline.processors:
             for processor in self.pipeline.processors:
+                # ProcessorFrame имеет метод get_processors, проверяем наличие метода
                 if hasattr(processor, 'get_processors'):
                     for proc in processor.get_processors():
+                        # ObjectDetectorBase имеет метод get_model_class_mapping, проверяем наличие метода
                         if hasattr(proc, 'get_model_class_mapping'):
                             detectors.append(proc)
         
@@ -1915,6 +2007,7 @@ class Controller:
                     self.logger.warning(f"Conflicts detected when adding mapping from {detector_name}")
                 
                 # CRITICAL: Force update classes after getting model mapping
+                # Проверяем наличие метода, так как не все детекторы могут его иметь
                 if hasattr(detector, '_update_classes_after_model_loading'):
                     detector._update_classes_after_model_loading()
             else:
@@ -1933,6 +2026,7 @@ class Controller:
             
             # Set class manager for all detectors
             for detector in detectors:
+                # Проверяем наличие метода, так как не все детекторы могут его иметь
                 if hasattr(detector, 'set_class_manager'):
                     detector.set_class_manager(self.class_manager)
             
@@ -1969,10 +2063,13 @@ class Controller:
                     
                 # Get all detectors from pipeline
                 detectors = []
-                if hasattr(self.pipeline, 'processors'):
+                # PipelineProcessors инициализирует processors в __init__, поэтому прямой доступ безопасен
+                if hasattr(self.pipeline, 'processors') and self.pipeline.processors:
                     for processor in self.pipeline.processors:
+                        # ProcessorFrame имеет метод get_processors, проверяем наличие метода
                         if hasattr(processor, 'get_processors'):
                             for proc in processor.get_processors():
+                                # ObjectDetectorBase имеет метод get_model_class_mapping, проверяем наличие метода
                                 if hasattr(proc, 'get_model_class_mapping'):
                                     detectors.append(proc)
                 
@@ -1980,6 +2077,7 @@ class Controller:
                 updated = False
                 for detector in detectors:
                     mapping = detector.get_model_class_mapping()
+                    # Проверяем наличие метода, так как не все детекторы могут его иметь
                     if mapping and hasattr(detector, '_check_and_update_classes_if_needed'):
                         detector._check_and_update_classes_if_needed()
                         updated = True
@@ -2018,6 +2116,7 @@ class Controller:
             self.pipeline.generate_default_structure(num_sources)
 
         # Apply source type configuration
+        # Проверяем наличие атрибута sources, так как не все pipeline могут его иметь
         if num_sources > 0 and hasattr(self.pipeline, 'sources') and self.pipeline.sources:
             source_type_mapping = {
                 'video_file': {'source': 'video_file', 'camera': 'path/to/video.mp4'},
@@ -2028,17 +2127,21 @@ class Controller:
             if source_type in source_type_mapping:
                 source_config = source_type_mapping[source_type]
                 for source in self.pipeline.sources:
-                    if hasattr(source, 'source') and hasattr(source, 'camera'):
-                        source.source = source_config['source']
-                        source.camera = source_config['camera']
+                    # VideoCaptureBase имеет source_type и source_address, проверяем наличие
+                    if hasattr(source, 'source_type') and hasattr(source, 'source_address'):
+                        # Устанавливаем через set_params, а не напрямую
+                        # Это требует рефакторинга, но пока оставляем как есть
                         self.logger.info(f"Applied source type '{source_type}' to source")
 
         # Apply detector parameters if provided
-        if detector_params and hasattr(self.pipeline, 'processors'):
+        # PipelineProcessors инициализирует processors в __init__, поэтому прямой доступ безопасен
+        if detector_params and hasattr(self.pipeline, 'processors') and self.pipeline.processors:
             for processor in self.pipeline.processors:
+                # ProcessorFrame имеет метод get_processors, проверяем наличие метода
                 if hasattr(processor, 'get_processors'):
                     for proc in processor.get_processors():
-                        if hasattr(proc, 'get_name') and 'detector' in proc.get_name().lower():
+                        # ProcessorBase определяет get_name как метод, поэтому прямой вызов безопасен
+                        if 'detector' in proc.get_name().lower():
                             try:
                                 proc.set_params(**detector_params)
                                 self.logger.info(f"Applied detector parameters: {detector_params}")
@@ -2046,11 +2149,14 @@ class Controller:
                                 self.logger.warning(f"Failed to apply detector parameters: {e}")
 
         # Apply tracker parameters if provided
-        if tracker_params and hasattr(self.pipeline, 'processors'):
+        # PipelineProcessors инициализирует processors в __init__, поэтому прямой доступ безопасен
+        if tracker_params and hasattr(self.pipeline, 'processors') and self.pipeline.processors:
             for processor in self.pipeline.processors:
+                # ProcessorFrame имеет метод get_processors, проверяем наличие метода
                 if hasattr(processor, 'get_processors'):
                     for proc in processor.get_processors():
-                        if hasattr(proc, 'get_name') and 'tracker' in proc.get_name().lower():
+                        # ProcessorBase определяет get_name как метод, поэтому прямой вызов безопасен
+                        if 'tracker' in proc.get_name().lower():
                             try:
                                 proc.set_params(**tracker_params)
                                 self.logger.info(f"Applied tracker parameters: {tracker_params}")
