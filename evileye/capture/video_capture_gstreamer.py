@@ -86,6 +86,18 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         # Track callback frequency for diagnostics
         self._callback_count = 0
         self._callback_last_log = now
+        
+        # Error tracking for UDP stream errors
+        self._udp_error_count = 0
+        self._last_udp_error_time = None
+        self._udp_error_reconnect_delay = 5.0  # Задержка перед реконнектом при UDP ошибках
+        self._udp_error_threshold = 3  # Количество ошибок подряд перед реконнектом
+        
+        # Диагностические счетчики (явная инициализация вместо hasattr)
+        self._get_call_count = 0
+        self._get_call_last_log = now
+        self._last_returned_frame_id = -1
+        self._same_frame_count = 0
 
     # Debug stack dump removed
     
@@ -408,8 +420,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 try:
                     self.frame_buffer.put(capture_image, block=False)
                     # Track frame ID for diagnostics
-                    if hasattr(self, '_frame_buffer_deque'):
-                        self._frame_buffer_deque.append(capture_image.frame_id)
+                    self._frame_buffer_deque.append(capture_image.frame_id)
                 except Full:
                     self._perf_frame_buffer_full += 1
                     # Remove multiple old frames to make room (more aggressive clearing)
@@ -430,8 +441,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     # Try to add new frame
                     try:
                         self.frame_buffer.put_nowait(capture_image)
-                        if hasattr(self, '_frame_buffer_deque'):
-                            self._frame_buffer_deque.append(capture_image.frame_id)
+                        self._frame_buffer_deque.append(capture_image.frame_id)
                     except Full:
                         # If still full after clearing, drop the new frame (shouldn't happen often)
                         self.logger.debug(f"Frame buffer still full after clearing {frames_removed} frames, dropping frame for source {capture_image.source_id}")
@@ -585,6 +595,11 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                         # Notify subscribers asynchronously (only if there are subscribers)
                         if self.subscribers:
                             self._notify_subscribers_async(capture_images)
+                        
+                        # Сбрасываем счетчик UDP ошибок при успешном получении кадра (поток восстановился)
+                        if self._udp_error_count > 0:
+                            self._udp_error_count = 0
+                            self._last_udp_error_time = None
                     else:
                         # Log warning if split stream returns empty list (shouldn't happen normally)
                         if self.is_working:
@@ -633,6 +648,11 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     
                     # Store frame
                     self._store_frame(capture_image, is_split=False)
+                    
+                    # Сбрасываем счетчик UDP ошибок при успешном получении кадра (поток восстановился)
+                    if self._udp_error_count > 0:
+                        self._udp_error_count = 0
+                        self._last_udp_error_time = None
                     
                     # Notify subscribers asynchronously (only if there are subscribers)
                     # Check before calling to avoid unnecessary thread creation
@@ -708,8 +728,8 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         if recording_queue_buffers is not None:
             msg_parts.append(f"record_queue_buf={recording_queue_buffers}")
 
-        # Логируем в INFO, чтобы строки попадали в стандартный debug-лог
-        self.logger.info(f"Capture perf [{source_label}]: " + ", ".join(msg_parts))
+        # Логируем в DEBUG, чтобы не создавать флуд в логах
+        self.logger.debug(f"Capture perf [{source_label}]: " + ", ".join(msg_parts))
 
         # Reset counters for next interval
         self._perf_last_log = now
@@ -1074,19 +1094,88 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     self.is_working = False
             elif msg_type == Gst.MessageType.ERROR:
                 err, debug = message.parse_error()
-                self.logger.error(f"GStreamer ERROR: {err}, debug: {debug}")
-                self.is_working = False
-                # For IP cameras, just mark not working; monitor thread handles reconnect
-                if self.source_type == CaptureDeviceType.IpCamera and self.run_flag:
-                    timestamp = datetime.datetime.now()
-                    self.disconnects.append((self.source_address, timestamp, self.is_working))
-                    for sub in self.subscribers:
-                        sub.update()
-                    # Store error for protocol switching logic
-                    self._last_init_error = RuntimeError(f"{err}: {debug}")
-                    # Trigger reconnect loop if not already running
-                    if not self._reconnecting:
-                        threading.Thread(target=self._reconnect_loop, daemon=True).start()
+                err_str = str(err)
+                debug_str = str(debug)
+                
+                # Проверяем, является ли это "Internal data stream error" от udpsrc
+                is_udp_stream_error = (
+                    "Internal data stream error" in err_str and 
+                    "udpsrc" in debug_str.lower()
+                )
+                
+                # Получаем значение ignore_udp_stream_errors из конфига
+                ignore_udp_errors = getattr(self.capture_config, 'ignore_udp_stream_errors', True)
+                
+                if is_udp_stream_error and ignore_udp_errors:
+                    # Это временная потеря UDP пакетов - не критично
+                    now = time.time()
+                    self._udp_error_count += 1
+                    
+                    # Запоминаем время первой ошибки в серии
+                    if self._last_udp_error_time is None:
+                        self._last_udp_error_time = now
+                    
+                    time_since_first_error = now - self._last_udp_error_time
+                    
+                    # Логируем как DEBUG (не ERROR)
+                    self.logger.debug(
+                        f"UDP stream error (temporary packet loss) for {self.source_names}: "
+                        f"error_count={self._udp_error_count}, "
+                        f"time_since_first={time_since_first_error:.1f}s, "
+                        f"debug={debug_str[:100]}"
+                    )
+                    
+                    # Реконнектим только если:
+                    # 1. Ошибок подряд >= threshold
+                    # 2. Прошло >= delay секунд с первой ошибки
+                    should_reconnect = (
+                        self._udp_error_count >= self._udp_error_threshold and
+                        time_since_first_error >= self._udp_error_reconnect_delay
+                    )
+                    
+                    if should_reconnect:
+                        self.logger.warning(
+                            f"UDP stream errors threshold reached for {self.source_names} "
+                            f"({self._udp_error_count} errors in {time_since_first_error:.1f}s), triggering reconnect"
+                        )
+                        self.is_working = False
+                        # Сбрасываем счетчик перед реконнектом
+                        self._udp_error_count = 0
+                        self._last_udp_error_time = None
+                        
+                        if self.source_type == CaptureDeviceType.IpCamera and self.run_flag:
+                            timestamp = datetime.datetime.now()
+                            self.disconnects.append((self.source_address, timestamp, self.is_working))
+                            for sub in self.subscribers:
+                                sub.update()
+                            # Store error for protocol switching logic
+                            self._last_init_error = RuntimeError(f"{err}: {debug}")
+                            # Trigger reconnect loop if not already running
+                            if not self._reconnecting:
+                                threading.Thread(target=self._reconnect_loop, daemon=True).start()
+                    else:
+                        # Недостаточно ошибок или времени - просто игнорируем
+                        # Поток может восстановиться сам
+                        pass
+                else:
+                    # Другие ошибки или ignore_udp_stream_errors=False - обрабатываем как обычно
+                    self.logger.error(f"GStreamer ERROR: {err}, debug: {debug}")
+                    self.is_working = False
+                    # Сбрасываем счетчик UDP ошибок при других ошибках
+                    self._udp_error_count = 0
+                    self._last_udp_error_time = None
+                    
+                    # For IP cameras, just mark not working; monitor thread handles reconnect
+                    if self.source_type == CaptureDeviceType.IpCamera and self.run_flag:
+                        timestamp = datetime.datetime.now()
+                        self.disconnects.append((self.source_address, timestamp, self.is_working))
+                        for sub in self.subscribers:
+                            sub.update()
+                        # Store error for protocol switching logic
+                        self._last_init_error = RuntimeError(f"{err}: {debug}")
+                        # Trigger reconnect loop if not already running
+                        if not self._reconnecting:
+                            threading.Thread(target=self._reconnect_loop, daemon=True).start()
             elif msg_type == Gst.MessageType.WARNING:
                 warn, debug = message.parse_warning()
                 # Check for UDP-related warnings - hide them from logs as they are common and not critical
@@ -1272,7 +1361,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     meta = SourceMeta(
                         source_name=(self.source_names[0] if self.source_names else "source"),
                         source_address=self.source_address,
-                        source_type=str(self.source_type.value) if hasattr(self.source_type, 'value') else str(self.source_type),
+                        source_type=str(self.source_type.value),
                         width=None,
                         height=None,
                         fps=self.source_fps,
@@ -1436,9 +1525,6 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             return frames
         
         # Track get() calls for diagnostics
-        if not hasattr(self, '_get_call_count'):
-            self._get_call_count = 0
-            self._get_call_last_log = time.time()
         self._get_call_count += 1
         now = time.time()
         if now - self._get_call_last_log >= 5.0:
@@ -1474,16 +1560,12 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     if self.last_frame:
                         # Track if we're returning the same frame multiple times (indicates pipeline is faster than GStreamer)
                         current_frame_id = self.last_frame.frame_id
-                        if not hasattr(self, '_last_returned_frame_id'):
-                            self._last_returned_frame_id = -1
                         if current_frame_id == self._last_returned_frame_id:
                             # Same frame returned again - pipeline is calling get() faster than GStreamer produces frames
-                            if not hasattr(self, '_same_frame_count'):
-                                self._same_frame_count = 0
                             self._same_frame_count += 1
                         else:
                             self._last_returned_frame_id = current_frame_id
-                            if hasattr(self, '_same_frame_count') and self._same_frame_count > 0:
+                            if self._same_frame_count > 0:
                                 # Log if we had repeated frames
                                 source_label = ",".join(str(name) for name in self.source_names) if self.source_names else str(self.source_address)
                                 self.logger.debug(f"Capture get() [{source_label}]: returned same frame {self._same_frame_count} times before new frame")
@@ -1584,50 +1666,59 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             try:
                 if self.pipeline:
                     ret, state, pending = self.pipeline.get_state(0)
-                    if ret == Gst.StateChangeReturn.SUCCESS:
-                        if state == Gst.State.PLAYING:
-                            # Check if we're actually receiving frames
-                            now = time.time()
-                            last_frame_time = 0
-                            
-                            with self.frame_lock:
-                                if self.split_stream:
-                                    # For split streams, check last_frame which is updated when frames arrive
-                                    # last_frame is set to first frame of capture_images for split streams
-                                    if self.last_frame:
-                                        last_frame_time = getattr(self.last_frame, 'time_stamp', 0)
-                                    # Also check if frame_buffer has frames (as fallback)
-                                    elif not self.frame_buffer.empty():
-                                        # Try to peek at the most recent frame
-                                        # Since Queue doesn't support peek, we temporarily get and put back
+                    # Комбинированная проверка: ret == SUCCESS И state == PLAYING для основной проверки
+                    # Но если ret == FAILURE, но state == PLAYING и кадры приходят, не помечаем как "not working"
+                    if ret == Gst.StateChangeReturn.SUCCESS and state == Gst.State.PLAYING:
+                        # Нормальный случай: pipeline в PLAYING и get_state() вернул SUCCESS
+                        # Check if we're actually receiving frames
+                        now = time.time()
+                        last_frame_time = 0
+                        
+                        with self.frame_lock:
+                            if self.split_stream:
+                                # For split streams, check last_frame which is updated when frames arrive
+                                # last_frame is set to first frame of capture_images for split streams
+                                if self.last_frame:
+                                    last_frame_time = getattr(self.last_frame, 'time_stamp', 0)
+                                # Also check if frame_buffer has frames (as fallback)
+                                elif not self.frame_buffer.empty():
+                                    # Try to peek at the most recent frame
+                                    # Since Queue doesn't support peek, we temporarily get and put back
+                                    try:
+                                        temp_frame = self.frame_buffer.get_nowait()
+                                        if temp_frame:
+                                            last_frame_time = getattr(temp_frame, 'time_stamp', 0)
+                                        # Put frame back
                                         try:
-                                            temp_frame = self.frame_buffer.get_nowait()
-                                            if temp_frame:
-                                                last_frame_time = getattr(temp_frame, 'time_stamp', 0)
-                                            # Put frame back
-                                            try:
-                                                self.frame_buffer.put_nowait(temp_frame)
-                                            except Full:
-                                                # If buffer is full, just drop the frame we got
-                                                pass
-                                        except Empty:
+                                            self.frame_buffer.put_nowait(temp_frame)
+                                        except Full:
+                                            # If buffer is full, just drop the frame we got
                                             pass
-                                else:
-                                    # For single stream, check last_frame
-                                    if self.last_frame:
-                                        last_frame_time = getattr(self.last_frame, 'time_stamp', 0)
-                            
-                            if last_frame_time > 0 and (now - last_frame_time) > CaptureConstants.FRAME_TIMEOUT_SECONDS:
+                                    except Empty:
+                                        pass
+                            else:
+                                # For single stream, check last_frame
+                                if self.last_frame:
+                                    last_frame_time = getattr(self.last_frame, 'time_stamp', 0)
+                        
+                        # Проверяем таймаут только если кадры действительно не приходят
+                        if last_frame_time > 0:
+                            time_since_last_frame = now - last_frame_time
+                            if time_since_last_frame > CaptureConstants.FRAME_TIMEOUT_SECONDS:
                                 # No frames for timeout period
-                                time_since_last_frame = now - last_frame_time
+                                # Улучшенная диагностика: проверяем состояние pipeline и кадров
+                                pipeline_diag = f"state={state}, ret={ret}, pending={pending}"
+                                frame_diag = f"last_frame_time={last_frame_time:.3f}, time_since={time_since_last_frame:.1f}s"
+                                if self.split_stream:
+                                    frame_diag += f", frame_buffer_size={self.frame_buffer.qsize()}"
                                 
                                 # For VideoFile with loop_play, don't stop working - trigger restart instead
                                 if self.source_type == CaptureDeviceType.VideoFile and self.loop_play:
                                     if self.is_working:
                                         self.logger.warning(
                                             f"Pipeline PLAYING but no frames received after {time_since_last_frame:.1f}s "
-                                            f"for {self.source_names} (VideoFile with loop_play), triggering restart "
-                                            f"(last_frame_time={last_frame_time:.3f}, now={now:.3f})"
+                                            f"for {self.source_names} (VideoFile with loop_play), triggering restart. "
+                                            f"Diagnostics: {pipeline_diag}, {frame_diag}"
                                         )
                                         # Don't set is_working = False for VideoFile with loop_play
                                         # Instead, trigger restart immediately (handled below)
@@ -1638,19 +1729,70 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                                     if self.is_working:
                                         self.logger.warning(
                                             f"Pipeline PLAYING but no frames received after {time_since_last_frame:.1f}s "
-                                            f"for {self.source_names}, marking as not working "
-                                            f"(last_frame_time={last_frame_time:.3f}, now={now:.3f})"
+                                            f"for {self.source_names}, marking as not working. "
+                                            f"Diagnostics: {pipeline_diag}, {frame_diag}"
                                         )
                                         self.is_working = False
+                            # Если кадры приходят (time_since_last_frame <= FRAME_TIMEOUT_SECONDS), pipeline работает
+                        # Если last_frame_time == 0, значит кадров еще не было - это нормально при инициализации
+                    elif ret != Gst.StateChangeReturn.SUCCESS and state == Gst.State.PLAYING:
+                        # Специальный случай: ret == FAILURE, но state == PLAYING
+                        # Это может быть асинхронное изменение состояния
+                        # Проверяем, приходят ли кадры - если да, не помечаем как "not working"
+                        now = time.time()
+                        last_frame_time = 0
+                        
+                        with self.frame_lock:
+                            if self.split_stream:
+                                if self.last_frame:
+                                    last_frame_time = getattr(self.last_frame, 'time_stamp', 0)
+                                elif not self.frame_buffer.empty():
+                                    try:
+                                        temp_frame = self.frame_buffer.get_nowait()
+                                        if temp_frame:
+                                            last_frame_time = getattr(temp_frame, 'time_stamp', 0)
+                                        try:
+                                            self.frame_buffer.put_nowait(temp_frame)
+                                        except Full:
+                                            pass
+                                    except Empty:
+                                        pass
+                            else:
+                                if self.last_frame:
+                                    last_frame_time = getattr(self.last_frame, 'time_stamp', 0)
+                        
+                        if last_frame_time > 0:
+                            time_since_last_frame = now - last_frame_time
+                            # Если кадры приходят (time_since < таймаут), НЕ помечаем как "not working"
+                            if time_since_last_frame >= CaptureConstants.FRAME_TIMEOUT_SECONDS:
+                                    # Кадры не приходят - помечаем как "not working"
+                                if self.is_working:
+                                    # Убрано отладочное сообщение для уменьшения флуда
+                                    self.is_working = False
+                            else:
+                                # Кадры приходят (time_since < таймаут) - НЕ помечаем как "not working"
+                                # Это нормальная ситуация для ret == FAILURE при асинхронном изменении состояния
+                                if not self.is_working:
+                                    # Восстанавливаем is_working без логирования (избегаем флуда)
+                                    self.is_working = True
+                        # Если last_frame_time == 0, это может быть сразу после инициализации
+                        # Не помечаем как "not working" сразу, даем время на получение первого кадра
+                        # Но если прошло много времени после инициализации, помечаем как "not working"
                         else:
-                            # Pipeline not in PLAYING state
-                            if self.is_working:
-                                self.logger.debug(f"Pipeline state changed to {state} for {self.source_names}, marking as not working")
-                            self.is_working = False
+                            # Проверяем, прошло ли время после инициализации
+                            if self._init_time:
+                                time_since_init = now - self._init_time
+                                if time_since_init > CaptureConstants.INIT_GRACE_PERIOD_SECONDS:
+                                    # Прошло достаточно времени после инициализации, но кадров нет
+                                    if self.is_working:
+                                        # Убрано отладочное сообщение для уменьшения флуда
+                                        self.is_working = False
+                            # Если _init_time нет, это может быть старая инициализация - не трогаем is_working
                     else:
-                        # Failed to get state
+                        # Pipeline not in PLAYING state или ret != SUCCESS и state != PLAYING
                         if self.is_working:
-                            self.logger.debug(f"Failed to get pipeline state (ret={ret}) for {self.source_names}, marking as not working")
+                            # Убрано отладочное сообщение для уменьшения флуда
+                            pass
                         self.is_working = False
             except Exception as e:
                 self.logger.debug(f"Error checking pipeline state: {e}")
@@ -1660,8 +1802,58 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 # For IP cameras, use reconnect loop
                 if self.source_type == CaptureDeviceType.IpCamera:
                     if self.run_flag and not self._reconnecting:
-                        self.logger.info(f"Pipeline not working, starting reconnect loop for {self.source_names}")
-                        threading.Thread(target=self._reconnect_loop, daemon=True).start()
+                        # Улучшенная диагностика состояния потока перед реконнектом
+                        pipeline_state_str = "unknown"
+                        last_frame_info = "no frames"
+                        should_reconnect = True
+                        now = time.time()
+                        try:
+                            if self.pipeline:
+                                ret, state, pending = self.pipeline.get_state(0)
+                                pipeline_state_str = f"state={state}, ret={ret}, pending={pending}"
+                                
+                                # КРИТИЧНО: Если state == PLAYING и кадры приходят, НЕ реконнектим
+                                if state == Gst.State.PLAYING:
+                                    try:
+                                        with self.frame_lock:
+                                            last_frame_time = 0
+                                            if self.last_frame:
+                                                last_frame_time = getattr(self.last_frame, 'time_stamp', 0)
+                                            elif self.split_stream and not self.frame_buffer.empty():
+                                                try:
+                                                    temp_frame = self.frame_buffer.get_nowait()
+                                                    if temp_frame:
+                                                        last_frame_time = getattr(temp_frame, 'time_stamp', 0)
+                                                    self.frame_buffer.put_nowait(temp_frame)
+                                                except (Empty, Full):
+                                                    pass
+                                            
+                                            if last_frame_time > 0:
+                                                time_since_last = now - last_frame_time
+                                                last_frame_info = f"last_frame_time={last_frame_time:.3f}, time_since={time_since_last:.1f}s"
+                                                
+                                                # Если кадры приходят (time_since < FRAME_TIMEOUT_SECONDS), НЕ реконнектим
+                                                if time_since_last < CaptureConstants.FRAME_TIMEOUT_SECONDS:
+                                                    should_reconnect = False
+                                                    # Восстанавливаем is_working, так как pipeline работает (без логирования для уменьшения флуда)
+                                                    self.is_working = True
+                                            else:
+                                                last_frame_info = "no frames yet"
+                                    except Exception as e:
+                                        last_frame_info = f"error checking frames: {e}"
+                            else:
+                                pipeline_state_str = "pipeline=None"
+                        except Exception as e:
+                            pipeline_state_str = f"error getting state: {e}"
+                        
+                        # Реконнектим только если действительно нужно
+                        if should_reconnect:
+                            self.logger.info(
+                                f"Pipeline not working, starting reconnect loop for {self.source_names}. "
+                                f"Diagnostics: {pipeline_state_str}, {last_frame_info}, "
+                                f"is_inited={self.is_inited}, _reconnecting={self._reconnecting}"
+                            )
+                            threading.Thread(target=self._reconnect_loop, daemon=True).start()
                 # For video files with loop_play, check if reconnection is needed
                 elif self.source_type == CaptureDeviceType.VideoFile and self.loop_play:
                     # Don't reconnect if already reconnecting (via EOS handler or previous attempt)
