@@ -3,7 +3,7 @@ import json
 import time
 import os
 import datetime
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, Union
 from ..core.base_class import EvilEyeBase
 from ..core.interfaces import IObjectHandler, IDatabaseAdapter
 from ..capture.video_capture_base import CaptureImage
@@ -14,6 +14,7 @@ from threading import Thread
 from threading import Condition, Lock
 from ..object_tracker.tracking_results import TrackingResult
 from ..object_tracker.tracking_results import TrackingResultList
+from ..object_detector.object_detection_base import DetectionResultList
 from timeit import default_timer as timer
 from .object_result import ObjectResultHistory, ObjectResult, ObjectResultList
 from .labeling_manager import LabelingManager
@@ -340,6 +341,24 @@ class ObjectsHandler(EvilEyeBase):
         for subscriber in self.subscribers:
             subscriber.update()
     
+    def _timestamp_to_datetime(self, timestamp: Union[float, datetime.datetime, None]) -> Optional[datetime.datetime]:
+        """
+        Convert timestamp (float or datetime) to datetime object.
+        
+        Args:
+            timestamp: Can be float (Unix timestamp) or datetime object or None
+            
+        Returns:
+            datetime object or None
+        """
+        if timestamp is None:
+            return None
+        if isinstance(timestamp, datetime.datetime):
+            return timestamp
+        if isinstance(timestamp, (int, float)):
+            return datetime.datetime.fromtimestamp(timestamp)
+        return None
+    
     def _is_primary_object(self, obj):
         """Check if object is primary based on class name or ID"""
         if not self.attr_manager:
@@ -471,6 +490,25 @@ class ObjectsHandler(EvilEyeBase):
                     self._ensure_all_attributes_present(active_obj)
             return
 
+        # Convert DetectionResultList to TrackingResultList if trackers are disabled
+        if isinstance(tracking_results, DetectionResultList):
+            tracking_result_list = TrackingResultList()
+            tracking_result_list.generate_from(tracking_results)
+            # Copy metadata from DetectionResultList
+            tracking_result_list.source_id = tracking_results.source_id
+            tracking_result_list.frame_id = tracking_results.frame_id
+            tracking_result_list.time_stamp = tracking_results.time_stamp
+            # Copy confidence from detections to tracks
+            for i, track in enumerate(tracking_result_list.tracks):
+                if i < len(tracking_results.detections):
+                    track.confidence = tracking_results.detections[i].confidence
+            tracking_results = tracking_result_list
+
+        # Ensure tracking_results has tracks attribute
+        if not hasattr(tracking_results, 'tracks') or tracking_results.tracks is None:
+            self.logger.warning(f"tracking_results has no tracks attribute, skipping frame {image.frame_id if image else 'unknown'}")
+            return
+
         for track in tracking_results.tracks:
             track_object = None
             for active_obj in self.active_objs.objects:
@@ -483,7 +521,8 @@ class ObjectsHandler(EvilEyeBase):
                 track_object.frame_id = tracking_results.frame_id
                 track_object.class_id = track.class_id
                 track_object.track = track
-                track_object.time_stamp = tracking_results.time_stamp
+                # Convert timestamp to datetime if needed
+                track_object.time_stamp = self._timestamp_to_datetime(tracking_results.time_stamp)
                 # Store reference to image instead of copying to save memory
                 # The image will be used for saving, then cleared when object is lost
                 track_object.last_image = image
@@ -509,8 +548,9 @@ class ObjectsHandler(EvilEyeBase):
                     obj = ObjectResult()
                 obj.source_id = tracking_results.source_id
                 obj.class_id = track.class_id
-                obj.time_stamp = tracking_results.time_stamp
-                obj.time_detected = tracking_results.time_stamp
+                # Convert timestamp to datetime if needed
+                obj.time_stamp = self._timestamp_to_datetime(tracking_results.time_stamp)
+                obj.time_detected = self._timestamp_to_datetime(tracking_results.time_stamp)
                 obj.frame_id = tracking_results.frame_id
                 obj.object_id = self.object_id_counter
                 obj.global_id = track.tracking_data.get('global_id', None)
@@ -818,9 +858,15 @@ class ObjectsHandler(EvilEyeBase):
                 break
         
         if obj_event_type == 'detected':
-            timestamp = obj.time_stamp.strftime('%Y-%m-%d_%H-%M-%S.%f')
+            dt = self._timestamp_to_datetime(obj.time_stamp)
+            if dt is None:
+                dt = datetime.datetime.now()
+            timestamp = dt.strftime('%Y-%m-%d_%H-%M-%S.%f')
             img_path = os.path.join(obj_type_path, f'{timestamp}_{source_name}_{image_type}.jpeg')
         elif obj_event_type == 'lost':
-            timestamp = obj.time_lost.strftime('%Y-%m-%d_%H-%M-%S-%f')
+            dt = self._timestamp_to_datetime(obj.time_lost)
+            if dt is None:
+                dt = datetime.datetime.now()
+            timestamp = dt.strftime('%Y-%m-%d_%H-%M-%S-%f')
             img_path = os.path.join(obj_type_path, f'{timestamp}_{source_name}_{image_type}.jpeg')
         return os.path.relpath(img_path, save_dir)

@@ -417,10 +417,14 @@ class LabelingManager:
         # Get source name from cameras params if available
         source_name = self._get_source_name(obj.source_id)
         
+        # Convert timestamp to datetime if needed
+        time_stamp_dt = self._timestamp_to_datetime(obj.time_stamp)
+        timestamp_str = time_stamp_dt.isoformat() if time_stamp_dt else datetime.datetime.now().isoformat()
+        
         object_data = {
             "object_id": obj.object_id,
             "frame_id": obj.frame_id,
-            "timestamp": obj.time_stamp.isoformat(),
+            "timestamp": timestamp_str,
             "image_filename": relative_image_path,
             "bounding_box": pixel_bbox,
             "confidence": float(obj.track.confidence),
@@ -447,6 +451,24 @@ class LabelingManager:
                     }
         
         return object_data
+    
+    def _timestamp_to_datetime(self, timestamp):
+        """
+        Convert timestamp (float or datetime) to datetime object.
+        
+        Args:
+            timestamp: Can be float (Unix timestamp) or datetime object or None
+            
+        Returns:
+            datetime object or None
+        """
+        if timestamp is None:
+            return None
+        if isinstance(timestamp, datetime.datetime):
+            return timestamp
+        if isinstance(timestamp, (int, float)):
+            return datetime.datetime.fromtimestamp(timestamp)
+        return None
     
     def create_lost_object_data(self, obj, image_width: int, image_height: int,
                                image_filename: str, preview_filename: str) -> Dict[str, Any]:
@@ -478,11 +500,17 @@ class LabelingManager:
         # Get source name from cameras params if available
         source_name = self._get_source_name(obj.source_id)
         
+        # Convert timestamps to datetime if needed
+        time_detected_dt = self._timestamp_to_datetime(obj.time_detected)
+        time_lost_dt = self._timestamp_to_datetime(obj.time_lost)
+        detected_timestamp_str = time_detected_dt.isoformat() if time_detected_dt else datetime.datetime.now().isoformat()
+        lost_timestamp_str = time_lost_dt.isoformat() if time_lost_dt else datetime.datetime.now().isoformat()
+        
         object_data = {
             "object_id": obj.object_id,
             "frame_id": obj.frame_id,
-            "detected_timestamp": obj.time_detected.isoformat(),
-            "lost_timestamp": obj.time_lost.isoformat(),
+            "detected_timestamp": detected_timestamp_str,
+            "lost_timestamp": lost_timestamp_str,
             "image_filename": relative_image_path,
             "bounding_box": pixel_bbox,
             "confidence": float(obj.track.confidence),
