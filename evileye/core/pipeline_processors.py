@@ -217,7 +217,12 @@ class PipelineProcessors(PipelineBase):
 
         if isinstance(processor, ProcessorSource):
             self.sources_proc = processor
-        self._final_results_name = processor.get_name()
+        
+        # Set final_results_name only for main processing processors (not attributes processors)
+        # Main processors: sources, preprocessors, detectors, trackers, mc_trackers
+        processor_name = processor.get_name()
+        if processor_name in ['sources', 'preprocessors', 'detectors', 'trackers', 'mc_trackers']:
+            self._final_results_name = processor_name
 
     def generate_default_structure(self, num_sources: int):
         """Generate default structure for pipeline"""

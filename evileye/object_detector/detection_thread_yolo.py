@@ -128,22 +128,32 @@ class DetectionThreadYolo(DetectionThreadBase):
             self.logger.warning(f"Expected list of images, got {type(images)}")
             return None
         
-        # Track which images are None to map results back correctly
+        # Track which images are None or invalid to map results back correctly
         valid_images = []
         image_indices = []  # Track original indices of valid images
         for i, img in enumerate(images):
             if img is not None:
-                valid_images.append(img)
-                image_indices.append(i)
+                # Проверка что изображение имеет валидные размеры (не пустое)
+                try:
+                    if len(img.shape) >= 2 and img.shape[0] > 0 and img.shape[1] > 0:
+                        valid_images.append(img)
+                        image_indices.append(i)
+                    else:
+                        self.logger.debug(f"Image {i} has invalid shape {img.shape}, skipping")
+                except Exception as e:
+                    self.logger.debug(f"Error checking image {i} shape: {e}, skipping")
         
-        # If all images are None, return None results
+        # If all images are None or invalid, return None results
         if len(valid_images) == 0:
-            self.logger.warning("All images are None, cannot perform prediction")
+            self.logger.warning("All images are None or invalid, cannot perform prediction")
             return [None] * len(images)
         
         try:
+            # Исключить batch_size и batch_timeout_ms из параметров для ultralytics
+            filtered_params = {k: v for k, v in self.inf_params.items() 
+                             if k not in ('batch_size', 'batch_timeout_ms')}
             # Defer classes filtering to base; avoid passing names to model
-            results = self.model.predict(source=valid_images, classes=self._get_classes_arg_for_model(), verbose=False, **self.inf_params)
+            results = self.model.predict(source=valid_images, classes=self._get_classes_arg_for_model(), verbose=False, **filtered_params)
             
             # Map results back to original positions (None for invalid images)
             if results is None:
@@ -183,7 +193,12 @@ class DetectionThreadYolo(DetectionThreadBase):
             
             for coord, class_id, conf in zip(coords, class_ids, confs):
                 from ..utils import utils
-                abs_coords = utils.roi_to_image(coord, roi[1][0], roi[1][1])
+                # Проверка формата ROI: roi должен быть списком с минимум 2 элементами, roi[1] должен быть списком с минимум 2 элементами
+                if len(roi) > 1 and isinstance(roi[1], (list, tuple)) and len(roi[1]) >= 2:
+                    abs_coords = utils.roi_to_image(coord, roi[1][0], roi[1][1])
+                else:
+                    # Если ROI не определен правильно, использовать координаты как есть
+                    abs_coords = [int(coord[0]), int(coord[1]), int(coord[2]), int(coord[3])]
                 bboxes_coords.append(abs_coords)
                 confidences.append(conf)
                 ids.append(class_id)

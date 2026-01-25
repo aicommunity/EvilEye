@@ -26,6 +26,9 @@ class AttributeEventsDetector(EventsDetector):
             events = []
 
             # Iterate over configured sources
+            # Проверка на наличие objects_handler
+            if self.obj_handler is None:
+                continue
             for source_id in self.sources:
                 active_objects = self.obj_handler.get('active', source_id)
                 lost_objects = self.obj_handler.get('lost', source_id)

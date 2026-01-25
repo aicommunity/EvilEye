@@ -299,7 +299,11 @@ class Controller:
     def _process_tracking_results(self, mc_tracking_results) -> list:
         """Положить результаты трекинга в ObjectsHandler и собрать кадры для визуализации/стриминга."""
         processing_frames = []
-        self.logger.debug(f"Processing {len(mc_tracking_results)} tracking results")
+        if len(mc_tracking_results) > 0:
+            self.logger.debug(f"Processing {len(mc_tracking_results)} tracking results")
+        
+        frames_with_images = 0
+        frames_without_images = 0
         
         for track_info in mc_tracking_results:
             # Handle both tuples [tracking_result, image] and Frame objects
@@ -309,11 +313,29 @@ class Controller:
                 # Assume it's a Frame object (from attributes processors)
                 image = track_info
 
+            # Проверка наличия изображения
+            if image is not None:
+                if hasattr(image, 'image') and image.image is not None:
+                    frames_with_images += 1
+                else:
+                    frames_without_images += 1
+                    if frames_without_images <= 5:  # Логируем только первые 5 для диагностики
+                        self.logger.debug(f"Frame without image: source_id={getattr(image, 'source_id', None)}, frame_id={getattr(image, 'frame_id', None)}")
+            else:
+                frames_without_images += 1
+                if frames_without_images <= 5:
+                    self.logger.debug("Track info image is None")
+
             # Если skip_objects_handler включен, не передаем данные в obj_handler
             if not self.skip_objects_handler and self.obj_handler:
                 self.obj_handler.put(track_info)
             
             processing_frames.append(image)
+        
+        if frames_without_images > 0:
+            self.logger.warning(f"Frames summary: {frames_with_images} with images, {frames_without_images} without images")
+        elif len(processing_frames) > 0:
+            self.logger.debug(f"Frames summary: {frames_with_images} with images, {frames_without_images} without images")
 
             try:
                 # Frame инициализирует source_id и frame_id в __init__, поэтому прямой доступ безопасен
@@ -538,23 +560,26 @@ class Controller:
         obj.global_id = track.tracking_data.get('global_id', None) if track.tracking_data else None
         return obj
 
-    def _maybe_update_visualization(self, processing_frames: list, dropped_frames) -> None:
+    def _maybe_update_visualization(self, processing_frames: list, dropped_frames, mc_tracking_results=None) -> None:
         """Обновить визуализацию (если GUI включен)."""
         if not (self.show_main_gui and self.gui_enabled and self.visualizer):
             return
         try:
             objects = []
             if self.skip_objects_handler:
-                # Конвертируем результаты напрямую из пайплайна для визуализации
-                pipeline_results = self.pipeline.peek_latest_result()
-                if pipeline_results is not None:
-                    final_results_name = self.pipeline.get_final_results_name()
-                    mc_tracking_results = pipeline_results.get(final_results_name, [])
+                # Конвертируем результаты напрямую из обработанных результатов для визуализации
+                if mc_tracking_results is not None and len(mc_tracking_results) > 0:
+                    self.logger.debug(f"Visualization: mc_tracking_results count={len(mc_tracking_results)}")
                     converted_objects = self._convert_results_for_visualization(mc_tracking_results)
+                    self.logger.debug(f"Visualization: converted_objects keys={list(converted_objects.keys())}, processing_frames count={len(processing_frames)}")
                     # Создаем список ObjectResultList в порядке source_ids визуализатора
                     for source_id in self.visualizer.source_ids:
-                        objects.append(converted_objects.get(source_id, ObjectResultList()))
+                        obj_list = converted_objects.get(source_id, ObjectResultList())
+                        objects.append(obj_list)
+                        if len(obj_list.objects) > 0:
+                            self.logger.debug(f"Visualization: source_id={source_id}, objects count={len(obj_list.objects)}")
                 else:
+                    self.logger.debug("Visualization: mc_tracking_results is None or empty")
                     # Если результатов нет, создаем пустые списки
                     for source_id in self.visualizer.source_ids:
                         objects.append(ObjectResultList())
@@ -565,6 +590,13 @@ class Controller:
                         objects.append(self.obj_handler.get("active", source_id))
                     else:
                         objects.append(ObjectResultList())
+            # Проверка кадров перед передачей в визуализатор
+            frames_with_images = sum(1 for f in processing_frames if f is not None and hasattr(f, 'image') and f.image is not None)
+            if frames_with_images == 0 and len(processing_frames) > 0:
+                self.logger.warning(f"Visualization: all {len(processing_frames)} processing_frames have image=None!")
+            elif frames_with_images > 0:
+                self.logger.debug(f"Visualization: {frames_with_images}/{len(processing_frames)} frames have images")
+            
             self.visualizer.update(
                 processing_frames,
                 self.source_last_processed_frame_id,
@@ -572,9 +604,9 @@ class Controller:
                 dropped_frames,
                 self.debug_info,
             )
-        except Exception:
+        except Exception as e:
             # Визуализация не должна падать весь цикл
-            pass
+            self.logger.error(f"Visualization error: {e}", exc_info=True)
 
     def run(self):
         self.logger.info(f"Controller main loop started, stream_pipeline_id: {self.stream_pipeline_id}")
@@ -588,7 +620,18 @@ class Controller:
             all_sources_finished = self.pipeline.check_all_sources_finished()
 
             pipeline_results = self.pipeline.peek_latest_result()
-            self.logger.debug(f"Pipeline results keys: {list(pipeline_results.keys()) if pipeline_results else 'None'}")
+            if pipeline_results:
+                self.logger.debug(f"Pipeline results keys: {list(pipeline_results.keys())}")
+                # Логируем размеры результатов для каждого ключа
+                for key, value in pipeline_results.items():
+                    if isinstance(value, (list, tuple)):
+                        self.logger.debug(f"Pipeline results['{key}'] count: {len(value)}")
+                    elif value is None:
+                        self.logger.warning(f"Pipeline results['{key}'] is None")
+                    else:
+                        self.logger.debug(f"Pipeline results['{key}'] type: {type(value)}")
+            else:
+                self.logger.warning("Pipeline results is None!")
 
             final_results_name = self.pipeline.get_final_results_name()
             self.logger.debug(f"Final results name: {final_results_name}")
@@ -596,10 +639,30 @@ class Controller:
                 mc_tracking_results = pipeline_results.get(final_results_name, [])
             else:
                 mc_tracking_results = []
-            try:
+            if len(mc_tracking_results) > 0:
                 self.logger.debug(f"MC tracking results count: {len(mc_tracking_results)}")
-            except Exception:
-                pass
+            elif pipeline_results is not None:
+                # Логировать только первые несколько раз, чтобы не засорять логи
+                if not hasattr(self, '_empty_results_warning_count'):
+                    self._empty_results_warning_count = 0
+                if self._empty_results_warning_count < 3:
+                    self.logger.warning(f"MC tracking results is empty! Pipeline has keys: {list(pipeline_results.keys())}, final_results_name={final_results_name}")
+                    # Дополнительная диагностика: проверим, что находится в detectors
+                    if 'detectors' in pipeline_results:
+                        detectors_value = pipeline_results['detectors']
+                        if detectors_value is None:
+                            self.logger.warning(f"detectors value is None!")
+                        elif isinstance(detectors_value, (list, tuple)):
+                            self.logger.warning(f"detectors value is {type(detectors_value)} with length {len(detectors_value)}")
+                            if len(detectors_value) > 0:
+                                self.logger.warning(f"First detector result type: {type(detectors_value[0])}, value: {detectors_value[0]}")
+                        else:
+                            self.logger.warning(f"detectors value type: {type(detectors_value)}, value: {detectors_value}")
+                    else:
+                        self.logger.warning(f"'detectors' key not found in pipeline_results!")
+                    self._empty_results_warning_count += 1
+                else:
+                    self.logger.debug(f"MC tracking results is empty (suppressing repeated warnings)")
 
             # Insert debug info from pipeline components
             self.pipeline.insert_debug_info_by_id(self.debug_info)
@@ -619,7 +682,7 @@ class Controller:
             if self._check_memory_and_maybe_stop():
                 continue
 
-            self._maybe_update_visualization(processing_frames, dropped_frames)
+            self._maybe_update_visualization(processing_frames, dropped_frames, mc_tracking_results)
 
             end_it = timer()
             elapsed_seconds = end_it - begin_it
@@ -828,6 +891,7 @@ class Controller:
             self.show_main_gui = self.params['controller'].get("show_main_gui", self.show_main_gui)
             self.gui_enabled = self.params['controller'].get("gui_enabled", self.gui_enabled)
             self.skip_objects_handler = self.params['controller'].get("skip_objects_handler", self.skip_objects_handler)
+            self.logger.info(f"skip_objects_handler={self.skip_objects_handler} (from config: {self.params['controller'].get('skip_objects_handler', 'not set')})")
 
             self.show_journal = self.params['controller'].get("show_journal", self.show_journal)
             self.enable_close_from_gui = self.params['controller'].get("enable_close_from_gui", self.enable_close_from_gui)
@@ -1001,18 +1065,37 @@ class Controller:
                 self.database_config = {"database": {}, "database_adapters": {}}
         
         # Инициализация ObjectsHandler через ObjectsHandlerService
+        # Создаем objects_handler только если skip_objects_handler=False
+        if not self.skip_objects_handler:
+            if db_initialized:
+                db_adapter_obj = self._database_service.get_adapter('DatabaseAdapterObjects')
+                self.obj_handler = self._objects_handler_service.create_objects_handler(
+                    db_controller=self.db_controller,
+                    db_adapter=db_adapter_obj,
+                )
+                self.obj_handler = self._objects_handler_service.initialize_objects_handler(
+                    objects_handler=self.obj_handler,
+                    params=params.get('objects_handler') or dict(),
+                    pipeline=self.pipeline,
+                )
+            else:
+                # Инициализация ObjectsHandler без БД через ObjectsHandlerService
+                self.obj_handler = self._objects_handler_service.create_objects_handler(
+                    db_controller=None,
+                    db_adapter=None,
+                )
+                self.obj_handler = self._objects_handler_service.initialize_objects_handler(
+                    objects_handler=self.obj_handler,
+                    params=params.get('objects_handler') or dict(),
+                    pipeline=self.pipeline,
+                )
+        else:
+            self.logger.info("ObjectsHandler disabled via skip_objects_handler=True")
+            self.obj_handler = None
+        
+        # Инициализация событий через EventsService
+        # Передаем objects_handler (может быть None, если skip_objects_handler=True)
         if db_initialized:
-            db_adapter_obj = self._database_service.get_adapter('DatabaseAdapterObjects')
-            self.obj_handler = self._objects_handler_service.create_objects_handler(
-                db_controller=self.db_controller,
-                db_adapter=db_adapter_obj,
-            )
-            self.obj_handler = self._objects_handler_service.initialize_objects_handler(
-                objects_handler=self.obj_handler,
-                params=params.get('objects_handler') or dict(),
-                pipeline=self.pipeline,
-            )
-            # Инициализация событий через EventsService
             self._events_service.initialize_detectors(
                 params=self.params.get('events_detectors', dict()),
                 pipeline=self.pipeline,
@@ -1027,11 +1110,12 @@ class Controller:
             self.system_events_detector = self._events_service.get_detector('SystemEventsDetector')
             
             # Инициализация атрибутных процессоров
-            self._events_service.initialize_attribute_processors(
-                pipeline=self.pipeline,
-                objects_handler=self.obj_handler,
-                params=self.params,
-            )
+            if self.obj_handler:
+                self._events_service.initialize_attribute_processors(
+                    pipeline=self.pipeline,
+                    objects_handler=self.obj_handler,
+                    params=self.params,
+                )
             
             self._events_service.initialize_controller(self.params.get('events_detectors', dict()))
             self.events_detectors_controller = self._events_service.get_detectors_controller()
@@ -1047,17 +1131,8 @@ class Controller:
             self.events_processor = self._events_service.get_events_processor()
         else:
             self.logger.info("Database functionality disabled. Working without database connection.")
-            # Инициализация ObjectsHandler без БД через ObjectsHandlerService
-            self.obj_handler = self._objects_handler_service.create_objects_handler(
-                db_controller=None,
-                db_adapter=None,
-            )
-            self.obj_handler = self._objects_handler_service.initialize_objects_handler(
-                objects_handler=self.obj_handler,
-                params=params.get('objects_handler') or dict(),
-                pipeline=self.pipeline,
-            )
             # Инициализация событий без БД через EventsService
+            # Передаем objects_handler (может быть None, если skip_objects_handler=True)
             self._events_service.initialize_detectors(
                 params=self.params.get('events_detectors', dict()),
                 pipeline=self.pipeline,
@@ -1072,11 +1147,12 @@ class Controller:
             self.system_events_detector = self._events_service.get_detector('SystemEventsDetector')
             
             # Инициализация атрибутных процессоров
-            self._events_service.initialize_attribute_processors(
-                pipeline=self.pipeline,
-                objects_handler=self.obj_handler,
-                params=self.params,
-            )
+            if self.obj_handler:
+                self._events_service.initialize_attribute_processors(
+                    pipeline=self.pipeline,
+                    objects_handler=self.obj_handler,
+                    params=self.params,
+                )
             
             self._events_service.initialize_controller(self.params.get('events_detectors', dict()))
             self.events_detectors_controller = self._events_service.get_detectors_controller()

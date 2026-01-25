@@ -23,7 +23,11 @@ class ProcessorStep(ProcessorBase):
                 for processor in self.processors:
                     source_ids = processor.get_source_ids()
                     if frame.source_id in source_ids:
-                        processor.put(input)
+                        # Для детекторов нужно передавать только frame, а не весь input
+                        # input может быть кортежем [data, frame], но детектор ожидает только Frame
+                        put_result = processor.put(frame)
+                        if not put_result:
+                            self.logger.warning(f"Failed to put frame {frame.source_id}:{frame.frame_id} to processor {processor}")
                         is_processor_found = True
 
                     if is_processor_found:
@@ -43,9 +47,24 @@ class ProcessorStep(ProcessorBase):
 
                     processing_results.append([res, frame])
 
+        # Получить результаты из всех процессоров
         for processor in self.processors:
             result = processor.get()
             if result:
-                processing_results.append(result)
+                # result может быть списком [DetectionResultList, Frame] или кортежем (TrackingResultList, Frame)
+                # Для детекторов и трекеров нужно сохранить оба элемента, так как Frame нужен для визуализации
+                if isinstance(result, (list, tuple)) and len(result) == 2:
+                    # Это формат [result, frame] - добавляем как есть
+                    processing_results.append(result)
+                    if self.processor_name == 'detectors':
+                        self.logger.debug(f"ProcessorStep[{self.processor_name}]: got result from processor, type={type(result)}, result_type={type(result[0]) if len(result) > 0 else None}")
+                else:
+                    # Это просто результат без Frame - добавляем как есть
+                    processing_results.append(result)
+                    if self.processor_name == 'detectors':
+                        self.logger.debug(f"ProcessorStep[{self.processor_name}]: got result from processor (single), type={type(result)}")
+
+        if self.processor_name == 'detectors':
+            self.logger.debug(f"ProcessorStep[{self.processor_name}]: returning {len(processing_results)} results")
 
         return processing_results

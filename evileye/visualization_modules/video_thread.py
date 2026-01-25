@@ -121,6 +121,11 @@ class VideoThread(QThread):
 
     def convert_cv_qt(self, cv_img, widget_width, widget_height) -> QPixmap:
         # Переводим из opencv image в QPixmap
+        if cv_img is None:
+            # Return empty QPixmap if image is None
+            empty_pixmap = QPixmap(int(widget_width / VideoThread.cols), int(widget_height / VideoThread.rows))
+            empty_pixmap.fill(Qt.GlobalColor.black)
+            return empty_pixmap
         rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
         h, w, ch = rgb_image.shape
         bytes_per_line = ch * w
@@ -212,7 +217,24 @@ class VideoThread(QThread):
         painter.setBrush(brush)
         width, height = image.width(), image.height()
         for zone_type, zone_coords, _ in src_zones:
-            coords = [QPointF(point[0] * width, point[1] * height) for point in zone_coords]
+            # Защита от неправильного формата координат
+            coords = []
+            for point in zone_coords:
+                try:
+                    # Если point это список/кортеж из двух элементов
+                    if isinstance(point, (list, tuple)) and len(point) == 2:
+                        x, y = float(point[0]), float(point[1])
+                        coords.append(QPointF(x * width, y * height))
+                    # Если point это вложенный список (лишний уровень вложенности)
+                    elif isinstance(point, (list, tuple)) and len(point) > 0:
+                        # Попробовать извлечь координаты из вложенного списка
+                        nested = point[0] if isinstance(point[0], (list, tuple)) else point
+                        if isinstance(nested, (list, tuple)) and len(nested) == 2:
+                            x, y = float(nested[0]), float(nested[1])
+                            coords.append(QPointF(x * width, y * height))
+                except (ValueError, TypeError, IndexError) as e:
+                    self.logger.debug(f"Error processing zone point {point}: {e}")
+                    continue
             if ZoneForm(zone_type) == ZoneForm.Rectangle:
                 rect = QRectF(coords[0], coords[2])
                 painter.drawRect(rect)
@@ -223,6 +245,11 @@ class VideoThread(QThread):
         try:
             frame, track_info, source_name, source_duration_secs, debug_info = self.queue.get()
             begin_it = timer()
+            
+            # Проверить, что изображение доступно
+            if frame.image is None:
+                self.logger.debug(f"Frame {frame.frame_id} from source {frame.source_id} has None image in VideoThread")
+                return 0
             
             # Create a shallow copy of frame and copy only the image array (numpy array)
             # This is much more memory-efficient than deepcopy
@@ -249,12 +276,20 @@ class VideoThread(QThread):
             self.clean_image_mutex.unlock()
             # Remember original size to normalize pixel bboxes to display size correctly
             try:
-                ih, iw = display_frame.image.shape[:2]
-                self.last_frame_w = iw
-                self.last_frame_h = ih
+                if display_frame.image is not None:
+                    ih, iw = display_frame.image.shape[:2]
+                    self.last_frame_w = iw
+                    self.last_frame_h = ih
+                else:
+                    self.last_frame_w = None
+                    self.last_frame_h = None
             except Exception:
                 self.last_frame_w = None
                 self.last_frame_h = None
+            
+            # Skip processing if image is None
+            if display_frame.image is None:
+                return 0
             
             # Update persistent boxes TTL and merge with latest boxes
             try:
@@ -297,6 +332,15 @@ class VideoThread(QThread):
                 utils.draw_debug_info(display_frame, debug_info)
             qt_image = self.convert_cv_qt(display_frame.image, self.widget_width, self.widget_height)
             
+            if qt_image is None or qt_image.isNull():
+                self.logger.warning(f"qt_image is None or Null for source {self.source_id}, frame {frame.frame_id}, display_frame.image shape: {display_frame.image.shape if display_frame.image is not None else None}")
+                return 0
+            
+            # Дополнительная проверка размера изображения
+            if qt_image.width() == 0 or qt_image.height() == 0:
+                self.logger.warning(f"qt_image has zero size for source {self.source_id}, frame {frame.frame_id}, size: {qt_image.width()}x{qt_image.height()}")
+                return 0
+            
             if self.show_zones:
                 self.draw_zones(qt_image, self.zones)
             # Draw event signalization overlay last
@@ -304,6 +348,7 @@ class VideoThread(QThread):
             end_it = timer()
             elapsed_seconds = end_it - begin_it
             # Сигнал из потока для обновления label на новое изображение
+            self.logger.debug(f"Emitting update_image_signal for source {self.source_id}, frame {frame.frame_id}, thread_num {self.thread_num}, qt_image size: {qt_image.width()}x{qt_image.height()}")
             self.update_image_signal.emit(self.thread_num, qt_image)
             # Сигнал с оригинальным OpenCV изображением для ROI Editor (до любых отрисовок)
             self.update_original_cv_image_signal.emit(self.thread_num, frame.image)

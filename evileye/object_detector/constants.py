@@ -24,6 +24,16 @@ DEFAULT_BG_HISTORY = 500
 DEFAULT_BG_VAR_THRESHOLD = 16.0
 DEFAULT_BG_DETECT_SHADOWS = True
 
+# Frame freshness and batching
+DEFAULT_MAX_FRAME_AGE_MS = 500  # Maximum age of frame before dropping (milliseconds)
+DEFAULT_BATCH_SIZE = 4  # Default batch size for batching (optional, None = disabled)
+DEFAULT_BATCH_TIMEOUT_MS = 16  # Timeout for forming a batch (milliseconds)
+
+# Frame freshness and batching
+DEFAULT_MAX_FRAME_AGE_MS = 500  # Maximum age of frame before dropping (milliseconds)
+DEFAULT_BATCH_SIZE = 4  # Default batch size for batching (optional, None = disabled)
+DEFAULT_BATCH_TIMEOUT_MS = 16  # Timeout for forming a batch (milliseconds)
+
 """
 Constants for object detector module.
 All magic numbers and default values are defined here.
@@ -49,3 +59,8 @@ THREAD_START_DELAY = 0.1
 DEFAULT_BG_HISTORY = 500
 DEFAULT_BG_VAR_THRESHOLD = 16.0
 DEFAULT_BG_DETECT_SHADOWS = True
+
+# Frame freshness and batching
+DEFAULT_MAX_FRAME_AGE_MS = 500  # Maximum age of frame before dropping (milliseconds)
+DEFAULT_BATCH_SIZE = 4  # Default batch size for batching (optional, None = disabled)
+DEFAULT_BATCH_TIMEOUT_MS = 16  # Timeout for forming a batch (milliseconds)

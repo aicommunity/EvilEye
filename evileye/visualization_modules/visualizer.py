@@ -37,7 +37,7 @@ class Visualizer(EvilEyeBase):
         self.processing_frames: dict[int, list[CaptureImage]] = {}
         self.objects: list["ObjectResultList"] = []  # Используем строковую аннотацию для избежания циклических зависимостей
         self.last_displayed_frame = dict()
-        self.visual_buffer_num_frames = 50
+        self.visual_buffer_num_frames = 15  # Уменьшено с 50 для снижения использования памяти
         self.text_config = {}  # Text configuration for rendering
         self._class_mapping: dict[str, int] = {}  # Class mapping for displaying class names
         self.memory_consumption_detail = dict()
@@ -137,7 +137,7 @@ class Visualizer(EvilEyeBase):
         self.font_params = self.params.get('font_params', None)
         self.num_height = self.params.get('num_height', self.num_height)
         self.num_width = self.params.get('num_width', self.num_width)
-        self.visual_buffer_num_frames = self.params.get('visual_buffer_num_frames', 50)
+        self.visual_buffer_num_frames = self.params.get('visual_buffer_num_frames', 15)  # Уменьшено с 50 для снижения использования памяти
         self.text_config = self.params.get('text_config', {})
         self.signal_enabled = self.params.get('event_signal_enabled', False)
         self.signal_color = tuple(self.params.get('event_signal_color', [255, 0, 0]))
@@ -269,6 +269,11 @@ class Visualizer(EvilEyeBase):
             exceed_frames_num = len(self.processing_frames[frame.source_id]) - self.visual_buffer_num_frames
             if exceed_frames_num > 0:
                 # Remove oldest frames (from the beginning)
+                # Очистить изображения перед удалением для освобождения памяти
+                exceed_frames = self.processing_frames[frame.source_id][:exceed_frames_num]
+                for old_frame in exceed_frames:
+                    if hasattr(old_frame, 'image') and old_frame.image is not None:
+                        old_frame.image = None
                 del self.processing_frames[frame.source_id][:exceed_frames_num]
 
         self.objects = objects
@@ -310,16 +315,91 @@ class Visualizer(EvilEyeBase):
                 #self.logger.debug(f"source={source_id} num_objs={len(objs)}")
                 # self.logger.debug(f"Found {len(objs)} objects for visualization for source_id={frame.source_id} frame_id={frame.frame_id}")
 
+                # Удаление кадров без результатов детекции (если нет объектов вообще)
+                if len(objs) == 0 and objects[source_index].get_num_objects() == 0:
+                    # Нет объектов для этого кадра и нет объектов вообще - возможно, детекция еще не началась
+                    # Удалить кадр, если он слишком старый
+                    if frame.time_stamp:
+                        try:
+                            import time
+                            if isinstance(frame.time_stamp, (int, float)):
+                                frame_timestamp = float(frame.time_stamp)
+                            else:
+                                # Предполагаем datetime или другой формат
+                                frame_timestamp = getattr(frame.time_stamp, 'timestamp', lambda: time.time())()
+                            frame_age = time.time() - frame_timestamp
+                            if frame_age > 10.0:  # Удалить кадры старше 10 секунд без результатов
+                                remove_processed_idx[source_id].append(i)
+                                continue
+                        except Exception:
+                            pass
+                    continue
+
                 if len(objs) == 0 and objects[source_index].get_num_objects() > 0:
-                    # remove_processed_idx[source_id].append(i)
+                    # Кадр не может быть отображен, но есть другие объекты - возможно, кадр устарел
+                    # Проверить возраст кадра и удалить, если слишком старый
+                    if frame.time_stamp:
+                        try:
+                            import time
+                            if isinstance(frame.time_stamp, (int, float)):
+                                frame_timestamp = float(frame.time_stamp)
+                            else:
+                                # Предполагаем datetime или другой формат
+                                frame_timestamp = getattr(frame.time_stamp, 'timestamp', lambda: time.time())()
+                            frame_age = time.time() - frame_timestamp
+                            if frame_age > 5.0:  # Удалить кадры старше 5 секунд
+                                remove_processed_idx[source_id].append(i)
+                                continue
+                        except Exception:
+                            pass
                     continue
 
                 start_append_data = timer()
                 for j in range(len(self.visual_threads)):
                     if self.visual_threads[j].source_id == source_id:
-                        data = (frame, objs, self.source_id_name_table[source_id],
+                        # Проверить, что изображение доступно перед передачей
+                        if frame.image is None:
+                            self.logger.warning(f"Frame {frame.frame_id} from source {source_id} has None image, skipping visualization")
+                            remove_processed_idx[source_id].append(i)
+                            break
+                        # Создать копию кадра с копией изображения для передачи в VideoThread
+                        # Это необходимо, так как изображение может быть очищено в визуализаторе
+                        # до того, как VideoThread его обработает
+                        from ..capture.video_capture_base import CaptureImage
+                        frame_copy = CaptureImage()
+                        frame_copy.source_id = frame.source_id
+                        frame_copy.frame_id = frame.frame_id
+                        frame_copy.time_stamp = frame.time_stamp
+                        frame_copy.current_video_frame = frame.current_video_frame
+                        frame_copy.current_video_position = frame.current_video_position
+                        if frame.image is not None:
+                            # Создать глубокую копию изображения
+                            try:
+                                frame_copy.image = frame.image.copy()
+                                # Проверить, что копия создана
+                                if frame_copy.image is None:
+                                    self.logger.error(f"Failed to copy image for frame {frame.frame_id} from source {source_id}")
+                                    remove_processed_idx[source_id].append(i)
+                                    break
+                                # Дополнительная проверка: убедиться, что копия не пустая
+                                if frame_copy.image.size == 0:
+                                    self.logger.error(f"Copied image is empty for frame {frame.frame_id} from source {source_id}")
+                                    remove_processed_idx[source_id].append(i)
+                                    break
+                                self.logger.debug(f"Successfully copied image for frame {frame.frame_id} from source {source_id}, shape: {frame_copy.image.shape}")
+                            except Exception as e:
+                                self.logger.error(f"Error copying image for frame {frame.frame_id} from source {source_id}: {e}")
+                                remove_processed_idx[source_id].append(i)
+                                break
+                        else:
+                            frame_copy.image = None
+                            self.logger.warning(f"Frame {frame.frame_id} from source {source_id} has None image, cannot create copy")
+                            remove_processed_idx[source_id].append(i)
+                            break
+                        data = (frame_copy, objs, self.source_id_name_table[source_id],
                                 self.source_video_duration.get(source_id, None), debug_info)
                         self.visual_threads[j].append_data(data)
+                        self.logger.debug(f"Sent frame {frame.frame_id} from source {source_id} to VideoThread")
                         self.last_displayed_frame[source_id] = frame.frame_id
                         processed_sources.append(source_id)
                         remove_processed_idx[source_id].append(i)
@@ -331,12 +411,24 @@ class Visualizer(EvilEyeBase):
             remove_processed_idx[source_id].sort(reverse=True)
             for index in remove_processed_idx[source_id]:
                 if index < len(proc_frames):
+                    frame_to_remove = proc_frames[index]
+                    # Очистить изображение перед удалением для освобождения памяти
+                    # Важно: это очищает только оригинальный кадр в processing_frames,
+                    # копии уже переданы в VideoThread и не затронуты
+                    if hasattr(frame_to_remove, 'image') and frame_to_remove.image is not None:
+                        self.logger.debug(f"Clearing image for frame {frame_to_remove.frame_id} from source {source_id} (original frame, copy already sent to VideoThread)")
+                        frame_to_remove.image = None
                     del proc_frames[index]
 
             # Additional cleanup: remove frames for sources that are not in source_ids (inactive sources)
             if source_id not in self.source_ids:
                 # Clear all frames for inactive source
                 if source_id in self.processing_frames:
+                    frames_to_clear = self.processing_frames[source_id]
+                    # Очистить изображения перед удалением для освобождения памяти
+                    for frame in frames_to_clear:
+                        if hasattr(frame, 'image') and frame.image is not None:
+                            frame.image = None
                     del self.processing_frames[source_id]
                     self.logger.debug(f"Cleared processing_frames for inactive source {source_id}")
 
@@ -352,5 +444,10 @@ class Visualizer(EvilEyeBase):
             if source_id not in active_source_ids:
                 sources_to_remove.append(source_id)
         for source_id in sources_to_remove:
+            frames_to_clear = self.processing_frames[source_id]
+            # Очистить изображения перед удалением для освобождения памяти
+            for frame in frames_to_clear:
+                if hasattr(frame, 'image') and frame.image is not None:
+                    frame.image = None
             del self.processing_frames[source_id]
             self.logger.debug(f"Cleared processing_frames for removed source {source_id}")

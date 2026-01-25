@@ -47,6 +47,9 @@ class ZoneEventsDetector(EventsDetector):
             self.event.wait()
             if not self.run_flag:
                 break
+            # Проверка на наличие objects_handler
+            if self.obj_handler is None:
+                continue
             events = []
             objects = []
             lost_objects = []
@@ -241,19 +244,41 @@ class ZoneEventsDetector(EventsDetector):
 
     def _is_obj_in_zone(self, box_bottom_mid, zone, img_width, img_height):
         zone_coords_norm = zone.get_coords()
-        zone_coords = [(point[0] * img_width, point[1] * img_height) for point in zone_coords_norm]
+        # Защита от неправильного формата координат
+        zone_coords = []
+        for point in zone_coords_norm:
+            try:
+                # Если point это список/кортеж из двух элементов
+                if isinstance(point, (list, tuple)) and len(point) == 2:
+                    x, y = float(point[0]), float(point[1])
+                    zone_coords.append((x * img_width, y * img_height))
+                # Если point это вложенный список (лишний уровень вложенности)
+                elif isinstance(point, (list, tuple)) and len(point) > 0:
+                    # Попробовать извлечь координаты из вложенного списка
+                    nested = point[0] if isinstance(point[0], (list, tuple)) else point
+                    if isinstance(nested, (list, tuple)) and len(nested) == 2:
+                        x, y = float(nested[0]), float(nested[1])
+                        zone_coords.append((x * img_width, y * img_height))
+            except (ValueError, TypeError, IndexError) as e:
+                self.logger.debug(f"Error processing zone point {point}: {e}")
+                continue
         if zone.get_zone_form() == ZoneForm.Rectangle:
             if (zone_coords[0][0] <= box_bottom_mid[0] <= zone_coords[1][0] and
                     zone_coords[0][1] <= box_bottom_mid[1] <= zone_coords[2][1]):
                 return True
         elif zone.get_zone_form() == ZoneForm.Polygon:
             # Ray-casting algorithm для определения принадлежности точки полигону
+            if not zone_coords:
+                return False
             # Еще раз добавляем первую точку для формирования ребер полигона
-            zone_coords.append((zone_coords_norm[0][0] * img_width, zone_coords_norm[0][1] * img_height))
+            zone_coords.append(zone_coords[0])
             x_obj, y_obj = box_bottom_mid[0], box_bottom_mid[1]
             count = 0
             for i in range(len(zone_coords) - 1):
                 (x1, y1), (x2, y2) = zone_coords[i], zone_coords[i + 1]  # Получаем ребро
+                # Защита от деления на ноль
+                if y2 == y1:
+                    continue
                 if (y_obj < y1) != (y_obj < y2) and x_obj < x1 + ((y_obj - y1) / (y2 - y1)) * (x2 - x1):
                     count += 1
             if count % 2 == 1:

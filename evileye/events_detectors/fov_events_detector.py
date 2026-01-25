@@ -25,6 +25,9 @@ class FieldOfViewEventsDetector(EventsDetector):
             self.event.wait()
             if not self.run_flag:
                 break
+            # Проверка на наличие objects_handler
+            if self.obj_handler is None:
+                continue
             events = []
             objects = []
             lost_objects = []

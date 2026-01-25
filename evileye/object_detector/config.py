@@ -23,6 +23,8 @@ class InferenceParams:
     imgsz: int = DEFAULT_INFERENCE_SIZE
     device: Optional[str] = None
     half: bool = True
+    batch_size: Optional[int] = None  # Optional batch size for batching frames
+    batch_timeout_ms: Optional[int] = None  # Optional timeout for forming a batch
 
     @classmethod
     def from_dict(cls, params: dict) -> "InferenceParams":
@@ -34,6 +36,8 @@ class InferenceParams:
             imgsz=params.get("inference_size", params.get("imgsz", DEFAULT_INFERENCE_SIZE)),
             device=params.get("device", None),
             half=params.get("half", True),
+            batch_size=params.get("batch_size", None),
+            batch_timeout_ms=params.get("batch_timeout_ms", None),
         )
 
     def to_dict(self) -> dict:
@@ -45,6 +49,8 @@ class InferenceParams:
             "imgsz": self.imgsz,
             "device": self.device,
             "half": self.half,
+            "batch_size": self.batch_size,
+            "batch_timeout_ms": self.batch_timeout_ms,
         }
 
 
@@ -88,6 +94,8 @@ class InferenceParams:
     imgsz: int = DEFAULT_INFERENCE_SIZE
     device: Optional[str] = None
     half: bool = True
+    batch_size: Optional[int] = None  # Optional batch size for batching frames
+    batch_timeout_ms: Optional[int] = None  # Optional timeout for forming a batch
 
     @classmethod
     def from_dict(cls, params: dict) -> 'InferenceParams':
@@ -99,6 +107,8 @@ class InferenceParams:
             imgsz=params.get('inference_size', params.get('imgsz', DEFAULT_INFERENCE_SIZE)),
             device=params.get('device', None),
             half=params.get('half', True),
+            batch_size=params.get('batch_size', None),
+            batch_timeout_ms=params.get('batch_timeout_ms', None),
         )
 
     def to_dict(self) -> dict:
@@ -110,6 +120,8 @@ class InferenceParams:
             'imgsz': self.imgsz,
             'device': self.device,
             'half': self.half,
+            'batch_size': self.batch_size,
+            'batch_timeout_ms': self.batch_timeout_ms,
         }
 
 

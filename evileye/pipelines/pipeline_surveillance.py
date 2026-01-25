@@ -43,8 +43,20 @@ class PipelineSurveillance(PipelineProcessors):
         self._init_attributes_roi(pipeline_params.get("attributes_roi", []))
         self._init_attribute_classifier(pipeline_params.get("attributes_classifier", []))
 
-        # Set final results name dynamically based on mc_trackers status
+        # Set final results name dynamically based on processor chain
+        # _add_processor will set it correctly for main processors (detectors, trackers, mc_trackers)
+        # But we need to ensure it's set to the last main processor if attributes processors are added
         mc_trackers_enabled = any(tracker.get("enable", True) for tracker in pipeline_params.get("mc_trackers", []))
+        trackers_enabled = any(tracker.get("enable", True) for tracker in pipeline_params.get("trackers", []))
+        
+        # Find the last main processor (not attributes processors)
+        main_processors = ['sources', 'preprocessors', 'detectors', 'trackers', 'mc_trackers']
+        for processor in reversed(self.processors):
+            if processor.get_name() in main_processors:
+                self._final_results_name = processor.get_name()
+                break
+        
+        self.logger.info(f"Pipeline final_results_name set to: {self._final_results_name} (mc_trackers_enabled={mc_trackers_enabled}, trackers_enabled={trackers_enabled}, processors={[p.get_name() for p in self.processors]})")
 
         return True
 

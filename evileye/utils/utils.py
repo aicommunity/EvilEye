@@ -85,8 +85,37 @@ def create_roi(capture_image: CaptureImage, coords):
     if img is None:
         # Return empty list if image is None to avoid TypeError
         return rois
+    
+    # Проверка что исходное изображение имеет валидные размеры
+    if len(img.shape) < 2 or img.shape[0] == 0 or img.shape[1] == 0:
+        # Return empty list if image has invalid dimensions
+        return rois
+    
+    img_height, img_width = img.shape[0], img.shape[1]
+    
     for x, y, w, h in coords:
+        # Проверка валидности координат ROI (ширина и высота должны быть > 0)
+        if w <= 0 or h <= 0:
+            continue
+        
+        # Проверка что ROI находится в пределах изображения
+        if x < 0 or y < 0 or x + w > img_width or y + h > img_height:
+            # Обрезать ROI до границ изображения
+            x = max(0, min(x, img_width - 1))
+            y = max(0, min(y, img_height - 1))
+            w = min(w, img_width - x)
+            h = min(h, img_height - y)
+            
+            # Проверка что после обрезки размеры все еще валидны
+            if w <= 0 or h <= 0:
+                continue
+        
         roi_img = img[y:y+h, x:x+w]
+        
+        # Проверка что вырезанное изображение имеет валидные размеры
+        if roi_img.size == 0 or len(roi_img.shape) < 2 or roi_img.shape[0] == 0 or roi_img.shape[1] == 0:
+            continue
+        
         roi_capture = CaptureImage()
         roi_capture.source_id = capture_image.source_id
         roi_capture.frame_id = capture_image.frame_id

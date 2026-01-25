@@ -18,6 +18,8 @@ from .constants import (
     MODEL_READY_TIMEOUT,
     PROCESSING_SLEEP_INTERVAL,
     THREAD_START_DELAY,
+    DEFAULT_MAX_FRAME_AGE_MS,
+    DEFAULT_INFERENCE_SIZE,
 )
 
 
@@ -63,6 +65,16 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         self._model_class_mapping_cache: Optional[dict] = None
         self.class_manager = None  # Will be set by Controller
         self._roi_cache: dict[int, list[list[int]]] = {}
+        
+        # Performance metrics
+        self._metrics = {
+            'total_frames_processed': 0,
+            'total_frames_dropped': 0,
+            'total_stale_frames_skipped': 0,
+            'total_inference_time_ms': 0.0,
+            'max_queue_size': 0,
+            'last_metrics_log_time': 0.0,
+        }
 
     def put(self, image: CaptureImage) -> bool:
         """Put image into input queue for processing."""
@@ -249,6 +261,10 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         self.model_class_mapping = self.params.get('model_class_mapping', None)
         self._model_class_mapping_cache = None
         
+        # Frame freshness check - maximum age of frame before dropping (in seconds)
+        max_frame_age_ms = self.params.get('max_frame_age_ms', DEFAULT_MAX_FRAME_AGE_MS)
+        self.max_frame_age_sec = max_frame_age_ms / 1000.0 if max_frame_age_ms > 0 else 0
+        
         # Process classes parameter - support both class IDs and class names
         self._process_classes_parameter()
 
@@ -364,91 +380,151 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         self._preload_models()
     
     def _preload_models(self):
-        """Pre-load models in all detection threads to ensure they're ready"""
-        import platform
-        import sys
+        """
+        Pre-load models in all detection threads by sending synthetic images through the processing pipeline.
+        This ensures models are loaded in the processing thread, not the initialization thread.
+        
+        Note: Warmup is non-blocking and optional. If warmup fails, models will still load on first use.
+        """
+        import time
+        import threading
         
         if not self.detection_threads:
             self.logger.debug("No detection threads available for pre-loading")
             return
         
-        self.logger.info(f"Pre-loading models in {len(self.detection_threads)} detection thread(s)...")
+        self.logger.info(f"Starting warmup for {len(self.detection_threads)} detection thread(s)...")
         
-        successful_loads = 0
-        failed_loads = 0
-        
-        for i, thread in enumerate(self.detection_threads):
-            if hasattr(thread, 'init_detection_implementation'):
+        # Запустить warmup в отдельном потоке, чтобы не блокировать инициализацию
+        def warmup_thread():
+            successful_loads = 0
+            failed_loads = 0
+            
+            for i, thread in enumerate(self.detection_threads):
                 try:
-                    # Log model loading attempt for this thread
                     thread_name = thread.__class__.__name__
                     model_name = getattr(thread, 'model_name', 'unknown')
-                    self.logger.debug(f"Pre-loading model in detection thread {i} ({thread_name}): {model_name}")
+                    self.logger.debug(f"Warming up model in detection thread {i} ({thread_name}): {model_name}")
                     
-                    # Call init_detection_implementation to load model
-                    thread.init_detection_implementation()
-                    
-                    # Check that model is actually loaded
-                    if hasattr(thread, 'model') and thread.model is not None:
-                        self.logger.info(f"Pre-loaded model in detection thread {i} ({thread_name})")
+                    # Warmup через штатный пайплайн - модель загрузится в потоке обработки
+                    # Используем короткий таймаут, чтобы не блокировать надолго
+                    if self._warmup_model(thread, i, timeout=10.0):
                         successful_loads += 1
+                        self.logger.info(f"Model warmup completed for thread {i} ({thread_name})")
                     else:
-                        # Model not loaded, but thread can load it later
-                        self.logger.warning(f"Model pre-load called but model is still None in thread {i} ({thread_name}). "
-                                         f"Model will be loaded on first use.")
                         failed_loads += 1
-                        
-                except RuntimeError as e:
-                    # Handle model loading errors
-                    error_msg = str(e)
-                    thread_name = thread.__class__.__name__
-                    model_name = getattr(thread, 'model_name', 'unknown')
-                    
-                    if 'zip archive' in error_msg.lower() or 'central directory' in error_msg.lower():
-                        self.logger.warning(f"Failed to pre-load model in detection thread {i} ({thread_name}): "
-                                          f"Model file appears corrupted (ZIP archive error). "
-                                          f"Thread will continue without model. Error: {e}")
-                    else:
-                        self.logger.warning(f"Failed to pre-load model in detection thread {i} ({thread_name}): {e}")
-                    
-                    self.logger.debug(f"Pre-load error context: thread={thread_name}, model={model_name}, "
-                                    f"platform={platform.system()} {platform.release()}", exc_info=True)
-                    failed_loads += 1
-                    # Thread will continue, model can be loaded later
-                    
+                        self.logger.debug(f"Model warmup timeout/failed for thread {i} ({thread_name}). "
+                                        f"Model will be loaded on first use.")
                 except Exception as e:
-                    # Handle any other pre-loading errors
                     thread_name = thread.__class__.__name__
-                    model_name = getattr(thread, 'model_name', 'unknown')
-                    
-                    error_context = {
-                        'error_type': type(e).__name__,
-                        'error_message': str(e),
-                        'thread_index': i,
-                        'thread_name': thread_name,
-                        'model_name': model_name,
-                        'platform': f"{platform.system()} {platform.release()}",
-                        'python_version': sys.version.split()[0]
-                    }
-                    
-                    self.logger.warning(f"Failed to pre-load model in detection thread {i} ({thread_name}): {e}")
-                    self.logger.debug(f"Pre-load error context: {error_context}", exc_info=True)
+                    self.logger.warning(f"Error during model warmup for thread {i} ({thread_name}): {e}")
+                    self.logger.debug(f"Warmup error context", exc_info=True)
                     failed_loads += 1
                     # Thread will continue, model can be loaded later
+            
+            # Final warmup statistics
+            if successful_loads > 0:
+                self.logger.info(f"Model warmup completed: {successful_loads} successful, {failed_loads} failed")
+            elif failed_loads > 0:
+                self.logger.debug(f"Model warmup completed with errors: {failed_loads} threads failed. "
+                                f"Models will be loaded on first use if possible.")
         
-        # Final pre-loading statistics
-        if successful_loads > 0:
-            self.logger.info(f"Model pre-loading completed: {successful_loads} successful, {failed_loads} failed")
-        elif failed_loads > 0:
-            self.logger.warning(f"Model pre-loading completed with errors: {failed_loads} threads failed to load models. "
-                              f"Models will be loaded on first use if possible.")
-        else:
-            self.logger.info("Model pre-loading completed: no models to pre-load")
+        # Запустить warmup в фоновом потоке
+        warmup_thread_obj = threading.Thread(target=warmup_thread, daemon=True)
+        warmup_thread_obj.start()
+    
+    def _warmup_model(self, thread, thread_index: int, timeout: float = 10.0) -> bool:
+        """
+        Прогреть модель синтетическим изображением через штатный пайплайн обработки.
+        Модель загрузится в потоке обработки, а не в потоке инициализации.
+        
+        Args:
+            thread: Detection thread instance
+            thread_index: Index of the thread for logging
+            timeout: Таймаут для warmup в секундах (по умолчанию 10 секунд)
+            
+        Returns:
+            True если warmup успешен, False в противном случае
+        """
+        import numpy as np
+        import time
+        
+        try:
+            # Получить размер изображения для инференса из параметров
+            imgsz = thread.inf_params.get('imgsz', DEFAULT_INFERENCE_SIZE) if hasattr(thread, 'inf_params') else DEFAULT_INFERENCE_SIZE
+            
+            # Создать синтетическое изображение нужного размера (минимум 1x1, чтобы избежать проблем)
+            if imgsz <= 0:
+                imgsz = DEFAULT_INFERENCE_SIZE
+            # Создать не чисто черное изображение, а с небольшим шумом, чтобы избежать проблем с делением на ноль
+            # Некоторые модели могут иметь проблемы с чисто черными изображениями
+            synthetic_image_array = np.ones((imgsz, imgsz, 3), dtype=np.uint8) * 128  # Серое изображение вместо черного
+            
+            # Создать CaptureImage объект с нужными полями
+            synthetic_capture_image = CaptureImage()
+            synthetic_capture_image.image = synthetic_image_array
+            # Использовать первый source_id из списка или 0 по умолчанию
+            synthetic_capture_image.source_id = self.source_ids[0] if self.source_ids else 0
+            synthetic_capture_image.frame_id = -1  # Специальный ID для warmup кадра
+            synthetic_capture_image.time_stamp = time.time()
+            synthetic_capture_image.current_video_frame = None
+            synthetic_capture_image.current_video_position = None
+            
+            self.logger.debug(f"Warming up model in thread {thread_index} with {imgsz}x{imgsz} synthetic image via processing pipeline")
+            
+            # Положить синтетическое изображение в очередь обработки потока
+            # Это запустит штатный пайплайн: queue_in -> _process_impl() -> init_detection_implementation() -> process_stride() -> predict()
+            success, dropped_id = thread.put(synthetic_capture_image, force=True)
+            if not success:
+                self.logger.debug(f"Failed to put warmup image into thread {thread_index} queue")
+                return False
+            
+            # Ждать результат из общей выходной очереди детектора
+            # Результат будет в формате [DetectionResultList, CaptureImage]
+            start_time = time.time()
+            
+            while time.time() - start_time < timeout:
+                try:
+                    result = self.queue_out.get(timeout=0.5)  # Короткий таймаут для частых проверок
+                    if result and len(result) >= 2:
+                        detection_result_list, result_image = result
+                        # Проверить, что это наш warmup кадр
+                        if (hasattr(result_image, 'frame_id') and 
+                            result_image.frame_id == -1 and
+                            result_image.source_id == synthetic_capture_image.source_id):
+                            # Warmup успешен - модель загружена и обработала кадр
+                            self.logger.debug(f"Warmup result received for thread {thread_index}")
+                            # Очистить результат из памяти
+                            del result
+                            return True
+                        else:
+                            # Это не наш warmup кадр, вернуть его обратно в очередь
+                            try:
+                                self.queue_out.put_nowait(result)
+                            except Exception:
+                                # Если очередь переполнена, просто пропустить этот результат
+                                pass
+                except Exception:
+                    # Таймаут или ошибка - продолжить ожидание
+                    continue
+            
+            # Таймаут - warmup не завершился (это нормально, модель загрузится при первом использовании)
+            self.logger.debug(f"Warmup timeout for thread {thread_index} after {timeout}s (model will load on first use)")
+            return False
+            
+        except Exception as e:
+            self.logger.debug(f"Error during model warmup for thread {thread_index}: {e}")
+            return False
     
     def is_ready(self, timeout: float = MODEL_READY_TIMEOUT) -> bool:
         """
         Check if detector is ready to process frames (models loaded).
         Returns True if all detection threads have loaded their models.
+        
+        Note: For multiprocessing models (yolo_mp), model is in worker process,
+        so we check if mp_control is initialized instead.
+        
+        Note: Warmup is optional and non-blocking - we only check if models are loaded.
         """
         import time
         start_time = time.time()
@@ -459,12 +535,25 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
             if not self.detection_threads:
                 time.sleep(THREAD_START_DELAY)
                 continue
-            # Check if all detection threads have loaded models
+            # Check if all detection threads are started and ready to process
+            # Note: Models load lazily in processing thread, so we just check that threads are running
             all_ready = True
             for thread in self.detection_threads:
-                if not hasattr(thread, 'model') or thread.model is None:
+                # Проверяем что поток запущен
+                if not hasattr(thread, 'run_flag') or not thread.run_flag:
                     all_ready = False
                     break
+                # Для multiprocessing моделей проверяем mp_control
+                if hasattr(thread, 'mp_control'):
+                    if thread.mp_control is None:
+                        all_ready = False
+                        break
+                # Для обычных моделей проверяем что поток обработки запущен
+                # Модель загрузится лениво при первом кадре
+                if hasattr(thread, 'processing_thread'):
+                    if not thread.processing_thread or not thread.processing_thread.is_alive():
+                        all_ready = False
+                        break
             if all_ready:
                 return True
             time.sleep(THREAD_START_DELAY)
@@ -547,9 +636,34 @@ class ModelBasedDetectorBase(ObjectDetectorBase):
                 logger_name=logger_name,
                 parent_logger=self.logger,
             )
+            # Установить ссылку на родительский детектор для передачи метрик
+            if hasattr(thread, 'queue_out'):
+                thread.queue_out._parent_detector = self
             thread.start()
             self.detection_threads.append(thread)
         return True
+
+    def _get_least_loaded_thread(self) -> int:
+        """
+        Найти thread с наименьшей загрузкой очереди.
+        
+        Returns:
+            Индекс thread с наименьшей загрузкой
+        """
+        if not self.detection_threads:
+            return 0
+        
+        min_queue_size = float('inf')
+        least_loaded_idx = 0
+        
+        for i, thread in enumerate(self.detection_threads):
+            if hasattr(thread, 'queue_in'):
+                queue_size = thread.queue_in.qsize()
+                if queue_size < min_queue_size:
+                    min_queue_size = queue_size
+                    least_loaded_idx = i
+        
+        return least_loaded_idx
 
     def _resolve_model_path(self, model_name: str) -> str:
         """Resolve relative model path to absolute path."""
@@ -570,9 +684,64 @@ class ModelBasedDetectorBase(ObjectDetectorBase):
         params["model"] = self.model_name
         return params
 
+    def _log_performance_metrics(self):
+        """Логировать метрики производительности"""
+        metrics = self._metrics
+        total_processed = metrics['total_frames_processed']
+        total_dropped = metrics['total_frames_dropped']
+        total_stale = metrics['total_stale_frames_skipped']
+        max_queue = metrics['max_queue_size']
+        
+        # Вычислить текущие размеры очередей threads
+        thread_queue_sizes = []
+        for thread in self.detection_threads:
+            if hasattr(thread, 'queue_in'):
+                thread_queue_sizes.append(thread.queue_in.qsize())
+        
+        avg_inference_time = 0.0
+        if total_processed > 0:  # Защита от деления на ноль
+            avg_inference_time = metrics['total_inference_time_ms'] / total_processed
+        
+        self.logger.info(
+            f"Detector performance metrics: "
+            f"processed={total_processed}, "
+            f"dropped={total_dropped}, "
+            f"stale_skipped={total_stale}, "
+            f"max_queue_size={max_queue}, "
+            f"thread_queue_sizes={thread_queue_sizes}, "
+            f"avg_inference_time_ms={avg_inference_time:.2f}"
+        )
+    
+    def get_performance_metrics(self) -> dict:
+        """
+        Получить текущие метрики производительности.
+        
+        Returns:
+            Словарь с метриками производительности
+        """
+        thread_queue_sizes = []
+        for thread in self.detection_threads:
+            if hasattr(thread, 'queue_in'):
+                thread_queue_sizes.append(thread.queue_in.qsize())
+        
+        metrics = self._metrics.copy()
+        metrics['current_queue_size'] = self.queue_in.qsize()
+        metrics['thread_queue_sizes'] = thread_queue_sizes
+        metrics['output_queue_size'] = self.queue_out.qsize()
+        
+        # Вычислить среднее время инференса (с защитой от деления на ноль)
+        if metrics['total_frames_processed'] > 0:
+            metrics['avg_inference_time_ms'] = metrics['total_inference_time_ms'] / metrics['total_frames_processed']
+        else:
+            metrics['avg_inference_time_ms'] = 0.0
+        
+        return metrics
+
     def get_debug_info(self, debug_info: dict):
         super().get_debug_info(debug_info)
         debug_info["model_name"] = self.model_name
+        # Добавить метрики в debug_info
+        debug_info["performance_metrics"] = self.get_performance_metrics()
 
     def default(self):
         super().default()
@@ -581,6 +750,8 @@ class ModelBasedDetectorBase(ObjectDetectorBase):
 
     def _process_impl(self):
         """Main processing loop that distributes images to detection threads."""
+        import time
+        
         while self.run_flag:
             if not self.is_inited:
                 sleep(PROCESSING_SLEEP_INTERVAL)
@@ -593,12 +764,47 @@ class ModelBasedDetectorBase(ObjectDetectorBase):
             if not image:
                 continue
 
-            res, dropped_id = self.detection_threads[self.thread_counter].put(image, force=True)
+            # Обновить метрики размера очереди
+            current_queue_size = self.queue_in.qsize()
+            if current_queue_size > self._metrics['max_queue_size']:
+                self._metrics['max_queue_size'] = current_queue_size
+
+            # Проверка актуальности кадра
+            if self.max_frame_age_sec > 0 and image.time_stamp:
+                try:
+                    # Конвертировать timestamp в float если нужно
+                    if isinstance(image.time_stamp, (int, float)):
+                        frame_timestamp = float(image.time_stamp)
+                    else:
+                        # Предполагаем datetime или другой формат
+                        frame_timestamp = getattr(image.time_stamp, 'timestamp', lambda: time.time())()
+                    
+                    frame_age = time.time() - frame_timestamp
+                    if frame_age > self.max_frame_age_sec:
+                        self._metrics['total_stale_frames_skipped'] += 1
+                        self.logger.debug(f"Skipping stale frame {image.frame_id} from source {image.source_id} (age: {frame_age:.2f}s > {self.max_frame_age_sec:.2f}s)")
+                        continue
+                except Exception as e:
+                    # Если проверка актуальности не удалась, обрабатываем кадр (fallback)
+                    self.logger.debug(f"Frame freshness check failed, processing frame anyway: {e}")
+
+            # Умное распределение нагрузки - выбрать thread с наименьшей загрузкой
+            thread_idx = self._get_least_loaded_thread()
+            res, dropped_id = self.detection_threads[thread_idx].put(image, force=True)
             if dropped_id:
+                self._metrics['total_frames_dropped'] += 1
                 try:
                     self.queue_dropped_id.put_nowait(dropped_id)
                 except Exception:
                     pass
-            self.thread_counter += 1
-            if self.thread_counter >= self.num_detection_threads:
-                self.thread_counter = 0
+            else:
+                self._metrics['total_frames_processed'] += 1
+            
+            # Обновить thread_counter для совместимости (но используется умное распределение)
+            self.thread_counter = (thread_idx + 1) % self.num_detection_threads
+            
+            # Периодическое логирование метрик (каждые 5 секунд)
+            current_time = time.time()
+            if current_time - self._metrics['last_metrics_log_time'] >= 5.0:
+                self._log_performance_metrics()
+                self._metrics['last_metrics_log_time'] = current_time

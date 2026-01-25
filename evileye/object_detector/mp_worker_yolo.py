@@ -30,7 +30,10 @@ class MpWorkerYolo(MpWorker):
             self.model.half()
 
     def worker_impl(self, data: list):
-        results = self.model.predict(data, classes=self.classes, verbose=False, **self.inf_params)
+        # Исключить batch_size и batch_timeout_ms из параметров для ultralytics
+        filtered_params = {k: v for k, v in self.inf_params.items() 
+                         if k not in ('batch_size', 'batch_timeout_ms')}
+        results = self.model.predict(data, classes=self.classes, verbose=False, **filtered_params)
         cpu_results = []
         for res in results:
             cpu_results.append(res.cpu())

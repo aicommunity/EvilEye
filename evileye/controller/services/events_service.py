@@ -47,32 +47,42 @@ class EventsService:
         self._detectors['CamEventsDetector'].set_params(**params.get('CamEventsDetector', {}))
         self._detectors['CamEventsDetector'].init()
 
-        # FieldOfViewEventsDetector
-        self._detectors['FieldOfViewEventsDetector'] = FieldOfViewEventsDetector(objects_handler)
-        self._detectors['FieldOfViewEventsDetector'].set_params(**params.get('FieldOfViewEventsDetector', {}))
-        self._detectors['FieldOfViewEventsDetector'].init()
+        # FieldOfViewEventsDetector (требует objects_handler)
+        if objects_handler is not None:
+            self._detectors['FieldOfViewEventsDetector'] = FieldOfViewEventsDetector(objects_handler)
+            self._detectors['FieldOfViewEventsDetector'].set_params(**params.get('FieldOfViewEventsDetector', {}))
+            self._detectors['FieldOfViewEventsDetector'].init()
+        else:
+            self.logger.debug("Skipping FieldOfViewEventsDetector initialization: objects_handler is None")
 
-        # ZoneEventsDetector
-        self._detectors['ZoneEventsDetector'] = ZoneEventsDetector(objects_handler)
-        self._detectors['ZoneEventsDetector'].set_params(**params.get('ZoneEventsDetector', {}))
-        self._detectors['ZoneEventsDetector'].init()
+        # ZoneEventsDetector (требует objects_handler)
+        if objects_handler is not None:
+            self._detectors['ZoneEventsDetector'] = ZoneEventsDetector(objects_handler)
+            self._detectors['ZoneEventsDetector'].set_params(**params.get('ZoneEventsDetector', {}))
+            self._detectors['ZoneEventsDetector'].init()
+        else:
+            self.logger.debug("Skipping ZoneEventsDetector initialization: objects_handler is None")
 
-        # AttributeEventsDetector
-        self._detectors['AttributeEventsDetector'] = AttributeEventsDetector(objects_handler)
-        self._detectors['AttributeEventsDetector'].set_params(**params.get('AttributeEventsDetector', {}))
-        self._detectors['AttributeEventsDetector'].init()
+        # AttributeEventsDetector (требует objects_handler)
+        if objects_handler is not None:
+            self._detectors['AttributeEventsDetector'] = AttributeEventsDetector(objects_handler)
+            self._detectors['AttributeEventsDetector'].set_params(**params.get('AttributeEventsDetector', {}))
+            self._detectors['AttributeEventsDetector'].init()
+        else:
+            self.logger.debug("Skipping AttributeEventsDetector initialization: objects_handler is None")
 
-        # SystemEventsDetector
+        # SystemEventsDetector (не требует objects_handler)
         self._detectors['SystemEventsDetector'] = SystemEventsDetector()
         self._detectors['SystemEventsDetector'].set_params(**params.get('SystemEventsDetector', {}))
         self._detectors['SystemEventsDetector'].init()
 
-        # Подписка объектов на детекторы
-        objects_handler.subscribe(
-            self._detectors['FieldOfViewEventsDetector'],
-            self._detectors['ZoneEventsDetector'],
-            self._detectors['AttributeEventsDetector'],
-        )
+        # Подписка объектов на детекторы (только если objects_handler доступен)
+        if objects_handler is not None:
+            objects_handler.subscribe(
+                self._detectors.get('FieldOfViewEventsDetector'),
+                self._detectors.get('ZoneEventsDetector'),
+                self._detectors.get('AttributeEventsDetector'),
+            )
 
         # Подписка источников на CamEventsDetector
         for source in sources:
@@ -126,6 +136,9 @@ class EventsService:
             detectors_list.append(self._detectors['AttributeEventsDetector'])
         if self._detectors.get('SystemEventsDetector'):
             detectors_list.append(self._detectors['SystemEventsDetector'])
+        
+        # Фильтровать None детекторы (которые не были созданы из-за отсутствия objects_handler)
+        detectors_list = [detector for detector in detectors_list if detector is not None]
 
         self._detectors_controller = EventsDetectorsController(detectors_list)
         self._detectors_controller.set_params(**params)
@@ -197,6 +210,8 @@ class EventsService:
     def start_detectors(self) -> None:
         """Запустить все детекторы."""
         for name, detector in self._detectors.items():
+            if detector is None:
+                continue
             try:
                 detector.start()
                 self.logger.debug(f"Started detector: {name}")
@@ -206,6 +221,8 @@ class EventsService:
     def stop_detectors(self) -> None:
         """Остановить все детекторы."""
         for name, detector in self._detectors.items():
+            if detector is None:
+                continue
             try:
                 detector.stop()
                 self.logger.debug(f"Stopped detector: {name}")

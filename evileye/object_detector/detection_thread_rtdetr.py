@@ -63,8 +63,11 @@ class DetectionThreadRtdetr(DetectionThreadBase):
             return [None] * len(images)
         
         try:
+            # Исключить batch_size и batch_timeout_ms из параметров для ultralytics
+            filtered_params = {k: v for k, v in self.inf_params.items() 
+                             if k not in ('batch_size', 'batch_timeout_ms')}
             # Defer classes filtering to base; avoid passing names to model
-            results = self.model.predict(source=valid_images, classes=self._get_classes_arg_for_model(), verbose=False, **self.inf_params)
+            results = self.model.predict(source=valid_images, classes=self._get_classes_arg_for_model(), verbose=False, **filtered_params)
             
             # Map results back to original positions (None for invalid images)
             if results is None:

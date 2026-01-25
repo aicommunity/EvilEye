@@ -10,7 +10,7 @@ import logging
 
 from ..capture.video_capture_base import CaptureImage
 from .object_detection_base import DetectionResult, DetectionResultList
-from .constants import DEFAULT_THREAD_QUEUE_SIZE, PROCESSING_SLEEP_INTERVAL
+from .constants import DEFAULT_THREAD_QUEUE_SIZE, PROCESSING_SLEEP_INTERVAL, DEFAULT_BATCH_SIZE, DEFAULT_BATCH_TIMEOUT_MS
 
 
 class DetectionThreadBase:
@@ -50,6 +50,10 @@ class DetectionThreadBase:
             source_id: roi_coords for source_id, roi_coords in zip(self.source_ids, self.roi)
         }
         self.model_class_mapping: Optional[dict] = None
+        
+        # Batching parameters (optional)
+        self.batch_size = inf_params.get('batch_size', None)
+        self.batch_timeout_ms = inf_params.get('batch_timeout_ms', DEFAULT_BATCH_TIMEOUT_MS) if inf_params.get('batch_timeout_ms') is not None else DEFAULT_BATCH_TIMEOUT_MS
 
     def start(self) -> None:
         """Start the detection thread."""
@@ -102,40 +106,249 @@ class DetectionThreadBase:
 
     def _process_impl(self) -> None:
         """Main processing loop for detection thread."""
+        import time
+        
+        # Инициализировать модель один раз в начале цикла
+        self.init_detection_implementation()
+        
         while self.run_flag:
-            self.init_detection_implementation()
-            try:
-                image = self.queue_in.get(timeout=PROCESSING_SLEEP_INTERVAL)
-            except Exception:
-                image = None
+            # Если батчинг включен, собираем батч кадров
+            if self.batch_size and self.batch_size > 1:
+                batch_frames = []
+                batch_start_time = time.time()
+                
+                # Собрать батч кадров
+                while len(batch_frames) < self.batch_size:
+                    try:
+                        timeout = (self.batch_timeout_ms / 1000.0) - (time.time() - batch_start_time)
+                        if timeout <= 0:
+                            break
+                        image = self.queue_in.get(timeout=max(0.001, timeout))
+                        if image:
+                            batch_frames.append(image)
+                    except Exception:
+                        break
+                
+                if batch_frames:
+                    # Обработать батч кадров
+                    self._process_batch(batch_frames)
+                else:
+                    sleep(PROCESSING_SLEEP_INTERVAL)
+            else:
+                # Стандартная обработка - один кадр за раз
+                try:
+                    image = self.queue_in.get(timeout=PROCESSING_SLEEP_INTERVAL)
+                except Exception:
+                    image = None
 
-            if not image:
-                sleep(PROCESSING_SLEEP_INTERVAL)
-                continue
+                if not image:
+                    sleep(PROCESSING_SLEEP_INTERVAL)
+                    continue
 
+                if not self.roi[0]:
+                    split_image = [[image, [0, 0]]]
+                else:
+                    coords = self.roi_coords_per_camera[image.source_id]
+                    from ..utils import utils
+
+                    split_image = utils.create_roi(image, coords)
+                
+                # Проверка что split_image не пустой и содержит валидные изображения
+                if not split_image:
+                    self.logger.debug(f"Empty split_image for source {image.source_id}, frame {image.frame_id}, skipping")
+                    continue
+                
+                # Проверка что все изображения валидны (не None и имеют ненулевые размеры)
+                valid_split_image = []
+                for roi_item in split_image:
+                    roi_capture, roi_offset = roi_item
+                    if roi_capture and roi_capture.image is not None:
+                        img = roi_capture.image
+                        # Проверка что изображение имеет валидные размеры
+                        if len(img.shape) >= 2 and img.shape[0] > 0 and img.shape[1] > 0:
+                            valid_split_image.append(roi_item)
+                        else:
+                            self.logger.debug(f"Invalid image shape {img.shape if img is not None else 'None'} for ROI, skipping")
+                    else:
+                        self.logger.debug(f"None image in ROI, skipping")
+                
+                if not valid_split_image:
+                    self.logger.debug(f"No valid images in split_image for source {image.source_id}, frame {image.frame_id}, skipping")
+                    continue
+                
+                detection_result_list = self.process_stride(valid_split_image)
+                if detection_result_list:
+                    try:
+                        self.queue_out.put_nowait([detection_result_list, image])
+                    except Exception:
+                        self.logger.warning(
+                            f"Output queue full, dropping detection result for {image.source_id}:{image.frame_id}"
+                        )
+
+    def _process_batch(self, batch_frames: list) -> None:
+        """
+        Обработать батч кадров с правильным маппированием результатов.
+        
+        Args:
+            batch_frames: Список CaptureImage объектов для обработки
+        """
+        from ..utils import utils
+        
+        # Подготовить данные для батча: собрать все изображения и сохранить метаданные
+        batch_images = []
+        batch_metadata = []  # [(source_id, frame_id, roi_coords, original_image), ...]
+        
+        for image in batch_frames:
             if not self.roi[0]:
                 split_image = [[image, [0, 0]]]
             else:
                 coords = self.roi_coords_per_camera[image.source_id]
-                from ..utils import utils
-
                 split_image = utils.create_roi(image, coords)
-
-            detection_result_list = self.process_stride(split_image)
+            
+            # Проверка что split_image не пустой
+            if not split_image:
+                continue
+            
+            # Собрать изображения из всех ROI для этого кадра
+            for roi_item in split_image:
+                roi_image, roi_offset = roi_item
+                if roi_image and roi_image.image is not None:
+                    img = roi_image.image
+                    # Проверка что изображение имеет валидные размеры
+                    if len(img.shape) >= 2 and img.shape[0] > 0 and img.shape[1] > 0:
+                        batch_images.append(img)
+                        batch_metadata.append({
+                            'source_id': image.source_id,
+                            'frame_id': image.frame_id,
+                            'roi_offset': roi_offset,
+                            'original_image': image,
+                            'roi_item': roi_item
+                        })
+                    else:
+                        self.logger.debug(f"Invalid image shape {img.shape} in batch ROI, skipping")
+                else:
+                    self.logger.debug(f"None image in batch ROI, skipping")
+        
+        if not batch_images:
+            return
+        
+        # Выполнить инференс на батче
+        import time
+        inference_start_time = time.time()
+        predict_results = self._run_prediction(batch_images, len(batch_images))
+        inference_time_ms = (time.time() - inference_start_time) * 1000.0
+        
+        # Передать метрику времени инференса
+        if hasattr(self.queue_out, '_parent_detector'):
+            parent = getattr(self.queue_out, '_parent_detector', None)
+            if parent and hasattr(parent, '_metrics'):
+                parent._metrics['total_inference_time_ms'] += inference_time_ms
+        
+        if not predict_results:
+            return
+        
+        # Сгруппировать результаты по исходным кадрам
+        results_by_frame = {}
+        metadata_idx = 0
+        
+        for i, result in enumerate(predict_results):
+            if metadata_idx >= len(batch_metadata):
+                break
+                
+            meta = batch_metadata[metadata_idx]
+            frame_key = (meta['source_id'], meta['frame_id'])
+            
+            if frame_key not in results_by_frame:
+                results_by_frame[frame_key] = {
+                    'image': meta['original_image'],
+                    'roi_results': []
+                }
+            
+            # Извлечь bboxes из результата для этого ROI
+            # roi_item это [roi_capture, [x, y]], get_bboxes ожидает такой же формат
+            roi_bboxes, roi_confs, roi_ids = self.get_bboxes(result, meta['roi_item'])
+            
+            results_by_frame[frame_key]['roi_results'].append({
+                'bboxes': roi_bboxes,
+                'confidences': roi_confs,
+                'class_ids': roi_ids,
+                'roi_offset': meta['roi_offset']
+            })
+            
+            metadata_idx += 1
+        
+        # Создать DetectionResultList для каждого кадра в батче
+        for (source_id, frame_id), frame_data in results_by_frame.items():
+            # Объединить результаты от всех ROI для этого кадра
+            all_bboxes = []
+            all_confidences = []
+            all_class_ids = []
+            
+            for roi_result in frame_data['roi_results']:
+                all_bboxes.extend(roi_result['bboxes'])
+                all_confidences.extend(roi_result['confidences'])
+                all_class_ids.extend(roi_result['class_ids'])
+            
+            if not all_bboxes:
+                continue
+            
+            # Применить постобработку (merge_roi_boxes, NMS, фильтрация)
+            bboxes_coords, confidences, class_ids = self._post_process_detections(
+                all_bboxes, all_confidences, all_class_ids
+            )
+            
+            if not bboxes_coords:
+                continue
+            
+            # Создать DetectionResultList для этого кадра
+            detection_result_list = self._create_detection_result_list_for_frame(
+                frame_data['image'], bboxes_coords, confidences, class_ids
+            )
+            
             if detection_result_list:
                 try:
-                    self.queue_out.put_nowait([detection_result_list, image])
+                    self.queue_out.put_nowait([detection_result_list, frame_data['image']])
                 except Exception:
                     self.logger.warning(
-                        f"Output queue full, dropping detection result for {image.source_id}:{image.frame_id}"
+                        f"Output queue full, dropping detection result for {source_id}:{frame_id}"
                     )
+    
+    def _create_detection_result_list_for_frame(
+        self, image, bboxes_coords: list, confidences: list, class_ids: list
+    ) -> Optional[DetectionResultList]:
+        """Создать DetectionResultList для кадра из объединенных результатов ROI"""
+        detection_result_list = DetectionResultList()
+        detection_result_list.source_id = image.source_id
+        detection_result_list.time_stamp = image.time_stamp
+        detection_result_list.frame_id = image.frame_id
+
+        for bbox, class_id, conf in zip(bboxes_coords, class_ids, confidences):
+            detection_result = DetectionResult()
+            detection_result.bounding_box = [int(x) for x in bbox]
+            detection_result.class_id = int(class_id)
+            detection_result.confidence = conf
+            detection_result_list.detections.append(detection_result)
+
+        return detection_result_list
 
     def process_stride(self, split_image: list) -> Optional[DetectionResultList]:
         """
         Process images with stride and return detection results.
         """
+        import time
+        inference_start_time = time.time()
+        
         images = [img[0].image for img in split_image]
         predict_results = self._run_prediction(images, len(split_image))
+        
+        # Отслеживание времени инференса
+        inference_time_ms = (time.time() - inference_start_time) * 1000.0
+        if hasattr(self.queue_out, '_parent_detector'):
+            # Передать метрику времени инференса в родительский детектор
+            parent = getattr(self.queue_out, '_parent_detector', None)
+            if parent and hasattr(parent, '_metrics'):
+                parent._metrics['total_inference_time_ms'] += inference_time_ms
+        
         if not predict_results:
             return None
 

@@ -763,6 +763,11 @@ class ObjectsHandler(EvilEyeBase):
         try:
             if obj.last_image is None:
                 return
+            
+            # Дополнительная проверка на image.image
+            if not hasattr(obj.last_image, 'image') or obj.last_image.image is None:
+                self.logger.debug(f"Skipping image save: obj.last_image.image is None for object {obj.object_id} (event_type={event_type})")
+                return
                 
             # Save preview image
             self._save_image(obj.last_image, obj.track.bounding_box, 'preview', event_type, obj)
@@ -776,6 +781,11 @@ class ObjectsHandler(EvilEyeBase):
     def _save_image(self, image, box, image_type, obj_event_type, obj):
         """Save image to file system independent of database - using same logic as database journal"""
         try:
+            # Проверка на None перед сохранением
+            if image is None or not hasattr(image, 'image') or image.image is None:
+                self.logger.debug(f"Skipping image save: image is None or image.image is None for {obj_event_type} {image_type} (object_id={obj.object_id if obj else 'unknown'})")
+                return
+            
             # Get image path
             img_path = self._get_img_path(image_type, obj_event_type, obj)
             
@@ -792,6 +802,11 @@ class ObjectsHandler(EvilEyeBase):
             
             # Create directory if it doesn't exist
             os.makedirs(os.path.dirname(full_img_path), exist_ok=True)
+            
+            # Дополнительная проверка перед использованием image.image
+            if image.image is None:
+                self.logger.debug(f"Skipping image save: image.image became None during processing for {obj_event_type} {image_type} (object_id={obj.object_id if obj else 'unknown'})")
+                return
             
             # Save clean images without any debug overlays
             if image_type == 'preview':

@@ -157,7 +157,12 @@ class DetectionThreadRfdetr(DetectionThreadBase):
                     if int(class_id) not in self.classes:
                         continue
                     from ..utils import utils
-                    abs_coords = utils.roi_to_image(coord, roi[1][0], roi[1][1])
+                    # Проверка формата ROI: roi должен быть списком с минимум 2 элементами, roi[1] должен быть списком с минимум 2 элементами
+                    if len(roi) > 1 and isinstance(roi[1], (list, tuple)) and len(roi[1]) >= 2:
+                        abs_coords = utils.roi_to_image(coord, roi[1][0], roi[1][1])
+                    else:
+                        # Если ROI не определен правильно, использовать координаты как есть
+                        abs_coords = [int(coord[0]), int(coord[1]), int(coord[2]), int(coord[3])]
                     bboxes_coords.append(abs_coords)
                     confidences.append(conf)
                     ids.append(class_id)
