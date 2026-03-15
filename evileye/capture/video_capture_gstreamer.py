@@ -99,6 +99,9 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         self._last_returned_frame_id = -1
         self._same_frame_count = 0
 
+        # Reconnect backoff for video file branch in _grab_frames (same scheme as OpenCV)
+        self._reconnect_attempt = 0
+
     # Debug stack dump removed
     
     def _mask_credentials_in_pipeline(self, pipeline_str: str) -> str:
@@ -1636,20 +1639,35 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     # Wait a bit before checking again
                     time.sleep(CaptureConstants.RECONNECT_MONITOR_INTERVAL)
                 else:
-                    # For video files, try direct init (but only if not already reconnecting via EOS handler)
+                    # For video files, try direct init with backoff (same scheme as OpenCV and _reconnect_loop)
                     self.logger.debug(f"Video file {self.source_names} not initialized (is_inited={self.is_inited}, pipeline={self.pipeline is not None}), attempting reconnect")
-                    time.sleep(CaptureConstants.RECONNECT_SLEEP_SHORT)
+                    try:
+                        cfg = (self.params or {}).get('reconnect', {})
+                    except Exception:
+                        cfg = {}
+                    initial_delay_sec = float(cfg.get('initial_delay_sec', CaptureConstants.RECONNECT_INITIAL_DELAY_SEC))
+                    backoff_step_sec = float(cfg.get('backoff_step_sec', CaptureConstants.RECONNECT_BACKOFF_STEP_SEC))
+                    max_delay_sec = float(cfg.get('max_delay_sec', CaptureConstants.RECONNECT_MAX_DELAY_SEC))
+                    if self._reconnect_attempt == 0:
+                        wait_time = 0.0
+                    else:
+                        wait_time = min(max_delay_sec, initial_delay_sec + (self._reconnect_attempt - 1) * backoff_step_sec)
+                    if wait_time > 0:
+                        time.sleep(wait_time)
                     if self.run_flag:
                         try:
                             if self.init():
+                                self._reconnect_attempt = 0
                                 timestamp = datetime.datetime.now()
                                 self.logger.info(f"Reconnected to source: {self.source_names} (is_inited={self.is_inited}, is_working={self.is_working})")
                                 self.reconnects.append((self.source_address, timestamp, self.is_working))
                                 for sub in self.subscribers:
                                     sub.update()
                             else:
+                                self._reconnect_attempt += 1
                                 self.logger.warning(f"Reconnection attempt failed for {self.source_names} (init() returned False)")
                         except Exception as e:
+                            self._reconnect_attempt += 1
                             self.logger.error(f"Reconnection failed: {e} (is_inited={self.is_inited}, is_working={self.is_working})")
                 continue
             
@@ -1969,9 +1987,9 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             except Exception:
                 cfg = {}
             max_attempts = int(cfg.get('max_attempts', 0))  # 0 => infinite by default
-            initial_delay_sec = float(cfg.get('initial_delay_sec', 8.0))
-            max_delay_sec = float(cfg.get('max_delay_sec', 60.0))
-            backoff_step_sec = float(cfg.get('backoff_step_sec', 6.0))
+            initial_delay_sec = float(cfg.get('initial_delay_sec', CaptureConstants.RECONNECT_INITIAL_DELAY_SEC))
+            max_delay_sec = float(cfg.get('max_delay_sec', CaptureConstants.RECONNECT_MAX_DELAY_SEC))
+            backoff_step_sec = float(cfg.get('backoff_step_sec', CaptureConstants.RECONNECT_BACKOFF_STEP_SEC))
             attempt = 0
             while self.run_flag and not self.stop_event.is_set() and (max_attempts == 0 or attempt < max_attempts):
                 # First attempt immediately; subsequent attempts with backoff

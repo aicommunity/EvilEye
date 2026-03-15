@@ -41,6 +41,9 @@ class VideoCaptureOpencv(VideoCaptureBase):
         self._perf_last_log = now
         self._perf_frame_count = 0
 
+        # Reconnect backoff: attempt counter for delay between restart attempts
+        self._reconnect_attempt = 0
+
     def is_opened(self) -> bool:
         return self.capture.isOpened()
 
@@ -172,7 +175,10 @@ class VideoCaptureOpencv(VideoCaptureBase):
             # Create a completely new VideoCapture object
             self.capture = cv2.VideoCapture()
             # Now initialize it
-            init_result = self.init()
+            try:
+                init_result = self.init()
+            except CaptureConnectionError:
+                init_result = False
             timestamp = datetime.datetime.now()
             if init_result and self.get_init_flag() and self.is_opened():
                 self.logger.info(f"Reconnected to a sources: {self.source_names} (is_inited={self.is_inited}, is_working={self.is_working})")
@@ -200,21 +206,48 @@ class VideoCaptureOpencv(VideoCaptureBase):
                     f"No frames for {self.capture_config.frame_timeout_seconds}s from {self.source_names}, forcing reset"
                 )
                 self.is_working = False
-                self.reset()
+                try:
+                    self.reset()
+                except CaptureConnectionError:
+                    self._reconnect_attempt += 1
+                    continue
             if not self.is_inited or self.capture is None:
-                time.sleep(CaptureConstants.RECONNECT_SLEEP_SHORT)
-                if self.init():
-                    timestamp = datetime.datetime.now()
-                    self.logger.info(f"Reconnected to a sources: {self.source_names} (is_inited={self.is_inited}, is_working={self.is_working})")
-                    self.reconnects.append((self.params['camera'], timestamp, self.is_working))
-                    for sub in self.subscribers:
-                        sub.update()
+                # Backoff between restart attempts (same scheme as GStreamer _reconnect_loop)
+                try:
+                    cfg = (self.params or {}).get('reconnect', {})
+                except Exception:
+                    cfg = {}
+                initial_delay_sec = float(cfg.get('initial_delay_sec', CaptureConstants.RECONNECT_INITIAL_DELAY_SEC))
+                backoff_step_sec = float(cfg.get('backoff_step_sec', CaptureConstants.RECONNECT_BACKOFF_STEP_SEC))
+                max_delay_sec = float(cfg.get('max_delay_sec', CaptureConstants.RECONNECT_MAX_DELAY_SEC))
+                if self._reconnect_attempt == 0:
+                    wait_time = 0.0
                 else:
+                    wait_time = min(max_delay_sec, initial_delay_sec + (self._reconnect_attempt - 1) * backoff_step_sec)
+                if wait_time > 0:
+                    time.sleep(wait_time)
+                try:
+                    if self.init():
+                        self._reconnect_attempt = 0
+                        timestamp = datetime.datetime.now()
+                        self.logger.info(f"Reconnected to a sources: {self.source_names} (is_inited={self.is_inited}, is_working={self.is_working})")
+                        self.reconnects.append((self.params['camera'], timestamp, self.is_working))
+                        for sub in self.subscribers:
+                            sub.update()
+                    else:
+                        self._reconnect_attempt += 1
+                        continue
+                except CaptureConnectionError:
+                    self._reconnect_attempt += 1
                     continue
 
             if not self.is_opened():
                 time.sleep(CaptureConstants.RECONNECT_SLEEP_SHORT)
-                self.reset()
+                try:
+                    self.reset()
+                except CaptureConnectionError:
+                    self._reconnect_attempt += 1
+                    continue
 
             # Minimize lock hold time - only lock during actual grab operation
             with self.mutex:
@@ -256,7 +289,11 @@ class VideoCaptureOpencv(VideoCaptureBase):
                 for sub in self.subscribers:
                     sub.update()
                 # reset() попытается восстановить поток
-                self.reset()
+                try:
+                    self.reset()
+                except CaptureConnectionError:
+                    self._reconnect_attempt += 1
+                    continue
                 # Verify reset was successful
                 if not (self.is_inited and self.is_opened()):
                     self.logger.warning(
