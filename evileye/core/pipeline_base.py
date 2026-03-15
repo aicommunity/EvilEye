@@ -302,8 +302,37 @@ class PipelineBase(EvilEyeBase):
         
         return iter(results)
 
+    # === High-level results helpers ===
+
     def get_final_results_name(self):
         return self._final_results_name
+
+    def get_latest_visualization_frames(self) -> list[Any]:
+        """
+        Unified helper for controller/visualizer to obtain frames for visualization/streaming.
+
+        Base implementation: берет последнюю структуру результатов и возвращает секцию
+        с именем _final_results_name (как было до рефакторинга контроллера).
+
+        Наследники (такие как PipelineSurveillance) могут переопределять этот метод и
+        инкапсулировать внутреннюю структуру пайплайна (mc_trackers/trackers/detectors/sources),
+        чтобы внешний код не зависел от конкретных секций.
+        """
+        latest = self.peek_latest_result()
+        if not latest:
+            return []
+
+        section_name = self.get_final_results_name()
+        if not section_name:
+            return []
+
+        section = latest.get(section_name, [])
+        # Гарантируем, что возвращаем список
+        if isinstance(section, (list, tuple)):
+            return list(section)
+        if section is None:
+            return []
+        return [section]
 
     def check_all_sources_finished(self) -> bool:
         """

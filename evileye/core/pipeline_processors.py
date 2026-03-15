@@ -99,17 +99,39 @@ class PipelineProcessors(PipelineBase):
         if detectors:
             self.logger.info(f"Waiting for {len(detectors)} detector(s) to load models...")
             all_ready = True
-            for detector in detectors:
-                if hasattr(detector, 'is_ready'):
-                    ready = detector.is_ready(timeout=30.0)
-                    if not ready:
-                        self.logger.warning(f"Detector {detector.__class__.__name__} did not become ready within timeout")
-                        all_ready = False
-                    else:
-                        self.logger.debug(f"Detector {detector.__class__.__name__} is ready")
-                else:
-                    # Fallback: wait a bit for models to load
-                    time.sleep(2.0)
+            # Wait in parallel so total wait is ~one timeout instead of N × timeout
+            detectors_with_ready = [d for d in detectors if hasattr(d, "is_ready")]
+            detectors_fallback = [d for d in detectors if not hasattr(d, "is_ready")]
+            if detectors_with_ready:
+                import concurrent.futures
+                timeout_per_detector = 30.0
+                with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=min(len(detectors_with_ready), 8)
+                ) as executor:
+                    future_to_det = {
+                        executor.submit(d.is_ready, timeout_per_detector): d
+                        for d in detectors_with_ready
+                    }
+                    for fut in concurrent.futures.as_completed(
+                        future_to_det, timeout=timeout_per_detector + 5.0
+                    ):
+                        det = future_to_det[fut]
+                        try:
+                            ready = fut.result()
+                        except Exception as e:
+                            ready = False
+                            self.logger.warning(
+                                f"Detector {det.__class__.__name__} is_ready raised: {e}"
+                            )
+                        if not ready:
+                            self.logger.warning(
+                                f"Detector {det.__class__.__name__} did not become ready within timeout"
+                            )
+                            all_ready = False
+                        else:
+                            self.logger.debug(f"Detector {det.__class__.__name__} is ready")
+            for _ in detectors_fallback:
+                time.sleep(2.0)
             if all_ready:
                 self.logger.info("All detectors are ready")
             else:

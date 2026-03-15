@@ -237,6 +237,38 @@ class PipelineSurveillance(PipelineProcessors):
         self.set_params(**params)
         self.init()
 
+    # === Unified visualization frames API ===
+
+    def get_latest_visualization_frames(self) -> list[Any]:
+        """
+        Вернуть кадры для визуализации/стриминга в единообразном виде.
+
+        Логика выбора секции инкапсулирована внутри пайплайна, чтобы контроллер
+        не зависел от внутренней структуры (sources/detectors/trackers/mc_trackers).
+
+        Приоритет (от более «богатого» результата к более простому):
+        1. mc_trackers
+        2. trackers
+        3. detectors
+        4. sources
+        """
+        latest = self.peek_latest_result()
+        if not latest:
+            return []
+
+        priority = ["mc_trackers", "trackers", "detectors", "sources"]
+
+        for name in priority:
+            if name not in latest:
+                continue
+            section = latest.get(name, [])
+            if isinstance(section, (list, tuple)) and section:
+                # Нашли первую непустую секцию – используем её как источник кадров
+                return list(section)
+
+        # Если все секции пусты или имеют неожиданный тип – ничего не отдаем
+        return []
+
     # === ROI Editor integration helpers ===
     def get_detectors(self):
         """Возвращает список инстансов детекторов, если они инициализированы."""

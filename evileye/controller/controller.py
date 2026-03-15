@@ -587,17 +587,11 @@ class Controller:
             self.pipeline.process()
             all_sources_finished = self.pipeline.check_all_sources_finished()
 
-            pipeline_results = self.pipeline.peek_latest_result()
-            self.logger.debug(f"Pipeline results keys: {list(pipeline_results.keys()) if pipeline_results else 'None'}")
-
-            final_results_name = self.pipeline.get_final_results_name()
-            self.logger.debug(f"Final results name: {final_results_name}")
-            if pipeline_results is not None:
-                mc_tracking_results = pipeline_results.get(final_results_name, [])
-            else:
-                mc_tracking_results = []
+            # Пайплайн сам инкапсулирует выбор секции результатов и возвращает
+            # кадры в единообразном виде для визуализации/стриминга.
+            mc_tracking_results = self.pipeline.get_latest_visualization_frames()
             try:
-                self.logger.debug(f"MC tracking results count: {len(mc_tracking_results)}")
+                self.logger.debug(f"Visualization frames count: {len(mc_tracking_results)}")
             except Exception:
                 pass
 
