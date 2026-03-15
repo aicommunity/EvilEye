@@ -6,6 +6,7 @@ from .processor_step import ProcessorStep
 from .processor_frame import ProcessorFrame
 from .mp_worker import MpWorker
 from .mp_control import MpControl
+from .process_manager import ProcessManager, get_process_manager
 from .pipeline_processors import PipelineProcessors
 from .pipeline_base import PipelineBase
 from .pipeline_simple import PipelineSimple
