@@ -4,6 +4,7 @@ from typing import Optional
 from ultralytics import YOLO
 from .detection_thread_base import DetectionThreadBase
 import logging
+import numpy as np
 
 
 class DetectionThreadYolo(DetectionThreadBase):
@@ -182,6 +183,11 @@ class DetectionThreadYolo(DetectionThreadBase):
             class_ids = boxes.cls
             
             for coord, class_id, conf in zip(coords, class_ids, confs):
+                # Защита от NaN/Inf в координатах (ultralytics может вернуть такие боксы для
+                # вырожденных областей). Такие боксы пропускаем без лог-флуда.
+                if not np.all(np.isfinite(coord)):
+                    self.logger.debug(f"Skipping bbox with non-finite coords: {coord}")
+                    continue
                 from ..utils import utils
                 abs_coords = utils.roi_to_image(coord, roi[1][0], roi[1][1])
                 bboxes_coords.append(abs_coords)

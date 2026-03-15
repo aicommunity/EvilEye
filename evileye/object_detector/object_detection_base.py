@@ -356,12 +356,11 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         self.run_flag = True
         if self.processing_thread:
             self.processing_thread.start()
-        # Pre-load models in detection threads to avoid queue overflow
-        # Models are loaded lazily in _process_impl, but we want them ready before sources start
-        # Wait a bit for threads to start, then preload models
+        # Короткая пауза, чтобы рабочие потоки успели стартовать; модели
+        # инициализируются строго внутри detection-потоков в init_detection_implementation(),
+        # перед первым predict, что важно для корректной работы ultralytics.
         import time
         time.sleep(MODEL_PRELOAD_TIMEOUT)
-        self._preload_models()
     
     def _preload_models(self):
         """Pre-load models in all detection threads to ensure they're ready"""
