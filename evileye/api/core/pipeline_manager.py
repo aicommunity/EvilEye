@@ -199,12 +199,32 @@ class PipelineManager:
             return self._items.get(pid)
     
     def _describe_locked(self, pid: int, runner: PipelineRunner) -> Dict:
-        return {
+        info: Dict = {
             "id": pid,
             "name": runner.pipeline_name,
             "state": runner.state,
             "error": runner.error,
         }
+        if runner.state != PipelineState.RUNNING or runner.controller is None:
+            return info
+
+        try:
+            obj_handler = runner.controller.obj_handler
+            if obj_handler:
+                active = len(obj_handler.active_objs.objects) if hasattr(obj_handler, "active_objs") else 0
+                lost = len(obj_handler.lost_objs.objects) if hasattr(obj_handler, "lost_objs") else 0
+                info["statistics"] = {"active_objects": active, "lost_objects": lost}
+
+            if hasattr(runner.controller, "pipeline") and runner.controller.pipeline:
+                sources = runner.controller.pipeline.get_sources()
+                info["sources"] = [
+                    {"source_id": s.get_id(), "source_name": getattr(s, "source_name", f"Source-{s.get_id()}")}
+                    for s in sources
+                ]
+        except Exception:
+            pass
+
+        return info
 
     def shutdown(self) -> None:
         with self._lock:

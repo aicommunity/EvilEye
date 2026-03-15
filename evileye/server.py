@@ -2,12 +2,12 @@ import atexit
 import argparse
 import json
 import sys
+import multiprocessing as mp
 from pathlib import Path
 import signal
 import uvicorn
 from fastapi import FastAPI
 
-# Add project root to path for imports when running as script
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from evileye.api.app import create_app
@@ -21,7 +21,108 @@ def build_app() -> FastAPI:
     return create_app()
 
 
-def run_api_server(host: str = "127.0.0.1", port: int = 8080, reload: bool = True, log_level: str = "info", config: str | None = None) -> None:
+# -- Standalone entry point for child process ----------------------------
+
+def _run_server_in_process(host, port, log_level, frame_queue):
+    """Entry point for the web server child process
+
+    Receives JPEG frames from the main process via *frame_queue* and
+    serves them through the MJPEG streaming endpoint
+    """
+    setup_evileye_logging(log_level=log_level.upper(), log_to_console=True, log_to_file=True)
+    logger = get_module_logger("server.child")
+    logger.info(f"Web server child process starting on {host}:{port}")
+
+    app = create_app()
+
+    # Wire the IPC queue into the broker so frames arrive from main process
+    from evileye.api.core.broker_access import get_broker
+    broker = get_broker()
+    if frame_queue is not None:
+        broker.set_ipc_queue(frame_queue)
+
+    try:
+        uvicorn_config = uvicorn.Config(app, host=host, port=port, log_level=log_level)
+        server = uvicorn.Server(uvicorn_config)
+        server.run()
+    except KeyboardInterrupt:
+        pass
+    except Exception as e:
+        logger.error(f"Server child process error: {e}")
+    finally:
+        broker.stop_ipc()
+        logger.info("Web server child process exiting")
+
+
+class ServerProcessManager:
+    """Manages the web server as a separate OS process
+
+    The main process creates a ``frame_queue`` and passes it to the
+    child.  Frames are published by calling ``publish_frame()``
+    """
+
+    def __init__(self):
+        self.logger = get_module_logger("server_process_manager")
+        self._process: mp.Process | None = None
+        self._frame_queue: mp.Queue | None = None
+
+    def start(self, host="127.0.0.1", port=8080, log_level="info"):
+        if self._process is not None and self._process.is_alive():
+            self.logger.warning("Server process already running")
+            return
+
+        self._frame_queue = mp.Queue(maxsize=30)
+        self._process = mp.Process(
+            target=_run_server_in_process,
+            args=(host, port, log_level, self._frame_queue),
+            daemon=True,
+            name="evileye-web-server",
+        )
+        self._process.start()
+        self.logger.info(f"Web server process started, pid={self._process.pid}")
+
+    def publish_frame(self, pipeline_id: str, jpeg_bytes: bytes):
+        """Send a JPEG frame to the web server process"""
+        if self._frame_queue is None:
+            return
+        try:
+            if self._frame_queue.full():
+                try:
+                    self._frame_queue.get_nowait()
+                except Exception:
+                    pass
+            self._frame_queue.put_nowait((pipeline_id, jpeg_bytes))
+        except Exception:
+            pass
+
+    def stop(self, timeout=5.0):
+        if self._frame_queue is not None:
+            try:
+                self._frame_queue.put_nowait(None)
+            except Exception:
+                pass
+
+        if self._process is not None:
+            self._process.join(timeout=timeout)
+            if self._process.is_alive():
+                self.logger.warning("Force-terminating web server process")
+                self._process.terminate()
+                self._process.join(timeout=2.0)
+                if self._process.is_alive():
+                    self._process.kill()
+            self._process = None
+        self._frame_queue = None
+        self.logger.info("Web server process stopped")
+
+    def is_alive(self) -> bool:
+        return self._process is not None and self._process.is_alive()
+
+
+# -- Original single-process entry point ---------------------------------
+
+def run_api_server(host: str = "127.0.0.1", port: int = 8080,
+                   reload: bool = True, log_level: str = "info",
+                   config: str | None = None) -> None:
     logger = get_module_logger("server")
     logger.info("=" * 60)
     logger.info("EvilEye API Server Initialization")
@@ -60,9 +161,8 @@ def run_api_server(host: str = "127.0.0.1", port: int = 8080, reload: bool = Tru
     app = build_app()
     logger.info("FastAPI application created successfully")
 
-    # Optional autorun of a config immediately (avoids reliance on startup events)
     if config:
-        config_name = config  # Save to avoid shadowing
+        config_name = config
         logger.info(f"Autorun requested for config: {config_name}")
         try:
             mgr = get_config_run_manager()
@@ -75,7 +175,7 @@ def run_api_server(host: str = "127.0.0.1", port: int = 8080, reload: bool = Tru
             else:
                 desc = mgr.create(rid, Path(config_name).stem, config_name=config_name)
             logger.info(f"Autorun created config run id={desc['id']}")
-            mgr.start(desc["id"]) 
+            mgr.start(desc["id"])
             logger.info(f"Autorun started config run id={desc['id']}")
         except Exception as e:
             logger.error(f"Autorun failed: {e}")
@@ -113,11 +213,10 @@ def main() -> None:
     """Main entry point for server.py"""
     parser = _create_args_parser()
     args = parser.parse_args()
-    
-    # Initialize logging before anything else
+
     logger = setup_evileye_logging(log_level=args.log_level.upper(), log_to_console=True, log_to_file=True)
     log_system_info(logger)
-    
+
     try:
         run_api_server(host=args.host, port=args.port, reload=args.reload, log_level=args.log_level, config=args.config)
     except Exception as e:
@@ -127,5 +226,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-

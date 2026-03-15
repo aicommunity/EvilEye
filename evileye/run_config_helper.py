@@ -171,9 +171,11 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
         while not initialization_result['completed'] or not main_window_created['done']:
             qt_app.processEvents()
     else:
-        # Headless mode: just wait (no event loop)
+        # Headless mode: need a QApplication for Qt signal delivery from init thread
         import time
+        _headless_app = QApplication.instance() or QApplication(sys.argv)
         while not initialization_result['completed'] or not main_window_created['done']:
+            _headless_app.processEvents()
             time.sleep(0.01)
     
     # Check result
