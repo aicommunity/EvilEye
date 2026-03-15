@@ -5,8 +5,13 @@ from ..core.class_manager import ClassManager
 
 from ..core.base_class import EvilEyeBase
 from queue import Queue
+import multiprocessing as mp
 import threading
 from time import sleep
+
+# Execution mode constants
+EXEC_MODE_THREAD = "thread"
+EXEC_MODE_PROCESS = "process"
 
 
 class DetectionResult:
@@ -14,7 +19,7 @@ class DetectionResult:
         self.bounding_box = []
         self.confidence = 0.0
         self.class_id = None
-        self.detection_data = dict()  # internal detection data
+        self.detection_data = dict()
 
 
 class DetectionResultList:
@@ -32,14 +37,18 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         super().__init__()
 
         self.run_flag = False
-        # Increased queue size to prevent overflow during startup when models are loading
-        self.queue_in = Queue(maxsize=10)
-        self.queue_out = Queue()
+        self.execution_mode = EXEC_MODE_THREAD
+
+        # Queues are created lazily based on execution_mode
+        self.queue_in = None
+        self.queue_out = None
+        self.queue_dropped_id = None
+        self._init_queues()
+
         self.source_ids = []
         self.classes = []
-        self.stride = 1  # Параметр скважности
+        self.stride = 1
         self.roi = [[]]
-        self.queue_dropped_id = Queue()
 
         self.num_detection_threads = 3
         self.detection_threads = []
@@ -47,8 +56,22 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
 
         self.processing_thread = None
 
+        # Multiprocessing pool (used when execution_mode == "process")
+        self._mp_control = None
+
         self.model_class_mapping = None
-        self.class_manager = None  # Will be set by Controller
+        self.class_manager = None
+
+    def _init_queues(self):
+        """Create queues matching current execution_mode"""
+        if self.execution_mode == EXEC_MODE_PROCESS:
+            self.queue_in = mp.Queue(maxsize=10)
+            self.queue_out = mp.Queue()
+            self.queue_dropped_id = mp.Queue()
+        else:
+            self.queue_in = Queue(maxsize=10)
+            self.queue_out = Queue()
+            self.queue_dropped_id = Queue()
 
     def put(self, image: CaptureImage) -> bool:
         if not self.queue_in.full():
@@ -216,8 +239,13 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         self.source_ids = self.params.get('source_ids', [])
         self.num_detection_threads = self.params.get('num_detection_threads', 3)
         self.model_class_mapping = self.params.get('model_class_mapping', None)
-        
-        # Process classes parameter - support both class IDs and class names
+
+        # Read execution mode from config (default: thread for backward compat)
+        new_mode = self.params.get('execution_mode', EXEC_MODE_THREAD)
+        if new_mode != self.execution_mode:
+            self.execution_mode = new_mode
+            self._init_queues()
+
         self._process_classes_parameter()
 
     # ===== ROI Editor API (can be overridden by derived detectors) =====
@@ -304,6 +332,7 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         params['source_ids'] = self.source_ids
         params['num_detection_threads'] = self.num_detection_threads
         params['model_class_mapping'] = self.model_class_mapping
+        params['execution_mode'] = self.execution_mode
         return params
 
     def get_debug_info(self, debug_info: dict):
@@ -433,22 +462,37 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
 
     def stop(self):
         self.run_flag = False
-        self.queue_in.put(None)
-        # self.queue_in.put('STOP')
+        try:
+            self.queue_in.put(None)
+        except Exception:
+            pass
         if self.processing_thread and self.processing_thread.is_alive():
             self.processing_thread.join()
+        # Stop multiprocessing pool if active
+        if self._mp_control is not None:
+            self._mp_control.stop()
+            self._mp_control = None
         self.logger.info('Detection stopped')
 
     def init_impl(self):
-        self.processing_thread = threading.Thread(target=self._process_impl)
+        if self.execution_mode == EXEC_MODE_PROCESS:
+            # In process mode the dispatcher runs as a thread that reads
+            # from queue_in and distributes work to child processes
+            self.processing_thread = threading.Thread(target=self._process_impl)
+        else:
+            self.processing_thread = threading.Thread(target=self._process_impl)
 
     def release_impl(self):
         for i in range(len(self.detection_threads)):
             self.detection_threads[i].stop()
 
         self.detection_threads = []
-        del self.processing_thread
-        self.processing_thread = None
+        if self._mp_control is not None:
+            self._mp_control.stop()
+            self._mp_control = None
+        if self.processing_thread is not None:
+            del self.processing_thread
+            self.processing_thread = None
 
     def default(self):
         self.stride = 1
