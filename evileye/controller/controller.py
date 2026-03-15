@@ -71,6 +71,9 @@ class Controller:
 
         self.pipeline = None
 
+        # Web server process manager (set when server.execution_mode == "process")
+        self._server_process_manager = None
+
         self.obj_handler = None
         self.visualizer = None
         self.pyqt_slots = None
@@ -205,13 +208,47 @@ class Controller:
 
         self.stream_pipeline_id = os.getenv('EVILEYE_PIPELINE_ID', 'default')
         self.logger.info(f"Controller initialized with stream pipeline id: {self.stream_pipeline_id}")
-        
+
+        # File-based frame sharing for Config Run mode
+        self._frame_dir = os.environ.get("EVILEYE_FRAME_DIR")
+        if self._frame_dir:
+            from pathlib import Path as _Path
+            self._frame_dir = _Path(self._frame_dir)
+            self._frame_dir.mkdir(parents=True, exist_ok=True)
+            self.logger.info(f"Frame file output enabled: {self._frame_dir}")
+
         # Event-based recording components
         self.event_buffers = {}  # source_id -> EventBuffer
         self.event_recorders = {}  # source_id -> EventRecorder
         self.event_video_paths = {}  # event_id -> relative_video_path (for storing video paths in DB)
         self.recording_params = None  # Global recording parameters
     
+    # ── Frame publishing ────────────────────────────────────────────
+
+    def _publish_frame(self, jpeg_bytes: bytes) -> None:
+        """Publish JPEG to local FrameBroker and/or to a shared frame file."""
+        if self._frame_dir:
+            try:
+                tmp = self._frame_dir / ".latest.tmp"
+                final = self._frame_dir / "latest.jpg"
+                tmp.write_bytes(jpeg_bytes)
+                tmp.replace(final)
+                if not getattr(self, '_frame_file_ok_logged', False):
+                    self._frame_file_ok_logged = True
+                    self.logger.info(
+                        "First frame written to %s (%d bytes)", final, len(jpeg_bytes)
+                    )
+            except Exception as e:
+                self.logger.warning(f"Frame file write failed: {e}")
+            return
+
+        from evileye.api.core.broker_access import get_broker
+        get_broker().publish_jpeg(self.stream_pipeline_id, jpeg_bytes)
+        if hasattr(self, '_server_process_manager') and self._server_process_manager is not None:
+            self._server_process_manager.publish_frame(self.stream_pipeline_id, jpeg_bytes)
+
+    # ── Getters ──────────────────────────────────────────────────────
+
     def get_fps(self) -> int:
         return self.fps
 
@@ -249,6 +286,7 @@ class Controller:
         if self.system_events_detector:
             self.system_events_detector.emit_started()
         while self.run_flag:
+          try:
             begin_it = timer()
             # Process pipeline: sources -> preprocessors -> detectors -> trackers -> mc_trackers
             self.pipeline.process()
@@ -257,17 +295,41 @@ class Controller:
             pipeline_results = self.pipeline.peek_latest_result()
             self.logger.debug(f"Pipeline results keys: {list(pipeline_results.keys()) if pipeline_results else 'None'}")
 
-            #mc_tracking_results = pipeline_results.get("mc_trackers", [])
-            final_results_name = self.pipeline.get_final_results_name()
-            self.logger.debug(f"Final results name: {final_results_name}")
-            mc_tracking_results = pipeline_results.get(final_results_name, [])
-            self.logger.debug(f"MC tracking results count: {len(mc_tracking_results)}")
-            if self.pipeline is not None and pipeline_results is not None:
-                mc_tracking_results = pipeline_results.get(self.pipeline.get_final_results_name(), [])
+            if pipeline_results is not None:
+                final_results_name = self.pipeline.get_final_results_name()
+                mc_tracking_results = pipeline_results.get(final_results_name, [])
             else:
                 mc_tracking_results = []
 
-                # Insert debug info from pipeline components
+            # #region agent log
+            if not getattr(self, '_dbg_logged', False) and mc_tracking_results:
+                self._dbg_logged = True
+                _ti = mc_tracking_results[0]
+                _is_tuple = isinstance(_ti, (tuple, list)) and len(_ti) == 2
+                _tr = _ti[0] if _is_tuple else None
+                _img = _ti[1] if _is_tuple else _ti
+                _dbg = {"hypothesisId": "H1-H5", "location": "controller.py:run-loop",
+                        "message": "first_mc_tracking_result",
+                        "data": {"show_main_gui": self.show_main_gui, "gui_enabled": self.gui_enabled,
+                                 "visualizer_is_none": self.visualizer is None,
+                                 "mc_len": len(mc_tracking_results), "is_tuple": _is_tuple,
+                                 "tracking_result_type": type(_tr).__name__ if _tr else None,
+                                 "tracking_result_keys": list(_tr.keys()) if isinstance(_tr, dict) else (dir(_tr)[:10] if _tr else None),
+                                 "image_type": type(_img).__name__,
+                                 "image_has_image": hasattr(_img, 'image') and _img.image is not None,
+                                 "image_shape": _img.image.shape if hasattr(_img, 'image') and _img.image is not None else None,
+                                 "image_has_detections": hasattr(_img, 'detections'),
+                                 "image_has_objects": hasattr(_img, 'objects'),
+                                 "frame_dir_set": self._frame_dir is not None},
+                        "sessionId": "b697af", "timestamp": int(timer() * 1000)}
+                try:
+                    import json as _json
+                    with open("debug-b697af.log", "a") as _f:
+                        _f.write(_json.dumps(_dbg) + "\n")
+                except Exception:
+                    pass
+            # #endregion
+
             self.pipeline.insert_debug_info_by_id(self.debug_info)
 
             if self.autoclose and all_sources_finished:
@@ -279,16 +341,46 @@ class Controller:
 
             # Process tracking results
             processing_frames = []
+            last_tracking_result = None
             self.logger.debug(f"Processing {len(mc_tracking_results)} tracking results")
             for track_info in mc_tracking_results:
                 # Handle both tuples [tracking_result, image] and Frame objects
                 if isinstance(track_info, (tuple, list)) and len(track_info) == 2:
                     tracking_result, image = track_info
+                    last_tracking_result = tracking_result
                 else:
                     # Assume it's a Frame object (from attributes processors)
                     tracking_result = None
                     image = track_info
                 
+                # #region agent log
+                if not getattr(self, '_dbg_tr_logged', False):
+                    self._dbg_tr_logged = True
+                    _tr_data = None
+                    if tracking_result is not None:
+                        _tr_data = {"type": type(tracking_result).__name__}
+                        if hasattr(tracking_result, 'objects'):
+                            _tr_data["n_objects"] = len(tracking_result.objects) if tracking_result.objects else 0
+                        if hasattr(tracking_result, 'bboxes'):
+                            _tr_data["n_bboxes"] = len(tracking_result.bboxes)
+                        if isinstance(tracking_result, dict):
+                            _tr_data["keys"] = list(tracking_result.keys())[:10]
+                    _img_attrs = [a for a in ['detections', 'detection_result', 'objects', 'bboxes', 'tracking_result', 'tracked_objects'] if hasattr(image, a)]
+                    _dbg3 = {"hypothesisId": "H4", "location": "controller.py:track_info",
+                             "message": "first_track_info_detail",
+                             "data": {"tracking_result_info": _tr_data,
+                                      "image_type": type(image).__name__,
+                                      "image_relevant_attrs": _img_attrs,
+                                      "image_all_attrs": [a for a in dir(image) if not a.startswith('_')][:30]},
+                             "sessionId": "b697af", "timestamp": int(timer() * 1000)}
+                    try:
+                        import json as _json
+                        with open("debug-b697af.log", "a") as _f:
+                            _f.write(_json.dumps(_dbg3) + "\n")
+                    except Exception:
+                        pass
+                # #endregion
+
                 self.obj_handler.put(track_info)
                 processing_frames.append(image)
                 self.source_last_processed_frame_id[image.source_id] = image.frame_id
@@ -297,17 +389,11 @@ class Controller:
                 if self.recording_params and self.recording_params.event_recording_enabled:
                     if image.source_id in self.event_buffers and hasattr(image, 'image') and image.image is not None:
                         try:
-                            # For video files, use current_video_position (in milliseconds) for accurate timestamps
-                            # For live sources (IP cameras, devices), use time_stamp
                             if (hasattr(image, 'current_video_position') and 
                                 image.current_video_position is not None and 
                                 image.current_video_position >= 0):
-                                # Use video position in seconds as relative timestamp
-                                # This gives accurate frame intervals from the source video
-                                # Convert milliseconds to seconds
                                 timestamp = image.current_video_position / 1000.0
                             else:
-                                # For live sources, use capture timestamp
                                 timestamp = image.time_stamp if hasattr(image, 'time_stamp') and image.time_stamp else time.time()
                             self.event_buffers[image.source_id].add_frame(image.image, timestamp)
                         except Exception as e:
@@ -318,17 +404,11 @@ class Controller:
                         try:
                             event_recorder = self.event_recorders[image.source_id]
                             if event_recorder.is_recording() and hasattr(image, 'image') and image.image is not None:
-                                # For video files, use current_video_position (in milliseconds) for accurate timestamps
-                                # For live sources (IP cameras, devices), use time_stamp
                                 if (hasattr(image, 'current_video_position') and 
                                     image.current_video_position is not None and 
                                     image.current_video_position >= 0):
-                                    # Use video position in seconds as relative timestamp
-                                    # This gives accurate frame intervals from the source video
-                                    # Convert milliseconds to seconds
                                     timestamp = image.current_video_position / 1000.0
                                 else:
-                                    # For live sources, use capture timestamp
                                     timestamp = image.time_stamp if hasattr(image, 'time_stamp') and image.time_stamp else time.time()
                                 event_recorder.add_post_event_frame(image.image, timestamp)
                         except Exception as e:
@@ -338,7 +418,6 @@ class Controller:
 
             events = dict()
             events = self.events_detectors_controller.get()
-            # self.logger.debug(f"Events: {events}")
             if events:
                 self.events_processor.put(events)
             complete_processing_it = timer()
@@ -346,25 +425,54 @@ class Controller:
             # Get all dropped images from pipeline
             dropped_frames = self.pipeline.get_dropped_ids()
 
-            # Publish latest frame to web streaming broker (if available)
+            # Publish latest frame for streaming (with tracking annotations)
             try:
                 if processing_frames:
                     last_frame = processing_frames[-1]
                     if hasattr(last_frame, 'image') and last_frame.image is not None:
-                        ok, buf = cv2.imencode('.jpg', last_frame.image)
+                        stream_img = last_frame.image
+                        if last_tracking_result is not None and hasattr(last_tracking_result, 'tracks'):
+                            stream_img = stream_img.copy()
+                            h, w = stream_img.shape[:2]
+                            font_thickness = max(1, int(min(w, h) / 500))
+                            font_scale = max(0.4, min(w, h) / 1200.0)
+                            for trk in last_tracking_result.tracks:
+                                bb = trk.bounding_box
+                                if bb and len(bb) >= 4:
+                                    x1, y1, x2, y2 = int(bb[0]), int(bb[1]), int(bb[2]), int(bb[3])
+                                    cv2.rectangle(stream_img, (x1, y1), (x2, y2), (0, 255, 0), font_thickness)
+                                    label = f"{trk.track_id}"
+                                    if trk.class_id is not None:
+                                        cls_name = self.get_class_name(trk.class_id)
+                                        label = f"{cls_name} {label}"
+                                    cv2.putText(stream_img, label, (x1, max(y1 - 6, 0)),
+                                                cv2.FONT_HERSHEY_SIMPLEX, font_scale,
+                                                (0, 255, 0), font_thickness)
+                        ok, buf = cv2.imencode('.jpg', stream_img)
                         if ok:
-                            from evileye.api.core.broker_access import get_broker
-                            get_broker().publish_jpeg(self.stream_pipeline_id, buf.tobytes())
-                            self.logger.debug(f"Published frame to broker for pipeline '{self.stream_pipeline_id}', size: {len(buf.tobytes())} bytes")
-                        else:
-                            self.logger.debug("JPEG encode returned false")
-                    else:
-                        self.logger.debug(f"Last frame has no image or image is None")
-                else:
-                    self.logger.debug("No processing frames available for publishing")
+                            jpeg_bytes = buf.tobytes()
+                            self._publish_frame(jpeg_bytes)
+                            # #region agent log
+                            if not getattr(self, '_dbg_pub_logged', False):
+                                self._dbg_pub_logged = True
+                                _n_tracks = len(last_tracking_result.tracks) if last_tracking_result and hasattr(last_tracking_result, 'tracks') else 0
+                                _dbg2 = {"hypothesisId": "H2-H3", "location": "controller.py:publish",
+                                         "message": "first_frame_published",
+                                         "data": {"jpeg_size": len(jpeg_bytes),
+                                                  "image_shape": list(stream_img.shape),
+                                                  "frame_id": getattr(last_frame, 'frame_id', None),
+                                                  "n_processing_frames": len(processing_frames),
+                                                  "n_tracks_drawn": _n_tracks},
+                                         "sessionId": "b697af", "timestamp": int(timer() * 1000)}
+                                try:
+                                    import json as _json
+                                    with open("debug-b697af.log", "a") as _f:
+                                        _f.write(_json.dumps(_dbg2) + "\n")
+                                except Exception:
+                                    pass
+                            # #endregion
             except Exception as e:
-                # Do not break controller loop if streaming is not initialized
-                self.logger.debug(f"Frame publish failed: {e}")
+                self.logger.warning(f"Frame publish failed: {e}")
 
             if not self.debug_info.get("controller", None) or not self.debug_info["controller"].get("timestamp", None) or ((datetime.datetime.now() - self.debug_info["controller"]["timestamp"]).total_seconds() > self.memory_periodic_check_sec):
                 self.collect_memory_consumption()
@@ -382,7 +490,7 @@ class Controller:
                         self.run_flag = False
                         continue
 
-            if self.show_main_gui and self.gui_enabled:
+            if self.show_main_gui and self.gui_enabled and self.visualizer is not None:
                 objects = []
                 for i in range(len(self.visualizer.source_ids)):
                     objects.append(self.obj_handler.get('active', self.visualizer.source_ids[i]))
@@ -401,9 +509,11 @@ class Controller:
             else:
                 sleep_seconds = 0.03
 
-            #self.logger.debug(f"Time: cap[{complete_capture_it-begin_it}], det[{complete_detection_it-complete_capture_it}], track[{complete_tracking_it-complete_detection_it}], events[{complete_processing_it-complete_tracking_it}]], "
-            #       f"read=[{complete_read_objects_it-complete_processing_it}], vis[{end_it-complete_read_objects_it}] = {end_it-begin_it} secs, sleep {sleep_seconds} secs")
             time.sleep(sleep_seconds)
+
+          except Exception as exc:
+            self.logger.error("Unhandled error in control loop iteration: %s", exc, exc_info=True)
+            time.sleep(0.1)
 
         if self.system_events_detector:
             self.system_events_detector.emit_stopped()
@@ -530,8 +640,6 @@ class Controller:
         self.logger.info(f"Control thread started successfully")
 
     def stop(self):
-        # self._save_video_duration()
-
         self.run_flag = False
         if self.control_thread.is_alive():
             self.control_thread.join()
@@ -583,6 +691,14 @@ class Controller:
             except Exception as e:
                 self.logger.warning(f"Error stopping storage monitor: {e}", exc_info=True)
         
+        # Stop web server process if running
+        if self._server_process_manager is not None:
+            try:
+                self._server_process_manager.stop()
+            except Exception as e:
+                self.logger.warning(f"Error stopping server process: {e}")
+            self._server_process_manager = None
+
         # Stop pipeline components
         self.pipeline.stop()
         self.logger.info('All controller components stopped')
@@ -827,6 +943,18 @@ class Controller:
         
         # Initialize event-based recording components
         self._init_event_recording(params)
+
+        # Initialize web server in a separate process if configured
+        server_cfg = self.params.get("server", {})
+        if server_cfg.get("execution_mode") == "process" and server_cfg.get("enabled", False):
+            from evileye.server import ServerProcessManager
+            self._server_process_manager = ServerProcessManager()
+            self._server_process_manager.start(
+                host=server_cfg.get("host", "127.0.0.1"),
+                port=server_cfg.get("port", 8080),
+                log_level=server_cfg.get("log_level", "info"),
+            )
+            self.logger.info("Web server started in a separate process")
 
     def init_main_window(self, main_window: QMainWindow, pyqt_slots: dict, pyqt_signals: dict):
         self.main_window = main_window
