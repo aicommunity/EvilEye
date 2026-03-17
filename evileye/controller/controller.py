@@ -296,12 +296,21 @@ class Controller:
             pass
         return time.time()
 
-    def _process_tracking_results(self, mc_tracking_results) -> list:
-        """Положить результаты трекинга в ObjectsHandler и собрать кадры для визуализации/стриминга."""
+    def _process_pipeline_results(self, pipeline_results) -> list:
+        """Положить результаты пайплайна в ObjectsHandler и собрать кадры для визуализации/стриминга.
+
+        Важно: контроллер не должен зависеть от внутренней структуры пайплайна (mc_trackers/trackers/detectors/sources).
+        Пайплайн обязан вернуть результаты в единообразном виде (список элементов, где каждый элемент — либо Frame,
+        либо (data, Frame)).
+        """
         processing_frames = []
-        self.logger.debug(f"Processing {len(mc_tracking_results)} tracking results")
+        try:
+            n = len(pipeline_results)
+        except Exception:
+            n = -1
+        self.logger.debug(f"Processing {n} pipeline results")
         
-        for track_info in mc_tracking_results:
+        for track_info in (pipeline_results or []):
             # Handle both tuples [tracking_result, image] and Frame objects
             if isinstance(track_info, (tuple, list)) and len(track_info) == 2:
                 _, image = track_info
@@ -368,6 +377,10 @@ class Controller:
 
         self.logger.debug(f"Collected {len(processing_frames)} frames for processing")
         return processing_frames
+
+    def _process_tracking_results(self, mc_tracking_results) -> list:
+        """Backward compatible wrapper."""
+        return self._process_pipeline_results(mc_tracking_results)
 
     def _process_events_once(self) -> None:
         """Считать события из EventsDetectorsController и передать в EventsProcessor."""
@@ -601,7 +614,7 @@ class Controller:
             if self.autoclose and all_sources_finished:
                 self.run_flag = False
 
-            processing_frames = self._process_tracking_results(mc_tracking_results)
+            processing_frames = self._process_pipeline_results(mc_tracking_results)
             self._process_events_once()
 
             # Get all dropped images from pipeline
@@ -1720,6 +1733,23 @@ class Controller:
                 # Resolve relative path relative to current working directory
                 self.recording_params.out_dir = str(image_dir_path.resolve())
             self.logger.info(f"Event recording out_dir set to database.image_dir: {self.recording_params.out_dir}")
+
+            # Pre-validate out_dir early to avoid capture init failures / reconnect log flood.
+            # If path is not writable/available (e.g. missing mount), disable recording and continue.
+            try:
+                ok, reason = self.recording_params.check_out_dir_writable()
+                if not ok:
+                    # Disable both event and continuous recording (global params)
+                    self.recording_params.enabled = False
+                    self.recording_params.continuous_recording_enabled = False
+                    self.recording_params.event_recording_enabled = False
+                    self.logger.warning(
+                        f"Recording disabled because out_dir is not writable/available: {self.recording_params.out_dir} "
+                        f"(reason: {reason})"
+                    )
+            except Exception:
+                # Never block controller init on validation errors
+                pass
             
             # Check if event recording is enabled
             if not self.recording_params.event_recording_enabled:

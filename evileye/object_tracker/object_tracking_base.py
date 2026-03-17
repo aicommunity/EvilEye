@@ -3,6 +3,7 @@ from ..core.base_class import EvilEyeBase
 from queue import Queue
 import threading
 from .tracking_results import TrackingResultList
+from queue import Full
 
 
 class ObjectTrackingBase(EvilEyeBase):
@@ -13,7 +14,8 @@ class ObjectTrackingBase(EvilEyeBase):
 
         self.run_flag = False
         self.queue_in = Queue(maxsize=2)
-        self.queue_out = Queue()
+        # IMPORTANT: output queue must be bounded, otherwise results accumulate and memory grows unbounded.
+        self.queue_out = Queue(maxsize=4)
         self.queue_dropped_id = Queue()
         self.source_ids = []
         self.processing_thread = None
@@ -43,6 +45,21 @@ class ObjectTrackingBase(EvilEyeBase):
         if self.queue_out.empty():
             return None
         return self.queue_out.get()
+
+    def _put_out_drop_oldest(self, item) -> None:
+        """Put to queue_out with drop-oldest behavior when full."""
+        try:
+            self.queue_out.put_nowait(item)
+            return
+        except Full:
+            try:
+                _ = self.queue_out.get_nowait()
+            except Exception:
+                pass
+            try:
+                self.queue_out.put_nowait(item)
+            except Exception:
+                pass
 
     def get_dropped_ids(self) -> list:
         res = []

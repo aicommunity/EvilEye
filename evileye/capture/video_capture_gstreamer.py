@@ -23,6 +23,10 @@ except ImportError:
     GLib = None
 
 
+class _RecordingFilesystemError(RuntimeError):
+    """Raised when recording output directory is not writable/available."""
+
+
 @EvilEyeBase.register("VideoCaptureGStreamer")
 class VideoCaptureGStreamer(VideoCaptureBase):
     """
@@ -101,6 +105,12 @@ class VideoCaptureGStreamer(VideoCaptureBase):
 
         # Reconnect backoff for video file branch in _grab_frames (same scheme as OpenCV)
         self._reconnect_attempt = 0
+
+        # Recording: if output path is not writable/available, disable recording to avoid log flood
+        self._recording_disabled_due_to_fs = False
+
+    # Class-level guard to avoid repeated FS error logs
+    _recording_fs_error_logged = set()
 
     # Debug stack dump removed
     
@@ -816,57 +826,106 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                             else:
                                 self.logger.info(f"GStreamer pipeline: {self._mask_credentials_in_pipeline(candidate_str)}")
                             
-                            # Clean up previous pipeline if any
-                            if self.pipeline:
+                            # Some failures (like unwritable recording dir) should disable recording
+                            # and retry the SAME codec candidate without recording branch, without failing the whole init.
+                            attempted_without_recording = False
+                            while True:
+                                # Clean up previous pipeline if any
+                                if self.pipeline:
+                                    try:
+                                        self.pipeline.set_state(Gst.State.NULL)
+                                    except Exception:
+                                        pass
+                                    self.pipeline = None
+
+                                # Parse and create pipeline
+                                self.pipeline = Gst.parse_launch(candidate_str)
+                                if not self.pipeline:
+                                    self.logger.warning(f"Failed to create pipeline candidate {i}")
+                                    last_error = f"Failed to create pipeline candidate {i}"
+                                    break
+
+                                # Setup bus
+                                self.bus = self.pipeline.get_bus()
+                                if self.bus is not None:
+                                    try:
+                                        self.bus.add_signal_watch()
+                                        self.bus.connect("message", self._on_bus_message)
+                                    except Exception:
+                                        pass
+
+                                # Get appsink element
+                                self.appsink = self.pipeline.get_by_name("sink")
+                                if not self.appsink:
+                                    self.logger.warning(f"Failed to get appsink from candidate {i}")
+                                    last_error = f"Failed to get appsink from candidate {i}"
+                                    break
+
+                                # Connect callback
                                 try:
-                                    self.pipeline.set_state(Gst.State.NULL)
+                                    self._appsink_handler_id = self.appsink.connect("new-sample", self._on_new_sample)
                                 except Exception:
-                                    pass
-                                self.pipeline = None
-                            
-                            # Parse and create pipeline
-                            self.pipeline = Gst.parse_launch(candidate_str)
+                                    self._appsink_handler_id = None
+
+                                # Setup recording branch if continuous recording enabled
+                                continuous_enabled = (self.recording_params and
+                                                      (self.recording_params.continuous_recording_enabled or
+                                                       (self.recording_params.enabled and not self.recording_params.event_recording_enabled)))
+                                if continuous_enabled and not attempted_without_recording:
+                                    try:
+                                        self._setup_recording_branch()
+                                    except _RecordingFilesystemError as e:
+                                        # Disable recording due to FS issues, log once, and retry without recording
+                                        self._recording_disabled_due_to_fs = True
+                                        try:
+                                            if self.recording_params:
+                                                self.recording_params.enabled = False
+                                                self.recording_params.continuous_recording_enabled = False
+                                        except Exception:
+                                            pass
+                                        # Log once per source set
+                                        try:
+                                            src_key = tuple(self.source_names) if self.source_names else str(self.source_address)
+                                        except Exception:
+                                            src_key = str(self.source_address)
+                                        if src_key not in VideoCaptureGStreamer._recording_fs_error_logged:
+                                            VideoCaptureGStreamer._recording_fs_error_logged.add(src_key)
+                                            self.logger.warning(
+                                                f"Recording disabled for {self.source_names} due to output path error: {e}. "
+                                                f"Video capture will continue without recording."
+                                            )
+                                        # Rebuild candidate without recording (no tee/recording_queue)
+                                        try:
+                                            new_candidates = self._build_pipeline_candidates()
+                                            # Preserve codec preference for this candidate
+                                            if "rtph265depay" in candidate_str:
+                                                codec_token = "rtph265depay"
+                                            elif "rtph264depay" in candidate_str:
+                                                codec_token = "rtph264depay"
+                                            else:
+                                                codec_token = None
+                                            if codec_token:
+                                                matched = [c for c in new_candidates if codec_token in c]
+                                                candidate_str = matched[0] if matched else new_candidates[0]
+                                            else:
+                                                candidate_str = new_candidates[0]
+                                        except Exception:
+                                            # Fallback: just disable tee by trying to re-init with new candidates list
+                                            pass
+                                        attempted_without_recording = True
+                                        continue
+                                    except Exception as e:
+                                        # Other recording setup errors are real errors and should fail the candidate
+                                        self.logger.error(f"Failed to setup recording branch: {e}", exc_info=True)
+                                        raise
+
+                                # Success path continues below (set PLAYING)
+                                break
+                            else:
+                                # while True exhausted via break; continue to set_state below
+                                pass
                             if not self.pipeline:
-                                self.logger.warning(f"Failed to create pipeline candidate {i}")
-                                last_error = f"Failed to create pipeline candidate {i}"
                                 continue
-                            
-                            # Setup bus
-                            self.bus = self.pipeline.get_bus()
-                            if self.bus is not None:
-                                try:
-                                    self.bus.add_signal_watch()
-                                    self.bus.connect("message", self._on_bus_message)
-                                except Exception:
-                                    pass
-                            
-                            # Get appsink element
-                            self.appsink = self.pipeline.get_by_name("sink")
-                            if not self.appsink:
-                                self.logger.warning(f"Failed to get appsink from candidate {i}")
-                                last_error = f"Failed to get appsink from candidate {i}"
-                                continue
-                            
-                            # Connect callback
-                            try:
-                                self._appsink_handler_id = self.appsink.connect("new-sample", self._on_new_sample)
-                            except Exception:
-                                self._appsink_handler_id = None
-                            
-                            # Setup recording branch if continuous recording enabled
-                            # IMPORTANT: This must be done BEFORE setting pipeline to PLAYING state
-                            # Otherwise, RTSPSrc will see an incomplete pipeline and report "not-linked" error
-                            continuous_enabled = (self.recording_params and 
-                                                  (self.recording_params.continuous_recording_enabled or 
-                                                   (self.recording_params.enabled and not self.recording_params.event_recording_enabled)))
-                            if continuous_enabled:
-                                try:
-                                    self._setup_recording_branch()
-                                except Exception as e:
-                                    self.logger.error(f"Failed to setup recording branch: {e}", exc_info=True)
-                                    # Don't continue - recording branch must be set up before pipeline goes to PLAYING
-                                    # Otherwise RTSPSrc will report "not-linked" error
-                                    raise
                             
                             # Set pipeline to playing state - simple approach from api-refactoring
                             # Recording branch must be fully set up before this point
@@ -959,6 +1018,52 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                                     if not peer:
                                         self.logger.error("recording_queue src pad is not linked after setup!")
                                         raise RuntimeError("Recording branch setup incomplete: recording_queue not linked")
+                        except _RecordingFilesystemError as e:
+                            # Disable recording and rebuild pipeline without tee/recording_queue
+                            self._recording_disabled_due_to_fs = True
+                            try:
+                                if self.recording_params:
+                                    self.recording_params.enabled = False
+                                    self.recording_params.continuous_recording_enabled = False
+                            except Exception:
+                                pass
+                            try:
+                                src_key = tuple(self.source_names) if self.source_names else str(self.source_address)
+                            except Exception:
+                                src_key = str(self.source_address)
+                            if src_key not in VideoCaptureGStreamer._recording_fs_error_logged:
+                                VideoCaptureGStreamer._recording_fs_error_logged.add(src_key)
+                                self.logger.warning(
+                                    f"Recording disabled for {self.source_names} due to output path error: {e}. "
+                                    f"Video capture will continue without recording."
+                                )
+
+                            # Recreate pipeline without recording
+                            try:
+                                self.pipeline.set_state(Gst.State.NULL)
+                            except Exception:
+                                pass
+                            self.pipeline = None
+
+                            pipeline_str = self._build_pipeline()
+                            self.logger.info(f"GStreamer pipeline (recording disabled): {self._mask_credentials_in_pipeline(pipeline_str)}")
+                            self.pipeline = Gst.parse_launch(pipeline_str)
+                            if not self.pipeline:
+                                raise RuntimeError("Failed to create GStreamer pipeline after disabling recording")
+                            self.bus = self.pipeline.get_bus()
+                            if self.bus is not None:
+                                try:
+                                    self.bus.add_signal_watch()
+                                    self.bus.connect("message", self._on_bus_message)
+                                except Exception:
+                                    pass
+                            self.appsink = self.pipeline.get_by_name("sink")
+                            if not self.appsink:
+                                raise RuntimeError("Failed to get appsink element after disabling recording")
+                            try:
+                                self._appsink_handler_id = self.appsink.connect("new-sample", self._on_new_sample)
+                            except Exception:
+                                self._appsink_handler_id = None
                         except Exception as e:
                             self.logger.error(f"Failed to setup recording branch: {e}", exc_info=True)
                             # Don't continue - recording branch must be set up before pipeline goes to PLAYING
@@ -2177,7 +2282,11 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             base_dir = Path(self.recording_params.out_dir) if self.recording_params.out_dir else Path("EvilEyeData")
             date_dir = _dt.datetime.now().strftime("%Y-%m-%d")
             out_dir = base_dir / "Streams" / date_dir / camera_folder
-            out_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                out_dir.mkdir(parents=True, exist_ok=True)
+            except (PermissionError, FileNotFoundError, OSError) as e:
+                # Convert to a known error type so caller can disable recording and continue without flood
+                raise _RecordingFilesystemError(str(e)) from e
             
             ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
             source_name = (self.source_names[0] if self.source_names else camera_folder)
@@ -2411,6 +2520,9 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             self.logger.info("Recording branch setup successfully")
             
         except Exception as e:
+            # Avoid traceback flood for known filesystem issues; the caller will handle disabling recording.
+            if isinstance(e, _RecordingFilesystemError):
+                raise
             self.logger.error(f"Error setting up recording branch: {e}", exc_info=True)
             raise
     

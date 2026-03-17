@@ -140,7 +140,8 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
                 if len(tracks) > 0:
                     pass
                 tracks_info = self._create_tracks_info(cam_id, detection_result.frame_id, None, tracks)
-                self.queue_out.put((tracks_info, image))
+                # Keep only the freshest tracking results to avoid unbounded memory growth
+                self._put_out_drop_oldest((tracks_info, image))
             except Exception as e:
                 self.logger.error(f"Error processing detection for source {detection_result.source_id if detection_result else 'unknown'}: {e}", exc_info=True)
                 continue

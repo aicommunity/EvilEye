@@ -6,6 +6,7 @@ All magic numbers and default values are defined here.
 # Queue sizes
 DEFAULT_INPUT_QUEUE_SIZE = 10
 DEFAULT_THREAD_QUEUE_SIZE = 2
+DEFAULT_OUTPUT_QUEUE_SIZE = 4
 
 # Default parameters
 DEFAULT_STRIDE = 1
@@ -32,6 +33,7 @@ All magic numbers and default values are defined here.
 # Queue sizes
 DEFAULT_INPUT_QUEUE_SIZE = 10
 DEFAULT_THREAD_QUEUE_SIZE = 2
+DEFAULT_OUTPUT_QUEUE_SIZE = 4
 
 # Default parameters
 DEFAULT_STRIDE = 1

@@ -13,6 +13,7 @@ from ..core.frame import CaptureImage
 from .constants import (
     DEFAULT_INPUT_QUEUE_SIZE,
     DEFAULT_NUM_DETECTION_THREADS,
+    DEFAULT_OUTPUT_QUEUE_SIZE,
     DEFAULT_STRIDE,
     MODEL_PRELOAD_TIMEOUT,
     MODEL_READY_TIMEOUT,
@@ -46,7 +47,10 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         self.run_flag = False
         # Increased queue size to prevent overflow during startup when models are loading
         self.queue_in = Queue(maxsize=DEFAULT_INPUT_QUEUE_SIZE)
-        self.queue_out = Queue()
+        # IMPORTANT: output queue must be bounded, otherwise if downstream is slower
+        # (e.g. controller/visualizer lag), results accumulate and memory grows unbounded.
+        # We only need the latest results.
+        self.queue_out = Queue(maxsize=DEFAULT_OUTPUT_QUEUE_SIZE)
         self.source_ids = []
         self.classes = []
         self.stride = DEFAULT_STRIDE

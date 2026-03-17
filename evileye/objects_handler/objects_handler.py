@@ -44,7 +44,11 @@ class ObjectsHandler(EvilEyeBase):
     def __init__(self, db_controller, db_adapter: Optional[IDatabaseAdapter] = None):
         super().__init__()
         # Очередь для потокобезопасного приема данных от каждой камеры
-        self.objs_queue = Queue()
+        # Важно: очередь должна быть ограниченной, иначе при высокой нагрузке
+        # (много источников/детекторы/трекеры) она начинает неограниченно расти и "утекать" память.
+        # Нам не нужна полная история: для GUI/событий важнее самые свежие данные.
+        self.objs_queue_maxsize = 200
+        self.objs_queue = Queue(maxsize=self.objs_queue_maxsize)
         # Списки для хранения различных типов объектов
         self.new_objs: ObjectResultList = ObjectResultList()
         self.active_objs: ObjectResultList = ObjectResultList()
@@ -208,6 +212,15 @@ class ObjectsHandler(EvilEyeBase):
         self.lost_thresh = self.params.get('lost_thresh', 5)
         self.max_active_objects = self.params.get('max_active_objects', 100)
         self.max_lost_objects = self.params.get('max_lost_objects', 100)
+        # Максимальный размер очереди входящих кадров/результатов.
+        # При переполнении будем выкидывать самые старые элементы (drop-oldest).
+        self.objs_queue_maxsize = int(self.params.get('objs_queue_maxsize', self.objs_queue_maxsize))
+        try:
+            if getattr(self.objs_queue, "maxsize", 0) != self.objs_queue_maxsize:
+                # Нельзя безопасно "поменять maxsize" существующей Queue, пересоздаем.
+                self.objs_queue = Queue(maxsize=self.objs_queue_maxsize)
+        except Exception:
+            pass
         # thresholds for attributes (optional)
         attrs = self.params.get('attributes_detection', {})
         classifier = attrs.get('classifier', {})
@@ -252,7 +265,17 @@ class ObjectsHandler(EvilEyeBase):
         self.handler.start()
 
     def put(self, data):  # Добавление данных из детектора/трекера в очередь
-        self.objs_queue.put(data)
+        # Drop-oldest при переполнении: всегда стараемся держать "самое свежее"
+        try:
+            if self.objs_queue.full():
+                try:
+                    self.objs_queue.get_nowait()
+                except Exception:
+                    pass
+            self.objs_queue.put_nowait(data)
+        except Exception:
+            # Если по каким-то причинам не получилось — не ломаем основной цикл
+            pass
 
 
     def get(self, objs_type, cam_id):  # Получение списка объектов в зависимости от указанного типа
@@ -308,9 +331,11 @@ class ObjectsHandler(EvilEyeBase):
     def handle_objs(self):  # Функция, отвечающая за работу с объектами
         self.logger.info('Handler working: waiting for objects...')
         while self.run_flag:
-            time.sleep(0.01)
-            # if self.objs_queue.empty():
-            #    continue
+            # Не замедляемся искусственно, если очередь непустая.
+            # Если пустая — чуть спим, чтобы не крутить busy-loop.
+            if self.objs_queue.empty():
+                time.sleep(0.005)
+                continue
             tracking_results = self.objs_queue.get()
             if tracking_results is None:
                 continue

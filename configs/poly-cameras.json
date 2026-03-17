@@ -20,8 +20,7 @@
                 "camera": "rtsp://10.245.1.200",
                 "type": "VideoCaptureGStreamer",
                 "apiPreference": "CAP_GSTREAMER",
-                "gstreamer_available": true,
-                "source_fps": 25.166666666666668
+                "gstreamer_available": true
             },
             {
                 "split": true,
@@ -54,8 +53,7 @@
                 "camera": "rtsp://10.245.1.199",
                 "type": "VideoCaptureGStreamer",
                 "apiPreference": "CAP_GSTREAMER",
-                "gstreamer_available": true,
-                "source_fps": 10.0
+                "gstreamer_available": true
             },
             {
                 "split": true,
@@ -88,8 +86,7 @@
                 "camera": "rtsp://10.245.1.202",
                 "type": "VideoCaptureGStreamer",
                 "apiPreference": "CAP_GSTREAMER",
-                "gstreamer_available": true,
-                "source_fps": 10.0
+                "gstreamer_available": true
             }
         ],
         "detectors": [
@@ -578,7 +575,7 @@
         "show_memory_usage": false,
         "max_memory_usage_mb": 16384,
         "auto_restart": true,
-        "use_database": true,
+        "use_database": false,
         "scheduled_restart": {
             "enabled": false,
             "mode": "daily_time",
@@ -586,10 +583,7 @@
             "interval_minutes": 0
         }
     },
-    "database": {
-        "port": 5433,
-        "image_dir": "/media/user/Data8/EvilEyeData"
-    },
+    "database": {},
     "storage_monitor": {
         "enabled": true,
         "check_interval_seconds": 300,
