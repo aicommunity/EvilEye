@@ -29,6 +29,13 @@ class PipelineProcessors(PipelineBase):
 
         self._final_results_name = ""
 
+        # Perf diagnostics (disabled by default). Enable with env EVILEYE_PERF_DIAG=1
+        # or via controller.perf_diag=true (checked in Controller).
+        import os
+        self._perf_diag_env = os.getenv("EVILEYE_PERF_DIAG", "").strip().lower() in {"1", "true", "yes", "on"}
+        self._perf_diag_every = int(os.getenv("EVILEYE_PERF_DIAG_EVERY", "60") or "60")
+        self._perf_diag_loop = 0
+
     def default(self):
         """Reset pipeline to default state"""
         super().default()
@@ -162,6 +169,11 @@ class PipelineProcessors(PipelineBase):
         pipeline_results = dict()
         step_result = None
         tracking_results = None  # Store tracking results for attributes processors
+        perf_diag_enabled = self._perf_diag_env
+        if perf_diag_enabled:
+            from timeit import default_timer as _t
+            t_begin = _t()
+            stage_timings = []
 
         for processor in self.processors:
             if processor is None:
@@ -170,7 +182,16 @@ class PipelineProcessors(PipelineBase):
             if isinstance(processor, ProcessorSource):
                 self.run_sources()
             
+            if perf_diag_enabled:
+                t0 = _t()
             step_result = processor.process(step_result)
+            if perf_diag_enabled:
+                t1 = _t()
+                try:
+                    out_len = len(step_result) if step_result is not None else 0
+                except Exception:
+                    out_len = -1
+                stage_timings.append((processor.get_name(), (t1 - t0) * 1000.0, out_len))
             
             pipeline_results[processor.get_name()] = step_result
             
@@ -182,6 +203,17 @@ class PipelineProcessors(PipelineBase):
         # Store results for external access
         if pipeline_results:
             self.add_result(pipeline_results)
+
+        if perf_diag_enabled:
+            self._perf_diag_loop += 1
+            every = max(1, int(self._perf_diag_every or 60))
+            if (self._perf_diag_loop % every) == 0:
+                try:
+                    total_ms = (_t() - t_begin) * 1000.0
+                    top = ", ".join([f"{n}={ms:.1f}ms(len={ln})" for (n, ms, ln) in stage_timings])
+                    self.logger.info(f"PerfDiag(Pipeline): loop={self._perf_diag_loop}, total={total_ms:.1f}ms, {top}")
+                except Exception:
+                    pass
 
         return pipeline_results
 

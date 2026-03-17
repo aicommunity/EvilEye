@@ -60,6 +60,7 @@ from evileye.controller.services import (
     ServiceLocator,
 )
 import cv2
+import os
 
 
 try:
@@ -86,6 +87,8 @@ class Controller:
         self.source_last_processed_frame_id = dict()
         # Вспомогательный счётчик для диагностического логирования кадров по источникам
         self._per_source_frame_debug_counter: dict[int, int] = {}
+        # Throttle ObjectsHandler updates to avoid backlog under load
+        self._obj_handler_last_sent_frame_id: dict[int, int] = {}
 
         self.pipeline = None
 
@@ -240,6 +243,12 @@ class Controller:
 
         self.stream_pipeline_id = os.getenv('EVILEYE_PIPELINE_ID', 'default')
         self.logger.info(f"Controller initialized with stream pipeline id: {self.stream_pipeline_id}")
+
+        # Perf diagnostics (disabled by default). Enable with env EVILEYE_PERF_DIAG=1
+        # or via config controller.perf_diag=true.
+        self._perf_diag_env = os.getenv("EVILEYE_PERF_DIAG", "").strip().lower() in {"1", "true", "yes", "on"}
+        self._perf_diag_every = int(os.getenv("EVILEYE_PERF_DIAG_EVERY", "60") or "60")  # log once per N loops
+        self._perf_diag_loop = 0
         
         # Event-based recording components
         self.event_buffers = {}  # source_id -> EventBuffer
@@ -313,14 +322,45 @@ class Controller:
         for track_info in (pipeline_results or []):
             # Handle both tuples [tracking_result, image] and Frame objects
             if isinstance(track_info, (tuple, list)) and len(track_info) == 2:
-                _, image = track_info
+                data, image = track_info
             else:
                 # Assume it's a Frame object (from attributes processors)
+                data = None
                 image = track_info
 
             # Если skip_objects_handler включен, не передаем данные в obj_handler
             if not self.skip_objects_handler and self.obj_handler:
-                self.obj_handler.put(track_info)
+                # ObjectsHandler can become a bottleneck (heavy history/update/save logic).
+                # To prevent backlog/lag, we avoid sending "empty" results for every frame.
+                # - Always send when there are detections/tracks.
+                # - If empty, send at most once per N frames per source as heartbeat.
+                try:
+                    source_id = getattr(image, "source_id", None)
+                    frame_id = getattr(image, "frame_id", None)
+                    has_payload = False
+                    if data is not None:
+                        tracks = getattr(data, "tracks", None)
+                        detections = getattr(data, "detections", None)
+                        if tracks is not None:
+                            has_payload = bool(tracks)
+                        elif detections is not None:
+                            has_payload = bool(detections)
+                    heartbeat_every = 10  # send empty update once per 10 frames
+                    should_send = True
+                    if not has_payload and source_id is not None and frame_id is not None:
+                        last_sent = self._obj_handler_last_sent_frame_id.get(source_id)
+                        if last_sent is not None and (frame_id - last_sent) < heartbeat_every:
+                            should_send = False
+                    if should_send:
+                        self.obj_handler.put(track_info)
+                        if source_id is not None and frame_id is not None:
+                            self._obj_handler_last_sent_frame_id[source_id] = int(frame_id)
+                except Exception:
+                    # Never break the controller loop on obj_handler throttling errors
+                    try:
+                        self.obj_handler.put(track_info)
+                    except Exception:
+                        pass
             
             processing_frames.append(image)
 
@@ -595,16 +635,36 @@ class Controller:
         if self.system_events_detector:
             self.system_events_detector.emit_started()
         while self.run_flag:
+            perf_diag_enabled = self._perf_diag_env
+            try:
+                if self.params and isinstance(self.params, dict):
+                    cfg = (self.params.get("controller", {}) or {})
+                    if bool(cfg.get("perf_diag", False)):
+                        perf_diag_enabled = True
+                    if "perf_diag_every" in cfg:
+                        self._perf_diag_every = int(cfg.get("perf_diag_every") or self._perf_diag_every)
+            except Exception:
+                pass
+
             begin_it = timer()
+            t0 = timer() if perf_diag_enabled else None
             # Process pipeline: sources -> preprocessors -> detectors -> trackers -> mc_trackers
             self.pipeline.process()
+            t1 = timer() if perf_diag_enabled else None
             all_sources_finished = self.pipeline.check_all_sources_finished()
 
-            # Пайплайн сам инкапсулирует выбор секции результатов и возвращает
-            # кадры в единообразном виде для визуализации/стриминга.
-            mc_tracking_results = self.pipeline.get_latest_visualization_frames()
+            # ObjectsHandler должен получать результаты пайплайна (не "кадры-заменители"),
+            # и выбор источника результатов должен быть внутри пайплайна (разные пайплайны — разная структура).
+            objects_results = self.pipeline.get_latest_objects_results()
+
+            # Visualization/streaming frames: allow pipeline to fall back to sources to keep UI moving.
+            vis_frames = self.pipeline.get_latest_visualization_frames()
+            t2 = timer() if perf_diag_enabled else None
             try:
-                self.logger.debug(f"Visualization frames count: {len(mc_tracking_results)}")
+                self.logger.debug(
+                    f"Visualization frames count: {len(vis_frames)}; "
+                    f"objects_results_count: {len(objects_results) if objects_results is not None else -1}"
+                )
             except Exception:
                 pass
 
@@ -614,7 +674,22 @@ class Controller:
             if self.autoclose and all_sources_finished:
                 self.run_flag = False
 
-            processing_frames = self._process_pipeline_results(mc_tracking_results)
+            # 1) Feed ObjectsHandler strictly from pipeline objects results (no fallback to frames-only).
+            _ = self._process_pipeline_results(objects_results)
+
+            # 2) Build frames for visualization/streaming from vis_frames (can be sources when nothing else available).
+            processing_frames = []
+            try:
+                for item in (vis_frames or []):
+                    if isinstance(item, (tuple, list)) and len(item) == 2:
+                        _, img = item
+                        processing_frames.append(img)
+                    else:
+                        processing_frames.append(item)
+            except Exception:
+                # Keep empty list if something is malformed; visualization must not break controller loop.
+                processing_frames = []
+            t3 = timer() if perf_diag_enabled else None
             self._process_events_once()
 
             # Get all dropped images from pipeline
@@ -622,11 +697,13 @@ class Controller:
 
             # Publish latest frame to web streaming broker (if available)
             self._publish_latest_frame_to_broker(processing_frames)
+            t4 = timer() if perf_diag_enabled else None
 
             if self._check_memory_and_maybe_stop():
                 continue
 
             self._maybe_update_visualization(processing_frames, dropped_frames)
+            t5 = timer() if perf_diag_enabled else None
 
             end_it = timer()
             elapsed_seconds = end_it - begin_it
@@ -639,6 +716,42 @@ class Controller:
                 sleep_seconds = 0.03
 
             time.sleep(sleep_seconds)
+
+            if perf_diag_enabled:
+                self._perf_diag_loop += 1
+                every = max(1, int(self._perf_diag_every or 60))
+                if (self._perf_diag_loop % every) == 0:
+                    # Compute lag (best-effort): live uses time_stamp, video file uses current_video_position
+                    lag_ms = None
+                    try:
+                        if processing_frames:
+                            fr = processing_frames[-1]
+                            now = time.time()
+                            if getattr(fr, "current_video_position", None) is not None and fr.current_video_position >= 0:
+                                # How far behind wall-clock vs file position is not meaningful; keep as None.
+                                lag_ms = None
+                            else:
+                                ts = getattr(fr, "time_stamp", None)
+                                if isinstance(ts, (int, float)) and ts > 0:
+                                    lag_ms = (now - float(ts)) * 1000.0
+                    except Exception:
+                        pass
+                    try:
+                        self.logger.info(
+                            "PerfDiag: loop=%d, frames=%d, "
+                            "pipeline_ms=%.1f, select_ms=%.1f, proc_ms=%.1f, publish_ms=%.1f, viz_ms=%.1f, total_ms=%.1f%s",
+                            self._perf_diag_loop,
+                            (len(processing_frames) if processing_frames else 0),
+                            ((t1 - t0) * 1000.0 if (t0 is not None and t1 is not None) else -1.0),
+                            ((t2 - t1) * 1000.0 if (t1 is not None and t2 is not None) else -1.0),
+                            ((t3 - t2) * 1000.0 if (t2 is not None and t3 is not None) else -1.0),
+                            ((t4 - t3) * 1000.0 if (t3 is not None and t4 is not None) else -1.0),
+                            ((t5 - t4) * 1000.0 if (t4 is not None and t5 is not None) else -1.0),
+                            ((t5 - t0) * 1000.0 if (t0 is not None and t5 is not None) else -1.0),
+                            (f", lag_ms={lag_ms:.1f}" if lag_ms is not None else ""),
+                        )
+                    except Exception:
+                        pass
 
         if self.system_events_detector:
             self.system_events_detector.emit_stopped()
@@ -766,13 +879,17 @@ class Controller:
         if self.control_thread.is_alive():
             self.control_thread.join()
         
-        # Stop visualizer через VisualizationService
-        if self.visualizer:
-            self._visualization_service.stop_visualizer()
-        
+        # Stop pipeline first (detectors/trackers/captures), then visualizer/handler.
+        # This prevents background processing from continuing after GUI/queues are stopped.
+        self._pipeline_service.stop_pipeline()
+
         # Stop ObjectsHandler через ObjectsHandlerService
         if self.obj_handler:
             self._objects_handler_service.stop_objects_handler()
+
+        # Stop visualizer через VisualizationService
+        if self.visualizer:
+            self._visualization_service.stop_visualizer()
 
         # Stop events detectors через EventsService
         if self._events_service:
@@ -816,8 +933,6 @@ class Controller:
         if self.memory_monitor:
             self.memory_monitor.stop()
         
-        # Stop pipeline через PipelineService
-        self._pipeline_service.stop_pipeline()
         self.logger.info('All controller components stopped')
 
     def init(self, params):

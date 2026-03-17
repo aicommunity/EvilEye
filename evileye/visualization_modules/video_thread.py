@@ -20,6 +20,7 @@ import time
 import cv2
 from ..events_detectors.zone import ZoneForm
 import logging
+import os
 
 
 class VideoThread(QThread):
@@ -96,6 +97,11 @@ class VideoThread(QThread):
 
         # Определяем количество потоков в зависимости от параметра split
         VideoThread.thread_counter += 1
+
+        # Perf diagnostics (disabled by default). Enable with env EVILEYE_PERF_DIAG=1
+        self._perf_diag_env = os.getenv("EVILEYE_PERF_DIAG", "").strip().lower() in {"1", "true", "yes", "on"}
+        self._perf_diag_every = int(os.getenv("EVILEYE_PERF_DIAG_EVERY", "60") or "60")
+        self._perf_diag_counter = 0
 
     def start_thread(self):
         self.run_flag = True
@@ -309,6 +315,25 @@ class VideoThread(QThread):
             self.update_original_cv_image_signal.emit(self.thread_num, frame.image)
             # Сигнал с чистым OpenCV изображением без нарисованных элементов для ROI Editor (до любых отрисовок)
             self.clean_image_available_signal.emit(self.thread_num, frame.image)
+            if self._perf_diag_env:
+                try:
+                    self._perf_diag_counter += 1
+                    every = max(1, int(self._perf_diag_every or 60))
+                    if (self._perf_diag_counter % every) == 0:
+                        try:
+                            qsz = self.queue.qsize()
+                        except Exception:
+                            qsz = -1
+                        self.logger.info(
+                            "PerfDiag(VideoThread): src_id=%s, processed=%d, frame_id=%s, qsize=%s, proc_ms=%.1f",
+                            self.source_id,
+                            self._perf_diag_counter,
+                            getattr(frame, "frame_id", None),
+                            qsz,
+                            (timer() - begin_it) * 1000.0,
+                        )
+                except Exception:
+                    pass
             return elapsed_seconds
         except Empty:
             return 0

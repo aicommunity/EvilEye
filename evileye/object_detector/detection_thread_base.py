@@ -122,13 +122,19 @@ class DetectionThreadBase:
                 split_image = utils.create_roi(image, coords)
 
             detection_result_list = self.process_stride(split_image)
-            if detection_result_list:
+            if detection_result_list is not None:
                 try:
                     self.queue_out.put_nowait([detection_result_list, image])
                 except Exception:
-                    self.logger.warning(
-                        f"Output queue full, dropping detection result for {image.source_id}:{image.frame_id}"
-                    )
+                    # Keep the newest results: drop oldest and push latest.
+                    # This prevents long-lived backlog when downstream is slower.
+                    try:
+                        _ = self.queue_out.get_nowait()
+                        self.queue_out.put_nowait([detection_result_list, image])
+                    except Exception:
+                        self.logger.warning(
+                            f"Output queue full, dropping detection result for {image.source_id}:{image.frame_id}"
+                        )
 
     def process_stride(self, split_image: list) -> Optional[DetectionResultList]:
         """
@@ -136,20 +142,34 @@ class DetectionThreadBase:
         """
         images = [img[0].image for img in split_image]
         predict_results = self._run_prediction(images, len(split_image))
+        # Important contract: we must emit a result for each processed input frame (even if empty),
+        # otherwise downstream visualization buffering can stall when there are no detections.
         if not predict_results:
-            return None
+            detection_result_list = DetectionResultList()
+            detection_result_list.source_id = split_image[0][0].source_id
+            detection_result_list.time_stamp = time.time()
+            detection_result_list.frame_id = split_image[0][0].frame_id
+            return detection_result_list
 
         bboxes_coords, confidences, class_ids = self._extract_bboxes_from_results(
             predict_results, split_image
         )
         if not bboxes_coords:
-            return None
+            detection_result_list = DetectionResultList()
+            detection_result_list.source_id = split_image[0][0].source_id
+            detection_result_list.time_stamp = time.time()
+            detection_result_list.frame_id = split_image[0][0].frame_id
+            return detection_result_list
 
         bboxes_coords, confidences, class_ids = self._post_process_detections(
             bboxes_coords, confidences, class_ids
         )
         if not bboxes_coords:
-            return None
+            detection_result_list = DetectionResultList()
+            detection_result_list.source_id = split_image[0][0].source_id
+            detection_result_list.time_stamp = time.time()
+            detection_result_list.frame_id = split_image[0][0].frame_id
+            return detection_result_list
 
         return self._create_detection_result_list(
             split_image, bboxes_coords, confidences, class_ids

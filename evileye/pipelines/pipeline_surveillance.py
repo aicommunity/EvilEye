@@ -43,8 +43,28 @@ class PipelineSurveillance(PipelineProcessors):
         self._init_attributes_roi(pipeline_params.get("attributes_roi", []))
         self._init_attribute_classifier(pipeline_params.get("attributes_classifier", []))
 
-        # Set final results name dynamically based on mc_trackers status
-        mc_trackers_enabled = any(tracker.get("enable", True) for tracker in pipeline_params.get("mc_trackers", []))
+        # Выбираем "финальную" секцию результатов детерминированно по enable-флагам.
+        # Это определяет, какие (data, frame) считаются "прошедшими обработку" для визуализации/стриминга.
+        def _enabled(section: str) -> bool:
+            try:
+                params_list = pipeline_params.get(section, []) or []
+                if not isinstance(params_list, list) or not params_list:
+                    return False
+                for p in params_list:
+                    if isinstance(p, dict) and bool(p.get("enable", True)):
+                        return True
+                return False
+            except Exception:
+                return False
+
+        if _enabled("mc_trackers"):
+            self._final_results_name = "mc_trackers"
+        elif _enabled("trackers"):
+            self._final_results_name = "trackers"
+        elif _enabled("detectors"):
+            self._final_results_name = "detectors"
+        else:
+            self._final_results_name = "sources"
 
         return True
 
@@ -237,37 +257,60 @@ class PipelineSurveillance(PipelineProcessors):
         self.set_params(**params)
         self.init()
 
-    # === Unified visualization frames API ===
-
     def get_latest_visualization_frames(self) -> list[Any]:
         """
-        Вернуть кадры для визуализации/стриминга в единообразном виде.
+        Вернуть кадры/результаты, которые уже прошли обработку (final stage).
+        Это обеспечивает контролируемую задержку в визуализаторе и не позволяет
+        ему "убегать" вперёд относительно детектора/трекера.
+        """
+        latest = self.peek_latest_result()
+        if not latest:
+            return []
+        section_name = self.get_final_results_name()
+        if not section_name:
+            return []
+        res = latest.get(section_name, []) or []
+        return list(res) if isinstance(res, (list, tuple)) else ([res] if res is not None else [])
 
-        Логика выбора секции инкапсулирована внутри пайплайна, чтобы контроллер
-        не зависел от внутренней структуры (sources/detectors/trackers/mc_trackers).
+    def get_latest_objects_results(self) -> list[Any]:
+        """
+        Return object results for ObjectsHandler deterministically based on enabled stages.
 
-        Приоритет (от более «богатого» результата к более простому):
-        1. mc_trackers
-        2. trackers
-        3. detectors
-        4. sources
+        Rules (no fallback by emptiness):
+        - if mc_trackers enabled -> return mc_trackers section
+        - else if trackers enabled -> return trackers section
+        - else if detectors enabled -> return detectors section
+        - else -> return sources section
         """
         latest = self.peek_latest_result()
         if not latest:
             return []
 
-        priority = ["mc_trackers", "trackers", "detectors", "sources"]
+        def _enabled(section: str) -> bool:
+            try:
+                params_list = self.get_processor_params(section)
+                if not isinstance(params_list, list) or not params_list:
+                    return False
+                for p in params_list:
+                    if isinstance(p, dict) and bool(p.get("enable", True)):
+                        return True
+                return False
+            except Exception:
+                return False
 
-        for name in priority:
-            if name not in latest:
-                continue
-            section = latest.get(name, [])
-            if isinstance(section, (list, tuple)) and section:
-                # Нашли первую непустую секцию – используем её как источник кадров
-                return list(section)
+        if _enabled("mc_trackers"):
+            section = "mc_trackers"
+        elif _enabled("trackers"):
+            section = "trackers"
+        elif _enabled("detectors"):
+            section = "detectors"
+        else:
+            section = "sources"
 
-        # Если все секции пусты или имеют неожиданный тип – ничего не отдаем
-        return []
+        res = latest.get(section, []) or []
+        if isinstance(res, (list, tuple)):
+            return list(res)
+        return [res]
 
     # === ROI Editor integration helpers ===
     def get_detectors(self):

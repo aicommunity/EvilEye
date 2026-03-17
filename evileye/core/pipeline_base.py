@@ -334,6 +334,33 @@ class PipelineBase(EvilEyeBase):
             return []
         return [section]
 
+    def get_latest_objects_results(self) -> list[Any]:
+        """
+        Unified helper for controller/ObjectsHandler to obtain *object results*.
+
+        Important distinction vs get_latest_visualization_frames():
+        - visualization must keep flowing even if detectors/trackers don't emit (so it may fall back to sources)
+        - objects results must be selected deterministically by pipeline logic (e.g. if tracker enabled,
+          results must come from tracker section even if empty), and should NOT silently fall back to raw frames.
+
+        Base implementation: returns the pipeline "final results" section (legacy behavior).
+        Pipelines with multiple stages/enable flags (e.g. surveillance) should override this.
+        """
+        latest = self.peek_latest_result()
+        if not latest:
+            return []
+
+        section_name = self.get_final_results_name()
+        if not section_name:
+            return []
+
+        section = latest.get(section_name, [])
+        if isinstance(section, (list, tuple)):
+            return list(section)
+        if section is None:
+            return []
+        return [section]
+
     def check_all_sources_finished(self) -> bool:
         """
         Check if all sources have finished processing.

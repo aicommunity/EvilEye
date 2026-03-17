@@ -62,7 +62,21 @@ class ZoneEventsDetector(EventsDetector):
 
                 zones = self.sources_zones[source_id]
                 timestamp = datetime.now()
-                img_height, img_width, _ = source_objects.objects[0].last_image.image.shape
+                # last_image may be None or may not contain an image (it can be cleared to save memory).
+                # In that case, we cannot evaluate zone geometry in pixel space reliably; skip this tick.
+                img_height = None
+                img_width = None
+                try:
+                    first = source_objects.objects[0]
+                    last_img = getattr(first, "last_image", None)
+                    img = getattr(last_img, "image", None)
+                    if img is not None and hasattr(img, "shape") and len(img.shape) >= 2:
+                        img_height, img_width = img.shape[:2]
+                except Exception:
+                    img_height = None
+                    img_width = None
+                if not img_height or not img_width:
+                    continue
                 for cur_zone in zones:
                     for obj in source_objects.objects:
                         timestamp = datetime.now()
