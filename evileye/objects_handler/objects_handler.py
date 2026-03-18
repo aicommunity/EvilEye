@@ -869,6 +869,17 @@ class ObjectsHandler(EvilEyeBase):
     def _save_image(self, image, box, image_type, obj_event_type, obj):
         """Save image to file system independent of database - using same logic as database journal"""
         try:
+            # Guard against transient None/empty frames during pipeline restarts.
+            # These can happen for VideoFile loop_play restarts and should not be treated as errors.
+            if image is None or getattr(image, "image", None) is None:
+                return
+            try:
+                # OpenCV treats empty arrays as invalid too.
+                if hasattr(image.image, "size") and image.image.size == 0:
+                    return
+            except Exception:
+                pass
+
             # Get image path
             img_path = self._get_img_path(image_type, obj_event_type, obj)
             
@@ -890,7 +901,11 @@ class ObjectsHandler(EvilEyeBase):
             if image_type == 'preview':
                 # Create clean preview without bounding box
                 # Use .copy() for numpy arrays instead of deepcopy - much more efficient
-                preview = cv2.resize(image.image.copy(), (self.db_params.get('preview_width', 300), self.db_params.get('preview_height', 150)), cv2.INTER_NEAREST)
+                preview = cv2.resize(
+                    image.image.copy(),
+                    (self.db_params.get('preview_width', 300), self.db_params.get('preview_height', 150)),
+                    cv2.INTER_NEAREST,
+                )
                 saved = cv2.imwrite(full_img_path, preview)
             else:
                 # Save original frame without any graphical info
@@ -900,6 +915,7 @@ class ObjectsHandler(EvilEyeBase):
                 self.logger.error(f'ERROR: Failed to save image file {full_img_path}')
 
         except Exception as e:
+            # Keep as error (should be rare after guards), but avoid cascading failures.
             self.logger.error(f"Image saving error: {e}")
 
     def _get_img_path(self, image_type, obj_event_type, obj):

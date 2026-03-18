@@ -140,15 +140,25 @@ class DetectionThreadBase:
         """
         Process images with stride and return detection results.
         """
+        if not split_image:
+            # Can happen transiently when a source is restarting/looping and ROI splitter returns nothing.
+            return None
+        try:
+            first = split_image[0][0] if split_image and split_image[0] else None
+        except Exception:
+            first = None
+        if first is None:
+            return None
+
         images = [img[0].image for img in split_image]
         predict_results = self._run_prediction(images, len(split_image))
         # Important contract: we must emit a result for each processed input frame (even if empty),
         # otherwise downstream visualization buffering can stall when there are no detections.
         if not predict_results:
             detection_result_list = DetectionResultList()
-            detection_result_list.source_id = split_image[0][0].source_id
+            detection_result_list.source_id = first.source_id
             detection_result_list.time_stamp = time.time()
-            detection_result_list.frame_id = split_image[0][0].frame_id
+            detection_result_list.frame_id = first.frame_id
             return detection_result_list
 
         bboxes_coords, confidences, class_ids = self._extract_bboxes_from_results(
@@ -156,9 +166,9 @@ class DetectionThreadBase:
         )
         if not bboxes_coords:
             detection_result_list = DetectionResultList()
-            detection_result_list.source_id = split_image[0][0].source_id
+            detection_result_list.source_id = first.source_id
             detection_result_list.time_stamp = time.time()
-            detection_result_list.frame_id = split_image[0][0].frame_id
+            detection_result_list.frame_id = first.frame_id
             return detection_result_list
 
         bboxes_coords, confidences, class_ids = self._post_process_detections(
@@ -166,9 +176,9 @@ class DetectionThreadBase:
         )
         if not bboxes_coords:
             detection_result_list = DetectionResultList()
-            detection_result_list.source_id = split_image[0][0].source_id
+            detection_result_list.source_id = first.source_id
             detection_result_list.time_stamp = time.time()
-            detection_result_list.frame_id = split_image[0][0].frame_id
+            detection_result_list.frame_id = first.frame_id
             return detection_result_list
 
         return self._create_detection_result_list(

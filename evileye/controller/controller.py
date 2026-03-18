@@ -75,7 +75,8 @@ class Controller:
         self.logger = get_module_logger("controller")
         self.main_window = None
         # self.application = application
-        self.control_thread = threading.Thread(target=self.run)
+        # Run controller loop in daemon thread so app can exit even if pipeline blocks.
+        self.control_thread = threading.Thread(target=self.run, daemon=True, name="ControllerMainLoop")
         self.params = None
         self.loaded_config = dict()
         self.credentials = dict()
@@ -249,12 +250,25 @@ class Controller:
         self._perf_diag_env = os.getenv("EVILEYE_PERF_DIAG", "").strip().lower() in {"1", "true", "yes", "on"}
         self._perf_diag_every = int(os.getenv("EVILEYE_PERF_DIAG_EVERY", "60") or "60")  # log once per N loops
         self._perf_diag_loop = 0
+
+        # Periodic resource stats (RSS/threads/fds) for leak tracking.
+        try:
+            self._resource_stats_every_sec = float(os.getenv("EVILEYE_RESOURCE_STATS_EVERY_SEC", "60") or "60")
+        except Exception:
+            self._resource_stats_every_sec = 60.0
+        self._resource_stats_last_ts = 0.0
         
         # Event-based recording components
         self.event_buffers = {}  # source_id -> EventBuffer
         self.event_recorders = {}  # source_id -> EventRecorder
         self.event_video_paths = {}  # event_id -> relative_video_path (for storing video paths in DB)
         self.recording_params = None  # Global recording parameters
+
+        # VideoFile timestamp normalization for event recording.
+        # current_video_position resets to ~0 on loop; EventBuffer expects monotonic timestamps.
+        # Track per-source offset to keep a monotonic "video time" timeline across loops.
+        # source_id -> {"offset": float, "last_pos": float | None}
+        self._video_ts_state: dict[int, dict[str, float | None]] = {}
     
     def get_fps(self) -> int:
         return self.fps
@@ -293,7 +307,27 @@ class Controller:
             # Для видеофайлов используем current_video_position (мс) для точных интервалов
             # Frame инициализирует current_video_position в __init__, поэтому прямой доступ безопасен
             if image.current_video_position is not None and image.current_video_position >= 0:
-                return float(image.current_video_position) / 1000.0
+                cur = float(image.current_video_position) / 1000.0
+                # Normalize to monotonic timeline across loop_play resets
+                try:
+                    sid = getattr(image, "source_id", None)
+                    if isinstance(sid, int):
+                        st = self._video_ts_state.get(sid)
+                        if st is None:
+                            st = {"offset": 0.0, "last_pos": None}
+                            self._video_ts_state[sid] = st
+                        last_pos = st.get("last_pos")
+                        offset = float(st.get("offset") or 0.0)
+                        # Detect wrap/reset (position went backwards noticeably)
+                        if isinstance(last_pos, (int, float)) and (cur + 0.25) < float(last_pos):
+                            # Add previous position as a segment length approximation
+                            offset += float(last_pos)
+                            st["offset"] = offset
+                        st["last_pos"] = cur
+                        return offset + cur
+                except Exception:
+                    pass
+                return cur
         except Exception:
             pass
         # Для live-источников используем time_stamp, иначе текущее время
@@ -635,6 +669,23 @@ class Controller:
         if self.system_events_detector:
             self.system_events_detector.emit_started()
         while self.run_flag:
+            # Periodic process-level resource stats to correlate slow RSS growth.
+            try:
+                if self.params and isinstance(self.params, dict):
+                    ctrl_cfg = (self.params.get("controller", {}) or {})
+                    if "resource_stats_interval_sec" in ctrl_cfg:
+                        try:
+                            self._resource_stats_every_sec = float(ctrl_cfg.get("resource_stats_interval_sec") or self._resource_stats_every_sec)
+                        except Exception:
+                            pass
+                now_ts = time.time()
+                every = float(self._resource_stats_every_sec or 0.0)
+                if every > 0 and (self._resource_stats_last_ts <= 0 or (now_ts - self._resource_stats_last_ts) >= every):
+                    self._resource_stats_last_ts = now_ts
+                    self._log_resource_stats(context="periodic")
+            except Exception:
+                pass
+
             perf_diag_enabled = self._perf_diag_env
             try:
                 if self.params and isinstance(self.params, dict):
@@ -757,6 +808,104 @@ class Controller:
             self.system_events_detector.emit_stopped()
             time.sleep(0.2)
 
+    def _log_resource_stats(self, context: str) -> None:
+        """Log lightweight RSS/threads/FD metrics for the current process."""
+        pid = None
+        try:
+            pid = os.getpid()
+        except Exception:
+            pid = None
+
+        rss_mb = None
+        num_threads = None
+        num_fds = None
+        open_files = None
+        try:
+            import psutil  # type: ignore
+            proc = psutil.Process(pid) if pid else psutil.Process()
+            mem = proc.memory_info()
+            rss_mb = mem.rss / (1024 * 1024)
+            try:
+                num_threads = proc.num_threads()
+            except Exception:
+                num_threads = None
+            try:
+                num_fds = proc.num_fds()
+            except Exception:
+                num_fds = None
+            try:
+                open_files = len(proc.open_files())
+            except Exception:
+                open_files = None
+        except Exception:
+            return
+
+        try:
+            self.logger.info(
+                "ResourceStats[%s] pid=%s rss_mb=%s threads=%s fds=%s open_files=%s%s",
+                context,
+                pid,
+                (f"{rss_mb:.3f}" if isinstance(rss_mb, (int, float)) else "n/a"),
+                (str(num_threads) if num_threads is not None else "n/a"),
+                (str(num_fds) if num_fds is not None else "n/a"),
+                (str(open_files) if open_files is not None else "n/a"),
+                self._format_source_restart_counters(),
+            )
+        except Exception:
+            pass
+
+    def _format_source_restart_counters(self) -> str:
+        """Best-effort: append per-source capture restart counters (loop_play restarts)."""
+        try:
+            sources = []
+            try:
+                if getattr(self, "_pipeline_service", None):
+                    sources = self._pipeline_service.get_sources() or []
+            except Exception:
+                sources = []
+            if not sources:
+                try:
+                    if self.pipeline is not None and hasattr(self.pipeline, "get_sources"):
+                        sources = self.pipeline.get_sources() or []
+                except Exception:
+                    sources = []
+
+            parts: list[str] = []
+            for src in sources:
+                if src is None:
+                    continue
+                try:
+                    # Name label
+                    names = getattr(src, "source_names", None)
+                    ids = getattr(src, "source_ids", None)
+                    if names:
+                        label = "-".join(str(x) for x in names)
+                    elif ids:
+                        label = "-".join(str(x) for x in ids)
+                    else:
+                        label = type(src).__name__
+
+                    # Counter
+                    cnt = None
+                    for attr in ("_restart_counter", "restart_counter"):
+                        if hasattr(src, attr):
+                            try:
+                                cnt = int(getattr(src, attr))
+                            except Exception:
+                                cnt = None
+                            break
+                    if cnt is None:
+                        continue
+                    parts.append(f"{label}:{cnt}")
+                except Exception:
+                    continue
+            if not parts:
+                return ""
+            # Keep it compact; it's already a periodic log line.
+            return " restarts={" + ",".join(parts) + "}"
+        except Exception:
+            return ""
+
     def start(self):
         # Start pipeline через PipelineService
         self._pipeline_service.start_pipeline()
@@ -876,8 +1025,14 @@ class Controller:
         # self._save_video_duration()
 
         self.run_flag = False
-        if self.control_thread.is_alive():
-            self.control_thread.join()
+        if self.control_thread and self.control_thread.is_alive():
+            # Don't block shutdown forever if pipeline.process() is stuck.
+            self.control_thread.join(timeout=3.0)
+            if self.control_thread.is_alive():
+                try:
+                    self.logger.warning("Controller control_thread did not stop within 3s; continuing shutdown")
+                except Exception:
+                    pass
         
         # Stop pipeline first (detectors/trackers/captures), then visualizer/handler.
         # This prevents background processing from continuing after GUI/queues are stopped.

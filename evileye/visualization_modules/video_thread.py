@@ -229,6 +229,29 @@ class VideoThread(QThread):
         try:
             frame, track_info, source_name, source_duration_secs, debug_info = self.queue.get()
             begin_it = timer()
+
+            # During capture restarts/teardown the producer can push a placeholder with image=None.
+            # Avoid allocating QPixmap/QImage buffers and avoid noisy exceptions in that case.
+            try:
+                if frame is None or getattr(frame, "image", None) is None:
+                    # Keep clean image consistent
+                    try:
+                        self.clean_image_mutex.lock()
+                        self.last_clean_image = None
+                    finally:
+                        try:
+                            self.clean_image_mutex.unlock()
+                        except Exception:
+                            pass
+                    return 0
+                # Some pipelines can produce empty arrays; treat them as missing frames.
+                try:
+                    if hasattr(frame.image, "size") and frame.image.size == 0:
+                        return 0
+                except Exception:
+                    pass
+            except Exception:
+                return 0
             
             # Create a shallow copy of frame and copy only the image array (numpy array)
             # This is much more memory-efficient than deepcopy
@@ -239,19 +262,14 @@ class VideoThread(QThread):
             display_frame.frame_id = frame.frame_id
             display_frame.current_video_frame = frame.current_video_frame
             display_frame.current_video_position = frame.current_video_position
-            # Copy only the image numpy array, not the entire frame object
-            if frame.image is not None:
-                display_frame.image = frame.image.copy()
-            else:
-                display_frame.image = None
+            # IMPORTANT: frame.image is already an owning numpy array (copied in capture).
+            # Avoid extra copies here to reduce RSS spikes when streams connect / restart.
+            display_frame.image = frame.image
             
             # Store clean image in thread-safe storage (before any drawing)
-            # Use copy() instead of deepcopy() for numpy arrays - much more efficient
+            # Avoid copying: keep a reference to the latest clean frame.
             self.clean_image_mutex.lock()
-            if frame.image is not None:
-                self.last_clean_image = frame.image.copy()
-            else:
-                self.last_clean_image = None
+            self.last_clean_image = frame.image
             self.clean_image_mutex.unlock()
             # Remember original size to normalize pixel bboxes to display size correctly
             try:
