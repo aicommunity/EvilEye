@@ -2049,8 +2049,18 @@ class Controller:
                 # Get FPS for buffer
                 buffer_fps = self.recording_params.event_buffer_fps
                 if buffer_fps is None:
-                    # VideoCaptureBase инициализирует source_fps в __init__, поэтому прямой доступ безопасен
-                    buffer_fps = source.source_fps if source.source_fps else 25.0  # Default
+                    # Defaulting to full source FPS makes EventBuffer extremely memory-hungry
+                    # because it stores full-frame numpy copies. Cap it by default.
+                    try:
+                        import os as _os
+                        max_buf_fps = float(_os.environ.get('EVILEYE_EVENT_BUFFER_FPS_MAX', '5') or 5.0)
+                    except Exception:
+                        max_buf_fps = 5.0
+                    try:
+                        src_fps = float(source.source_fps) if source.source_fps else 25.0
+                    except Exception:
+                        src_fps = 25.0
+                    buffer_fps = min(src_fps, max_buf_fps)
                 
                 # Create EventBuffer
                 event_buffer = EventBuffer(max_buffer_duration, buffer_fps)

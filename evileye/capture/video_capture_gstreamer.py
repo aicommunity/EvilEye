@@ -683,7 +683,10 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 # For live sources, keep larger queue for isolation
                 pipeline += f" t. ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync={sync_mode} max-buffers=5 drop=true"
             # Branch 2: to recording (will be connected after pipeline creation)
-            pipeline += " t. ! queue name=recording_queue"
+            # IMPORTANT: recording branch must be bounded.
+            # If encoder/muxer/disk is slower than realtime, an unbounded queue will
+            # accumulate raw frames and inflate RSS indefinitely.
+            pipeline += " t. ! queue name=recording_queue max-size-buffers=5 max-size-bytes=0 max-size-time=500000000 leaky=downstream"
         else:
             # No recording - direct to appsink
             # For VideoFile, no queue needed (no tee)
@@ -1155,7 +1158,8 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         if continuous_enabled:
             common_tail += " ! tee name=t"
             common_tail += " t. ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync=true max-buffers=3 drop=true"
-            common_tail += " t. ! queue name=recording_queue"
+            # IMPORTANT: recording branch must be bounded to avoid runaway RSS.
+            common_tail += " t. ! queue name=recording_queue max-size-buffers=5 max-size-bytes=0 max-size-time=500000000 leaky=downstream"
         else:
             common_tail += " ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync=true max-buffers=3 drop=true"
         
@@ -2735,6 +2739,14 @@ class VideoCaptureGStreamer(VideoCaptureBase):
             queue_before_mux = Gst.ElementFactory.make("queue", "recording_queue_before_mux")
             if not queue_before_mux:
                 raise RuntimeError("Failed to create queue element")
+            # IMPORTANT: bound mux queue to avoid runaway RSS if mux/disk stalls.
+            try:
+                queue_before_mux.set_property("max-size-buffers", 200)
+                queue_before_mux.set_property("max-size-bytes", 5 * 1024 * 1024)
+                queue_before_mux.set_property("max-size-time", 2_000_000_000)
+                queue_before_mux.set_property("leaky", 2)  # downstream
+            except Exception:
+                pass
             
             # Create splitmuxsink
             splitmuxsink = Gst.ElementFactory.make("splitmuxsink", "recording_splitmuxsink")
