@@ -49,6 +49,9 @@ class EventRecorder:
         self._max_post_frames = int(self._fps * params.event_post_seconds) if self._fps > 0 else 0
         self._frame_interval = 1.0 / self._fps if self._fps > 0 else 0.04  # Target interval between frames in seconds
         self._last_written_timestamp: Optional[float] = None  # Last timestamp of written frame
+        self._post_frames_enqueued = 0
+        self._post_frames_dropped = 0
+        self._post_frames_last_log = time.time()
         
         # Async recording attributes
         self._recording_thread: Optional[threading.Thread] = None
@@ -471,12 +474,14 @@ class EventRecorder:
                         return False
         
         # Add frame to queue (non-blocking)
-        # Copy is necessary: frame may be modified after being added to queue
-        # Queue needs independent copies for async processing
+        # IMPORTANT: do not copy every incoming frame. For high FPS sources this can
+        # burn CPU and inflate RSS. Queue backpressure + dropping is sufficient.
         try:
-            self._frame_queue.put_nowait((frame.copy(), timestamp))
+            self._frame_queue.put_nowait((frame, timestamp))
+            self._post_frames_enqueued += 1
             return True
         except queue.Full:
+            self._post_frames_dropped += 1
             # Queue is full - try to remove oldest frame and add new one
             try:
                 # Remove oldest frame to make room
@@ -489,13 +494,31 @@ class EventRecorder:
                     pass
                 # Try to add new frame again
                 try:
-                    self._frame_queue.put_nowait((frame.copy(), timestamp))
+                    self._frame_queue.put_nowait((frame, timestamp))
                     self.logger.debug("Frame queue was full, dropped oldest frame and added new one")
                 except queue.Full:
                     self.logger.warning("Frame queue is still full after removing oldest frame, dropping new frame")
             except Exception as e:
                 self.logger.debug(f"Error handling full queue: {e}")
             return True  # Continue recording, just drop this frame
+        finally:
+            try:
+                now = time.time()
+                if (now - self._post_frames_last_log) >= 5.0:
+                    self._post_frames_last_log = now
+                    qsz = None
+                    try:
+                        qsz = self._frame_queue.qsize()
+                    except Exception:
+                        qsz = "n/a"
+                    self.logger.debug(
+                        "EventRecorder post-frames: enq=%s dropped=%s queue=%s/100",
+                        self._post_frames_enqueued,
+                        self._post_frames_dropped,
+                        qsz,
+                    )
+            except Exception:
+                pass
     
     def stop_event_recording(self) -> Optional[Path]:
         """

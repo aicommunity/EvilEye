@@ -22,6 +22,9 @@ except ImportError:
     Gst = None
     GLib = None
 
+from evileye.video_recorder.recorder_base import SourceMeta
+from evileye.video_recorder.continuous_recorder_gst import GstContinuousRecorder
+
 
 class _RecordingFilesystemError(RuntimeError):
     """Raised when recording output directory is not writable/available."""
@@ -88,6 +91,7 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         self._perf_last_pts = None
         self._perf_frame_buffer_full = 0
         self._recording_queue_elem = None
+        self._gst_continuous_recorder = None
         # Track callback frequency for diagnostics
         self._callback_count = 0
         self._callback_last_log = now
@@ -330,6 +334,19 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         except Exception:
             pass
 
+        # Recording queue backpressure visibility (continuous branch)
+        try:
+            if self._recording_queue_elem is not None:
+                lvl = None
+                try:
+                    lvl = self._recording_queue_elem.get_property("current-level-buffers")
+                except Exception:
+                    lvl = None
+                if lvl is not None:
+                    self.logger.info(f"ResourceStats[{context}] record_queue_buf={lvl}")
+        except Exception:
+            pass
+
     def _teardown_pipeline(self, reason: str, *, join_main_loop: bool) -> None:
         """
         Tear down pipeline resources safely.
@@ -403,6 +420,12 @@ class VideoCaptureGStreamer(VideoCaptureBase):
 
         # Stop recording helpers and detach recording elements from the old pipeline.
         try:
+            # If decoupled recorder is used, stop it first.
+            try:
+                if self._gst_continuous_recorder is not None:
+                    self._gst_continuous_recorder.stop_with_pipeline(pipeline=pipeline, Gst=Gst)
+            except Exception:
+                pass
             self._cleanup_recording_branch(pipeline=pipeline)
         except Exception:
             pass
@@ -667,9 +690,12 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         sync_mode = "true"
         
         # If continuous recording is enabled, use tee to split stream: one to appsink, one to recording
-        continuous_enabled = (self.recording_params and 
-                              (self.recording_params.continuous_recording_enabled or 
-                               (self.recording_params.enabled and not self.recording_params.event_recording_enabled)))
+        # `enabled` is a master switch. Continuous recording must be explicitly enabled.
+        continuous_enabled = bool(
+            self.recording_params
+            and self.recording_params.enabled
+            and self.recording_params.continuous_recording_enabled
+        )
         if continuous_enabled:
             # Use tee to split stream
             # NOTE: tee requires queues on each branch to avoid blocking
@@ -962,11 +988,20 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                             if capture_images:
                                 self.logger.info(f"First frame received {(now - self._init_time):.1f}s after init - marking as working")
                                 self.is_working = True
+                                # Frames are flowing again: clear noframes restart backoff.
+                                try:
+                                    self._noframes_restart_consecutive = 0
+                                except Exception:
+                                    pass
                             else:
                                 # Even if split failed, we received a frame from GStreamer
                                 # Mark as working to allow subsequent frames to be processed
                                 self.logger.warning(f"First frame received but split returned empty for {self.source_names} - marking as working anyway")
                                 self.is_working = True
+                                try:
+                                    self._noframes_restart_consecutive = 0
+                                except Exception:
+                                    pass
                     
                     # If still not working after init grace period, skip frame
                     if not self.is_working:
@@ -1028,6 +1063,10 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                         if (now - self._init_time) < CaptureConstants.INIT_GRACE_PERIOD_SECONDS:
                             self.logger.info(f"First frame received {(now - self._init_time):.1f}s after init - marking as working")
                             self.is_working = True
+                            try:
+                                self._noframes_restart_consecutive = 0
+                            except Exception:
+                                pass
                     
                     # If still not working after init grace period, skip frame
                     if not self.is_working:
@@ -1152,9 +1191,12 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         # For IP cameras, use sync=true to synchronize with real-time clock
         # (Note: _build_pipeline_candidates is only called for IpCamera, so sync is always true here)
         common_tail = " ! videoconvert"
-        continuous_enabled = (self.recording_params and 
-                              (self.recording_params.continuous_recording_enabled or 
-                               (self.recording_params.enabled and not self.recording_params.event_recording_enabled)))
+        # `enabled` is a master switch. Continuous recording must be explicitly enabled.
+        continuous_enabled = bool(
+            self.recording_params
+            and self.recording_params.enabled
+            and self.recording_params.continuous_recording_enabled
+        )
         if continuous_enabled:
             common_tail += " ! tee name=t"
             common_tail += " t. ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync=true max-buffers=3 drop=true"
@@ -1253,9 +1295,12 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                                     self._appsink_handler_id = None
 
                                 # Setup recording branch if continuous recording enabled
-                                continuous_enabled = (self.recording_params and
-                                                      (self.recording_params.continuous_recording_enabled or
-                                                       (self.recording_params.enabled and not self.recording_params.event_recording_enabled)))
+                                # `enabled` is a master switch. Continuous recording must be explicitly enabled.
+                                continuous_enabled = bool(
+                                    self.recording_params
+                                    and self.recording_params.enabled
+                                    and self.recording_params.continuous_recording_enabled
+                                )
                                 if continuous_enabled and not attempted_without_recording:
                                     try:
                                         self._setup_recording_branch()
@@ -1387,10 +1432,12 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                     except Exception:
                         self._appsink_handler_id = None
                     
-                    # Setup recording branch if continuous recording enabled
-                    continuous_enabled = (self.recording_params and 
-                                          (self.recording_params.continuous_recording_enabled or 
-                                           (self.recording_params.enabled and not self.recording_params.event_recording_enabled)))
+                    # `enabled` is a master switch. Continuous recording must be explicitly enabled.
+                    continuous_enabled = bool(
+                        self.recording_params
+                        and self.recording_params.enabled
+                        and self.recording_params.continuous_recording_enabled
+                    )
                     if continuous_enabled:
                         try:
                             self._setup_recording_branch()
@@ -1883,9 +1930,12 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         # Start recording if configured (for OpenCV backend, not GStreamer - GStreamer uses tee)
         # For GStreamer, recording is integrated in pipeline via tee
         try:
-            continuous_enabled = (self.recording_params and 
-                                  (self.recording_params.continuous_recording_enabled or 
-                                   (self.recording_params.enabled and not self.recording_params.event_recording_enabled)))
+            # `enabled` is a master switch. Continuous recording must be explicitly enabled.
+            continuous_enabled = bool(
+                self.recording_params
+                and self.recording_params.enabled
+                and self.recording_params.continuous_recording_enabled
+            )
             if continuous_enabled:
                 # Check if recording is integrated in pipeline (GStreamer) or separate (OpenCV)
                 is_gstreamer = 'gstreamer' in self.__class__.__name__.lower()
@@ -2454,7 +2504,9 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                             cfg_nf = (self.params or {}).get("noframes_restart", {})
                         except Exception:
                             cfg_nf = {}
-                        min_interval_sec = float(cfg_nf.get("min_interval_sec", 30.0))
+                        # For VideoFile(loop_play) we want fast recovery: avoid large restart backoffs
+                        # that cause long visible freezes between restarts.
+                        min_interval_sec = float(cfg_nf.get("min_interval_sec", 1.0))
                         max_timeout_sec = float(cfg_nf.get("max_timeout_sec", 120.0))
                         base_timeout_sec = float(cfg_nf.get("base_timeout_sec", CaptureConstants.FRAME_TIMEOUT_SECONDS))
 
@@ -2469,9 +2521,9 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                             except Exception:
                                 pass
 
-                        # Backoff: require longer no-frames gap after repeated restarts.
-                        # This reduces churn if the pipeline is briefly stalled during looping.
-                        effective_timeout = min(max_timeout_sec, base_timeout_sec * (1.0 + min(5, self._noframes_restart_consecutive)))
+                        # For VideoFile(loop_play), do not apply multiplicative backoff here: it creates long gaps
+                        # between restart attempts (tens of seconds) and makes short clips unusable.
+                        effective_timeout = min(max_timeout_sec, base_timeout_sec)
                         try:
                             # Only restart if the latest observed gap is >= effective_timeout.
                             # We recompute gap quickly (best-effort) to avoid relying on earlier branch state.
@@ -2702,13 +2754,51 @@ class VideoCaptureGStreamer(VideoCaptureBase):
     
     def _setup_recording_branch(self):
         """Setup recording branch using tee output - encode and record to splitmuxsink"""
-        continuous_enabled = (self.recording_params and 
-                              (self.recording_params.continuous_recording_enabled or 
-                               (self.recording_params.enabled and not self.recording_params.event_recording_enabled)))
+        # `enabled` is a master switch. Continuous recording must be explicitly enabled.
+        continuous_enabled = bool(
+            self.recording_params
+            and self.recording_params.enabled
+            and self.recording_params.continuous_recording_enabled
+        )
         if not continuous_enabled:
             return
         
         try:
+            # Preferred path: delegate to decoupled recorder
+            try:
+                if self._gst_continuous_recorder is None:
+                    self._gst_continuous_recorder = GstContinuousRecorder()
+                # Build minimal SourceMeta for path generation
+                try:
+                    src_name = (self.source_names[0] if self.source_names else "source")
+                except Exception:
+                    src_name = "source"
+                meta = SourceMeta(
+                    source_name=src_name,
+                    source_address=self.source_address,
+                    source_type=str(self.source_type),
+                    width=None,
+                    height=None,
+                    fps=self.source_fps,
+                    source_names=self.source_names,
+                    source_ids=self.source_ids,
+                )
+                self._gst_continuous_recorder.start(meta, self.recording_params)
+
+                recording_queue = self.pipeline.get_by_name("recording_queue")
+                if not recording_queue:
+                    raise RuntimeError("Failed to get recording_queue element")
+                self._recording_queue_elem = recording_queue
+                self._gst_continuous_recorder.start_with_pipeline(
+                    pipeline=self.pipeline,
+                    recording_queue_elem=recording_queue,
+                    Gst=Gst,
+                )
+                return
+            except Exception:
+                # fall back to legacy inline implementation below
+                pass
+
             # Clean up existing recording branch if any (prevent duplicates)
             if self._recording_elements:
                 self._cleanup_recording_branch()
@@ -3018,6 +3108,11 @@ class VideoCaptureGStreamer(VideoCaptureBase):
     def _cleanup_recording_branch(self, *, pipeline=None):
         """Clean up recording branch elements"""
         try:
+            try:
+                if self._gst_continuous_recorder is not None and pipeline is not None:
+                    self._gst_continuous_recorder.stop_with_pipeline(pipeline=pipeline, Gst=Gst)
+            except Exception:
+                pass
             
             # Stop periodic check thread
             if self._recording_check_thread:

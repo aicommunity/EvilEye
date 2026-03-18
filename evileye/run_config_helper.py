@@ -207,7 +207,7 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
     controller_instance = initialization_result['controller']
     # Ensure we always stop the controller on app quit (GUI mode).
     # Without this, closing the window may exit Qt loop while leaving background threads running.
-    shutdown_state = {"done": False}
+    shutdown_state = {"done": False, "thread": None}
     if qt_app is not None and controller_instance is not None:
         try:
             import weakref
@@ -248,7 +248,11 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
 
             try:
                 import threading as _threading
-                t = _threading.Thread(target=_do_shutdown, name="evileye-gui-shutdown", daemon=True)
+                # Use non-daemon thread so that Python does not tear down
+                # the interpreter while shutdown is still running. We'll
+                # join it with timeout after the Qt event loop exits.
+                t = _threading.Thread(target=_do_shutdown, name="evileye-gui-shutdown", daemon=False)
+                shutdown_state["thread"] = t
                 t.start()
             except Exception:
                 # Fallback to best-effort sync shutdown (last resort)
@@ -313,9 +317,27 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
 
         logger.info("Controller started in headless mode, entering Qt event loop...")
         ret = qt_app.exec()
+        # Best-effort wait for shutdown thread if it was started
+        try:
+            t = shutdown_state.get("thread")
+            if t is not None:
+                import threading as _threading
+                if isinstance(t, _threading.Thread) and t.is_alive():
+                    t.join(timeout=5.0)
+        except Exception:
+            pass
     else:
         logger.info("Starting main application loop")
         ret = qt_app.exec()
+        # Best-effort wait for shutdown thread if it was started
+        try:
+            t = shutdown_state.get("thread")
+            if t is not None:
+                import threading as _threading
+                if isinstance(t, _threading.Thread) and t.is_alive():
+                    t.join(timeout=5.0)
+        except Exception:
+            pass
         
         # Check if restart is requested due to memory leak (GUI mode)
         if controller_instance is not None:

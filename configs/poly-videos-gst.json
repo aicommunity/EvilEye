@@ -475,9 +475,9 @@
         "display_zones": true
     },
     "record": {
-        "enabled": false,
-        "continuous_recording_enabled": false,
-        "event_recording_enabled": false,
+        "enabled": true,
+        "continuous_recording_enabled": true,
+        "event_recording_enabled": true,
         "event_pre_seconds": 10,
         "event_post_seconds": 10,
         "event_buffer_fps": null,
@@ -486,6 +486,7 @@
         "segment_length_sec": 300,
         "retention_days": 3,
         "min_free_space_pct": 80,
+        "min_file_size_kb": 50,
         "filename_tmpl": "{source_name}_{start_time}_{seq}.{ext}"
     },
     "objects_handler": {

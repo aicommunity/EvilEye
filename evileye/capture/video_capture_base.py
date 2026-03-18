@@ -116,9 +116,9 @@ class VideoCaptureBase(EvilEyeBase):
             return
             
         try:
-            continuous_enabled = (
-                self.recording_params.continuous_recording_enabled or 
-                (self.recording_params.enabled and not self.recording_params.event_recording_enabled)
+            # `enabled` is a master switch. Continuous recording must be explicitly enabled.
+            continuous_enabled = bool(
+                self.recording_params.enabled and self.recording_params.continuous_recording_enabled
             )
             
             if not continuous_enabled:
@@ -139,6 +139,7 @@ class VideoCaptureBase(EvilEyeBase):
         """Start OpenCV recording with separate recorder."""
         backend = "opencv"
         from ..video_recorder.recorder_base import SourceMeta
+        from ..video_recorder.continuous_recorder_manager import ContinuousRecorderManager
         
         meta = SourceMeta(
             source_name=(self.source_names[0] if self.source_names else "source"),
@@ -161,7 +162,9 @@ class VideoCaptureBase(EvilEyeBase):
             self.logger.error(f"Error logging recording start: {e}")
         
         try:
-            self.recorder_manager = self.recorder_manager or RecorderManager()
+            # Prefer continuous recorder manager if capture already set it up.
+            if self.recorder_manager is None:
+                self.recorder_manager = ContinuousRecorderManager(self.recording_params)
             self.recorder_manager.configure(self.recording_params)
             self.recorder_manager.start(backend, meta)
             self.logger.info(f"Recording started successfully for {meta.source_name}")

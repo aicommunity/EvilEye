@@ -11,6 +11,8 @@ from enum import IntEnum
 
 from ..core.base_class import EvilEyeBase
 from ..video_recorder.recording_params import RecordingParams
+from ..video_recorder.recorder_base import SourceMeta
+from ..video_recorder.continuous_recorder_manager import ContinuousRecorderManager
 
 
 @EvilEyeBase.register("VideoCaptureOpencv")
@@ -28,6 +30,8 @@ class VideoCaptureOpencv(VideoCaptureBase):
         super().__init__()
 
         self.capture = cv2.VideoCapture()
+        self.recording_params: RecordingParams = RecordingParams()
+        self.recorder_manager: ContinuousRecorderManager | None = None
         self.mutex = RLock()
         # Флаг для синхронизации: если True, значит произошла перемотка видео
         # и retrieve() должен пропустить текущий кадр
@@ -53,8 +57,15 @@ class VideoCaptureOpencv(VideoCaptureBase):
             rec_cfg = self.params.get('record', None)
             if isinstance(rec_cfg, dict):
                 self.recording_params = RecordingParams.from_config({'record': rec_cfg})
+            else:
+                self.recording_params = RecordingParams()
         except Exception:
-            pass
+            self.recording_params = RecordingParams()
+
+        try:
+            self.recorder_manager = ContinuousRecorderManager(self.recording_params)
+        except Exception:
+            self.recorder_manager = None
 
     def init_impl(self):
         api_pref = self.params.get('apiPreference','CAP_FFMPEG')
@@ -142,6 +153,26 @@ class VideoCaptureOpencv(VideoCaptureBase):
                     self.video_duration = self.video_length * 1000.0 / self.source_fps
             except cv2.error as e:
                 self.logger.debug(f"Failed to read source_fps: {e} for sources {self.source_names}")
+
+            # Initialize continuous recorder for OpenCV backend
+            try:
+                if self.recorder_manager is not None:
+                    source_name = (
+                        self.source_names[0]
+                        if isinstance(self.source_names, list) and self.source_names
+                        else str(self.source_names)
+                    )
+                    meta = SourceMeta(
+                        source_name=source_name,
+                        source_address=self.source_address,
+                        source_type=str(self.source_type),
+                        width=None,
+                        height=None,
+                        fps=self.source_fps,
+                    )
+                    self.recorder_manager.init_for_opencv(meta)
+            except Exception:
+                pass
         else:
             error_msg = f"Could not connect to sources: {self.source_names}"
             self.logger.error(error_msg)
@@ -154,6 +185,12 @@ class VideoCaptureOpencv(VideoCaptureBase):
         return True
 
     def release_impl(self) -> None:
+        if self.recorder_manager is not None:
+            try:
+                self.recorder_manager.stop()
+            except Exception:
+                pass
+
         if self.capture is not None:
             try:
                 self.capture.release()

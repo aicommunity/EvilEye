@@ -101,10 +101,11 @@ class EventBuffer:
         
         with self.lock:
             # Iterate from oldest to newest
-            # Copy is necessary: returned frames may be modified by caller
+            # NOTE: We return the stored numpy arrays directly to avoid extra copies.
+            # Callers that mutate frames must copy on their side.
             for frame, frame_ts in self.buffer:
                 if cutoff_time <= frame_ts < timestamp:
-                    result.append((frame.copy(), frame_ts))
+                    result.append((frame, frame_ts))
         
         # Sort by timestamp (should already be sorted, but ensure it)
         result.sort(key=lambda x: x[1])
@@ -126,10 +127,11 @@ class EventBuffer:
         
         with self.lock:
             # Iterate from oldest to newest
-            # Copy is necessary: returned frames may be modified by caller
+            # NOTE: We return the stored numpy arrays directly to avoid extra copies.
+            # Callers that mutate frames must copy on their side.
             for frame, frame_ts in self.buffer:
                 if timestamp <= frame_ts <= cutoff_time:
-                    result.append((frame.copy(), frame_ts))
+                    result.append((frame, frame_ts))
         
         # Sort by timestamp (should already be sorted, but ensure it)
         result.sort(key=lambda x: x[1])
@@ -149,10 +151,11 @@ class EventBuffer:
         result = []
         
         with self.lock:
-            # Copy is necessary: returned frames may be modified by caller
+            # NOTE: We return the stored numpy arrays directly to avoid extra copies.
+            # Callers that mutate frames must copy on their side.
             for frame, frame_ts in self.buffer:
                 if start_timestamp <= frame_ts <= end_timestamp:
-                    result.append((frame.copy(), frame_ts))
+                    result.append((frame, frame_ts))
         
         result.sort(key=lambda x: x[1])
         return result

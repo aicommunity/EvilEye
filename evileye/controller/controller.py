@@ -1194,17 +1194,25 @@ class Controller:
                         merged['enabled'] = enabled
                     else:
                         # If enabled_sources is empty/None, use root enabled flag
-                        # For backward compatibility: if 'enabled' is set but new flags are not,
-                        # treat it as continuous_recording_enabled
-                        if 'continuous_recording_enabled' not in merged and 'event_recording_enabled' not in merged:
+                        # Backward compatibility:
+                        # - If only legacy `enabled` is provided (no new flags), treat it as continuous recording.
+                        # New behavior:
+                        # - `enabled` is a master switch and MUST NOT implicitly enable continuous/event when new flags exist.
+                        has_new_flags = ('continuous_recording_enabled' in merged) or ('event_recording_enabled' in merged)
+                        if not has_new_flags:
+                            # Legacy mode: enabled -> continuous_recording_enabled
                             if 'enabled' in merged:
-                                merged['continuous_recording_enabled'] = merged.get('enabled', False)
+                                merged['continuous_recording_enabled'] = bool(merged.get('enabled', False))
+                                merged['event_recording_enabled'] = False
                             else:
-                                merged['enabled'] = record_cfg.get('enabled', True)
-                                merged['continuous_recording_enabled'] = record_cfg.get('enabled', True)
-                        elif 'enabled' not in merged:
-                            # If new flags are set, keep 'enabled' for backward compatibility
-                            merged['enabled'] = merged.get('continuous_recording_enabled', False) or merged.get('event_recording_enabled', False)
+                                # No record config at all -> default to disabled
+                                merged['enabled'] = False
+                                merged['continuous_recording_enabled'] = False
+                                merged['event_recording_enabled'] = False
+                        else:
+                            # New mode: ensure master flag exists, but do not derive it from new flags.
+                            if 'enabled' not in merged:
+                                merged['enabled'] = True
                     s['record'] = merged
                     try:
                         sid_log = (s.get('source_ids') or [idx])[0]
@@ -2021,8 +2029,8 @@ class Controller:
                 # Never block controller init on validation errors
                 pass
             
-            # Check if event recording is enabled
-            if not self.recording_params.event_recording_enabled:
+            # `enabled` is a master switch; event recording must be explicitly enabled.
+            if not (self.recording_params.enabled and self.recording_params.event_recording_enabled):
                 self.logger.info("Event-based recording is disabled")
                 return
             
