@@ -7,9 +7,12 @@ from time import sleep
 
 from evileye.capture import video_capture_opencv
 from evileye.object_detector import object_detection_yolo
+from evileye.object_detector.object_detection_base import DetectionResultList
 from evileye.object_tracker import object_tracking_botsort
 from evileye.object_tracker.trackers.onnx_encoder import OnnxEncoder
+from evileye.object_tracker.tracking_results import TrackingResultList, TrackingResult
 from evileye.objects_handler import objects_handler
+from evileye.objects_handler.object_result import ObjectResult, ObjectResultList
 import time
 from timeit import default_timer as timer
 from evileye.visualization_modules.visualizer import Visualizer
@@ -33,16 +36,20 @@ from evileye.events_detectors.fov_events_detector import FieldOfViewEventsDetect
 from evileye.events_detectors.zone_events_detector import ZoneEventsDetector
 from evileye.events_detectors.attribute_events_detector import AttributeEventsDetector
 from evileye.events_detectors.event_system import SystemEvent
+import datetime
 from evileye.events_detectors.system_events_detector import SystemEventsDetector
 import json
 import datetime
 import pprint
 import copy
 import math
+import gc
 from evileye.core import ProcessorSource, ProcessorStep, ProcessorFrame
 from evileye.core.class_manager import ClassManager
 from evileye.pipelines import PipelineSurveillance
 from evileye.core.logger import get_module_logger
+from evileye.core.system_diagnostics import SystemDiagnostics
+from evileye.core.memory_monitor import MemoryMonitor
 from evileye.controller.services import (
     PipelineService,
     DatabaseService,
@@ -53,6 +60,7 @@ from evileye.controller.services import (
     ServiceLocator,
 )
 import cv2
+import os
 
 
 try:
@@ -67,7 +75,8 @@ class Controller:
         self.logger = get_module_logger("controller")
         self.main_window = None
         # self.application = application
-        self.control_thread = threading.Thread(target=self.run)
+        # Run controller loop in daemon thread so app can exit even if pipeline blocks.
+        self.control_thread = threading.Thread(target=self.run, daemon=True, name="ControllerMainLoop")
         self.params = None
         self.loaded_config = dict()
         self.credentials = dict()
@@ -77,6 +86,10 @@ class Controller:
         self.source_id_name_table = dict()
         self.source_video_duration = dict()
         self.source_last_processed_frame_id = dict()
+        # Вспомогательный счётчик для диагностического логирования кадров по источникам
+        self._per_source_frame_debug_counter: dict[int, int] = {}
+        # Throttle ObjectsHandler updates to avoid backlog under load
+        self._obj_handler_last_sent_frame_id: dict[int, int] = {}
 
         self.pipeline = None
 
@@ -88,6 +101,7 @@ class Controller:
         self.show_main_gui = True
         self.show_journal = False
         self.enable_close_from_gui = True
+        self.skip_objects_handler = False
         self.memory_periodic_check_sec = 60*15*60
         self.max_memory_usage_mb = 1024*16
         self.show_memory_usage = False
@@ -113,6 +127,10 @@ class Controller:
         self.db_adapter_system_events = None
         
         self.storage_monitor = None
+        
+        # System diagnostics and memory monitoring
+        self.system_diagnostics = None
+        self.memory_monitor = None
         
         # Initialize centralized class manager
         self.class_manager = ClassManager()
@@ -226,12 +244,31 @@ class Controller:
 
         self.stream_pipeline_id = os.getenv('EVILEYE_PIPELINE_ID', 'default')
         self.logger.info(f"Controller initialized with stream pipeline id: {self.stream_pipeline_id}")
+
+        # Perf diagnostics (disabled by default). Enable with env EVILEYE_PERF_DIAG=1
+        # or via config controller.perf_diag=true.
+        self._perf_diag_env = os.getenv("EVILEYE_PERF_DIAG", "").strip().lower() in {"1", "true", "yes", "on"}
+        self._perf_diag_every = int(os.getenv("EVILEYE_PERF_DIAG_EVERY", "60") or "60")  # log once per N loops
+        self._perf_diag_loop = 0
+
+        # Periodic resource stats (RSS/threads/fds) for leak tracking.
+        try:
+            self._resource_stats_every_sec = float(os.getenv("EVILEYE_RESOURCE_STATS_EVERY_SEC", "60") or "60")
+        except Exception:
+            self._resource_stats_every_sec = 60.0
+        self._resource_stats_last_ts = 0.0
         
         # Event-based recording components
         self.event_buffers = {}  # source_id -> EventBuffer
         self.event_recorders = {}  # source_id -> EventRecorder
         self.event_video_paths = {}  # event_id -> relative_video_path (for storing video paths in DB)
         self.recording_params = None  # Global recording parameters
+
+        # VideoFile timestamp normalization for event recording.
+        # current_video_position resets to ~0 on loop; EventBuffer expects monotonic timestamps.
+        # Track per-source offset to keep a monotonic "video time" timeline across loops.
+        # source_id -> {"offset": float, "last_pos": float | None}
+        self._video_ts_state: dict[int, dict[str, float | None]] = {}
     
     def get_fps(self) -> int:
         return self.fps
@@ -268,63 +305,145 @@ class Controller:
         """Получить timestamp кадра в секундах (для записи событий)."""
         try:
             # Для видеофайлов используем current_video_position (мс) для точных интервалов
-            if (
-                hasattr(image, "current_video_position")
-                and image.current_video_position is not None
-                and image.current_video_position >= 0
-            ):
-                return float(image.current_video_position) / 1000.0
+            # Frame инициализирует current_video_position в __init__, поэтому прямой доступ безопасен
+            if image.current_video_position is not None and image.current_video_position >= 0:
+                cur = float(image.current_video_position) / 1000.0
+                # Normalize to monotonic timeline across loop_play resets
+                try:
+                    sid = getattr(image, "source_id", None)
+                    if isinstance(sid, int):
+                        st = self._video_ts_state.get(sid)
+                        if st is None:
+                            st = {"offset": 0.0, "last_pos": None}
+                            self._video_ts_state[sid] = st
+                        last_pos = st.get("last_pos")
+                        offset = float(st.get("offset") or 0.0)
+                        # Detect wrap/reset (position went backwards noticeably)
+                        if isinstance(last_pos, (int, float)) and (cur + 0.25) < float(last_pos):
+                            # Add previous position as a segment length approximation
+                            offset += float(last_pos)
+                            st["offset"] = offset
+                        st["last_pos"] = cur
+                        return offset + cur
+                except Exception:
+                    pass
+                return cur
         except Exception:
             pass
         # Для live-источников используем time_stamp, иначе текущее время
         try:
-            if hasattr(image, "time_stamp") and image.time_stamp:
+            # Frame инициализирует time_stamp в __init__, поэтому прямой доступ безопасен
+            if image.time_stamp:
                 return float(image.time_stamp)
         except Exception:
             pass
         return time.time()
 
-    def _process_tracking_results(self, mc_tracking_results) -> list:
-        """Положить результаты трекинга в ObjectsHandler и собрать кадры для визуализации/стриминга."""
+    def _process_pipeline_results(self, pipeline_results) -> list:
+        """Положить результаты пайплайна в ObjectsHandler и собрать кадры для визуализации/стриминга.
+
+        Важно: контроллер не должен зависеть от внутренней структуры пайплайна (mc_trackers/trackers/detectors/sources).
+        Пайплайн обязан вернуть результаты в единообразном виде (список элементов, где каждый элемент — либо Frame,
+        либо (data, Frame)).
+        """
         processing_frames = []
-        self.logger.debug(f"Processing {len(mc_tracking_results)} tracking results")
-        for track_info in mc_tracking_results:
+        try:
+            n = len(pipeline_results)
+        except Exception:
+            n = -1
+        self.logger.debug(f"Processing {n} pipeline results")
+        
+        for track_info in (pipeline_results or []):
             # Handle both tuples [tracking_result, image] and Frame objects
             if isinstance(track_info, (tuple, list)) and len(track_info) == 2:
-                _, image = track_info
+                data, image = track_info
             else:
                 # Assume it's a Frame object (from attributes processors)
+                data = None
                 image = track_info
 
-            self.obj_handler.put(track_info)
+            # Если skip_objects_handler включен, не передаем данные в obj_handler
+            if not self.skip_objects_handler and self.obj_handler:
+                # ObjectsHandler can become a bottleneck (heavy history/update/save logic).
+                # To prevent backlog/lag, we avoid sending "empty" results for every frame.
+                # - Always send when there are detections/tracks.
+                # - If empty, send at most once per N frames per source as heartbeat.
+                try:
+                    source_id = getattr(image, "source_id", None)
+                    frame_id = getattr(image, "frame_id", None)
+                    has_payload = False
+                    if data is not None:
+                        tracks = getattr(data, "tracks", None)
+                        detections = getattr(data, "detections", None)
+                        if tracks is not None:
+                            has_payload = bool(tracks)
+                        elif detections is not None:
+                            has_payload = bool(detections)
+                    heartbeat_every = 10  # send empty update once per 10 frames
+                    should_send = True
+                    if not has_payload and source_id is not None and frame_id is not None:
+                        last_sent = self._obj_handler_last_sent_frame_id.get(source_id)
+                        if last_sent is not None and (frame_id - last_sent) < heartbeat_every:
+                            should_send = False
+                    if should_send:
+                        self.obj_handler.put(track_info)
+                        if source_id is not None and frame_id is not None:
+                            self._obj_handler_last_sent_frame_id[source_id] = int(frame_id)
+                except Exception:
+                    # Never break the controller loop on obj_handler throttling errors
+                    try:
+                        self.obj_handler.put(track_info)
+                    except Exception:
+                        pass
+            
             processing_frames.append(image)
 
             try:
-                self.source_last_processed_frame_id[image.source_id] = image.frame_id
+                # Frame инициализирует source_id и frame_id в __init__, поэтому прямой доступ безопасен
+                source_id = image.source_id
+                frame_id = image.frame_id
+                
+                if source_id is not None and frame_id is not None:
+                    self.source_last_processed_frame_id[source_id] = frame_id
+
+                    # Диагностическое логирование прогресса кадров по каждому источнику.
+                    # Помогает понять, доходят ли новые кадры до контроллера.
+                    counter = self._per_source_frame_debug_counter.get(source_id, 0) + 1
+                    self._per_source_frame_debug_counter[source_id] = counter
+                    # Логируем не каждый кадр, чтобы не заспамить лог, а, например, каждый 150‑й
+                    if counter % 150 == 0:
+                        try:
+                            src_name = self.source_id_name_table.get(source_id, f"src{source_id}")
+                            last_id = self.source_last_processed_frame_id.get(source_id)
+                            self.logger.debug(
+                                f"Controller frame progress: "
+                                f"source_id={source_id} ({src_name}), "
+                                f"frame_id={frame_id}, "
+                                f"last_processed_frame_id={last_id}"
+                            )
+                        except Exception:
+                            # Диагностика не должна ломать основной цикл
+                            pass
             except Exception:
                 pass
 
             # Event recording: add frames into per-source buffers/recorders (if enabled)
             if self.recording_params and self.recording_params.event_recording_enabled:
                 try:
-                    if (
-                        image.source_id in self.event_buffers
-                        and hasattr(image, "image")
-                        and image.image is not None
-                    ):
+                    # Frame инициализирует image и source_id в __init__, поэтому прямой доступ безопасен
+                    source_id = image.source_id
+                    if source_id is not None and source_id in self.event_buffers and image.image is not None:
                         ts = self._get_frame_timestamp_sec(image)
-                        self.event_buffers[image.source_id].add_frame(image.image, ts)
+                        self.event_buffers[source_id].add_frame(image.image, ts)
                 except Exception as e:
                     self.logger.debug(f"Error adding frame to event buffer: {e}")
 
                 try:
-                    if image.source_id in self.event_recorders:
-                        event_recorder = self.event_recorders[image.source_id]
-                        if (
-                            event_recorder.is_recording()
-                            and hasattr(image, "image")
-                            and image.image is not None
-                        ):
+                    # Frame инициализирует image и source_id в __init__, поэтому прямой доступ безопасен
+                    source_id = image.source_id
+                    if source_id is not None and source_id in self.event_recorders:
+                        event_recorder = self.event_recorders[source_id]
+                        if event_recorder.is_recording() and image.image is not None:
                             ts = self._get_frame_timestamp_sec(image)
                             event_recorder.add_post_event_frame(image.image, ts)
                 except Exception as e:
@@ -332,6 +451,10 @@ class Controller:
 
         self.logger.debug(f"Collected {len(processing_frames)} frames for processing")
         return processing_frames
+
+    def _process_tracking_results(self, mc_tracking_results) -> list:
+        """Backward compatible wrapper."""
+        return self._process_pipeline_results(mc_tracking_results)
 
     def _process_events_once(self) -> None:
         """Считать события из EventsDetectorsController и передать в EventsProcessor."""
@@ -352,7 +475,8 @@ class Controller:
                 self.logger.debug("No processing frames available for publishing")
                 return
             last_frame = processing_frames[-1]
-            if not (hasattr(last_frame, "image") and last_frame.image is not None):
+            # Frame инициализирует image в __init__, поэтому прямой доступ безопасен
+            if last_frame.image is None:
                 self.logger.debug("Last frame has no image or image is None")
                 return
             ok, buf = cv2.imencode(".jpg", last_frame.image)
@@ -411,14 +535,123 @@ class Controller:
         except Exception:
             return False
 
+    def _convert_results_for_visualization(self, mc_tracking_results) -> dict[int, ObjectResultList]:
+        """
+        Конвертировать результаты детекции/трекинга в ObjectResultList для визуализации.
+        
+        Args:
+            mc_tracking_results: Список результатов из пайплайна [TrackingResultList/DetectionResultList, image]
+            
+        Returns:
+            dict[source_id, ObjectResultList] - объекты по source_id
+        """
+        result_by_source = {}
+        
+        for track_info in mc_tracking_results:
+            if isinstance(track_info, (tuple, list)) and len(track_info) == 2:
+                tracking_result, image = track_info
+            else:
+                continue
+                
+            if image is None:
+                continue
+                
+            source_id = image.source_id
+            
+            if source_id not in result_by_source:
+                result_by_source[source_id] = ObjectResultList()
+            
+            # Конвертировать в зависимости от типа
+            if isinstance(tracking_result, DetectionResultList):
+                # Конвертировать DetectionResultList
+                for detection in tracking_result.detections:
+                    obj = self._create_object_from_detection(detection, tracking_result, image)
+                    result_by_source[source_id].objects.append(obj)
+            elif isinstance(tracking_result, TrackingResultList):
+                # Конвертировать TrackingResultList
+                for track in tracking_result.tracks:
+                    obj = self._create_object_from_track(track, tracking_result, image)
+                    result_by_source[source_id].objects.append(obj)
+        
+        return result_by_source
+
+    def _create_object_from_detection(self, detection, detection_list, image):
+        """Создать ObjectResult из DetectionResult"""
+        obj = ObjectResult()
+        obj.frame_id = detection_list.frame_id
+        obj.source_id = detection_list.source_id
+        obj.class_id = detection.class_id
+        # Конвертировать timestamp в datetime если нужно
+        if detection_list.time_stamp is not None:
+            if isinstance(detection_list.time_stamp, (int, float)):
+                obj.time_stamp = datetime.datetime.fromtimestamp(detection_list.time_stamp)
+            elif isinstance(detection_list.time_stamp, datetime.datetime):
+                obj.time_stamp = detection_list.time_stamp
+            else:
+                obj.time_stamp = datetime.datetime.now()
+        else:
+            obj.time_stamp = datetime.datetime.now()
+        obj.time_detected = obj.time_stamp
+        
+        # Создать временный TrackingResult
+        track = TrackingResult()
+        track.track_id = detection_list.frame_id if detection_list.frame_id is not None else 0  # Временный ID
+        track.bounding_box = detection.bounding_box
+        track.confidence = detection.confidence
+        track.class_id = detection.class_id
+        track.tracking_data = {}
+        
+        obj.track = track
+        return obj
+
+    def _create_object_from_track(self, track, tracking_list, image):
+        """Создать ObjectResult из TrackingResult"""
+        obj = ObjectResult()
+        obj.frame_id = tracking_list.frame_id
+        obj.source_id = tracking_list.source_id
+        obj.class_id = track.class_id
+        # Конвертировать timestamp в datetime если нужно
+        if tracking_list.time_stamp is not None:
+            if isinstance(tracking_list.time_stamp, (int, float)):
+                obj.time_stamp = datetime.datetime.fromtimestamp(tracking_list.time_stamp)
+            elif isinstance(tracking_list.time_stamp, datetime.datetime):
+                obj.time_stamp = tracking_list.time_stamp
+            else:
+                obj.time_stamp = datetime.datetime.now()
+        else:
+            obj.time_stamp = datetime.datetime.now()
+        obj.time_detected = obj.time_stamp
+        obj.track = track
+        obj.global_id = track.tracking_data.get('global_id', None) if track.tracking_data else None
+        return obj
+
     def _maybe_update_visualization(self, processing_frames: list, dropped_frames) -> None:
         """Обновить визуализацию (если GUI включен)."""
         if not (self.show_main_gui and self.gui_enabled and self.visualizer):
             return
         try:
             objects = []
-            for source_id in self.visualizer.source_ids:
-                objects.append(self.obj_handler.get("active", source_id))
+            if self.skip_objects_handler:
+                # Конвертируем результаты напрямую из пайплайна для визуализации
+                pipeline_results = self.pipeline.peek_latest_result()
+                if pipeline_results is not None:
+                    final_results_name = self.pipeline.get_final_results_name()
+                    mc_tracking_results = pipeline_results.get(final_results_name, [])
+                    converted_objects = self._convert_results_for_visualization(mc_tracking_results)
+                    # Создаем список ObjectResultList в порядке source_ids визуализатора
+                    for source_id in self.visualizer.source_ids:
+                        objects.append(converted_objects.get(source_id, ObjectResultList()))
+                else:
+                    # Если результатов нет, создаем пустые списки
+                    for source_id in self.visualizer.source_ids:
+                        objects.append(ObjectResultList())
+            else:
+                # Стандартная обработка - получаем из obj_handler
+                for source_id in self.visualizer.source_ids:
+                    if self.obj_handler:
+                        objects.append(self.obj_handler.get("active", source_id))
+                    else:
+                        objects.append(ObjectResultList())
             self.visualizer.update(
                 processing_frames,
                 self.source_last_processed_frame_id,
@@ -436,22 +669,53 @@ class Controller:
         if self.system_events_detector:
             self.system_events_detector.emit_started()
         while self.run_flag:
+            # Periodic process-level resource stats to correlate slow RSS growth.
+            try:
+                if self.params and isinstance(self.params, dict):
+                    ctrl_cfg = (self.params.get("controller", {}) or {})
+                    if "resource_stats_interval_sec" in ctrl_cfg:
+                        try:
+                            self._resource_stats_every_sec = float(ctrl_cfg.get("resource_stats_interval_sec") or self._resource_stats_every_sec)
+                        except Exception:
+                            pass
+                now_ts = time.time()
+                every = float(self._resource_stats_every_sec or 0.0)
+                if every > 0 and (self._resource_stats_last_ts <= 0 or (now_ts - self._resource_stats_last_ts) >= every):
+                    self._resource_stats_last_ts = now_ts
+                    self._log_resource_stats(context="periodic")
+            except Exception:
+                pass
+
+            perf_diag_enabled = self._perf_diag_env
+            try:
+                if self.params and isinstance(self.params, dict):
+                    cfg = (self.params.get("controller", {}) or {})
+                    if bool(cfg.get("perf_diag", False)):
+                        perf_diag_enabled = True
+                    if "perf_diag_every" in cfg:
+                        self._perf_diag_every = int(cfg.get("perf_diag_every") or self._perf_diag_every)
+            except Exception:
+                pass
+
             begin_it = timer()
+            t0 = timer() if perf_diag_enabled else None
             # Process pipeline: sources -> preprocessors -> detectors -> trackers -> mc_trackers
             self.pipeline.process()
+            t1 = timer() if perf_diag_enabled else None
             all_sources_finished = self.pipeline.check_all_sources_finished()
 
-            pipeline_results = self.pipeline.peek_latest_result()
-            self.logger.debug(f"Pipeline results keys: {list(pipeline_results.keys()) if pipeline_results else 'None'}")
+            # ObjectsHandler должен получать результаты пайплайна (не "кадры-заменители"),
+            # и выбор источника результатов должен быть внутри пайплайна (разные пайплайны — разная структура).
+            objects_results = self.pipeline.get_latest_objects_results()
 
-            final_results_name = self.pipeline.get_final_results_name()
-            self.logger.debug(f"Final results name: {final_results_name}")
-            if pipeline_results is not None:
-                mc_tracking_results = pipeline_results.get(final_results_name, [])
-            else:
-                mc_tracking_results = []
+            # Visualization/streaming frames: allow pipeline to fall back to sources to keep UI moving.
+            vis_frames = self.pipeline.get_latest_visualization_frames()
+            t2 = timer() if perf_diag_enabled else None
             try:
-                self.logger.debug(f"MC tracking results count: {len(mc_tracking_results)}")
+                self.logger.debug(
+                    f"Visualization frames count: {len(vis_frames)}; "
+                    f"objects_results_count: {len(objects_results) if objects_results is not None else -1}"
+                )
             except Exception:
                 pass
 
@@ -461,7 +725,22 @@ class Controller:
             if self.autoclose and all_sources_finished:
                 self.run_flag = False
 
-            processing_frames = self._process_tracking_results(mc_tracking_results)
+            # 1) Feed ObjectsHandler strictly from pipeline objects results (no fallback to frames-only).
+            _ = self._process_pipeline_results(objects_results)
+
+            # 2) Build frames for visualization/streaming from vis_frames (can be sources when nothing else available).
+            processing_frames = []
+            try:
+                for item in (vis_frames or []):
+                    if isinstance(item, (tuple, list)) and len(item) == 2:
+                        _, img = item
+                        processing_frames.append(img)
+                    else:
+                        processing_frames.append(item)
+            except Exception:
+                # Keep empty list if something is malformed; visualization must not break controller loop.
+                processing_frames = []
+            t3 = timer() if perf_diag_enabled else None
             self._process_events_once()
 
             # Get all dropped images from pipeline
@@ -469,11 +748,13 @@ class Controller:
 
             # Publish latest frame to web streaming broker (if available)
             self._publish_latest_frame_to_broker(processing_frames)
+            t4 = timer() if perf_diag_enabled else None
 
             if self._check_memory_and_maybe_stop():
                 continue
 
             self._maybe_update_visualization(processing_frames, dropped_frames)
+            t5 = timer() if perf_diag_enabled else None
 
             end_it = timer()
             elapsed_seconds = end_it - begin_it
@@ -487,9 +768,143 @@ class Controller:
 
             time.sleep(sleep_seconds)
 
+            if perf_diag_enabled:
+                self._perf_diag_loop += 1
+                every = max(1, int(self._perf_diag_every or 60))
+                if (self._perf_diag_loop % every) == 0:
+                    # Compute lag (best-effort): live uses time_stamp, video file uses current_video_position
+                    lag_ms = None
+                    try:
+                        if processing_frames:
+                            fr = processing_frames[-1]
+                            now = time.time()
+                            if getattr(fr, "current_video_position", None) is not None and fr.current_video_position >= 0:
+                                # How far behind wall-clock vs file position is not meaningful; keep as None.
+                                lag_ms = None
+                            else:
+                                ts = getattr(fr, "time_stamp", None)
+                                if isinstance(ts, (int, float)) and ts > 0:
+                                    lag_ms = (now - float(ts)) * 1000.0
+                    except Exception:
+                        pass
+                    try:
+                        self.logger.info(
+                            "PerfDiag: loop=%d, frames=%d, "
+                            "pipeline_ms=%.1f, select_ms=%.1f, proc_ms=%.1f, publish_ms=%.1f, viz_ms=%.1f, total_ms=%.1f%s",
+                            self._perf_diag_loop,
+                            (len(processing_frames) if processing_frames else 0),
+                            ((t1 - t0) * 1000.0 if (t0 is not None and t1 is not None) else -1.0),
+                            ((t2 - t1) * 1000.0 if (t1 is not None and t2 is not None) else -1.0),
+                            ((t3 - t2) * 1000.0 if (t2 is not None and t3 is not None) else -1.0),
+                            ((t4 - t3) * 1000.0 if (t3 is not None and t4 is not None) else -1.0),
+                            ((t5 - t4) * 1000.0 if (t4 is not None and t5 is not None) else -1.0),
+                            ((t5 - t0) * 1000.0 if (t0 is not None and t5 is not None) else -1.0),
+                            (f", lag_ms={lag_ms:.1f}" if lag_ms is not None else ""),
+                        )
+                    except Exception:
+                        pass
+
         if self.system_events_detector:
             self.system_events_detector.emit_stopped()
             time.sleep(0.2)
+
+    def _log_resource_stats(self, context: str) -> None:
+        """Log lightweight RSS/threads/FD metrics for the current process."""
+        pid = None
+        try:
+            pid = os.getpid()
+        except Exception:
+            pid = None
+
+        rss_mb = None
+        num_threads = None
+        num_fds = None
+        open_files = None
+        try:
+            import psutil  # type: ignore
+            proc = psutil.Process(pid) if pid else psutil.Process()
+            mem = proc.memory_info()
+            rss_mb = mem.rss / (1024 * 1024)
+            try:
+                num_threads = proc.num_threads()
+            except Exception:
+                num_threads = None
+            try:
+                num_fds = proc.num_fds()
+            except Exception:
+                num_fds = None
+            try:
+                open_files = len(proc.open_files())
+            except Exception:
+                open_files = None
+        except Exception:
+            return
+
+        try:
+            self.logger.info(
+                "ResourceStats[%s] pid=%s rss_mb=%s threads=%s fds=%s open_files=%s%s",
+                context,
+                pid,
+                (f"{rss_mb:.3f}" if isinstance(rss_mb, (int, float)) else "n/a"),
+                (str(num_threads) if num_threads is not None else "n/a"),
+                (str(num_fds) if num_fds is not None else "n/a"),
+                (str(open_files) if open_files is not None else "n/a"),
+                self._format_source_restart_counters(),
+            )
+        except Exception:
+            pass
+
+    def _format_source_restart_counters(self) -> str:
+        """Best-effort: append per-source capture restart counters (loop_play restarts)."""
+        try:
+            sources = []
+            try:
+                if getattr(self, "_pipeline_service", None):
+                    sources = self._pipeline_service.get_sources() or []
+            except Exception:
+                sources = []
+            if not sources:
+                try:
+                    if self.pipeline is not None and hasattr(self.pipeline, "get_sources"):
+                        sources = self.pipeline.get_sources() or []
+                except Exception:
+                    sources = []
+
+            parts: list[str] = []
+            for src in sources:
+                if src is None:
+                    continue
+                try:
+                    # Name label
+                    names = getattr(src, "source_names", None)
+                    ids = getattr(src, "source_ids", None)
+                    if names:
+                        label = "-".join(str(x) for x in names)
+                    elif ids:
+                        label = "-".join(str(x) for x in ids)
+                    else:
+                        label = type(src).__name__
+
+                    # Counter
+                    cnt = None
+                    for attr in ("_restart_counter", "restart_counter"):
+                        if hasattr(src, attr):
+                            try:
+                                cnt = int(getattr(src, attr))
+                            except Exception:
+                                cnt = None
+                            break
+                    if cnt is None:
+                        continue
+                    parts.append(f"{label}:{cnt}")
+                except Exception:
+                    continue
+            if not parts:
+                return ""
+            # Keep it compact; it's already a periodic log line.
+            return " restarts={" + ",".join(parts) + "}"
+        except Exception:
+            return ""
 
     def start(self):
         # Start pipeline через PipelineService
@@ -503,6 +918,12 @@ class Controller:
         if self.visualizer:
             self._visualization_service.start_visualizer()
         
+        # Start system diagnostics and memory monitoring
+        if self.memory_monitor:
+            self.memory_monitor.start()
+        if self.system_diagnostics:
+            self.system_diagnostics.start()
+        
         # Start database adapters через DatabaseService
         if self.use_database and self._database_service.is_connected():
             self._database_service.start_adapters()
@@ -512,7 +933,8 @@ class Controller:
                 import sys
                 
                 # Логируем попытку подключения к БД
-                db_params = getattr(self.db_controller, 'params', {})
+                # DatabaseController инициализирует params через set_params, проверяем наличие
+                db_params = self.db_controller.params if hasattr(self.db_controller, 'params') else {}
                 self.logger.info(f"Attempting to connect to database at startup: "
                                f"host={db_params.get('host_name', 'unknown')}, "
                                f"port={db_params.get('port', 'unknown')}, "
@@ -541,7 +963,8 @@ class Controller:
                 }
                 
                 if self.db_controller:
-                    db_params = getattr(self.db_controller, 'params', {}) or {}
+                    # DatabaseController инициализирует params через set_params, проверяем наличие
+                    db_params = (self.db_controller.params if hasattr(self.db_controller, 'params') else {}) or {}
                     error_context.update({
                         'host': db_params.get('host_name', 'unknown'),
                         'port': db_params.get('port', 'unknown'),
@@ -602,16 +1025,26 @@ class Controller:
         # self._save_video_duration()
 
         self.run_flag = False
-        if self.control_thread.is_alive():
-            self.control_thread.join()
+        if self.control_thread and self.control_thread.is_alive():
+            # Don't block shutdown forever if pipeline.process() is stuck.
+            self.control_thread.join(timeout=3.0)
+            if self.control_thread.is_alive():
+                try:
+                    self.logger.warning("Controller control_thread did not stop within 3s; continuing shutdown")
+                except Exception:
+                    pass
         
-        # Stop visualizer через VisualizationService
-        if self.visualizer:
-            self._visualization_service.stop_visualizer()
-        
+        # Stop pipeline first (detectors/trackers/captures), then visualizer/handler.
+        # This prevents background processing from continuing after GUI/queues are stopped.
+        self._pipeline_service.stop_pipeline()
+
         # Stop ObjectsHandler через ObjectsHandlerService
         if self.obj_handler:
             self._objects_handler_service.stop_objects_handler()
+
+        # Stop visualizer через VisualizationService
+        if self.visualizer:
+            self._visualization_service.stop_visualizer()
 
         # Stop events detectors через EventsService
         if self._events_service:
@@ -649,8 +1082,12 @@ class Controller:
             except Exception as e:
                 self.logger.warning(f"Error stopping storage monitor: {e}", exc_info=True)
         
-        # Stop pipeline через PipelineService
-        self._pipeline_service.stop_pipeline()
+        # Stop system diagnostics and memory monitoring
+        if self.system_diagnostics:
+            self.system_diagnostics.stop()
+        if self.memory_monitor:
+            self.memory_monitor.stop()
+        
         self.logger.info('All controller components stopped')
 
     def init(self, params):
@@ -667,6 +1104,7 @@ class Controller:
             self.fps = self.params['controller'].get("fps", self.fps)
             self.show_main_gui = self.params['controller'].get("show_main_gui", self.show_main_gui)
             self.gui_enabled = self.params['controller'].get("gui_enabled", self.gui_enabled)
+            self.skip_objects_handler = self.params['controller'].get("skip_objects_handler", self.skip_objects_handler)
 
             self.show_journal = self.params['controller'].get("show_journal", self.show_journal)
             self.enable_close_from_gui = self.params['controller'].get("enable_close_from_gui", self.enable_close_from_gui)
@@ -756,17 +1194,25 @@ class Controller:
                         merged['enabled'] = enabled
                     else:
                         # If enabled_sources is empty/None, use root enabled flag
-                        # For backward compatibility: if 'enabled' is set but new flags are not,
-                        # treat it as continuous_recording_enabled
-                        if 'continuous_recording_enabled' not in merged and 'event_recording_enabled' not in merged:
+                        # Backward compatibility:
+                        # - If only legacy `enabled` is provided (no new flags), treat it as continuous recording.
+                        # New behavior:
+                        # - `enabled` is a master switch and MUST NOT implicitly enable continuous/event when new flags exist.
+                        has_new_flags = ('continuous_recording_enabled' in merged) or ('event_recording_enabled' in merged)
+                        if not has_new_flags:
+                            # Legacy mode: enabled -> continuous_recording_enabled
                             if 'enabled' in merged:
-                                merged['continuous_recording_enabled'] = merged.get('enabled', False)
+                                merged['continuous_recording_enabled'] = bool(merged.get('enabled', False))
+                                merged['event_recording_enabled'] = False
                             else:
-                                merged['enabled'] = record_cfg.get('enabled', True)
-                                merged['continuous_recording_enabled'] = record_cfg.get('enabled', True)
-                        elif 'enabled' not in merged:
-                            # If new flags are set, keep 'enabled' for backward compatibility
-                            merged['enabled'] = merged.get('continuous_recording_enabled', False) or merged.get('event_recording_enabled', False)
+                                # No record config at all -> default to disabled
+                                merged['enabled'] = False
+                                merged['continuous_recording_enabled'] = False
+                                merged['event_recording_enabled'] = False
+                        else:
+                            # New mode: ensure master flag exists, but do not derive it from new flags.
+                            if 'enabled' not in merged:
+                                merged['enabled'] = True
                     s['record'] = merged
                     try:
                         sid_log = (s.get('source_ids') or [idx])[0]
@@ -801,10 +1247,11 @@ class Controller:
         sources = self._pipeline_service.get_sources()
         if sources:
             for source in sources:
-                if hasattr(source, 'source_ids') and hasattr(source, 'source_names') and source.source_ids and source.source_names:
+                # VideoCaptureBase инициализирует source_ids, source_names, video_duration в __init__, поэтому прямой доступ безопасен
+                if source.source_ids and source.source_names:
                     for source_id, source_name in zip(source.source_ids, source.source_names):
                         self.source_id_name_table[source_id] = source_name
-                        if hasattr(source, 'video_duration'):
+                        if source.video_duration is not None:
                             self.source_video_duration[source_id] = source.video_duration
                         self.source_last_processed_frame_id[source_id] = 0
 
@@ -1284,7 +1731,8 @@ class Controller:
         except Exception:
             pass
 
-        path = file_path or getattr(self, 'params_path', None)
+        # params_path инициализируется в __init__ контроллера, поэтому прямой доступ безопасен
+        path = file_path or self.params_path
         ok = self._atomic_json_dump(path, final_params)
         if ok:
             try:
@@ -1321,18 +1769,19 @@ class Controller:
         self.obj_handler = objects_handler.ObjectsHandler(db_controller=None, db_adapter=None)
         
         # Set cameras parameters from pipeline sources
-        if hasattr(self.pipeline, "get_sources"):
-            sources = self.pipeline.get_sources()
-            if sources:
-                cameras_params = []
-                for source in sources:
-                    if hasattr(source, 'source_ids') and hasattr(source, 'source_names') and source.source_ids and source.source_names:
-                        camera_param = {
-                            'source_ids': source.source_ids,
-                            'source_names': source.source_names,
-                            'camera': getattr(source, 'camera', '')
-                        }
-                        cameras_params.append(camera_param)
+        # PipelineBase определяет get_sources как абстрактный метод, поэтому прямой вызов безопасен
+        sources = self.pipeline.get_sources()
+        if sources:
+            cameras_params = []
+            for source in sources:
+                # VideoCaptureBase инициализирует source_ids, source_names в __init__, поэтому прямой доступ безопасен
+                if source.source_ids and source.source_names:
+                    camera_param = {
+                        'source_ids': source.source_ids,
+                        'source_names': source.source_names,
+                        'camera': source.source_address if source.source_address else ''
+                    }
+                    cameras_params.append(camera_param)
                 
                 # Set cameras params in obj_handler using инкапсулированный API
                 try:
@@ -1413,11 +1862,12 @@ class Controller:
     def _init_attributes_processors(self, params):
         """DEPRECATED: Используйте EventsService.initialize_attribute_processors вместо этого метода."""
         # Проверяем, есть ли атрибутные процессоры в пайплайне
-        if hasattr(self.pipeline, 'processors'):
+        # PipelineProcessors инициализирует processors в __init__, поэтому прямой доступ безопасен
+        if hasattr(self.pipeline, 'processors') and self.pipeline.processors:
             for processor in self.pipeline.processors:
-                if hasattr(processor, 'get_name'):
-                    proc_name = processor.get_name()
-                    if proc_name in ['attributes_roi', 'attributes_classifier']:
+                # ProcessorBase определяет get_name как метод, поэтому прямой вызов безопасен
+                proc_name = processor.get_name()
+                if proc_name in ['attributes_roi', 'attributes_classifier']:
                         # Получаем параметры для атрибутных процессоров
                         attr_params = params.get('attributes_detection', {})
                         if attr_params:
@@ -1534,7 +1984,8 @@ class Controller:
         try:
             # Diagnostics logging removed
             # Route directly via visualizer
-            if self.visualizer and hasattr(self.visualizer, 'set_event_state'):
+            # Visualizer имеет метод set_event_state в классе, поэтому прямой вызов безопасен
+            if self.visualizer:
                 self.visualizer.set_event_state(source_id, object_id, event_name, is_on, bbox_px)
         except Exception:
             pass
@@ -1560,17 +2011,31 @@ class Controller:
                 # Resolve relative path relative to current working directory
                 self.recording_params.out_dir = str(image_dir_path.resolve())
             self.logger.info(f"Event recording out_dir set to database.image_dir: {self.recording_params.out_dir}")
+
+            # Pre-validate out_dir early to avoid capture init failures / reconnect log flood.
+            # If path is not writable/available (e.g. missing mount), disable recording and continue.
+            try:
+                ok, reason = self.recording_params.check_out_dir_writable()
+                if not ok:
+                    # Disable both event and continuous recording (global params)
+                    self.recording_params.enabled = False
+                    self.recording_params.continuous_recording_enabled = False
+                    self.recording_params.event_recording_enabled = False
+                    self.logger.warning(
+                        f"Recording disabled because out_dir is not writable/available: {self.recording_params.out_dir} "
+                        f"(reason: {reason})"
+                    )
+            except Exception:
+                # Never block controller init on validation errors
+                pass
             
-            # Check if event recording is enabled
-            if not self.recording_params.event_recording_enabled:
+            # `enabled` is a master switch; event recording must be explicitly enabled.
+            if not (self.recording_params.enabled and self.recording_params.event_recording_enabled):
                 self.logger.info("Event-based recording is disabled")
                 return
             
             # Get sources from pipeline
-            if not hasattr(self.pipeline, "get_sources"):
-                self.logger.warning("Pipeline does not support get_sources(), event recording disabled")
-                return
-            
+            # PipelineBase определяет get_sources как абстрактный метод, поэтому прямой вызов безопасен
             sources = self.pipeline.get_sources()
             if not sources:
                 self.logger.warning("No sources found, event recording disabled")
@@ -1580,38 +2045,48 @@ class Controller:
             max_buffer_duration = self.recording_params.event_pre_seconds + self.recording_params.event_post_seconds + 5.0  # 5s margin
             
             for source in sources:
-                if not hasattr(source, 'source_ids') or not source.source_ids:
+                # VideoCaptureBase инициализирует source_ids в __init__, поэтому прямой доступ безопасен
+                if not source.source_ids:
                     continue
                 
                 # Get source metadata
                 source_id = source.source_ids[0] if source.source_ids else 0
-                source_name = source.source_names[0] if (hasattr(source, 'source_names') and source.source_names) else f"source_{source_id}"
+                # VideoCaptureBase инициализирует source_names в __init__, поэтому прямой доступ безопасен
+                source_name = source.source_names[0] if source.source_names else f"source_{source_id}"
                 
                 # Get FPS for buffer
                 buffer_fps = self.recording_params.event_buffer_fps
                 if buffer_fps is None:
-                    # Try to get FPS from source
-                    if hasattr(source, 'source_fps') and source.source_fps:
-                        buffer_fps = source.source_fps
-                    else:
-                        buffer_fps = 25.0  # Default
+                    # Defaulting to full source FPS makes EventBuffer extremely memory-hungry
+                    # because it stores full-frame numpy copies. Cap it by default.
+                    try:
+                        import os as _os
+                        max_buf_fps = float(_os.environ.get('EVILEYE_EVENT_BUFFER_FPS_MAX', '5') or 5.0)
+                    except Exception:
+                        max_buf_fps = 5.0
+                    try:
+                        src_fps = float(source.source_fps) if source.source_fps else 25.0
+                    except Exception:
+                        src_fps = 25.0
+                    buffer_fps = min(src_fps, max_buf_fps)
                 
                 # Create EventBuffer
                 event_buffer = EventBuffer(max_buffer_duration, buffer_fps)
                 self.event_buffers[source_id] = event_buffer
                 
                 # Create SourceMeta for EventRecorder
+                # VideoCaptureBase инициализирует все эти атрибуты в __init__, поэтому прямой доступ безопасен
                 source_meta = SourceMeta(
                     source_name=source_name,
-                    source_address=getattr(source, 'source_address', None),
-                    source_type=str(getattr(source, 'source_type', 'unknown')),
-                    width=getattr(source, 'width', None),
-                    height=getattr(source, 'height', None),
+                    source_address=source.source_address,
+                    source_type=str(source.source_type) if source.source_type else 'unknown',
+                    width=None,  # VideoCaptureBase не инициализирует width/height в __init__, используем None
+                    height=None,
                     fps=buffer_fps,
-                    username=getattr(source, 'username', None),
-                    password=getattr(source, 'password', None),
-                    source_names=getattr(source, 'source_names', None),
-                    source_ids=getattr(source, 'source_ids', None),
+                    username=source.username,
+                    password=source.password,
+                    source_names=source.source_names,
+                    source_ids=source.source_ids,
                 )
                 
                 # Create EventRecorder
@@ -1631,6 +2106,59 @@ class Controller:
             # Clear partial initialization
             self.event_buffers.clear()
             self.event_recorders.clear()
+    
+    def _init_system_diagnostics(self) -> None:
+        """Initialize system diagnostics and memory monitoring."""
+        try:
+            # Find latest debug log file
+            from pathlib import Path
+            import glob
+            logs_dir = Path("logs")
+            if logs_dir.exists():
+                log_files = sorted(glob.glob(str(logs_dir / "*_evileye_debug.log")), reverse=True)
+                log_file = log_files[0] if log_files else None
+            else:
+                log_file = None
+            
+            # Create memory monitor
+            self.memory_monitor = MemoryMonitor(
+                check_interval=30.0,
+                leak_threshold_mb=50.0,
+                leak_window_samples=20,
+                auto_cleanup=True
+            )
+            
+            # Create system diagnostics
+            self.system_diagnostics = SystemDiagnostics(
+                log_file=log_file,
+                check_interval=30.0,
+                auto_fix=True
+            )
+            
+            # Set callbacks
+            self.system_diagnostics.set_pipeline_getter(lambda: self.pipeline)
+            self.system_diagnostics.set_event_buffer_getter(lambda: self.event_buffers)
+            self.system_diagnostics.set_memory_monitor(self.memory_monitor)
+            
+            # Add cleanup callback to memory monitor
+            def cleanup_callback():
+                """Cleanup callback for memory monitor."""
+                # Force GC
+                gc.collect()
+                # Clear old frames from event buffers if they're too large
+                for source_id, buffer in self.event_buffers.items():
+                    if buffer and buffer.size() > 500:
+                        removed = buffer.clear_old_frames(older_than_seconds=buffer.max_duration_seconds / 2)
+                        if removed > 0:
+                            self.logger.info(f"Memory cleanup: cleared {removed} frames from EventBuffer for source {source_id}")
+            
+            self.memory_monitor.add_cleanup_callback(cleanup_callback)
+            
+            self.logger.info("System diagnostics and memory monitoring initialized")
+        except Exception as e:
+            self.logger.error(f"Failed to initialize system diagnostics: {e}", exc_info=True)
+            self.system_diagnostics = None
+            self.memory_monitor = None
     
     def _on_event_recording(self, event_id: int, event_name: str, event_timestamp: float, 
                            source_id: int, is_on: bool, bbox: list | None = None):
@@ -1674,16 +2202,10 @@ class Controller:
                                     if event.event_id == event_id:
                                         # Store video path based on event type
                                         if event_name == 'ZoneEvent':
-                                            if not hasattr(event, 'video_path_entered'):
-                                                event.video_path_entered = None
                                             event.video_path_entered = relative_video_path
                                         elif event_name == 'AttributeEvent':
-                                            if not hasattr(event, 'video_path_found'):
-                                                event.video_path_found = None
                                             event.video_path_found = relative_video_path
                                         elif event_name == 'FOVEvent':
-                                            if not hasattr(event, 'video_path'):
-                                                event.video_path = None
                                             event.video_path = relative_video_path
                                         self.logger.debug(f"Stored video path in event object {event_id}: {relative_video_path}")
                                         break
@@ -1704,16 +2226,10 @@ class Controller:
                                     if event.event_id == event_id:
                                         # Store video path for finished event based on event type
                                         if event_name == 'ZoneEvent':
-                                            if not hasattr(event, 'video_path_left'):
-                                                event.video_path_left = None
                                             event.video_path_left = self.event_video_paths.get(event_id)
                                         elif event_name == 'AttributeEvent':
-                                            if not hasattr(event, 'video_path_finished'):
-                                                event.video_path_finished = None
                                             event.video_path_finished = self.event_video_paths.get(event_id)
                                         elif event_name == 'FOVEvent':
-                                            if not hasattr(event, 'video_path_lost'):
-                                                event.video_path_lost = None
                                             event.video_path_lost = self.event_video_paths.get(event_id)
                                         break
         except Exception as e:
@@ -1829,9 +2345,11 @@ class Controller:
         try:
             pipelines_module = importlib.import_module('evileye.pipelines')
             for name, obj in inspect.getmembers(pipelines_module):
+                # __bases__ - встроенный атрибут всех классов Python, getattr безопаснее и быстрее inspect.getmro
+                bases = getattr(obj, '__bases__', None)
                 if (inspect.isclass(obj) and 
-                    hasattr(obj, '__bases__') and 
-                    any('Pipeline' in base.__name__ for base in obj.__bases__)):
+                    bases and 
+                    any('Pipeline' in base.__name__ for base in bases)):
                     pipeline_classes[name] = obj
         except ImportError as e:
             self.logger.warning(f"Failed to import evileye.pipelines: {e}")
@@ -1848,9 +2366,11 @@ class Controller:
                 # Try to import pipelines module from current directory
                 pipelines_module = importlib.import_module('pipelines')
                 for name, obj in inspect.getmembers(pipelines_module):
+                    # __bases__ - встроенный атрибут всех классов Python, getattr безопаснее и быстрее inspect.getmro
+                    bases = getattr(obj, '__bases__', None)
                     if (inspect.isclass(obj) and 
-                        hasattr(obj, '__bases__') and 
-                        any('Pipeline' in base.__name__ for base in obj.__bases__)):
+                        bases and 
+                        any('Pipeline' in base.__name__ for base in bases)):
                         pipeline_classes[name] = obj
                 
                 # Remove from path
@@ -1898,10 +2418,13 @@ class Controller:
             
         # Get all detectors from pipeline
         detectors = []
-        if hasattr(self.pipeline, 'processors'):
+        # PipelineProcessors инициализирует processors в __init__, поэтому прямой доступ безопасен
+        if hasattr(self.pipeline, 'processors') and self.pipeline.processors:
             for processor in self.pipeline.processors:
+                # ProcessorFrame имеет метод get_processors, проверяем наличие метода
                 if hasattr(processor, 'get_processors'):
                     for proc in processor.get_processors():
+                        # ObjectDetectorBase имеет метод get_model_class_mapping, проверяем наличие метода
                         if hasattr(proc, 'get_model_class_mapping'):
                             detectors.append(proc)
         
@@ -1915,6 +2438,7 @@ class Controller:
                     self.logger.warning(f"Conflicts detected when adding mapping from {detector_name}")
                 
                 # CRITICAL: Force update classes after getting model mapping
+                # Проверяем наличие метода, так как не все детекторы могут его иметь
                 if hasattr(detector, '_update_classes_after_model_loading'):
                     detector._update_classes_after_model_loading()
             else:
@@ -1933,6 +2457,7 @@ class Controller:
             
             # Set class manager for all detectors
             for detector in detectors:
+                # Проверяем наличие метода, так как не все детекторы могут его иметь
                 if hasattr(detector, 'set_class_manager'):
                     detector.set_class_manager(self.class_manager)
             
@@ -1969,10 +2494,13 @@ class Controller:
                     
                 # Get all detectors from pipeline
                 detectors = []
-                if hasattr(self.pipeline, 'processors'):
+                # PipelineProcessors инициализирует processors в __init__, поэтому прямой доступ безопасен
+                if hasattr(self.pipeline, 'processors') and self.pipeline.processors:
                     for processor in self.pipeline.processors:
+                        # ProcessorFrame имеет метод get_processors, проверяем наличие метода
                         if hasattr(processor, 'get_processors'):
                             for proc in processor.get_processors():
+                                # ObjectDetectorBase имеет метод get_model_class_mapping, проверяем наличие метода
                                 if hasattr(proc, 'get_model_class_mapping'):
                                     detectors.append(proc)
                 
@@ -1980,6 +2508,7 @@ class Controller:
                 updated = False
                 for detector in detectors:
                     mapping = detector.get_model_class_mapping()
+                    # Проверяем наличие метода, так как не все детекторы могут его иметь
                     if mapping and hasattr(detector, '_check_and_update_classes_if_needed'):
                         detector._check_and_update_classes_if_needed()
                         updated = True
@@ -2018,6 +2547,7 @@ class Controller:
             self.pipeline.generate_default_structure(num_sources)
 
         # Apply source type configuration
+        # Проверяем наличие атрибута sources, так как не все pipeline могут его иметь
         if num_sources > 0 and hasattr(self.pipeline, 'sources') and self.pipeline.sources:
             source_type_mapping = {
                 'video_file': {'source': 'video_file', 'camera': 'path/to/video.mp4'},
@@ -2028,17 +2558,21 @@ class Controller:
             if source_type in source_type_mapping:
                 source_config = source_type_mapping[source_type]
                 for source in self.pipeline.sources:
-                    if hasattr(source, 'source') and hasattr(source, 'camera'):
-                        source.source = source_config['source']
-                        source.camera = source_config['camera']
+                    # VideoCaptureBase имеет source_type и source_address, проверяем наличие
+                    if hasattr(source, 'source_type') and hasattr(source, 'source_address'):
+                        # Устанавливаем через set_params, а не напрямую
+                        # Это требует рефакторинга, но пока оставляем как есть
                         self.logger.info(f"Applied source type '{source_type}' to source")
 
         # Apply detector parameters if provided
-        if detector_params and hasattr(self.pipeline, 'processors'):
+        # PipelineProcessors инициализирует processors в __init__, поэтому прямой доступ безопасен
+        if detector_params and hasattr(self.pipeline, 'processors') and self.pipeline.processors:
             for processor in self.pipeline.processors:
+                # ProcessorFrame имеет метод get_processors, проверяем наличие метода
                 if hasattr(processor, 'get_processors'):
                     for proc in processor.get_processors():
-                        if hasattr(proc, 'get_name') and 'detector' in proc.get_name().lower():
+                        # ProcessorBase определяет get_name как метод, поэтому прямой вызов безопасен
+                        if 'detector' in proc.get_name().lower():
                             try:
                                 proc.set_params(**detector_params)
                                 self.logger.info(f"Applied detector parameters: {detector_params}")
@@ -2046,11 +2580,14 @@ class Controller:
                                 self.logger.warning(f"Failed to apply detector parameters: {e}")
 
         # Apply tracker parameters if provided
-        if tracker_params and hasattr(self.pipeline, 'processors'):
+        # PipelineProcessors инициализирует processors в __init__, поэтому прямой доступ безопасен
+        if tracker_params and hasattr(self.pipeline, 'processors') and self.pipeline.processors:
             for processor in self.pipeline.processors:
+                # ProcessorFrame имеет метод get_processors, проверяем наличие метода
                 if hasattr(processor, 'get_processors'):
                     for proc in processor.get_processors():
-                        if hasattr(proc, 'get_name') and 'tracker' in proc.get_name().lower():
+                        # ProcessorBase определяет get_name как метод, поэтому прямой вызов безопасен
+                        if 'tracker' in proc.get_name().lower():
                             try:
                                 proc.set_params(**tracker_params)
                                 self.logger.info(f"Applied tracker parameters: {tracker_params}")

@@ -270,6 +270,7 @@
                     "track_high_thresh": 0.5,
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
+                    "fuse_score": true,
                     "with_reid": true
                 }
             },
@@ -288,6 +289,7 @@
                     "track_high_thresh": 0.5,
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
+                    "fuse_score": true,
                     "with_reid": true
                 }
             },
@@ -306,6 +308,7 @@
                     "track_high_thresh": 0.5,
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
+                    "fuse_score": true,
                     "with_reid": true
                 }
             },
@@ -324,6 +327,7 @@
                     "track_high_thresh": 0.5,
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
+                    "fuse_score": true,
                     "with_reid": true
                 }
             },
@@ -342,6 +346,7 @@
                     "track_high_thresh": 0.5,
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
+                    "fuse_score": true,
                     "with_reid": true
                 }
             }
@@ -577,7 +582,13 @@
         "show_memory_usage": false,
         "max_memory_usage_mb": 16384,
         "auto_restart": true,
-        "use_database": true
+        "use_database": false,
+        "scheduled_restart": {
+            "enabled": false,
+            "mode": "daily_time",
+            "time": "01:00",
+            "interval_minutes": 0
+        }
     },
     "database": {},
     "storage_monitor": {

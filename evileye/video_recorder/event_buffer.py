@@ -7,6 +7,7 @@ from typing import List, Tuple, Optional
 import numpy as np
 
 from evileye.core.logger import get_module_logger
+from evileye.video_recorder.constants import RecorderConstants
 
 
 class EventBuffer:
@@ -27,6 +28,13 @@ class EventBuffer:
         self.logger = get_module_logger("event_buffer")
         self.max_duration_seconds = max_duration_seconds
         self.fps = fps
+        self._last_added_ts: Optional[float] = None
+        self._min_frame_interval_s: Optional[float] = None
+        try:
+            if fps and fps > 0:
+                self._min_frame_interval_s = 1.0 / float(fps)
+        except Exception:
+            self._min_frame_interval_s = None
         
         # Circular buffer: deque of (frame: np.ndarray, timestamp: float)
         self.buffer: deque[Tuple[np.ndarray, float]] = deque(maxlen=None)  # Will set maxlen dynamically
@@ -52,12 +60,29 @@ class EventBuffer:
         """
         if timestamp is None:
             timestamp = time.time()
-        
-        # Make a copy to avoid reference issues
+
+        # If FPS target is provided, do not store every incoming frame.
+        # Storing (and copying) full-resolution frames at source FPS can severely
+        # impact CPU and visualization/detection throughput.
+        if self._min_frame_interval_s:
+            last_ts = self._last_added_ts
+            if last_ts is not None:
+                # Handle timestamp resets (e.g. looping video files / reconnect).
+                if timestamp < last_ts:
+                    self._last_added_ts = None
+                else:
+                    # Keep at most ~fps frames per second in the buffer.
+                    # Small tolerance avoids storing bursts due to timestamp jitter.
+                    if (timestamp - last_ts) < (self._min_frame_interval_s * 0.90):
+                        return
+
+        # Copy is necessary: frames may be modified after being added to buffer
+        # Buffer needs to maintain independent copies for pre-event frame retrieval
         frame_copy = frame.copy()
         
         with self.lock:
             self.buffer.append((frame_copy, timestamp))
+            self._last_added_ts = timestamp
             self._cleanup_old_frames()
     
     def get_frames_before(self, timestamp: float, seconds: float) -> List[Tuple[np.ndarray, float]]:
@@ -76,9 +101,11 @@ class EventBuffer:
         
         with self.lock:
             # Iterate from oldest to newest
+            # NOTE: We return the stored numpy arrays directly to avoid extra copies.
+            # Callers that mutate frames must copy on their side.
             for frame, frame_ts in self.buffer:
                 if cutoff_time <= frame_ts < timestamp:
-                    result.append((frame.copy(), frame_ts))
+                    result.append((frame, frame_ts))
         
         # Sort by timestamp (should already be sorted, but ensure it)
         result.sort(key=lambda x: x[1])
@@ -100,9 +127,11 @@ class EventBuffer:
         
         with self.lock:
             # Iterate from oldest to newest
+            # NOTE: We return the stored numpy arrays directly to avoid extra copies.
+            # Callers that mutate frames must copy on their side.
             for frame, frame_ts in self.buffer:
                 if timestamp <= frame_ts <= cutoff_time:
-                    result.append((frame.copy(), frame_ts))
+                    result.append((frame, frame_ts))
         
         # Sort by timestamp (should already be sorted, but ensure it)
         result.sort(key=lambda x: x[1])
@@ -122,9 +151,11 @@ class EventBuffer:
         result = []
         
         with self.lock:
+            # NOTE: We return the stored numpy arrays directly to avoid extra copies.
+            # Callers that mutate frames must copy on their side.
             for frame, frame_ts in self.buffer:
                 if start_timestamp <= frame_ts <= end_timestamp:
-                    result.append((frame.copy(), frame_ts))
+                    result.append((frame, frame_ts))
         
         result.sort(key=lambda x: x[1])
         return result
@@ -141,9 +172,9 @@ class EventBuffer:
         if newest_ts is None:
             return
         
-        # If newest timestamp is large (> 1 day), it's absolute time (live source)
+        # If newest timestamp is large (> threshold), it's absolute time (live source)
         # Otherwise it's relative time (video file)
-        if newest_ts > 86400:  # Absolute timestamp (live source)
+        if newest_ts > RecorderConstants.TIMESTAMP_THRESHOLD_ABSOLUTE:  # Absolute timestamp (live source)
             current_time = time.time()
             cutoff_time = current_time - self.max_duration_seconds
         else:  # Relative timestamp (video file)
@@ -154,7 +185,10 @@ class EventBuffer:
         # to ensure we don't keep frames beyond max_duration_seconds
         removed_count = 0
         while self.buffer and self.buffer[0][1] < cutoff_time:
-            self.buffer.popleft()
+            old_frame, _ = self.buffer.popleft()
+            # Explicitly free memory from removed frame
+            if old_frame is not None:
+                del old_frame
             removed_count += 1
         
         if removed_count > 0:
@@ -163,6 +197,10 @@ class EventBuffer:
     def clear(self) -> None:
         """Clear all frames from the buffer."""
         with self.lock:
+            # Explicitly free memory from all frames before clearing
+            for frame, _ in self.buffer:
+                if frame is not None:
+                    del frame
             self.buffer.clear()
     
     def size(self) -> int:
@@ -214,7 +252,7 @@ class EventBuffer:
             return 0
         
         # Determine cutoff time
-        if newest_ts > 86400:  # Absolute timestamp
+        if newest_ts > RecorderConstants.TIMESTAMP_THRESHOLD_ABSOLUTE:  # Absolute timestamp
             current_time = time.time()
             cutoff_time = current_time - older_than_seconds
         else:  # Relative timestamp
@@ -223,7 +261,10 @@ class EventBuffer:
         removed_count = 0
         with self.lock:
             while self.buffer and self.buffer[0][1] < cutoff_time:
-                self.buffer.popleft()
+                old_frame, _ = self.buffer.popleft()
+                # Explicitly free memory from removed frame
+                if old_frame is not None:
+                    del old_frame
                 removed_count += 1
         
         if removed_count > 0:

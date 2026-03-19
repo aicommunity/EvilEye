@@ -133,6 +133,20 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
             if image is None or image.image is None:
                 self.logger.warning(f"Received None image for source {detection_result.source_id if detection_result else 'unknown'}, skipping")
                 continue
+
+            # Important contract: emit a result per processed frame (even if empty).
+            # Otherwise downstream visualization buffering can stall when there are no detections.
+            try:
+                if detection_result is None or not getattr(detection_result, "detections", None):
+                    tracks_info = TrackingResultList()
+                    tracks_info.source_id = getattr(detection_result, "source_id", None)
+                    tracks_info.frame_id = getattr(detection_result, "frame_id", None)
+                    tracks_info.time_stamp = datetime.datetime.now()
+                    self._put_out_drop_oldest((tracks_info, image))
+                    continue
+            except Exception:
+                # If something is malformed, fall through to normal processing attempt.
+                pass
             
             try:
                 cam_id, boxes = self._parse_det_info(detection_result, image.image)
@@ -140,7 +154,8 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
                 if len(tracks) > 0:
                     pass
                 tracks_info = self._create_tracks_info(cam_id, detection_result.frame_id, None, tracks)
-                self.queue_out.put((tracks_info, image))
+                # Keep only the freshest tracking results to avoid unbounded memory growth
+                self._put_out_drop_oldest((tracks_info, image))
             except Exception as e:
                 self.logger.error(f"Error processing detection for source {detection_result.source_id if detection_result else 'unknown'}: {e}", exc_info=True)
                 continue

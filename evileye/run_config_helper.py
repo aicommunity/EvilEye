@@ -104,7 +104,20 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
     
     if gui_mode == GUIMode.HEADLESS:
         logger.info("Headless mode: skipping GUI initialization")
-        # No GUI components, no QApplication
+        # IMPORTANT: still create a minimal QApplication early.
+        # ControllerInitThread is a QThread and delivers results via Qt signals;
+        # without a Qt event loop in the main thread those signals won't be processed,
+        # causing headless runs to hang during initialization.
+        try:
+            import os as _os
+            _os.environ.setdefault("QT_NO_GLIB", "1")
+        except Exception:
+            pass
+        qt_app = QApplication.instance() or QApplication(sys.argv)
+        try:
+            qt_app.setQuitOnLastWindowClosed(False)
+        except Exception:
+            pass
     else:
         # Create GUI manager for HIDDEN or VISIBLE modes
         logger.info(f"Step 2: Initializing GUI (mode: {gui_mode.value})")
@@ -177,11 +190,11 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
     
     # Wait for initialization to complete
     if qt_app:
-        # GUI mode: process events while waiting
+        # Process Qt events while waiting (required for signal delivery)
         while not initialization_result['completed'] or not main_window_created['done']:
             qt_app.processEvents()
     else:
-        # Headless mode: just wait (no event loop)
+        # Fallback (shouldn't happen): basic wait
         import time
         while not initialization_result['completed'] or not main_window_created['done']:
             time.sleep(0.01)
@@ -192,6 +205,66 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
         sys.exit(1)
     
     controller_instance = initialization_result['controller']
+    # Ensure we always stop the controller on app quit (GUI mode).
+    # Without this, closing the window may exit Qt loop while leaving background threads running.
+    shutdown_state = {"done": False, "thread": None}
+    if qt_app is not None and controller_instance is not None:
+        try:
+            import weakref
+            ctrl_ref = weakref.ref(controller_instance)
+        except Exception:
+            ctrl_ref = None
+
+        def _shutdown_controller():
+            if shutdown_state["done"]:
+                return
+            shutdown_state["done"] = True
+            # IMPORTANT: aboutToQuit handlers must return quickly.
+            # If we block here (e.g. ctrl.release() waiting on threads), Qt event loop may never finish,
+            # leaving the process "hung" after GUI closes. Run controller shutdown in a daemon thread.
+            def _do_shutdown():
+                try:
+                    ctrl = ctrl_ref() if ctrl_ref else controller_instance
+                    if ctrl is None:
+                        return
+                    try:
+                        logger.info("Qt aboutToQuit: stopping controller...")
+                    except Exception:
+                        pass
+                    try:
+                        ctrl.release()
+                        return
+                    except Exception:
+                        pass
+                    try:
+                        ctrl.stop()
+                    except Exception:
+                        pass
+                except Exception as e:
+                    try:
+                        logger.error(f"Error during Qt shutdown controller stop: {e}", exc_info=True)
+                    except Exception:
+                        pass
+
+            try:
+                import threading as _threading
+                # Use non-daemon thread so that Python does not tear down
+                # the interpreter while shutdown is still running. We'll
+                # join it with timeout after the Qt event loop exits.
+                t = _threading.Thread(target=_do_shutdown, name="evileye-gui-shutdown", daemon=False)
+                shutdown_state["thread"] = t
+                t.start()
+            except Exception:
+                # Fallback to best-effort sync shutdown (last resort)
+                try:
+                    _do_shutdown()
+                except Exception:
+                    pass
+
+        try:
+            qt_app.aboutToQuit.connect(_shutdown_controller)  # type: ignore[attr-defined]
+        except Exception:
+            pass
     
     # Step 4: Start application event loop
     if gui_mode == GUIMode.HEADLESS:
@@ -244,9 +317,27 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
 
         logger.info("Controller started in headless mode, entering Qt event loop...")
         ret = qt_app.exec()
+        # Best-effort wait for shutdown thread if it was started
+        try:
+            t = shutdown_state.get("thread")
+            if t is not None:
+                import threading as _threading
+                if isinstance(t, _threading.Thread) and t.is_alive():
+                    t.join(timeout=5.0)
+        except Exception:
+            pass
     else:
         logger.info("Starting main application loop")
         ret = qt_app.exec()
+        # Best-effort wait for shutdown thread if it was started
+        try:
+            t = shutdown_state.get("thread")
+            if t is not None:
+                import threading as _threading
+                if isinstance(t, _threading.Thread) and t.is_alive():
+                    t.join(timeout=5.0)
+        except Exception:
+            pass
         
         # Check if restart is requested due to memory leak (GUI mode)
         if controller_instance is not None:

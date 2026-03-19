@@ -1,12 +1,25 @@
-from abc import ABC
+from __future__ import annotations
 
-from ..core.frame import CaptureImage
-from ..core.class_manager import ClassManager
-
-from ..core.base_class import EvilEyeBase
+from abc import ABC, abstractmethod
 from queue import Queue
 import threading
 from time import sleep
+from typing import Optional
+
+from ..core.base_class import EvilEyeBase
+from ..core.class_manager import ClassManager
+from ..core.frame import CaptureImage
+
+from .constants import (
+    DEFAULT_INPUT_QUEUE_SIZE,
+    DEFAULT_NUM_DETECTION_THREADS,
+    DEFAULT_OUTPUT_QUEUE_SIZE,
+    DEFAULT_STRIDE,
+    MODEL_PRELOAD_TIMEOUT,
+    MODEL_READY_TIMEOUT,
+    PROCESSING_SLEEP_INTERVAL,
+    THREAD_START_DELAY,
+)
 
 
 class DetectionResult:
@@ -33,36 +46,51 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
 
         self.run_flag = False
         # Increased queue size to prevent overflow during startup when models are loading
-        self.queue_in = Queue(maxsize=10)
-        self.queue_out = Queue()
+        self.queue_in = Queue(maxsize=DEFAULT_INPUT_QUEUE_SIZE)
+        # IMPORTANT: output queue must be bounded, otherwise if downstream is slower
+        # (e.g. controller/visualizer lag), results accumulate and memory grows unbounded.
+        # We only need the latest results.
+        self.queue_out = Queue(maxsize=DEFAULT_OUTPUT_QUEUE_SIZE)
         self.source_ids = []
         self.classes = []
-        self.stride = 1  # Параметр скважности
+        self.stride = DEFAULT_STRIDE
         self.roi = [[]]
         self.queue_dropped_id = Queue()
 
-        self.num_detection_threads = 3
+        self.num_detection_threads = DEFAULT_NUM_DETECTION_THREADS
         self.detection_threads = []
         self.thread_counter = 0
 
         self.processing_thread = None
 
         self.model_class_mapping = None
+        self._model_class_mapping_cache: Optional[dict] = None
         self.class_manager = None  # Will be set by Controller
+        self._roi_cache: dict[int, list[list[int]]] = {}
 
     def put(self, image: CaptureImage) -> bool:
-        if not self.queue_in.full():
-            self.queue_in.put(image)
+        """Put image into input queue for processing."""
+        try:
+            self.queue_in.put_nowait(image)
             return True
-        self.logger.warning(f"Failed to put image {image.source_id}:{image.frame_id} to ObjectDetection queue. Queue is full.")
-        return False
+        except Exception:
+            self.logger.warning(
+                f"Failed to put image {image.source_id}:{image.frame_id} to ObjectDetection queue. Queue is full."
+            )
+            return False
 
     def get(self):
-        if self.queue_out.empty():
+        """Get detection result from output queue."""
+        try:
+            return self.queue_out.get_nowait()
+        except Exception:
             return None
-        return self.queue_out.get()
 
-    def get_model_class_mapping(self) -> dict|None:
+    def get_model_class_mapping(self) -> Optional[dict]:
+        """Get model class mapping with caching."""
+        if self._model_class_mapping_cache is not None:
+            return self._model_class_mapping_cache
+
         if len(self.detection_threads) > 0:
             model_class_mapping = self.detection_threads[0].get_model_class_mapping()
             if self.model_class_mapping is not None and model_class_mapping is not None and self.model_class_mapping != model_class_mapping:
@@ -80,6 +108,9 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
                 self._check_and_update_classes_if_needed()
         else:
             self.model_class_mapping = None
+
+        if self.model_class_mapping is not None:
+            self._model_class_mapping_cache = self.model_class_mapping.copy()
         return self.model_class_mapping
     
     def _process_classes_parameter(self):
@@ -197,9 +228,13 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
                 self._update_threads_classes()
 
     def get_dropped_ids(self) -> list:
+        """Get all dropped frame IDs from the queue."""
         res = []
-        while not self.queue_dropped_id.empty():
-            res.append(self.queue_dropped_id.get())
+        while True:
+            try:
+                res.append(self.queue_dropped_id.get_nowait())
+            except Exception:
+                break
         return res
 
     def get_queue_out_size(self) -> int:
@@ -212,10 +247,11 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         super().set_params_impl()
         self.roi = self.params.get('roi', [[]])
         self.classes = self.params.get('classes', [])
-        self.stride = self.params.get('vid_stride', 1)
+        self.stride = self.params.get('vid_stride', DEFAULT_STRIDE)
         self.source_ids = self.params.get('source_ids', [])
-        self.num_detection_threads = self.params.get('num_detection_threads', 3)
+        self.num_detection_threads = self.params.get('num_detection_threads', DEFAULT_NUM_DETECTION_THREADS)
         self.model_class_mapping = self.params.get('model_class_mapping', None)
+        self._model_class_mapping_cache = None
         
         # Process classes parameter - support both class IDs and class names
         self._process_classes_parameter()
@@ -223,25 +259,28 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
     # ===== ROI Editor API (can be overridden by derived detectors) =====
     def get_rois_for_source(self, source_id: int) -> list[list[int]]:
         """
-        Return ROI list for source in [x, y, w, h] format.
+        Return ROI list for source in [x, y, w, h] format (cached).
         Default: try to read from self.roi structure like [[... for src0], [... for src1], ...]
         """
+        if source_id in self._roi_cache:
+            return self._roi_cache[source_id]
         try:
             if not isinstance(self.roi, list) or len(self.roi) == 0:
-                return []
-            # Heuristic: if roi structure is per-source list, pick first list
-            # Otherwise, try to find by index of source_id in self.source_ids
-            # Если структура ROI пер-источник и указаны source_ids — выбрать по индексу
-            if isinstance(self.source_ids, list) and source_id in self.source_ids:
+                res: list[list[int]] = []
+            elif isinstance(self.source_ids, list) and source_id in self.source_ids:
                 idx = self.source_ids.index(source_id)
                 if isinstance(self.roi, list) and idx < len(self.roi) and isinstance(self.roi[idx], list):
-                    return [list(map(int, r)) for r in self.roi[idx]]
-            # Если ROI едины для всех источников (список списков), берём первый
-            if len(self.roi) > 0 and isinstance(self.roi[0], list):
-                return [list(map(int, r)) for r in self.roi[0]]
+                    res = [list(map(int, r)) for r in self.roi[idx]]
+                else:
+                    res = []
+            elif len(self.roi) > 0 and isinstance(self.roi[0], list):
+                res = [list(map(int, r)) for r in self.roi[0]]
+            else:
+                res = []
+            self._roi_cache[source_id] = res
+            return res
         except Exception:
-            pass
-        return []
+            return []
 
     def set_rois_for_source(self, source_id: int, rois_xyxy: list[list[int]]) -> None:
         """
@@ -253,7 +292,7 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
             for r in rois_xyxy:
                 if len(r) == 4:
                     x1, y1, x2, y2 = map(int, r)
-                    # Интерпретируем вход как включительные границы: width = x2 - x1 + 1
+                    # Interpret input as inclusive boundaries: width = x2 - x1 + 1
                     w = max(0, x2 - x1 + 1)
                     h = max(0, y2 - y1 + 1)
                     if w <= 0 or h <= 0:
@@ -273,23 +312,27 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
                     self.roi = [rois_xywh]
                 else:
                     self.roi[0] = rois_xywh
-            # Уведомляем рабочие потоки/детектор о смене ROI
+
+            # Clear cache for this source
+            self._roi_cache.pop(source_id, None)
+
+            # Notify worker threads/detector about ROI change
             self._on_rois_updated_for_source(source_id)
         except Exception:
             pass
 
     def _on_rois_updated_for_source(self, source_id: int) -> None:
-        """Переопределяемый хук: оповестить рабочие потоки или внутренние компоненты о смене ROI."""
+        """Hook to notify worker threads or internal components about ROI change."""
         try:
-            # Попытка обновить в потоках, если они поддерживают соответствующий метод
+            # Try to update in threads if they support the corresponding method
             for t in getattr(self, 'detection_threads', []) or []:
                 try:
                     if hasattr(t, 'set_rois_for_source'):
-                        # Передадим текущие ROI для source_id в формате xywh
+                        # Pass current ROI for source_id in xywh format
                         rois = self.get_rois_for_source(source_id)
                         t.set_rois_for_source(source_id, rois)
                     elif hasattr(t, 'roi'):
-                        # Глобальное обновление
+                        # Global update
                         t.roi = self.roi
                 except Exception:
                     continue
@@ -317,12 +360,11 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         self.run_flag = True
         if self.processing_thread:
             self.processing_thread.start()
-        # Pre-load models in detection threads to avoid queue overflow
-        # Models are loaded lazily in _process_impl, but we want them ready before sources start
-        # Wait a bit for threads to start, then preload models
+        # Короткая пауза, чтобы рабочие потоки успели стартовать; модели
+        # инициализируются строго внутри detection-потоков в init_detection_implementation(),
+        # перед первым predict, что важно для корректной работы ultralytics.
         import time
-        time.sleep(0.2)  # Give threads time to start
-        self._preload_models()
+        time.sleep(MODEL_PRELOAD_TIMEOUT)
     
     def _preload_models(self):
         """Pre-load models in all detection threads to ensure they're ready"""
@@ -341,7 +383,7 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         for i, thread in enumerate(self.detection_threads):
             if hasattr(thread, 'init_detection_implementation'):
                 try:
-                    # Логируем попытку загрузки модели для этого потока
+                    # Log model loading attempt for this thread
                     thread_name = thread.__class__.__name__
                     model_name = getattr(thread, 'model_name', 'unknown')
                     self.logger.debug(f"Pre-loading model in detection thread {i} ({thread_name}): {model_name}")
@@ -349,18 +391,18 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
                     # Call init_detection_implementation to load model
                     thread.init_detection_implementation()
                     
-                    # Проверяем, что модель действительно загружена
+                    # Check that model is actually loaded
                     if hasattr(thread, 'model') and thread.model is not None:
                         self.logger.info(f"Pre-loaded model in detection thread {i} ({thread_name})")
                         successful_loads += 1
                     else:
-                        # Модель не загружена, но это не критическая ошибка - поток может загрузить её позже
+                        # Model not loaded, but thread can load it later
                         self.logger.warning(f"Model pre-load called but model is still None in thread {i} ({thread_name}). "
                                          f"Model will be loaded on first use.")
                         failed_loads += 1
                         
                 except RuntimeError as e:
-                    # Обработка ошибок загрузки модели (поврежденный файл и т.д.)
+                    # Handle model loading errors
                     error_msg = str(e)
                     thread_name = thread.__class__.__name__
                     model_name = getattr(thread, 'model_name', 'unknown')
@@ -375,10 +417,10 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
                     self.logger.debug(f"Pre-load error context: thread={thread_name}, model={model_name}, "
                                     f"platform={platform.system()} {platform.release()}", exc_info=True)
                     failed_loads += 1
-                    # Поток продолжит работу, модель может быть загружена позже
+                    # Thread will continue, model can be loaded later
                     
                 except Exception as e:
-                    # Обработка любых других ошибок предзагрузки
+                    # Handle any other pre-loading errors
                     thread_name = thread.__class__.__name__
                     model_name = getattr(thread, 'model_name', 'unknown')
                     
@@ -395,9 +437,9 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
                     self.logger.warning(f"Failed to pre-load model in detection thread {i} ({thread_name}): {e}")
                     self.logger.debug(f"Pre-load error context: {error_context}", exc_info=True)
                     failed_loads += 1
-                    # Поток продолжит работу, модель может быть загружена позже
+                    # Thread will continue, model can be loaded later
         
-        # Итоговая статистика предзагрузки
+        # Final pre-loading statistics
         if successful_loads > 0:
             self.logger.info(f"Model pre-loading completed: {successful_loads} successful, {failed_loads} failed")
         elif failed_loads > 0:
@@ -406,7 +448,7 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         else:
             self.logger.info("Model pre-loading completed: no models to pre-load")
     
-    def is_ready(self, timeout=30.0):
+    def is_ready(self, timeout: float = MODEL_READY_TIMEOUT) -> bool:
         """
         Check if detector is ready to process frames (models loaded).
         Returns True if all detection threads have loaded their models.
@@ -415,10 +457,10 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         start_time = time.time()
         while time.time() - start_time < timeout:
             if not self.is_inited:
-                time.sleep(0.1)
+                time.sleep(THREAD_START_DELAY)
                 continue
             if not self.detection_threads:
-                time.sleep(0.1)
+                time.sleep(THREAD_START_DELAY)
                 continue
             # Check if all detection threads have loaded models
             all_ready = True
@@ -428,12 +470,15 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
                     break
             if all_ready:
                 return True
-            time.sleep(0.1)
+            time.sleep(THREAD_START_DELAY)
         return False
 
     def stop(self):
         self.run_flag = False
-        self.queue_in.put(None)
+        try:
+            self.queue_in.put_nowait(None)
+        except Exception:
+            self.queue_in.put(None)
         # self.queue_in.put('STOP')
         if self.processing_thread and self.processing_thread.is_alive():
             self.processing_thread.join()
@@ -451,24 +496,112 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         self.processing_thread = None
 
     def default(self):
-        self.stride = 1
+        """Reset detector to default state."""
+        self.stride = DEFAULT_STRIDE
 
     def reset_impl(self):
         pass
 
+
+class ModelBasedDetectorBase(ObjectDetectorBase):
+    """
+    Base class for model-based detectors (YOLO, RTDETR, RFDETR, YOLO_MP).
+    Contains common logic for all detectors that use ML models.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.model_name: Optional[str] = None
+
+    @abstractmethod
+    def _get_detection_thread_type(self) -> str:
+        """Return the detection thread type identifier for this detector."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def _get_default_model_name(self) -> str:
+        """Return default model name for this detector."""
+        raise NotImplementedError
+
+    def init_impl(self):
+        """Initialize detector and create detection threads."""
+        super().init_impl()
+        self.detection_threads = []
+
+        # Local imports to avoid circular imports
+        from .config import InferenceParams
+        from .detection_thread_factory import DetectionThreadFactory
+
+        inf_params = InferenceParams.from_dict(self.params)
+        thread_type = self._get_detection_thread_type()
+
+        for i in range(self.num_detection_threads):
+            model_path = self._resolve_model_path(self.model_name or self._get_default_model_name())
+            logger_name = f"det{i}"
+            thread = DetectionThreadFactory.create_thread(
+                thread_type,
+                model_path,
+                self.stride,
+                self.classes,
+                self.source_ids,
+                self.roi,
+                inf_params.to_dict(),
+                self.queue_out,
+                logger_name=logger_name,
+                parent_logger=self.logger,
+            )
+            thread.start()
+            self.detection_threads.append(thread)
+        return True
+
+    def _resolve_model_path(self, model_name: str) -> str:
+        """Resolve relative model path to absolute path."""
+        import os
+
+        if not os.path.isabs(model_name):
+            return os.path.join(os.getcwd(), model_name)
+        return model_name
+
+    def set_params_impl(self):
+        super().set_params_impl()
+        if self.model_name is None:
+            self.model_name = self._get_default_model_name()
+        self.model_name = self.params.get("model", self.model_name)
+
+    def get_params_impl(self):
+        params = super().get_params_impl()
+        params["model"] = self.model_name
+        return params
+
+    def get_debug_info(self, debug_info: dict):
+        super().get_debug_info(debug_info)
+        debug_info["model_name"] = self.model_name
+
+    def default(self):
+        super().default()
+        self.model_name = None
+        self.params.clear()
+
     def _process_impl(self):
+        """Main processing loop that distributes images to detection threads."""
         while self.run_flag:
             if not self.is_inited:
-                sleep(0.01)
+                sleep(PROCESSING_SLEEP_INTERVAL)
                 continue
 
-            image = self.queue_in.get()
+            try:
+                image = self.queue_in.get(timeout=PROCESSING_SLEEP_INTERVAL)
+            except Exception:
+                continue
             if not image:
                 continue
 
             res, dropped_id = self.detection_threads[self.thread_counter].put(image, force=True)
             if dropped_id:
-                self.queue_dropped_id.put(dropped_id)
+                try:
+                    self.queue_dropped_id.put_nowait(dropped_id)
+                except Exception:
+                    pass
             self.thread_counter += 1
             if self.thread_counter >= self.num_detection_threads:
                 self.thread_counter = 0

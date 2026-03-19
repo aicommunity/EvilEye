@@ -118,6 +118,12 @@ class StorageMonitor:
         # Perform initial check immediately on startup (in the same background thread)
         self.logger.info("Performing initial storage check and cleanup on startup...")
         self._perform_storage_check(is_initial=True)
+        # If shutdown is in progress, don't transition into periodic monitoring.
+        # This avoids confusing "starting periodic monitoring" logs during app exit,
+        # and helps the thread terminate promptly when stop() is called while the
+        # initial check is still running.
+        if self._stop_event.is_set() or (not self.enabled) or (not self._running):
+            return
         self.logger.info("Initial storage check completed, starting periodic monitoring")
         
         # Continue with periodic checks in the same thread

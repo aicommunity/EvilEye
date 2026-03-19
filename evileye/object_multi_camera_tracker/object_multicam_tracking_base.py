@@ -4,6 +4,7 @@ from ..core.base_class import EvilEyeBase
 from queue import Queue
 import threading
 from ..object_tracker.tracking_results import TrackingResult, TrackingResultList
+from queue import Full
 
 class ObjectMultiCameraTrackingBase(EvilEyeBase):
     ResultType = TrackingResultList
@@ -13,7 +14,8 @@ class ObjectMultiCameraTrackingBase(EvilEyeBase):
 
         self.run_flag = False
         self.queue_in = Queue()
-        self.queue_out = Queue()
+        # IMPORTANT: output queue must be bounded to avoid unbounded memory growth.
+        self.queue_out = Queue(maxsize=4)
         self.source_ids = []
         self.enable = False
         self.processing_thread = threading.Thread(target=self._process_impl)
@@ -31,18 +33,37 @@ class ObjectMultiCameraTrackingBase(EvilEyeBase):
         return params
 
     def put(self, track_info: List[TrackingResultList]):
-        if not self.queue_in.full():
-            self.queue_in.put(track_info)
+        # Drop-oldest when input queue is full: we prefer freshest data
+        try:
+            if self.queue_in.full():
+                try:
+                    _ = self.queue_in.get_nowait()
+                except Exception:
+                    pass
+            self.queue_in.put_nowait(track_info)
             return True
-        
-        #designator = '; '.join(f"{t[0].source_id}:{t[0].frame_id}" for t in track_info)
-        #self.logger.info(f"Failed to put tracking info {designator} to ObjectMultiCameraTrackingBase queue. Queue is Full.")
-        #return False
+        except Exception:
+            return False
 
     def get(self):
         if self.queue_out.empty():
             return None
         return self.queue_out.get()
+
+    def _put_out_drop_oldest(self, item) -> None:
+        """Put to queue_out with drop-oldest behavior when full."""
+        try:
+            self.queue_out.put_nowait(item)
+            return
+        except Full:
+            try:
+                _ = self.queue_out.get_nowait()
+            except Exception:
+                pass
+            try:
+                self.queue_out.put_nowait(item)
+            except Exception:
+                pass
 
     def get_oueue_out_size(self):
         return self.queue_out.qsize()
