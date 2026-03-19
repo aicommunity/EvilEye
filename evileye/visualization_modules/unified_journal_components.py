@@ -11,21 +11,36 @@ try:
     from PyQt6.QtCore import Qt, QSize, QPointF, QRect, QUrl
     from PyQt6.QtWidgets import QStyledItemDelegate, QLabel, QVBoxLayout, QTableWidget, QWidget, QTabWidget
     from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor, QBrush, QPolygonF
-    from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
-    from PyQt6.QtMultimediaWidgets import QVideoWidget
     pyqt_version = 6
-    pyqt_multimedia_available = True
+    # IMPORTANT: do not import QtMultimedia at module import time.
+    # QtMultimedia can segfault on interpreter shutdown in some headless environments,
+    # and most code paths (including tests) don't need it.
+    pyqt_multimedia_available = False
 except ImportError:
     from PyQt5.QtCore import Qt, QSize, QPointF, QRect, QUrl
     from PyQt5.QtWidgets import QStyledItemDelegate, QLabel, QVBoxLayout, QTableWidget, QWidget, QTabWidget
     from PyQt5.QtGui import QPixmap, QPainter, QPen, QColor, QBrush, QPolygonF
-    try:
-        from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
-        from PyQt5.QtMultimediaWidgets import QVideoWidget
-        pyqt_multimedia_available = True
-    except ImportError:
-        pyqt_multimedia_available = False
     pyqt_version = 5
+    pyqt_multimedia_available = False
+
+
+def _ensure_multimedia_imported() -> bool:
+    """Lazy import of QtMultimedia to reduce crash surface in headless runs."""
+    global pyqt_multimedia_available
+    if pyqt_multimedia_available:
+        return True
+    try:
+        if pyqt_version == 6:
+            from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput  # noqa: F401
+            from PyQt6.QtMultimediaWidgets import QVideoWidget  # noqa: F401
+        else:
+            from PyQt5.QtMultimedia import QMediaPlayer  # noqa: F401
+            from PyQt5.QtMultimediaWidgets import QVideoWidget  # noqa: F401
+        pyqt_multimedia_available = True
+        return True
+    except Exception:
+        pyqt_multimedia_available = False
+        return False
 
 from ..core.logger import get_module_logger
 from .journal_metadata_extractor import EventMetadataExtractor
@@ -1483,8 +1498,16 @@ class UnifiedImageWindow(QWidget):
         video_layout.setContentsMargins(0, 0, 0, 0)
         
         # Create video player
-        if pyqt_multimedia_available and not self._use_opencv:
+        if (not self._use_opencv) and _ensure_multimedia_imported():
             try:
+                # Import lazily to avoid QtMultimedia side effects unless actually needed.
+                if pyqt_version == 6:
+                    from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
+                    from PyQt6.QtMultimediaWidgets import QVideoWidget
+                    QMediaContent = None
+                else:
+                    from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
+                    from PyQt5.QtMultimediaWidgets import QVideoWidget
                 if pyqt_version == 6:
                     self.video_player = QMediaPlayer()
                     self.audio_output = QAudioOutput()

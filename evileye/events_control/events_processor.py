@@ -83,9 +83,16 @@ class EventsProcessor(EvilEyeBase):
         table_names = [name for name in self.events_tables.values() if name]
         if not table_names:  # No tables available
             return 0
-            
+
+        # Delegate DB-specific aggregation to the DB layer (preferred).
+        try:
+            if hasattr(self.db_controller, "get_next_event_id"):
+                return self.db_controller.get_next_event_id(table_names)
+        except Exception:
+            pass
+
+        # Fallback: legacy behavior (keep for safety)
         subqueries = []
-        # Объединяем результаты из всех таблиц событий, выбираем максимальный id
         for i in range(len(table_names) - 1):
             subquery = sql.SQL('SELECT MAX(event_id) as event_id FROM {table} UNION').format(
                 table=sql.Identifier(table_names[i]))
@@ -98,7 +105,6 @@ class EventsProcessor(EvilEyeBase):
             subqueries=sql.SQL(' ').join(subqueries))
         record = self.db_controller.query(query)
 
-        # Check if record is None or empty
         if record is None or len(record) == 0 or len(record[0]) == 0 or record[0][0] is None:
             return 0
         return record[0][0] + 1

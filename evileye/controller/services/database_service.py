@@ -13,6 +13,7 @@ from evileye.database_controller.db_adapter_fov_events import DatabaseAdapterFie
 from evileye.database_controller.db_adapter_zone_events import DatabaseAdapterZoneEvents
 from evileye.database_controller.db_adapter_system_events import DatabaseAdapterSystemEvents
 from evileye.database_controller.db_adapter_attribute_events import DatabaseAdapterAttributeEvents
+from evileye.database_controller.migrations import apply_startup_migrations
 
 
 class DatabaseService:
@@ -49,6 +50,13 @@ class DatabaseService:
                 self.logger.warning("Database connection failed during initialization")
                 self._db_controller = None
                 return False
+
+            # Apply idempotent schema migrations once at startup.
+            # This keeps DDL out of adapters / GUI read paths.
+            try:
+                apply_startup_migrations(self._db_controller, logger=self.logger)
+            except Exception as e:
+                self.logger.warning(f"Failed to apply startup migrations: {e}")
 
             self.logger.info("Database connected successfully")
             return True

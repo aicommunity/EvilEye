@@ -6,6 +6,8 @@ from typing import Optional, List
 import datetime as _dt
 import threading
 import time
+import weakref
+import atexit
 
 from evileye.core.logger import get_module_logger
 from evileye.video_recorder.recording_params import RecordingParams
@@ -26,6 +28,8 @@ class GstBranchRefs:
 
 class GstContinuousRecorder(VideoRecorderBase):
     """
+
+    _instances: "weakref.WeakSet[GstContinuousRecorder]" = weakref.WeakSet()
     Continuous-запись для GStreamer backend.
 
     Важно: этот класс управляет только веткой записи (от `recording_queue` до splitmuxsink)
@@ -45,7 +49,30 @@ class GstContinuousRecorder(VideoRecorderBase):
         self._lock = threading.RLock()
         self._segments_attached: int = 0
         self._last_stats_ts: float = 0.0
+        try:
+            GstContinuousRecorder._instances.add(self)
+        except Exception:
+            pass
 
+    @classmethod
+    def shutdown_all(cls) -> None:
+        """Best-effort stop of background check threads (used in tests/atexit)."""
+        try:
+            items = list(cls._instances)
+        except Exception:
+            return
+        for r in items:
+            try:
+                r.is_running = False
+                r._check_stop.set()
+                t = getattr(r, "_check_thread", None)
+                if t is not None and t.is_alive():
+                    try:
+                        t.join(timeout=2.0)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
     def start(self, source_meta: SourceMeta, params: RecordingParams) -> None:
         # This start() is for API compatibility; actual wiring requires pipeline.
         self.source = source_meta
@@ -266,4 +293,10 @@ class GstContinuousRecorder(VideoRecorderBase):
     def stop(self) -> None:
         # Need pipeline+Gst to remove elements; caller should use stop_with_pipeline.
         self.is_running = False
+
+
+try:
+    atexit.register(GstContinuousRecorder.shutdown_all)
+except Exception:
+    pass
 

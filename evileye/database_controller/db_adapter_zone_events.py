@@ -87,98 +87,80 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
             if query_string is None:
                 continue
 
-            try:
-                record = self.db_controller.query(query_string, data)
-            except Exception as e:
-                # Attempt to auto-migrate missing columns and retry once
-                msg = str(e)
-                if 'UndefinedColumn' in msg or 'does not exist' in msg:
-                    try:
-                        self._ensure_zone_columns()
-                        self.logger.warning('DB: Missing columns in zone_events detected. Applied auto-migration. Retrying query...')
-                        record = self.db_controller.query(query_string, data)
-                    except Exception as e2:
-                        self.logger.error(f'DB: ZoneEvents query failed after migration attempt: {e2}')
-                        continue
-                else:
-                    self.logger.error(f'DB: ZoneEvents query failed: {e}')
-                    continue
+            self._process_queue_item((query_type, query_string, data, preview_path, frame_path, image))
 
-            # Безопасные проверки результата RETURNING
-            # UPDATE может не найти запись для обновления (подзапрос не нашел event_id)
-            # В этом случае record будет пустым списком []
-            if not record:
-                # Пустой результат - это нормально для UPDATE, если запись не найдена
-                # (например, событие уже было обновлено или удалено)
-                # Для INSERT это не должно происходить, но проверяем тип запроса
-                if query_type == QueryType.INSERT:
-                    self.logger.warning('DB: ZoneEvents INSERT returned no data; skipping image save')
-                # Для UPDATE не логируем, так как это нормальная ситуация
-                continue
-            
-            if not isinstance(record, list):
-                self.logger.warning(f'DB: ZoneEvents query returned unexpected type: {type(record)}; skipping image save')
-                continue
-                
-            if len(record) == 0:
-                # Пустой список - запись не найдена для обновления
-                if query_type == QueryType.INSERT:
-                    self.logger.warning('DB: ZoneEvents INSERT returned empty list; skipping image save')
-                continue
-                
-            if not record[0] or len(record[0]) < 2:
-                self.logger.warning(f'DB: ZoneEvents query returned incomplete data: {record}; skipping image save')
-                continue
+    def _process_queue_item(self, item):
+        query_type, query_string, data, preview_path, frame_path, image = item
 
-            box = record[0][0]
-            zone_coords = record[0][1]
+        try:
+            record = self.db_controller.query(query_string, data)
+        except Exception as e:
+            self.logger.error(f'DB: ZoneEvents query failed: {e}')
+            return
 
-            # Проверка на None перед отрисовкой
-            if box is None or zone_coords is None:
-                self.logger.warning('DB: Missing box/zone_coords in RETURNING; skipping image save')
-                continue
-            
-            # Проверка типа box - должен быть списком/массивом, а не datetime
-            if not isinstance(box, (list, tuple, np.ndarray)):
-                self.logger.warning(f'DB: Invalid box type in RETURNING: {type(box)}, expected list/tuple/array; skipping image save')
-                continue
-            
-            # Проверка, что box имеет правильный формат [x1, y1, x2, y2]
-            if len(box) < 4:
-                self.logger.warning(f'DB: Invalid box format in RETURNING: {box}, expected [x1, y1, x2, y2]; skipping image save')
-                continue
-
-            # Проверка на None для image
-            if image is None:
-                self.logger.warning('DB: Image is None in RETURNING; skipping image save')
-                continue
-
-            self._save_image(preview_path, frame_path, image, box, zone_coords)
-
+        # Безопасные проверки результата RETURNING
+        if not record:
             if query_type == QueryType.INSERT:
-                threading_events.notify(EventType.NEW_EVENT)
-            elif query_type == QueryType.UPDATE:
-                threading_events.notify(EventType.UPDATE_EVENT)
+                self.logger.warning('DB: ZoneEvents INSERT returned no data; skipping image save')
+            return
+
+        if not isinstance(record, list) or len(record) == 0:
+            if query_type == QueryType.INSERT:
+                self.logger.warning('DB: ZoneEvents INSERT returned empty list; skipping image save')
+            return
+
+        if not record[0] or len(record[0]) < 2:
+            self.logger.warning(f'DB: ZoneEvents query returned incomplete data: {record}; skipping image save')
+            return
+
+        box = record[0][0]
+        zone_coords = record[0][1]
+
+        if box is None or zone_coords is None:
+            self.logger.warning('DB: Missing box/zone_coords in RETURNING; skipping image save')
+            return
+
+        if not isinstance(box, (list, tuple, np.ndarray)):
+            self.logger.warning(
+                f'DB: Invalid box type in RETURNING: {type(box)}, expected list/tuple/array; skipping image save'
+            )
+            return
+
+        if len(box) < 4:
+            self.logger.warning(
+                f'DB: Invalid box format in RETURNING: {box}, expected [x1, y1, x2, y2]; skipping image save'
+            )
+            return
+
+        if image is None:
+            self.logger.warning('DB: Image is None in RETURNING; skipping image save')
+            return
+
+        self._save_image(preview_path, frame_path, image, box, zone_coords)
+
+        if query_type == QueryType.INSERT:
+            threading_events.notify(EventType.NEW_EVENT)
+        elif query_type == QueryType.UPDATE:
+            threading_events.notify(EventType.UPDATE_EVENT)
 
     def _save_image(self, preview_path, frame_path, image, box, zone_coords):
-        # Дополнительная проверка на None и наличие атрибута image
-        if image is None:
-            self.logger.warning('DB: Image is None in _save_image; skipping image save')
-            return
-        
-        if not hasattr(image, 'image') or image.image is None:
-            self.logger.warning('DB: Image object has no image attribute or image.image is None; skipping image save')
-            return
-        
+        # Centralized storage (preferred)
+        try:
+            if hasattr(self.db_controller, "_save_image"):
+                self.db_controller._save_image(preview_path, frame_path, image, box, zone_coords=zone_coords)
+                return
+        except Exception:
+            pass
+
+        # Fallback to legacy direct save (should be removable after migration)
         preview_save_dir = os.path.join(self.image_dir, preview_path)
         frame_save_dir = os.path.join(self.image_dir, frame_path)
-        # Use .copy() for numpy arrays instead of deepcopy - much more efficient
         preview = cv2.resize(image.image.copy(), self.preview_size, cv2.INTER_NEAREST)
         preview_boxes = utils.draw_preview_boxes_zones(preview, self.preview_width, self.preview_height, box, zone_coords)
         preview_saved = cv2.imwrite(preview_save_dir, preview_boxes)
         frame_saved = cv2.imwrite(frame_save_dir, image.image)
         if not preview_saved or not frame_saved:
-            self.logger.error(f'ERROR: can\'t save image file {frame_save_dir}')
+            self.logger.error(f"ERROR: can't save image file {frame_save_dir}")
 
     def _prepare_for_updating(self, event):
         fields_for_updating = {'time_left': event.time_left,
@@ -271,18 +253,4 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
             img_path = os.path.join(obj_type_path, f'{timestamp}_zone{zone_id}_obj{obj_id}_{image_type}.jpeg')
         return os.path.relpath(img_path, save_dir)
 
-    def _ensure_zone_columns(self):
-        # Ensure newly added columns exist in zone_events table
-        try:
-            alter_tpl = "ALTER TABLE {} ADD COLUMN IF NOT EXISTS {} {};"
-            table = self.table_name
-            # List of required columns and types
-            required = [
-                ('video_path_entered', 'text'),
-                ('video_path_left', 'text'),
-            ]
-            for col, coltype in required:
-                query = alter_tpl.format(table, col, coltype)
-                self.db_controller.query(query, None)
-        except Exception as e:
-            self.logger.error(f'DB: Failed to ensure zone_events columns: {e}')
+    # NOTE: schema migrations are applied centrally at DB startup (see `database_controller/migrations.py`).

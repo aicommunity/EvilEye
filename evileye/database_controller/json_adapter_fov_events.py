@@ -4,6 +4,7 @@ import datetime
 import copy
 import cv2
 from .db_adapter import DatabaseAdapterBase
+from .image_storage_service import ImageStorageService
 
 
 class JsonAdapterFovEvents(DatabaseAdapterBase):
@@ -31,6 +32,7 @@ class JsonAdapterFovEvents(DatabaseAdapterBase):
 
     def init_impl(self):
         os.makedirs(self.base_dir, exist_ok=True)
+        self._image_storage = ImageStorageService(self.image_dir, preview_width=320, preview_height=240, logger=None)
 
     def start(self):
         self.run_flag = True
@@ -103,14 +105,20 @@ class JsonAdapterFovEvents(DatabaseAdapterBase):
         if image is None or not hasattr(image, 'image'):
             return '', ''
 
-        preview = cv2.resize(image.image.copy(), (320, 240), cv2.INTER_NEAREST)
         preview_name = f'{ts_str}_src{event.source_id}_preview.jpeg'
         frame_name = f'{ts_str}_src{event.source_id}_frame.jpeg'
-        cv2.imwrite(os.path.join(previews_dir, preview_name), preview)
-        cv2.imwrite(os.path.join(frames_dir, frame_name), image.image)
-        # Return relative to image_dir
-        preview_rel = os.path.relpath(os.path.join(previews_dir, preview_name), self.image_dir)
-        frame_rel = os.path.relpath(os.path.join(frames_dir, frame_name), self.image_dir)
+        preview_abs = os.path.join(previews_dir, preview_name)
+        frame_abs = os.path.join(frames_dir, frame_name)
+
+        preview_rel = os.path.relpath(preview_abs, self.image_dir)
+        frame_rel = os.path.relpath(frame_abs, self.image_dir)
+
+        if getattr(self, "_image_storage", None):
+            self._image_storage.save_image_simple(preview_rel, frame_rel, image)
+        else:
+            preview = cv2.resize(image.image.copy(), (320, 240), cv2.INTER_NEAREST)
+            cv2.imwrite(preview_abs, preview)
+            cv2.imwrite(frame_abs, image.image)
         return preview_rel, frame_rel
 
 

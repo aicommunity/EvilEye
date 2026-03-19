@@ -218,29 +218,24 @@ def test_journal_columns_with_config(qapp):
             test_logger.info(f"   Column {i} ({header}): {resize_mode}")
         
         # Cleanup
-        def close_window():
-            if hasattr(journal, 'update_timer'):
-                journal.update_timer.stop()
-            journal.close()
-            if hasattr(journal, 'ds') and journal.ds:
-                journal.ds.close()
-            app.quit()
-        
-        try:
-            from PyQt6.QtCore import QTimer
-        except ImportError:
-            from PyQt5.QtCore import QTimer
-        
-        QTimer.singleShot(100, close_window)
-        
-        # Process events
-        import time
-        for _ in range(5):
+        #
+        # NOTE: pytest-qt's `qapp` fixture manages QApplication lifetime.
+        # Calling `app.quit()` (and then processing events) can intermittently crash
+        # native Qt plugins in headless/CI environments.
+        if hasattr(journal, 'update_timer'):
             try:
-                app.processEvents()
-            except (RuntimeError, AttributeError):
-                break
-            time.sleep(0.1)
+                journal.update_timer.stop()
+            except Exception:
+                pass
+        try:
+            journal.close()
+        except Exception:
+            pass
+        if hasattr(journal, 'ds') and journal.ds:
+            try:
+                journal.ds.close()
+            except Exception:
+                pass
         
         test_logger.info("\n✅ Journal columns with config test completed successfully")
         test_logger.info("\n📋 Summary:")

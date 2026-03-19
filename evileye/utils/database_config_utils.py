@@ -12,6 +12,29 @@ from ..core.logger import get_module_logger
 
 logger = get_module_logger("database_config_utils")
 
+_IMAGE_DIR_KEYS = ("image_dir", "images_dir")
+
+
+def _normalize_image_dir_keys(db_section: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Normalize legacy `images_dir` vs `image_dir` naming.
+
+    We keep both keys in the resulting dict for backward compatibility with older code/configs,
+    but treat `image_dir` as canonical.
+    """
+    if not isinstance(db_section, dict):
+        return {}
+
+    image_dir = db_section.get("image_dir")
+    images_dir = db_section.get("images_dir")
+
+    # Prefer explicit canonical key; otherwise fall back to legacy key.
+    chosen = image_dir if image_dir not in (None, "") else images_dir
+    if chosen not in (None, ""):
+        db_section["image_dir"] = chosen
+        db_section["images_dir"] = chosen
+    return db_section
+
 
 def get_database_config_path() -> Path:
     """Получить путь к файлу database_config.json"""
@@ -104,6 +127,12 @@ def compute_database_config(
     db_section.setdefault("port", database_creds["port"])
     db_section.setdefault("admin_user_name", database_creds["admin_user_name"])
     db_section.setdefault("admin_password", database_creds["admin_password"])
+
+    # image_dir naming compatibility
+    if "image_dir" not in db_section and "images_dir" not in db_section:
+        db_section.setdefault("image_dir", "EvilEyeData")
+        db_section.setdefault("images_dir", "EvilEyeData")
+    _normalize_image_dir_keys(db_section)
     
     # Переопределяем значения из params['database'], если есть
     if params and "database" in params:
@@ -116,12 +145,17 @@ def compute_database_config(
                 db_section["host_name"] = params_db["host_name"]
             if "port" in params_db:
                 db_section["port"] = params_db["port"]
-            if "image_dir" in params_db:
-                db_section["image_dir"] = params_db["image_dir"]
+            if any(k in params_db for k in _IMAGE_DIR_KEYS):
+                chosen = params_db.get("image_dir") or params_db.get("images_dir")
+                if chosen not in (None, ""):
+                    db_section["image_dir"] = chosen
+                    db_section["images_dir"] = chosen
             if "preview_width" in params_db:
                 db_section["preview_width"] = params_db["preview_width"]
             if "preview_height" in params_db:
                 db_section["preview_height"] = params_db["preview_height"]
+
+    _normalize_image_dir_keys(db_section)
     
     logger.debug(f"Computed database_config with database keys: {list(db_section.keys())}")
     return database_config
@@ -154,6 +188,7 @@ def ensure_database_config_complete(database_config: Optional[Dict[str, Any]]) -
         "admin_user_name",
         "admin_password",
         "image_dir",
+        "images_dir",
         "preview_width",
         "preview_height",
         "tables",
@@ -200,5 +235,8 @@ def ensure_database_config_complete(database_config: Optional[Dict[str, Any]]) -
         for key, value in file_db_section.items():
             db_section.setdefault(key, value)
         database_config["database"] = db_section
+
+    # Final normalization for image_dir/images_dir compatibility
+    database_config["database"] = _normalize_image_dir_keys(database_config.get("database") or {})
     
     return database_config

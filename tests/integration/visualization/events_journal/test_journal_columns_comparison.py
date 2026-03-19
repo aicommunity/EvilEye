@@ -192,29 +192,24 @@ def test_journal_columns_comparison(qapp):
             assert False, "'Source' column not found"
         
         # Cleanup
-        def close_window():
-            if hasattr(events_journal, 'update_timer'):
-                events_journal.update_timer.stop()
-            events_journal.close()
-            if hasattr(events_journal, 'ds') and events_journal.ds:
-                events_journal.ds.close()
-            app.quit()
-        
-        try:
-            from PyQt6.QtCore import QTimer
-        except ImportError:
-            from PyQt5.QtCore import QTimer
-        
-        QTimer.singleShot(100, close_window)
-        
-        # Process events
-        import time
-        for _ in range(5):
+        #
+        # NOTE: pytest-qt's `qapp` fixture manages QApplication lifetime.
+        # Calling `app.quit()` (and then processing events) can intermittently crash
+        # native Qt plugins in headless/CI environments.
+        if hasattr(events_journal, 'update_timer'):
             try:
-                app.processEvents()
-            except (RuntimeError, AttributeError):
-                break
-            time.sleep(0.1)
+                events_journal.update_timer.stop()
+            except Exception:
+                pass
+        try:
+            events_journal.close()
+        except Exception:
+            pass
+        if hasattr(events_journal, 'ds') and events_journal.ds:
+            try:
+                events_journal.ds.close()
+            except Exception:
+                pass
         
         test_logger.info("\n✅ Journal columns comparison test completed successfully")
         test_logger.info("\n📋 Summary:")

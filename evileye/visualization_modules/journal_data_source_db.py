@@ -1,17 +1,8 @@
-import os
 import datetime
-from typing import List, Dict, Tuple, Callable, Optional
+from typing import List, Dict, Tuple, Callable, Optional, Any
+
 from .journal_data_source import EventJournalDataSource
 from ..core.logger import get_module_logger
-
-try:
-    from PyQt6.QtSql import QSqlDatabase, QSqlQuery
-    from PyQt6.QtCore import QDateTime, QVariant
-    pyqt_version = 6
-except ImportError:
-    from PyQt5.QtSql import QSqlDatabase, QSqlQuery
-    from PyQt5.QtCore import QDateTime, QVariant
-    pyqt_version = 5
 
 
 class DatabaseJournalDataSource(EventJournalDataSource):
@@ -46,10 +37,6 @@ class DatabaseJournalDataSource(EventJournalDataSource):
         self._cache: List[Dict] = []  # Keep for compatibility, but won't be used for full load
         self._source_name_id_address = {}
         
-        # Store QDateTime type for date conversion
-        self._qdatetime_type = QDateTime
-        self._qvariant_type = QVariant
-        
         # Default time range: last 7 days (for pagination after initial load)
         self.default_days_back = 7
         
@@ -57,45 +44,24 @@ class DatabaseJournalDataSource(EventJournalDataSource):
         self.initial_load_limit = 30
         self._is_initial_load = True
         
-        # Initialize database connection
-        self._init_db_connection()
+        # Ensure image_dir is normalized (image_dir/images_dir compatibility is handled in config utils too)
+        try:
+            if not self.image_dir and isinstance(self.database_params, dict):
+                db_section = (self.database_params.get("database") or {}) if self.database_params else {}
+                self.image_dir = db_section.get("image_dir") or db_section.get("images_dir") or "EvilEyeData"
+        except Exception:
+            self.image_dir = self.image_dir or "EvilEyeData"
+
         self._load_source_mappings()
 
-    def _init_db_connection(self):
-        """Initialize Qt SQL database connection"""
-        # На этом этапе database_params уже должен быть приведён к полному виду
-        # (через ensure_database_config_complete в вызывающем коде).
-        db_section = self.database_params.get('database', {})
-        self.username = db_section.get('user_name', 'postgres')
-        self.password = db_section.get('password', '')
-        self.db_name = db_section.get('database_name', 'evil_eye_db')
-        self.host = db_section.get('host_name', 'localhost')
-        self.port = db_section.get('port', 5432)
-        if not self.image_dir:
-            self.image_dir = db_section.get('image_dir', 'EvilEyeData')
-        
-        # Логируем фактические параметры подключения для отладки
-        self.logger.info(
-            f"Initializing Qt database connection: "
-            f"host={self.host}, port={self.port}, "
-            f"database={self.db_name}, user={self.username}"
-        )
-        
-        # Check if connection already exists
-        if self.db_connection_name in QSqlDatabase.connectionNames():
-            return True
-            
-        db = QSqlDatabase.addDatabase("QPSQL", self.db_connection_name)
-        db.setHostName(self.host)
-        db.setDatabaseName(self.db_name)
-        db.setUserName(self.username)
-        db.setPassword(self.password)
-        db.setPort(self.port)
-        if not db.open():
-            error_text = db.lastError().databaseText()
-            self.logger.error(f"Database connection failed: {error_text}")
+    def _ensure_db_controller(self) -> bool:
+        """Ensure we have a usable psycopg2-backed controller."""
+        if self.db_controller is None:
             return False
-        return True
+        try:
+            return bool(getattr(self.db_controller, "is_connected", lambda: True)())
+        except Exception:
+            return True
 
     def _load_source_mappings(self):
         """Load source name to (source_id, address) mappings"""
@@ -128,30 +94,31 @@ class DatabaseJournalDataSource(EventJournalDataSource):
 
     def list_available_dates(self) -> List[str]:
         """List available dates from database"""
-        if not self._init_db_connection():
+        if not self._ensure_db_controller():
             return []
-        
-        dates = set()
-        query = QSqlQuery(QSqlDatabase.database(self.db_connection_name))
-        
-        if self.journal_type == 'objects':
-            # Get dates from objects table
-            query.prepare('SELECT DISTINCT DATE(time_stamp) as date FROM objects ORDER BY date DESC LIMIT 30')
-        else:
-            # Get dates from jobs table or events tables
-            query.prepare('SELECT DISTINCT DATE(time_stamp) as date FROM jobs ORDER BY date DESC LIMIT 30')
-        
-        if query.exec():
-            while query.next():
-                date_val = query.value(0)
-                if date_val:
-                    if hasattr(date_val, 'toString'):
-                        date_str = date_val.toString('yyyy-MM-dd')
-                    else:
-                        date_str = str(date_val)
-                    dates.add(date_str)
-        
-        return sorted(list(dates), reverse=True)
+
+        sql = (
+            "SELECT DISTINCT DATE(time_stamp) AS date "
+            f"FROM {'objects' if self.journal_type == 'objects' else 'jobs'} "
+            "ORDER BY date DESC LIMIT 30"
+        )
+        records = self.db_controller.query(sql, None) or []
+        dates = []
+        for (date_val,) in records:
+            if date_val is None:
+                continue
+            if isinstance(date_val, (datetime.date, datetime.datetime)):
+                dates.append(date_val.strftime("%Y-%m-%d"))
+            else:
+                dates.append(str(date_val)[:10])
+        # records are already ordered desc by SQL, but keep stable unique
+        uniq = []
+        seen = set()
+        for d in dates:
+            if d not in seen:
+                seen.add(d)
+                uniq.append(d)
+        return uniq
 
     def _load_cache(self) -> None:
         """Load data from database into cache - DEPRECATED, kept for compatibility"""
@@ -174,49 +141,74 @@ class DatabaseJournalDataSource(EventJournalDataSource):
 
     def _enrich_zone_event(self, event_dict: Dict, row_dict: Dict) -> None:
         """Enrich zone event with additional data from zone_events table"""
-        query = QSqlQuery(QSqlDatabase.database(self.db_connection_name))
-        # Note: zone_id doesn't exist in zone_events table, so we don't select it
-        query.prepare('SELECT box_entered, box_left, zone_coords, object_id FROM zone_events WHERE preview_path_entered = :path OR preview_path_left = :path LIMIT 1')
-        query.bindValue(':path', row_dict.get('preview_path', ''))
-        if query.exec() and query.next():
-            # Store in both formats for compatibility
-            box_entered = self._parse_bbox(query.value(0))
-            box_left = self._parse_bbox(query.value(1))
-            event_dict['box_entered'] = box_entered
-            event_dict['box_left'] = box_left
-            event_dict['bounding_box'] = box_entered  # For backward compatibility
-            event_dict['lost_bounding_box'] = box_left  # For backward compatibility
-            event_dict['zone_coords'] = self._parse_zone_coords(query.value(2))
-            event_dict['object_id'] = query.value(3)
-            # zone_id doesn't exist in table, so we don't set it
+        path = row_dict.get("preview_path", "") or row_dict.get("lost_preview_path", "")
+        if not path:
+            return
+        records = self.db_controller.query(
+            "SELECT box_entered, box_left, zone_coords, object_id "
+            "FROM zone_events "
+            "WHERE preview_path_entered = %s OR preview_path_left = %s "
+            "LIMIT 1",
+            (path, path),
+        ) or []
+        if not records:
+            return
+        box_entered, box_left, zone_coords, object_id = records[0]
+        event_dict["box_entered"] = self._parse_bbox(box_entered)
+        event_dict["box_left"] = self._parse_bbox(box_left)
+        event_dict["bounding_box"] = event_dict["box_entered"]
+        event_dict["lost_bounding_box"] = event_dict["box_left"]
+        event_dict["zone_coords"] = self._parse_zone_coords(zone_coords)
+        event_dict["object_id"] = object_id
 
     def _enrich_attribute_event(self, event_dict: Dict, row_dict: Dict) -> None:
         """Enrich attribute event with additional data"""
-        query = QSqlQuery(QSqlDatabase.database(self.db_connection_name))
-        query.prepare('SELECT box_found, box_finished, object_id, class_id, class_name, attrs, event_name FROM attribute_events WHERE preview_path_found = :path OR preview_path_finished = :path LIMIT 1')
-        query.bindValue(':path', row_dict.get('preview_path', ''))
-        if query.exec() and query.next():
-            # Store in both formats for compatibility
-            box_found = self._parse_bbox(query.value(0))
-            box_finished = self._parse_bbox(query.value(1))
-            event_dict['box_found'] = box_found
-            event_dict['box_finished'] = box_finished
-            event_dict['bounding_box'] = box_found  # For backward compatibility
-            event_dict['lost_bounding_box'] = box_finished  # For backward compatibility
-            event_dict['object_id'] = query.value(2)
-            event_dict['class_id'] = query.value(3)
-            event_dict['class_name'] = query.value(4)
-            event_dict['attrs'] = self._parse_array(query.value(5))
-            event_dict['event_name'] = query.value(6)
+        path = row_dict.get("preview_path", "") or row_dict.get("lost_preview_path", "")
+        if not path:
+            return
+        records = self.db_controller.query(
+            "SELECT box_found, box_finished, object_id, class_id, class_name, attrs, event_name "
+            "FROM attribute_events "
+            "WHERE preview_path_found = %s OR preview_path_finished = %s "
+            "LIMIT 1",
+            (path, path),
+        ) or []
+        if not records:
+            return
+        (
+            box_found,
+            box_finished,
+            object_id,
+            class_id,
+            class_name,
+            attrs,
+            event_name,
+        ) = records[0]
+        event_dict["box_found"] = self._parse_bbox(box_found)
+        event_dict["box_finished"] = self._parse_bbox(box_finished)
+        event_dict["bounding_box"] = event_dict["box_found"]
+        event_dict["lost_bounding_box"] = event_dict["box_finished"]
+        event_dict["object_id"] = object_id
+        event_dict["class_id"] = class_id
+        event_dict["class_name"] = class_name
+        event_dict["attrs"] = self._parse_array(attrs)
+        event_dict["event_name"] = event_name
 
     def _enrich_fov_event(self, event_dict: Dict, row_dict: Dict) -> None:
         """Enrich FOV event with additional data"""
-        query = QSqlQuery(QSqlDatabase.database(self.db_connection_name))
-        query.prepare('SELECT object_id, source_id FROM fov_events WHERE preview_path = :path OR lost_preview_path = :path LIMIT 1')
-        query.bindValue(':path', row_dict.get('preview_path', ''))
-        if query.exec() and query.next():
-            event_dict['object_id'] = query.value(0)
-            event_dict['source_id'] = query.value(1)
+        path = row_dict.get("preview_path", "") or row_dict.get("lost_preview_path", "")
+        if not path:
+            return
+        records = self.db_controller.query(
+            "SELECT object_id, source_id FROM fov_events "
+            "WHERE preview_path = %s OR lost_preview_path = %s LIMIT 1",
+            (path, path),
+        ) or []
+        if not records:
+            return
+        object_id, source_id = records[0]
+        event_dict["object_id"] = object_id
+        event_dict["source_id"] = source_id
 
     def _parse_bbox(self, value) -> Optional[List[float]]:
         """Parse bounding box from database format"""
@@ -427,108 +419,64 @@ class DatabaseJournalDataSource(EventJournalDataSource):
         }
 
     def _execute_query_and_convert(self, sql: str, skip_enrichment: bool = False) -> List[Dict]:
-        """Execute SQL query and convert results to event format"""
-        query = QSqlQuery(QSqlDatabase.database(self.db_connection_name))
-        
-        if not query.exec(sql):
-            error_text = query.lastError().text()
-            # Attempt to auto-migrate missing columns and retry once
-            if 'does not exist' in error_text or 'UndefinedColumn' in error_text:
-                try:
-                    self._ensure_video_columns()
-                    self.logger.warning('DB: Missing video columns detected. Applied auto-migration. Retrying query...')
-                    # Retry query
-                    query = QSqlQuery(QSqlDatabase.database(self.db_connection_name))
-                    if not query.exec(sql):
-                        self.logger.error(f"SQL Error after migration: {query.lastError().text()}")
-                        return []
-                except Exception as e:
-                    self.logger.error(f"Failed to migrate video columns: {e}")
-                    return []
-            else:
-                self.logger.error(f"SQL Error: {error_text}")
-                return []
-        
-        results = []
-        while query.next():
-            record = query.record()
-            row_dict = {}
-            for i in range(record.count()):
-                field_name = record.fieldName(i)
-                value = query.value(i)
-                
-                # Convert Qt types to Python types
-                if value is None:
-                    row_dict[field_name] = None
-                elif isinstance(value, self._qdatetime_type):
-                    try:
-                        if value.isValid():
-                            row_dict[field_name] = value.toPyDateTime()
-                        else:
-                            row_dict[field_name] = None
-                    except (ValueError, OverflowError):
-                        row_dict[field_name] = None
-                elif isinstance(value, self._qvariant_type):
-                    if not value.isNull():
-                        variant_value = value.value()
-                        if isinstance(variant_value, self._qdatetime_type):
-                            try:
-                                if variant_value.isValid():
-                                    row_dict[field_name] = variant_value.toPyDateTime()
-                                else:
-                                    row_dict[field_name] = None
-                            except (ValueError, OverflowError):
-                                row_dict[field_name] = None
-                        else:
-                            row_dict[field_name] = variant_value
-                    else:
-                        row_dict[field_name] = None
-                elif isinstance(value, (int, float, bool)):
-                    row_dict[field_name] = value
-                else:
-                    row_dict[field_name] = str(value)
-            
-            # For objects: create both found and lost events
-            if self.journal_type == 'objects':
-                # Found event
-                if row_dict.get('time_stamp'):
+        """Execute SQL query using DatabaseControllerPg and convert results."""
+        if not self._ensure_db_controller():
+            return []
+
+        records = self.db_controller.query(sql, None) or []
+        results: List[Dict[str, Any]] = []
+
+        if self.journal_type == "objects":
+            cols = [
+                "time_stamp",
+                "event_type",
+                "information",
+                "source_name",
+                "time_lost",
+                "preview_path",
+                "lost_preview_path",
+                "object_id",
+                "class_id",
+                "confidence",
+                "bounding_box",
+                "lost_bounding_box",
+                "source_id",
+                "object_data",
+            ]
+            for row in records:
+                row_dict = dict(zip(cols, row))
+                if row_dict.get("time_stamp"):
                     found_event = self._convert_row_to_event(row_dict, is_found=True)
                     if found_event:
                         results.append(found_event)
-                
-                # Lost event
-                if row_dict.get('time_lost'):
+                if row_dict.get("time_lost"):
                     lost_event = self._convert_row_to_event(row_dict, is_found=False)
                     if lost_event:
                         results.append(lost_event)
-            else:
-                # For events: convert directly
-                event_dict = self._convert_events_row_to_dict(row_dict, skip_enrichment=skip_enrichment)
-                if event_dict:
-                    results.append(event_dict)
-        
-        return results
+            return results
 
-    def _ensure_video_columns(self):
-        """Ensure video columns exist in event tables"""
-        try:
-            from psycopg2 import sql as psql
-            
-            # Zone events
-            self.db_controller.query(psql.SQL("ALTER TABLE zone_events ADD COLUMN IF NOT EXISTS video_path_entered text;"), None)
-            self.db_controller.query(psql.SQL("ALTER TABLE zone_events ADD COLUMN IF NOT EXISTS video_path_left text;"), None)
-            
-            # Attribute events
-            self.db_controller.query(psql.SQL("ALTER TABLE attribute_events ADD COLUMN IF NOT EXISTS video_path_found text;"), None)
-            self.db_controller.query(psql.SQL("ALTER TABLE attribute_events ADD COLUMN IF NOT EXISTS video_path_finished text;"), None)
-            
-            # FOV events
-            self.db_controller.query(psql.SQL("ALTER TABLE fov_events ADD COLUMN IF NOT EXISTS video_path text;"), None)
-            self.db_controller.query(psql.SQL("ALTER TABLE fov_events ADD COLUMN IF NOT EXISTS video_path_lost text;"), None)
-            
-            self.logger.info("Video columns migration completed")
-        except Exception as e:
-            self.logger.error(f'DB: Failed to ensure video columns: {e}')
+        # events journal: unioned columns from journal adapters
+        cols = [
+            "time_stamp",
+            "type",
+            "information",
+            "source_name",
+            "time_lost",
+            "preview_path",
+            "lost_preview_path",
+            "video_path",
+            "video_path_lost",
+            "object_id",
+            "zone_id",
+            "event_id",
+            "source_id",
+        ]
+        for row in records:
+            row_dict = dict(zip(cols, row))
+            event_dict = self._convert_events_row_to_dict(row_dict, skip_enrichment=skip_enrichment)
+            if event_dict:
+                results.append(event_dict)
+        return results
 
     def _convert_events_row_to_dict(self, row_dict: Dict, skip_enrichment: bool = False) -> Dict:
         """Convert events row to unified format"""
@@ -691,13 +639,9 @@ class DatabaseJournalDataSource(EventJournalDataSource):
                 if conditions:
                     sql += ' WHERE ' + ' AND '.join(conditions)
                 
-                query = QSqlQuery(QSqlDatabase.database(self.db_connection_name))
-                if not query.exec(sql):
-                    self.logger.error(f"SQL Error in get_total: {query.lastError().text()}")
-                    return 0
-                
-                if query.next():
-                    count = query.value(0)
+                records = self.db_controller.query(sql, None) or []
+                if records:
+                    count = records[0][0]
                     # For objects: each row can produce 1-2 events (found and/or lost)
                     # But for simplicity, we count rows. If needed, can be adjusted
                     base_count = int(count) if count is not None else 0
@@ -717,13 +661,9 @@ class DatabaseJournalDataSource(EventJournalDataSource):
                 base_sql = sql.split('ORDER BY')[0]
                 sql = f'SELECT COUNT(*) FROM ({base_sql}) AS count_query'
                 
-                query = QSqlQuery(QSqlDatabase.database(self.db_connection_name))
-                if not query.exec(sql):
-                    self.logger.error(f"SQL Error in get_total: {query.lastError().text()}")
-                    return 0
-                
-                if query.next():
-                    count = query.value(0)
+                records = self.db_controller.query(sql, None) or []
+                if records:
+                    count = records[0][0]
                     return int(count) if count is not None else 0
             
             return 0
@@ -738,5 +678,4 @@ class DatabaseJournalDataSource(EventJournalDataSource):
     def close(self) -> None:
         """Close data source and cleanup"""
         self._cache.clear()
-        if self.db_connection_name in QSqlDatabase.connectionNames():
-            QSqlDatabase.removeDatabase(self.db_connection_name)
+        # No per-datasource DB connection to close: controller is managed elsewhere.

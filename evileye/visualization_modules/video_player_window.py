@@ -10,19 +10,34 @@ from typing import Optional
 try:
     from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QPushButton
     from PyQt6.QtCore import Qt, QUrl, pyqtSignal, QTimer
-    from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
-    from PyQt6.QtMultimediaWidgets import QVideoWidget
     pyqt_version = 6
+    pyqt_multimedia_available = False
 except ImportError:
     from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QPushButton
     from PyQt5.QtCore import Qt, QUrl, pyqtSignal, QTimer
-    try:
-        from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
-        from PyQt5.QtMultimediaWidgets import QVideoWidget
-        pyqt5_multimedia_available = True
-    except ImportError:
-        pyqt5_multimedia_available = False
     pyqt_version = 5
+    pyqt_multimedia_available = False
+
+
+def _ensure_multimedia_imported() -> bool:
+    """
+    Lazy import of QtMultimedia to reduce segfault risk in headless runs.
+    """
+    global pyqt_multimedia_available
+    if pyqt_multimedia_available:
+        return True
+    try:
+        if pyqt_version == 6:
+            from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput  # noqa: F401
+            from PyQt6.QtMultimediaWidgets import QVideoWidget  # noqa: F401
+        else:
+            from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent  # noqa: F401
+            from PyQt5.QtMultimediaWidgets import QVideoWidget  # noqa: F401
+        pyqt_multimedia_available = True
+        return True
+    except Exception:
+        pyqt_multimedia_available = False
+        return False
 
 # Import cv2 for OpenCV fallback (always try to import)
 try:
@@ -79,8 +94,19 @@ class VideoPlayerWidget(QWidget):
         self.player = None  # QMediaPlayer instance (if using QMediaPlayer)
         self.audio_output = None  # QAudioOutput instance (PyQt6 only)
         self.video_widget = None  # QVideoWidget or QLabel instance
-        if pyqt_version == 6:
+        # In headless/CI environments QtMultimedia can crash on init/shutdown.
+        # Allow forcing OpenCV backend via env var.
+        try:
+            disable_qt_mm = os.environ.get("EVILEYE_DISABLE_QT_MULTIMEDIA", "").strip().lower() in {"1", "true", "yes", "on"}
+        except Exception:
+            disable_qt_mm = False
+
+        if disable_qt_mm or not _ensure_multimedia_imported():
+            self._use_opencv = True
+        elif pyqt_version == 6:
             try:
+                from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
+                from PyQt6.QtMultimediaWidgets import QVideoWidget
                 self.player = QMediaPlayer()
                 self.audio_output = QAudioOutput()
                 self.player.setAudioOutput(self.audio_output)
@@ -93,7 +119,6 @@ class VideoPlayerWidget(QWidget):
                 self.player.errorOccurred.connect(self._on_player_error)
                 # Получить список поддерживаемых MIME-типов
                 try:
-                    from PyQt6.QtMultimedia import QMediaPlayer
                     self._supported_mime_types = set(QMediaPlayer.supportedMimeTypes())
                     self.logger.debug(f"QMediaPlayer supports {len(self._supported_mime_types)} MIME types")
                 except Exception as e:
@@ -102,35 +127,30 @@ class VideoPlayerWidget(QWidget):
                 self.logger.warning(f"QMediaPlayer not available, falling back to OpenCV: {e}")
                 self._use_opencv = True
         elif pyqt_version == 5:
-            if pyqt5_multimedia_available:
+            try:
+                from PyQt5.QtMultimedia import QMediaPlayer
+                from PyQt5.QtMultimediaWidgets import QVideoWidget
+                self.player = QMediaPlayer(None, QMediaPlayer.VideoSurface)
+                self.video_widget = QVideoWidget()
+                self.player.setVideoOutput(self.video_widget)
+                # Set looping - PyQt5 doesn't have setLoops, use stateChanged to restart
+                self.player.stateChanged.connect(self._on_state_changed)
+                self.player.mediaStatusChanged.connect(self._on_media_status_changed_pyqt5)
+                # Connect error signal to detect FFmpeg errors
+                self.player.error.connect(self._on_player_error)
+                # Получить список поддерживаемых форматов
                 try:
-                    self.player = QMediaPlayer(None, QMediaPlayer.VideoSurface)
-                    self.video_widget = QVideoWidget()
-                    self.player.setVideoOutput(self.video_widget)
-                    # Set looping - PyQt5 doesn't have setLoops, use stateChanged to restart
-                    self.player.stateChanged.connect(self._on_state_changed)
-                    self.player.mediaStatusChanged.connect(self._on_media_status_changed_pyqt5)
-                    # Connect error signal to detect FFmpeg errors
-                    self.player.error.connect(self._on_player_error)
-                    # Получить список поддерживаемых форматов (PyQt5 использует supportedFormats)
-                    try:
-                        from PyQt5.QtMultimedia import QMediaPlayer
-                        # PyQt5 может не иметь supportedMimeTypes, используем supportedFormats
-                        if hasattr(QMediaPlayer, 'supportedMimeTypes'):
-                            self._supported_mime_types = set(QMediaPlayer.supportedMimeTypes())
-                        else:
-                            # Fallback: используем известные MIME-типы для видео
-                            self._supported_mime_types = {
-                                'video/mp4', 'video/x-msvideo', 'video/quicktime',
-                                'video/x-matroska', 'video/webm', 'video/ogg'
-                            }
-                        self.logger.debug(f"QMediaPlayer supports {len(self._supported_mime_types)} MIME types")
-                    except Exception as e:
-                        self.logger.debug(f"Could not get supported MIME types: {e}")
-                except Exception as e:
-                    self.logger.warning(f"QMediaPlayer not available, falling back to OpenCV: {e}")
-                    self._use_opencv = True
-            else:
+                    if hasattr(QMediaPlayer, 'supportedMimeTypes'):
+                        self._supported_mime_types = set(QMediaPlayer.supportedMimeTypes())
+                    else:
+                        self._supported_mime_types = {
+                            'video/mp4', 'video/x-msvideo', 'video/quicktime',
+                            'video/x-matroska', 'video/webm', 'video/ogg'
+                        }
+                except Exception:
+                    self._supported_mime_types = set()
+            except Exception as e:
+                self.logger.warning(f"QMediaPlayer not available, falling back to OpenCV: {e}")
                 self._use_opencv = True
         
         if self._use_opencv:

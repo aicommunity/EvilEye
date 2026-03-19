@@ -53,7 +53,7 @@ class DatabaseAdapterAttributeEvents(DatabaseAdapterBase):
             should_retry, last_error = self.error_handler.handle_query_error(
                 error=e,
                 query_string=str(query_string) if query_string else None,
-                retry_callback=lambda: self._ensure_attribute_columns() or self.db_controller.query(query_string, data),
+                retry_callback=None,
                 max_retries=1,
             )
             if last_error:
@@ -115,14 +115,21 @@ class DatabaseAdapterAttributeEvents(DatabaseAdapterBase):
         return (list(fields_for_updating.keys()), list(fields_for_updating.values()), fields_for_updating['preview_path_finished'], fields_for_updating['frame_path_finished'])
 
     def _save_image(self, preview_path, frame_path, image, box):
-        save_dir = self.db_params['image_dir']
+        # Centralized storage (preferred)
+        try:
+            if hasattr(self.db_controller, "_save_image"):
+                self.db_controller._save_image(preview_path, frame_path, image, box)
+                return
+        except Exception:
+            pass
+
+        # Legacy fallback
+        save_dir = self.db_params["image_dir"]
         preview_save_dir = os.path.join(save_dir, preview_path)
         frame_save_dir = os.path.join(save_dir, frame_path)
-        # Build preview
         try:
-            preview_width = self.db_params.get('preview_width', 300)
-            preview_height = self.db_params.get('preview_height', 150)
-            # Save original (no debug overlays) for both preview and frame
+            preview_width = self.db_params.get("preview_width", 300)
+            preview_height = self.db_params.get("preview_height", 150)
             preview = cv2.resize(image.image.copy(), (preview_width, preview_height), cv2.INTER_NEAREST)
             os.makedirs(os.path.dirname(preview_save_dir), exist_ok=True)
             os.makedirs(os.path.dirname(frame_save_dir), exist_ok=True)
@@ -172,27 +179,6 @@ class DatabaseAdapterAttributeEvents(DatabaseAdapterBase):
             img_path = os.path.join(obj_type_path, f'{timestamp}_attr_{event.matched_event_name}_obj{obj_id}_{image_type}.jpeg')
         return os.path.relpath(img_path, save_dir)
 
-    def _ensure_attribute_columns(self):
-        # Ensure newly added columns exist in attribute_events table
-        try:
-            alter_tpl = "ALTER TABLE {} ADD COLUMN IF NOT EXISTS {} {};"
-            table = self.table_name
-            # List of required columns and types
-            required = [
-                ('preview_path_found', 'text'),
-                ('frame_path_found', 'text'),
-                ('preview_path_finished', 'text'),
-                ('frame_path_finished', 'text'),
-                ('video_path_found', 'text'),
-                ('video_path_finished', 'text'),
-                ('class_id', 'integer'),
-                ('box_found', 'real[]'),
-                ('box_finished', 'real[]')
-            ]
-            for col, coltype in required:
-                query = alter_tpl.format(table, col, coltype)
-                self.db_controller.query(query, None)
-        except Exception as e:
-            self.logger.error(f'DB: Failed to ensure attribute_events columns: {e}')
+    # NOTE: schema migrations are applied centrally at DB startup (see `database_controller/migrations.py`).
 
 

@@ -30,6 +30,11 @@ except ImportError:
 from evileye.visualization_modules.stream_player_window import StreamPlayerWindow
 from evileye.visualization_modules.stream_player_components import VideoGridWidget, VideoPlayerWidget, SplitVideoPlayerWidget
 
+pytestmark = pytest.mark.skipif(
+    os.environ.get("EVILEYE_RUN_REAL_DATA_TESTS", "").strip().lower() not in {"1", "true", "yes", "on"},
+    reason="Real-data stream player tests are disabled by default (set EVILEYE_RUN_REAL_DATA_TESTS=1 to enable).",
+)
+
 
 @pytest.fixture(scope="session")
 def qapp():
@@ -37,7 +42,6 @@ def qapp():
     if not QApplication.instance():
         app = QApplication(sys.argv)
         yield app
-        app.quit()
     else:
         yield QApplication.instance()
 

@@ -310,9 +310,9 @@ class DatabaseControllerPg(DatabaseControllerBase):
                 if connection:
                     self.conn_pool.putconn(connection)
 
-    def _save_image(self, preview_path, frame_path, image, box):
+    def _save_image(self, preview_path, frame_path, image, box=None, zone_coords=None):
         if self._image_storage:
-            self._image_storage.save_image(preview_path, frame_path, image, box)
+            self._image_storage.save_image(preview_path, frame_path, image, box, zone_coords=zone_coords)
 
     def get_fields_names(self, table_name):
         if self.conn_pool is None:
@@ -524,6 +524,33 @@ class DatabaseControllerPg(DatabaseControllerBase):
 
     def get_job_id(self):
         return self._job_id
+
+    def get_next_event_id(self, table_names: list[str]) -> int:
+        """
+        Get the next event_id across multiple event tables.
+
+        This keeps DB-specific SQL inside the DB layer (used by EventsProcessor).
+        """
+        if self.conn_pool is None:
+            return 0
+        table_names = [t for t in (table_names or []) if t]
+        if not table_names:
+            return 0
+
+        subqueries = [
+            sql.SQL("SELECT MAX(event_id) as event_id FROM {table}").format(table=sql.Identifier(t))
+            for t in table_names
+        ]
+        query = sql.SQL("SELECT MAX(event_id) FROM ({subqueries}) AS temp").format(
+            subqueries=sql.SQL(" UNION ").join(subqueries)
+        )
+        record = self.query(query, None)
+        if not record or not record[0] or record[0][0] is None:
+            return 0
+        try:
+            return int(record[0][0]) + 1
+        except Exception:
+            return 0
 
     def get_config_by_job_id(self, job_id: int) -> dict:
         """

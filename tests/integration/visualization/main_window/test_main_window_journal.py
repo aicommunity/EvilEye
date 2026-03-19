@@ -15,14 +15,13 @@ except ImportError:
     pyqt_version = 5
 
 from evileye.visualization_modules.main_window import MainWindow
-from evileye.controller.controller import Controller
 
 # Инициализация логирования для тестов
 logger = setup_evileye_logging(log_level="INFO", log_to_console=True, log_to_file=True)
 test_logger = get_module_logger("test")
 
-def test_main_window_journal():
-    app = QApplication(sys.argv)
+def test_main_window_journal(qapp):
+    app = qapp
     
     # Create a mock controller with use_database=False
     class MockController:
@@ -65,27 +64,16 @@ def test_main_window_journal():
         }
     }
     
-    # Create main window
-    main_window = MainWindow(controller, 'test_config.json', config, 800, 600)
+    # Create main window (new API: set controller after construction)
+    os.makedirs("EvilEyeData", exist_ok=True)
+    main_window = MainWindow(800, 600)
+    main_window.set_controller(controller, 'test_config.json', config)
     main_window.show()
     
     test_logger.info("Main window with JSON journal opened.")
     
-    # Автоматически закрываем окно через 100ms
-    def close_window():
-        # Закрываем главное окно
-        main_window.close()
-        # Выходим из приложения
-        app.quit()
-    
-    QTimer.singleShot(100, close_window)
-    # Даем время на закрытие окна
-    import time
-    time.sleep(0.2)
-    
-    # Явно закрываем окно на случай, если таймер не сработал
+    # Close window; do not call app.quit() (shared QApplication across tests).
     try:
         main_window.close()
-        # Не вызываем app.quit() здесь, так как он уже вызван в close_window()
     except Exception:
         pass

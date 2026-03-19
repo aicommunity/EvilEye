@@ -7,6 +7,8 @@ import time
 from time import sleep
 from typing import Optional
 import logging
+import weakref
+import atexit
 
 from ..capture.video_capture_base import CaptureImage
 from .object_detection_base import DetectionResult, DetectionResultList
@@ -18,6 +20,8 @@ class DetectionThreadBase:
     Base class for detection threads.
     Handles image processing, prediction, and result extraction.
     """
+
+    _instances: "weakref.WeakSet[DetectionThreadBase]" = weakref.WeakSet()
 
     def __init__(
         self,
@@ -45,12 +49,28 @@ class DetectionThreadBase:
         self.queue_in = Queue(maxsize=DEFAULT_THREAD_QUEUE_SIZE)
         self.queue_out = queue_out
         self.source_ids = source_ids
-        self.processing_thread = threading.Thread(target=self._process_impl)
+        self.processing_thread = threading.Thread(target=self._process_impl, daemon=True)
         self.roi_coords_per_camera = {
             source_id: roi_coords for source_id, roi_coords in zip(self.source_ids, self.roi)
         }
         self.model_class_mapping: Optional[dict] = None
+        try:
+            DetectionThreadBase._instances.add(self)
+        except Exception:
+            pass
 
+    @classmethod
+    def shutdown_all(cls) -> None:
+        """Best-effort stop of all detection threads (used in tests)."""
+        try:
+            items = list(cls._instances)
+        except Exception:
+            return
+        for t in items:
+            try:
+                t.stop()
+            except Exception:
+                pass
     def start(self) -> None:
         """Start the detection thread."""
         self.run_flag = True
@@ -320,3 +340,9 @@ class DetectionThreadBase:
     def get_bboxes(self, result, roi: list) -> tuple[list, list, list]:
         """Extract bboxes from prediction result."""
         raise NotImplementedError
+
+
+try:
+    atexit.register(DetectionThreadBase.shutdown_all)
+except Exception:
+    pass

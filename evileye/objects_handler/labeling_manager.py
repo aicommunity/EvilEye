@@ -8,6 +8,8 @@ import os
 import datetime
 import time
 import threading
+import weakref
+import atexit
 from typing import Dict, List, Any, Optional
 from pathlib import Path
 from queue import Queue
@@ -23,6 +25,8 @@ class LabelingManager:
     - objects_found.json: For objects detected for the first time
     - objects_lost.json: For objects that were lost (tracking ended)
     """
+
+    _instances: "weakref.WeakSet[LabelingManager]" = weakref.WeakSet()
     
     def __init__(self, base_dir: str = 'EvilEyeData', cameras_params: list = None, preload_data: bool = True):
         """
@@ -86,6 +90,23 @@ class LabelingManager:
         # Start background save thread
         self.save_thread = Thread(target=self._save_worker, daemon=True)
         self.save_thread.start()
+        try:
+            LabelingManager._instances.add(self)
+        except Exception:
+            pass
+
+    @classmethod
+    def shutdown_all(cls) -> None:
+        """Best-effort shutdown of all created managers (used in tests)."""
+        try:
+            managers = list(cls._instances)
+        except Exception:
+            return
+        for m in managers:
+            try:
+                m.stop()
+            except Exception:
+                pass
     
     def _init_label_files(self):
         """Initialize JSON label files if they don't exist."""
@@ -679,6 +700,12 @@ class LabelingManager:
         # Wait for save thread to finish
         if self.save_thread.is_alive():
             self.save_thread.join(timeout=5)
+
+
+try:
+    atexit.register(LabelingManager.shutdown_all)
+except Exception:
+    pass
     
     def _preload_existing_data(self, timeout: float = 5.0):
         """

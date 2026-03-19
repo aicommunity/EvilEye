@@ -7,6 +7,9 @@ import pytest
 def _make_record_cfg(tmp_path: Path) -> dict:
     return {
         "enabled": True,
+        # Continuous recorder is the default recording mechanism for GST backend.
+        # Explicitly enable it for tests that expect output files.
+        "continuous_recording_enabled": True,
         "container": "mp4",
         "segment_length_sec": 60,
         "retention_days": 1,

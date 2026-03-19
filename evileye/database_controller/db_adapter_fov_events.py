@@ -58,7 +58,7 @@ class DatabaseAdapterFieldOfViewEvents(DatabaseAdapterBase):
             should_retry, last_error = self.error_handler.handle_query_error(
                 error=e,
                 query_string=str(query_string) if query_string else None,
-                retry_callback=lambda: self._ensure_fov_columns() or self.db_controller.query(query_string, data),
+                retry_callback=None,
                 max_retries=1,
             )
             if last_error:
@@ -159,18 +159,4 @@ class DatabaseAdapterFieldOfViewEvents(DatabaseAdapterBase):
             img_path = os.path.join(obj_type_path, f'{timestamp}_{src_name}_{image_type}.jpeg')
         return os.path.relpath(img_path, save_dir)
 
-    def _ensure_fov_columns(self):
-        # Ensure newly added columns exist in fov_events table
-        try:
-            alter_tpl = "ALTER TABLE {} ADD COLUMN IF NOT EXISTS {} {};"
-            table = self.table_name
-            # List of required columns and types
-            required = [
-                ('video_path', 'text'),
-                ('video_path_lost', 'text'),
-            ]
-            for col, coltype in required:
-                query = alter_tpl.format(table, col, coltype)
-                self.db_controller.query(query, None)
-        except Exception as e:
-            self.logger.error(f'DB: Failed to ensure fov_events columns: {e}')
+    # NOTE: schema migrations are applied centrally at DB startup (see `database_controller/migrations.py`).
