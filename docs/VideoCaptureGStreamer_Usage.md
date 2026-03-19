@@ -4,6 +4,28 @@
 
 `VideoCaptureGStreamer` is a GStreamer-based video capture class that provides enhanced performance and flexibility for various video sources compared to the OpenCV-based `VideoCaptureOpencv` class.
 
+## GStreamer requirements (Ubuntu)
+
+For correct work with H.264/H.265 and most common formats on Ubuntu, you must install GStreamer with the full set of plugins, including `h264parse`, decoders and container support:
+
+```bash
+sudo apt update
+sudo apt install \
+  gstreamer1.0-plugins-base \
+  gstreamer1.0-plugins-good \
+  gstreamer1.0-plugins-bad \
+  gstreamer1.0-plugins-ugly \
+  gstreamer1.0-libav
+```
+
+After installation you can verify that the required elements are available, for example:
+
+```bash
+gst-inspect-1.0 h264parse
+```
+
+If the element is not found, check that you are installing packages inside the same environment / container where EvilEye is running.
+
 ## Supported Source Types
 
 ### 1. IP Camera (RTSP Stream)

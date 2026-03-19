@@ -1031,7 +1031,8 @@ class MainWindow(QMainWindow):
             # Сохраняем последний pixmap для источника
             source_id = self.labels_sources_ids.get(label_id)
             if source_id is not None:
-                self.last_pixmaps[source_id] = picture.copy()
+                # QPixmap is implicitly shared; avoid making an extra deep copy per frame.
+                self.last_pixmaps[source_id] = picture
         else:
             self.logger.warning(f"update_image called with invalid label_id={label_id}, labels count={len(self.labels)}")
     
@@ -1040,14 +1041,14 @@ class MainWindow(QMainWindow):
         # Сохраняем оригинальное OpenCV изображение в last_clean_cv_images (они содержат одинаковые данные)
         source_id = self.labels_sources_ids.get(label_id)
         if source_id is not None:
-            # Use copy() instead of deepcopy() for numpy arrays - much more memory efficient
-            # numpy arrays are already contiguous, so copy() is sufficient
+            # Keep a reference to the latest frame; avoid per-frame numpy allocations.
+            self.last_clean_cv_images[source_id] = original_cv_image
             if original_cv_image is not None:
-                self.last_clean_cv_images[source_id] = original_cv_image.copy()
-                h, w = original_cv_image.shape[:2]
-                self.logger.debug(f"Saved original CV image for source {source_id}: {w}x{h}")
-            else:
-                self.last_clean_cv_images[source_id] = None
+                try:
+                    h, w = original_cv_image.shape[:2]
+                    self.logger.debug(f"Saved original CV image for source {source_id}: {w}x{h}")
+                except Exception:
+                    pass
 
     @pyqtSlot(int, object)
     def clean_image_available(self, label_id: int, clean_cv_image):
@@ -1056,14 +1057,14 @@ class MainWindow(QMainWindow):
             # Сохраняем чистое изображение для ROI Editor
             source_id = self.labels_sources_ids.get(label_id)
             if source_id is not None:
-                # Use copy() instead of deepcopy() for numpy arrays - much more memory efficient
-                # numpy arrays are already contiguous, so copy() is sufficient
+                # Keep a reference to the latest clean frame; avoid per-frame numpy allocations.
+                self.last_clean_cv_images[source_id] = clean_cv_image
                 if clean_cv_image is not None:
-                    self.last_clean_cv_images[source_id] = clean_cv_image.copy()
-                    h, w = clean_cv_image.shape[:2]
-                    self.logger.debug(f"Saved clean CV image for source {source_id}: {w}x{h}")
-                else:
-                    self.last_clean_cv_images[source_id] = None
+                    try:
+                        h, w = clean_cv_image.shape[:2]
+                        self.logger.debug(f"Saved clean CV image for source {source_id}: {w}x{h}")
+                    except Exception:
+                        pass
         except Exception as e:
             self.logger.error(f"Error updating clean CV image: {e}")
 
@@ -1255,13 +1256,29 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         if self.controller.enable_close_from_gui:
-            self.controller.release()
-            self.zone_window.close()
-            if self.db_journal_win is not None:
-                self.db_journal_win.close()
-            #with open(self.params_path, 'w') as params_file:
-            #    json.dump(self.params, params_file, indent=4)
-            QApplication.closeAllWindows()
+            # IMPORTANT: Do not block the Qt GUI thread here.
+            # Closing the window during capture restarts can deadlock if we synchronously
+            # stop GStreamer/threads from within closeEvent. We trigger a Qt quit and let
+            # the app-level shutdown handler stop the controller asynchronously.
+            try:
+                self.zone_window.close()
+            except Exception:
+                pass
+            try:
+                if self.db_journal_win is not None:
+                    self.db_journal_win.close()
+            except Exception:
+                pass
+            try:
+                QApplication.closeAllWindows()
+            except Exception:
+                pass
+            try:
+                app = QApplication.instance()
+                if app is not None:
+                    app.quit()
+            except Exception:
+                pass
             event.accept()
         else:
             self.setVisible(False)

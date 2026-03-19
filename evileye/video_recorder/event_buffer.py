@@ -28,6 +28,13 @@ class EventBuffer:
         self.logger = get_module_logger("event_buffer")
         self.max_duration_seconds = max_duration_seconds
         self.fps = fps
+        self._last_added_ts: Optional[float] = None
+        self._min_frame_interval_s: Optional[float] = None
+        try:
+            if fps and fps > 0:
+                self._min_frame_interval_s = 1.0 / float(fps)
+        except Exception:
+            self._min_frame_interval_s = None
         
         # Circular buffer: deque of (frame: np.ndarray, timestamp: float)
         self.buffer: deque[Tuple[np.ndarray, float]] = deque(maxlen=None)  # Will set maxlen dynamically
@@ -53,13 +60,29 @@ class EventBuffer:
         """
         if timestamp is None:
             timestamp = time.time()
-        
+
+        # If FPS target is provided, do not store every incoming frame.
+        # Storing (and copying) full-resolution frames at source FPS can severely
+        # impact CPU and visualization/detection throughput.
+        if self._min_frame_interval_s:
+            last_ts = self._last_added_ts
+            if last_ts is not None:
+                # Handle timestamp resets (e.g. looping video files / reconnect).
+                if timestamp < last_ts:
+                    self._last_added_ts = None
+                else:
+                    # Keep at most ~fps frames per second in the buffer.
+                    # Small tolerance avoids storing bursts due to timestamp jitter.
+                    if (timestamp - last_ts) < (self._min_frame_interval_s * 0.90):
+                        return
+
         # Copy is necessary: frames may be modified after being added to buffer
         # Buffer needs to maintain independent copies for pre-event frame retrieval
         frame_copy = frame.copy()
         
         with self.lock:
             self.buffer.append((frame_copy, timestamp))
+            self._last_added_ts = timestamp
             self._cleanup_old_frames()
     
     def get_frames_before(self, timestamp: float, seconds: float) -> List[Tuple[np.ndarray, float]]:
@@ -78,10 +101,11 @@ class EventBuffer:
         
         with self.lock:
             # Iterate from oldest to newest
-            # Copy is necessary: returned frames may be modified by caller
+            # NOTE: We return the stored numpy arrays directly to avoid extra copies.
+            # Callers that mutate frames must copy on their side.
             for frame, frame_ts in self.buffer:
                 if cutoff_time <= frame_ts < timestamp:
-                    result.append((frame.copy(), frame_ts))
+                    result.append((frame, frame_ts))
         
         # Sort by timestamp (should already be sorted, but ensure it)
         result.sort(key=lambda x: x[1])
@@ -103,10 +127,11 @@ class EventBuffer:
         
         with self.lock:
             # Iterate from oldest to newest
-            # Copy is necessary: returned frames may be modified by caller
+            # NOTE: We return the stored numpy arrays directly to avoid extra copies.
+            # Callers that mutate frames must copy on their side.
             for frame, frame_ts in self.buffer:
                 if timestamp <= frame_ts <= cutoff_time:
-                    result.append((frame.copy(), frame_ts))
+                    result.append((frame, frame_ts))
         
         # Sort by timestamp (should already be sorted, but ensure it)
         result.sort(key=lambda x: x[1])
@@ -126,10 +151,11 @@ class EventBuffer:
         result = []
         
         with self.lock:
-            # Copy is necessary: returned frames may be modified by caller
+            # NOTE: We return the stored numpy arrays directly to avoid extra copies.
+            # Callers that mutate frames must copy on their side.
             for frame, frame_ts in self.buffer:
                 if start_timestamp <= frame_ts <= end_timestamp:
-                    result.append((frame.copy(), frame_ts))
+                    result.append((frame, frame_ts))
         
         result.sort(key=lambda x: x[1])
         return result

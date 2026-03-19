@@ -7,6 +7,29 @@ if ! [ -x "$(command -v realpath)" ]; then
    sudo apt install -y coreutils
 fi
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+
+psql_as_postgres() {
+    sudo -u postgres psql "$@"
+}
+
+ensure_postgres_running() {
+    if command -v systemctl >/dev/null 2>&1; then
+        if systemctl is-active --quiet postgresql; then
+            return 0
+        fi
+        echo "Starting PostgreSQL service..."
+        sudo systemctl start postgresql
+        return $?
+    fi
+
+    if sudo service postgresql status >/dev/null 2>&1; then
+        return 0
+    fi
+    echo "Starting PostgreSQL service..."
+    sudo service postgresql start
+}
+
 if ! [ -x "$(command -v psql)" ]; then
     echo "psql could not be found"
     #sudo -s -- <<DOF
@@ -14,12 +37,7 @@ if ! [ -x "$(command -v psql)" ]; then
     wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
     sudo apt -y update
     sudo apt -y install postgresql-14 postgresql-client-14 postgresql-contrib-14 postgresql-server-dev-14
-    sudo sed -E -i 's/(local.*all.*)postgres(.*)peer/\1all\2trust/g' /etc/postgresql/14/main/pg_hba.conf
-    sudo sed -E -i 's/(local.*all.*all.*peer)/# \1/g' /etc/postgresql/14/main/pg_hba.conf
-    sudo sed -E -i 's/(host.*all.*all.*)127.0.0.1\/32(.*)scram-sha-256/\10.0.0.0\/0\2trust/g' /etc/postgresql/14/main/pg_hba.conf
-    sudo sed -E -i 's/(host.*all.*all.*)127.0.0.1\/32(.*)peer/\127.0.0.1\/0\2trust/g' /etc/postgresql/14/main/pg_hba.conf
-    sudo sed -E -i 's/#(listen_addresses = \x27)localhost/\1\*/g' /etc/postgresql/14/main/postgresql.conf
-    sudo service postgresql start
+    ensure_postgres_running
     #sudo echo "service postgresql start" >> /etc/bash.bashrc
     #DOF
     echo "Postgres has been installed"
@@ -27,12 +45,14 @@ else
     echo "Postgres has been found"
 fi
 
-if psql -U postgres -lqt | cut -d \| -f 1 | grep -qw evil_eye_db; then
+ensure_postgres_running
+
+if psql_as_postgres -lqt | cut -d \| -f 1 | grep -qw evil_eye_db; then
     # database exists
     # $? is 0
     echo "Postgres has been installed and database exists"
 else
-    psql -U postgres -c 'create database evil_eye_db;'
-    psql -U postgres evil_eye_db < ./db_dump.txt
+    psql_as_postgres -c 'create database evil_eye_db;'
+    psql_as_postgres evil_eye_db < "${SCRIPT_DIR}/../db_dump.txt"
     echo "evil_eye_db database has been created"
 fi

@@ -9,6 +9,7 @@ import copy
 from ..capture.video_capture_base import CaptureImage
 from timeit import default_timer as timer
 from pympler import asizeof
+import os
 
 if TYPE_CHECKING:
     # Импорт только для type checking, чтобы избежать циклических зависимостей
@@ -48,6 +49,11 @@ class Visualizer(EvilEyeBase):
         self.signal_color = (255, 0, 0)
         # Zones display toggle
         self.display_zones = False
+
+        # Perf diagnostics (disabled by default). Enable with env EVILEYE_PERF_DIAG=1
+        self._perf_diag_env = os.getenv("EVILEYE_PERF_DIAG", "").strip().lower() in {"1", "true", "yes", "on"}
+        self._perf_diag_every = int(os.getenv("EVILEYE_PERF_DIAG_EVERY", "60") or "60")
+        self._perf_diag_counter = 0
 
 
     def default(self):
@@ -258,6 +264,7 @@ class Visualizer(EvilEyeBase):
     def update(self, processing_frames: list[CaptureImage], source_last_processed_frame_id: dict,
                objects: list["ObjectResultList"], dropped_frames: list,  debug_info: dict):
         start_update = timer()
+        perf_diag_enabled = self._perf_diag_env
         remove_processed_idx = dict()
         for frame in processing_frames:
             if not frame.source_id in self.processing_frames.keys():
@@ -354,3 +361,26 @@ class Visualizer(EvilEyeBase):
         for source_id in sources_to_remove:
             del self.processing_frames[source_id]
             self.logger.debug(f"Cleared processing_frames for removed source {source_id}")
+
+        if perf_diag_enabled:
+            self._perf_diag_counter += 1
+            every = max(1, int(self._perf_diag_every or 60))
+            if (self._perf_diag_counter % every) == 0:
+                try:
+                    per_source_buf = {sid: len(self.processing_frames.get(sid, [])) for sid in self.source_ids}
+                    per_thread_q = {}
+                    for thr in self.visual_threads:
+                        try:
+                            per_thread_q[thr.source_id] = thr.queue.qsize()
+                        except Exception:
+                            per_thread_q[thr.source_id] = -1
+                    self.logger.info(
+                        "PerfDiag(Visualizer): updates=%d, in_frames=%d, update_ms=%.1f, per_source_buf=%s, video_thread_q=%s",
+                        self._perf_diag_counter,
+                        (len(processing_frames) if processing_frames else 0),
+                        (timer() - start_update) * 1000.0,
+                        per_source_buf,
+                        per_thread_q,
+                    )
+                except Exception:
+                    pass

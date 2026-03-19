@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Dict, Any
+import os
 
 
 @dataclass
@@ -112,5 +113,25 @@ class RecordingParams:
         path = Path(self.out_dir)
         path.mkdir(parents=True, exist_ok=True)
         return path
+
+    def check_out_dir_writable(self) -> tuple[bool, str]:
+        """Best-effort check that out_dir exists and is writable.
+
+        Returns:
+            (ok, reason): ok=True when recording directory can be created and is writable;
+            ok=False with a short reason otherwise.
+        """
+        try:
+            path = Path(self.out_dir)
+            # Ensure directory exists (may raise PermissionError / FileNotFoundError / OSError)
+            path.mkdir(parents=True, exist_ok=True)
+            # Basic writability check (directory must be traversable too)
+            if not path.is_dir():
+                return False, f"not a directory: {path}"
+            if not os.access(path, os.W_OK | os.X_OK):
+                return False, f"not writable: {path}"
+            return True, ""
+        except Exception as e:
+            return False, str(e)
 
 

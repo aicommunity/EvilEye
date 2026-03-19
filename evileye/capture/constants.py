@@ -42,6 +42,11 @@ class CaptureConstants:
     RECONNECT_SLEEP_SHORT: float = 0.1
     RECONNECT_SLEEP_LONG: float = 1.0
 
+    # Reconnect backoff (delay between restart attempts)
+    RECONNECT_INITIAL_DELAY_SEC: float = 8.0
+    RECONNECT_BACKOFF_STEP_SEC: float = 6.0
+    RECONNECT_MAX_DELAY_SEC: float = 60.0
+
     # Default FPS fallback
     DEFAULT_FPS_FALLBACK: float = 15.0
     

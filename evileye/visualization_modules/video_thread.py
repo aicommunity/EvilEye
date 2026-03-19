@@ -20,6 +20,7 @@ import time
 import cv2
 from ..events_detectors.zone import ZoneForm
 import logging
+import os
 
 
 class VideoThread(QThread):
@@ -96,6 +97,11 @@ class VideoThread(QThread):
 
         # Определяем количество потоков в зависимости от параметра split
         VideoThread.thread_counter += 1
+
+        # Perf diagnostics (disabled by default). Enable with env EVILEYE_PERF_DIAG=1
+        self._perf_diag_env = os.getenv("EVILEYE_PERF_DIAG", "").strip().lower() in {"1", "true", "yes", "on"}
+        self._perf_diag_every = int(os.getenv("EVILEYE_PERF_DIAG_EVERY", "60") or "60")
+        self._perf_diag_counter = 0
 
     def start_thread(self):
         self.run_flag = True
@@ -223,6 +229,29 @@ class VideoThread(QThread):
         try:
             frame, track_info, source_name, source_duration_secs, debug_info = self.queue.get()
             begin_it = timer()
+
+            # During capture restarts/teardown the producer can push a placeholder with image=None.
+            # Avoid allocating QPixmap/QImage buffers and avoid noisy exceptions in that case.
+            try:
+                if frame is None or getattr(frame, "image", None) is None:
+                    # Keep clean image consistent
+                    try:
+                        self.clean_image_mutex.lock()
+                        self.last_clean_image = None
+                    finally:
+                        try:
+                            self.clean_image_mutex.unlock()
+                        except Exception:
+                            pass
+                    return 0
+                # Some pipelines can produce empty arrays; treat them as missing frames.
+                try:
+                    if hasattr(frame.image, "size") and frame.image.size == 0:
+                        return 0
+                except Exception:
+                    pass
+            except Exception:
+                return 0
             
             # Create a shallow copy of frame and copy only the image array (numpy array)
             # This is much more memory-efficient than deepcopy
@@ -233,19 +262,14 @@ class VideoThread(QThread):
             display_frame.frame_id = frame.frame_id
             display_frame.current_video_frame = frame.current_video_frame
             display_frame.current_video_position = frame.current_video_position
-            # Copy only the image numpy array, not the entire frame object
-            if frame.image is not None:
-                display_frame.image = frame.image.copy()
-            else:
-                display_frame.image = None
+            # IMPORTANT: frame.image is already an owning numpy array (copied in capture).
+            # Avoid extra copies here to reduce RSS spikes when streams connect / restart.
+            display_frame.image = frame.image
             
             # Store clean image in thread-safe storage (before any drawing)
-            # Use copy() instead of deepcopy() for numpy arrays - much more efficient
+            # Avoid copying: keep a reference to the latest clean frame.
             self.clean_image_mutex.lock()
-            if frame.image is not None:
-                self.last_clean_image = frame.image.copy()
-            else:
-                self.last_clean_image = None
+            self.last_clean_image = frame.image
             self.clean_image_mutex.unlock()
             # Remember original size to normalize pixel bboxes to display size correctly
             try:
@@ -309,6 +333,25 @@ class VideoThread(QThread):
             self.update_original_cv_image_signal.emit(self.thread_num, frame.image)
             # Сигнал с чистым OpenCV изображением без нарисованных элементов для ROI Editor (до любых отрисовок)
             self.clean_image_available_signal.emit(self.thread_num, frame.image)
+            if self._perf_diag_env:
+                try:
+                    self._perf_diag_counter += 1
+                    every = max(1, int(self._perf_diag_every or 60))
+                    if (self._perf_diag_counter % every) == 0:
+                        try:
+                            qsz = self.queue.qsize()
+                        except Exception:
+                            qsz = -1
+                        self.logger.info(
+                            "PerfDiag(VideoThread): src_id=%s, processed=%d, frame_id=%s, qsize=%s, proc_ms=%.1f",
+                            self.source_id,
+                            self._perf_diag_counter,
+                            getattr(frame, "frame_id", None),
+                            qsz,
+                            (timer() - begin_it) * 1000.0,
+                        )
+                except Exception:
+                    pass
             return elapsed_seconds
         except Empty:
             return 0

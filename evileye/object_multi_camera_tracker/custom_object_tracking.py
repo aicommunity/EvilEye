@@ -71,7 +71,7 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
 
             if self.enable == False:
                 for track_info in sc_track_results:
-                    self.queue_out.put(track_info)
+                    self._put_out_drop_oldest(track_info)
                 continue
 
             sc_tracks: List[List[BOTrack]] = []
@@ -89,7 +89,7 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
             mc_tracks = self.tracker.update(sc_tracks)
             tracks_infos = self._create_tracks_info(track_infos, mc_tracks)
             for track_info in zip(tracks_infos, images):
-                self.queue_out.put(track_info)
+                self._put_out_drop_oldest(track_info)
 
     def _parse_det_info(self, det_info: DetectionResultList) -> tuple:
         cam_id = det_info.source_id
