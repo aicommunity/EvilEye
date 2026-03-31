@@ -213,11 +213,16 @@ class PipelineSurveillance(PipelineProcessors):
                     import os
                     self.encoders[path] = OnnxEncoder(path)
                 except ImportError:
-                    # Continue without encoder
-                    pass
-                except Exception:
-                    # Continue without encoder
-                    pass
+                    self.logger.warning(
+                        "Failed to import OnnxEncoder for '%s'; ReID encoder disabled",
+                        path,
+                    )
+                except Exception as e:
+                    self.logger.warning(
+                        "Failed to initialize OnnxEncoder for '%s': %s. ReID encoder disabled",
+                        path,
+                        e,
+                    )
 
     def generate_default_structure(self, num_sources: int):
         """Generate default structure for pipeline"""

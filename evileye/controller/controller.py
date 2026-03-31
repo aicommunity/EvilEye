@@ -95,6 +95,8 @@ class Controller:
 
         # Web server process manager (set when server.execution_mode == "process")
         self._server_process_manager = None
+        self._stream_publish_fps = 5.0
+        self._stream_publish_last_ts = 0.0
 
         self.obj_handler = None
         self.visualizer = None
@@ -307,6 +309,40 @@ class Controller:
         if hasattr(self, '_server_process_manager') and self._server_process_manager is not None:
             self._server_process_manager.publish_frame(self.stream_pipeline_id, jpeg_bytes)
 
+    def _should_publish_frame(self) -> bool:
+        """Avoid JPEG encoding when no consumer is active and throttle publish FPS."""
+        if self._frame_dir:
+            return True
+
+        try:
+            from evileye.api.core.broker_access import get_broker
+            has_local_stream = get_broker().is_stream_active(self.stream_pipeline_id)
+        except Exception:
+            has_local_stream = False
+
+        try:
+            has_server_process = (
+                hasattr(self, "_server_process_manager")
+                and self._server_process_manager is not None
+                and self._server_process_manager.is_alive()
+            )
+        except Exception:
+            has_server_process = False
+
+        if not has_local_stream and not has_server_process:
+            return False
+
+        publish_fps = max(0.0, float(getattr(self, "_stream_publish_fps", 0.0) or 0.0))
+        if publish_fps <= 0.0:
+            return True
+
+        now = time.time()
+        min_interval = 1.0 / publish_fps
+        if (now - float(getattr(self, "_stream_publish_last_ts", 0.0) or 0.0)) < min_interval:
+            return False
+        self._stream_publish_last_ts = now
+        return True
+
     # ── Getters ──────────────────────────────────────────────────────
 
     def get_fps(self) -> int:
@@ -512,6 +548,8 @@ class Controller:
         try:
             if not processing_frames:
                 self.logger.debug("No processing frames available for publishing")
+                return
+            if not self._should_publish_frame():
                 return
             last_frame = processing_frames[-1]
             # Frame инициализирует image в __init__, поэтому прямой доступ безопасен
@@ -1158,6 +1196,11 @@ class Controller:
             self.max_memory_usage_mb = self.params['controller'].get("max_memory_usage_mb", self.max_memory_usage_mb)
             self.auto_restart = self.params['controller'].get("auto_restart", self.auto_restart)
             self.use_database = self.params['controller'].get("use_database", self.use_database)
+
+        server_cfg = self.params.get("server", {}) if isinstance(self.params, dict) else {}
+        if isinstance(server_cfg, dict):
+            self._stream_publish_fps = float(server_cfg.get("publish_fps", self._stream_publish_fps) or 0.0)
+            self._stream_publish_last_ts = 0.0
 
         try:
             with open("credentials.json") as creds_file:
