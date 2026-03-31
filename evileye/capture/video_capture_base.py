@@ -319,6 +319,40 @@ class VideoCaptureBase(EvilEyeBase):
         reconstructed_url = url_parsed_info._replace(netloc=f"{processed_username}:{processed_password}@{url_parsed_info.hostname}")
         return reconstructed_url.geturl()
 
+    def get_ip_camera_init_hint(self) -> str:
+        """Return a human-readable hint for common RTSP configuration mistakes."""
+        if self.source_type != CaptureDeviceType.IpCamera:
+            return ""
+
+        hints: list[str] = []
+        try:
+            parsed = urlparse(self.source_address or "")
+        except Exception:
+            parsed = None
+
+        has_username = bool(getattr(self, "username", None))
+        has_password = bool(getattr(self, "password", None))
+        has_credentials = has_username and has_password
+
+        if not has_credentials:
+            hints.append(
+                "RTSP source is configured without username/password. "
+                "If the camera requires authentication, add `username` and `password` to the source config "
+                "or create `credentials.json` with credentials for this camera."
+            )
+
+        try:
+            path = (parsed.path or "") if parsed is not None else ""
+            if path in {"", "/"}:
+                hints.append(
+                    "RTSP URL looks incomplete (missing stream path). "
+                    "Use a full stream URL like `rtsp://user:pass@host:554/stream_path`."
+                )
+        except Exception:
+            pass
+
+        return " ".join(hints)
+
     def subscribe(self, *subscribers):
         self.subscribers = list(subscribers)
 

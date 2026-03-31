@@ -127,6 +127,7 @@
                     0
                 ],
                 "num_detection_threads": 3,
+                "execution_mode": "thread",
                 "model": "models/yolov8n.pt"
             },
             {
@@ -147,6 +148,7 @@
                     1
                 ],
                 "num_detection_threads": 3,
+                "execution_mode": "thread",
                 "model": "models/yolov8n.pt"
             },
             {
@@ -192,6 +194,7 @@
                     2
                 ],
                 "num_detection_threads": 3,
+                "execution_mode": "thread",
                 "model": "models/yolov8n.pt"
             },
             {
@@ -231,6 +234,7 @@
                     3
                 ],
                 "num_detection_threads": 3,
+                "execution_mode": "thread",
                 "model": "models/yolov8n.pt"
             },
             {
@@ -251,6 +255,7 @@
                     4
                 ],
                 "num_detection_threads": 3,
+                "execution_mode": "thread",
                 "model": "models/yolov8n.pt"
             }
         ],
@@ -271,7 +276,8 @@
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
                     "with_reid": true
-                }
+                },
+                "execution_mode": "thread"
             },
             {
                 "source_ids": [
@@ -289,7 +295,8 @@
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
                     "with_reid": true
-                }
+                },
+                "execution_mode": "thread"
             },
             {
                 "source_ids": [
@@ -307,7 +314,8 @@
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
                     "with_reid": true
-                }
+                },
+                "execution_mode": "thread"
             },
             {
                 "source_ids": [
@@ -325,7 +333,8 @@
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
                     "with_reid": true
-                }
+                },
+                "execution_mode": "thread"
             },
             {
                 "source_ids": [
@@ -343,7 +352,8 @@
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
                     "with_reid": true
-                }
+                },
+                "execution_mode": "thread"
             }
         ],
         "mc_trackers": [

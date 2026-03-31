@@ -1851,7 +1851,10 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 # Re-raise initialization errors
                 raise
             except Exception as e:
+                hint = self.get_ip_camera_init_hint()
                 error_msg = f"Failed to initialize GStreamer capture: {e}"
+                if hint:
+                    error_msg = f"{error_msg}. Hint: {hint}"
                 self.logger.error(error_msg, exc_info=True)
                 self.is_inited = False
                 self.is_working = False
