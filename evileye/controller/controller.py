@@ -93,6 +93,9 @@ class Controller:
 
         self.pipeline = None
 
+        # Web server process manager (set when server.execution_mode == "process")
+        self._server_process_manager = None
+
         self.obj_handler = None
         self.visualizer = None
         self.pyqt_slots = None
@@ -257,7 +260,14 @@ class Controller:
         except Exception:
             self._resource_stats_every_sec = 60.0
         self._resource_stats_last_ts = 0.0
-        
+
+        # File-based frame sharing for Config Run mode
+        self._frame_dir = os.environ.get("EVILEYE_FRAME_DIR")
+        if self._frame_dir:
+            from pathlib import Path as _Path
+            self._frame_dir = _Path(self._frame_dir)
+            self._frame_dir.mkdir(parents=True, exist_ok=True)
+            self.logger.info(f"Frame file output enabled: {self._frame_dir}")
         # Event-based recording components
         self.event_buffers = {}  # source_id -> EventBuffer
         self.event_recorders = {}  # source_id -> EventRecorder
@@ -270,6 +280,32 @@ class Controller:
         # source_id -> {"offset": float, "last_pos": float | None}
         self._video_ts_state: dict[int, dict[str, float | None]] = {}
     
+    # ── Frame publishing ────────────────────────────────────────────
+
+    def _publish_frame(self, jpeg_bytes: bytes) -> None:
+        """Publish JPEG to local FrameBroker and/or to a shared frame file."""
+        if self._frame_dir:
+            try:
+                tmp = self._frame_dir / ".latest.tmp"
+                final = self._frame_dir / "latest.jpg"
+                tmp.write_bytes(jpeg_bytes)
+                tmp.replace(final)
+                if not getattr(self, '_frame_file_ok_logged', False):
+                    self._frame_file_ok_logged = True
+                    self.logger.info(
+                        "First frame written to %s (%d bytes)", final, len(jpeg_bytes)
+                    )
+            except Exception as e:
+                self.logger.warning(f"Frame file write failed: {e}")
+            return
+
+        from evileye.api.core.broker_access import get_broker
+        get_broker().publish_jpeg(self.stream_pipeline_id, jpeg_bytes)
+        if hasattr(self, '_server_process_manager') and self._server_process_manager is not None:
+            self._server_process_manager.publish_frame(self.stream_pipeline_id, jpeg_bytes)
+
+    # ── Getters ──────────────────────────────────────────────────────
+
     def get_fps(self) -> int:
         return self.fps
 
@@ -469,7 +505,7 @@ class Controller:
             pass
 
     def _publish_latest_frame_to_broker(self, processing_frames: list) -> None:
-        """Опубликовать последний кадр в web broker (если доступно)."""
+        """Опубликовать последний кадр в web broker или shared frame file."""
         try:
             if not processing_frames:
                 self.logger.debug("No processing frames available for publishing")
@@ -483,10 +519,8 @@ class Controller:
             if not ok:
                 self.logger.debug("JPEG encode returned false")
                 return
-            from evileye.api.core.broker_access import get_broker
-
             payload = buf.tobytes()
-            get_broker().publish_jpeg(self.stream_pipeline_id, payload)
+            self._publish_frame(payload)
             self.logger.debug(
                 f"Published frame to broker for pipeline '{self.stream_pipeline_id}', size: {len(payload)} bytes"
             )
@@ -669,140 +703,131 @@ class Controller:
         if self.system_events_detector:
             self.system_events_detector.emit_started()
         while self.run_flag:
-            # Periodic process-level resource stats to correlate slow RSS growth.
             try:
-                if self.params and isinstance(self.params, dict):
-                    ctrl_cfg = (self.params.get("controller", {}) or {})
-                    if "resource_stats_interval_sec" in ctrl_cfg:
+                # Periodic process-level resource stats to correlate slow RSS growth.
+                try:
+                    if self.params and isinstance(self.params, dict):
+                        ctrl_cfg = (self.params.get("controller", {}) or {})
+                        if "resource_stats_interval_sec" in ctrl_cfg:
+                            try:
+                                self._resource_stats_every_sec = float(
+                                    ctrl_cfg.get("resource_stats_interval_sec") or self._resource_stats_every_sec
+                                )
+                            except Exception:
+                                pass
+                    now_ts = time.time()
+                    every = float(self._resource_stats_every_sec or 0.0)
+                    if every > 0 and (self._resource_stats_last_ts <= 0 or (now_ts - self._resource_stats_last_ts) >= every):
+                        self._resource_stats_last_ts = now_ts
+                        self._log_resource_stats(context="periodic")
+                except Exception:
+                    pass
+
+                perf_diag_enabled = self._perf_diag_env
+                try:
+                    if self.params and isinstance(self.params, dict):
+                        cfg = (self.params.get("controller", {}) or {})
+                        if bool(cfg.get("perf_diag", False)):
+                            perf_diag_enabled = True
+                        if "perf_diag_every" in cfg:
+                            self._perf_diag_every = int(cfg.get("perf_diag_every") or self._perf_diag_every)
+                except Exception:
+                    pass
+
+                begin_it = timer()
+                t0 = timer() if perf_diag_enabled else None
+                self.pipeline.process()
+                t1 = timer() if perf_diag_enabled else None
+                all_sources_finished = self.pipeline.check_all_sources_finished()
+
+                objects_results = self.pipeline.get_latest_objects_results()
+                vis_frames = self.pipeline.get_latest_visualization_frames()
+                t2 = timer() if perf_diag_enabled else None
+                try:
+                    self.logger.debug(
+                        f"Visualization frames count: {len(vis_frames)}; "
+                        f"objects_results_count: {len(objects_results) if objects_results is not None else -1}"
+                    )
+                except Exception:
+                    pass
+
+                self.pipeline.insert_debug_info_by_id(self.debug_info)
+
+                if self.autoclose and all_sources_finished:
+                    self.run_flag = False
+
+                _ = self._process_pipeline_results(objects_results)
+
+                processing_frames = []
+                try:
+                    for item in (vis_frames or []):
+                        if isinstance(item, (tuple, list)) and len(item) == 2:
+                            _, img = item
+                            processing_frames.append(img)
+                        else:
+                            processing_frames.append(item)
+                except Exception:
+                    processing_frames = []
+
+                t3 = timer() if perf_diag_enabled else None
+                self._process_events_once()
+
+                dropped_frames = self.pipeline.get_dropped_ids()
+                self._publish_latest_frame_to_broker(processing_frames)
+                t4 = timer() if perf_diag_enabled else None
+
+                if self._check_memory_and_maybe_stop():
+                    continue
+
+                self._maybe_update_visualization(processing_frames, dropped_frames)
+                t5 = timer() if perf_diag_enabled else None
+
+                end_it = timer()
+                elapsed_seconds = end_it - begin_it
+
+                if self.fps:
+                    sleep_seconds = 1. / self.fps - elapsed_seconds
+                    if sleep_seconds <= 0.0:
+                        sleep_seconds = 0.001
+                else:
+                    sleep_seconds = 0.03
+
+                time.sleep(sleep_seconds)
+
+                if perf_diag_enabled:
+                    self._perf_diag_loop += 1
+                    every = max(1, int(self._perf_diag_every or 60))
+                    if (self._perf_diag_loop % every) == 0:
+                        lag_ms = None
                         try:
-                            self._resource_stats_every_sec = float(ctrl_cfg.get("resource_stats_interval_sec") or self._resource_stats_every_sec)
+                            if processing_frames:
+                                fr = processing_frames[-1]
+                                now = time.time()
+                                if getattr(fr, "current_video_position", None) is None or fr.current_video_position < 0:
+                                    ts = getattr(fr, "time_stamp", None)
+                                    if isinstance(ts, (int, float)) and ts > 0:
+                                        lag_ms = (now - float(ts)) * 1000.0
                         except Exception:
                             pass
-                now_ts = time.time()
-                every = float(self._resource_stats_every_sec or 0.0)
-                if every > 0 and (self._resource_stats_last_ts <= 0 or (now_ts - self._resource_stats_last_ts) >= every):
-                    self._resource_stats_last_ts = now_ts
-                    self._log_resource_stats(context="periodic")
-            except Exception:
-                pass
-
-            perf_diag_enabled = self._perf_diag_env
-            try:
-                if self.params and isinstance(self.params, dict):
-                    cfg = (self.params.get("controller", {}) or {})
-                    if bool(cfg.get("perf_diag", False)):
-                        perf_diag_enabled = True
-                    if "perf_diag_every" in cfg:
-                        self._perf_diag_every = int(cfg.get("perf_diag_every") or self._perf_diag_every)
-            except Exception:
-                pass
-
-            begin_it = timer()
-            t0 = timer() if perf_diag_enabled else None
-            # Process pipeline: sources -> preprocessors -> detectors -> trackers -> mc_trackers
-            self.pipeline.process()
-            t1 = timer() if perf_diag_enabled else None
-            all_sources_finished = self.pipeline.check_all_sources_finished()
-
-            # ObjectsHandler должен получать результаты пайплайна (не "кадры-заменители"),
-            # и выбор источника результатов должен быть внутри пайплайна (разные пайплайны — разная структура).
-            objects_results = self.pipeline.get_latest_objects_results()
-
-            # Visualization/streaming frames: allow pipeline to fall back to sources to keep UI moving.
-            vis_frames = self.pipeline.get_latest_visualization_frames()
-            t2 = timer() if perf_diag_enabled else None
-            try:
-                self.logger.debug(
-                    f"Visualization frames count: {len(vis_frames)}; "
-                    f"objects_results_count: {len(objects_results) if objects_results is not None else -1}"
-                )
-            except Exception:
-                pass
-
-            # Insert debug info from pipeline components
-            self.pipeline.insert_debug_info_by_id(self.debug_info)
-
-            if self.autoclose and all_sources_finished:
-                self.run_flag = False
-
-            # 1) Feed ObjectsHandler strictly from pipeline objects results (no fallback to frames-only).
-            _ = self._process_pipeline_results(objects_results)
-
-            # 2) Build frames for visualization/streaming from vis_frames (can be sources when nothing else available).
-            processing_frames = []
-            try:
-                for item in (vis_frames or []):
-                    if isinstance(item, (tuple, list)) and len(item) == 2:
-                        _, img = item
-                        processing_frames.append(img)
-                    else:
-                        processing_frames.append(item)
-            except Exception:
-                # Keep empty list if something is malformed; visualization must not break controller loop.
-                processing_frames = []
-            t3 = timer() if perf_diag_enabled else None
-            self._process_events_once()
-
-            # Get all dropped images from pipeline
-            dropped_frames = self.pipeline.get_dropped_ids()
-
-            # Publish latest frame to web streaming broker (if available)
-            self._publish_latest_frame_to_broker(processing_frames)
-            t4 = timer() if perf_diag_enabled else None
-
-            if self._check_memory_and_maybe_stop():
-                continue
-
-            self._maybe_update_visualization(processing_frames, dropped_frames)
-            t5 = timer() if perf_diag_enabled else None
-
-            end_it = timer()
-            elapsed_seconds = end_it - begin_it
-
-            if self.fps:
-                sleep_seconds = 1. / self.fps - elapsed_seconds
-                if sleep_seconds <= 0.0:
-                    sleep_seconds = 0.001
-            else:
-                sleep_seconds = 0.03
-
-            time.sleep(sleep_seconds)
-
-            if perf_diag_enabled:
-                self._perf_diag_loop += 1
-                every = max(1, int(self._perf_diag_every or 60))
-                if (self._perf_diag_loop % every) == 0:
-                    # Compute lag (best-effort): live uses time_stamp, video file uses current_video_position
-                    lag_ms = None
-                    try:
-                        if processing_frames:
-                            fr = processing_frames[-1]
-                            now = time.time()
-                            if getattr(fr, "current_video_position", None) is not None and fr.current_video_position >= 0:
-                                # How far behind wall-clock vs file position is not meaningful; keep as None.
-                                lag_ms = None
-                            else:
-                                ts = getattr(fr, "time_stamp", None)
-                                if isinstance(ts, (int, float)) and ts > 0:
-                                    lag_ms = (now - float(ts)) * 1000.0
-                    except Exception:
-                        pass
-                    try:
-                        self.logger.info(
-                            "PerfDiag: loop=%d, frames=%d, "
-                            "pipeline_ms=%.1f, select_ms=%.1f, proc_ms=%.1f, publish_ms=%.1f, viz_ms=%.1f, total_ms=%.1f%s",
-                            self._perf_diag_loop,
-                            (len(processing_frames) if processing_frames else 0),
-                            ((t1 - t0) * 1000.0 if (t0 is not None and t1 is not None) else -1.0),
-                            ((t2 - t1) * 1000.0 if (t1 is not None and t2 is not None) else -1.0),
-                            ((t3 - t2) * 1000.0 if (t2 is not None and t3 is not None) else -1.0),
-                            ((t4 - t3) * 1000.0 if (t3 is not None and t4 is not None) else -1.0),
-                            ((t5 - t4) * 1000.0 if (t4 is not None and t5 is not None) else -1.0),
-                            ((t5 - t0) * 1000.0 if (t0 is not None and t5 is not None) else -1.0),
-                            (f", lag_ms={lag_ms:.1f}" if lag_ms is not None else ""),
-                        )
-                    except Exception:
-                        pass
+                        try:
+                            self.logger.info(
+                                "PerfDiag: loop=%d, frames=%d, "
+                                "pipeline_ms=%.1f, select_ms=%.1f, proc_ms=%.1f, publish_ms=%.1f, viz_ms=%.1f, total_ms=%.1f%s",
+                                self._perf_diag_loop,
+                                (len(processing_frames) if processing_frames else 0),
+                                ((t1 - t0) * 1000.0 if (t0 is not None and t1 is not None) else -1.0),
+                                ((t2 - t1) * 1000.0 if (t1 is not None and t2 is not None) else -1.0),
+                                ((t3 - t2) * 1000.0 if (t2 is not None and t3 is not None) else -1.0),
+                                ((t4 - t3) * 1000.0 if (t3 is not None and t4 is not None) else -1.0),
+                                ((t5 - t4) * 1000.0 if (t4 is not None and t5 is not None) else -1.0),
+                                ((t5 - t0) * 1000.0 if (t0 is not None and t5 is not None) else -1.0),
+                                (f", lag_ms={lag_ms:.1f}" if lag_ms is not None else ""),
+                            )
+                        except Exception:
+                            pass
+            except Exception as exc:
+                self.logger.error("Unhandled error in control loop iteration: %s", exc, exc_info=True)
+                time.sleep(0.1)
 
         if self.system_events_detector:
             self.system_events_detector.emit_stopped()
@@ -1022,8 +1047,6 @@ class Controller:
         self.logger.info(f"Control thread started successfully")
 
     def stop(self):
-        # self._save_video_duration()
-
         self.run_flag = False
         if self.control_thread and self.control_thread.is_alive():
             # Don't block shutdown forever if pipeline.process() is stuck.
@@ -1087,7 +1110,14 @@ class Controller:
             self.system_diagnostics.stop()
         if self.memory_monitor:
             self.memory_monitor.stop()
-        
+
+        # Stop web server process if running
+        if self._server_process_manager is not None:
+            try:
+                self._server_process_manager.stop()
+            except Exception as e:
+                self.logger.warning(f"Error stopping server process: {e}")
+            self._server_process_manager = None
         self.logger.info('All controller components stopped')
 
     def init(self, params):
@@ -1378,6 +1408,18 @@ class Controller:
         
         # Initialize event-based recording components
         self._init_event_recording(params)
+
+        # Initialize web server in a separate process if configured
+        server_cfg = self.params.get("server", {})
+        if server_cfg.get("execution_mode") == "process" and server_cfg.get("enabled", False):
+            from evileye.server import ServerProcessManager
+            self._server_process_manager = ServerProcessManager()
+            self._server_process_manager.start(
+                host=server_cfg.get("host", "127.0.0.1"),
+                port=server_cfg.get("port", 8080),
+                log_level=server_cfg.get("log_level", "info"),
+            )
+            self.logger.info("Web server started in a separate process")
 
     def init_main_window(self, main_window: QMainWindow, pyqt_slots: dict, pyqt_signals: dict):
         self.main_window = main_window

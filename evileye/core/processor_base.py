@@ -2,6 +2,10 @@ from .base_class import EvilEyeBase
 from abc import ABC, abstractmethod
 from .logger import get_module_logger
 
+EXEC_MODE_THREAD = "thread"
+EXEC_MODE_PROCESS = "process"
+
+
 class ProcessorBase(ABC):
     def __init__(self, processor_name, class_name, num_processors: int, order: int):
         # Используем get_module_logger(), т.к. ProcessorBase не наследуется от EvilEyeBase
@@ -13,6 +17,8 @@ class ProcessorBase(ABC):
         self.num_processors = num_processors
         self.order = order
         # Создание процессоров вынесено в отдельный метод для снижения связности
+        self.dummy_processor = self._create_processor_instance(class_name)
+        self.execution_mode = EXEC_MODE_THREAD
         self.dummy_processor = self._create_processor_instance(class_name)
         self.processors = []
         for i in range(0, num_processors):
@@ -53,6 +59,11 @@ class ProcessorBase(ABC):
         self.params = params
         if len(params) != self.num_processors or type(params) != list:
             self.logger.error(f"Failed to initialize processors {self.class_name}[{self.num_processors}]. Wrong params list.")
+
+        # Detect execution_mode from the first param block (shared across all)
+        if params and isinstance(params, list) and len(params) > 0:
+            self.execution_mode = params[0].get('execution_mode', EXEC_MODE_THREAD)
+
         for i in range(0, self.num_processors):
             self.processors[i].set_params(**params[i])
 

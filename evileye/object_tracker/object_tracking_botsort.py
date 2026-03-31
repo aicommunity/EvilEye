@@ -3,7 +3,7 @@ import datetime
 from typing import List
 from ultralytics.engine.results import Boxes
 from ultralytics.trackers.bot_sort import BOTrack
-from .object_tracking_base import ObjectTrackingBase
+from .object_tracking_base import EXEC_MODE_PROCESS, ObjectTrackingBase
 from .trackers.bot_sort import BOTSORT
 from .trackers.track_encoder import TrackEncoder
 from .trackers.cfg.utils import read_cfg
@@ -72,6 +72,9 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
                 self.logger.debug("No encoders provided, ReID disabled")
             
             super().init_impl(**kwargs)
+            if self.execution_mode == EXEC_MODE_PROCESS:
+                self.logger.info("ObjectTrackingBotsort initialized in PROCESS mode")
+                return True
             
             # Ensure botsort_cfg is set (should be set by set_params_impl, but check anyway)
             if not self.botsort_cfg:
@@ -98,6 +101,7 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
     def set_params_impl(self):
         self.source_ids = self.params.get('source_ids', [])
         self.fps = self.params.get('fps', 5)
+        self.execution_mode = self.params.get('execution_mode', self.execution_mode)
 
         self.cfg_dict = self.params.get('botsort_cfg', self.cfg_dict)
         cfg_dict = self.cfg_dict
@@ -114,6 +118,7 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
         params['source_ids'] = self.source_ids
         params['fps'] = self.fps
         params['botsort_cfg'] = self.cfg_dict
+        params['execution_mode'] = self.execution_mode
         return params
 
     def default(self):

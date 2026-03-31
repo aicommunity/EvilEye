@@ -1,4 +1,5 @@
-from .object_detection_base import ModelBasedDetectorBase
+import os
+from .object_detection_base import EXEC_MODE_PROCESS, ModelBasedDetectorBase
 from ..core.base_class import EvilEyeBase
 
 
@@ -15,3 +16,39 @@ class ObjectDetectorYolo(ModelBasedDetectorBase):
 
     def _get_default_model_name(self) -> str:
         return "models/yolo11n.pt"
+
+    def init_impl(self):
+        if self.execution_mode != EXEC_MODE_PROCESS:
+            return super().init_impl()
+
+        inf_params = {
+            "show": self.params.get('show', False),
+            'conf': self.params.get('conf', 0.25),
+            'save': self.params.get('save', False),
+            "imgsz": self.params.get('inference_size', 640),
+            "device": self.params.get('device', None),
+        }
+        self.detection_threads = []
+        return self._init_process_mode(inf_params)
+
+    def _init_process_mode(self, inf_params):
+        """Initialize YOLO inference workers in child processes."""
+        from .detection_thread_yolo_mp import DetectionThreadYoloMp
+
+        model_path = self.model_name or self._get_default_model_name()
+        if not os.path.isabs(model_path):
+            model_path = os.path.join(os.getcwd(), model_path)
+
+        for i in range(self.num_detection_threads):
+            thread = DetectionThreadYoloMp(
+                model_path, self.stride, self.classes,
+                self.source_ids, self.roi, inf_params,
+                self.queue_out, logger_name=f"det{i}", parent_logger=self.logger,
+            )
+            thread.start()
+            self.detection_threads.append(thread)
+        self.logger.info(
+            f"Detection initialized in PROCESS mode with "
+            f"{self.num_detection_threads} worker(s)"
+        )
+        return True

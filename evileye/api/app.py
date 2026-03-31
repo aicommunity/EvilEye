@@ -1,12 +1,15 @@
 import os
+from pathlib import Path
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 from evileye.core.logger import get_module_logger
 from evileye.api.routes.configs import router as configs_router
-from evileye.api.routes.pipelines import router as pipelines_router
+# from evileye.api.routes.pipelines import router as pipelines_router  # DEPRECATED
 from evileye.api.routes.streaming import router as streaming_router
-from evileye.api.routes.events import router as events_router
+# from evileye.api.routes.events import router as events_router  # DEPRECATED
+from evileye.api.routes.internal import router as internal_router
 from evileye.api.core.config_run_access import get_config_run_manager
 from evileye.api.core.manager_access import get_manager
 from evileye import __version__
@@ -48,9 +51,17 @@ def create_app() -> FastAPI:
         return {"evileye": __version__, "api": app.version}
 
     app.include_router(configs_router)
-    app.include_router(pipelines_router)
+    # app.include_router(pipelines_router)  # DEPRECATED: use /api/v1/configs/runs
     app.include_router(streaming_router)
-    app.include_router(events_router)
-    logger.info("Routers registered: configs, pipelines, streaming, events")
+    # app.include_router(events_router)  # DEPRECATED: requires in-process Controller access
+    app.include_router(internal_router)
+    logger.info("Routers registered: configs, streaming, internal")
+
+    static_dir = Path(__file__).parent / "static"
+    if static_dir.exists():
+        app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="frontend")
+        logger.info("Frontend static files mounted at /")
+    else:
+        logger.warning("Frontend not built: static dir missing. Run: cd evileye/api/frontend && npm install && npm run build")
 
     return app

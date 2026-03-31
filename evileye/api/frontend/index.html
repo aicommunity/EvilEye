@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EvilEye — Управление пайплайнами</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Outfit:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/main.css">
+</head>
+<body>
+  <div class="layout">
+    <header class="header">
+      <div class="header-brand">
+        <h1 class="logo">EvilEye</h1>
+        <p class="tagline">Управление конфигурациями и пайплайнами</p>
+      </div>
+      <nav class="tabs">
+        <button type="button" id="nav-streaming" class="tab active">Видеопотоки</button>
+        <button type="button" id="nav-runs" class="tab">Пайплайны</button>
+        <button type="button" id="nav-configs" class="tab">Конфиги</button>
+      </nav>
+    </header>
+
+    <main class="main">
+      <section id="panel-streaming" class="panel active">
+        <div class="card streaming-card">
+          <h2>Видеопотоки</h2>
+          <p class="hint">Для каждого работающего пайплайна: кадр (Snapshot), статус потока (Stream Status), видеопоток (MJPEG). Остановить пайплайн можно на вкладке «Пайплайны».</p>
+          <div class="toolbar">
+            <button type="button" id="streaming-refresh-btn" class="btn btn-outline">Обновить список</button>
+          </div>
+          <div id="streaming-list" class="streaming-list"></div>
+        </div>
+      </section>
+
+      <section id="panel-configs" class="panel">
+        <div class="card">
+          <h2>Конфигурации</h2>
+          <p class="hint">Файлы конфигурации в формате JSON. Можно просматривать, создавать, редактировать и удалять.</p>
+          <div class="toolbar">
+            <input type="search" id="config-search" placeholder="Поиск по названию…" class="search-input" aria-label="Поиск конфигов">
+            <button type="button" id="config-create-btn" class="btn btn-primary">Создать конфиг</button>
+          </div>
+          <ul id="configs-list" class="configs-list"></ul>
+        </div>
+      </section>
+
+      <section id="panel-runs" class="panel">
+        <div class="card create-card">
+          <h2>Новый пайплайн</h2>
+          <p class="hint">Создайте пайплайн по выбранному конфигу или вставьте свой JSON. После запуска видеопоток появится на вкладке «Видеопотоки».</p>
+          <div class="form-row">
+            <label class="checkbox-label">
+              <input type="checkbox" id="run-use-body" aria-label="Свой JSON">
+              <span>Вставить свой JSON</span>
+            </label>
+          </div>
+          <div class="form-row run-form-main">
+            <select id="run-config-select" aria-label="Конфиг"></select>
+            <input type="text" id="run-name" placeholder="Имя пайплайна (необязательно)" aria-label="Имя пайплайна">
+            <button type="button" id="run-create-btn" class="btn btn-primary">Создать пайплайн</button>
+          </div>
+          <div id="run-body-wrap" class="form-row hidden">
+            <label for="run-body">JSON конфигурации</label>
+            <textarea id="run-body" rows="8" placeholder='{"sources": [...]}' aria-label="JSON конфигурации"></textarea>
+          </div>
+        </div>
+        <div class="card runs-card">
+          <h2>Список пайплайнов</h2>
+          <p class="hint">Создайте пайплайн, запустите его — видеопоток будет доступен на вкладке «Видеопотоки». Здесь: запуск, остановка, удаление, детали.</p>
+          <div class="toolbar runs-toolbar">
+            <input type="search" id="run-search" placeholder="Поиск по id, имени, конфигу, статусу…" class="search-input" aria-label="Поиск пайплайнов">
+            <button type="button" id="run-refresh-btn" class="btn btn-outline">Обновить</button>
+          </div>
+          <ul id="runs-list" class="runs-list"></ul>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span id="footer-version">—</span>
+    </footer>
+
+    <div id="config-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="config-modal-title">
+      <div class="modal-backdrop"></div>
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 id="config-modal-title">Конфиг</h2>
+          <button type="button" id="config-modal-close" class="btn btn-outline" aria-label="Закрыть">&times;</button>
+        </div>
+        <div class="modal-body">
+          <label for="config-name">Имя файла (.json)</label>
+          <input type="text" id="config-name" placeholder="my_config.json" aria-label="Имя конфига">
+          <label for="config-body">Содержимое JSON</label>
+          <textarea id="config-body" rows="14" placeholder="{}" aria-label="JSON"></textarea>
+        </div>
+        <div class="modal-footer config-modal-footer">
+          <button type="button" id="config-save-btn" class="btn btn-primary">Сохранить</button>
+          <button type="button" id="config-close-btn" class="btn btn-outline">Закрыть</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="run-detail-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="run-detail-title">
+      <div class="modal-backdrop"></div>
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 id="run-detail-title">Подробности пайплайна</h2>
+          <button type="button" id="run-detail-close" class="btn btn-outline" aria-label="Закрыть">&times;</button>
+        </div>
+        <div class="modal-body run-detail-body">
+          <p><strong>ID</strong> <span id="run-detail-rid">—</span></p>
+          <p><strong>Имя</strong> <span id="run-detail-name">—</span></p>
+          <p><strong>Статус</strong> <span id="run-detail-state">—</span></p>
+          <p><strong>Конфиг</strong> <span id="run-detail-config-path">—</span></p>
+          <p><strong>PID</strong> <span id="run-detail-pid">—</span></p>
+          <p id="run-detail-error" class="run-detail-error hidden"></p>
+          <div id="run-detail-actions" class="run-detail-actions"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="stream-container" class="stream-container">
+      <div class="stream-header">
+        <div class="stream-info">
+          <span>Видеопоток пайплайна <strong id="stream-rid">-</strong></span>
+          <span id="stream-name" class="stream-name">-</span>
+          <span id="stream-state" class="badge">-</span>
+          <span id="stream-status" class="stream-status">-</span>
+        </div>
+        <div class="stream-controls">
+          <label class="stream-fps-label">FPS <input type="number" id="stream-fps-input" value="10" min="1" max="30" aria-label="FPS потока"></label>
+          <button type="button" id="stream-apply-fps-btn" class="btn btn-sm btn-outline">Применить FPS</button>
+        </div>
+        <div class="stream-actions">
+          <button type="button" id="stream-snapshot-btn" class="btn btn-sm btn-outline">Обновить кадр</button>
+          <button type="button" id="stream-back-btn" class="btn btn-outline">Закрыть</button>
+        </div>
+      </div>
+      <div class="stream-body">
+        <div class="stream-sidebar">
+          <p class="stream-sidebar-title">Последний кадр</p>
+          <img id="stream-snapshot" alt="Кадр" class="stream-snapshot">
+        </div>
+        <div class="stream-main">
+          <p class="stream-main-title">Видеопоток</p>
+          <img id="stream-frame" alt="Видеопоток" class="stream-frame">
+        </div>
+      </div>
+    </div>
+
+    <div id="error-toast" class="toast toast-error" role="alert"></div>
+    <div id="success-toast" class="toast toast-success" role="alert"></div>
+  </div>
+  <script type="module" src="/main.js"></script>
+</body>
+</html>

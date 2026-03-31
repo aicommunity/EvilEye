@@ -1,9 +1,10 @@
 from ..core.mp_worker import MpWorker
 from ultralytics import YOLO
 
+
 class MpWorkerYolo(MpWorker):
-    def __init__(self, input_queue, output_queue):
-        super().__init__(input_queue, output_queue)
+    def __init__(self, input_queue, output_queue, log_queue=None):
+        super().__init__(input_queue, output_queue, log_queue=log_queue)
         self.model_name = ""
         self.model = None
         self.classes = []
@@ -21,10 +22,8 @@ class MpWorkerYolo(MpWorker):
         self.model = YOLO(self.model_name)
         # Try to fuse Conv+BN layers (optimization, not required)
         try:
-            self.model.fuse()  # Fuse Conv+BN layers
-        except Exception as e:
-            # Fuse may fail with mixed precision models, continue without it
-            # Note: logger may not be available in multiprocessing context
+            self.model.fuse()
+        except Exception:
             pass
         if self.inf_params.get('half', True):
             self.model.half()
@@ -37,3 +36,8 @@ class MpWorkerYolo(MpWorker):
 
         del results
         return cpu_results
+
+    def cleanup(self):
+        if self.model is not None:
+            del self.model
+            self.model = None

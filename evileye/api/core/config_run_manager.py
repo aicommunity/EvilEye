@@ -1,8 +1,11 @@
 import os
 import json
+import shutil
 import signal
 import subprocess
+import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -26,6 +29,73 @@ class ConfigRunItem:
         self.pid: Optional[int] = None
         self.state: str = ConfigRunState.CREATED
         self.error: Optional[str] = None
+        self.frame_dir: Optional[Path] = None
+
+
+class _FramePoller:
+    """Background thread that reads frame files written by child processes
+    and publishes them to the FrameBroker so streaming endpoints work."""
+
+    def __init__(self, logger):
+        self._lock = threading.Lock()
+        self._watched: Dict[int, Path] = {}
+        self._mtimes: Dict[int, float] = {}
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._loop, daemon=True, name="frame-poller")
+        self._logger = logger
+        self._thread.start()
+
+    def watch(self, rid: int, frame_dir: Path) -> None:
+        with self._lock:
+            self._watched[rid] = frame_dir / "latest.jpg"
+            self._mtimes[rid] = 0.0
+        self._logger.info(f"Frame poller watching rid={rid} at {frame_dir}")
+
+    def unwatch(self, rid: int) -> None:
+        with self._lock:
+            self._watched.pop(rid, None)
+            self._mtimes.pop(rid, None)
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=3.0)
+
+    def _loop(self) -> None:
+        from evileye.api.core.broker_access import get_broker
+        broker = get_broker()
+        first_frame_logged: dict = {}
+        miss_counter: dict = {}
+        while not self._stop.is_set():
+            with self._lock:
+                items = list(self._watched.items())
+            for rid, fpath in items:
+                try:
+                    if not fpath.exists():
+                        cnt = miss_counter.get(rid, 0) + 1
+                        miss_counter[rid] = cnt
+                        if cnt == 250:
+                            self._logger.warning(
+                                "Frame file %s still missing after ~10s", fpath
+                            )
+                        continue
+                    mtime = fpath.stat().st_mtime
+                    prev = self._mtimes.get(rid, 0.0)
+                    if mtime <= prev:
+                        continue
+                    data = fpath.read_bytes()
+                    if data:
+                        broker.publish_jpeg(str(rid), data)
+                        with self._lock:
+                            self._mtimes[rid] = mtime
+                        if rid not in first_frame_logged:
+                            first_frame_logged[rid] = True
+                            self._logger.info(
+                                "First frame read for rid=%s (%d bytes, mtime=%.3f)",
+                                rid, len(data), mtime,
+                            )
+                except Exception as e:
+                    self._logger.warning("FramePoller error for rid=%s: %s", rid, e)
+            self._stop.wait(0.04)
 
 
 class ConfigRunManager:
@@ -36,6 +106,7 @@ class ConfigRunManager:
         self._items: Dict[int, ConfigRunItem] = {}
         self._shutdown_called = False
         self.logger = get_module_logger("api.config_run_manager")
+        self._frame_poller = _FramePoller(self.logger)
 
     def _describe_locked(self, item: ConfigRunItem) -> Dict:
         return {
@@ -114,7 +185,17 @@ class ConfigRunManager:
 
         try:
             item.state = ConfigRunState.STARTING
-            # Spawn separate python process to run config headless (no GUI)
+
+            frame_dir = Path(tempfile.gettempdir()) / "evileye_frames" / str(rid)
+            frame_dir.mkdir(parents=True, exist_ok=True)
+            item.frame_dir = frame_dir
+
+            env = {
+                **os.environ,
+                "EVILEYE_PIPELINE_ID": str(rid),
+                "EVILEYE_FRAME_DIR": str(frame_dir),
+                "PYTHONUNBUFFERED": "1",
+            }
             cmd = [
                 os.sys.executable,
                 str(Path(__file__).resolve().parents[2] / "process.py"),
@@ -123,10 +204,11 @@ class ConfigRunManager:
                 "--no-autoclose",
             ]
             self.logger.info(f"Starting config run '{rid}': {' '.join(cmd)}")
-            proc = subprocess.Popen(cmd, cwd=str(Path.cwd()))
+            proc = subprocess.Popen(cmd, cwd=str(Path.cwd()), env=env)
             item.pid = proc.pid
             item.state = ConfigRunState.RUNNING
-            self.logger.info(f"ConfigRun '{rid}' running with pid {item.pid}")
+            self._frame_poller.watch(rid, frame_dir)
+            self.logger.info(f"ConfigRun '{rid}' running with pid {item.pid}, frame_dir={frame_dir}")
         except Exception as e:
             item.state = ConfigRunState.ERROR
             item.error = str(e)
@@ -140,15 +222,17 @@ class ConfigRunManager:
             if item is None:
                 raise KeyError("Config run not found")
 
+        self._frame_poller.unwatch(rid)
+
         if item.pid is None or item.state not in (ConfigRunState.STARTING, ConfigRunState.RUNNING):
             item.state = ConfigRunState.STOPPED
+            self._cleanup_frame_dir(item)
             return self.describe(rid)
 
         try:
             item.state = ConfigRunState.STOPPING
             self.logger.info(f"Stopping config run '{rid}', pid={item.pid}")
             os.kill(item.pid, signal.SIGTERM)
-            # Wait a bit, escalate if needed
             for _ in range(10):
                 try:
                     os.kill(item.pid, 0)
@@ -157,7 +241,6 @@ class ConfigRunManager:
                     item.state = ConfigRunState.STOPPED
                     break
                 else:
-                    import time
                     time.sleep(0.2)
             if item.state != ConfigRunState.STOPPED and item.pid is not None:
                 self.logger.warning(f"Force killing config run '{rid}', pid={item.pid}")
@@ -172,7 +255,16 @@ class ConfigRunManager:
             item.error = str(e)
             self.logger.error(f"ConfigRun '{rid}' failed to stop: {e}")
 
+        self._cleanup_frame_dir(item)
         return self.describe(rid)
+
+    def _cleanup_frame_dir(self, item: ConfigRunItem) -> None:
+        if item.frame_dir and item.frame_dir.exists():
+            try:
+                shutil.rmtree(item.frame_dir, ignore_errors=True)
+            except Exception:
+                pass
+            item.frame_dir = None
 
     def shutdown(self) -> None:
         with self._lock:
@@ -182,6 +274,7 @@ class ConfigRunManager:
             self._shutdown_called = True
 
         self.logger.info("ConfigRunManager shutdown initiated")
+        self._frame_poller.stop()
         with self._lock:
             ids = list(self._items.keys())
         for rid in ids:

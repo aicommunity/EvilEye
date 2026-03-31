@@ -621,6 +621,12 @@ evileye server --log-level debug
 - ReDoc documentation: `http://localhost:8080/redoc`
 - OpenAPI schema: `http://localhost:8080/openapi.json`
 
+**Веб-интерфейс (frontend):** лёгкое SPA на TypeScript доступно по адресу `http://localhost:8080/` после однократной сборки:
+```bash
+cd evileye/api/frontend && npm install && npm run build
+```
+Подробности в `evileye/api/frontend/README.md`.
+
 **Alternative entry point:**
 ```bash
 # Use evileye-srv as alternative entry point

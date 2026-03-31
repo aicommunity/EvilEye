@@ -570,6 +570,10 @@ def start_api(
     
     if not reload:
         cmd.append("--no-reload")
+    if workers != 1:
+        cmd.extend(["--workers", str(workers)])
+    if verbose:
+        cmd.append("--verbose")
 
     if config:
         cmd.extend(["--config", config])

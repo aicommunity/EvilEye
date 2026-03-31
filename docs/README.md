@@ -14,6 +14,7 @@
 
 - **[Архитектура системы](ARCHITECTURE.md)** - Полное описание архитектуры на 7 уровнях абстракции (CLI, Controller, Pipeline, Video, Objects, Events, Database) с интерактивными Mermaid диаграммами и статическими UML диаграммами
 - **[Архитектура Pipeline](PIPELINE_ARCHITECTURE.md)** - Описание архитектуры pipeline, базовых классов и способов создания собственных pipeline
+- **[Мультипроцессность](MULTIPROCESSING.md)** - Запуск компонентов в отдельных OS-процессах, конфигурация `execution_mode`, диаграммы, FAQ
 - **[Руководство по рефакторингу GUI](GUI_REFACTORING_GUIDE.md)** - Архитектура GUI системы, компоненты и лучшие практики
 - **[Руководство по Dependency Injection](DEPENDENCY_INJECTION_GUIDE.md)** - Подробное описание механизма Dependency Injection, DIContainer и DependencyRegistry с примерами использования
 
