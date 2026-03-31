@@ -59,7 +59,6 @@ from evileye.controller.services import (
     ObjectsHandlerService,
     ServiceLocator,
 )
-import cv2
 import os
 
 
@@ -96,7 +95,6 @@ class Controller:
         # Web server process manager (set when server.execution_mode == "process")
         self._server_process_manager = None
         self._stream_publish_fps = 5.0
-        self._stream_publish_last_ts = 0.0
 
         self.obj_handler = None
         self.visualizer = None
@@ -154,6 +152,7 @@ class Controller:
         self._visualization_service = self.service_locator.get_visualization_service()
         self._config_service = self.service_locator.get_config_service()
         self._objects_handler_service = self.service_locator.get_objects_handler_service()
+        self._streaming_service = self.service_locator.get_streaming_service()
         
         # Default COCO class mapping: class_name -> class_id
         self.class_mapping = {
@@ -286,62 +285,6 @@ class Controller:
         self._video_ts_state: dict[int, dict[str, float | None]] = {}
     
     # ── Frame publishing ────────────────────────────────────────────
-
-    def _publish_frame(self, jpeg_bytes: bytes) -> None:
-        """Publish JPEG to local FrameBroker and/or to a shared frame file."""
-        if self._frame_dir:
-            try:
-                tmp = self._frame_dir / ".latest.tmp"
-                final = self._frame_dir / "latest.jpg"
-                tmp.write_bytes(jpeg_bytes)
-                tmp.replace(final)
-                if not getattr(self, '_frame_file_ok_logged', False):
-                    self._frame_file_ok_logged = True
-                    self.logger.info(
-                        "First frame written to %s (%d bytes)", final, len(jpeg_bytes)
-                    )
-            except Exception as e:
-                self.logger.warning(f"Frame file write failed: {e}")
-            return
-
-        from evileye.api.core.broker_access import get_broker
-        get_broker().publish_jpeg(self.stream_pipeline_id, jpeg_bytes)
-        if hasattr(self, '_server_process_manager') and self._server_process_manager is not None:
-            self._server_process_manager.publish_frame(self.stream_pipeline_id, jpeg_bytes)
-
-    def _should_publish_frame(self) -> bool:
-        """Avoid JPEG encoding when no consumer is active and throttle publish FPS."""
-        if self._frame_dir:
-            return True
-
-        try:
-            from evileye.api.core.broker_access import get_broker
-            has_local_stream = get_broker().is_stream_active(self.stream_pipeline_id)
-        except Exception:
-            has_local_stream = False
-
-        try:
-            has_server_process = (
-                hasattr(self, "_server_process_manager")
-                and self._server_process_manager is not None
-                and self._server_process_manager.is_alive()
-            )
-        except Exception:
-            has_server_process = False
-
-        if not has_local_stream and not has_server_process:
-            return False
-
-        publish_fps = max(0.0, float(getattr(self, "_stream_publish_fps", 0.0) or 0.0))
-        if publish_fps <= 0.0:
-            return True
-
-        now = time.time()
-        min_interval = 1.0 / publish_fps
-        if (now - float(getattr(self, "_stream_publish_last_ts", 0.0) or 0.0)) < min_interval:
-            return False
-        self._stream_publish_last_ts = now
-        return True
 
     # ── Getters ──────────────────────────────────────────────────────
 
@@ -549,22 +492,18 @@ class Controller:
             if not processing_frames:
                 self.logger.debug("No processing frames available for publishing")
                 return
-            if not self._should_publish_frame():
-                return
             last_frame = processing_frames[-1]
             # Frame инициализирует image в __init__, поэтому прямой доступ безопасен
             if last_frame.image is None:
                 self.logger.debug("Last frame has no image or image is None")
                 return
-            ok, buf = cv2.imencode(".jpg", last_frame.image)
-            if not ok:
-                self.logger.debug("JPEG encode returned false")
-                return
-            payload = buf.tobytes()
-            self._publish_frame(payload)
-            self.logger.debug(
-                f"Published frame to broker for pipeline '{self.stream_pipeline_id}', size: {len(payload)} bytes"
-            )
+            if self._streaming_service and self._streaming_service.submit_frame(last_frame):
+                self.logger.debug(
+                    "Submitted frame for async streaming publish: pipeline=%s source=%s frame=%s",
+                    self.stream_pipeline_id,
+                    getattr(last_frame, "source_id", None),
+                    getattr(last_frame, "frame_id", None),
+                )
         except Exception as e:
             # Do not break controller loop if streaming is not initialized
             self.logger.debug(f"Frame publish failed: {e}")
@@ -1159,6 +1098,8 @@ class Controller:
             except Exception as e:
                 self.logger.warning(f"Error stopping server process: {e}")
             self._server_process_manager = None
+        if self._streaming_service is not None:
+            self._streaming_service.stop()
         self.logger.info('All controller components stopped')
 
     def init(self, params):
@@ -1200,7 +1141,6 @@ class Controller:
         server_cfg = self.params.get("server", {}) if isinstance(self.params, dict) else {}
         if isinstance(server_cfg, dict):
             self._stream_publish_fps = float(server_cfg.get("publish_fps", self._stream_publish_fps) or 0.0)
-            self._stream_publish_last_ts = 0.0
 
         try:
             with open("credentials.json") as creds_file:
@@ -1455,8 +1395,19 @@ class Controller:
         # Initialize event-based recording components
         self._init_event_recording(params)
 
+        server_cfg = self.params.get("server", {}) if isinstance(self.params, dict) else {}
+        if self._streaming_service is not None:
+            self._streaming_service.configure(
+                pipeline_id=self.stream_pipeline_id,
+                publish_fps=self._stream_publish_fps,
+                frame_dir=self._frame_dir,
+                server_process_manager=self._server_process_manager,
+                encoder_backend=server_cfg.get("preview_encoder", "auto"),
+                jpeg_quality=server_cfg.get("preview_jpeg_quality", 85),
+                num_workers=server_cfg.get("preview_encode_workers", 1),
+            )
+
         # Initialize web server in a separate process if configured
-        server_cfg = self.params.get("server", {})
         if server_cfg.get("execution_mode") == "process" and server_cfg.get("enabled", False):
             from evileye.server import ServerProcessManager
             self._server_process_manager = ServerProcessManager()
@@ -1465,6 +1416,8 @@ class Controller:
                 port=server_cfg.get("port", 8080),
                 log_level=server_cfg.get("log_level", "info"),
             )
+            if self._streaming_service is not None:
+                self._streaming_service.set_server_process_manager(self._server_process_manager)
             self.logger.info("Web server started in a separate process")
 
     def init_main_window(self, main_window: QMainWindow, pyqt_slots: dict, pyqt_signals: dict):

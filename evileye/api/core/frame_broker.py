@@ -1,8 +1,16 @@
 import threading
 import multiprocessing as mp
-from typing import Dict, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional, Tuple
 import time
 from evileye.core.logger import get_module_logger
+
+
+@dataclass
+class FramePayload:
+    data: bytes
+    timestamp: float
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class FrameBroker:
@@ -17,7 +25,7 @@ class FrameBroker:
     def __init__(self):
         self.logger = get_module_logger("api.frame_broker")
         self._lock = threading.Lock()
-        self._frames: Dict[str, Tuple[bytes, float]] = {}
+        self._frames: Dict[str, FramePayload] = {}
         self._active_streams: Dict[str, threading.Event] = {}
         self._max_frame_age_seconds = 30.0
         self._max_frames_per_pipeline = 10
@@ -49,8 +57,12 @@ class FrameBroker:
                 item = self._ipc_queue.get(timeout=0.5)
                 if item is None:
                     break
-                pipeline_id, jpeg_bytes = item
-                self.publish_jpeg(pipeline_id, jpeg_bytes)
+                if isinstance(item, tuple) and len(item) == 3:
+                    pipeline_id, jpeg_bytes, metadata = item
+                else:
+                    pipeline_id, jpeg_bytes = item
+                    metadata = None
+                self.publish_jpeg(pipeline_id, jpeg_bytes, metadata=metadata)
             except Exception:
                 continue
 
@@ -74,15 +86,15 @@ class FrameBroker:
         cutoff_time = current_time - max_age_seconds
 
         pipelines_to_remove = []
-        for pipeline_id, (jpeg_data, timestamp) in list(self._frames.items()):
-            if timestamp < cutoff_time:
-                pipelines_to_remove.append((pipeline_id, timestamp))
+        for pipeline_id, payload in list(self._frames.items()):
+            if payload.timestamp < cutoff_time:
+                pipelines_to_remove.append((pipeline_id, payload.timestamp))
 
         for pipeline_id, timestamp in pipelines_to_remove:
             del self._frames[pipeline_id]
 
         if len(self._frames) > self._max_frames_per_pipeline * max(1, len(self._active_streams)):
-            sorted_frames = sorted(self._frames.items(), key=lambda x: x[1][1])
+            sorted_frames = sorted(self._frames.items(), key=lambda x: x[1].timestamp)
             frames_to_remove = len(self._frames) - (self._max_frames_per_pipeline * max(1, len(self._active_streams)))
             removed_count = 0
             for pipeline_id, _ in sorted_frames:
@@ -90,20 +102,43 @@ class FrameBroker:
                     del self._frames[pipeline_id]
                     removed_count += 1
 
-    def publish_jpeg(self, pipeline_id: str, jpeg_bytes: bytes) -> None:
+    def publish_payload(
+        self,
+        pipeline_id: str,
+        payload: bytes,
+        *,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> None:
         with self._lock:
-            self._frames[pipeline_id] = (jpeg_bytes, time.time())
+            self._frames[pipeline_id] = FramePayload(
+                data=payload,
+                timestamp=time.time(),
+                metadata=dict(metadata or {}),
+            )
             if hash(pipeline_id) % 10 == 0:
                 self._cleanup_old_frames()
         self.logger.debug(f"Published frame for pipeline '{pipeline_id}'")
 
+    def publish_jpeg(
+        self,
+        pipeline_id: str,
+        jpeg_bytes: bytes,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> None:
+        meta = dict(metadata or {})
+        meta.setdefault("content_type", "image/jpeg")
+        self.publish_payload(pipeline_id, jpeg_bytes, metadata=meta)
+
     def latest_jpeg(self, pipeline_id: str) -> Optional[bytes]:
+        payload = self.latest_payload(pipeline_id)
+        return payload.data if payload else None
+
+    def latest_payload(self, pipeline_id: str) -> Optional[FramePayload]:
         with self._lock:
-            item = self._frames.get(pipeline_id)
-            if not item:
+            payload = self._frames.get(pipeline_id)
+            if not payload:
                 return None
-            jpeg_data, timestamp = item
-            return jpeg_data
+            return payload
 
     def start_stream(self, pipeline_id: str) -> threading.Event:
         with self._lock:

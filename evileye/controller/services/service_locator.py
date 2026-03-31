@@ -9,6 +9,7 @@ from evileye.controller.services.database_service import DatabaseService
 from evileye.controller.services.events_service import EventsService
 from evileye.controller.services.objects_handler_service import ObjectsHandlerService
 from evileye.controller.services.pipeline_service import PipelineService
+from evileye.controller.services.streaming_service import StreamingService
 from evileye.controller.services.visualization_service import VisualizationService
 
 
@@ -23,6 +24,7 @@ class ServiceLocator:
         self._visualization_service: Optional[VisualizationService] = None
         self._config_service: Optional[ConfigurationService] = None
         self._objects_handler_service: Optional[ObjectsHandlerService] = None
+        self._streaming_service: Optional[StreamingService] = None
 
     def register_pipeline_service(self, service: PipelineService) -> None:
         """Зарегистрировать сервис pipeline.
@@ -104,6 +106,12 @@ class ServiceLocator:
         """
         return self._config_service
 
+    def register_streaming_service(self, service: StreamingService) -> None:
+        self._streaming_service = service
+
+    def get_streaming_service(self) -> Optional[StreamingService]:
+        return self._streaming_service
+
     def register_objects_handler_service(self, service: ObjectsHandlerService) -> None:
         """Зарегистрировать сервис ObjectsHandler.
 
@@ -138,6 +146,8 @@ class ServiceLocator:
             self._config_service = ConfigurationService()
         if self._objects_handler_service is None:
             self._objects_handler_service = ObjectsHandlerService(class_manager=class_manager)
+        if self._streaming_service is None:
+            self._streaming_service = StreamingService()
 
     def release_all(self) -> None:
         """Освободить все сервисы."""
@@ -151,3 +161,5 @@ class ServiceLocator:
             self._visualization_service.release()
         if self._objects_handler_service:
             self._objects_handler_service.release_objects_handler()
+        if self._streaming_service:
+            self._streaming_service.stop()

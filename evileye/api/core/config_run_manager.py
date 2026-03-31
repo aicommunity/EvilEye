@@ -84,7 +84,15 @@ class _FramePoller:
                         continue
                     data = fpath.read_bytes()
                     if data:
-                        broker.publish_jpeg(str(rid), data)
+                        broker.publish_jpeg(
+                            str(rid),
+                            data,
+                            metadata={
+                                "timestamp": time.time(),
+                                "content_type": "image/jpeg",
+                                "transport": "file_ipc",
+                            },
+                        )
                         with self._lock:
                             self._mtimes[rid] = mtime
                         if rid not in first_frame_logged:

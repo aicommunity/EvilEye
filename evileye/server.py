@@ -82,7 +82,7 @@ class ServerProcessManager:
         self._process.start()
         self.logger.info(f"Web server process started, pid={self._process.pid}")
 
-    def publish_frame(self, pipeline_id: str, jpeg_bytes: bytes):
+    def publish_frame(self, pipeline_id: str, jpeg_bytes: bytes, metadata=None):
         """Send a JPEG frame to the web server process"""
         if self._frame_queue is None:
             return
@@ -92,7 +92,7 @@ class ServerProcessManager:
                     self._frame_queue.get_nowait()
                 except Exception:
                     pass
-            self._frame_queue.put_nowait((pipeline_id, jpeg_bytes))
+            self._frame_queue.put_nowait((pipeline_id, jpeg_bytes, metadata or {}))
         except Exception:
             pass
 
