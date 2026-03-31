@@ -37,7 +37,7 @@ if PYDANTIC_AVAILABLE:
 
         fps: int = Field(default=30, ge=1, le=120, description="FPS обработки")
         show_main_gui: bool = Field(default=True, description="Показывать главное GUI")
-        use_database: bool = Field(default=True, description="Использовать БД")
+        use_database: bool = Field(default=False, description="Использовать БД")
 
 
 class ConfigValidator:

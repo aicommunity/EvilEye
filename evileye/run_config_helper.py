@@ -14,8 +14,6 @@ except ImportError:
     pyqt_version = 5
 
 from evileye.controller import controller
-from evileye.visualization_modules.main_window import MainWindow
-from evileye.visualization_modules.startup_progress_window import StartupProgressWindow
 from evileye.visualization_modules.controller_init_thread import ControllerInitThread
 from evileye.utils.utils import normalize_config_path
 from evileye.core.logger import get_module_logger
@@ -111,6 +109,7 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
         try:
             import os as _os
             _os.environ.setdefault("QT_NO_GLIB", "1")
+            _os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         except Exception:
             pass
         qt_app = QApplication.instance() or QApplication(sys.argv)
@@ -126,6 +125,7 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
         
         # Show progress window only in VISIBLE mode
         if gui_mode == GUIMode.VISIBLE:
+            from evileye.visualization_modules.startup_progress_window import StartupProgressWindow
             progress_window = StartupProgressWindow()
             progress_window.show()
             progress_window.raise_()
@@ -276,6 +276,7 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
         try:
             import os as _os
             _os.environ.setdefault("QT_NO_GLIB", "1")
+            _os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
         except Exception:
             pass
         qt_app = QApplication.instance() or QApplication(sys.argv)
@@ -368,6 +369,8 @@ def _connect_gui_to_controller(controller_instance, config_file_name, config_dat
     through the visualization adapter after controller initialization.
     """
     try:
+        from evileye.visualization_modules.main_window import MainWindow
+
         # Update progress if available
         if progress_window:
             progress_window.update_progress(90, "Creating GUI components...")

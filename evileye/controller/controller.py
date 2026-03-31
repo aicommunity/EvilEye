@@ -109,7 +109,10 @@ class Controller:
         self.max_memory_usage_mb = 1024*16
         self.show_memory_usage = False
         self.auto_restart = True
-        self.use_database = True  # Default to True for backward compatibility
+        # DB access goes through native psycopg2 code, so configs must opt in
+        # explicitly. This prevents accidental crashes in scenarios like local
+        # video playback where database support is not needed.
+        self.use_database = False
         # Timeout for late model loading/class mapping propagation (seconds)
         self.model_loading_timeout_sec = 60
 

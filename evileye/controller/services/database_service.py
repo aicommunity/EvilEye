@@ -39,6 +39,10 @@ class DatabaseService:
         Returns:
             True если подключение успешно, False иначе
         """
+        if not db_config:
+            self.logger.info("Database configuration is empty, skipping database initialization")
+            self._db_controller = None
+            return False
         try:
             self._db_controller = DatabaseControllerPg(system_params or {})
             self._db_controller.set_params(**db_config)

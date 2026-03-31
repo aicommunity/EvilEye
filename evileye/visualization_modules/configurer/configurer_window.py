@@ -8,7 +8,6 @@ from .jobs_history_journal import JobsHistory
 from .db_connection_window import DatabaseConnectionWindow
 from ...core.logger import get_module_logger
 from ..base_window import BaseMainWindow
-from PyQt6.QtWidgets import QDialog
 from ..dialogs import SaveConfirmationDialog, SaveAsDialog
 
 try:
@@ -20,7 +19,7 @@ try:
     from PyQt6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout, QLineEdit, QScrollArea, QMessageBox,
     QSizePolicy, QToolBar, QComboBox, QFormLayout, QSpacerItem, QTextEdit,
-    QMenu, QMainWindow, QApplication, QCheckBox, QPushButton, QTabWidget
+    QMenu, QMainWindow, QApplication, QCheckBox, QPushButton, QTabWidget, QDialog
     )
     pyqt_version = 6
 except ImportError:
@@ -32,7 +31,7 @@ except ImportError:
     from PyQt5.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout, QLineEdit, QScrollArea, QMessageBox,
     QSizePolicy, QToolBar, QComboBox, QFormLayout, QSpacerItem, QTextEdit,
-    QMenu, QMainWindow, QApplication, QCheckBox, QPushButton, QTabWidget
+    QMenu, QMainWindow, QApplication, QCheckBox, QPushButton, QTabWidget, QDialog
     )
     pyqt_version = 5
 

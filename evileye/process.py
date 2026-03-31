@@ -1,11 +1,6 @@
 import argparse
-import json
 import sys
-import os
 from pathlib import Path
-import onnxruntime as ort
-import atexit
-import signal
 
 try:
     from PyQt6 import QtCore
@@ -19,11 +14,7 @@ except ImportError:
 # Add project root to path for imports when running as script
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from evileye.controller import controller
-from evileye.visualization_modules.main_window import MainWindow
-from evileye.utils.utils import normalize_config_path
 from evileye.core.logging_config import setup_evileye_logging, log_system_info
-from evileye.core.logger import get_module_logger
 
 def create_args_parser():
     pars = argparse.ArgumentParser()
