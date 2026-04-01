@@ -109,7 +109,9 @@ class ObjectTrackingBase(EvilEyeBase):
         except Exception:
             pass
         if self.processing_thread and self.processing_thread.is_alive():
-            self.processing_thread.join()
+            self.processing_thread.join(timeout=2.0)
+            if self.processing_thread.is_alive():
+                self.logger.warning("Tracker processing_thread did not stop within 2s")
         if self._mp_control is not None:
             self._mp_control.stop()
             self._mp_control = None

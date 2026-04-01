@@ -151,6 +151,6 @@ export function streamStatus(rid, sourceId) {
     return request(`/runs/${rid}/stream:status${sourceId != null ? `?source_id=${sourceId}` : ''}`);
 }
 /** POST /api/v1/runs/{rid}/stream:stop */
-export function streamStop(rid) {
-    return request(`/runs/${rid}/stream:stop`, { method: 'POST' });
+export function streamStop(rid, sourceId) {
+    return request(`/runs/${rid}/stream:stop${sourceId != null ? `?source_id=${sourceId}` : ''}`, { method: 'POST' });
 }

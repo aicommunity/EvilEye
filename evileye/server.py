@@ -3,6 +3,8 @@ import argparse
 import json
 import sys
 import multiprocessing as mp
+import threading
+import time
 from pathlib import Path
 import os
 import signal
@@ -29,7 +31,7 @@ def _uvicorn_access_log_enabled() -> bool:
 
 # -- Standalone entry point for child process ----------------------------
 
-def _run_server_in_process(host, port, log_level, frame_queue, ssl_certfile=None, ssl_keyfile=None):
+def _run_server_in_process(host, port, log_level, frame_queue, demand_queue, ssl_certfile=None, ssl_keyfile=None):
     """Entry point for the web server child process
 
     Receives JPEG frames from the main process via *frame_queue* and
@@ -40,6 +42,7 @@ def _run_server_in_process(host, port, log_level, frame_queue, ssl_certfile=None
     logger.info(f"Web server child process starting on {host}:{port}")
 
     app = create_app()
+    app.state.preview_demand_queue = demand_queue
 
     # Wire the IPC queue into the broker so frames arrive from main process
     from evileye.api.core.broker_access import get_broker
@@ -80,6 +83,11 @@ class ServerProcessManager:
         self.logger = get_module_logger("server_process_manager")
         self._process: mp.Process | None = None
         self._frame_queue: mp.Queue | None = None
+        self._demand_queue: mp.Queue | None = None
+        self._demand_thread: threading.Thread | None = None
+        self._demand_stop = threading.Event()
+        self._preview_demand_ts: dict[str, float] = {}
+        self._published_frame_count = 0
 
     def start(self, host="127.0.0.1", port=8080, log_level="info", ssl_certfile=None, ssl_keyfile=None):
         if self._process is not None and self._process.is_alive():
@@ -87,14 +95,45 @@ class ServerProcessManager:
             return
 
         self._frame_queue = mp.Queue(maxsize=30)
+        self._demand_queue = mp.Queue(maxsize=200)
+        self._demand_stop.clear()
+        self._demand_thread = threading.Thread(target=self._demand_listener_loop, daemon=True, name="server-preview-demand")
+        self._demand_thread.start()
         self._process = mp.Process(
             target=_run_server_in_process,
-            args=(host, port, log_level, self._frame_queue, ssl_certfile, ssl_keyfile),
+            args=(host, port, log_level, self._frame_queue, self._demand_queue, ssl_certfile, ssl_keyfile),
             daemon=True,
             name="evileye-web-server",
         )
         self._process.start()
         self.logger.info(f"Web server process started, pid={self._process.pid}")
+
+    def _demand_listener_loop(self):
+        while not self._demand_stop.is_set():
+            if self._demand_queue is None:
+                break
+            try:
+                item = self._demand_queue.get(timeout=0.5)
+                if item is None:
+                    break
+                if isinstance(item, tuple) and len(item) == 2:
+                    key, touched_at = item
+                    self._preview_demand_ts[str(key)] = float(touched_at)
+            except Exception:
+                continue
+
+    def touch_preview_demand(self, pipeline_key: str, *, touched_at: float | None = None):
+        self._preview_demand_ts[str(pipeline_key)] = float(touched_at or time.time())
+
+    def has_preview_demand(self, pipeline_key: str, *, ttl_sec: float = 5.0) -> bool:
+        now = time.time()
+        key = str(pipeline_key)
+        touched_at = self._preview_demand_ts.get(key)
+        if touched_at is not None and (now - touched_at) <= ttl_sec:
+            return True
+        root_key = key.split(":", 1)[0]
+        root_touched_at = self._preview_demand_ts.get(root_key)
+        return bool(root_touched_at is not None and (now - root_touched_at) <= ttl_sec)
 
     def publish_frame(self, pipeline_id: str, jpeg_bytes: bytes, metadata=None):
         """Send a JPEG frame to the web server process"""
@@ -107,6 +146,15 @@ class ServerProcessManager:
                 except Exception:
                     pass
             self._frame_queue.put_nowait((pipeline_id, jpeg_bytes, metadata or {}))
+            self._published_frame_count += 1
+            if self._published_frame_count <= 5 or (self._published_frame_count % 100) == 0:
+                self.logger.info(
+                    "IPC publish frame #%s pipeline=%s source=%s bytes=%s",
+                    self._published_frame_count,
+                    pipeline_id,
+                    (metadata or {}).get("source_id") if isinstance(metadata, dict) else None,
+                    len(jpeg_bytes) if jpeg_bytes is not None else 0,
+                )
         except Exception:
             pass
 
@@ -116,6 +164,15 @@ class ServerProcessManager:
                 self._frame_queue.put_nowait(None)
             except Exception:
                 pass
+        if self._demand_queue is not None:
+            try:
+                self._demand_queue.put_nowait(None)
+            except Exception:
+                pass
+        self._demand_stop.set()
+        if self._demand_thread is not None and self._demand_thread.is_alive():
+            self._demand_thread.join(timeout=2.0)
+        self._demand_thread = None
 
         if self._process is not None:
             try:
@@ -133,6 +190,9 @@ class ServerProcessManager:
                     self._process.kill()
             self._process = None
         self._frame_queue = None
+        self._demand_queue = None
+        self._preview_demand_ts.clear()
+        self._published_frame_count = 0
         self.logger.info("Web server process stopped")
 
     def is_alive(self) -> bool:

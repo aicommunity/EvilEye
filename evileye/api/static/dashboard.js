@@ -1,4 +1,4 @@
-import { ApiError, authApi, journalsApi, logsApi, stateApi, systemApi, configsList, configGet, configCreate, configUpdate, configDelete, runsList, runGet, runCreate, runStart, runStop, runDelete, streamSnapshotUrl, streamMjpgUrl, streamStatus, } from './api.js';
+import { ApiError, authApi, journalsApi, logsApi, stateApi, systemApi, configsList, configGet, configCreate, configUpdate, configDelete, runsList, runGet, runCreate, runStart, runStop, runDelete, streamSnapshotUrl, streamMjpgUrl, streamStop, streamStatus, } from './api.js';
 const navOverview = document.getElementById('nav-overview');
 const navCameras = document.getElementById('nav-cameras');
 const navJournals = document.getElementById('nav-journals');
@@ -75,6 +75,7 @@ let currentStreamRid = null;
 let currentStreamSourceId = null;
 let streamPollTimer = null;
 let cameraPreviewTimer = null;
+let activePanel = 'overview';
 let configEditName = null;
 let runsCache = [];
 let configNamesCache = [];
@@ -237,6 +238,7 @@ async function logout() {
     }
 }
 function showPanel(panel) {
+    activePanel = panel;
     panelOverview.classList.toggle('active', panel === 'overview');
     panelCameras.classList.toggle('active', panel === 'cameras');
     panelJournals.classList.toggle('active', panel === 'journals');
@@ -439,12 +441,58 @@ function disableCameraPreview(img) {
     const placeholder = document.createElement('div');
     placeholder.className = 'camera-preview camera-preview-empty';
     placeholder.textContent = 'Preview остановлен';
+    const objectUrl = img.dataset.objectUrl;
+    if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+    }
     img.replaceWith(placeholder);
     if (!camerasListEl.querySelector('.camera-preview[data-rid][data-sid]')) {
         stopCameraPreviewRefresh();
     }
 }
+function requestCameraPreview(img, rid, sid) {
+    if (img.dataset.previewLoading === '1') {
+        img.dataset.previewPending = '1';
+        return;
+    }
+    img.dataset.previewLoading = '1';
+    img.dataset.previewPending = '0';
+    const url = `${streamSnapshotUrl(rid, sid)}&t=${Date.now()}`;
+    void fetch(url, { credentials: 'same-origin', cache: 'no-store' })
+        .then((response) => {
+        if (!response.ok) {
+            throw new Error(`Snapshot request failed: ${response.status}`);
+        }
+        return response.blob();
+    })
+        .then((blob) => {
+        if (!document.body.contains(img)) {
+            return;
+        }
+        const nextObjectUrl = URL.createObjectURL(blob);
+        const previousObjectUrl = img.dataset.objectUrl;
+        img.src = nextObjectUrl;
+        img.dataset.objectUrl = nextObjectUrl;
+        if (previousObjectUrl) {
+            URL.revokeObjectURL(previousObjectUrl);
+        }
+    })
+        .catch(() => {
+        if (document.body.contains(img)) {
+            disableCameraPreview(img);
+        }
+    })
+        .finally(() => {
+        img.dataset.previewLoading = '0';
+        if (img.dataset.previewPending === '1' && document.body.contains(img)) {
+            requestCameraPreview(img, rid, sid);
+        }
+    });
+}
 function refreshCameraPreviews() {
+    if (activePanel !== 'cameras' || document.visibilityState !== 'visible') {
+        return;
+    }
     camerasListEl.querySelectorAll('.camera-preview[data-rid][data-sid]').forEach((img) => {
         const rid = Number(img.dataset.rid);
         const sid = Number(img.dataset.sid);
@@ -454,7 +502,7 @@ function refreshCameraPreviews() {
                 disableCameraPreview(img);
                 return;
             }
-            img.src = `${streamSnapshotUrl(rid, sid)}&t=${Date.now()}`;
+            requestCameraPreview(img, rid, sid);
         }
     });
 }
@@ -686,6 +734,8 @@ function applyStreamFps() {
 function refreshSnapshot() {
     if (currentStreamRid == null)
         return;
+    if (streamFrame.src)
+        return;
     const base = streamSnapshotUrl(currentStreamRid, currentStreamSourceId);
     streamSnapshotImg.src = `${base}${base.includes('?') ? '&' : '?'}t=${Date.now()}`;
 }
@@ -709,7 +759,7 @@ async function pollStreamInfo() {
         if (status) {
             streamStatusEl.textContent = streamAvailabilityText(status);
             streamStatusEl.className = status.stream_active || status.has_frame ? 'stream-status-active' : '';
-            if (status.stream_active || status.has_frame) {
+            if (!status.stream_active && status.has_frame) {
                 const base = streamSnapshotUrl(currentStreamRid, currentStreamSourceId);
                 streamSnapshotImg.src = `${base}${base.includes('?') ? '&' : '?'}t=${Date.now()}`;
             }
@@ -726,6 +776,8 @@ async function pollStreamInfo() {
     }
 }
 function closeStream() {
+    const rid = currentStreamRid;
+    const sourceId = currentStreamSourceId;
     streamFrame.src = '';
     streamSnapshotImg.src = '';
     streamContainer.classList.remove('open');
@@ -734,6 +786,9 @@ function closeStream() {
     if (streamPollTimer != null) {
         clearInterval(streamPollTimer);
         streamPollTimer = null;
+    }
+    if (rid != null) {
+        void streamStop(rid, sourceId).catch(() => null);
     }
 }
 function delegateConfigs(e) {

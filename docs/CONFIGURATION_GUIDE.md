@@ -136,6 +136,21 @@ evileye deploy-samples
 5. `power_user` предназначен для просмотра предметных журналов системы и технических логов.
 6. `admin` предназначен для настройки и управления системой.
 
+### Server module и схемы запуска
+
+Секция `web_auth.internal_token` используется не только для защиты внутренних endpoint'ов,
+но и для обмена данными между runtime и server module в многопроцессных сценариях.
+
+Актуальные схемы того, кто кого запускает и как передаются preview-кадры, приведены в
+документе [`MULTIPROCESSING.md`](MULTIPROCESSING.md), раздел
+`Веб-сервер: актуальные схемы запуска`.
+
+Кратко:
+
+- `evileye run` + `server.enabled: true` — основной сценарий, где система владеет runtime, а server module работает как её web/API-слой;
+- `evileye server` — служебный server-first сценарий, где runtime запускается через REST API;
+- если server уже запущен отдельно, runtime не поднимает второй web-server, а отправляет preview в существующий server module через внутренний API.
+
 ### Журналы и логи в web/API
 
 В терминах EvilEye это разные сущности:

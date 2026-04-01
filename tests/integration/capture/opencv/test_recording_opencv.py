@@ -66,6 +66,8 @@ def test_opencv_recording_basic(tmp_path: Path, ensure_test_videos):
         },
     )
     assert cap.init() is True
+    assert cap.recorder_manager is not None, "RecorderManager should be created during init"
+    assert cap.recorder_manager.recorder is None, "Recorder must not start before capture.start()"
 
     cap.start()
     # Wait a bit for threads to start and recorder to initialize
@@ -97,13 +99,8 @@ def test_opencv_recording_basic(tmp_path: Path, ensure_test_videos):
     # Note: check_and_delete_small_files has min_age_seconds=30, so files won't be deleted immediately
     time.sleep(1.0)
 
-    # Verify at least one recording file exists.
-    # OpenCV recorder can write either directly into out_dir or into a hierarchy.
-    files = []
-    files.extend(list(tmp_path.glob("*.mp4")))
-    files.extend(list(tmp_path.glob("*.mkv")))
-    if not files:
-        # Try hierarchy: Streams/... or legacy date/camera structure
-        files.extend(list(tmp_path.rglob("*.mp4")))
-        files.extend(list(tmp_path.rglob("*.mkv")))
-    assert len(files) >= 1, f"No recording files created. Checked recursively under: {tmp_path}"
+    streams_dir = tmp_path / "Streams"
+    assert streams_dir.exists(), f"Streams hierarchy was not created under: {tmp_path}"
+    files = list(streams_dir.rglob("*.mp4")) + list(streams_dir.rglob("*.mkv"))
+    assert len(files) >= 1, f"No recording files created in Streams hierarchy under: {streams_dir}"
+    assert not list(tmp_path.glob("*.mp4")), "Recorder must not write video files directly into root out_dir"

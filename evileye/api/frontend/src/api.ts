@@ -270,9 +270,9 @@ export function streamStatus(rid: number, sourceId?: number | null): Promise<{
 }
 
 /** POST /api/v1/runs/{rid}/stream:stop */
-export function streamStop(rid: number): Promise<{ run_id: number; pipeline_id: number; status: string; message: string }> {
+export function streamStop(rid: number, sourceId?: number | null): Promise<{ run_id: number; pipeline_id: number; status: string; message: string }> {
   return request<{ run_id: number; pipeline_id: number; status: string; message: string }>(
-    `/runs/${rid}/stream:stop`,
+    `/runs/${rid}/stream:stop${sourceId != null ? `?source_id=${sourceId}` : ''}`,
     { method: 'POST' }
   );
 }

@@ -116,57 +116,104 @@ evileye-launch
 evileye-launch configs/single_video_multiprocess.json
 ```
 
-### Веб-сервер: два режима работы
+### Веб-сервер: актуальные схемы запуска
 
-Веб-сервер может работать в двух режимах:
+Ниже приведены актуальные схемы того, кто кого запускает и как runtime
+связан с web/API.
 
-**Режим A - Отдельный процесс (`evileye server`)**
+#### Сценарий A. `evileye run` + `server.enabled: true`
 
-```
-┌──────────────────────────────────────┐
-│  evileye server --port 8080          │
-│  ┌────────────────────────────────┐  │
-│  │  FastAPI / Uvicorn (основной)  │  │
-│  │  REST API для управления       │  │
-│  │  POST /configs/runs → запуск   │  │
-│  │  GET /stream/{id} → видео      │  │
-│  └────────────────────────────────┘  │
-│  ┌────────────────────────────────┐  │
-│  │  Config Run (дочерний процесс) │  │
-│  │  Детекция, трекинг, атрибуты   │  │
-│  │  Кадры → /tmp/evileye_frames/  │  │
-│  └────────────────────────────────┘  │
-└──────────────────────────────────────┘
-```
-
-Сервер - главный. Пайплайны запускаются как Config Runs через REST API
-(`POST /api/v1/configs/runs`). Кадры из дочернего процесса попадают
-в сервер через файловый IPC (_FramePoller читает `latest.jpg`).
-
-Этот режим предназначен прежде всего для сервисного запуска и удаленного администрирования.
-
-**Режим B — Дочерний процесс (`evileye run` + `server.enabled: true`)**
+Основной standalone/operational-сценарий: система запускает серверный модуль.
 
 ```
-┌──────────────────────────────────────┐
-│  evileye run config.json             │
-│  ┌────────────────────────────────┐  │
-│  │  Controller (основной процесс) │  │
-│  │  Pipeline, GUI, обработка      │  │
-│  └──────────┬─────────────────────┘  │
-│             │ mp.Queue (JPEG-кадры)  │
-│  ┌──────────▼─────────────────────┐  │
-│  │  FastAPI / Uvicorn (дочерний)  │  │
-│  │  Только стриминг видео         │  │
-│  │  GET /stream/{id}              │  │
-│  └────────────────────────────────┘  │
-└──────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────┐
+│ evileye run config.json                                      │
+│                                                               │
+│  Основной runtime-процесс                                     │
+│  ┌─────────────────────────────────────────────────────────┐  │
+│  │ Controller / Pipeline / GUI (опционально)              │  │
+│  │ - владелец жизненного цикла системы                     │  │
+│  │ - обрабатывает источники, детекцию, трекинг             │  │
+│  └───────────────┬─────────────────────────────────────────┘  │
+│                  │                                             │
+│                  │ если server.execution_mode == "process"     │
+│                  ▼                                             │
+│  Дочерний server-процесс                                      │
+│  ┌─────────────────────────────────────────────────────────┐  │
+│  │ FastAPI / Uvicorn                                      │  │
+│  │ web-ui + API + streaming                               │  │
+│  └─────────────────────────────────────────────────────────┘  │
+│                                                               │
+│  Preview transport:                                           │
+│  - если server-процесс дочерний: mp.Queue                     │
+│  - если используется отдельный уже занятый сервер:            │
+│    HTTP POST /api/v1/internal/frames/{rid}                    │
+└───────────────────────────────────────────────────────────────┘
 ```
 
-Controller — главный. Сервер работает как модуль уже запущенной системы.
-Настройки берутся из секции `"server"` в JSON-конфиге.
+В этом режиме:
 
-Это основной рекомендуемый сценарий для production/operations.
+- система является владельцем runtime;
+- серверный модуль является веб-слоем системы;
+- preview больше не пишется в `latest.jpg`, а передается в память.
+
+#### Сценарий B. `evileye server`
+
+Служебный сценарий: сервер запускается первым и сам управляет runtime через REST API.
+
+```
+┌───────────────────────────────────────────────────────────────┐
+│ evileye server --port 8080                                   │
+│                                                               │
+│  Основной server-процесс                                      │
+│  ┌─────────────────────────────────────────────────────────┐  │
+│  │ FastAPI / Uvicorn                                      │  │
+│  │ - web-ui                                               │  │
+│  │ - REST API                                             │  │
+│  │ - POST /api/v1/configs/runs/{id}/start                 │  │
+│  └───────────────┬─────────────────────────────────────────┘  │
+│                  │ spawn process.py                           │
+│                  ▼                                             │
+│  Managed runtime-процесс                                      │
+│  ┌─────────────────────────────────────────────────────────┐  │
+│  │ Controller / Pipeline                                  │  │
+│  │ - сервер внутри runtime НЕ стартует                    │  │
+│  │ - preview отправляет в server по internal API          │  │
+│  └─────────────────────────────────────────────────────────┘  │
+│                                                               │
+│  Preview transport:                                           │
+│  HTTP POST /api/v1/internal/frames/{rid}?source_id=...        │
+└───────────────────────────────────────────────────────────────┘
+```
+
+В этом режиме:
+
+- сервер является владельцем запуска;
+- runtime стартует как managed child process;
+- встроенный web-server внутри runtime специально отключён;
+- обмен preview идет через внутренний API с `internal_token`.
+
+#### Сценарий C. Внешний уже запущенный сервер наблюдает runtime
+
+Это режим наблюдения: runtime не поднимает свой web-server, потому что порт уже занят.
+
+```
+┌──────────────────────────────┐       ┌──────────────────────────────┐
+│ Отдельный server-процесс     │       │ Runtime-процесс системы      │
+│ FastAPI / Uvicorn            │◄──────│ evileye run config.json      │
+│ web-ui + API + streaming     │       │ Controller / Pipeline        │
+└──────────────────────────────┘       └──────────────────────────────┘
+               ▲                                       │
+               │                                       │
+               └──── HTTP POST /api/v1/internal/frames ┘
+```
+
+В этом режиме:
+
+- server и runtime живут как независимые процессы;
+- runtime при старте видит, что порт сервера уже занят, и не поднимает свой дочерний web-server;
+- web-ui показывает состояние уже работающей системы;
+- последние preview-кадры передаются только в память сервера, без записи на диск.
 
 ### Пример: полный запуск с мультипроцессностью
 
@@ -1273,7 +1320,8 @@ from .process_manager import ProcessManager, get_process_manager
 | Переменная | Кто задает | Кто читает | Для чего |
 |------------|------------|------------|----------|
 | **`EVILEYE_PIPELINE_ID`** | `ConfigRunManager` при старте дочернего процесса (значение `rid`) | `Controller` в дочернем процессе | Идентификатор runtime-запуска. Историческое имя переменной сохранено для совместимости; используется как `stream_pipeline_id` и как ключ в FrameBroker на стороне сервера |
-| **`EVILEYE_FRAME_DIR`** | `ConfigRunManager` при старте дочернего процесса | `Controller` в дочернем процессе | Путь к временной директории (например `/tmp/evileye_frames/1/`), куда Controller записывает файл `latest.jpg` с последним обработанным кадром |
+| **`EVILEYE_WEB_API_BASE`** | `ConfigRunManager` при старте managed runtime | `Controller` / `StreamingService` в дочернем процессе | Базовый URL server module, куда runtime отправляет preview-кадры через внутренний API `/api/v1/internal/frames/*` |
+| **`EVILEYE_INTERNAL_TOKEN`** | `ConfigRunManager` или внешний launcher | `Controller` / `StreamingService` | Токен для внутренних вызовов между runtime и server module |
 | **`PYTHONUNBUFFERED`** | `ConfigRunManager` при старте дочернего процесса | Python runtime | Установлена в `1` для того чтобы логи дочернего процесса не буферизировались и были видны в реальном времени |
 
 Эти переменные задаются только при запуске Config Run через API. При ручном запуске
@@ -1285,17 +1333,15 @@ from .process_manager import ProcessManager, get_process_manager
 
 1. Клиент создает Config Run: `POST /api/v1/configs/runs`, затем запускает его:
    `POST /api/v1/configs/runs/{rid}/start`.
-2. **ConfigRunManager.start(rid)** создает временную директорию
-   `/tmp/evileye_frames/{rid}/`, записывает путь в переменную окружения
-   `EVILEYE_FRAME_DIR` и запускает `process.py` с этим окружением.
-   Одновременно запускается `_FramePoller` для этого `rid`.
+2. **ConfigRunManager.start(rid)** формирует окружение для дочернего runtime:
+   `EVILEYE_PIPELINE_ID`, `EVILEYE_WEB_API_BASE`, `EVILEYE_INTERNAL_TOKEN`,
+   `PYTHONUNBUFFERED=1` и запускает `process.py`.
 3. В дочернем процессе **Controller** на каждом кадре:
-   - кодирует кадр в JPEG через `cv2.imencode`
-   - записывает его во временный файл `.latest.tmp`
-   - атомарно переименовывает `.latest.tmp` в `latest.jpg` (через `Path.replace`)
-4. В API-сервере **_FramePoller** (фоновый поток в `ConfigRunManager`) каждые ~40мс
-   проверяет `mtime` файла `latest.jpg`. Если файл обновился, читает его и вызывает
-   `broker.publish_jpeg(str(rid), data)`.
+   - кодирует кадр в JPEG
+   - отправляет его в server module через `POST /api/v1/internal/frames/{rid}`
+   - для per-camera preview добавляет `source_id` в query/meta
+4. В API-сервере внутренний endpoint `/api/v1/internal/frames/{rid}`
+   принимает JPEG и публикует его в `FrameBroker`.
 5. Клиент запрашивает стрим: **GET /api/v1/runs/{rid}/stream.mjpg** или снимок:
    **GET /api/v1/runs/{rid}/snapshot**.
    Старые `/api/v1/pipelines/{rid}/...` сохранены как deprecated alias.
@@ -1303,20 +1349,15 @@ from .process_manager import ProcessManager, get_process_manager
    `ConfigRunManager` и возвращает `str(rid)` как ключ FrameBroker.
 7. FrameBroker отдает последний кадр, и стриминг работает.
 
-При остановке Config Run `_FramePoller` перестает следить за директорией,
-и она удаляется.
+При остановке Config Run никаких preview-файлов очищать не нужно:
+runtime просто перестает публиковать новые JPEG в `FrameBroker`.
 
-```
-Дочерний процесс                   API-сервер
+```text
+Дочерний runtime                   API-сервер
       |                                  |
-  cv2.imencode → jpeg                    |
+  encode jpeg                            |
       |                                  |
-  write /tmp/evileye_frames/{rid}/       |
-        latest.jpg (atomic rename)       |
-      |                                  |
-      |        _FramePoller (~40ms)      |
-      |        stat → mtime changed? --->|
-      |        read_bytes --------> publish_jpeg
+      |---- POST /internal/frames -----> |
       |                                  |
       |                           FrameBroker
       |                                  |
@@ -1652,17 +1693,18 @@ curl -X POST http://localhost:8080/api/v1/configs/runs/1/start
 ```
 
 Что происходит внутри:
-1. `ConfigRunManager.start()` создает временную директорию для кадров
-   (`/tmp/evileye_frames/{rid}/`) и запускает `process.py --config ... --no-gui`
+1. `ConfigRunManager.start()` запускает `process.py --config ... --no-gui`
    как отдельный OS-процесс через `subprocess.Popen`. В окружение передаются
-   `EVILEYE_PIPELINE_ID`, `EVILEYE_FRAME_DIR`, `PYTHONUNBUFFERED=1`
-2. Запускается `_FramePoller` для этого `rid`, который будет следить за файлом
-   `latest.jpg` в этой директории
+   `EVILEYE_PIPELINE_ID`, `EVILEYE_WEB_API_BASE`, `EVILEYE_INTERNAL_TOKEN`,
+   `PYTHONUNBUFFERED=1`
+2. Managed runtime не поднимает свой собственный web-server, а использует уже
+   работающий server module
 3. `process.py` создает `Controller`, который читает конфиг
 4. Controller инициализирует каждый компонент пайплайна
 5. Для компонентов с `"execution_mode": "process"` создаются `MpControl` +
    дочерние процессы (MpWorkerYolo, MpWorkerTracker и т.д.)
-6. Пайплайн начинает обрабатывать видео, кадры записываются в `latest.jpg`
+6. Пайплайн начинает обрабатывать видео, а preview-кадры отправляются в server
+   через внутренний API и хранятся только в памяти
 
 ---
 

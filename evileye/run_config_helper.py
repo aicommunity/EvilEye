@@ -263,10 +263,10 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
 
             try:
                 import threading as _threading
-                # Use non-daemon thread so that Python does not tear down
-                # the interpreter while shutdown is still running. We'll
-                # join it with timeout after the Qt event loop exits.
-                t = _threading.Thread(target=_do_shutdown, name="evileye-gui-shutdown", daemon=False)
+                # Run shutdown in a daemon thread so Qt aboutToQuit can return
+                # immediately and the process is not kept alive forever by a
+                # stuck controller.release()/stop() path.
+                t = _threading.Thread(target=_do_shutdown, name="evileye-gui-shutdown", daemon=True)
                 shutdown_state["thread"] = t
                 t.start()
             except Exception:
@@ -339,7 +339,9 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
             if t is not None:
                 import threading as _threading
                 if isinstance(t, _threading.Thread) and t.is_alive():
-                    t.join(timeout=5.0)
+                    t.join(timeout=15.0)
+                    if t.is_alive():
+                        logger.warning("GUI shutdown thread is still alive after 15s timeout")
         except Exception:
             pass
     else:
@@ -351,7 +353,9 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
             if t is not None:
                 import threading as _threading
                 if isinstance(t, _threading.Thread) and t.is_alive():
-                    t.join(timeout=5.0)
+                    t.join(timeout=15.0)
+                    if t.is_alive():
+                        logger.warning("GUI shutdown thread is still alive after 15s timeout")
         except Exception:
             pass
         

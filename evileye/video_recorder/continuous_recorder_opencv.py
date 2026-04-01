@@ -10,6 +10,7 @@ import numpy as np
 
 from evileye.core.logger import get_module_logger
 from evileye.video_recorder.recorder_base import VideoRecorderBase, SourceMeta
+from evileye.video_recorder.path_generator import PathGenerator
 from evileye.video_recorder.recording_params import RecordingParams
 
 
@@ -68,21 +69,12 @@ class OpenCVContinuousRecorder(VideoRecorderBase):
         )
 
     def _open_new_segment(self, frame: np.ndarray, now: float) -> None:
-        out_dir = self.params.ensure_out_dir()
         self._segment_start_ts = now
         self._seq += 1
 
         h, w = frame.shape[:2]
         self._frame_size = (w, h)
-
-        start_time_str = time.strftime("%Y%m%d_%H%M%S", time.localtime(now))
-        filename = self.params.filename_tmpl.format(
-            source_name=self.source.source_name if self.source else "source",
-            start_time=start_time_str,
-            seq=self._seq,
-            ext=self.params.container,
-        )
-        path = out_dir / filename
+        path = Path(PathGenerator.generate_stream_path(self.source, self.params, now, self._seq))
 
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         writer = cv2.VideoWriter(str(path), fourcc, self._fps, self._frame_size)

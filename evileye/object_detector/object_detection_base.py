@@ -506,7 +506,9 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         except Exception:
             self.queue_in.put(None)
         if self.processing_thread and self.processing_thread.is_alive():
-            self.processing_thread.join()
+            self.processing_thread.join(timeout=2.0)
+            if self.processing_thread.is_alive():
+                self.logger.warning("Detection processing_thread did not stop within 2s")
         # Stop multiprocessing pool if active
         if self._mp_control is not None:
             self._mp_control.stop()

@@ -249,6 +249,23 @@ class Visualizer(EvilEyeBase):
     def get_active_events(self, source_id: int) -> set[tuple[int, int, str]]:
         return set(self.active_events.get(source_id, set()))
 
+    def get_latest_clean_frames(self) -> list[CaptureImage]:
+        """Return the latest clean GUI frames per source for external preview consumers."""
+        frames: list[CaptureImage] = []
+        for thr in self.visual_threads:
+            try:
+                image = thr.get_clean_image()
+            except Exception:
+                image = None
+            if image is None:
+                continue
+            frame = CaptureImage()
+            frame.source_id = thr.source_id
+            frame.frame_id = self.last_displayed_frame.get(thr.source_id)
+            frame.image = image
+            frames.append(frame)
+        return frames
+
     def calc_memory_consumption(self):
         super().calc_memory_consumption()
         self.memory_consumption_detail['processing_frames'] = asizeof.asizeof(self.processing_frames)

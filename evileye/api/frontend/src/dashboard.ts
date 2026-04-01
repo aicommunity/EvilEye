@@ -18,6 +18,7 @@ import {
   runDelete,
   streamSnapshotUrl,
   streamMjpgUrl,
+  streamStop,
   streamStatus,
   type ConfigRun,
   type StateCamera,
@@ -108,6 +109,7 @@ let currentStreamRid: number | null = null;
 let currentStreamSourceId: number | null = null;
 let streamPollTimer: number | null = null;
 let cameraPreviewTimer: number | null = null;
+let activePanel: PanelId = 'overview';
 let configEditName: string | null = null;
 let runsCache: ConfigRun[] = [];
 let configNamesCache: string[] = [];
@@ -284,6 +286,7 @@ async function logout(): Promise<void> {
 }
 
 function showPanel(panel: PanelId): void {
+  activePanel = panel;
   panelOverview.classList.toggle('active', panel === 'overview');
   panelCameras.classList.toggle('active', panel === 'cameras');
   panelJournals.classList.toggle('active', panel === 'journals');
@@ -503,13 +506,60 @@ function disableCameraPreview(img: HTMLImageElement): void {
   const placeholder = document.createElement('div');
   placeholder.className = 'camera-preview camera-preview-empty';
   placeholder.textContent = 'Preview остановлен';
+  const objectUrl = img.dataset.objectUrl;
+  if (objectUrl) {
+    URL.revokeObjectURL(objectUrl);
+  }
   img.replaceWith(placeholder);
   if (!camerasListEl.querySelector('.camera-preview[data-rid][data-sid]')) {
     stopCameraPreviewRefresh();
   }
 }
 
+function requestCameraPreview(img: HTMLImageElement, rid: number, sid: number): void {
+  if (img.dataset.previewLoading === '1') {
+    img.dataset.previewPending = '1';
+    return;
+  }
+  img.dataset.previewLoading = '1';
+  img.dataset.previewPending = '0';
+  const url = `${streamSnapshotUrl(rid, sid)}&t=${Date.now()}`;
+  void fetch(url, { credentials: 'same-origin', cache: 'no-store' })
+    .then((response) => {
+      if (!response.ok) {
+        throw new Error(`Snapshot request failed: ${response.status}`);
+      }
+      return response.blob();
+    })
+    .then((blob) => {
+      if (!document.body.contains(img)) {
+        return;
+      }
+      const nextObjectUrl = URL.createObjectURL(blob);
+      const previousObjectUrl = img.dataset.objectUrl;
+      img.src = nextObjectUrl;
+      img.dataset.objectUrl = nextObjectUrl;
+      if (previousObjectUrl) {
+        URL.revokeObjectURL(previousObjectUrl);
+      }
+    })
+    .catch(() => {
+      if (document.body.contains(img)) {
+        disableCameraPreview(img);
+      }
+    })
+    .finally(() => {
+      img.dataset.previewLoading = '0';
+      if (img.dataset.previewPending === '1' && document.body.contains(img)) {
+        requestCameraPreview(img, rid, sid);
+      }
+    });
+}
+
 function refreshCameraPreviews(): void {
+  if (activePanel !== 'cameras' || document.visibilityState !== 'visible') {
+    return;
+  }
   camerasListEl.querySelectorAll<HTMLImageElement>('.camera-preview[data-rid][data-sid]').forEach((img) => {
     const rid = Number(img.dataset.rid);
     const sid = Number(img.dataset.sid);
@@ -519,7 +569,7 @@ function refreshCameraPreviews(): void {
         disableCameraPreview(img);
         return;
       }
-      img.src = `${streamSnapshotUrl(rid, sid)}&t=${Date.now()}`;
+      requestCameraPreview(img, rid, sid);
     }
   });
 }
@@ -747,6 +797,7 @@ function applyStreamFps(): void {
 
 function refreshSnapshot(): void {
   if (currentStreamRid == null) return;
+  if (streamFrame.src) return;
   const base = streamSnapshotUrl(currentStreamRid, currentStreamSourceId);
   streamSnapshotImg.src = `${base}${base.includes('?') ? '&' : '?'}t=${Date.now()}`;
 }
@@ -770,7 +821,7 @@ async function pollStreamInfo(): Promise<void> {
     if (status) {
       streamStatusEl.textContent = streamAvailabilityText(status);
       streamStatusEl.className = status.stream_active || status.has_frame ? 'stream-status-active' : '';
-      if (status.stream_active || status.has_frame) {
+      if (!status.stream_active && status.has_frame) {
         const base = streamSnapshotUrl(currentStreamRid, currentStreamSourceId);
         streamSnapshotImg.src = `${base}${base.includes('?') ? '&' : '?'}t=${Date.now()}`;
       } else if (!status.web_stream_available) {
@@ -786,6 +837,8 @@ async function pollStreamInfo(): Promise<void> {
 }
 
 function closeStream(): void {
+  const rid = currentStreamRid;
+  const sourceId = currentStreamSourceId;
   streamFrame.src = '';
   streamSnapshotImg.src = '';
   streamContainer.classList.remove('open');
@@ -794,6 +847,9 @@ function closeStream(): void {
   if (streamPollTimer != null) {
     clearInterval(streamPollTimer);
     streamPollTimer = null;
+  }
+  if (rid != null) {
+    void streamStop(rid, sourceId).catch(() => null);
   }
 }
 

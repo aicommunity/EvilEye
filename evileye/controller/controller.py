@@ -584,6 +584,22 @@ class Controller:
             # Do not break controller loop if streaming is not initialized
             self.logger.debug(f"Frame publish failed: {e}")
 
+    def _resolve_web_preview_frames(self, processing_frames: list) -> list:
+        """Return the correct frame source for web preview publishing.
+
+        When GUI visualizer is active, web preview must use the latest already
+        rendered visualizer frames so overlays/events match what the operator sees.
+        In headless mode, fall back to the controller-side processing frames.
+        """
+        if self.show_main_gui and self.gui_enabled and self.visualizer:
+            try:
+                vis_frames = self.visualizer.get_latest_clean_frames()
+                if vis_frames:
+                    return vis_frames
+            except Exception:
+                pass
+        return list(processing_frames or [])
+
     def _check_memory_and_maybe_stop(self) -> bool:
         """Периодически проверять память; если лимит превышен — остановить цикл.
 
@@ -812,7 +828,7 @@ class Controller:
                 if self.autoclose and all_sources_finished:
                     self.run_flag = False
 
-                _ = self._process_pipeline_results(objects_results)
+                fallback_processing_frames = self._process_pipeline_results(objects_results)
 
                 processing_frames = []
                 try:
@@ -824,18 +840,21 @@ class Controller:
                             processing_frames.append(item)
                 except Exception:
                     processing_frames = []
+                if not processing_frames:
+                    processing_frames = list(fallback_processing_frames or [])
 
                 t3 = timer() if perf_diag_enabled else None
                 self._process_events_once()
 
                 dropped_frames = self.pipeline.get_dropped_ids()
-                self._publish_latest_frame_to_broker(processing_frames)
-                t4 = timer() if perf_diag_enabled else None
 
                 if self._check_memory_and_maybe_stop():
                     continue
 
                 self._maybe_update_visualization(processing_frames, dropped_frames)
+                web_preview_frames = self._resolve_web_preview_frames(processing_frames)
+                self._publish_latest_frame_to_broker(web_preview_frames)
+                t4 = timer() if perf_diag_enabled else None
                 t5 = timer() if perf_diag_enabled else None
 
                 end_it = timer()
@@ -1120,6 +1139,9 @@ class Controller:
     def stop(self):
         self.run_flag = False
         self._publish_runtime_snapshot(state="stopping")
+        # Stop pipeline first (detectors/trackers/captures) so source reconnect and
+        # recorder loops cannot continue while the rest of shutdown is still running.
+        self._pipeline_service.stop_pipeline()
         if self.control_thread and self.control_thread.is_alive():
             # Don't block shutdown forever if pipeline.process() is stuck.
             self.control_thread.join(timeout=3.0)
@@ -1128,10 +1150,6 @@ class Controller:
                     self.logger.warning("Controller control_thread did not stop within 3s; continuing shutdown")
                 except Exception:
                     pass
-        
-        # Stop pipeline first (detectors/trackers/captures), then visualizer/handler.
-        # This prevents background processing from continuing after GUI/queues are stopped.
-        self._pipeline_service.stop_pipeline()
 
         # Stop ObjectsHandler через ObjectsHandlerService
         if self.obj_handler:

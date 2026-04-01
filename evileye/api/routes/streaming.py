@@ -1,6 +1,6 @@
 import asyncio
 import time
-from fastapi import APIRouter, HTTPException, Response, Query
+from fastapi import APIRouter, HTTPException, Response, Query, Request
 from fastapi.responses import StreamingResponse
 from typing import AsyncGenerator
 import threading
@@ -10,6 +10,20 @@ from evileye.api.core.config_run_access import get_config_run_manager
 from evileye.api.core.runtime_registry import load_runtime_record
 
 router = APIRouter(prefix="/api/v1", tags=["streaming"])
+
+
+def _touch_preview_demand(request: Request, rid: int, source_id: int | None = None) -> None:
+    queue = getattr(request.app.state, "preview_demand_queue", None)
+    if queue is None:
+        return
+    touched_at = time.time()
+    try:
+        key = f"{rid}:{source_id}" if source_id is not None else str(rid)
+        queue.put_nowait((key, touched_at))
+        if source_id is not None:
+            queue.put_nowait((str(rid), touched_at))
+    except Exception:
+        return
 
 
 def _resolve_run(rid: int) -> dict:
@@ -70,10 +84,11 @@ def _stream_status_payload(rid: int, run_info: dict, *, source_id: int | None = 
     }
 
 
-async def _snapshot_impl(rid: int, source_id: int | None = None):
+async def _snapshot_impl(request: Request, rid: int, source_id: int | None = None):
     """
     Return the latest available JPEG snapshot for the given runtime.
     """
+    _touch_preview_demand(request, rid, source_id=source_id)
     run_info = _resolve_run(rid)
     data = _load_latest_frame(run_info, source_id=source_id)
     if not data:
@@ -90,41 +105,49 @@ async def _snapshot_impl(rid: int, source_id: int | None = None):
 
 
 @router.get("/runs/{rid}/snapshot")
-async def snapshot(rid: int, source_id: int | None = Query(None)):
-    return await _snapshot_impl(rid, source_id=source_id)
+async def snapshot(request: Request, rid: int, source_id: int | None = Query(None)):
+    return await _snapshot_impl(request, rid, source_id=source_id)
 
 
 @router.get("/pipelines/{rid}/snapshot", deprecated=True)
-async def snapshot_legacy(rid: int, source_id: int | None = Query(None)):
-    return await _snapshot_impl(rid, source_id=source_id)
+async def snapshot_legacy(request: Request, rid: int, source_id: int | None = Query(None)):
+    return await _snapshot_impl(request, rid, source_id=source_id)
 
 
 async def _mjpeg_generator(
     run_info: dict, fps: int, stop_event: threading.Event, source_id: int | None = None,
 ) -> AsyncGenerator[bytes, None]:
     run_id_str = str(run_info["id"])
+    stream_key = f"{run_id_str}:{source_id}" if source_id is not None else run_id_str
     boundary = b"--frame"
     delay = 1.0 / max(1, fps)
 
-    while not stop_event.is_set():
-        data = _load_latest_frame(run_info, source_id=source_id)
-        if data:
-            yield (
-                boundary
-                + b"\r\n"
-                + b"Content-Type: image/jpeg\r\n\r\n"
-                + data
-                + b"\r\n"
-            )
+    try:
+        while not stop_event.is_set():
+            data = _load_latest_frame(run_info, source_id=source_id)
+            if data:
+                yield (
+                    boundary
+                    + b"\r\n"
+                    + b"Content-Type: image/jpeg\r\n\r\n"
+                    + data
+                    + b"\r\n"
+                )
 
-        elapsed = 0
-        check_interval = 0.1
-        while elapsed < delay and not stop_event.is_set():
-            await asyncio.sleep(min(check_interval, delay - elapsed))
-            elapsed += check_interval
+            elapsed = 0
+            check_interval = 0.1
+            while elapsed < delay and not stop_event.is_set():
+                await asyncio.sleep(min(check_interval, delay - elapsed))
+                elapsed += check_interval
+    finally:
+        try:
+            get_broker().stop_stream(stream_key)
+        except Exception:
+            pass
 
 
 async def _mjpeg_stream_impl(
+    request: Request,
     rid: int,
     source_id: int | None = None,
     fps: int = Query(5, ge=1, le=60, description="Frames per second (1–60)"),
@@ -135,6 +158,7 @@ async def _mjpeg_stream_impl(
     Browsers and players render it as a video stream thanks to
     'multipart/x-mixed-replace' and boundary markers.
     """
+    _touch_preview_demand(request, rid, source_id=source_id)
     run_info = _resolve_run(rid)
     if not _web_stream_available(run_info, source_id=source_id):
         raise HTTPException(
@@ -159,20 +183,22 @@ async def _mjpeg_stream_impl(
 
 @router.get("/runs/{rid}/stream.mjpg")
 async def mjpeg_stream(
+    request: Request,
     rid: int,
     source_id: int | None = Query(None),
     fps: int = Query(5, ge=1, le=60, description="Frames per second (1–60)"),
 ):
-    return await _mjpeg_stream_impl(rid, source_id=source_id, fps=fps)
+    return await _mjpeg_stream_impl(request, rid, source_id=source_id, fps=fps)
 
 
 @router.get("/pipelines/{rid}/stream.mjpg", deprecated=True)
 async def mjpeg_stream_legacy(
+    request: Request,
     rid: int,
     source_id: int | None = Query(None),
     fps: int = Query(5, ge=1, le=60, description="Frames per second (1–60)"),
 ):
-    return await _mjpeg_stream_impl(rid, source_id=source_id, fps=fps)
+    return await _mjpeg_stream_impl(request, rid, source_id=source_id, fps=fps)
 
 
 async def _stop_stream_impl(rid: int, source_id: int | None = None):
@@ -209,19 +235,20 @@ async def stop_stream_legacy(rid: int, source_id: int | None = Query(None)):
     return await _stop_stream_impl(rid, source_id=source_id)
 
 
-async def _stream_status_impl(rid: int, source_id: int | None = None):
+async def _stream_status_impl(request: Request, rid: int, source_id: int | None = None):
     """
     Get the status of the stream for the given run.
     """
+    _touch_preview_demand(request, rid, source_id=source_id)
     run_info = _resolve_run(rid)
     return _stream_status_payload(rid, run_info, source_id=source_id)
 
 
 @router.get("/runs/{rid}/stream:status")
-async def stream_status(rid: int, source_id: int | None = Query(None)):
-    return await _stream_status_impl(rid, source_id=source_id)
+async def stream_status(request: Request, rid: int, source_id: int | None = Query(None)):
+    return await _stream_status_impl(request, rid, source_id=source_id)
 
 
 @router.get("/pipelines/{rid}/stream:status", deprecated=True)
-async def stream_status_legacy(rid: int, source_id: int | None = Query(None)):
-    return await _stream_status_impl(rid, source_id=source_id)
+async def stream_status_legacy(request: Request, rid: int, source_id: int | None = Query(None)):
+    return await _stream_status_impl(request, rid, source_id=source_id)

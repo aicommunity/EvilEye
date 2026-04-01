@@ -109,7 +109,8 @@ class StreamingService:
         if image is None:
             return False
 
-        throttle_key = str(getattr(frame, "source_id", None) if getattr(frame, "source_id", None) is not None else self._pipeline_id)
+        source_id = getattr(frame, "source_id", None)
+        throttle_key = f"{self._pipeline_id}:{source_id}" if source_id is not None else self._pipeline_id
         if not self._should_publish(throttle_key):
             return False
 
@@ -180,9 +181,19 @@ class StreamingService:
         try:
             from evileye.api.core.broker_access import get_broker
 
-            has_local_stream = get_broker().is_stream_active(self._pipeline_id)
+            has_local_stream = get_broker().is_stream_active(throttle_key) or get_broker().is_stream_active(self._pipeline_id)
         except Exception:
             has_local_stream = False
+
+        has_server_preview_demand = False
+        try:
+            has_server_preview_demand = (
+                self._server_process_manager is not None
+                and self._server_process_manager.is_alive()
+                and self._server_process_manager.has_preview_demand(throttle_key)
+            )
+        except Exception:
+            has_server_preview_demand = False
 
         has_server_process = False
         try:
@@ -195,15 +206,25 @@ class StreamingService:
 
         has_relay = self._frame_relay is not None
 
-        if not has_local_stream and not has_server_process and not has_relay:
+        if has_local_stream or has_server_preview_demand or has_relay:
+            return self._throttle_ok(throttle_key)
+
+        # Fallback for embedded server + web-ui bootstrap: keep a very low-rate
+        # preview heartbeat so snapshots do not stay permanently "not ready" if
+        # explicit demand propagation is delayed or lost.
+        if has_server_process:
+            return self._throttle_ok(throttle_key, fps_override=min(self._publish_fps, 1.0))
+
+        if not has_local_stream and not has_server_preview_demand and not has_relay:
             return False
         return self._throttle_ok(throttle_key)
 
-    def _throttle_ok(self, throttle_key: str) -> bool:
-        if self._publish_fps <= 0.0:
+    def _throttle_ok(self, throttle_key: str, *, fps_override: float | None = None) -> bool:
+        effective_fps = self._publish_fps if fps_override is None else max(0.0, float(fps_override))
+        if effective_fps <= 0.0:
             return True
         now = time.time()
-        min_interval = 1.0 / self._publish_fps
+        min_interval = 1.0 / effective_fps
         last_publish_ts = self._last_publish_ts_by_key.get(throttle_key, 0.0)
         if (now - last_publish_ts) < min_interval:
             return False
