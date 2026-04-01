@@ -302,6 +302,32 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
     
     # Apply text configuration
     config = apply_text_config(text_config)
+    font_scale_method = config.get('font_scale_method', 'resolution_based')
+    font_size_pt = config['font_size_pt']
+    base_resolution = config.get('base_resolution', (1920, 1080))
+    thickness = config['thickness']
+    font_face = config['font_face']
+    if font_scale_method == "simple":
+        resolved_font_scale = calculate_font_scale_simple(font_size_pt, width, height)
+    else:
+        resolved_font_scale = calculate_font_scale_for_resolution(font_size_pt, width, height, base_resolution)
+    if thickness is None:
+        resolved_thickness = max(1, int(resolved_font_scale * 2))
+    else:
+        resolved_thickness = thickness
+    position_offset_percent = config['position_offset_percent']
+    background_enabled = config.get('background_enabled', True)
+    reverse_class_mapping = None
+    if class_mapping:
+        try:
+            reverse_class_mapping = {cid: name for name, cid in class_mapping.items()}
+        except Exception:
+            reverse_class_mapping = None
+    max_history_segments = 8
+    try:
+        max_history_segments = int(config.get('max_history_segments', 8) or 8)
+    except Exception:
+        max_history_segments = 8
     
     # Draw source name
     if source_name is int:
@@ -367,8 +393,8 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
             pass
         
         # Create tracking text with class name instead of class_id
-        if class_mapping:
-            class_name = get_class_name_from_mapping(last_info.class_id, class_mapping)
+        if reverse_class_mapping is not None:
+            class_name = reverse_class_mapping.get(last_info.class_id, f"class_{last_info.class_id}")
         else:
             class_name = f"class_{last_info.class_id}"
             
@@ -377,39 +403,24 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
         else:
             tracking_text = f'{class_name} [{last_info.track_id}:{"{:.2f}".format(last_info.confidence)}]'
 
-        # Calculate font scale based on image resolution
-        font_scale_method = config.get('font_scale_method', 'resolution_based')
-        font_size_pt = config['font_size_pt']
-        base_resolution = config.get('base_resolution', (1920, 1080))
-        thickness = config['thickness']
-        font_face = config['font_face']
-
-        if font_scale_method == "simple":
-            font_scale = calculate_font_scale_simple(font_size_pt, width, height)
-        else:  # resolution_based
-            font_scale = calculate_font_scale_for_resolution(font_size_pt, width, height, base_resolution)
-
-        # Auto-calculate thickness if not provided
-        if thickness is None:
-            thickness = max(1, int(font_scale * 2))
-
         # Draw tracking text with adaptive positioning
         put_text_with_bbox(image.image, tracking_text, last_info.bounding_box,
                           font_face=font_face,
-                          font_scale=font_scale,
+                          font_scale=resolved_font_scale,
                           color=config['color'],
-                          thickness=thickness,
+                          thickness=resolved_thickness,
                           background_color=config['background_color'],
-                          position_offset_percent=config['position_offset_percent'],
-                          background_enabled=config.get('background_enabled', True))
+                          position_offset_percent=position_offset_percent,
+                          background_enabled=background_enabled)
         
         # Draw attributes if available
         if hasattr(obj, 'attributes') and obj.attributes:
-            draw_object_attributes(image.image, obj, last_info.bounding_box, font_face, font_scale*0.5, thickness)
+            draw_object_attributes(image.image, obj, last_info.bounding_box, font_face, resolved_font_scale*0.5, resolved_thickness)
 
         # utils_logger.error(len(obj['obj_info']))
         if len(obj.history) > 1:
-            for i in range(0, last_hist_index):
+            hist_start_index = max(0, last_hist_index - max_history_segments)
+            for i in range(hist_start_index, last_hist_index):
                 first_info = obj.history[i].track
                 second_info = obj.history[i + 1].track
                 first_cm_x = int((first_info.bounding_box[0] + first_info.bounding_box[2]) / 2)
@@ -789,19 +800,9 @@ def draw_object_attributes(image, obj, bbox, font_face, font_scale, thickness):
         if isinstance(attr_data, dict):
             state = attr_data.get('state', 'none')
             confidence = attr_data.get('confidence_smooth', 0.0)
-            total_time = attr_data.get('total_time_ms', 0)
-            
-            # Получаем новые поля для улучшенного отображения
-            total_found_time = attr_data.get('total_found_time_ms', 0)
-            total_lost_time = attr_data.get('total_lost_time_ms', 0)
-            found_ratio = attr_data.get('found_ratio', 0.0)
-            
-            # Рассчитываем суммарное время (или ноль если < 0)
-            summary_time = max(0, total_found_time - total_lost_time)
-            
-            # Create attribute text with enhanced information
             color = state_colors.get(state, (128, 128, 128))
-            attr_text = f"{attr_name}: {state} ({confidence:.2f}, {summary_time}ms, {found_ratio:.1%})"
+            # Keep the live overlay compact: long telemetry strings noticeably slow down GUI drawing.
+            attr_text = f"{attr_name}: {state} ({confidence:.2f})"
             attr_texts.append((attr_text, color))
     
     # Calculate text height for proper spacing

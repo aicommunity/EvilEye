@@ -137,11 +137,17 @@ class VideoThread(QThread):
     def convert_cv_qt(self, cv_img, widget_width, widget_height) -> QPixmap:
         # Переводим из opencv image в QPixmap
         cvt_start = timer()
-        rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
+        h, w, ch = cv_img.shape
+        bytes_per_line = cv_img.strides[0]
+        qimage_format = getattr(QtGui.QImage.Format, "Format_BGR888", None)
+        if qimage_format is not None:
+            convert_to_qt = QtGui.QImage(cv_img.data, w, h, bytes_per_line, qimage_format)
+        else:
+            rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
+            h, w, ch = rgb_image.shape
+            bytes_per_line = rgb_image.strides[0]
+            convert_to_qt = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format.Format_RGB888)
         cvt_ms = (timer() - cvt_start) * 1000.0
-        h, w, ch = rgb_image.shape
-        bytes_per_line = ch * w
-        convert_to_qt = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format.Format_RGB888)
         scale_ms = 0.0
         if self.is_add_zone_clicked:
             zones_window_image = convert_to_qt.scaled(int(widget_width), int(widget_height),
