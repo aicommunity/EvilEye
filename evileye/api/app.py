@@ -10,6 +10,7 @@ from evileye.core.logger import get_module_logger
 from evileye.api.routes.auth import router as auth_router
 from evileye.api.routes.configs import router as configs_router
 from evileye.api.routes.journals import router as journals_router
+from evileye.api.routes.logs import router as logs_router
 # from evileye.api.routes.pipelines import router as pipelines_router  # DEPRECATED
 from evileye.api.routes.state import router as state_router
 from evileye.api.routes.streaming import router as streaming_router
@@ -108,12 +109,13 @@ def create_app() -> FastAPI:
     app.include_router(auth_router)
     app.include_router(state_router)
     app.include_router(journals_router)
+    app.include_router(logs_router)
     app.include_router(configs_router)
     # app.include_router(pipelines_router)  # DEPRECATED: use /api/v1/configs/runs
     app.include_router(streaming_router)
     # app.include_router(events_router)  # DEPRECATED: requires in-process Controller access
     app.include_router(internal_router)
-    logger.info("Routers registered: auth, state, journals, configs, streaming, internal")
+    logger.info("Routers registered: auth, state, journals, logs, configs, streaming, internal")
 
     static_dir = Path(__file__).parent / "static"
     if static_dir.exists():

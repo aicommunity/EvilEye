@@ -22,6 +22,11 @@ def build_app() -> FastAPI:
     return create_app()
 
 
+def _uvicorn_access_log_enabled() -> bool:
+    value = os.getenv("EVILEYE_UVICORN_ACCESS_LOG", "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
 # -- Standalone entry point for child process ----------------------------
 
 def _run_server_in_process(host, port, log_level, frame_queue, ssl_certfile=None, ssl_keyfile=None):
@@ -48,6 +53,7 @@ def _run_server_in_process(host, port, log_level, frame_queue, ssl_certfile=None
             host=host,
             port=port,
             log_level=log_level,
+            access_log=_uvicorn_access_log_enabled(),
             ssl_certfile=ssl_certfile,
             ssl_keyfile=ssl_keyfile,
             proxy_headers=True,
@@ -216,6 +222,7 @@ def run_api_server(host: str = "127.0.0.1", port: int = 8080,
             host=host,
             port=port,
             log_level=effective_log_level,
+            access_log=_uvicorn_access_log_enabled(),
             ssl_certfile=ssl_certfile,
             ssl_keyfile=ssl_keyfile,
             proxy_headers=True,

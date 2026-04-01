@@ -261,6 +261,22 @@ class DatabaseJournalDataSource(EventJournalDataSource):
             pass
         return []
 
+    def _append_source_filters(self, conditions: List[str], filters: Dict) -> None:
+        source_names = filters.get('source_names')
+        if isinstance(source_names, list) and source_names:
+            escaped = []
+            for name in source_names:
+                if not name:
+                    continue
+                escaped_name = str(name).replace("'", "''")
+                escaped.append(f"'{escaped_name}'")
+            if escaped:
+                conditions.append(f"source_name IN ({', '.join(escaped)})")
+                return
+        if filters.get('source_name'):
+            source_name_escaped = filters['source_name'].replace("'", "''")
+            conditions.append(f"source_name = '{source_name_escaped}'")
+
     def _build_objects_sql(self, filters: Dict, include_pagination: bool = False, page: int = 0, size: int = 50, initial_load: bool = False) -> str:
         """Build SQL query for objects with filters and optional pagination"""
         # Base SELECT
@@ -285,9 +301,7 @@ class DatabaseJournalDataSource(EventJournalDataSource):
             conditions.append(f"time_stamp >= '{default_start.strftime('%Y-%m-%d %H:%M:%S')}'")
         
         # Source name filter
-        if filters.get('source_name'):
-            source_name_escaped = filters['source_name'].replace("'", "''")
-            conditions.append(f"source_name = '{source_name_escaped}'")
+        self._append_source_filters(conditions, filters)
         
         # Source ID filter
         if filters.get('source_id'):
@@ -346,9 +360,7 @@ class DatabaseJournalDataSource(EventJournalDataSource):
             conditions.append(f"time_stamp >= '{default_start.strftime('%Y-%m-%d %H:%M:%S')}'")
         
         # Source name filter
-        if filters.get('source_name'):
-            source_name_escaped = filters['source_name'].replace("'", "''")
-            conditions.append(f"source_name = '{source_name_escaped}'")
+        self._append_source_filters(conditions, filters)
         
         if conditions:
             query_string += 'WHERE ' + ' AND '.join(conditions) + ' '
@@ -623,9 +635,7 @@ class DatabaseJournalDataSource(EventJournalDataSource):
                     conditions.append(f"time_stamp >= '{default_start.strftime('%Y-%m-%d %H:%M:%S')}'")
                 
                 # Source name filter
-                if filters.get('source_name'):
-                    source_name_escaped = filters['source_name'].replace("'", "''")
-                    conditions.append(f"source_name = '{source_name_escaped}'")
+                self._append_source_filters(conditions, filters)
                 
                 # Source ID filter
                 if filters.get('source_id'):

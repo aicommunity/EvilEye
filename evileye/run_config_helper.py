@@ -139,6 +139,10 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
     main_window_created = {'done': False}
     
     def on_initialization_complete(controller_instance):
+        try:
+            controller_instance.config_path = str(Path(config_file_name).resolve())
+        except Exception:
+            pass
         initialization_result['controller'] = controller_instance
         initialization_result['completed'] = True
         logger.info("Controller initialization completed")

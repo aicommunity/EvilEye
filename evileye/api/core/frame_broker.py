@@ -63,6 +63,9 @@ class FrameBroker:
                     pipeline_id, jpeg_bytes = item
                     metadata = None
                 self.publish_jpeg(pipeline_id, jpeg_bytes, metadata=metadata)
+                source_id = (metadata or {}).get("source_id") if isinstance(metadata, dict) else None
+                if source_id is not None:
+                    self.publish_jpeg(f"{pipeline_id}:{source_id}", jpeg_bytes, metadata=metadata)
             except Exception:
                 continue
 

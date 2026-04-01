@@ -2,6 +2,7 @@ import {
   ApiError,
   authApi,
   journalsApi,
+  logsApi,
   stateApi,
   systemApi,
   configsList,
@@ -22,30 +23,32 @@ import {
   type StateCamera,
 } from './api.js';
 
-type PanelId = 'overview' | 'cameras' | 'journals' | 'configs' | 'runs';
+type PanelId = 'overview' | 'cameras' | 'journals' | 'logs' | 'configs' | 'runs';
 
 const navOverview = document.getElementById('nav-overview')!;
 const navCameras = document.getElementById('nav-cameras')!;
 const navJournals = document.getElementById('nav-journals')!;
+const navLogs = document.getElementById('nav-logs')!;
 const navConfigs = document.getElementById('nav-configs')!;
 const navRuns = document.getElementById('nav-runs')!;
 const panelOverview = document.getElementById('panel-overview')!;
 const panelCameras = document.getElementById('panel-cameras')!;
 const panelJournals = document.getElementById('panel-journals')!;
+const panelLogs = document.getElementById('panel-logs')!;
 const panelConfigs = document.getElementById('panel-configs')!;
 const panelRuns = document.getElementById('panel-runs')!;
 
 const overviewRefreshBtn = document.getElementById('overview-refresh-btn')!;
 const overviewCardsEl = document.getElementById('overview-cards')!;
 const overviewRunsEl = document.getElementById('overview-runs')!;
-const overviewLogsEl = document.getElementById('overview-logs')!;
 const camerasRefreshBtn = document.getElementById('cameras-refresh-btn')!;
 const camerasListEl = document.getElementById('cameras-list')!;
 const journalsRefreshBtn = document.getElementById('journals-refresh-btn')!;
 const journalEventsEl = document.getElementById('journal-events')!;
 const journalObjectsEl = document.getElementById('journal-objects')!;
-const journalLogsEl = document.getElementById('journal-logs')!;
 const journalHistoryEl = document.getElementById('journal-history')!;
+const logsRefreshBtn = document.getElementById('logs-refresh-btn')!;
+const logsListEl = document.getElementById('logs-list')!;
 
 const configSearchInput = document.getElementById('config-search') as HTMLInputElement;
 const configsListEl = document.getElementById('configs-list')!;
@@ -102,7 +105,9 @@ const authPasswordInput = document.getElementById('auth-password') as HTMLInputE
 const authLoginBtn = document.getElementById('auth-login-btn')!;
 
 let currentStreamRid: number | null = null;
+let currentStreamSourceId: number | null = null;
 let streamPollTimer: number | null = null;
+let cameraPreviewTimer: number | null = null;
 let configEditName: string | null = null;
 let runsCache: ConfigRun[] = [];
 let configNamesCache: string[] = [];
@@ -181,6 +186,7 @@ function updateAuthUi(user: { username: string; role: string } | null): void {
 
 function applyAccessPolicy(): void {
   navJournals.classList.toggle('hidden', !hasPermission('journal:view'));
+  navLogs.classList.toggle('hidden', !hasPermission('journal:view'));
   navConfigs.classList.toggle('hidden', !hasPermission('config:view'));
   navRuns.classList.toggle('hidden', !hasPermission('runtime:control'));
   configCreateBtn.classList.toggle('hidden', !hasPermission('config:edit'));
@@ -281,11 +287,13 @@ function showPanel(panel: PanelId): void {
   panelOverview.classList.toggle('active', panel === 'overview');
   panelCameras.classList.toggle('active', panel === 'cameras');
   panelJournals.classList.toggle('active', panel === 'journals');
+  panelLogs.classList.toggle('active', panel === 'logs');
   panelConfigs.classList.toggle('active', panel === 'configs');
   panelRuns.classList.toggle('active', panel === 'runs');
   navOverview.classList.toggle('active', panel === 'overview');
   navCameras.classList.toggle('active', panel === 'cameras');
   navJournals.classList.toggle('active', panel === 'journals');
+  navLogs.classList.toggle('active', panel === 'logs');
   navConfigs.classList.toggle('active', panel === 'configs');
   navRuns.classList.toggle('active', panel === 'runs');
 }
@@ -453,24 +461,16 @@ async function loadRuns(): Promise<void> {
 }
 
 function renderOverview(overview: Awaited<ReturnType<typeof stateApi.overview>>): void {
+  const currentRun = overview.current_run;
   overviewCardsEl.innerHTML = `
     <div class="metric-card"><span class="metric-label">Статус сервера</span><strong>${escapeHtml(overview.server.status)}</strong></div>
-    <div class="metric-card"><span class="metric-label">Активные запуски</span><strong>${overview.server.runs_running}/${overview.server.runs_total}</strong></div>
+    <div class="metric-card"><span class="metric-label">Текущий запуск</span><strong>${currentRun ? `#${currentRun.id}` : '—'}</strong></div>
+    <div class="metric-card"><span class="metric-label">Состояние запуска</span><strong>${escapeHtml(overview.server.current_run_state)}</strong></div>
     <div class="metric-card"><span class="metric-label">Камеры</span><strong>${overview.server.cameras_total}</strong></div>
     <div class="metric-card"><span class="metric-label">Web preview</span><strong>${overview.server.web_previews_available}</strong></div>`;
-  overviewRunsEl.innerHTML = overview.runs.length
-    ? overview.runs
-        .map(
-          (run) =>
-            `<li class="overview-run"><span class="run-name">${escapeHtml(run.name ?? `Запуск ${run.id}`)}</span><span class="run-id">#${run.id}</span>${stateBadge(run.state)}<span class="run-config">${escapeHtml(run.pipeline_class ?? 'pipeline: n/a')}</span>${run.latest_frame_available ? '<span class="badge badge-running">preview</span>' : ''}</li>`
-        )
-        .join('')
-    : '<li class="empty">Активных runtime-запусков не найдено.</li>';
-  overviewLogsEl.innerHTML = overview.latest_logs.length
-    ? overview.latest_logs
-        .map((log) => `<article class="log-card"><h3>${escapeHtml(log.name)}</h3><pre>${escapeHtml(log.tail.join('\n'))}</pre></article>`)
-        .join('')
-    : '<p class="empty">Логи не найдены.</p>';
+  overviewRunsEl.innerHTML = currentRun
+    ? `<li class="overview-run"><span class="run-name">${escapeHtml(currentRun.name ?? `Запуск ${currentRun.id}`)}</span><span class="run-id">#${currentRun.id}</span>${stateBadge(currentRun.state)}<span class="run-config">${escapeHtml(currentRun.pipeline_class ?? 'pipeline: n/a')}</span>${currentRun.latest_frame_available ? '<span class="badge badge-running">preview</span>' : ''}</li>`
+    : '<li class="empty">Текущий runtime-запуск не найден.</li>';
 }
 
 function renderCameras(cameras: StateCamera[]): void {
@@ -479,13 +479,57 @@ function renderCameras(cameras: StateCamera[]): void {
     ? cameras
         .map(
           (camera) =>
-            `<article class="camera-card"><div class="camera-card-head"><span class="run-name">${escapeHtml(camera.source_name)}</span>${stateBadge(camera.run_state)}</div><p class="hint">Run #${camera.run_id} · ${escapeHtml(camera.run_name ?? 'без имени')} · ${escapeHtml(camera.pipeline_class ?? 'pipeline n/a')}</p><p class="camera-meta">${escapeHtml(camera.source_type ?? 'source n/a')} · ${escapeHtml(camera.address ?? 'адрес не указан')}</p>${camera.preview_available ? `<img src="${streamSnapshotUrl(camera.run_id)}?t=${ts}" alt="Preview ${escapeHtml(camera.source_name)}" class="camera-preview">` : `<div class="camera-preview camera-preview-empty">${camera.run_state === 'running' ? 'Кадр ещё не готов' : 'Запуск остановлен'}</div>`}<div class="camera-actions"><button type="button" class="btn btn-sm btn-outline camera-open-stream" data-rid="${camera.run_id}" ${camera.preview_available ? '' : 'disabled'}>Открыть поток</button></div></article>`
+            `<article class="camera-card"><div class="camera-card-head"><span class="run-name">${escapeHtml(camera.source_name)}</span>${stateBadge(camera.run_state)}</div><p class="hint">Run #${camera.run_id} · source #${camera.source_id ?? '—'} · ${escapeHtml(camera.run_name ?? 'без имени')} · ${escapeHtml(camera.pipeline_class ?? 'pipeline n/a')}</p><p class="camera-meta">${escapeHtml(camera.source_type ?? 'source n/a')} · ${escapeHtml(camera.address ?? 'адрес не указан')}</p>${camera.preview_available ? `<img src="${streamSnapshotUrl(camera.run_id, camera.source_id)}&t=${ts}" alt="Preview ${escapeHtml(camera.source_name)}" class="camera-preview" data-rid="${camera.run_id}" data-sid="${camera.source_id ?? ''}">` : `<div class="camera-preview camera-preview-empty">${camera.run_state === 'running' ? 'Кадр ещё не готов' : 'Запуск остановлен'}</div>`}<div class="camera-actions"><button type="button" class="btn btn-sm btn-outline camera-open-stream" data-rid="${camera.run_id}" data-sid="${camera.source_id ?? ''}" ${camera.preview_available ? '' : 'disabled'}>Открыть поток</button></div></article>`
         )
         .join('')
     : '<p class="empty">Сведения о камерах пока недоступны.</p>';
   camerasListEl.querySelectorAll('.camera-open-stream').forEach((btn) => {
-    btn.addEventListener('click', () => openStream(Number((btn as HTMLElement).dataset.rid)));
+    btn.addEventListener('click', () => openStream(Number((btn as HTMLElement).dataset.rid), Number((btn as HTMLElement).dataset.sid)));
   });
+  camerasListEl.querySelectorAll<HTMLImageElement>('.camera-preview[data-rid][data-sid]').forEach((img) => {
+    img.addEventListener('error', () => disableCameraPreview(img));
+  });
+  scheduleCameraPreviewRefresh();
+}
+
+function stopCameraPreviewRefresh(): void {
+  if (cameraPreviewTimer != null) {
+    window.clearInterval(cameraPreviewTimer);
+    cameraPreviewTimer = null;
+  }
+}
+
+function disableCameraPreview(img: HTMLImageElement): void {
+  const placeholder = document.createElement('div');
+  placeholder.className = 'camera-preview camera-preview-empty';
+  placeholder.textContent = 'Preview остановлен';
+  img.replaceWith(placeholder);
+  if (!camerasListEl.querySelector('.camera-preview[data-rid][data-sid]')) {
+    stopCameraPreviewRefresh();
+  }
+}
+
+function refreshCameraPreviews(): void {
+  camerasListEl.querySelectorAll<HTMLImageElement>('.camera-preview[data-rid][data-sid]').forEach((img) => {
+    const rid = Number(img.dataset.rid);
+    const sid = Number(img.dataset.sid);
+    if (!Number.isNaN(rid) && !Number.isNaN(sid)) {
+      const run = runsCache.find((item) => item.id === rid);
+      if (run && run.state !== 'running') {
+        disableCameraPreview(img);
+        return;
+      }
+      img.src = `${streamSnapshotUrl(rid, sid)}&t=${Date.now()}`;
+    }
+  });
+}
+
+function scheduleCameraPreviewRefresh(): void {
+  stopCameraPreviewRefresh();
+  if (!camerasListEl.querySelector('.camera-preview[data-rid][data-sid]')) {
+    return;
+  }
+  cameraPreviewTimer = window.setInterval(() => refreshCameraPreviews(), 1500);
 }
 
 function renderJournalTable(container: HTMLElement, items: Record<string, unknown>[], columns: string[], emptyText: string): void {
@@ -512,20 +556,24 @@ async function loadCameras(): Promise<void> {
 
 async function loadJournals(): Promise<void> {
   if (!hasPermission('journal:view')) return;
-  const [events, objects, logs, history] = await Promise.all([
+  const [events, objects, history] = await Promise.all([
     journalsApi.events(),
     journalsApi.objects(),
-    journalsApi.logs(),
     journalsApi.configHistory(),
   ]);
   renderJournalTable(journalEventsEl, events.items, ['event_type', 'source_name', 'information', 'ts'], 'События не найдены.');
   renderJournalTable(journalObjectsEl, objects.items, ['event_type', 'source_name', 'information', 'ts'], 'Объекты не найдены.');
-  journalLogsEl.innerHTML = logs.files.length
+  renderJournalTable(journalHistoryEl, history.items, ['job_id', 'project_id', 'configuration_id', 'status', 'creation_time'], 'История конфигураций недоступна.');
+}
+
+async function loadLogs(): Promise<void> {
+  if (!hasPermission('journal:view')) return;
+  const logs = await logsApi.runtime();
+  logsListEl.innerHTML = logs.files.length
     ? logs.files
         .map((file) => `<article class="log-card"><h3>${escapeHtml(file.name)}</h3><pre>${escapeHtml(file.lines.join('\n'))}</pre></article>`)
         .join('')
-    : '<p class="empty">Системные логи недоступны.</p>';
-  renderJournalTable(journalHistoryEl, history.items, ['job_id', 'project_id', 'configuration_id', 'status', 'creation_time'], 'История конфигураций недоступна.');
+    : '<p class="empty">Технические логи недоступны.</p>';
 }
 
 async function refreshAll(): Promise<void> {
@@ -535,6 +583,7 @@ async function refreshAll(): Promise<void> {
   await loadRuns();
   await loadConfigs();
   await loadJournals();
+  await loadLogs();
 }
 
 function openRunDetail(rid: number): void {
@@ -559,7 +608,7 @@ function openRunDetail(rid: number): void {
       }
       runDetailActions.innerHTML =
         run.state === 'running' || run.state === 'starting'
-          ? `<button type="button" class="btn btn-sm btn-danger run-detail-stop" data-rid="${rid}">Остановить</button><button type="button" class="btn btn-sm btn-primary run-detail-stream" data-rid="${rid}" ${run.frame_dir && run.state === 'running' ? '' : 'disabled'}>Поток</button>${!run.frame_dir ? '<span class="run-error">Web-preview недоступен: процесс запущен без frame sharing.</span>' : run.state !== 'running' ? '<span class="run-error">Поток будет доступен после перехода запуска в running.</span>' : ''}`
+          ? `<button type="button" class="btn btn-sm btn-danger run-detail-stop" data-rid="${rid}">Остановить</button><button type="button" class="btn btn-sm btn-primary run-detail-stream" data-rid="${rid}" ${run.state === 'running' ? '' : 'disabled'}>Поток</button>${run.state !== 'running' ? '<span class="run-error">Поток будет доступен после перехода запуска в running.</span>' : ''}`
           : `<button type="button" class="btn btn-sm btn-success run-detail-start" data-rid="${rid}">Запустить</button><button type="button" class="btn btn-sm btn-outline run-detail-delete" data-rid="${rid}">Удалить</button>`;
       runDetailActions.querySelectorAll('[data-rid]').forEach((btn) => {
         btn.addEventListener('click', () => {
@@ -640,6 +689,8 @@ async function stopRun(rid: number): Promise<void> {
   }
   try {
     await runStop(rid);
+    if (currentStreamRid === rid) closeStream();
+    camerasListEl.querySelectorAll<HTMLImageElement>(`.camera-preview[data-rid="${rid}"]`).forEach((img) => disableCameraPreview(img));
     showSuccess('Запуск остановлен');
     await refreshAll();
   } catch (e) {
@@ -664,24 +715,21 @@ async function deleteRun(rid: number): Promise<void> {
   }
 }
 
-function openStream(rid: number): void {
+function openStream(rid: number, sourceId?: number | null): void {
   const run = runsCache.find((item) => item.id === rid);
   if (run && run.state !== 'running') {
     showError('Поток доступен только для running-запуска.');
     return;
   }
-  if (run && !run.frame_dir) {
-    showError('У этого запуска нет web-preview. Перезапустите его через текущий API.');
-    return;
-  }
   const fps = streamFpsInput?.value ? Number(streamFpsInput.value) : 10;
   streamFpsInput.value = String(Math.max(1, Math.min(30, fps)));
   currentStreamRid = rid;
+  currentStreamSourceId = sourceId ?? null;
   streamRidEl.textContent = String(rid);
   streamNameEl.textContent = '…';
   streamStateEl.textContent = '…';
   streamStatusEl.textContent = '…';
-  streamFrame.src = streamMjpgUrl(rid, fps);
+  streamFrame.src = streamMjpgUrl(rid, fps, currentStreamSourceId);
   streamSnapshotImg.src = '';
   streamContainer.classList.add('open');
   streamPollTimer = window.setInterval(() => void pollStreamInfo(), 3000);
@@ -693,28 +741,38 @@ function applyStreamFps(): void {
   const fps = streamFpsInput?.value ? Number(streamFpsInput.value) : 10;
   const safeFps = Math.max(1, Math.min(30, fps));
   streamFpsInput.value = String(safeFps);
-  streamFrame.src = streamMjpgUrl(currentStreamRid, safeFps);
+  streamFrame.src = streamMjpgUrl(currentStreamRid, safeFps, currentStreamSourceId);
   showSuccess(`FPS установлен: ${safeFps}`);
 }
 
 function refreshSnapshot(): void {
   if (currentStreamRid == null) return;
-  streamSnapshotImg.src = `${streamSnapshotUrl(currentStreamRid)}?t=${Date.now()}`;
+  const base = streamSnapshotUrl(currentStreamRid, currentStreamSourceId);
+  streamSnapshotImg.src = `${base}${base.includes('?') ? '&' : '?'}t=${Date.now()}`;
 }
 
 async function pollStreamInfo(): Promise<void> {
   if (currentStreamRid == null) return;
   try {
     const run = await runGet(currentStreamRid);
+    if (run.state !== 'running') {
+      closeStream();
+      return;
+    }
     streamNameEl.textContent = run.name ?? `Запуск ${run.id}`;
     streamStateEl.textContent = stateLabels[run.state] ?? run.state;
     streamStateEl.className = `badge ${run.state === 'running' ? 'badge-running' : 'badge-stopped'}`;
-    const status = await streamStatus(currentStreamRid).catch(() => null);
+    const status = await streamStatus(currentStreamRid, currentStreamSourceId).catch(() => null);
+    if (!status) {
+      closeStream();
+      return;
+    }
     if (status) {
       streamStatusEl.textContent = streamAvailabilityText(status);
       streamStatusEl.className = status.stream_active || status.has_frame ? 'stream-status-active' : '';
       if (status.stream_active || status.has_frame) {
-        streamSnapshotImg.src = `${streamSnapshotUrl(currentStreamRid)}?t=${Date.now()}`;
+        const base = streamSnapshotUrl(currentStreamRid, currentStreamSourceId);
+        streamSnapshotImg.src = `${base}${base.includes('?') ? '&' : '?'}t=${Date.now()}`;
       } else if (!status.web_stream_available) {
         streamFrame.src = '';
       }
@@ -732,6 +790,7 @@ function closeStream(): void {
   streamSnapshotImg.src = '';
   streamContainer.classList.remove('open');
   currentStreamRid = null;
+  currentStreamSourceId = null;
   if (streamPollTimer != null) {
     clearInterval(streamPollTimer);
     streamPollTimer = null;
@@ -766,6 +825,7 @@ export function initDashboard(): void {
   navOverview.addEventListener('click', () => showPanel('overview'));
   navCameras.addEventListener('click', () => showPanel('cameras'));
   navJournals.addEventListener('click', () => showPanel('journals'));
+  navLogs.addEventListener('click', () => showPanel('logs'));
   navConfigs.addEventListener('click', () => showPanel('configs'));
   navRuns.addEventListener('click', () => showPanel('runs'));
   showPanel('overview');
@@ -773,6 +833,7 @@ export function initDashboard(): void {
   overviewRefreshBtn.addEventListener('click', () => void refreshAll());
   camerasRefreshBtn.addEventListener('click', () => void loadCameras());
   journalsRefreshBtn.addEventListener('click', () => void loadJournals());
+  logsRefreshBtn.addEventListener('click', () => void loadLogs());
 
   configCreateBtn.addEventListener('click', () => void openConfigModal('create'));
   configModalClose.addEventListener('click', closeConfigModal);

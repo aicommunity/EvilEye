@@ -188,6 +188,8 @@ def required_permissions_for_request(path: str, method: str) -> set[str]:
         return set()
     if path.startswith("/api/v1/journals/config-history"):
         return {"history:view"} if method == "GET" else {"history:edit"}
+    if path.startswith("/api/v1/logs"):
+        return {"journal:view"}
     if path.startswith("/api/v1/journals/"):
         return {"journal:view"}
     if path.startswith("/api/v1/state/"):

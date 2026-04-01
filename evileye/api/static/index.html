@@ -14,7 +14,7 @@
     <header class="header">
       <div class="header-brand">
         <h1 class="logo">EvilEye</h1>
-        <p class="tagline">Актуальное состояние сервера, камер, журналов и настроек</p>
+        <p class="tagline">Актуальное состояние сервера, камер, журналов, логов и настроек</p>
       </div>
       <div id="auth-status" class="auth-status hidden">
         <span id="auth-user-label" class="auth-user-label">—</span>
@@ -24,6 +24,7 @@
         <button type="button" id="nav-overview" class="tab active">Обзор</button>
         <button type="button" id="nav-cameras" class="tab">Камеры</button>
         <button type="button" id="nav-journals" class="tab">Журналы</button>
+        <button type="button" id="nav-logs" class="tab">Логи</button>
         <button type="button" id="nav-runs" class="tab">Запуски</button>
         <button type="button" id="nav-configs" class="tab">Настройки</button>
       </nav>
@@ -33,22 +34,20 @@
       <section id="panel-overview" class="panel active">
         <div class="card">
           <h2>Обзор сервера</h2>
-          <p class="hint">Сводка по состоянию сервера, активным runtime-запускам и последним системным журналам.</p>
+          <p class="hint">Сводка по текущему operational context и активной конфигурации.</p>
           <div class="toolbar">
             <button type="button" id="overview-refresh-btn" class="btn btn-outline">Обновить обзор</button>
           </div>
           <div id="overview-cards" class="metric-grid"></div>
-          <h3 class="section-title">Активные запуски</h3>
+          <h3 class="section-title">Текущий запуск</h3>
           <ul id="overview-runs" class="runs-list compact-list"></ul>
-          <h3 class="section-title">Последние логи</h3>
-          <div id="overview-logs" class="log-grid"></div>
         </div>
       </section>
 
       <section id="panel-cameras" class="panel">
         <div class="card">
           <h2>Камеры и preview</h2>
-          <p class="hint">Read-only представление актуальных источников и связанных runtime-запусков.</p>
+          <p class="hint">Read-only представление камер и preview только для текущей активной конфигурации.</p>
           <div class="toolbar">
             <button type="button" id="cameras-refresh-btn" class="btn btn-outline">Обновить камеры</button>
           </div>
@@ -59,7 +58,7 @@
       <section id="panel-journals" class="panel">
         <div class="card">
           <h2>Журналы</h2>
-          <p class="hint">События, объекты, системные логи и история конфигураций.</p>
+          <p class="hint">Предметные журналы текущей активной конфигурации: события, объекты и история конфигураций.</p>
           <div class="toolbar">
             <button type="button" id="journals-refresh-btn" class="btn btn-outline">Обновить журналы</button>
           </div>
@@ -67,10 +66,19 @@
           <div id="journal-events"></div>
           <h3 class="section-title">Objects</h3>
           <div id="journal-objects"></div>
-          <h3 class="section-title">System logs</h3>
-          <div id="journal-logs" class="log-grid"></div>
           <h3 class="section-title">Configuration history</h3>
           <div id="journal-history"></div>
+        </div>
+      </section>
+
+      <section id="panel-logs" class="panel">
+        <div class="card">
+          <h2>Логи</h2>
+          <p class="hint">Технические логи сервера и runtime для диагностики текущего контекста.</p>
+          <div class="toolbar">
+            <button type="button" id="logs-refresh-btn" class="btn btn-outline">Обновить логи</button>
+          </div>
+          <div id="logs-list" class="log-grid"></div>
         </div>
       </section>
 

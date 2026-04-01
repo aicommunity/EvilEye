@@ -18,16 +18,23 @@ logger = get_module_logger("api.runtime_registry")
 
 RUNTIME_ROOT = Path(tempfile.gettempdir()) / "evileye_runtime"
 REGISTRY_DIR = RUNTIME_ROOT / "pipelines"
+SNAPSHOT_DIR = RUNTIME_ROOT / "snapshots"
 LOCK_FILE = RUNTIME_ROOT / ".lock"
 
 
 def _ensure_dirs() -> None:
     REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
+    SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _record_path(rid: int) -> Path:
     _ensure_dirs()
     return REGISTRY_DIR / f"{int(rid)}.json"
+
+
+def _snapshot_path(rid: int) -> Path:
+    _ensure_dirs()
+    return SNAPSHOT_DIR / f"{int(rid)}.json"
 
 
 def _is_pid_alive(pid: Optional[int]) -> bool:
@@ -188,6 +195,45 @@ def save_runtime_record(record: Dict) -> Dict:
     return normalized
 
 
+def save_runtime_snapshot(rid: int, snapshot: Dict) -> Dict:
+    _ensure_dirs()
+    normalized = dict(snapshot)
+    normalized["id"] = int(rid)
+    normalized["updated_at"] = time.time()
+    _snapshot_path(rid).write_text(
+        json.dumps(normalized, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return normalized
+
+
+def load_runtime_snapshot(rid: int) -> Optional[Dict]:
+    path = _snapshot_path(rid)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        logger.warning("Failed to read runtime snapshot %s: %s", path, exc)
+        return None
+    data["id"] = int(rid)
+    return data
+
+
+def delete_runtime_snapshot(rid: int) -> bool:
+    path = _snapshot_path(rid)
+    if not path.exists():
+        return False
+    path.unlink()
+    return True
+
+
+def update_runtime_snapshot(rid: int, **updates) -> Dict:
+    existing = load_runtime_snapshot(rid) or {}
+    merged = {**existing, **updates}
+    return save_runtime_snapshot(rid, merged)
+
+
 def register_runtime(
     *,
     rid: int,
@@ -240,6 +286,7 @@ def delete_runtime_record(rid: int) -> bool:
     if not path.exists():
         return False
     path.unlink()
+    delete_runtime_snapshot(rid)
     return True
 
 

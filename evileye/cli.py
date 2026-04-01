@@ -455,7 +455,10 @@ def run(
         verbose: bool = typer.Option(False, "--verbose", help="Enable verbose logging"),
 ) -> None:
     """
-    Launch EvilEye 
+    Launch EvilEye system.
+
+    This is the primary operational mode: the runtime owns the lifecycle
+    of the system and may start the web server module from configuration.
 
     Example:
         evileye run configs/test_sources_detectors_trackers_mc.json
@@ -551,6 +554,10 @@ def start_api(
 ) -> None:
     """
     Start EvilEye FastAPI web server.
+
+    This is a service/administrative mode. For the primary operational
+    scenario prefer `evileye run`, where the system is started first and
+    the web server works as its module.
 
     Examples:
         evileye server --host 0.0.0.0 --port 8000

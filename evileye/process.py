@@ -1,7 +1,6 @@
 import argparse
 import os
 import sys
-import tempfile
 from pathlib import Path
 
 try:
@@ -17,7 +16,7 @@ except ImportError:
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from evileye.core.logging_config import setup_evileye_logging, log_system_info
-from evileye.api.core.runtime_registry import allocate_pipeline_id, mark_runtime_stopped, register_runtime
+from evileye.api.core.runtime_registry import allocate_pipeline_id, mark_runtime_stopped, register_runtime, update_runtime_snapshot
 
 def create_args_parser():
     pars = argparse.ArgumentParser()
@@ -62,12 +61,6 @@ def main():
         pipeline_id = str(allocate_pipeline_id())
         os.environ["EVILEYE_PIPELINE_ID"] = pipeline_id
 
-    frame_dir = os.environ.get("EVILEYE_FRAME_DIR")
-    if not frame_dir:
-        frame_dir = str(Path(tempfile.gettempdir()) / "evileye_frames" / pipeline_id)
-        os.environ["EVILEYE_FRAME_DIR"] = frame_dir
-
-    Path(frame_dir).mkdir(parents=True, exist_ok=True)
     config_path = str(Path(args.config).resolve())
     config_name = Path(config_path).stem
 
@@ -76,18 +69,29 @@ def main():
         pid=os.getpid(),
         config_path=config_path,
         name=os.environ.get("EVILEYE_PIPELINE_NAME") or config_name,
-        frame_dir=frame_dir,
+        frame_dir=None,
         source="process",
         managed=os.environ.get("EVILEYE_MANAGED_RUN") == "1",
         state="starting",
+    )
+    update_runtime_snapshot(
+        int(pipeline_id),
+        pid=os.getpid(),
+        config_path=config_path,
+        state="starting",
+        server_identity={
+            "managed": os.environ.get("EVILEYE_MANAGED_RUN") == "1",
+        },
     )
 
     try:
         ret = run_config(args.config, gui=args.gui, autoclose=args.autoclose)
     except Exception as exc:
+        update_runtime_snapshot(int(pipeline_id), state="error", error=str(exc))
         mark_runtime_stopped(int(pipeline_id), error=str(exc))
         raise
     else:
+        update_runtime_snapshot(int(pipeline_id), state="stopped")
         mark_runtime_stopped(int(pipeline_id))
         sys.exit(ret)
 

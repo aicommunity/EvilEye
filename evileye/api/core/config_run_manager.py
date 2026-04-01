@@ -1,9 +1,7 @@
 import os
 import json
-import shutil
 import signal
 import subprocess
-import tempfile
 import threading
 import time
 from pathlib import Path
@@ -16,6 +14,7 @@ from evileye.api.core.runtime_registry import (
     mark_runtime_stopped,
     register_runtime,
 )
+from evileye.api.security import load_web_auth_config
 from evileye.core.logger import get_module_logger
 
 
@@ -36,7 +35,6 @@ class ConfigRunItem:
         self.pid: Optional[int] = None
         self.state: str = ConfigRunState.CREATED
         self.error: Optional[str] = None
-        self.frame_dir: Optional[Path] = None
 
 
 class _FramePoller:
@@ -121,7 +119,6 @@ class ConfigRunManager:
         self._items: Dict[int, ConfigRunItem] = {}
         self._shutdown_called = False
         self.logger = get_module_logger("api.config_run_manager")
-        self._frame_poller = _FramePoller(self.logger)
 
     def _describe_locked(self, item: ConfigRunItem) -> Dict:
         return {
@@ -200,7 +197,7 @@ class ConfigRunManager:
             self.logger.info(f"ConfigRun '{rid}' deleted")
             return {"id": rid, "status": "deleted"}
 
-    def start(self, rid: int) -> Dict:
+    def start(self, rid: int, *, api_base_url: str | None = None) -> Dict:
         with self._lock:
             item = self._items.get(rid)
             if item is None:
@@ -220,19 +217,19 @@ class ConfigRunManager:
 
         try:
             item.state = ConfigRunState.STARTING
-
-            frame_dir = Path(tempfile.gettempdir()) / "evileye_frames" / str(rid)
-            frame_dir.mkdir(parents=True, exist_ok=True)
-            item.frame_dir = frame_dir
+            auth = load_web_auth_config()
 
             env = {
                 **os.environ,
                 "EVILEYE_PIPELINE_ID": str(rid),
-                "EVILEYE_FRAME_DIR": str(frame_dir),
                 "EVILEYE_PIPELINE_NAME": item.name,
                 "EVILEYE_MANAGED_RUN": "1",
                 "PYTHONUNBUFFERED": "1",
             }
+            if api_base_url:
+                env["EVILEYE_WEB_API_BASE"] = api_base_url
+            if auth.internal_token:
+                env["EVILEYE_INTERNAL_TOKEN"] = auth.internal_token
             cmd = [
                 os.sys.executable,
                 str(Path(__file__).resolve().parents[2] / "process.py"),
@@ -245,18 +242,17 @@ class ConfigRunManager:
             item.pid = proc.pid
             item.state = ConfigRunState.RUNNING
             item.error = None
-            self._frame_poller.watch(rid, frame_dir)
             register_runtime(
                 rid=rid,
                 pid=proc.pid,
                 config_path=str(item.config_path),
                 name=item.name,
-                frame_dir=str(frame_dir),
+                frame_dir=None,
                 source="web",
                 managed=True,
                 state="running",
             )
-            self.logger.info(f"ConfigRun '{rid}' running with pid {item.pid}, frame_dir={frame_dir}")
+            self.logger.info(f"ConfigRun '{rid}' running with pid {item.pid}")
         except Exception as e:
             item.state = ConfigRunState.ERROR
             item.error = str(e)
@@ -297,11 +293,8 @@ class ConfigRunManager:
                     raise KeyError("Config run not found")
                 return runtime
 
-        self._frame_poller.unwatch(rid)
-
         if item.pid is None or item.state not in (ConfigRunState.STARTING, ConfigRunState.RUNNING):
             item.state = ConfigRunState.STOPPED
-            self._cleanup_frame_dir(item)
             mark_runtime_stopped(rid)
             return self.describe(rid)
 
@@ -331,17 +324,8 @@ class ConfigRunManager:
             item.error = str(e)
             self.logger.error(f"ConfigRun '{rid}' failed to stop: {e}")
 
-        self._cleanup_frame_dir(item)
         mark_runtime_stopped(rid, error=item.error if item.state == ConfigRunState.ERROR else None)
         return self.describe(rid)
-
-    def _cleanup_frame_dir(self, item: ConfigRunItem) -> None:
-        if item.frame_dir and item.frame_dir.exists():
-            try:
-                shutil.rmtree(item.frame_dir, ignore_errors=True)
-            except Exception:
-                pass
-            item.frame_dir = None
 
     def shutdown(self) -> None:
         with self._lock:
@@ -351,7 +335,6 @@ class ConfigRunManager:
             self._shutdown_called = True
 
         self.logger.info("ConfigRunManager shutdown initiated")
-        self._frame_poller.stop()
         with self._lock:
             ids = list(self._items.keys())
         for rid in ids:

@@ -122,6 +122,7 @@ export interface StateRun extends ConfigRun {
     source_type?: string | null;
     address?: string | null;
   }>;
+  runtime_snapshot?: Record<string, unknown> | null;
 }
 
 export interface StateCamera {
@@ -182,30 +183,31 @@ export const stateApi = {
     timestamp: number;
     server: {
       status: string;
-      runs_total: number;
-      runs_running: number;
-      runs_error: number;
+      current_run_id: number | null;
+      current_run_state: string;
+      history_runs_total: number;
       cameras_total: number;
       web_previews_available: number;
       log_files: string[];
     };
-    runs: StateRun[];
+    current_run: StateRun | null;
     cameras: StateCamera[];
+    history_runs: StateRun[];
     latest_logs: Array<{ name: string; updated_at: number; tail: string[] }>;
   }> {
     return request('/state/overview');
   },
 
-  runs(): Promise<{ items: StateRun[] }> {
-    return request('/state/runs');
+  runs(scope: 'current' | 'history' | 'all' = 'current'): Promise<{ current_run: StateRun | null; items: StateRun[] }> {
+    return request(`/state/runs?scope=${scope}`);
   },
 
   run(rid: number): Promise<StateRun> {
     return request(`/state/runs/${rid}`);
   },
 
-  cameras(): Promise<{ items: StateCamera[] }> {
-    return request('/state/cameras');
+  cameras(scope: 'current' | 'all' = 'current'): Promise<{ items: StateCamera[] }> {
+    return request(`/state/cameras?scope=${scope}`);
   },
 };
 
@@ -218,32 +220,40 @@ export const journalsApi = {
     return request(`/journals/objects?page=${page}&size=${size}`);
   },
 
-  logs(lines = 80): Promise<{ available: boolean; files: Array<{ name: string; updated_at: number; lines: string[] }> }> {
-    return request(`/journals/logs?lines=${lines}`);
-  },
-
   configHistory(limit = 30): Promise<{ available: boolean; items: Record<string, unknown>[] }> {
     return request(`/journals/config-history?limit=${limit}`);
+  },
+};
+
+export const logsApi = {
+  runtime(lines = 80, limit = 5): Promise<{ available: boolean; files: Array<{ name: string; updated_at: number; lines: string[] }> }> {
+    return request(`/logs?lines=${lines}&limit=${limit}`);
   },
 };
 
 // ─── Streaming: стрим и снапшоты runtime-запуска ──────────────────────
 
 /** GET /api/v1/runs/{rid}/snapshot — URL для одного кадра (image/jpeg) */
-export function streamSnapshotUrl(rid: number): string {
-  return `${API_BASE}/runs/${rid}/snapshot`;
+export function streamSnapshotUrl(rid: number, sourceId?: number | null): string {
+  const u = `${API_BASE}/runs/${rid}/snapshot`;
+  return sourceId != null ? `${u}?source_id=${sourceId}` : u;
 }
 
 /** GET /api/v1/runs/{rid}/stream.mjpg?fps= — URL MJPEG-потока */
-export function streamMjpgUrl(rid: number, fps?: number): string {
+export function streamMjpgUrl(rid: number, fps?: number, sourceId?: number | null): string {
   const u = `${API_BASE}/runs/${rid}/stream.mjpg`;
-  return fps != null ? `${u}?fps=${fps}` : u;
+  const params = new URLSearchParams();
+  if (fps != null) params.set('fps', String(fps));
+  if (sourceId != null) params.set('source_id', String(sourceId));
+  const qs = params.toString();
+  return qs ? `${u}?${qs}` : u;
 }
 
 /** GET /api/v1/runs/{rid}/stream:status */
-export function streamStatus(rid: number): Promise<{
+export function streamStatus(rid: number, sourceId?: number | null): Promise<{
   run_id: number;
   pipeline_id: number;
+  source_id?: number | null;
   stream_active: boolean;
   has_frame: boolean;
   web_stream_available: boolean;
@@ -256,7 +266,7 @@ export function streamStatus(rid: number): Promise<{
     has_frame: boolean;
     web_stream_available: boolean;
     frame_dir_configured: boolean;
-  }>(`/runs/${rid}/stream:status`);
+  }>(`/runs/${rid}/stream:status${sourceId != null ? `?source_id=${sourceId}` : ''}`);
 }
 
 /** POST /api/v1/runs/{rid}/stream:stop */

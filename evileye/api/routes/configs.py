@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from typing import List, Dict, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from evileye.api.core.config_run_access import get_config_run_manager
@@ -86,9 +86,10 @@ async def get_config_run(rid: int) -> Dict:
 
 
 @router.post("/runs/{rid}/start")
-async def start_config_run(rid: int) -> Dict:
+async def start_config_run(rid: int, request: Request) -> Dict:
     try:
-        return get_config_run_manager().start(rid)
+        api_base_url = str(request.base_url).rstrip("/") + "/api/v1"
+        return get_config_run_manager().start(rid, api_base_url=api_base_url)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Config run not found") from exc
     except Exception as e:

@@ -103,14 +103,14 @@ export const stateApi = {
     overview() {
         return request('/state/overview');
     },
-    runs() {
-        return request('/state/runs');
+    runs(scope = 'current') {
+        return request(`/state/runs?scope=${scope}`);
     },
     run(rid) {
         return request(`/state/runs/${rid}`);
     },
-    cameras() {
-        return request('/state/cameras');
+    cameras(scope = 'current') {
+        return request(`/state/cameras?scope=${scope}`);
     },
 };
 export const journalsApi = {
@@ -120,26 +120,35 @@ export const journalsApi = {
     objects(page = 0, size = 30) {
         return request(`/journals/objects?page=${page}&size=${size}`);
     },
-    logs(lines = 80) {
-        return request(`/journals/logs?lines=${lines}`);
-    },
     configHistory(limit = 30) {
         return request(`/journals/config-history?limit=${limit}`);
     },
 };
+export const logsApi = {
+    runtime(lines = 80, limit = 5) {
+        return request(`/logs?lines=${lines}&limit=${limit}`);
+    },
+};
 // ─── Streaming: стрим и снапшоты runtime-запуска ──────────────────────
 /** GET /api/v1/runs/{rid}/snapshot — URL для одного кадра (image/jpeg) */
-export function streamSnapshotUrl(rid) {
-    return `${API_BASE}/runs/${rid}/snapshot`;
+export function streamSnapshotUrl(rid, sourceId) {
+    const u = `${API_BASE}/runs/${rid}/snapshot`;
+    return sourceId != null ? `${u}?source_id=${sourceId}` : u;
 }
 /** GET /api/v1/runs/{rid}/stream.mjpg?fps= — URL MJPEG-потока */
-export function streamMjpgUrl(rid, fps) {
+export function streamMjpgUrl(rid, fps, sourceId) {
     const u = `${API_BASE}/runs/${rid}/stream.mjpg`;
-    return fps != null ? `${u}?fps=${fps}` : u;
+    const params = new URLSearchParams();
+    if (fps != null)
+        params.set('fps', String(fps));
+    if (sourceId != null)
+        params.set('source_id', String(sourceId));
+    const qs = params.toString();
+    return qs ? `${u}?${qs}` : u;
 }
 /** GET /api/v1/runs/{rid}/stream:status */
-export function streamStatus(rid) {
-    return request(`/runs/${rid}/stream:status`);
+export function streamStatus(rid, sourceId) {
+    return request(`/runs/${rid}/stream:status${sourceId != null ? `?source_id=${sourceId}` : ''}`);
 }
 /** POST /api/v1/runs/{rid}/stream:stop */
 export function streamStop(rid) {

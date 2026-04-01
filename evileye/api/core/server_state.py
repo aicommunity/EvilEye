@@ -6,8 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
+from evileye.api.core.broker_access import get_broker
 from evileye.api.core.config_run_access import get_config_run_manager
-from evileye.api.core.runtime_registry import list_runtime_records, load_runtime_record
+from evileye.api.core.runtime_registry import list_runtime_records, load_runtime_record, load_runtime_snapshot
 
 
 @dataclass
@@ -101,6 +102,16 @@ def _combined_runtime_records() -> Dict[int, Dict[str, Any]]:
     return dict(sorted(items.items(), key=lambda pair: pair[0]))
 
 
+def _combined_runtime_record(rid: int) -> Optional[Dict[str, Any]]:
+    record = load_runtime_record(rid)
+    if record is None:
+        try:
+            record = get_config_run_manager().describe(rid)
+        except KeyError:
+            return None
+    return record
+
+
 def _log_files() -> list[Path]:
     logs_dir = Path("logs")
     if not logs_dir.exists():
@@ -118,13 +129,13 @@ def _read_log_tail(path: Path, *, lines: int = 120) -> list[str]:
 
 def _run_summary(record: Dict[str, Any]) -> Dict[str, Any]:
     config_summary = load_config_summary(record.get("config_path"))
-    frame_dir = record.get("frame_dir")
+    runtime_snapshot = load_runtime_snapshot(int(record.get("id") or 0)) if record.get("id") is not None else None
     latest_frame_exists = False
-    if frame_dir:
-        try:
-            latest_frame_exists = (Path(frame_dir) / "latest.jpg").exists()
-        except Exception:
-            latest_frame_exists = False
+    try:
+        rid = record.get("id")
+        latest_frame_exists = bool(rid is not None and get_broker().latest_jpeg(str(rid)))
+    except Exception:
+        latest_frame_exists = False
     return {
         "id": record.get("id"),
         "name": record.get("name"),
@@ -145,6 +156,7 @@ def _run_summary(record: Dict[str, Any]) -> Dict[str, Any]:
         "event_detector_names": config_summary.event_detector_names,
         "database_enabled": config_summary.database_enabled,
         "sources": config_summary.source_items,
+        "runtime_snapshot": runtime_snapshot,
     }
 
 
@@ -153,18 +165,45 @@ def list_run_summaries() -> list[Dict[str, Any]]:
 
 
 def get_run_summary(rid: int) -> Optional[Dict[str, Any]]:
-    runtime = load_runtime_record(rid)
+    runtime = _combined_runtime_record(rid)
     if runtime is None:
-        try:
-            runtime = get_config_run_manager().describe(rid)
-        except KeyError:
-            return None
+        return None
     return _run_summary(runtime)
 
 
-def list_camera_summaries() -> list[Dict[str, Any]]:
+def _current_run_candidate_key(run: Dict[str, Any]) -> tuple[int, int, float]:
+    state = str(run.get("state") or "")
+    state_rank = 2 if state == "running" else 1 if run.get("alive") else 0
+    updated_at = float(run.get("updated_at") or 0.0)
+    return (state_rank, 1 if bool(run.get("latest_frame_available")) else 0, updated_at)
+
+
+def get_current_run_summary() -> Optional[Dict[str, Any]]:
+    runs = list_run_summaries()
+    if not runs:
+        return None
+    return max(runs, key=_current_run_candidate_key)
+
+
+def list_history_run_summaries(*, exclude_current: bool = True) -> list[Dict[str, Any]]:
+    runs = list_run_summaries()
+    current = get_current_run_summary()
+    current_id = current.get("id") if current else None
+    items = []
+    for run in runs:
+        if exclude_current and current_id is not None and run.get("id") == current_id:
+            continue
+        items.append(run)
+    items.sort(key=lambda item: float(item.get("updated_at") or 0.0), reverse=True)
+    return items
+
+
+def list_camera_summaries(*, current_only: bool = True) -> list[Dict[str, Any]]:
     cameras: list[Dict[str, Any]] = []
-    for run in list_run_summaries():
+    runs = [get_current_run_summary()] if current_only else list_run_summaries()
+    for run in runs:
+        if not run:
+            continue
         for source in run.get("sources", []):
             cameras.append(
                 {
@@ -178,7 +217,6 @@ def list_camera_summaries() -> list[Dict[str, Any]]:
                     "address": source.get("address"),
                     "preview_available": bool(
                         run.get("state") == "running"
-                        and run.get("frame_dir")
                         and run.get("latest_frame_available")
                     ),
                     "alive": bool(run.get("alive")),
@@ -189,8 +227,9 @@ def list_camera_summaries() -> list[Dict[str, Any]]:
 
 
 def build_overview() -> Dict[str, Any]:
-    runs = list_run_summaries()
-    cameras = list_camera_summaries()
+    current_run = get_current_run_summary()
+    current_cameras = list_camera_summaries(current_only=True)
+    history_runs = list_history_run_summaries(exclude_current=True)
     log_files = _log_files()
     latest_logs = []
     for path in log_files[:3]:
@@ -202,22 +241,30 @@ def build_overview() -> Dict[str, Any]:
             }
         )
 
-    running_runs = [run for run in runs if run.get("state") == "running"]
-    error_runs = [run for run in runs if run.get("state") == "error"]
+    current_state = current_run.get("state") if current_run else "stopped"
     return {
         "timestamp": time.time(),
         "server": {
             "status": "ok",
-            "runs_total": len(runs),
-            "runs_running": len(running_runs),
-            "runs_error": len(error_runs),
-            "cameras_total": len(cameras),
-            "web_previews_available": sum(1 for run in runs if run.get("latest_frame_available")),
+            "current_run_id": current_run.get("id") if current_run else None,
+            "current_run_state": current_state,
+            "history_runs_total": len(history_runs),
+            "cameras_total": len(current_cameras),
+            "web_previews_available": sum(1 for camera in current_cameras if camera.get("preview_available")),
             "log_files": [path.name for path in log_files[:10]],
         },
-        "runs": runs,
-        "cameras": cameras,
+        "current_run": current_run,
+        "cameras": current_cameras,
+        "history_runs": history_runs,
         "latest_logs": latest_logs,
+    }
+
+
+def build_runtime_history() -> Dict[str, Any]:
+    current_run = get_current_run_summary()
+    return {
+        "current_run": current_run,
+        "items": list_history_run_summaries(exclude_current=True),
     }
 
 

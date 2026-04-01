@@ -3,6 +3,7 @@ import os
 import importlib
 import inspect
 import socket
+import copy
 from pathlib import Path
 from time import sleep
 
@@ -49,6 +50,8 @@ from evileye.core import ProcessorSource, ProcessorStep, ProcessorFrame
 from evileye.core.class_manager import ClassManager
 from evileye.pipelines import PipelineSurveillance
 from evileye.core.logger import get_module_logger
+from evileye.api.core.runtime_registry import update_runtime_snapshot
+from evileye.api.security import load_web_auth_config
 from evileye.core.system_diagnostics import SystemDiagnostics
 from evileye.core.memory_monitor import MemoryMonitor
 from evileye.api.core.runtime_registry import register_runtime
@@ -306,6 +309,65 @@ class Controller:
     def get_params(self):
         return self.params
 
+    def _publish_runtime_snapshot(self, *, state: str | None = None) -> None:
+        try:
+            runtime_id = int(self.stream_pipeline_id)
+        except Exception:
+            return
+        try:
+            params = copy.deepcopy(self.get_params() or {})
+        except Exception:
+            params = {}
+
+        sources_payload = []
+        try:
+            for source in self.pipeline.get_sources() or []:
+                source_ids = list(getattr(source, "source_ids", []) or [])
+                source_names = list(getattr(source, "source_names", []) or [])
+                source_state = {
+                    "source_ids": source_ids,
+                    "source_names": source_names,
+                    "address": getattr(source, "source_address", None),
+                    "is_inited": bool(getattr(source, "is_inited", False)),
+                    "is_working": bool(getattr(source, "is_working", False)),
+                }
+                if source_ids or source_names:
+                    sources_payload.append(source_state)
+        except Exception:
+            sources_payload = []
+
+        try:
+            server_cfg = params.get("server", {}) if isinstance(params, dict) else {}
+            journal_context = {
+                "config_path": getattr(self, "config_path", None),
+                "database_enabled": bool(params.get("database")) if isinstance(params, dict) else False,
+                "source_names": [name for source in sources_payload for name in source.get("source_names", [])],
+            }
+            update_runtime_snapshot(
+                runtime_id,
+                pid=os.getpid(),
+                state=state or ("running" if self.run_flag else "initialized"),
+                config_path=getattr(self, "config_path", None),
+                config=params,
+                sources=sources_payload,
+                module_state={
+                    "pipeline_class": self.pipeline.__class__.__name__ if self.pipeline is not None else None,
+                    "detector_count": len(getattr(self.pipeline, "detectors", []) or []),
+                    "tracker_count": len(getattr(self.pipeline, "trackers", []) or []),
+                    "database_enabled": bool(params.get("database")) if isinstance(params, dict) else False,
+                    "event_detector_names": sorted((params.get("events_detectors") or {}).keys()) if isinstance(params, dict) and isinstance(params.get("events_detectors"), dict) else [],
+                },
+                server_identity={
+                    "managed": os.environ.get("EVILEYE_MANAGED_RUN") == "1",
+                    "embedded_server_enabled": bool(server_cfg.get("enabled")) if isinstance(server_cfg, dict) else False,
+                    "host": server_cfg.get("host") if isinstance(server_cfg, dict) else None,
+                    "port": server_cfg.get("port") if isinstance(server_cfg, dict) else None,
+                },
+                journal_context=journal_context,
+            )
+        except Exception as exc:
+            self.logger.debug("Failed to publish runtime snapshot: %s", exc)
+
     def system_event(self, type: str, message: str):
         if self.system_events_detector:
             self.system_events_detector.emit_message(type, message)
@@ -499,23 +561,25 @@ class Controller:
             pass
 
     def _publish_latest_frame_to_broker(self, processing_frames: list) -> None:
-        """Опубликовать последний кадр в web broker или shared frame file."""
+        """Опубликовать последние кадры всех sources в web broker/shared files."""
         try:
             if not processing_frames:
                 self.logger.debug("No processing frames available for publishing")
                 return
-            last_frame = processing_frames[-1]
-            # Frame инициализирует image в __init__, поэтому прямой доступ безопасен
-            if last_frame.image is None:
-                self.logger.debug("Last frame has no image or image is None")
-                return
-            if self._streaming_service and self._streaming_service.submit_frame(last_frame):
-                self.logger.debug(
-                    "Submitted frame for async streaming publish: pipeline=%s source=%s frame=%s",
-                    self.stream_pipeline_id,
-                    getattr(last_frame, "source_id", None),
-                    getattr(last_frame, "frame_id", None),
-                )
+            published = 0
+            for frame in processing_frames:
+                if getattr(frame, "image", None) is None:
+                    continue
+                if self._streaming_service and self._streaming_service.submit_frame(frame):
+                    published += 1
+                    self.logger.debug(
+                        "Submitted frame for async streaming publish: pipeline=%s source=%s frame=%s",
+                        self.stream_pipeline_id,
+                        getattr(frame, "source_id", None),
+                        getattr(frame, "frame_id", None),
+                    )
+            if published == 0:
+                self.logger.debug("No frames were accepted for async streaming publish")
         except Exception as e:
             # Do not break controller loop if streaming is not initialized
             self.logger.debug(f"Frame publish failed: {e}")
@@ -858,7 +922,8 @@ class Controller:
             return
 
         try:
-            self.logger.info(
+            log_method = self.logger.debug if context == "periodic" else self.logger.info
+            log_method(
                 "ResourceStats[%s] pid=%s rss_mb=%s threads=%s fds=%s open_files=%s%s",
                 context,
                 pid,
@@ -1040,19 +1105,21 @@ class Controller:
                 pid=os.getpid(),
                 config_path=None,
                 name=None,
-                frame_dir=str(self._frame_dir) if self._frame_dir else None,
+                frame_dir=None,
                 source="process",
                 managed=os.environ.get("EVILEYE_MANAGED_RUN") == "1",
                 state="running",
             )
         except Exception:
             pass
+        self._publish_runtime_snapshot(state="running")
         self.logger.info(f"Starting control thread for stream_pipeline_id: {self.stream_pipeline_id}")
         self.control_thread.start()
         self.logger.info(f"Control thread started successfully")
 
     def stop(self):
         self.run_flag = False
+        self._publish_runtime_snapshot(state="stopping")
         if self.control_thread and self.control_thread.is_alive():
             # Don't block shutdown forever if pipeline.process() is stuck.
             self.control_thread.join(timeout=3.0)
@@ -1421,12 +1488,15 @@ class Controller:
         self._init_event_recording(params)
 
         server_cfg = self.params.get("server", {}) if isinstance(self.params, dict) else {}
+        relay_base_url = os.environ.get("EVILEYE_WEB_API_BASE")
+        relay_token = os.environ.get("EVILEYE_INTERNAL_TOKEN") or load_web_auth_config().internal_token
         if self._streaming_service is not None:
             self._streaming_service.configure(
                 pipeline_id=self.stream_pipeline_id,
                 publish_fps=self._stream_publish_fps,
-                frame_dir=self._frame_dir,
                 server_process_manager=self._server_process_manager,
+                relay_base_url=relay_base_url,
+                relay_token=relay_token,
                 encoder_backend=server_cfg.get("preview_encoder", "auto"),
                 jpeg_quality=server_cfg.get("preview_jpeg_quality", 85),
                 num_workers=server_cfg.get("preview_encode_workers", 1),
@@ -1437,15 +1507,21 @@ class Controller:
         # Initialize web server in a separate process if configured
         if managed_run and server_cfg.get("enabled", False):
             self.logger.info("Skipping embedded web server for managed runtime launch")
+            if self._streaming_service is not None and relay_base_url:
+                self._streaming_service.set_frame_relay(relay_base_url, relay_token)
         elif server_cfg.get("execution_mode") == "process" and server_cfg.get("enabled", False):
             host = server_cfg.get("host", "127.0.0.1")
             port = int(server_cfg.get("port", 8080))
+            scheme = "https" if server_cfg.get("ssl_certfile") or server_cfg.get("ssl_keyfile") else "http"
+            inferred_base_url = relay_base_url or f"{scheme}://{host}:{port}/api/v1"
             if not self._can_bind_embedded_server(host, port):
                 self.logger.info(
                     "Skipping embedded web server because %s:%s is already in use",
                     host,
                     port,
                 )
+                if self._streaming_service is not None:
+                    self._streaming_service.set_frame_relay(inferred_base_url, relay_token)
             else:
                 from evileye.server import ServerProcessManager
                 self._server_process_manager = ServerProcessManager()
@@ -1457,6 +1533,8 @@ class Controller:
                 if self._streaming_service is not None:
                     self._streaming_service.set_server_process_manager(self._server_process_manager)
                 self.logger.info("Web server started in a separate process")
+
+        self._publish_runtime_snapshot(state="initialized")
 
     def init_main_window(self, main_window: QMainWindow, pyqt_slots: dict, pyqt_signals: dict):
         self.main_window = main_window

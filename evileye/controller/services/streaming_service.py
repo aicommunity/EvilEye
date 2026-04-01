@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Optional
 
 from evileye.core.logger import get_module_logger
@@ -20,6 +22,28 @@ class StreamFrameJob:
     created_at: float
 
 
+class FrameRelayClient:
+    def __init__(self, base_url: str, *, token: str | None = None, timeout_sec: float = 0.5):
+        self.base_url = base_url.rstrip("/")
+        self.token = token or ""
+        self.timeout_sec = max(0.1, float(timeout_sec))
+        self.logger = get_module_logger("frame_relay")
+
+    def publish_jpeg(self, pipeline_id: str, jpeg_bytes: bytes, *, source_id: int | None = None) -> bool:
+        query = f"?source_id={source_id}" if source_id is not None else ""
+        url = f"{self.base_url}/internal/frames/{pipeline_id}{query}"
+        headers = {"Content-Type": "image/jpeg"}
+        if self.token:
+            headers["X-EvilEye-Internal-Token"] = self.token
+        request = urllib.request.Request(url, data=jpeg_bytes, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout_sec) as response:
+                return 200 <= getattr(response, "status", 200) < 300
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            self.logger.debug("Frame relay publish failed: %s", exc)
+            return False
+
+
 class StreamingService:
     """Asynchronous preview publisher with latest-frame semantics."""
 
@@ -33,19 +57,26 @@ class StreamingService:
 
         self._pipeline_id = "default"
         self._publish_fps = 5.0
-        self._last_publish_ts = 0.0
-        self._frame_dir: Optional[Path] = None
+        self._last_publish_ts_by_key: dict[str, float] = {}
         self._server_process_manager = None
+        self._frame_relay: FrameRelayClient | None = None
         self._encoder: JpegEncoderBackend = create_jpeg_encoder()
         self._worker_count = 1
+
+    @staticmethod
+    def _job_key(job: StreamFrameJob) -> str:
+        if job.source_id is None:
+            return job.pipeline_id
+        return f"{job.pipeline_id}:{job.source_id}"
 
     def configure(
         self,
         *,
         pipeline_id: str,
         publish_fps: float,
-        frame_dir: Optional[Path],
         server_process_manager=None,
+        relay_base_url: str | None = None,
+        relay_token: str | None = None,
         encoder_backend: str = "auto",
         jpeg_quality: int = 85,
         num_workers: int = 1,
@@ -54,11 +85,9 @@ class StreamingService:
             self._stop_event.clear()
             self._pipeline_id = pipeline_id or "default"
             self._publish_fps = max(0.0, float(publish_fps or 0.0))
-            self._last_publish_ts = 0.0
-            self._frame_dir = Path(frame_dir) if frame_dir else None
-            if self._frame_dir:
-                self._frame_dir.mkdir(parents=True, exist_ok=True)
+            self._last_publish_ts_by_key.clear()
             self._server_process_manager = server_process_manager
+            self._frame_relay = FrameRelayClient(relay_base_url, token=relay_token) if relay_base_url else None
             self._encoder = create_jpeg_encoder(encoder_backend, jpeg_quality)
             self._worker_count = max(1, int(num_workers or 1))
             self._pending_jobs.clear()
@@ -70,12 +99,18 @@ class StreamingService:
             self._server_process_manager = manager
             self._condition.notify_all()
 
+    def set_frame_relay(self, relay_base_url: str | None, relay_token: str | None = None) -> None:
+        with self._condition:
+            self._frame_relay = FrameRelayClient(relay_base_url, token=relay_token) if relay_base_url else None
+            self._condition.notify_all()
+
     def submit_frame(self, frame) -> bool:
         image = getattr(frame, "image", None)
         if image is None:
             return False
 
-        if not self._should_publish():
+        throttle_key = str(getattr(frame, "source_id", None) if getattr(frame, "source_id", None) is not None else self._pipeline_id)
+        if not self._should_publish(throttle_key):
             return False
 
         try:
@@ -91,7 +126,7 @@ class StreamingService:
             created_at=time.time(),
         )
         with self._condition:
-            self._pending_jobs[job.pipeline_id] = job
+            self._pending_jobs[self._job_key(job)] = job
             self._condition.notify()
         return True
 
@@ -140,10 +175,7 @@ class StreamingService:
             _, job = self._pending_jobs.popitem()
             return job
 
-    def _should_publish(self) -> bool:
-        if self._frame_dir:
-            return self._throttle_ok()
-
+    def _should_publish(self, throttle_key: str) -> bool:
         has_local_stream = False
         try:
             from evileye.api.core.broker_access import get_broker
@@ -161,18 +193,21 @@ class StreamingService:
         except Exception:
             has_server_process = False
 
-        if not has_local_stream and not has_server_process:
-            return False
-        return self._throttle_ok()
+        has_relay = self._frame_relay is not None
 
-    def _throttle_ok(self) -> bool:
+        if not has_local_stream and not has_server_process and not has_relay:
+            return False
+        return self._throttle_ok(throttle_key)
+
+    def _throttle_ok(self, throttle_key: str) -> bool:
         if self._publish_fps <= 0.0:
             return True
         now = time.time()
         min_interval = 1.0 / self._publish_fps
-        if (now - self._last_publish_ts) < min_interval:
+        last_publish_ts = self._last_publish_ts_by_key.get(throttle_key, 0.0)
+        if (now - last_publish_ts) < min_interval:
             return False
-        self._last_publish_ts = now
+        self._last_publish_ts_by_key[throttle_key] = now
         return True
 
     def _publish_jpeg(self, pipeline_id: str, jpeg_bytes: bytes, job: StreamFrameJob) -> None:
@@ -182,21 +217,15 @@ class StreamingService:
             "frame_id": job.frame_id,
             "content_type": "image/jpeg",
         }
-        if self._frame_dir:
-            try:
-                tmp = self._frame_dir / ".latest.tmp"
-                final = self._frame_dir / "latest.jpg"
-                tmp.write_bytes(jpeg_bytes)
-                tmp.replace(final)
-            except Exception as e:
-                self.logger.warning("Frame file write failed: %s", e)
-            return
-
         from evileye.api.core.broker_access import get_broker
 
         get_broker().publish_jpeg(pipeline_id, jpeg_bytes, metadata=metadata)
+        if job.source_id is not None:
+            get_broker().publish_jpeg(f"{pipeline_id}:{job.source_id}", jpeg_bytes, metadata=metadata)
         if self._server_process_manager is not None:
             try:
                 self._server_process_manager.publish_frame(pipeline_id, jpeg_bytes, metadata=metadata)
             except Exception:
                 pass
+        if self._frame_relay is not None:
+            self._frame_relay.publish_jpeg(pipeline_id, jpeg_bytes, source_id=job.source_id)
