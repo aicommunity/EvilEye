@@ -1,0 +1,225 @@
+from __future__ import annotations
+
+import json
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, Iterable, Optional
+
+from evileye.api.core.config_run_access import get_config_run_manager
+from evileye.api.core.runtime_registry import list_runtime_records, load_runtime_record
+
+
+@dataclass
+class ConfigSummary:
+    pipeline_class: str | None
+    source_items: list[dict[str, Any]]
+    detector_count: int
+    tracker_count: int
+    event_detector_names: list[str]
+    database_enabled: bool
+
+
+def _load_json(path: Path) -> dict[str, Any]:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _get_pipeline_section(config: dict[str, Any]) -> dict[str, Any]:
+    pipeline = config.get("pipeline")
+    if isinstance(pipeline, dict):
+        return pipeline
+    return config
+
+
+def load_config_summary(config_path: Optional[str]) -> ConfigSummary:
+    if not config_path:
+        return ConfigSummary(None, [], 0, 0, [], False)
+
+    config = _load_json(Path(config_path))
+    pipeline = _get_pipeline_section(config)
+    sources = pipeline.get("sources") if isinstance(pipeline, dict) else None
+    detectors = pipeline.get("detectors") if isinstance(pipeline, dict) else None
+    trackers = pipeline.get("trackers") if isinstance(pipeline, dict) else None
+    event_detectors = config.get("events_detectors") or pipeline.get("events_detectors") if isinstance(pipeline, dict) else {}
+    database = config.get("database") or pipeline.get("database") if isinstance(pipeline, dict) else {}
+
+    source_items: list[dict[str, Any]] = []
+    for source in sources or []:
+        if not isinstance(source, dict):
+            continue
+        source_ids = source.get("source_ids") or []
+        source_names = source.get("source_names") or []
+        source_type = source.get("type") or source.get("source")
+        camera_address = source.get("camera") or source.get("video") or source.get("path")
+        if source_ids and source_names:
+            for idx, source_id in enumerate(source_ids):
+                source_items.append(
+                    {
+                        "source_id": source_id,
+                        "source_name": source_names[idx] if idx < len(source_names) else f"Source {source_id}",
+                        "source_type": source_type,
+                        "address": camera_address,
+                    }
+                )
+        else:
+            source_items.append(
+                {
+                    "source_id": None,
+                    "source_name": source.get("name") or source_type or "Source",
+                    "source_type": source_type,
+                    "address": camera_address,
+                }
+            )
+
+    if not isinstance(event_detectors, dict):
+        event_detectors = {}
+    if not isinstance(database, dict):
+        database = {}
+
+    return ConfigSummary(
+        pipeline_class=pipeline.get("pipeline_class") if isinstance(pipeline, dict) else None,
+        source_items=source_items,
+        detector_count=len(detectors or []),
+        tracker_count=len(trackers or []),
+        event_detector_names=sorted(event_detectors.keys()),
+        database_enabled=bool(database),
+    )
+
+
+def _combined_runtime_records() -> Dict[int, Dict[str, Any]]:
+    items = list_runtime_records()
+    for rid, item in get_config_run_manager().list().items():
+        existing = items.get(rid, {})
+        merged = {**existing, **item}
+        merged.setdefault("managed", True)
+        merged.setdefault("source", "web")
+        merged.setdefault("alive", merged.get("state") in {"starting", "running"})
+        items[rid] = merged
+    return dict(sorted(items.items(), key=lambda pair: pair[0]))
+
+
+def _log_files() -> list[Path]:
+    logs_dir = Path("logs")
+    if not logs_dir.exists():
+        return []
+    return sorted(logs_dir.glob("*.log"), key=lambda item: item.stat().st_mtime, reverse=True)
+
+
+def _read_log_tail(path: Path, *, lines: int = 120) -> list[str]:
+    try:
+        payload = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    except Exception:
+        return []
+    return payload[-lines:]
+
+
+def _run_summary(record: Dict[str, Any]) -> Dict[str, Any]:
+    config_summary = load_config_summary(record.get("config_path"))
+    frame_dir = record.get("frame_dir")
+    latest_frame_exists = False
+    if frame_dir:
+        try:
+            latest_frame_exists = (Path(frame_dir) / "latest.jpg").exists()
+        except Exception:
+            latest_frame_exists = False
+    return {
+        "id": record.get("id"),
+        "name": record.get("name"),
+        "state": record.get("state"),
+        "pid": record.get("pid"),
+        "alive": bool(record.get("alive")),
+        "managed": bool(record.get("managed")),
+        "source": record.get("source"),
+        "config_path": record.get("config_path"),
+        "frame_dir": record.get("frame_dir"),
+        "latest_frame_available": latest_frame_exists,
+        "error": record.get("error"),
+        "started_at": record.get("started_at"),
+        "updated_at": record.get("updated_at"),
+        "pipeline_class": config_summary.pipeline_class,
+        "detector_count": config_summary.detector_count,
+        "tracker_count": config_summary.tracker_count,
+        "event_detector_names": config_summary.event_detector_names,
+        "database_enabled": config_summary.database_enabled,
+        "sources": config_summary.source_items,
+    }
+
+
+def list_run_summaries() -> list[Dict[str, Any]]:
+    return [_run_summary(record) for record in _combined_runtime_records().values()]
+
+
+def get_run_summary(rid: int) -> Optional[Dict[str, Any]]:
+    runtime = load_runtime_record(rid)
+    if runtime is None:
+        try:
+            runtime = get_config_run_manager().describe(rid)
+        except KeyError:
+            return None
+    return _run_summary(runtime)
+
+
+def list_camera_summaries() -> list[Dict[str, Any]]:
+    cameras: list[Dict[str, Any]] = []
+    for run in list_run_summaries():
+        for source in run.get("sources", []):
+            cameras.append(
+                {
+                    "run_id": run["id"],
+                    "run_name": run.get("name"),
+                    "run_state": run.get("state"),
+                    "pipeline_class": run.get("pipeline_class"),
+                    "source_id": source.get("source_id"),
+                    "source_name": source.get("source_name"),
+                    "source_type": source.get("source_type"),
+                    "address": source.get("address"),
+                    "preview_available": bool(
+                        run.get("state") == "running"
+                        and run.get("frame_dir")
+                        and run.get("latest_frame_available")
+                    ),
+                    "alive": bool(run.get("alive")),
+                }
+            )
+    cameras.sort(key=lambda item: (item.get("run_id") or 0, str(item.get("source_name") or "")))
+    return cameras
+
+
+def build_overview() -> Dict[str, Any]:
+    runs = list_run_summaries()
+    cameras = list_camera_summaries()
+    log_files = _log_files()
+    latest_logs = []
+    for path in log_files[:3]:
+        latest_logs.append(
+            {
+                "name": path.name,
+                "updated_at": path.stat().st_mtime,
+                "tail": _read_log_tail(path, lines=10),
+            }
+        )
+
+    running_runs = [run for run in runs if run.get("state") == "running"]
+    error_runs = [run for run in runs if run.get("state") == "error"]
+    return {
+        "timestamp": time.time(),
+        "server": {
+            "status": "ok",
+            "runs_total": len(runs),
+            "runs_running": len(running_runs),
+            "runs_error": len(error_runs),
+            "cameras_total": len(cameras),
+            "web_previews_available": sum(1 for run in runs if run.get("latest_frame_available")),
+            "log_files": [path.name for path in log_files[:10]],
+        },
+        "runs": runs,
+        "cameras": cameras,
+        "latest_logs": latest_logs,
+    }
+
+
+def iter_log_files() -> Iterable[Path]:
+    return _log_files()

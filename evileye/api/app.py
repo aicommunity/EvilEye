@@ -9,7 +9,9 @@ from contextlib import asynccontextmanager
 from evileye.core.logger import get_module_logger
 from evileye.api.routes.auth import router as auth_router
 from evileye.api.routes.configs import router as configs_router
+from evileye.api.routes.journals import router as journals_router
 # from evileye.api.routes.pipelines import router as pipelines_router  # DEPRECATED
+from evileye.api.routes.state import router as state_router
 from evileye.api.routes.streaming import router as streaming_router
 # from evileye.api.routes.events import router as events_router  # DEPRECATED
 from evileye.api.routes.internal import router as internal_router
@@ -17,9 +19,10 @@ from evileye.api.core.config_run_access import get_config_run_manager
 from evileye.api.core.manager_access import get_manager
 from evileye.api.security import (
     current_user,
-    is_admin_request,
     is_api_request_protected,
     load_web_auth_config,
+    permissions_for_role,
+    required_permissions_for_request,
 )
 from evileye import __version__
 
@@ -44,7 +47,9 @@ class AuthGuardMiddleware(BaseHTTPMiddleware):
         user = current_user(request)
         if user is None:
             return Response('{"detail":"Authentication required"}', status_code=401, media_type="application/json")
-        if is_admin_request(path, request.method) and user.get("role") != "admin":
+        needed = required_permissions_for_request(path, request.method)
+        granted = set(user.get("permissions") or permissions_for_role(str(user.get("role") or "user")))
+        if needed and not needed.issubset(granted):
             return Response('{"detail":"Insufficient permissions"}', status_code=403, media_type="application/json")
         return await call_next(request)
 
@@ -101,12 +106,14 @@ def create_app() -> FastAPI:
         return {"evileye": __version__, "api": app.version}
 
     app.include_router(auth_router)
+    app.include_router(state_router)
+    app.include_router(journals_router)
     app.include_router(configs_router)
     # app.include_router(pipelines_router)  # DEPRECATED: use /api/v1/configs/runs
     app.include_router(streaming_router)
     # app.include_router(events_router)  # DEPRECATED: requires in-process Controller access
     app.include_router(internal_router)
-    logger.info("Routers registered: configs, streaming, internal")
+    logger.info("Routers registered: auth, state, journals, configs, streaming, internal")
 
     static_dir = Path(__file__).parent / "static"
     if static_dir.exists():

@@ -19,6 +19,25 @@ class WebAuthConfig:
     internal_token: str
 
 
+ROLE_PERMISSIONS: dict[str, set[str]] = {
+    "user": {"live:view", "runtime:view"},
+    "power_user": {"live:view", "runtime:view", "journal:view", "history:view"},
+    "admin": {
+        "live:view",
+        "runtime:view",
+        "runtime:control",
+        "journal:view",
+        "history:view",
+        "history:edit",
+        "config:view",
+        "config:edit",
+        "system:admin",
+    },
+    # Backward compatibility with previous naming.
+    "viewer": {"live:view", "runtime:view"},
+}
+
+
 def _load_credentials() -> dict[str, Any]:
     path = Path("credentials.json")
     if not path.exists():
@@ -37,12 +56,23 @@ def _normalize_users(raw_users: list[dict[str, Any]] | None) -> dict[str, dict[s
             continue
         users[username] = {
             "username": username,
-            "role": str(item.get("role") or "viewer"),
+            "role": normalize_role(str(item.get("role") or "user")),
             "disabled": bool(item.get("disabled", False)),
             "password": item.get("password"),
             "password_hash": item.get("password_hash"),
         }
     return users
+
+
+def normalize_role(role: str) -> str:
+    value = (role or "user").strip().lower()
+    if value in ROLE_PERMISSIONS:
+        return value
+    return "user"
+
+
+def permissions_for_role(role: str) -> list[str]:
+    return sorted(ROLE_PERMISSIONS.get(normalize_role(role), ROLE_PERMISSIONS["user"]))
 
 
 def load_web_auth_config() -> WebAuthConfig:
@@ -118,6 +148,9 @@ def current_user(request: Request) -> Optional[dict[str, Any]]:
     user = request.session.get("user")
     if not isinstance(user, dict):
         return None
+    if "role" in user:
+        user["role"] = normalize_role(str(user.get("role") or "user"))
+        user["permissions"] = permissions_for_role(user["role"])
     return user
 
 
@@ -130,8 +163,16 @@ def require_authenticated(request: Request) -> dict[str, Any]:
 
 def require_role(request: Request, roles: set[str]) -> dict[str, Any]:
     user = require_authenticated(request)
-    role = str(user.get("role") or "viewer")
+    role = normalize_role(str(user.get("role") or "user"))
     if role not in roles:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+    return user
+
+
+def require_permission(request: Request, permission: str) -> dict[str, Any]:
+    user = require_authenticated(request)
+    permissions = set(user.get("permissions") or permissions_for_role(str(user.get("role") or "user")))
+    if permission not in permissions:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
     return user
 
@@ -140,9 +181,23 @@ def is_api_request_protected(path: str) -> bool:
     return path.startswith("/api/v1") and not path.startswith("/api/v1/auth/")
 
 
-def is_admin_request(path: str, method: str) -> bool:
-    if method in {"GET", "HEAD", "OPTIONS"}:
-        return False
+def required_permissions_for_request(path: str, method: str) -> set[str]:
+    if method in {"HEAD", "OPTIONS"}:
+        return set()
     if path.startswith("/api/v1/internal/"):
-        return False
-    return path.startswith("/api/v1/")
+        return set()
+    if path.startswith("/api/v1/journals/config-history"):
+        return {"history:view"} if method == "GET" else {"history:edit"}
+    if path.startswith("/api/v1/journals/"):
+        return {"journal:view"}
+    if path.startswith("/api/v1/state/"):
+        return {"live:view"}
+    if path.startswith("/api/v1/runs/") or path.startswith("/api/v1/pipelines/"):
+        return {"live:view"}
+    if path.startswith("/api/v1/configs/runs"):
+        return {"runtime:view"} if method == "GET" else {"runtime:control"}
+    if path.startswith("/api/v1/configs"):
+        return {"config:view"} if method == "GET" else {"config:edit"}
+    if path.startswith("/api/v1/version"):
+        return {"live:view"}
+    return {"system:admin"} if method not in {"GET"} else {"live:view"}

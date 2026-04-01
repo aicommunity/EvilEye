@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>EvilEye — Управление пайплайнами</title>
+  <title>EvilEye — Операционная консоль</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Outfit:wght@400;600&display=swap" rel="stylesheet">
@@ -14,34 +14,69 @@
     <header class="header">
       <div class="header-brand">
         <h1 class="logo">EvilEye</h1>
-        <p class="tagline">Управление конфигурациями и пайплайнами</p>
+        <p class="tagline">Актуальное состояние сервера, камер, журналов и настроек</p>
       </div>
       <div id="auth-status" class="auth-status hidden">
         <span id="auth-user-label" class="auth-user-label">—</span>
         <button type="button" id="auth-logout-btn" class="btn btn-outline btn-sm">Выйти</button>
       </div>
       <nav class="tabs">
-        <button type="button" id="nav-streaming" class="tab active">Видеопотоки</button>
-        <button type="button" id="nav-runs" class="tab">Пайплайны</button>
-        <button type="button" id="nav-configs" class="tab">Конфиги</button>
+        <button type="button" id="nav-overview" class="tab active">Обзор</button>
+        <button type="button" id="nav-cameras" class="tab">Камеры</button>
+        <button type="button" id="nav-journals" class="tab">Журналы</button>
+        <button type="button" id="nav-runs" class="tab">Запуски</button>
+        <button type="button" id="nav-configs" class="tab">Настройки</button>
       </nav>
     </header>
 
     <main class="main">
-      <section id="panel-streaming" class="panel active">
-        <div class="card streaming-card">
-          <h2>Видеопотоки</h2>
-          <p class="hint">Для каждого работающего пайплайна: кадр (Snapshot), статус потока (Stream Status), видеопоток (MJPEG). Остановить пайплайн можно на вкладке «Пайплайны».</p>
+      <section id="panel-overview" class="panel active">
+        <div class="card">
+          <h2>Обзор сервера</h2>
+          <p class="hint">Сводка по состоянию сервера, активным runtime-запускам и последним системным журналам.</p>
           <div class="toolbar">
-            <button type="button" id="streaming-refresh-btn" class="btn btn-outline">Обновить список</button>
+            <button type="button" id="overview-refresh-btn" class="btn btn-outline">Обновить обзор</button>
           </div>
-          <div id="streaming-list" class="streaming-list"></div>
+          <div id="overview-cards" class="metric-grid"></div>
+          <h3 class="section-title">Активные запуски</h3>
+          <ul id="overview-runs" class="runs-list compact-list"></ul>
+          <h3 class="section-title">Последние логи</h3>
+          <div id="overview-logs" class="log-grid"></div>
+        </div>
+      </section>
+
+      <section id="panel-cameras" class="panel">
+        <div class="card">
+          <h2>Камеры и preview</h2>
+          <p class="hint">Read-only представление актуальных источников и связанных runtime-запусков.</p>
+          <div class="toolbar">
+            <button type="button" id="cameras-refresh-btn" class="btn btn-outline">Обновить камеры</button>
+          </div>
+          <div id="cameras-list" class="camera-grid"></div>
+        </div>
+      </section>
+
+      <section id="panel-journals" class="panel">
+        <div class="card">
+          <h2>Журналы</h2>
+          <p class="hint">События, объекты, системные логи и история конфигураций.</p>
+          <div class="toolbar">
+            <button type="button" id="journals-refresh-btn" class="btn btn-outline">Обновить журналы</button>
+          </div>
+          <h3 class="section-title">Events</h3>
+          <div id="journal-events"></div>
+          <h3 class="section-title">Objects</h3>
+          <div id="journal-objects"></div>
+          <h3 class="section-title">System logs</h3>
+          <div id="journal-logs" class="log-grid"></div>
+          <h3 class="section-title">Configuration history</h3>
+          <div id="journal-history"></div>
         </div>
       </section>
 
       <section id="panel-configs" class="panel">
         <div class="card">
-          <h2>Конфигурации</h2>
+          <h2>Настройки</h2>
           <p class="hint">Файлы конфигурации в формате JSON. Можно просматривать, создавать, редактировать и удалять.</p>
           <div class="toolbar">
             <input type="search" id="config-search" placeholder="Поиск по названию…" class="search-input" aria-label="Поиск конфигов">
@@ -53,8 +88,8 @@
 
       <section id="panel-runs" class="panel">
         <div class="card create-card">
-          <h2>Новый пайплайн</h2>
-          <p class="hint">Создайте пайплайн по выбранному конфигу или вставьте свой JSON. После запуска видеопоток появится на вкладке «Видеопотоки».</p>
+          <h2>Новый запуск</h2>
+          <p class="hint">Создайте runtime-запуск по выбранному конфигу или вставьте свой JSON. После старта preview будет доступен на вкладке «Камеры».</p>
           <div class="form-row">
             <label class="checkbox-label">
               <input type="checkbox" id="run-use-body" aria-label="Свой JSON">
@@ -63,8 +98,8 @@
           </div>
           <div class="form-row run-form-main">
             <select id="run-config-select" aria-label="Конфиг"></select>
-            <input type="text" id="run-name" placeholder="Имя пайплайна (необязательно)" aria-label="Имя пайплайна">
-            <button type="button" id="run-create-btn" class="btn btn-primary">Создать пайплайн</button>
+            <input type="text" id="run-name" placeholder="Имя запуска (необязательно)" aria-label="Имя запуска">
+            <button type="button" id="run-create-btn" class="btn btn-primary">Создать запуск</button>
           </div>
           <div id="run-body-wrap" class="form-row hidden">
             <label for="run-body">JSON конфигурации</label>
@@ -72,10 +107,10 @@
           </div>
         </div>
         <div class="card runs-card">
-          <h2>Список пайплайнов</h2>
-          <p class="hint">Создайте пайплайн, запустите его — видеопоток будет доступен на вкладке «Видеопотоки». Здесь: запуск, остановка, удаление, детали.</p>
+          <h2>Список запусков</h2>
+          <p class="hint">Просмотр, запуск, остановка и удаление runtime-запусков.</p>
           <div class="toolbar runs-toolbar">
-            <input type="search" id="run-search" placeholder="Поиск по id, имени, конфигу, статусу…" class="search-input" aria-label="Поиск пайплайнов">
+            <input type="search" id="run-search" placeholder="Поиск по id, имени, конфигу, статусу…" class="search-input" aria-label="Поиск запусков">
             <button type="button" id="run-refresh-btn" class="btn btn-outline">Обновить</button>
           </div>
           <ul id="runs-list" class="runs-list"></ul>
@@ -111,7 +146,7 @@
       <div class="modal-backdrop"></div>
       <div class="modal-content">
         <div class="modal-header">
-          <h2 id="run-detail-title">Подробности пайплайна</h2>
+          <h2 id="run-detail-title">Подробности запуска</h2>
           <button type="button" id="run-detail-close" class="btn btn-outline" aria-label="Закрыть">&times;</button>
         </div>
         <div class="modal-body run-detail-body">
@@ -129,7 +164,7 @@
     <div id="stream-container" class="stream-container">
       <div class="stream-header">
         <div class="stream-info">
-          <span>Видеопоток пайплайна <strong id="stream-rid">-</strong></span>
+          <span>Видеопоток запуска <strong id="stream-rid">-</strong></span>
           <span id="stream-name" class="stream-name">-</span>
           <span id="stream-state" class="badge">-</span>
           <span id="stream-status" class="stream-status">-</span>
@@ -177,6 +212,6 @@
       </div>
     </div>
   </div>
-  <script type="module" src="/main.js"></script>
+  <script type="module" src="/dashboard.js"></script>
 </body>
 </html>

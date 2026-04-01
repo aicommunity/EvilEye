@@ -2,6 +2,7 @@ import threading
 import os
 import importlib
 import inspect
+import socket
 from pathlib import Path
 from time import sleep
 
@@ -71,6 +72,16 @@ except ImportError:
     pyqt_version = 5
 
 class Controller:
+    @staticmethod
+    def _can_bind_embedded_server(host: str, port: int) -> bool:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                sock.bind((host, port))
+            return True
+        except OSError:
+            return False
+
     def __init__(self):
         self.logger = get_module_logger("controller")
         self.main_window = None
@@ -1421,18 +1432,31 @@ class Controller:
                 num_workers=server_cfg.get("preview_encode_workers", 1),
             )
 
+        # Managed API runs already have an outer web server; do not start another one inside the child runtime.
+        managed_run = os.environ.get("EVILEYE_MANAGED_RUN") == "1"
         # Initialize web server in a separate process if configured
-        if server_cfg.get("execution_mode") == "process" and server_cfg.get("enabled", False):
-            from evileye.server import ServerProcessManager
-            self._server_process_manager = ServerProcessManager()
-            self._server_process_manager.start(
-                host=server_cfg.get("host", "127.0.0.1"),
-                port=server_cfg.get("port", 8080),
-                log_level=server_cfg.get("log_level", "info"),
-            )
-            if self._streaming_service is not None:
-                self._streaming_service.set_server_process_manager(self._server_process_manager)
-            self.logger.info("Web server started in a separate process")
+        if managed_run and server_cfg.get("enabled", False):
+            self.logger.info("Skipping embedded web server for managed runtime launch")
+        elif server_cfg.get("execution_mode") == "process" and server_cfg.get("enabled", False):
+            host = server_cfg.get("host", "127.0.0.1")
+            port = int(server_cfg.get("port", 8080))
+            if not self._can_bind_embedded_server(host, port):
+                self.logger.info(
+                    "Skipping embedded web server because %s:%s is already in use",
+                    host,
+                    port,
+                )
+            else:
+                from evileye.server import ServerProcessManager
+                self._server_process_manager = ServerProcessManager()
+                self._server_process_manager.start(
+                    host=host,
+                    port=port,
+                    log_level=server_cfg.get("log_level", "info"),
+                )
+                if self._streaming_service is not None:
+                    self._streaming_service.set_server_process_manager(self._server_process_manager)
+                self.logger.info("Web server started in a separate process")
 
     def init_main_window(self, main_window: QMainWindow, pyqt_slots: dict, pyqt_signals: dict):
         self.main_window = main_window

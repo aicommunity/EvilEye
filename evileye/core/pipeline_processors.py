@@ -101,17 +101,19 @@ class PipelineProcessors(PipelineBase):
                             if isinstance(p, ObjectDetectorBase):
                                 detectors.append(p)
         
-        # Wait for all detectors to load their models before starting sources
-        # This prevents queue overflow when sources start sending frames
+        # Do not block pipeline startup for a long time on detector readiness.
+        # In headless/API runs this delays controller.start(), which in turn
+        # prevents preview publication and may look like a hung runtime.
+        # We only do a short best-effort readiness wait here.
         if detectors:
             self.logger.info(f"Waiting for {len(detectors)} detector(s) to load models...")
             all_ready = True
-            # Wait in parallel so total wait is ~one timeout instead of N × timeout
+            # Wait in parallel so total wait is bounded and short.
             detectors_with_ready = [d for d in detectors if hasattr(d, "is_ready")]
             detectors_fallback = [d for d in detectors if not hasattr(d, "is_ready")]
             if detectors_with_ready:
                 import concurrent.futures
-                timeout_per_detector = 30.0
+                timeout_per_detector = 2.0
                 with concurrent.futures.ThreadPoolExecutor(
                     max_workers=min(len(detectors_with_ready), 8)
                 ) as executor:
@@ -119,35 +121,38 @@ class PipelineProcessors(PipelineBase):
                         executor.submit(d.is_ready, timeout_per_detector): d
                         for d in detectors_with_ready
                     }
-                    for fut in concurrent.futures.as_completed(
-                        future_to_det, timeout=timeout_per_detector + 5.0
-                    ):
-                        det = future_to_det[fut]
-                        try:
-                            ready = fut.result()
-                        except Exception as e:
-                            ready = False
-                            self.logger.warning(
-                                f"Detector {det.__class__.__name__} is_ready raised: {e}"
-                            )
-                        if not ready:
-                            self.logger.warning(
-                                f"Detector {det.__class__.__name__} did not become ready within timeout"
-                            )
-                            all_ready = False
-                        else:
-                            self.logger.debug(f"Detector {det.__class__.__name__} is ready")
+                    try:
+                        for fut in concurrent.futures.as_completed(
+                            future_to_det, timeout=timeout_per_detector + 1.0
+                        ):
+                            det = future_to_det[fut]
+                            try:
+                                ready = fut.result()
+                            except Exception as e:
+                                ready = False
+                                self.logger.warning(
+                                    f"Detector {det.__class__.__name__} is_ready raised: {e}"
+                                )
+                            if not ready:
+                                self.logger.warning(
+                                    f"Detector {det.__class__.__name__} did not become ready within timeout"
+                                )
+                                all_ready = False
+                            else:
+                                self.logger.debug(f"Detector {det.__class__.__name__} is ready")
+                    except concurrent.futures.TimeoutError:
+                        all_ready = False
+                        self.logger.warning("Detector readiness wait timed out; continuing startup")
             for _ in detectors_fallback:
-                time.sleep(2.0)
+                time.sleep(0.2)
             if all_ready:
                 self.logger.info("All detectors are ready")
             else:
                 self.logger.warning("Some detectors may not be fully ready, but starting sources anyway")
-            # Add additional delay after models are loaded to ensure processing threads are fully initialized
-            time.sleep(0.5)
+            # Small settling delay without stalling startup for tens of seconds.
+            time.sleep(0.1)
         else:
-            # No detectors found, use a small delay as fallback
-            time.sleep(1.0)
+            time.sleep(0.1)
         
         # Finally, start sources last so they don't send frames before processors are ready
         for processor in self.processors:

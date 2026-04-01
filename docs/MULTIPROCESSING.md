@@ -1254,7 +1254,7 @@ from .process_manager import ProcessManager, get_process_manager
 
 | Переменная | Кто задает | Кто читает | Для чего |
 |------------|------------|------------|----------|
-| **`EVILEYE_PIPELINE_ID`** | `ConfigRunManager` при старте дочернего процесса (значение `rid`) | `Controller` в дочернем процессе | Идентификатор пайплайна. Используется как `stream_pipeline_id` и как ключ в FrameBroker на стороне сервера |
+| **`EVILEYE_PIPELINE_ID`** | `ConfigRunManager` при старте дочернего процесса (значение `rid`) | `Controller` в дочернем процессе | Идентификатор runtime-запуска. Историческое имя переменной сохранено для совместимости; используется как `stream_pipeline_id` и как ключ в FrameBroker на стороне сервера |
 | **`EVILEYE_FRAME_DIR`** | `ConfigRunManager` при старте дочернего процесса | `Controller` в дочернем процессе | Путь к временной директории (например `/tmp/evileye_frames/1/`), куда Controller записывает файл `latest.jpg` с последним обработанным кадром |
 | **`PYTHONUNBUFFERED`** | `ConfigRunManager` при старте дочернего процесса | Python runtime | Установлена в `1` для того чтобы логи дочернего процесса не буферизировались и были видны в реальном времени |
 
@@ -1278,9 +1278,10 @@ from .process_manager import ProcessManager, get_process_manager
 4. В API-сервере **_FramePoller** (фоновый поток в `ConfigRunManager`) каждые ~40мс
    проверяет `mtime` файла `latest.jpg`. Если файл обновился, читает его и вызывает
    `broker.publish_jpeg(str(rid), data)`.
-5. Клиент запрашивает стрим: **GET /api/v1/pipelines/{rid}/stream.mjpg** или снимок:
-   **GET /api/v1/pipelines/{rid}/snapshot**.
-6. Эндпоинты стриминга вызывают `_resolve_pipeline(rid)`, который проверяет
+5. Клиент запрашивает стрим: **GET /api/v1/runs/{rid}/stream.mjpg** или снимок:
+   **GET /api/v1/runs/{rid}/snapshot**.
+   Старые `/api/v1/pipelines/{rid}/...` сохранены как deprecated alias.
+6. Эндпоинты стриминга вызывают `_resolve_run(rid)`, который проверяет
    `ConfigRunManager` и возвращает `str(rid)` как ключ FrameBroker.
 7. FrameBroker отдает последний кадр, и стриминг работает.
 

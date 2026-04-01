@@ -12,8 +12,8 @@ from evileye.api.core.runtime_registry import load_runtime_record
 router = APIRouter(prefix="/api/v1", tags=["streaming"])
 
 
-def _resolve_pipeline(rid: int) -> dict:
-    """Resolve rid to runtime record and validate availability.
+def _resolve_run(rid: int) -> dict:
+    """Resolve run id to runtime record and validate availability.
 
     First checks the legacy ConfigRunManager, then the shared runtime registry.
     """
@@ -27,21 +27,21 @@ def _resolve_pipeline(rid: int) -> dict:
     elif runtime_info:
         run_info = runtime_info
     if not run_info:
-        raise HTTPException(status_code=404, detail=f"Pipeline '{rid}' not found")
+        raise HTTPException(status_code=404, detail=f"Run '{rid}' not found")
     if run_info.get("state") != "running":
         raise HTTPException(
             status_code=400,
-            detail=f"Config Run '{rid}' is not running (state: {run_info.get('state')})",
+            detail=f"Run '{rid}' is not running (state: {run_info.get('state')})",
         )
     return run_info
 
 
-def _load_latest_frame(pipeline_info: dict) -> bytes | None:
-    pipeline_id_str = str(pipeline_info["id"])
-    data = get_broker().latest_jpeg(pipeline_id_str)
+def _load_latest_frame(run_info: dict) -> bytes | None:
+    run_id_str = str(run_info["id"])
+    data = get_broker().latest_jpeg(run_id_str)
     if data:
         return data
-    frame_dir = pipeline_info.get("frame_dir")
+    frame_dir = run_info.get("frame_dir")
     if not frame_dir:
         return None
     try:
@@ -52,7 +52,7 @@ def _load_latest_frame(pipeline_info: dict) -> bytes | None:
             payload = latest_path.read_bytes()
             if payload:
                 get_broker().publish_jpeg(
-                    pipeline_id_str,
+                    run_id_str,
                     payload,
                     metadata={"timestamp": time.time(), "content_type": "image/jpeg", "transport": "file_runtime"},
                 )
@@ -62,33 +62,57 @@ def _load_latest_frame(pipeline_info: dict) -> bytes | None:
     return None
 
 
-def _web_stream_available(pipeline_info: dict, *, has_frame: bool | None = None) -> bool:
+def _web_stream_available(run_info: dict, *, has_frame: bool | None = None) -> bool:
     if has_frame is None:
-        has_frame = _load_latest_frame(pipeline_info) is not None
-    return bool(has_frame or pipeline_info.get("frame_dir"))
+        has_frame = _load_latest_frame(run_info) is not None
+    return bool(run_info.get("state") == "running" and has_frame)
 
 
-@router.get("/pipelines/{rid}/snapshot")
-async def snapshot(rid: int):
+def _stream_status_payload(rid: int, run_info: dict) -> dict:
+    run_id_str = str(run_info["id"])
+    is_active = get_broker().is_stream_active(run_id_str)
+    has_frame = _load_latest_frame(run_info) is not None
+    web_stream_available = _web_stream_available(run_info, has_frame=has_frame)
+    return {
+        "run_id": rid,
+        "pipeline_id": rid,
+        "stream_active": is_active,
+        "has_frame": has_frame,
+        "web_stream_available": web_stream_available,
+        "frame_dir_configured": bool(run_info.get("frame_dir")),
+    }
+
+
+async def _snapshot_impl(rid: int):
     """
-    Return the latest available JPEG snapshot for the given pipeline.
+    Return the latest available JPEG snapshot for the given runtime.
     """
-    pipeline_info = _resolve_pipeline(rid)
-    data = _load_latest_frame(pipeline_info)
+    run_info = _resolve_run(rid)
+    data = _load_latest_frame(run_info)
     if not data:
         raise HTTPException(status_code=404, detail="No frame available")
     return Response(content=data, media_type="image/jpeg")
 
 
+@router.get("/runs/{rid}/snapshot")
+async def snapshot(rid: int):
+    return await _snapshot_impl(rid)
+
+
+@router.get("/pipelines/{rid}/snapshot", deprecated=True)
+async def snapshot_legacy(rid: int):
+    return await _snapshot_impl(rid)
+
+
 async def _mjpeg_generator(
-    pipeline_info: dict, fps: int, stop_event: threading.Event,
+    run_info: dict, fps: int, stop_event: threading.Event,
 ) -> AsyncGenerator[bytes, None]:
-    pipeline_id_str = str(pipeline_info["id"])
+    run_id_str = str(run_info["id"])
     boundary = b"--frame"
     delay = 1.0 / max(1, fps)
 
     while not stop_event.is_set():
-        data = _load_latest_frame(pipeline_info)
+        data = _load_latest_frame(run_info)
         if data:
             yield (
                 boundary
@@ -105,8 +129,7 @@ async def _mjpeg_generator(
             elapsed += check_interval
 
 
-@router.get("/pipelines/{rid}/stream.mjpg")
-async def mjpeg_stream(
+async def _mjpeg_stream_impl(
     rid: int,
     fps: int = Query(5, ge=1, le=60, description="Frames per second (1–60)"),
 ):
@@ -116,17 +139,17 @@ async def mjpeg_stream(
     Browsers and players render it as a video stream thanks to
     'multipart/x-mixed-replace' and boundary markers.
     """
-    pipeline_info = _resolve_pipeline(rid)
-    if not _web_stream_available(pipeline_info):
+    run_info = _resolve_run(rid)
+    if not _web_stream_available(run_info):
         raise HTTPException(
             status_code=409,
-            detail="Web stream is unavailable for this pipeline. Restart it with frame sharing enabled.",
+            detail="Web stream is unavailable for this run. Restart it with frame sharing enabled.",
         )
-    pipeline_id_str = str(pipeline_info["id"])
-    stop_event = get_broker().start_stream(pipeline_id_str)
+    run_id_str = str(run_info["id"])
+    stop_event = get_broker().start_stream(run_id_str)
 
     return StreamingResponse(
-        _mjpeg_generator(pipeline_info, fps, stop_event),
+        _mjpeg_generator(run_info, fps, stop_event),
         media_type="multipart/x-mixed-replace; boundary=frame",
         headers={
             "X-Accel-Buffering": "no",
@@ -137,43 +160,68 @@ async def mjpeg_stream(
     )
 
 
-@router.post("/pipelines/{rid}/stream:stop")
-async def stop_stream(rid: int):
+@router.get("/runs/{rid}/stream.mjpg")
+async def mjpeg_stream(
+    rid: int,
+    fps: int = Query(5, ge=1, le=60, description="Frames per second (1–60)"),
+):
+    return await _mjpeg_stream_impl(rid, fps)
+
+
+@router.get("/pipelines/{rid}/stream.mjpg", deprecated=True)
+async def mjpeg_stream_legacy(
+    rid: int,
+    fps: int = Query(5, ge=1, le=60, description="Frames per second (1–60)"),
+):
+    return await _mjpeg_stream_impl(rid, fps)
+
+
+async def _stop_stream_impl(rid: int):
     """
-    Stop the active MJPEG stream for the given pipeline.
+    Stop the active MJPEG stream for the given run.
     """
-    pipeline_info = _resolve_pipeline(rid)
-    pipeline_id_str = str(pipeline_info["id"])
-    stopped = get_broker().stop_stream(pipeline_id_str)
+    run_info = _resolve_run(rid)
+    run_id_str = str(run_info["id"])
+    stopped = get_broker().stop_stream(run_id_str)
 
     if stopped:
         return {
+            "run_id": rid,
             "pipeline_id": rid,
             "status": "stopped",
-            "message": f"Stream for pipeline '{rid}' has been stopped",
+            "message": f"Stream for run '{rid}' has been stopped",
         }
     return {
+        "run_id": rid,
         "pipeline_id": rid,
         "status": "not_found",
-        "message": f"No active stream found for pipeline '{rid}'",
+        "message": f"No active stream found for run '{rid}'",
     }
 
 
-@router.get("/pipelines/{rid}/stream:status")
+@router.post("/runs/{rid}/stream:stop")
+async def stop_stream(rid: int):
+    return await _stop_stream_impl(rid)
+
+
+@router.post("/pipelines/{rid}/stream:stop", deprecated=True)
+async def stop_stream_legacy(rid: int):
+    return await _stop_stream_impl(rid)
+
+
+async def _stream_status_impl(rid: int):
+    """
+    Get the status of the stream for the given run.
+    """
+    run_info = _resolve_run(rid)
+    return _stream_status_payload(rid, run_info)
+
+
+@router.get("/runs/{rid}/stream:status")
 async def stream_status(rid: int):
-    """
-    Get the status of the stream for the given pipeline.
-    """
-    pipeline_info = _resolve_pipeline(rid)
-    pipeline_id_str = str(pipeline_info["id"])
-    is_active = get_broker().is_stream_active(pipeline_id_str)
-    has_frame = _load_latest_frame(pipeline_info) is not None
-    web_stream_available = _web_stream_available(pipeline_info, has_frame=has_frame)
+    return await _stream_status_impl(rid)
 
-    return {
-        "pipeline_id": rid,
-        "stream_active": is_active,
-        "has_frame": has_frame,
-        "web_stream_available": web_stream_available,
-        "frame_dir_configured": bool(pipeline_info.get("frame_dir")),
-    }
+
+@router.get("/pipelines/{rid}/stream:status", deprecated=True)
+async def stream_status_legacy(rid: int):
+    return await _stream_status_impl(rid)

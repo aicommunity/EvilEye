@@ -94,10 +94,17 @@ evileye deploy-samples
         "disabled": false
       },
       {
-        "username": "viewer",
-        "password": "viewer-pass",
+        "username": "operator",
+        "password": "operator-pass",
         "password_hash": "",
-        "role": "viewer",
+        "role": "user",
+        "disabled": false
+      },
+      {
+        "username": "analyst",
+        "password": "analyst-pass",
+        "password_hash": "",
+        "role": "power_user",
         "disabled": false
       }
     ]
@@ -117,7 +124,7 @@ evileye deploy-samples
 | `users[].username` | string | Имя пользователя |
 | `users[].password` | string | Временный открытый пароль для bootstrap-сценариев |
 | `users[].password_hash` | string | Предпочтительный формат: `pbkdf2_sha256$iterations$salt$hash` |
-| `users[].role` | string | Роль: `admin` или `viewer` |
+| `users[].role` | string | Роль: `user`, `power_user` или `admin` |
 | `users[].disabled` | boolean | Отключение пользователя без удаления |
 
 **Рекомендации**:
@@ -125,6 +132,7 @@ evileye deploy-samples
 1. Для production используйте `password_hash`, а не открытый `password`.
 2. Для HTTPS включайте `secure_cookies=true`.
 3. Для внутренних вызовов между процессами задавайте `internal_token`.
+4. `user` подходит для live-мониторинга камер, `power_user` для журналов, `admin` для настройки и управления системой.
 
 ### HTTPS для web API
 

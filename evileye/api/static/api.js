@@ -99,21 +99,49 @@ export function runStop(rid) {
 export function runDelete(rid) {
     return request(`/configs/runs/${rid}`, { method: 'DELETE' });
 }
-// ─── Streaming: стрим и снапшоты пайплайна ─────────────────────────────
-/** GET /api/v1/pipelines/{rid}/snapshot — URL для одного кадра (image/jpeg) */
+export const stateApi = {
+    overview() {
+        return request('/state/overview');
+    },
+    runs() {
+        return request('/state/runs');
+    },
+    run(rid) {
+        return request(`/state/runs/${rid}`);
+    },
+    cameras() {
+        return request('/state/cameras');
+    },
+};
+export const journalsApi = {
+    events(page = 0, size = 30) {
+        return request(`/journals/events?page=${page}&size=${size}`);
+    },
+    objects(page = 0, size = 30) {
+        return request(`/journals/objects?page=${page}&size=${size}`);
+    },
+    logs(lines = 80) {
+        return request(`/journals/logs?lines=${lines}`);
+    },
+    configHistory(limit = 30) {
+        return request(`/journals/config-history?limit=${limit}`);
+    },
+};
+// ─── Streaming: стрим и снапшоты runtime-запуска ──────────────────────
+/** GET /api/v1/runs/{rid}/snapshot — URL для одного кадра (image/jpeg) */
 export function streamSnapshotUrl(rid) {
-    return `${API_BASE}/pipelines/${rid}/snapshot`;
+    return `${API_BASE}/runs/${rid}/snapshot`;
 }
-/** GET /api/v1/pipelines/{rid}/stream.mjpg?fps= — URL MJPEG-потока */
+/** GET /api/v1/runs/{rid}/stream.mjpg?fps= — URL MJPEG-потока */
 export function streamMjpgUrl(rid, fps) {
-    const u = `${API_BASE}/pipelines/${rid}/stream.mjpg`;
+    const u = `${API_BASE}/runs/${rid}/stream.mjpg`;
     return fps != null ? `${u}?fps=${fps}` : u;
 }
-/** GET /api/v1/pipelines/{rid}/stream:status */
+/** GET /api/v1/runs/{rid}/stream:status */
 export function streamStatus(rid) {
-    return request(`/pipelines/${rid}/stream:status`);
+    return request(`/runs/${rid}/stream:status`);
 }
-/** POST /api/v1/pipelines/{rid}/stream:stop */
+/** POST /api/v1/runs/{rid}/stream:stop */
 export function streamStop(rid) {
-    return request(`/pipelines/${rid}/stream:stop`, { method: 'POST' });
+    return request(`/runs/${rid}/stream:stop`, { method: 'POST' });
 }

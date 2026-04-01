@@ -87,8 +87,6 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
     # Step 1: Initialize core (Controller) - always done first
     logger.info("Step 1: Initializing core system (Controller)")
     
-    # Create initialization thread for core components
-    init_thread = ControllerInitThread(config_data)
     initialization_result = {'controller': None, 'error': None, 'completed': False}
     
     # Progress callback for initialization
@@ -138,10 +136,6 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
                     qt_app.processEvents()
             progress_callback = on_progress_updated
     
-    # Set progress callback for controller initialization
-    if progress_callback:
-        init_thread.progress_updated.connect(progress_callback)
-    
     main_window_created = {'done': False}
     
     def on_initialization_complete(controller_instance):
@@ -181,25 +175,40 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
                                f"Failed to initialize application:\n\n{error_message}")
         sys.exit(1)
     
-    init_thread.initialization_complete.connect(on_initialization_complete)
-    init_thread.initialization_failed.connect(on_initialization_failed)
-    
-    # Start core initialization
-    logger.info("Starting controller initialization in background thread")
-    init_thread.start()
-    
-    # Wait for initialization to complete
-    if qt_app:
-        # Process Qt events while waiting (required for signal delivery)
-        while not initialization_result['completed'] or not main_window_created['done']:
-            qt_app.processEvents()
+    # Headless mode does not need asynchronous Qt-thread initialization.
+    # Initializing synchronously avoids hangs in managed API runs where the
+    # QThread signal delivery path can stall before controller.start().
+    if gui_mode == GUIMode.HEADLESS:
+        try:
+            logger.info("Starting controller initialization synchronously (headless mode)")
+            controller_instance = controller.Controller()
+            controller_instance.init(config_data)
+            on_initialization_complete(controller_instance)
+        except Exception as e:
+            on_initialization_failed(f"Initialization error: {str(e)}")
     else:
-        # Fallback/headless path: still need a QApplication for Qt signal delivery from init thread.
-        import time
-        _headless_app = QApplication.instance() or QApplication(sys.argv)
-        while not initialization_result['completed'] or not main_window_created['done']:
-            _headless_app.processEvents()
-            time.sleep(0.01)
+        # Create initialization thread for core components
+        init_thread = ControllerInitThread(config_data)
+        if progress_callback:
+            init_thread.progress_updated.connect(progress_callback)
+        init_thread.initialization_complete.connect(on_initialization_complete)
+        init_thread.initialization_failed.connect(on_initialization_failed)
+
+        logger.info("Starting controller initialization in background thread")
+        init_thread.start()
+
+        # Wait for initialization to complete
+        if qt_app:
+            # Process Qt events while waiting (required for signal delivery)
+            while not initialization_result['completed'] or not main_window_created['done']:
+                qt_app.processEvents()
+        else:
+            # Fallback path: still need a QApplication for Qt signal delivery from init thread.
+            import time
+            _headless_app = QApplication.instance() or QApplication(sys.argv)
+            while not initialization_result['completed'] or not main_window_created['done']:
+                _headless_app.processEvents()
+                time.sleep(0.01)
     
     # Check result
     if initialization_result['error']:
