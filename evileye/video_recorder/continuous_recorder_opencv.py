@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Optional
 import threading
 import time
+from queue import Queue, Empty
 
 import cv2
 import numpy as np
@@ -19,7 +20,7 @@ class OpenCVContinuousRecorder(VideoRecorderBase):
         super().__init__()
         self.logger = get_module_logger("opencv_continuous_recorder")
         self._writer: Optional[cv2.VideoWriter] = None
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._segment_start_ts: float = 0.0
         self._seq: int = 0
         self._frame_size: Optional[tuple[int, int]] = None
@@ -29,6 +30,10 @@ class OpenCVContinuousRecorder(VideoRecorderBase):
         self._frames_last_log_ts: float = 0.0
         self._segments_opened: int = 0
         self._segments_closed: int = 0
+        self._frame_queue: Queue[np.ndarray] = Queue(maxsize=8)
+        self._writer_thread: Optional[threading.Thread] = None
+        self._stop_event = threading.Event()
+        self._dropped_frames: int = 0
 
     def start(self, source_meta: SourceMeta, params: RecordingParams) -> None:
         self.source = source_meta
@@ -53,6 +58,9 @@ class OpenCVContinuousRecorder(VideoRecorderBase):
         self._segments_opened = 0
         self._segments_closed = 0
         self._frames_last_log_ts = time.time()
+        self._dropped_frames = 0
+        self._stop_event.clear()
+        self._start_writer_thread()
 
         self.logger.info(
             "OpenCVContinuousRecorder started for %s (fps=%.2f, segment=%ss, out_dir=%s)",
@@ -100,57 +108,87 @@ class OpenCVContinuousRecorder(VideoRecorderBase):
         if not isinstance(frame, np.ndarray):
             return
 
-        now = time.time()
-        with self._lock:
-            if self._writer is None or self._need_rotate(now):
-                if self._writer is not None:
-                    self.rotate_segment()
-                self._open_new_segment(frame, now)
-
-            writer = self._writer
-            if writer is None:
-                return
-
-            try:
-                h, w = frame.shape[:2]
-            except Exception:
-                return
-
-            if self._frame_size is None:
-                self._frame_size = (w, h)
-
-            if (w, h) != self._frame_size:
+        try:
+            frame_for_write = frame.copy()
+        except Exception:
+            frame_for_write = frame
+        try:
+            if self._frame_queue.full():
                 try:
-                    frame = cv2.resize(frame, self._frame_size)
+                    self._frame_queue.get_nowait()
+                    self._dropped_frames += 1
+                except Exception:
+                    pass
+            self._frame_queue.put_nowait(frame_for_write)
+        except Exception:
+            self._dropped_frames += 1
+
+    def _start_writer_thread(self) -> None:
+        if self._writer_thread is not None and self._writer_thread.is_alive():
+            return
+        self._writer_thread = threading.Thread(target=self._writer_loop, name="OpenCVContinuousRecorder", daemon=True)
+        self._writer_thread.start()
+
+    def _writer_loop(self) -> None:
+        while not self._stop_event.is_set() or not self._frame_queue.empty():
+            try:
+                frame = self._frame_queue.get(timeout=0.2)
+            except Empty:
+                continue
+
+            now = time.time()
+            with self._lock:
+                if self._writer is None or self._need_rotate(now):
+                    if self._writer is not None:
+                        self.rotate_segment()
+                    self._open_new_segment(frame, now)
+
+                writer = self._writer
+                if writer is None:
+                    continue
+
+                try:
+                    h, w = frame.shape[:2]
+                except Exception:
+                    continue
+
+                if self._frame_size is None:
+                    self._frame_size = (w, h)
+
+                try:
+                    if (w, h) != self._frame_size:
+                        frame = cv2.resize(frame, self._frame_size)
                 except Exception as e:
                     self.logger.debug("Failed to resize frame for recording: %s", e)
-                    return
+                    continue
 
-            try:
-                writer.write(frame)
-                self._frames_written += 1
-            except Exception as e:
-                self.logger.error(
-                    "Error writing frame to continuous recorder: %s", e, exc_info=True
-                )
-                return
-
-            # Lightweight periodic perf log
-            try:
-                now2 = time.time()
-                if (now2 - self._frames_last_log_ts) >= 5.0:
-                    self._frames_last_log_ts = now2
-                    self.logger.debug(
-                        "OpenCVContinuousRecorder stats: src=%s fps=%.2f frames_written=%s segments_opened=%s segments_closed=%s current=%s",
-                        self.source.source_name if self.source else "source",
-                        self._fps,
-                        self._frames_written,
-                        self._segments_opened,
-                        self._segments_closed,
-                        str(self._current_file_path) if self._current_file_path else "n/a",
+                try:
+                    writer.write(frame)
+                    self._frames_written += 1
+                except Exception as e:
+                    self.logger.error(
+                        "Error writing frame to continuous recorder: %s", e, exc_info=True
                     )
-            except Exception:
-                pass
+                    continue
+
+                # Lightweight periodic perf log
+                try:
+                    now2 = time.time()
+                    if (now2 - self._frames_last_log_ts) >= 5.0:
+                        self._frames_last_log_ts = now2
+                        self.logger.debug(
+                            "OpenCVContinuousRecorder stats: src=%s fps=%.2f frames_written=%s segments_opened=%s segments_closed=%s queue=%s dropped=%s current=%s",
+                            self.source.source_name if self.source else "source",
+                            self._fps,
+                            self._frames_written,
+                            self._segments_opened,
+                            self._segments_closed,
+                            self._frame_queue.qsize(),
+                            self._dropped_frames,
+                            str(self._current_file_path) if self._current_file_path else "n/a",
+                        )
+                except Exception:
+                    pass
 
     def rotate_segment(self) -> None:
         with self._lock:
@@ -174,13 +212,19 @@ class OpenCVContinuousRecorder(VideoRecorderBase):
         with self._lock:
             running = self.is_running
             self.is_running = False
+            self._stop_event.set()
 
         if not running:
             return
 
+        if self._writer_thread is not None and self._writer_thread.is_alive():
+            self._writer_thread.join(timeout=2.0)
+
         self.rotate_segment()
         self.logger.info(
-            "OpenCVContinuousRecorder stopped for %s",
+            "OpenCVContinuousRecorder stopped for %s (frames_written=%s dropped=%s)",
             self.source.source_name if self.source else "source",
+            self._frames_written,
+            self._dropped_frames,
         )
 

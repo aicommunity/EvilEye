@@ -218,6 +218,44 @@ class ObjectsHandler(EvilEyeBase):
     def reset_impl(self):
         pass
 
+    def get_runtime_stats(self) -> dict:
+        active_with_last_image = 0
+        active_last_image_bytes = 0
+        active_history_items = 0
+        lost_with_last_image = 0
+        lost_last_image_bytes = 0
+        for obj in self.active_objs.objects:
+            active_history_items += len(getattr(obj, "history", []) or [])
+            img = getattr(getattr(obj, "last_image", None), "image", None)
+            if img is not None:
+                active_with_last_image += 1
+                try:
+                    active_last_image_bytes += int(img.nbytes)
+                except Exception:
+                    pass
+        for obj in self.lost_objs.objects:
+            img = getattr(getattr(obj, "last_image", None), "image", None)
+            if img is not None:
+                lost_with_last_image += 1
+                try:
+                    lost_last_image_bytes += int(img.nbytes)
+                except Exception:
+                    pass
+        try:
+            queue_size = self.objs_queue.qsize()
+        except Exception:
+            queue_size = None
+        return {
+            "active_objects": len(self.active_objs.objects),
+            "lost_objects": len(self.lost_objs.objects),
+            "queue_size": queue_size,
+            "history_items": active_history_items,
+            "active_with_last_image": active_with_last_image,
+            "active_last_image_bytes": active_last_image_bytes,
+            "lost_with_last_image": lost_with_last_image,
+            "lost_last_image_bytes": lost_last_image_bytes,
+        }
+
     def set_params_impl(self):
         self.lost_store_time_secs = self.params.get('lost_store_time_secs', 60)
         self.history_len = self.params.get('history_len', 1)

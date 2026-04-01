@@ -10,7 +10,8 @@ class EventsDetectorsController(EvilEyeBase):
     def __init__(self, events_detectors: list):
         super().__init__()
         self.control_thread = Thread(target=self.run)
-        self.queue_out = Queue()
+        self.queue_out_maxsize = 32
+        self.queue_out = Queue(maxsize=self.queue_out_maxsize)
         self.detectors = events_detectors
         self.run_flag = False
 
@@ -18,6 +19,8 @@ class EventsDetectorsController(EvilEyeBase):
         self.events_detectors = {}  # Словарь, содержащий события, распределенные по детекторам
 
         self.any_events = False
+        self._queue_drops = 0
+        self._events_published = 0
 
     def set_params_impl(self):
         pass
@@ -53,7 +56,7 @@ class EventsDetectorsController(EvilEyeBase):
                     self.events_detectors[detector.get_name()] = []
 
             if self.any_events:
-                self.queue_out.put(copy.deepcopy(self.events_detectors))
+                self._publish_events_snapshot()
             end_it = timer()
 
     def start(self):
@@ -88,7 +91,7 @@ class EventsDetectorsController(EvilEyeBase):
                 else:
                     self.events_detectors[detector.get_name()] = []
             if self.any_events:
-                self.queue_out.put(copy.deepcopy(self.events_detectors))
+                self._publish_events_snapshot()
             return self.any_events
         except Exception:
             return False
@@ -105,3 +108,29 @@ class EventsDetectorsController(EvilEyeBase):
     def release_impl(self):
         self.stop()
         self.logger.info('Everything in controller released')
+
+    def _publish_events_snapshot(self) -> None:
+        snapshot = copy.deepcopy(self.events_detectors)
+        try:
+            if self.queue_out.full():
+                try:
+                    self.queue_out.get_nowait()
+                    self._queue_drops += 1
+                except Exception:
+                    pass
+            self.queue_out.put_nowait(snapshot)
+            self._events_published += 1
+        except Exception:
+            pass
+
+    def get_runtime_stats(self) -> dict:
+        try:
+            queue_size = self.queue_out.qsize()
+        except Exception:
+            queue_size = None
+        return {
+            "queue_size": queue_size,
+            "queue_maxsize": self.queue_out_maxsize,
+            "queue_drops": self._queue_drops,
+            "events_published": self._events_published,
+        }

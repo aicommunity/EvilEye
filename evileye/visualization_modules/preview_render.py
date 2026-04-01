@@ -38,6 +38,10 @@ def clone_capture_image(frame: CaptureImage) -> CaptureImage:
     cloned.current_video_position = getattr(frame, "current_video_position", None)
     image = getattr(frame, "image", None)
     cloned.image = image.copy() if image is not None else None
+    try:
+        setattr(cloned, "_streaming_image_owned", True)
+    except Exception:
+        pass
     return cloned
 
 
@@ -119,9 +123,13 @@ def _draw_event_overlay(image, context: PreviewRenderContext) -> None:
     y = 12
     box_width = max(220, min(w - 24, int(w * 0.45)))
     box_height = min(h - 24, 12 + len(context.active_event_labels) * line_height + 12)
-    overlay = image.copy()
-    cv2.rectangle(overlay, (x, y), (x + box_width, y + box_height), (0, 0, 0), thickness=-1)
-    cv2.addWeighted(overlay, 0.35, image, 0.65, 0.0, dst=image)
+    x2 = min(w, x + box_width)
+    y2 = min(h, y + box_height)
+    if x2 > x and y2 > y:
+        roi = image[y:y2, x:x2]
+        if roi.size > 0:
+            darkened = np.zeros_like(roi)
+            cv2.addWeighted(darkened, 0.35, roi, 0.65, 0.0, dst=roi)
 
     font_scale = max(0.5, min(w, h) / 1000.0)
     thickness = max(1, int(font_scale * 2))

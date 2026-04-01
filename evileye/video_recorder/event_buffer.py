@@ -207,6 +207,17 @@ class EventBuffer:
         """Get current number of frames in buffer."""
         with self.lock:
             return len(self.buffer)
+
+    def estimate_bytes(self) -> int:
+        """Best-effort estimate of total bytes retained by buffered frames."""
+        total = 0
+        with self.lock:
+            for frame, _ in self.buffer:
+                try:
+                    total += int(frame.nbytes)
+                except Exception:
+                    pass
+        return total
     
     def get_oldest_timestamp(self) -> Optional[float]:
         """Get timestamp of oldest frame in buffer, or None if empty."""
@@ -271,3 +282,22 @@ class EventBuffer:
             self.logger.debug(f"Explicitly cleared {removed_count} old frames (older than {older_than_seconds}s)")
         
         return removed_count
+
+    def get_runtime_stats(self) -> dict:
+        with self.lock:
+            buffer_len = len(self.buffer)
+            oldest = self.buffer[0][1] if self.buffer else None
+            newest = self.buffer[-1][1] if self.buffer else None
+            estimated_bytes = 0
+            for frame, _ in self.buffer:
+                try:
+                    estimated_bytes += int(frame.nbytes)
+                except Exception:
+                    pass
+            return {
+                "size": buffer_len,
+                "duration": (float(newest - oldest) if oldest is not None and newest is not None else 0.0),
+                "estimated_bytes": estimated_bytes,
+                "fps": self.fps,
+                "max_duration_seconds": self.max_duration_seconds,
+            }

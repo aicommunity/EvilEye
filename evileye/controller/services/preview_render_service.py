@@ -27,6 +27,13 @@ class PreviewRenderService:
         self._pending_jobs: dict[str, PreviewRenderJob] = {}
         self._worker_count = 1
         self._streaming_service = None
+        self._stats = {
+            "submitted": 0,
+            "replaced_latest": 0,
+            "rendered": 0,
+            "render_errors": 0,
+            "last_render_ms": 0.0,
+        }
 
     def configure(self, *, streaming_service=None, num_workers: int = 1) -> None:
         with self._condition:
@@ -66,9 +73,19 @@ class PreviewRenderService:
             return False
         key = self._job_key(source_id)
         with self._condition:
+            if key in self._pending_jobs:
+                self._stats["replaced_latest"] += 1
             self._pending_jobs[key] = PreviewRenderJob(frame=frame, context=context, source_id=source_id)
+            self._stats["submitted"] += 1
             self._condition.notify()
         return True
+
+    def get_runtime_stats(self) -> dict:
+        with self._condition:
+            stats = dict(self._stats)
+            stats["pending_jobs"] = len(self._pending_jobs)
+            stats["worker_count"] = len(self._workers)
+            return stats
 
     def _job_key(self, source_id: int | None) -> str:
         return f"src:{source_id}" if source_id is not None else "default"
@@ -100,8 +117,13 @@ class PreviewRenderService:
             if job is None:
                 continue
             try:
+                import time
+                started = time.perf_counter()
                 rendered = render_preview_frame(job.frame, job.context)
+                self._stats["rendered"] += 1
+                self._stats["last_render_ms"] = (time.perf_counter() - started) * 1000.0
                 if rendered is not None and self._streaming_service is not None:
                     self._streaming_service.submit_frame(rendered)
             except Exception as exc:
+                self._stats["render_errors"] += 1
                 self.logger.debug("Async preview render failed: %s", exc, exc_info=True)

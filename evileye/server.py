@@ -87,13 +87,19 @@ class ServerProcessManager:
         self._demand_thread: threading.Thread | None = None
         self._demand_stop = threading.Event()
         self._preview_demand_ts: dict[str, float] = {}
+        self._dropped_frames = 0
+        self._published_frames = 0
 
     def start(self, host="127.0.0.1", port=8080, log_level="info", ssl_certfile=None, ssl_keyfile=None):
         if self._process is not None and self._process.is_alive():
             self.logger.warning("Server process already running")
             return
 
-        self._frame_queue = mp.Queue(maxsize=30)
+        try:
+            frame_queue_size = int(os.getenv("EVILEYE_SERVER_FRAME_QUEUE_MAXSIZE", "8") or "8")
+        except Exception:
+            frame_queue_size = 8
+        self._frame_queue = mp.Queue(maxsize=max(2, frame_queue_size))
         self._demand_queue = mp.Queue(maxsize=200)
         self._demand_stop.clear()
         self._demand_thread = threading.Thread(target=self._demand_listener_loop, daemon=True, name="server-preview-demand")
@@ -142,11 +148,28 @@ class ServerProcessManager:
             if self._frame_queue.full():
                 try:
                     self._frame_queue.get_nowait()
+                    self._dropped_frames += 1
                 except Exception:
                     pass
             self._frame_queue.put_nowait((pipeline_id, jpeg_bytes, metadata or {}))
+            self._published_frames += 1
         except Exception:
             pass
+
+    def get_runtime_stats(self) -> dict:
+        queue_size = None
+        if self._frame_queue is not None:
+            try:
+                queue_size = self._frame_queue.qsize()
+            except Exception:
+                queue_size = None
+        return {
+            "published_frames": self._published_frames,
+            "dropped_frames": self._dropped_frames,
+            "queue_size": queue_size,
+            "demand_keys": len(self._preview_demand_ts),
+            "alive": self.is_alive(),
+        }
 
     def stop(self, timeout=5.0):
         if self._frame_queue is not None:

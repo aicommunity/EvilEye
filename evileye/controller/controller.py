@@ -1033,9 +1033,48 @@ class Controller:
             return
 
         try:
+            extra_parts: list[str] = []
+            if self.visualizer and hasattr(self.visualizer, "get_runtime_stats"):
+                try:
+                    vis_stats = self.visualizer.get_runtime_stats()
+                    extra_parts.append(f" vis_buf={vis_stats.get('per_source_buf')}")
+                    extra_parts.append(f" vis_q={vis_stats.get('per_thread_q')}")
+                except Exception:
+                    pass
+            if self._preview_render_service is not None and hasattr(self._preview_render_service, "get_runtime_stats"):
+                try:
+                    extra_parts.append(f" preview={self._preview_render_service.get_runtime_stats()}")
+                except Exception:
+                    pass
+            if self._streaming_service is not None and hasattr(self._streaming_service, "get_runtime_stats"):
+                try:
+                    extra_parts.append(f" stream={self._streaming_service.get_runtime_stats()}")
+                except Exception:
+                    pass
+            if self.obj_handler and hasattr(self.obj_handler, "get_runtime_stats"):
+                try:
+                    extra_parts.append(f" obj={self.obj_handler.get_runtime_stats()}")
+                except Exception:
+                    pass
+            if self.events_detectors_controller and hasattr(self.events_detectors_controller, "get_runtime_stats"):
+                try:
+                    extra_parts.append(f" events={self.events_detectors_controller.get_runtime_stats()}")
+                except Exception:
+                    pass
+            if self.event_buffers:
+                try:
+                    buf_stats = {sid: buf.get_runtime_stats() for sid, buf in self.event_buffers.items()}
+                    extra_parts.append(f" event_buffers={buf_stats}")
+                except Exception:
+                    pass
+            if self._server_process_manager is not None and hasattr(self._server_process_manager, "get_runtime_stats"):
+                try:
+                    extra_parts.append(f" server={self._server_process_manager.get_runtime_stats()}")
+                except Exception:
+                    pass
             log_method = self.logger.debug if context == "periodic" else self.logger.info
             log_method(
-                "ResourceStats[%s] pid=%s rss_mb=%s threads=%s fds=%s open_files=%s%s",
+                "ResourceStats[%s] pid=%s rss_mb=%s threads=%s fds=%s open_files=%s%s%s",
                 context,
                 pid,
                 (f"{rss_mb:.3f}" if isinstance(rss_mb, (int, float)) else "n/a"),
@@ -1043,6 +1082,7 @@ class Controller:
                 (str(num_fds) if num_fds is not None else "n/a"),
                 (str(open_files) if open_files is not None else "n/a"),
                 self._format_source_restart_counters(),
+                "".join(extra_parts),
             )
         except Exception:
             pass
@@ -2636,6 +2676,28 @@ class Controller:
         self.debug_info["controller"] = dict()
         self.debug_info["controller"]["timestamp"] = datetime.datetime.now()
         self.debug_info["controller"]["total_memory_usage_mb"] = total_memory_usage/(1024.0*1024.0)
+        try:
+            self.debug_info["controller"]["event_buffers"] = {
+                source_id: buffer.get_runtime_stats()
+                for source_id, buffer in self.event_buffers.items()
+            }
+        except Exception:
+            pass
+        try:
+            if self.obj_handler and hasattr(self.obj_handler, "get_runtime_stats"):
+                self.debug_info["controller"]["objects_handler_runtime"] = self.obj_handler.get_runtime_stats()
+        except Exception:
+            pass
+        try:
+            if self._preview_render_service is not None and hasattr(self._preview_render_service, "get_runtime_stats"):
+                self.debug_info["controller"]["preview_render_runtime"] = self._preview_render_service.get_runtime_stats()
+        except Exception:
+            pass
+        try:
+            if self._streaming_service is not None and hasattr(self._streaming_service, "get_runtime_stats"):
+                self.debug_info["controller"]["streaming_runtime"] = self._streaming_service.get_runtime_stats()
+        except Exception:
+            pass
 
     def _discover_pipeline_classes(self):
         """Discover all pipeline classes from packages and current directory"""

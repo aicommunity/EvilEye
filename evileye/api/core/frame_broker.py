@@ -34,6 +34,11 @@ class FrameBroker:
         self._ipc_queue: Optional[mp.Queue] = None
         self._ipc_thread: Optional[threading.Thread] = None
         self._ipc_stop = threading.Event()
+        self._stats = {
+            "published_payloads": 0,
+            "ipc_received": 0,
+            "last_payload_bytes": 0,
+        }
 
     # -- IPC bridge ------------------------------------------------------
 
@@ -62,6 +67,7 @@ class FrameBroker:
                 else:
                     pipeline_id, jpeg_bytes = item
                     metadata = None
+                self._stats["ipc_received"] += 1
                 self.publish_jpeg(pipeline_id, jpeg_bytes, metadata=metadata)
                 source_id = (metadata or {}).get("source_id") if isinstance(metadata, dict) else None
                 if source_id is not None:
@@ -118,9 +124,19 @@ class FrameBroker:
                 timestamp=time.time(),
                 metadata=dict(metadata or {}),
             )
+            self._stats["published_payloads"] += 1
+            self._stats["last_payload_bytes"] = len(payload) if payload is not None else 0
             if hash(pipeline_id) % 10 == 0:
                 self._cleanup_old_frames()
         self.logger.debug(f"Published frame for pipeline '{pipeline_id}'")
+
+    def get_runtime_stats(self) -> dict:
+        with self._lock:
+            stats = dict(self._stats)
+            stats["frames_keys"] = len(self._frames)
+            stats["active_streams"] = len(self._active_streams)
+            stats["estimated_bytes"] = sum(len(payload.data) for payload in self._frames.values())
+            return stats
 
     def publish_jpeg(
         self,

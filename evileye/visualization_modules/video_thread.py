@@ -103,6 +103,14 @@ class VideoThread(QThread):
         self._perf_diag_env = os.getenv("EVILEYE_PERF_DIAG", "").strip().lower() in {"1", "true", "yes", "on"}
         self._perf_diag_every = int(os.getenv("EVILEYE_PERF_DIAG_EVERY", "60") or "60")
         self._perf_diag_counter = 0
+        self._last_perf_stats = {
+            "overlay_ms": 0.0,
+            "cvt_color_ms": 0.0,
+            "qt_scale_ms": 0.0,
+            "qpixmap_ms": 0.0,
+            "emit_ms": 0.0,
+            "queue_size": 0,
+        }
 
     def start_thread(self):
         self.run_flag = True
@@ -128,25 +136,47 @@ class VideoThread(QThread):
 
     def convert_cv_qt(self, cv_img, widget_width, widget_height) -> QPixmap:
         # Переводим из opencv image в QPixmap
+        cvt_start = timer()
         rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
+        cvt_ms = (timer() - cvt_start) * 1000.0
         h, w, ch = rgb_image.shape
         bytes_per_line = ch * w
         convert_to_qt = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format.Format_RGB888)
+        scale_ms = 0.0
         if self.is_add_zone_clicked:
             zones_window_image = convert_to_qt.scaled(int(widget_width), int(widget_height),
-                                                      Qt.AspectRatioMode.KeepAspectRatio)
+                                                      Qt.AspectRatioMode.KeepAspectRatio,
+                                                      Qt.TransformationMode.FastTransformation)
             self.is_add_zone_clicked = False
             self.add_zone_signal.emit(self.thread_num, QPixmap.fromImage(zones_window_image))
         
         if self.is_add_roi_clicked:
             roi_window_image = convert_to_qt.scaled(int(widget_width), int(widget_height),
-                                                    Qt.AspectRatioMode.KeepAspectRatio)
+                                                    Qt.AspectRatioMode.KeepAspectRatio,
+                                                    Qt.TransformationMode.FastTransformation)
             self.is_add_roi_clicked = False
             self.add_roi_signal.emit(self.thread_num, QPixmap.fromImage(roi_window_image))
         # Подгоняем под указанный размер, но сохраняем пропорции
-        scaled_image = convert_to_qt.scaled(int(widget_width / VideoThread.cols),
-                                            int(widget_height / VideoThread.rows), Qt.AspectRatioMode.KeepAspectRatio)
-        return QPixmap.fromImage(scaled_image)
+        target_w = int(widget_width / VideoThread.cols)
+        target_h = int(widget_height / VideoThread.rows)
+        scale_start = timer()
+        if w == target_w and h == target_h:
+            scaled_image = convert_to_qt
+        else:
+            scaled_image = convert_to_qt.scaled(
+                target_w,
+                target_h,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.FastTransformation,
+            )
+        scale_ms = (timer() - scale_start) * 1000.0
+        pixmap_start = timer()
+        pixmap = QPixmap.fromImage(scaled_image)
+        pixmap_ms = (timer() - pixmap_start) * 1000.0
+        self._last_perf_stats["cvt_color_ms"] = cvt_ms
+        self._last_perf_stats["qt_scale_ms"] = scale_ms
+        self._last_perf_stats["qpixmap_ms"] = pixmap_ms
+        return pixmap
     
 
     def _draw_signal_overlay(self, image: QPixmap):
@@ -339,16 +369,20 @@ class VideoThread(QThread):
                 active_event_labels=active_event_labels,
                 zones=self.zones.get(self.source_id, []) if self.show_zones and self.zones else [],
             )
+            overlay_start = timer()
             apply_preview_overlay(display_frame, preview_context)
+            self._last_perf_stats["overlay_ms"] = (timer() - overlay_start) * 1000.0
             qt_image = self.convert_cv_qt(display_frame.image, self.widget_width, self.widget_height)
             end_it = timer()
             elapsed_seconds = end_it - begin_it
             # Сигнал из потока для обновления label на новое изображение
+            emit_start = timer()
             self.update_image_signal.emit(self.thread_num, qt_image)
             # Сигнал с оригинальным OpenCV изображением для ROI Editor (до любых отрисовок)
             self.update_original_cv_image_signal.emit(self.thread_num, frame.image)
             # Сигнал с чистым OpenCV изображением без нарисованных элементов для ROI Editor (до любых отрисовок)
             self.clean_image_available_signal.emit(self.thread_num, frame.image)
+            self._last_perf_stats["emit_ms"] = (timer() - emit_start) * 1000.0
             if self._perf_diag_env:
                 try:
                     self._perf_diag_counter += 1
@@ -358,13 +392,19 @@ class VideoThread(QThread):
                             qsz = self.queue.qsize()
                         except Exception:
                             qsz = -1
+                        self._last_perf_stats["queue_size"] = qsz
                         self.logger.info(
-                            "PerfDiag(VideoThread): src_id=%s, processed=%d, frame_id=%s, qsize=%s, proc_ms=%.1f",
+                            "PerfDiag(VideoThread): src_id=%s, processed=%d, frame_id=%s, qsize=%s, proc_ms=%.1f, overlay_ms=%.1f, cvt_ms=%.1f, scale_ms=%.1f, pixmap_ms=%.1f, emit_ms=%.1f",
                             self.source_id,
                             self._perf_diag_counter,
                             getattr(frame, "frame_id", None),
                             qsz,
                             (timer() - begin_it) * 1000.0,
+                            self._last_perf_stats["overlay_ms"],
+                            self._last_perf_stats["cvt_color_ms"],
+                            self._last_perf_stats["qt_scale_ms"],
+                            self._last_perf_stats["qpixmap_ms"],
+                            self._last_perf_stats["emit_ms"],
                         )
                 except Exception:
                     pass
@@ -383,6 +423,15 @@ class VideoThread(QThread):
     def stop_thread(self):
         self.run_flag = False
         self.logger.info('Visualization stopped')
+
+    def get_runtime_stats(self) -> dict:
+        stats = dict(self._last_perf_stats)
+        try:
+            stats["queue_size"] = self.queue.qsize()
+        except Exception:
+            pass
+        stats["source_id"] = self.source_id
+        return stats
 
     @pyqtSlot(dict)
     def display_zones(self, zones):

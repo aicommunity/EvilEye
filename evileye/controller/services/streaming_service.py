@@ -62,6 +62,14 @@ class StreamingService:
         self._frame_relay: FrameRelayClient | None = None
         self._encoder: JpegEncoderBackend = create_jpeg_encoder()
         self._worker_count = 1
+        self._stats = {
+            "submitted": 0,
+            "copied_images": 0,
+            "used_owned_images": 0,
+            "encoded": 0,
+            "publish_errors": 0,
+            "last_encode_ms": 0.0,
+        }
 
     @staticmethod
     def _job_key(job: StreamFrameJob) -> str:
@@ -114,10 +122,15 @@ class StreamingService:
         if not self._should_publish(throttle_key):
             return False
 
-        try:
-            image_for_encode = image.copy()
-        except Exception:
+        if bool(getattr(frame, "_streaming_image_owned", False)):
             image_for_encode = image
+            self._stats["used_owned_images"] += 1
+        else:
+            try:
+                image_for_encode = image.copy()
+                self._stats["copied_images"] += 1
+            except Exception:
+                image_for_encode = image
 
         job = StreamFrameJob(
             pipeline_id=self._pipeline_id,
@@ -128,13 +141,21 @@ class StreamingService:
         )
         with self._condition:
             self._pending_jobs[self._job_key(job)] = job
+            self._stats["submitted"] += 1
             self._condition.notify()
         return True
 
     def has_consumers(self, source_id: int | None = None) -> bool:
         throttle_key = f"{self._pipeline_id}:{source_id}" if source_id is not None else self._pipeline_id
         has_local_stream, has_server_preview_demand, has_server_process, has_relay = self._get_consumer_state(throttle_key)
-        return has_local_stream or has_server_preview_demand or has_relay or has_server_process
+        return has_local_stream or has_server_preview_demand or has_relay
+
+    def get_runtime_stats(self) -> dict:
+        with self._condition:
+            stats = dict(self._stats)
+            stats["pending_jobs"] = len(self._pending_jobs)
+            stats["worker_count"] = len(self._workers)
+            return stats
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -165,11 +186,15 @@ class StreamingService:
             if job is None:
                 continue
             try:
+                encode_started = time.perf_counter()
                 payload = self._encoder.encode(job.image)
+                self._stats["last_encode_ms"] = (time.perf_counter() - encode_started) * 1000.0
                 if not payload:
                     continue
+                self._stats["encoded"] += 1
                 self._publish_jpeg(job.pipeline_id, payload, job)
             except Exception as e:
+                self._stats["publish_errors"] += 1
                 self.logger.debug("Async preview publish failed: %s", e, exc_info=True)
 
     def _get_next_job(self) -> Optional[StreamFrameJob]:

@@ -26,6 +26,8 @@ class Visualizer(EvilEyeBase):
         self.pyqt_slots = pyqt_slots
         self.pyqt_signals = pyqt_signals
         self.visual_threads: list[VideoThread] = []
+        self.visual_threads_by_source: dict[int, VideoThread] = {}
+        self.source_index_map: dict[int, int] = {}
         self.source_ids = []
         # Внутренние структуры, доступ к которым теперь осуществляется через методы
         self._source_id_name_table: dict[int, str] = {}
@@ -73,6 +75,8 @@ class Visualizer(EvilEyeBase):
                 except Exception:
                     pass
             self.visual_threads = []
+            self.visual_threads_by_source = {}
+            self.source_index_map = {}
         
         # Check if source_ids are set
         if not self.source_ids:
@@ -80,6 +84,7 @@ class Visualizer(EvilEyeBase):
             return False
         
         self.logger.info(f"Initializing visualizer with {len(self.source_ids)} source(s): {self.source_ids}")
+        self.source_index_map = {source_id: idx for idx, source_id in enumerate(self.source_ids)}
         
         for i in range(len(self.source_ids)):
             logger_name = f"src{self.source_ids[i]}"
@@ -117,6 +122,7 @@ class Visualizer(EvilEyeBase):
                 self.pyqt_signals['display_zones_signal'].connect(self.visual_threads[-1].display_zones)
                 self.pyqt_signals['add_zone_signal'].connect(self.visual_threads[-1].add_zone_clicked)
                 self.pyqt_signals['add_roi_signal'].connect(self.visual_threads[-1].add_roi_clicked)
+                self.visual_threads_by_source[self.source_ids[i]] = self.visual_threads[-1]
             except Exception as e:
                 self.logger.error(f"Error creating video thread for source {self.source_ids[i]}: {e}", exc_info=True)
                 return False
@@ -128,6 +134,8 @@ class Visualizer(EvilEyeBase):
         for thr in self.visual_threads:
             thr.stop_thread()
         self.visual_threads = []
+        self.visual_threads_by_source = {}
+        self.source_index_map = {}
 
     def connect_to_signal(self, pyqt_signal):
         for i in range(len(self.source_ids)):  # Сигнал из потока для обновления label на новое изображение
@@ -266,6 +274,26 @@ class Visualizer(EvilEyeBase):
             frames.append(frame)
         return frames
 
+    def get_runtime_stats(self) -> dict:
+        per_source_buf = {sid: len(self.processing_frames.get(sid, [])) for sid in self.source_ids}
+        per_thread_q = {}
+        per_thread_perf = {}
+        for thr in self.visual_threads:
+            try:
+                per_thread_q[thr.source_id] = thr.queue.qsize()
+            except Exception:
+                per_thread_q[thr.source_id] = -1
+            try:
+                per_thread_perf[thr.source_id] = thr.get_runtime_stats()
+            except Exception:
+                per_thread_perf[thr.source_id] = {}
+        return {
+            "per_source_buf": per_source_buf,
+            "per_thread_q": per_thread_q,
+            "per_thread_perf": per_thread_perf,
+            "last_displayed_frame": dict(self.last_displayed_frame),
+        }
+
     def calc_memory_consumption(self):
         super().calc_memory_consumption()
         self.memory_consumption_detail['processing_frames'] = asizeof.asizeof(self.processing_frames)
@@ -327,7 +355,9 @@ class Visualizer(EvilEyeBase):
                 start_find_objects = timer()
                 if source_id is None or source_id not in self.source_ids:
                     continue
-                source_index = self.source_ids.index(source_id)
+                source_index = self.source_index_map.get(source_id)
+                if source_index is None:
+                    continue
                 #objs = objects[source_index].objects
                 objs = objects[source_index].find_objects_by_frame_id(frame.frame_id, use_history=False)
 
@@ -339,15 +369,14 @@ class Visualizer(EvilEyeBase):
                     continue
 
                 start_append_data = timer()
-                for j in range(len(self.visual_threads)):
-                    if self.visual_threads[j].source_id == source_id:
-                        data = (frame, objs, self.source_id_name_table[source_id],
-                                self.source_video_duration.get(source_id, None), debug_info)
-                        self.visual_threads[j].append_data(data)
-                        self.last_displayed_frame[source_id] = frame.frame_id
-                        processed_sources.append(source_id)
-                        remove_processed_idx[source_id].append(i)
-                        break
+                thread = self.visual_threads_by_source.get(source_id)
+                if thread is not None:
+                    data = (frame, objs, self.source_id_name_table[source_id],
+                            self.source_video_duration.get(source_id, None), debug_info)
+                    thread.append_data(data)
+                    self.last_displayed_frame[source_id] = frame.frame_id
+                    processed_sources.append(source_id)
+                    remove_processed_idx[source_id].append(i)
                 end_proc_frame = timer()
                 # self.logger.debug(f"Time frame: proc_frame[{end_proc_frame - start_proc_frame}], find_objects[{start_append_data - start_find_objects}, append[{end_proc_frame - start_find_objects}] secs")
 
@@ -392,12 +421,13 @@ class Visualizer(EvilEyeBase):
                         except Exception:
                             per_thread_q[thr.source_id] = -1
                     self.logger.info(
-                        "PerfDiag(Visualizer): updates=%d, in_frames=%d, update_ms=%.1f, per_source_buf=%s, video_thread_q=%s",
+                        "PerfDiag(Visualizer): updates=%d, in_frames=%d, update_ms=%.1f, per_source_buf=%s, video_thread_q=%s, displayed=%s",
                         self._perf_diag_counter,
                         (len(processing_frames) if processing_frames else 0),
                         (timer() - start_update) * 1000.0,
                         per_source_buf,
                         per_thread_q,
+                        dict(self.last_displayed_frame),
                     )
                 except Exception:
                     pass
