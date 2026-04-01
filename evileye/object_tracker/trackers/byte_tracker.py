@@ -1,6 +1,7 @@
 # Ultralytics YOLO 🚀, AGPL-3.0 license
 
 import numpy as np
+from collections import deque
 from .basetrack import BaseTrack, TrackState
 from .utils import matching
 from .utils.kalman_filter import KalmanFilterXYAH
@@ -241,7 +242,8 @@ class BYTETracker:
         """Initialize a YOLOv8 object to track objects with given arguments and frame rate."""
         self.tracked_stracks = []  # type: list[STrack]
         self.lost_stracks = []  # type: list[STrack]
-        self.removed_stracks = []  # type: list[STrack]
+        # Use deque with maxlen to automatically limit size.
+        self.removed_stracks = deque(maxlen=1000)  # type: deque[STrack]
 
         self.frame_id = 0
         self.args = args
@@ -374,8 +376,6 @@ class BYTETracker:
         self.lost_stracks = self.sub_stracks(self.lost_stracks, self.removed_stracks)
         self.tracked_stracks, self.lost_stracks = self.remove_duplicate_stracks(self.tracked_stracks, self.lost_stracks)
         self.removed_stracks.extend(removed_stracks)
-        if len(self.removed_stracks) > 1000:
-            self.removed_stracks = self.removed_stracks[-999:]  # clip remove stracks to 1000 maximum
 
         # return np.asarray([x.result for x in self.tracked_stracks if x.is_activated], dtype=np.float32)
         return [x for x in self.tracked_stracks if x.is_activated]
@@ -409,7 +409,7 @@ class BYTETracker:
         """Reset tracker."""
         self.tracked_stracks = []  # type: list[STrack]
         self.lost_stracks = []  # type: list[STrack]
-        self.removed_stracks = []  # type: list[STrack]
+        self.removed_stracks = deque(maxlen=1000)  # type: deque[STrack]
         self.frame_id = 0
         self.kalman_filter = self.get_kalmanfilter()
         self.reset_id()

@@ -1,9 +1,10 @@
 from typing import Dict, List, Tuple
 import datetime
-from time import sleep
 from collections import deque
 import os
 from timeit import default_timer as timer
+import threading
+from queue import Empty
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
@@ -18,8 +19,7 @@ from ..object_tracker.trackers.track_encoder import TrackEncoder
 from ..object_tracker.trackers.cfg.utils import read_cfg
 from ..object_detector.object_detection_base import DetectionResult
 from ..object_detector.object_detection_base import DetectionResultList
-from .object_multicam_tracking_base import TrackingResult
-from .object_multicam_tracking_base import TrackingResultList
+from ..object_tracker.tracking_results import TrackingResult, TrackingResultList
 from .object_multicam_tracking_base import ObjectMultiCameraTrackingBase
 from .mctrack import MCTrack
 from ..object_tracker.trackers.sctrack import SCTrack
@@ -46,7 +46,7 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
         self._diag_queue_snapshots = []
         self._diag_last_batch = []
 
-    def init_impl(self, **kwargs):
+    def init_impl(self, **kwargs) -> bool:
         sources_ids = self.params.get("source_ids", [])
         encoders = kwargs.get('encoders', None)
         self.tracker = MultiCameraTracker(len(sources_ids), encoders)
@@ -55,7 +55,7 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
     def release_impl(self):
         self.tracker = None
 
-    def reset_impl(self):
+    def reset_impl(self) -> None:
         self.tracker.reset()
 
     def set_params_impl(self):
@@ -71,22 +71,25 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
     def _process_impl(self):
         while self.run_flag:
             loop_start = timer()
-            sleep(0.01)
             queue_size_before = self.queue_in.qsize()
-            if queue_size_before <= len(self.source_ids):
+            sc_track_results = []
+            for _ in range(len(self.source_ids)):
+                try:
+                    result = self.queue_in.get(timeout=0.1)
+                except Empty:
+                    break
+                if result is None:
+                    continue
+                sc_track_results.append(result)
+
+            if len(sc_track_results) < len(self.source_ids):
                 if self._perf_diag_env:
                     self._diag_waiting_for_batch += 1
-                continue
-
-            sc_track_results = []
-            for i in range(0,len(self.source_ids)):
-                sc_track_results.append(self.queue_in.get())
-            if sc_track_results is None:
                 continue
             if self._perf_diag_env:
                 self._diag_batches += 1
 
-            if self.enable == False:
+            if not self.enable:
                 for track_info in sc_track_results:
                     self._put_out_drop_oldest(track_info)
                 continue
@@ -99,9 +102,7 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
                 track_info, image = results
                 images.append(image)
                 track_infos.append(track_info)
-                tracks = []
-                for t in track_info.tracks:
-                    tracks.append(t.tracking_data["track_object"])
+                tracks = [t.tracking_data["track_object"] for t in track_info.tracks]
                 sc_tracks.append(tracks)
                 try:
                     batch_diag.append(
@@ -160,25 +161,26 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
         cam_id = det_info.source_id
         objects = det_info.detections
 
-        bboxes_xyxy = []
-        confidences = []
-        class_ids = []
+        if len(objects) == 0:
+            return (
+                cam_id,
+                np.empty((0, 4), dtype=np.float64),
+                np.empty((0,), dtype=np.float32),
+                np.empty((0,), dtype=np.int32),
+            )
 
-        for obj in objects:
-            bboxes_xyxy.append(obj.bounding_box)
-            confidences.append(obj.confidence)
-            class_ids.append(obj.class_id)
+        num_objects = len(objects)
+        bboxes_xyxy = np.empty((num_objects, 4), dtype=np.float64)
+        confidences = np.empty(num_objects, dtype=np.float32)
+        class_ids = np.empty(num_objects, dtype=np.int32)
 
-        bboxes_xyxy = np.array(bboxes_xyxy).reshape(-1, 4)
-        confidences = np.array(confidences)
-        class_ids = np.array(class_ids)
-
-        bboxes_xyxy = np.array(bboxes_xyxy)
-        confidences = np.array(confidences)
-        class_ids = np.array(class_ids)
+        for i, obj in enumerate(objects):
+            bboxes_xyxy[i] = obj.bounding_box
+            confidences[i] = obj.confidence
+            class_ids[i] = obj.class_id
 
         # Convert XYXY input coordinates to XcYcWH
-        bboxes_xcycwh = bboxes_xyxy.astype('float64')
+        bboxes_xcycwh = bboxes_xyxy.copy()
         bboxes_xcycwh[:, 2] -= bboxes_xcycwh[:, 0]
         bboxes_xcycwh[:, 3] -= bboxes_xcycwh[:, 1]
         bboxes_xcycwh[:, 0] += bboxes_xcycwh[:, 2] / 2
@@ -192,12 +194,17 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
             mc_tracks: List['MCTrack']) -> List[TrackingResultList]:
         
         sc_tracks_by_cam = [list() for i in range(len(sc_track_results))]
+        # O(1) lookup: local track_id -> index in sc_track_results[cam_id].tracks
+        track_id_to_index = {
+            cam_id: {t.track_id: idx for idx, t in enumerate(track_list.tracks)}
+            for cam_id, track_list in enumerate(sc_track_results)
+        }
         for t in mc_tracks:
             global_id = t.global_track_id
             for cam_id, track in t.sc_tracks.items():
                 
                 track_id = track.track_id
-                src_track_number = [t.track_id for t in sc_track_results[cam_id].tracks].index(track_id)
+                src_track_number = track_id_to_index.get(cam_id, {}).get(track_id)
                 
                 if src_track_number is None:
                     continue
@@ -507,6 +514,11 @@ class MultiCameraTracker:
                 if cam_ids[i] == cam_ids[j]:
                     distances[i, j] = np.finfo(np.float32).max
         return distances
+
+    def reset(self) -> None:
+        """Reset the multi-camera tracker to initial state."""
+        self.mct_tracks = []
+        self.next_global_id = 0
 
 
 def check_overlaps(tracks: List[BOTrack], overlap_threshold: float = 0.5) -> List[bool]:

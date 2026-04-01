@@ -4,17 +4,15 @@ from typing import List
 from queue import Empty
 from ultralytics.engine.results import Boxes
 from ultralytics.trackers.bot_sort import BOTrack
-from .object_tracking_base import EXEC_MODE_PROCESS, ObjectTrackingBase
+from .object_tracking_base import ObjectTrackingBase
 from .trackers.bot_sort import BOTSORT
 from .trackers.track_encoder import TrackEncoder
 from .trackers.cfg.utils import read_cfg
-from time import sleep
 from ..object_detector.object_detection_base import DetectionResult
 from ..object_detector.object_detection_base import DetectionResultList
 from .tracking_results import TrackingResult
 from .tracking_results import TrackingResultList
 from dataclasses import dataclass
-import copy
 from ..core.base_class import EvilEyeBase
 
 @dataclass
@@ -44,18 +42,6 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
         self.encoders = None
         self.fps = 5
 
-        self.cfg_dict = dict()
-        self.cfg_dict["appearance_thresh"] = 0.25
-        self.cfg_dict["gmc_method"] = "sparseOptFlow"
-        self.cfg_dict["match_thresh"] = 0.8
-        self.cfg_dict["new_track_thresh"] = 0.6
-        self.cfg_dict["proximity_thresh"] = 0.5
-        self.cfg_dict["track_buffer"] = 30
-        self.cfg_dict["track_high_thresh"] = 0.5
-        self.cfg_dict["track_low_thresh"] = 0.1
-        self.cfg_dict["tracker_type"] = "botsort"
-        self.cfg_dict["with_reid"] = False
-
     def init_impl(self, **kwargs):
         try:
             encoders = kwargs.get('encoders', None)
@@ -73,10 +59,6 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
                 self.logger.debug("No encoders provided, ReID disabled")
             
             super().init_impl(**kwargs)
-            if self.execution_mode == EXEC_MODE_PROCESS:
-                self.logger.info("ObjectTrackingBotsort initialized in PROCESS mode")
-                return True
-            
             # Ensure botsort_cfg is set (should be set by set_params_impl, but check anyway)
             if not self.botsort_cfg:
                 # Try to set default config if not set
@@ -93,7 +75,7 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
             return False
 
     def release_impl(self):
-        super().init_impl()
+        super().release_impl()
         self.tracker = None
 
     def reset_impl(self):
@@ -104,22 +86,39 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
         self.fps = self.params.get('fps', 5)
         self.execution_mode = self.params.get('execution_mode', self.execution_mode)
 
-        self.cfg_dict = self.params.get('botsort_cfg', self.cfg_dict)
-        cfg_dict = self.cfg_dict
-
+        cfg_dict = self.params.get("botsort_cfg", None)
         if cfg_dict:
-            self.botsort_cfg = BostSortCfg(appearance_thresh=cfg_dict["appearance_thresh"], gmc_method=cfg_dict["gmc_method"],
-                                           match_thresh=cfg_dict["match_thresh"], new_track_thresh=cfg_dict["new_track_thresh"],
-                                           proximity_thresh=cfg_dict["proximity_thresh"], track_buffer=cfg_dict["track_buffer"],
-                                           track_high_thresh=cfg_dict["track_high_thresh"], track_low_thresh=cfg_dict["track_low_thresh"],
-                                           tracker_type=cfg_dict["tracker_type"], with_reid=cfg_dict["with_reid"])
+            self.botsort_cfg = BostSortCfg(
+                appearance_thresh=cfg_dict.get("appearance_thresh", self.botsort_cfg.appearance_thresh),
+                gmc_method=cfg_dict.get("gmc_method", self.botsort_cfg.gmc_method),
+                match_thresh=cfg_dict.get("match_thresh", self.botsort_cfg.match_thresh),
+                new_track_thresh=cfg_dict.get("new_track_thresh", self.botsort_cfg.new_track_thresh),
+                proximity_thresh=cfg_dict.get("proximity_thresh", self.botsort_cfg.proximity_thresh),
+                track_buffer=cfg_dict.get("track_buffer", self.botsort_cfg.track_buffer),
+                track_high_thresh=cfg_dict.get("track_high_thresh", self.botsort_cfg.track_high_thresh),
+                track_low_thresh=cfg_dict.get("track_low_thresh", self.botsort_cfg.track_low_thresh),
+                tracker_type=cfg_dict.get("tracker_type", self.botsort_cfg.tracker_type),
+                fuse_score=cfg_dict.get("fuse_score", self.botsort_cfg.fuse_score),
+                with_reid=cfg_dict.get("with_reid", self.botsort_cfg.with_reid),
+            )
 
     def get_params_impl(self):
         params = dict()
         params['source_ids'] = self.source_ids
         params['fps'] = self.fps
-        params['botsort_cfg'] = self.cfg_dict
-        params['execution_mode'] = self.execution_mode
+        params['botsort_cfg'] = {
+            "appearance_thresh": self.botsort_cfg.appearance_thresh,
+            "gmc_method": self.botsort_cfg.gmc_method,
+            "match_thresh": self.botsort_cfg.match_thresh,
+            "new_track_thresh": self.botsort_cfg.new_track_thresh,
+            "proximity_thresh": self.botsort_cfg.proximity_thresh,
+            "track_buffer": self.botsort_cfg.track_buffer,
+            "track_high_thresh": self.botsort_cfg.track_high_thresh,
+            "track_low_thresh": self.botsort_cfg.track_low_thresh,
+            "tracker_type": self.botsort_cfg.tracker_type,
+            "fuse_score": self.botsort_cfg.fuse_score,
+            "with_reid": self.botsort_cfg.with_reid,
+        }
         return params
 
     def default(self):
@@ -127,7 +126,6 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
 
     def _process_impl(self):
         while self.run_flag:
-            sleep(0.01)
             try:
                 detections = self.queue_in.get(timeout=0.5)
             except Empty:
@@ -176,22 +174,20 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
         cam_id = det_info.source_id
         objects = det_info.detections
 
-        bboxes_xyxy = []
-        confidences = []
-        class_ids = []
+        if len(objects) == 0:
+            boxes_array = np.empty((0, 6), dtype=np.float32)
+            orig_shape = (image.shape[1], image.shape[0])
+            return cam_id, Boxes(boxes_array, orig_shape)
 
-        for obj in objects:
-            bboxes_xyxy.append(obj.bounding_box)
-            confidences.append(obj.confidence)
-            class_ids.append(obj.class_id)
+        num_objects = len(objects)
+        bboxes_xyxy = np.empty((num_objects, 4), dtype=np.float32)
+        confidences = np.empty((num_objects, 1), dtype=np.float32)
+        class_ids = np.empty((num_objects, 1), dtype=np.float32)
 
-        bboxes_xyxy = np.array(bboxes_xyxy).reshape(-1, 4)
-        confidences = np.array(confidences).reshape(-1, 1)
-        class_ids = np.array(class_ids).reshape(-1, 1)
-
-        bboxes_xyxy = np.array(bboxes_xyxy)
-        confidences = np.array(confidences)
-        class_ids = np.array(class_ids)
+        for i, obj in enumerate(objects):
+            bboxes_xyxy[i] = obj.bounding_box
+            confidences[i] = obj.confidence
+            class_ids[i] = obj.class_id
         
         boxes_array = np.concatenate([bboxes_xyxy, confidences, class_ids], axis=1)
         
