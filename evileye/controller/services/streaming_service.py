@@ -131,6 +131,11 @@ class StreamingService:
             self._condition.notify()
         return True
 
+    def has_consumers(self, source_id: int | None = None) -> bool:
+        throttle_key = f"{self._pipeline_id}:{source_id}" if source_id is not None else self._pipeline_id
+        has_local_stream, has_server_preview_demand, has_server_process, has_relay = self._get_consumer_state(throttle_key)
+        return has_local_stream or has_server_preview_demand or has_relay or has_server_process
+
     def stop(self) -> None:
         self._stop_event.set()
         with self._condition:
@@ -177,6 +182,22 @@ class StreamingService:
             return job
 
     def _should_publish(self, throttle_key: str) -> bool:
+        has_local_stream, has_server_preview_demand, has_server_process, has_relay = self._get_consumer_state(throttle_key)
+
+        if has_local_stream or has_server_preview_demand or has_relay:
+            return self._throttle_ok(throttle_key)
+
+        # Fallback for embedded server + web-ui bootstrap: keep a very low-rate
+        # preview heartbeat so snapshots do not stay permanently "not ready" if
+        # explicit demand propagation is delayed or lost.
+        if has_server_process:
+            return self._throttle_ok(throttle_key, fps_override=min(self._publish_fps, 1.0))
+
+        if not has_local_stream and not has_server_preview_demand and not has_relay:
+            return False
+        return self._throttle_ok(throttle_key)
+
+    def _get_consumer_state(self, throttle_key: str) -> tuple[bool, bool, bool, bool]:
         has_local_stream = False
         try:
             from evileye.api.core.broker_access import get_broker
@@ -205,19 +226,7 @@ class StreamingService:
             has_server_process = False
 
         has_relay = self._frame_relay is not None
-
-        if has_local_stream or has_server_preview_demand or has_relay:
-            return self._throttle_ok(throttle_key)
-
-        # Fallback for embedded server + web-ui bootstrap: keep a very low-rate
-        # preview heartbeat so snapshots do not stay permanently "not ready" if
-        # explicit demand propagation is delayed or lost.
-        if has_server_process:
-            return self._throttle_ok(throttle_key, fps_override=min(self._publish_fps, 1.0))
-
-        if not has_local_stream and not has_server_preview_demand and not has_relay:
-            return False
-        return self._throttle_ok(throttle_key)
+        return has_local_stream, has_server_preview_demand, has_server_process, has_relay
 
     def _throttle_ok(self, throttle_key: str, *, fps_override: float | None = None) -> bool:
         effective_fps = self._publish_fps if fps_override is None else max(0.0, float(fps_override))

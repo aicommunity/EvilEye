@@ -13,6 +13,7 @@ except ImportError:
 
 from timeit import default_timer as timer
 from ..utils import utils
+from .preview_render import PreviewRenderContext, apply_preview_overlay
 from queue import Queue
 from queue import Empty
 import copy
@@ -311,20 +312,35 @@ class VideoThread(QThread):
                             active_obj_ids.add(oid)
             except Exception:
                 active_obj_ids = set()
-
-            utils.draw_boxes_tracking(display_frame, track_info, source_name, source_duration_secs,
-                                      self.font_scale, self.font_thickness, self.font_color,
-                                      text_config=self.text_config, class_mapping=self.class_mapping,
-                                      event_active_obj_ids=active_obj_ids,
-                                      event_color=(self.signal_color.red(), self.signal_color.green(), self.signal_color.blue()))
-            if self.show_debug_info:
-                utils.draw_debug_info(display_frame, debug_info)
+            active_event_labels = []
+            try:
+                if self.visualizer_ref and hasattr(self.visualizer_ref, 'get_active_events'):
+                    active_keys = self.visualizer_ref.get_active_events(self.source_id) or set()
+                    active_event_labels = [
+                        f"AttributeEvent: {evt_name} [{obj_id}]"
+                        for (_, obj_id, evt_name) in active_keys
+                    ]
+            except Exception:
+                active_event_labels = []
+            preview_context = PreviewRenderContext(
+                source_name=source_name,
+                source_duration_msecs=source_duration_secs,
+                track_info=track_info or [],
+                debug_info=debug_info or {},
+                show_debug_info=self.show_debug_info,
+                font_scale=self.font_scale,
+                font_thickness=self.font_thickness,
+                font_color=self.font_color,
+                text_config=self.text_config or {},
+                class_mapping=self.class_mapping or {},
+                event_signal_enabled=self.signal_enabled,
+                event_color_rgb=(self.signal_color.red(), self.signal_color.green(), self.signal_color.blue()),
+                event_active_obj_ids=active_obj_ids,
+                active_event_labels=active_event_labels,
+                zones=self.zones.get(self.source_id, []) if self.show_zones and self.zones else [],
+            )
+            apply_preview_overlay(display_frame, preview_context)
             qt_image = self.convert_cv_qt(display_frame.image, self.widget_width, self.widget_height)
-            
-            if self.show_zones:
-                self.draw_zones(qt_image, self.zones)
-            # Draw event signalization overlay last
-            self._draw_signal_overlay(qt_image)
             end_it = timer()
             elapsed_seconds = end_it - begin_it
             # Сигнал из потока для обновления label на новое изображение

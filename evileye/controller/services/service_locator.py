@@ -9,6 +9,7 @@ from evileye.controller.services.database_service import DatabaseService
 from evileye.controller.services.events_service import EventsService
 from evileye.controller.services.objects_handler_service import ObjectsHandlerService
 from evileye.controller.services.pipeline_service import PipelineService
+from evileye.controller.services.preview_render_service import PreviewRenderService
 from evileye.controller.services.streaming_service import StreamingService
 from evileye.controller.services.visualization_service import VisualizationService
 
@@ -25,6 +26,7 @@ class ServiceLocator:
         self._config_service: Optional[ConfigurationService] = None
         self._objects_handler_service: Optional[ObjectsHandlerService] = None
         self._streaming_service: Optional[StreamingService] = None
+        self._preview_render_service: Optional[PreviewRenderService] = None
 
     def register_pipeline_service(self, service: PipelineService) -> None:
         """Зарегистрировать сервис pipeline.
@@ -112,6 +114,12 @@ class ServiceLocator:
     def get_streaming_service(self) -> Optional[StreamingService]:
         return self._streaming_service
 
+    def register_preview_render_service(self, service: PreviewRenderService) -> None:
+        self._preview_render_service = service
+
+    def get_preview_render_service(self) -> Optional[PreviewRenderService]:
+        return self._preview_render_service
+
     def register_objects_handler_service(self, service: ObjectsHandlerService) -> None:
         """Зарегистрировать сервис ObjectsHandler.
 
@@ -148,6 +156,8 @@ class ServiceLocator:
             self._objects_handler_service = ObjectsHandlerService(class_manager=class_manager)
         if self._streaming_service is None:
             self._streaming_service = StreamingService()
+        if self._preview_render_service is None:
+            self._preview_render_service = PreviewRenderService()
 
     def release_all(self) -> None:
         """Освободить все сервисы."""
@@ -163,3 +173,5 @@ class ServiceLocator:
             self._objects_handler_service.release_objects_handler()
         if self._streaming_service:
             self._streaming_service.stop()
+        if self._preview_render_service:
+            self._preview_render_service.stop()

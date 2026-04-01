@@ -55,6 +55,7 @@ from evileye.api.security import load_web_auth_config
 from evileye.core.system_diagnostics import SystemDiagnostics
 from evileye.core.memory_monitor import MemoryMonitor
 from evileye.api.core.runtime_registry import register_runtime
+from evileye.visualization_modules.preview_render import PreviewRenderContext
 from evileye.controller.services import (
     PipelineService,
     DatabaseService,
@@ -104,6 +105,9 @@ class Controller:
         self._per_source_frame_debug_counter: dict[int, int] = {}
         # Throttle ObjectsHandler updates to avoid backlog under load
         self._obj_handler_last_sent_frame_id: dict[int, int] = {}
+        self._preview_active_events_by_source: dict[int, dict[tuple[int, str], dict]] = {}
+        self._preview_events_lock = threading.Lock()
+        self._preview_zones_by_source: dict[int, list] = {}
 
         self.pipeline = None
 
@@ -168,6 +172,7 @@ class Controller:
         self._config_service = self.service_locator.get_config_service()
         self._objects_handler_service = self.service_locator.get_objects_handler_service()
         self._streaming_service = self.service_locator.get_streaming_service()
+        self._preview_render_service = self.service_locator.get_preview_render_service()
         
         # Default COCO class mapping: class_name -> class_id
         self.class_mapping = {
@@ -560,17 +565,121 @@ class Controller:
             # Не ломаем основной цикл контроллера из-за ошибок событий
             pass
 
-    def _publish_latest_frame_to_broker(self, processing_frames: list) -> None:
+    def _collect_preview_objects_by_source(self, source_ids: set[int], objects_results) -> dict[int, ObjectResultList]:
+        objects_by_source: dict[int, ObjectResultList] = {}
+        if not source_ids:
+            return objects_by_source
+        try:
+            if self.skip_objects_handler:
+                converted = self._convert_results_for_visualization(objects_results or [])
+                for source_id in source_ids:
+                    objects_by_source[source_id] = converted.get(source_id, ObjectResultList())
+            else:
+                for source_id in source_ids:
+                    if self.obj_handler:
+                        objects_by_source[source_id] = self.obj_handler.get("active", source_id)
+                    else:
+                        objects_by_source[source_id] = ObjectResultList()
+        except Exception:
+            for source_id in source_ids:
+                objects_by_source.setdefault(source_id, ObjectResultList())
+        return objects_by_source
+
+    def _get_preview_event_entries(self, source_id: int) -> list[dict]:
+        with self._preview_events_lock:
+            return list((self._preview_active_events_by_source.get(source_id) or {}).values())
+
+    def _get_preview_visualizer_cfg(self) -> dict:
+        if isinstance(self.params, dict):
+            cfg = self.params.get("visualizer", {})
+            if isinstance(cfg, dict):
+                return cfg
+        return {}
+
+    def _get_preview_event_cfg(self) -> dict:
+        vis_cfg = self._get_preview_visualizer_cfg()
+        nested = vis_cfg.get("event_signalization", {})
+        if isinstance(nested, dict) and nested:
+            return nested
+        return vis_cfg
+
+    def _extract_preview_zones(self) -> dict[int, list]:
+        zones_cfg = (((self.params or {}).get('events_detectors', {}) or {}).get('ZoneEventsDetector', {}) or {}).get('sources', {})
+        sources_zones: dict[int, list] = {}
+        if not isinstance(zones_cfg, dict):
+            return sources_zones
+        for key, zone_list in zones_cfg.items():
+            try:
+                source_id = int(key)
+            except Exception:
+                continue
+            prepared = []
+            for coords in (zone_list or []):
+                if isinstance(coords, list) and coords:
+                    prepared.append(['poly', coords, None])
+            if prepared:
+                sources_zones[source_id] = prepared
+        return sources_zones
+
+    def _build_preview_render_context(self, frame, objects_by_source: dict[int, ObjectResultList]) -> PreviewRenderContext:
+        source_id = getattr(frame, "source_id", None)
+        frame_id = getattr(frame, "frame_id", None)
+        object_list = objects_by_source.get(source_id, ObjectResultList())
+        track_info = object_list.find_objects_by_frame_id(frame_id, use_history=False) if object_list else []
+        event_entries = self._get_preview_event_entries(source_id)
+        event_cfg = self._get_preview_event_cfg()
+        vis_cfg = self._get_preview_visualizer_cfg()
+        event_enabled = bool(event_cfg.get("event_signal_enabled", False))
+        event_color = tuple(event_cfg.get("event_signal_color", [255, 0, 0]))
+        return PreviewRenderContext(
+            source_name=self.source_id_name_table.get(source_id, f"src{source_id}"),
+            source_duration_msecs=self.source_video_duration.get(source_id),
+            track_info=track_info,
+            debug_info=self.debug_info,
+            show_debug_info=bool(vis_cfg.get("show_debug_info", False)),
+            text_config=vis_cfg.get("text_config", {}) or {},
+            class_mapping=self.class_mapping or {},
+            event_signal_enabled=event_enabled,
+            event_color_rgb=event_color,
+            event_active_obj_ids={entry["object_id"] for entry in event_entries if entry.get("object_id") is not None},
+            active_event_labels=[
+                f'{entry.get("event_name", "Event")} [{entry.get("object_id")}]'
+                for entry in event_entries
+            ],
+            zones=self._preview_zones_by_source.get(source_id, []),
+        )
+
+    def _publish_latest_frame_to_broker(self, processing_frames: list, objects_results=None) -> None:
         """Опубликовать последние кадры всех sources в web broker/shared files."""
         try:
             if not processing_frames:
                 self.logger.debug("No processing frames available for publishing")
                 return
-            published = 0
+            interested_frames = []
+            interested_source_ids: set[int] = set()
             for frame in processing_frames:
                 if getattr(frame, "image", None) is None:
                     continue
-                if self._streaming_service and self._streaming_service.submit_frame(frame):
+                source_id = getattr(frame, "source_id", None)
+                if self._preview_render_service is not None:
+                    if not self._preview_render_service.wants_frame(source_id):
+                        continue
+                interested_frames.append(frame)
+                if source_id is not None:
+                    interested_source_ids.add(source_id)
+            if not interested_frames:
+                self.logger.debug("No frames currently requested for preview publish")
+                return
+            objects_by_source = self._collect_preview_objects_by_source(interested_source_ids, objects_results)
+            published = 0
+            for frame in interested_frames:
+                accepted = False
+                if self._preview_render_service is not None:
+                    render_context = self._build_preview_render_context(frame, objects_by_source)
+                    accepted = self._preview_render_service.submit_frame(frame, render_context)
+                elif self._streaming_service:
+                    accepted = self._streaming_service.submit_frame(frame)
+                if accepted:
                     published += 1
                     self.logger.debug(
                         "Submitted frame for async streaming publish: pipeline=%s source=%s frame=%s",
@@ -583,22 +692,6 @@ class Controller:
         except Exception as e:
             # Do not break controller loop if streaming is not initialized
             self.logger.debug(f"Frame publish failed: {e}")
-
-    def _resolve_web_preview_frames(self, processing_frames: list) -> list:
-        """Return the correct frame source for web preview publishing.
-
-        When GUI visualizer is active, web preview must use the latest already
-        rendered visualizer frames so overlays/events match what the operator sees.
-        In headless mode, fall back to the controller-side processing frames.
-        """
-        if self.show_main_gui and self.gui_enabled and self.visualizer:
-            try:
-                vis_frames = self.visualizer.get_latest_clean_frames()
-                if vis_frames:
-                    return vis_frames
-            except Exception:
-                pass
-        return list(processing_frames or [])
 
     def _check_memory_and_maybe_stop(self) -> bool:
         """Периодически проверять память; если лимит превышен — остановить цикл.
@@ -852,8 +945,7 @@ class Controller:
                     continue
 
                 self._maybe_update_visualization(processing_frames, dropped_frames)
-                web_preview_frames = self._resolve_web_preview_frames(processing_frames)
-                self._publish_latest_frame_to_broker(web_preview_frames)
+                self._publish_latest_frame_to_broker(processing_frames, objects_results)
                 t4 = timer() if perf_diag_enabled else None
                 t5 = timer() if perf_diag_enabled else None
 
@@ -1218,6 +1310,9 @@ class Controller:
             except Exception as e:
                 self.logger.warning(f"Error stopping server process: {e}")
             self._server_process_manager = None
+        if self._preview_render_service is not None:
+            self.logger.info("Controller shutdown: stopping preview render service")
+            self._preview_render_service.stop()
         if self._streaming_service is not None:
             self.logger.info("Controller shutdown: stopping streaming service")
             self._streaming_service.stop()
@@ -1529,6 +1624,12 @@ class Controller:
                 encoder_backend=server_cfg.get("preview_encoder", "auto"),
                 jpeg_quality=server_cfg.get("preview_jpeg_quality", 85),
                 num_workers=server_cfg.get("preview_encode_workers", 1),
+            )
+        self._preview_zones_by_source = self._extract_preview_zones()
+        if self._preview_render_service is not None:
+            self._preview_render_service.configure(
+                streaming_service=self._streaming_service,
+                num_workers=server_cfg.get("preview_render_workers", 1),
             )
 
         # Managed API runs already have an outer web server; do not start another one inside the child runtime.
@@ -2168,6 +2269,19 @@ class Controller:
     def _on_event_signalization(self, source_id: int, object_id: int, event_name: str, is_on: bool, bbox_px: list | None = None):
         """Relay event signalization to main window (per source)."""
         try:
+            with self._preview_events_lock:
+                source_events = self._preview_active_events_by_source.setdefault(source_id, {})
+                key = (object_id, event_name)
+                if is_on:
+                    source_events[key] = {
+                        "object_id": object_id,
+                        "event_name": event_name,
+                        "bbox_px": bbox_px,
+                    }
+                else:
+                    source_events.pop(key, None)
+                    if not source_events:
+                        self._preview_active_events_by_source.pop(source_id, None)
             # Diagnostics logging removed
             # Route directly via visualizer
             # Visualizer имеет метод set_event_state в классе, поэтому прямой вызов безопасен
