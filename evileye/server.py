@@ -24,7 +24,7 @@ def build_app() -> FastAPI:
 
 # -- Standalone entry point for child process ----------------------------
 
-def _run_server_in_process(host, port, log_level, frame_queue):
+def _run_server_in_process(host, port, log_level, frame_queue, ssl_certfile=None, ssl_keyfile=None):
     """Entry point for the web server child process
 
     Receives JPEG frames from the main process via *frame_queue* and
@@ -43,7 +43,15 @@ def _run_server_in_process(host, port, log_level, frame_queue):
         broker.set_ipc_queue(frame_queue)
 
     try:
-        uvicorn_config = uvicorn.Config(app, host=host, port=port, log_level=log_level)
+        uvicorn_config = uvicorn.Config(
+            app,
+            host=host,
+            port=port,
+            log_level=log_level,
+            ssl_certfile=ssl_certfile,
+            ssl_keyfile=ssl_keyfile,
+            proxy_headers=True,
+        )
         server = uvicorn.Server(uvicorn_config)
         server.run()
     except KeyboardInterrupt:
@@ -67,7 +75,7 @@ class ServerProcessManager:
         self._process: mp.Process | None = None
         self._frame_queue: mp.Queue | None = None
 
-    def start(self, host="127.0.0.1", port=8080, log_level="info"):
+    def start(self, host="127.0.0.1", port=8080, log_level="info", ssl_certfile=None, ssl_keyfile=None):
         if self._process is not None and self._process.is_alive():
             self.logger.warning("Server process already running")
             return
@@ -75,7 +83,7 @@ class ServerProcessManager:
         self._frame_queue = mp.Queue(maxsize=30)
         self._process = mp.Process(
             target=_run_server_in_process,
-            args=(host, port, log_level, self._frame_queue),
+            args=(host, port, log_level, self._frame_queue, ssl_certfile, ssl_keyfile),
             daemon=True,
             name="evileye-web-server",
         )
@@ -130,14 +138,16 @@ class ServerProcessManager:
 def run_api_server(host: str = "127.0.0.1", port: int = 8080,
                    reload: bool = True, log_level: str = "info",
                    config: str | None = None, workers: int = 1,
-                   verbose: bool = False) -> None:
+                   verbose: bool = False, ssl_certfile: str | None = None,
+                   ssl_keyfile: str | None = None) -> None:
     logger = get_module_logger("server")
     effective_log_level = "debug" if verbose and log_level == "info" else log_level
     logger.info("=" * 60)
     logger.info("EvilEye API Server Initialization")
     logger.info("=" * 60)
     logger.info(f"Starting EvilEye API server on {host}:{port}")
-    logger.info(f"API documentation will be available at http://{host}:{port}/docs")
+    scheme = "https" if ssl_certfile and ssl_keyfile else "http"
+    logger.info(f"API documentation will be available at {scheme}://{host}:{port}/docs")
     if workers != 1:
         logger.warning(
             "workers=%s requested, but EvilEye API currently uses shared in-process state. "
@@ -201,7 +211,15 @@ def run_api_server(host: str = "127.0.0.1", port: int = 8080,
     logger.info("=" * 60)
 
     try:
-        uvicorn_config = uvicorn.Config(app, host=host, port=port, log_level=effective_log_level)
+        uvicorn_config = uvicorn.Config(
+            app,
+            host=host,
+            port=port,
+            log_level=effective_log_level,
+            ssl_certfile=ssl_certfile,
+            ssl_keyfile=ssl_keyfile,
+            proxy_headers=True,
+        )
         if reload:
             logger.warning("Reload mode is not supported when passing app instance directly")
         server = uvicorn.Server(uvicorn_config)
@@ -224,6 +242,8 @@ def _create_args_parser() -> argparse.ArgumentParser:
     pars.add_argument("--verbose", action="store_true", help="Enable verbose logging")
     pars.add_argument("--log-level", type=str, default="info", choices=["critical", "error", "warning", "info", "debug", "trace"], help="Logging level")
     pars.add_argument("--config", type=str, default=None, help="Autorun selected config (file path or name from configs/)")
+    pars.add_argument("--ssl-certfile", type=str, default=None, help="Path to TLS certificate file (PEM)")
+    pars.add_argument("--ssl-keyfile", type=str, default=None, help="Path to TLS private key file (PEM)")
     return pars
 
 
@@ -245,6 +265,8 @@ def main() -> None:
             config=args.config,
             workers=args.workers,
             verbose=args.verbose,
+            ssl_certfile=args.ssl_certfile,
+            ssl_keyfile=args.ssl_keyfile,
         )
     except Exception as e:
         logger.error(f"Failed to start server: {e}", exc_info=True)

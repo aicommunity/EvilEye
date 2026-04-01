@@ -544,7 +544,9 @@ def start_api(
         workers: int = typer.Option(1, "--workers", help="Number of worker processes"),
         verbose: bool = typer.Option(False, "--verbose", help="Enable verbose logging"),
         log_level: str = typer.Option("info", "--log-level", help="Logging level"),
-        config: Optional[str] = typer.Option(None, "--config", help="Auto-run selected config after server starts (name or file path)")
+        config: Optional[str] = typer.Option(None, "--config", help="Auto-run selected config after server starts (name or file path)"),
+        ssl_certfile: Optional[str] = typer.Option(None, "--ssl-certfile", help="TLS certificate file (PEM)"),
+        ssl_keyfile: Optional[str] = typer.Option(None, "--ssl-keyfile", help="TLS private key file (PEM)")
 
 ) -> None:
     """
@@ -577,6 +579,10 @@ def start_api(
 
     if config:
         cmd.extend(["--config", config])
+    if ssl_certfile:
+        cmd.extend(["--ssl-certfile", ssl_certfile])
+    if ssl_keyfile:
+        cmd.extend(["--ssl-keyfile", ssl_keyfile])
 
     try:
         logger.info(f"Starting web server (server.py): {' '.join(cmd)}")

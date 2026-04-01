@@ -74,6 +74,72 @@ evileye deploy-samples
 }
 ```
 
+### Секция web_auth
+
+Для веб-интерфейса и web API можно включить cookie-based аутентификацию. Пользователи хранятся в `credentials.json`, чтобы не попадать в обычные CRUD-конфиги веб-интерфейса.
+
+```json
+{
+  "web_auth": {
+    "enabled": true,
+    "session_secret": "change-me",
+    "secure_cookies": false,
+    "internal_token": "",
+    "users": [
+      {
+        "username": "admin",
+        "password": "change-me",
+        "password_hash": "",
+        "role": "admin",
+        "disabled": false
+      },
+      {
+        "username": "viewer",
+        "password": "viewer-pass",
+        "password_hash": "",
+        "role": "viewer",
+        "disabled": false
+      }
+    ]
+  }
+}
+```
+
+**Параметры**:
+
+| Параметр | Тип | Описание |
+|----------|-----|----------|
+| `enabled` | boolean | Включить проверку пользователей для `/api/v1/*` |
+| `session_secret` | string | Ключ подписи session cookie |
+| `secure_cookies` | boolean | Выставлять cookie только по HTTPS |
+| `internal_token` | string | Отдельный токен для внутренних endpoint'ов `/api/v1/internal/*` |
+| `users` | array | Список пользователей веб-интерфейса |
+| `users[].username` | string | Имя пользователя |
+| `users[].password` | string | Временный открытый пароль для bootstrap-сценариев |
+| `users[].password_hash` | string | Предпочтительный формат: `pbkdf2_sha256$iterations$salt$hash` |
+| `users[].role` | string | Роль: `admin` или `viewer` |
+| `users[].disabled` | boolean | Отключение пользователя без удаления |
+
+**Рекомендации**:
+
+1. Для production используйте `password_hash`, а не открытый `password`.
+2. Для HTTPS включайте `secure_cookies=true`.
+3. Для внутренних вызовов между процессами задавайте `internal_token`.
+
+### HTTPS для web API
+
+Веб-сервер поддерживает запуск с TLS напрямую через `uvicorn`:
+
+```bash
+evileye server --host 0.0.0.0 --port 8443 --ssl-certfile ./certs/server.crt --ssl-keyfile ./certs/server.key
+```
+
+При использовании HTTPS рекомендуется:
+
+1. Включить `web_auth.enabled=true`
+2. Задать `web_auth.secure_cookies=true`
+3. Ограничить `EVILEYE_CORS_ALLOW_ORIGINS` конкретными origin вместо `*`
+
 ### Секция sources
 
 Секция `sources` содержит учетные данные для IP камер. Каждый ключ соответствует URL камеры из конфигурации источника.

@@ -2,9 +2,12 @@ import os
 from pathlib import Path
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.sessions import SessionMiddleware
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 from evileye.core.logger import get_module_logger
+from evileye.api.routes.auth import router as auth_router
 from evileye.api.routes.configs import router as configs_router
 # from evileye.api.routes.pipelines import router as pipelines_router  # DEPRECATED
 from evileye.api.routes.streaming import router as streaming_router
@@ -12,9 +15,38 @@ from evileye.api.routes.streaming import router as streaming_router
 from evileye.api.routes.internal import router as internal_router
 from evileye.api.core.config_run_access import get_config_run_manager
 from evileye.api.core.manager_access import get_manager
+from evileye.api.security import (
+    current_user,
+    is_admin_request,
+    is_api_request_protected,
+    load_web_auth_config,
+)
 from evileye import __version__
 
 logger = get_module_logger("api.app")
+
+
+class AuthGuardMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        auth = request.app.state.web_auth
+        path = request.url.path
+        if not auth.enabled:
+            return await call_next(request)
+        if path.startswith("/api/v1/internal/") and auth.internal_token:
+            supplied = request.headers.get("X-EvilEye-Internal-Token", "")
+            if supplied != auth.internal_token:
+                return Response('{"detail":"Invalid internal token"}', status_code=401, media_type="application/json")
+            return await call_next(request)
+        if path.startswith("/api/v1/internal/") and not auth.internal_token:
+            return await call_next(request)
+        if not is_api_request_protected(path):
+            return await call_next(request)
+        user = current_user(request)
+        if user is None:
+            return Response('{"detail":"Authentication required"}', status_code=401, media_type="application/json")
+        if is_admin_request(path, request.method) and user.get("role") != "admin":
+            return Response('{"detail":"Insufficient permissions"}', status_code=403, media_type="application/json")
+        return await call_next(request)
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -33,9 +65,27 @@ async def lifespan(_app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(title="EvilEye API", version=os.getenv("EVILEYE_API_VERSION", "v1"), lifespan=lifespan)
     logger.info("FastAPI app created")
+    web_auth = load_web_auth_config()
+    app.state.web_auth = web_auth
+    allow_origins = os.getenv("EVILEYE_CORS_ALLOW_ORIGINS", "*").split(",")
+    if web_auth.enabled and allow_origins == ["*"]:
+        allow_origins = [
+            "http://127.0.0.1",
+            "http://localhost",
+            "https://127.0.0.1",
+            "https://localhost",
+        ]
+    app.add_middleware(AuthGuardMiddleware)
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=web_auth.session_secret,
+        session_cookie=web_auth.cookie_name,
+        same_site="lax",
+        https_only=web_auth.secure_cookies,
+    )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=os.getenv("EVILEYE_CORS_ALLOW_ORIGINS", "*").split(","),
+        allow_origins=allow_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -50,6 +100,7 @@ def create_app() -> FastAPI:
     async def version():
         return {"evileye": __version__, "api": app.version}
 
+    app.include_router(auth_router)
     app.include_router(configs_router)
     # app.include_router(pipelines_router)  # DEPRECATED: use /api/v1/configs/runs
     app.include_router(streaming_router)

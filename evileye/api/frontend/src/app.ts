@@ -6,6 +6,8 @@
  * System: /ready, /api/v1/version.
  */
 import {
+  ApiError,
+  authApi,
   systemApi,
   configsList,
   configGet,
@@ -83,12 +85,20 @@ const streamSnapshotBtn = document.getElementById('stream-snapshot-btn')!;
 const footerVersion = document.getElementById('footer-version')!;
 const errorToast = document.getElementById('error-toast')!;
 const successToast = document.getElementById('success-toast')!;
+const authStatus = document.getElementById('auth-status')!;
+const authUserLabel = document.getElementById('auth-user-label')!;
+const authLogoutBtn = document.getElementById('auth-logout-btn')!;
+const authModal = document.getElementById('auth-modal')!;
+const authUsernameInput = document.getElementById('auth-username') as HTMLInputElement;
+const authPasswordInput = document.getElementById('auth-password') as HTMLInputElement;
+const authLoginBtn = document.getElementById('auth-login-btn')!;
 
 let currentStreamRid: number | null = null;
 let streamPollTimer: number | null = null;
 let configEditName: string | null = null;
 let runsCache: ConfigRun[] = [];
 let configNamesCache: string[] = [];
+let authEnabled = false;
 
 // ─── Toasts ───────────────────────────────────────────────────────────
 
@@ -110,6 +120,33 @@ function escapeHtml(s: string): string {
   return div.innerHTML;
 }
 
+function openAuthModal(): void {
+  authModal.classList.add('open');
+}
+
+function closeAuthModal(): void {
+  authModal.classList.remove('open');
+  authPasswordInput.value = '';
+}
+
+function updateAuthUi(user: { username: string; role: string } | null): void {
+  authStatus.classList.toggle('hidden', !authEnabled || user == null);
+  authUserLabel.textContent = user ? `${user.username} (${user.role})` : '';
+}
+
+function handleApiError(error: unknown, fallbackMessage: string): void {
+  if (error instanceof ApiError && error.status === 401) {
+    openAuthModal();
+    showError('Требуется авторизация');
+    return;
+  }
+  if (error instanceof ApiError && error.status === 403) {
+    showError(error.message);
+    return;
+  }
+  showError(error instanceof Error ? error.message : fallbackMessage);
+}
+
 // ─── System: ready + version ───────────────────────────────────────────
 
 async function loadSystemInfo(): Promise<void> {
@@ -118,6 +155,67 @@ async function loadSystemInfo(): Promise<void> {
     footerVersion.textContent = `EvilEye ${v.evileye}`;
   } catch {
     footerVersion.textContent = '—';
+  }
+}
+
+async function bootstrapAuth(): Promise<boolean> {
+  try {
+    const me = await authApi.me();
+    authEnabled = me.auth_enabled;
+    updateAuthUi(me.user);
+    if (!me.auth_enabled) {
+      closeAuthModal();
+      return true;
+    }
+    if (me.user) {
+      closeAuthModal();
+      return true;
+    }
+    openAuthModal();
+    return false;
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 401) {
+      authEnabled = true;
+      updateAuthUi(null);
+      openAuthModal();
+      return false;
+    }
+    handleApiError(e, 'Не удалось проверить авторизацию');
+    return false;
+  }
+}
+
+async function login(): Promise<void> {
+  const username = authUsernameInput.value.trim();
+  const password = authPasswordInput.value;
+  if (!username || !password) {
+    showError('Введите имя пользователя и пароль');
+    return;
+  }
+  (authLoginBtn as HTMLButtonElement).disabled = true;
+  try {
+    const result = await authApi.login(username, password);
+    authEnabled = result.auth_enabled;
+    updateAuthUi(result.user);
+    closeAuthModal();
+    showSuccess('Вход выполнен');
+    await loadConfigs();
+    await loadRuns();
+  } catch (e) {
+    handleApiError(e, 'Не удалось выполнить вход');
+  } finally {
+    (authLoginBtn as HTMLButtonElement).disabled = false;
+  }
+}
+
+async function logout(): Promise<void> {
+  try {
+    await authApi.logout();
+    updateAuthUi(null);
+    openAuthModal();
+    showSuccess('Сессия завершена');
+  } catch (e) {
+    handleApiError(e, 'Не удалось завершить сессию');
   }
 }
 
@@ -164,7 +262,7 @@ async function loadConfigs(): Promise<void> {
     runConfigSelect.innerHTML =
       '<option value="">Выберите конфиг</option>' + names.map((n) => `<option value="${n}">${n}</option>`).join('');
   } catch (e) {
-    showError(e instanceof Error ? e.message : 'Не удалось загрузить конфиги');
+    handleApiError(e, 'Не удалось загрузить конфиги');
   }
 }
 
@@ -185,7 +283,7 @@ function openConfigModal(mode: 'create' | 'edit' | 'view', name?: string): void 
       .then((body) => {
         configBodyTextarea.value = JSON.stringify(body, null, 2);
       })
-      .catch((e) => showError(e instanceof Error ? e.message : 'Не удалось загрузить конфиг'));
+      .catch((e) => handleApiError(e, 'Не удалось загрузить конфиг'));
   }
   configModal.classList.add('open');
 }
@@ -224,7 +322,7 @@ async function saveConfig(): Promise<void> {
     closeConfigModal();
     await loadConfigs();
   } catch (e) {
-    showError(e instanceof Error ? e.message : 'Не удалось сохранить конфиг');
+    handleApiError(e, 'Не удалось сохранить конфиг');
   } finally {
     (configSaveBtn as HTMLButtonElement).disabled = false;
   }
@@ -238,7 +336,7 @@ async function deleteConfig(name: string): Promise<void> {
     await loadConfigs();
     closeConfigModal();
   } catch (e) {
-    showError(e instanceof Error ? e.message : 'Не удалось удалить конфиг');
+    handleApiError(e, 'Не удалось удалить конфиг');
   }
 }
 
@@ -264,6 +362,19 @@ function stateBadge(state: string): string {
   return `<span class="badge ${c}">${escapeHtml(label)}</span>`;
 }
 
+function streamAvailabilityText(status: {
+  stream_active: boolean;
+  has_frame: boolean;
+  web_stream_available: boolean;
+  frame_dir_configured: boolean;
+}): string {
+  if (status.stream_active) return 'Viewer active';
+  if (status.has_frame) return 'Frame ready';
+  if (!status.frame_dir_configured) return 'No web preview';
+  if (!status.web_stream_available) return 'Stream unavailable';
+  return 'No frame';
+}
+
 function renderRunsList(runs: ConfigRun[], searchQuery: string): void {
   const q = searchQuery.trim().toLowerCase();
   const filtered = q
@@ -286,6 +397,7 @@ function renderRunsList(runs: ConfigRun[], searchQuery: string): void {
             <span class="run-name">${escapeHtml(r.name ?? `Пайплайн ${r.id}`)}</span>
             <span class="run-id">#${r.id}</span>
             ${stateBadge(r.state)}
+            ${r.source ? `<span class="run-id">${escapeHtml(r.source)}</span>` : ''}
             <span class="run-config">${escapeHtml(r.config_path)}</span>
             ${r.error ? `<span class="run-error">${escapeHtml(r.error)}</span>` : ''}
           </div>
@@ -313,7 +425,7 @@ async function loadRuns(): Promise<void> {
     renderRunsList(runsCache, searchQuery);
     renderStreamingList();
   } catch (e) {
-    showError(e instanceof Error ? e.message : 'Не удалось загрузить список пайплайнов');
+    handleApiError(e, 'Не удалось загрузить список пайплайнов');
   }
 }
 
@@ -338,23 +450,25 @@ function renderStreamingList(): void {
         <span class="streaming-card-name">${escapeHtml(r.name ?? `Пайплайн ${r.id}`)}</span>
         <span class="streaming-card-id">#${r.id}</span>
         <span class="badge badge-running">running</span>
+        ${!r.frame_dir ? '<span class="badge badge-warning">no-web-preview</span>' : ''}
       </div>
       <div class="streaming-api-block" data-api="snapshot">
         <span class="streaming-block-title">GET snapshot</span>
         <div class="streaming-card-preview">
-          <img src="${streamSnapshotUrl(r.id)}?t=${ts}" alt="Snapshot" class="streaming-card-snapshot" data-rid="${r.id}">
+          <img src="${r.frame_dir ? `${streamSnapshotUrl(r.id)}?t=${ts}` : ''}" alt="Snapshot" class="streaming-card-snapshot" data-rid="${r.id}">
         </div>
-        <button type="button" class="btn btn-sm btn-outline streaming-refresh-snapshot" data-rid="${r.id}">Обновить кадр</button>
+        <button type="button" class="btn btn-sm btn-outline streaming-refresh-snapshot" data-rid="${r.id}" ${r.frame_dir ? '' : 'disabled'}>Обновить кадр</button>
+        ${!r.frame_dir ? '<p class="streaming-status-hint">Этот процесс запущен без frame sharing, поэтому web-preview недоступен.</p>' : ''}
       </div>
       <div class="streaming-api-block" data-api="status">
-        <span class="streaming-block-title">GET stream:status (MJPEG viewer connection)</span>
+        <span class="streaming-block-title">GET stream:status</span>
         <span class="streaming-status-text" data-rid="${r.id}">—</span>
         <button type="button" class="btn btn-sm btn-outline streaming-refresh-status" data-rid="${r.id}">Обновить статус</button>
-        <p class="streaming-status-hint">Active — когда поток открыт в плеере</p>
+        <p class="streaming-status-hint">Viewer active: поток открыт. Frame ready: есть кадры. No web preview: этот runtime не публикует кадры в web.</p>
       </div>
       <div class="streaming-api-block" data-api="mjpeg">
         <span class="streaming-block-title">GET stream.mjpg</span>
-        <button type="button" class="btn btn-primary streaming-open" data-rid="${r.id}">Открыть видеопоток</button>
+        <button type="button" class="btn btn-primary streaming-open" data-rid="${r.id}" ${r.frame_dir ? '' : 'disabled'}>Открыть видеопоток</button>
       </div>
     </div>`
     )
@@ -377,7 +491,7 @@ function renderStreamingList(): void {
       span.textContent = '…';
       try {
         const st = await streamStatus(rid);
-        span.textContent = st.stream_active ? 'Active' : 'Inactive';
+        span.textContent = streamAvailabilityText(st);
       } catch {
         span.textContent = 'Error';
       }
@@ -389,7 +503,7 @@ function renderStreamingList(): void {
     if (!span) return;
     streamStatus(r.id)
       .then((st) => {
-        span.textContent = st.stream_active ? 'Active' : 'Inactive';
+        span.textContent = streamAvailabilityText(st);
       })
       .catch(() => {
         span.textContent = '—';
@@ -420,7 +534,8 @@ function openRunDetail(rid: number): void {
       runDetailActions.innerHTML =
         run.state === 'running' || run.state === 'starting'
           ? `<button type="button" class="btn btn-sm btn-danger run-detail-stop" data-rid="${rid}">Остановить</button>
-             <button type="button" class="btn btn-sm btn-primary run-detail-stream" data-rid="${rid}">Поток</button>`
+             <button type="button" class="btn btn-sm btn-primary run-detail-stream" data-rid="${rid}" ${run.frame_dir ? '' : 'disabled'}>Поток</button>
+             ${!run.frame_dir ? '<span class="run-error">Web-preview недоступен: процесс запущен без frame sharing.</span>' : ''}`
           : `<button type="button" class="btn btn-sm btn-success run-detail-start" data-rid="${rid}">Запустить</button>
              <button type="button" class="btn btn-sm btn-outline run-detail-delete" data-rid="${rid}">Удалить</button>`;
       runDetailActions.querySelectorAll('[data-rid]').forEach((btn) => {
@@ -436,7 +551,7 @@ function openRunDetail(rid: number): void {
         });
       });
     })
-    .catch((e) => showError(e instanceof Error ? e.message : 'Не удалось загрузить данные пайплайна'));
+    .catch((e) => handleApiError(e, 'Не удалось загрузить данные пайплайна'));
 }
 
 function closeRunDetail(): void {
@@ -471,7 +586,7 @@ async function createRun(): Promise<void> {
     runNameInput.value = '';
     if (useBody) runBodyTextarea.value = '{}';
   } catch (e) {
-    showError(e instanceof Error ? e.message : 'Не удалось создать пайплайн');
+    handleApiError(e, 'Не удалось создать пайплайн');
   } finally {
     (runCreateBtn as HTMLButtonElement).disabled = false;
   }
@@ -486,7 +601,7 @@ async function startRun(rid: number): Promise<void> {
       openRunDetail(rid);
     }
   } catch (e) {
-    showError(e instanceof Error ? e.message : 'Не удалось запустить');
+    handleApiError(e, 'Не удалось запустить');
   }
 }
 
@@ -499,7 +614,7 @@ async function stopRun(rid: number): Promise<void> {
       openRunDetail(rid);
     }
   } catch (e) {
-    showError(e instanceof Error ? e.message : 'Не удалось остановить');
+    handleApiError(e, 'Не удалось остановить');
   }
 }
 
@@ -512,13 +627,18 @@ async function deleteRun(rid: number): Promise<void> {
     await loadRuns();
     if (currentStreamRid === rid) closeStream();
   } catch (e) {
-    showError(e instanceof Error ? e.message : 'Не удалось удалить пайплайн');
+    handleApiError(e, 'Не удалось удалить пайплайн');
   }
 }
 
 // ─── Stream window (snapshot URL, MJPEG URL, stream:status, stream:stop) ─
 
 function openStream(rid: number): void {
+  const run = runsCache.find((item) => item.id === rid);
+  if (run && !run.frame_dir) {
+    showError('У этого пайплайна нет web-preview. Перезапустите его через текущий API.');
+    return;
+  }
   const fps = streamFpsInput?.value ? Number(streamFpsInput.value) : 10;
   if (streamFpsInput) streamFpsInput.value = String(Math.max(1, Math.min(30, fps)));
   currentStreamRid = rid;
@@ -556,14 +676,19 @@ async function pollStreamInfo(): Promise<void> {
     streamStateEl.className = `badge ${run.state === 'running' ? 'badge-running' : 'badge-stopped'}`;
     const status = await streamStatus(currentStreamRid).catch(() => null);
     if (status) {
-      streamStatusEl.textContent = status.stream_active ? 'Active' : 'Inactive';
-      streamStatusEl.className = status.stream_active ? 'stream-status-active' : '';
-      if (status.stream_active) {
+      streamStatusEl.textContent = streamAvailabilityText(status);
+      streamStatusEl.className = status.stream_active || status.has_frame ? 'stream-status-active' : '';
+      if (status.stream_active || status.has_frame) {
         streamSnapshotImg.src = `${streamSnapshotUrl(currentStreamRid)}?t=${Date.now()}`;
+      } else if (!status.web_stream_available) {
+        streamFrame.src = '';
       }
     }
-  } catch {
-    // ignore
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 409) {
+      showError(e.message);
+      closeStream();
+    }
   }
 }
 
@@ -640,7 +765,24 @@ export function initApp(): void {
   streamApplyFpsBtn.addEventListener('click', applyStreamFps);
   streamSnapshotBtn.addEventListener('click', refreshSnapshot);
   configCloseBtn.addEventListener('click', closeConfigModal);
+  authLoginBtn.addEventListener('click', () => {
+    void login();
+  });
+  authLogoutBtn.addEventListener('click', () => {
+    void logout();
+  });
+  authPasswordInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      void login();
+    }
+  });
 
-  loadSystemInfo();
-  loadConfigs().then(() => loadRuns());
+  void loadSystemInfo();
+  void bootstrapAuth().then((authenticated) => {
+    if (authenticated) {
+      return loadConfigs().then(() => loadRuns());
+    }
+    return undefined;
+  });
 }

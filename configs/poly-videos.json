@@ -3,7 +3,7 @@
         "sources": [
             {
                 "source": "VideoFile",
-                "camera": "/home/user/Videos/Test3Cam/1/139932-video_trim.mp4",
+                "camera": "/home/alexab/Videos/Test3Cam/1/139932-video_trim.mp4",
                 "apiPreference": "CAP_FFMPEG",
                 "split": false,
                 "num_split": 0,
@@ -19,7 +19,7 @@
             },
             {
                 "source": "VideoFile",
-                "camera": "/home/user/Videos/Test3Cam/2/139931-video_trim.mp4",
+                "camera": "/home/alexab/Videos/Test3Cam/2/139931-video_trim.mp4",
                 "apiPreference": "CAP_FFMPEG",
                 "split": true,
                 "num_split": 2,
@@ -48,7 +48,7 @@
             },
             {
                 "source": "VideoFile",
-                "camera": "/home/user/Videos/Test3Cam/3/139930-video_trim.mp4",
+                "camera": "/home/alexab/Videos/Test3Cam/3/139930-video_trim.mp4",
                 "apiPreference": "CAP_FFMPEG",
                 "split": true,
                 "num_split": 2,
@@ -459,10 +459,20 @@
         "lost_store_time_secs": 60,
         "lost_thresh": 5
     },
+    "server": {
+        "enabled": true,
+        "execution_mode": "process",
+        "host": "127.0.0.1",
+        "port": 8080,
+        "log_level": "info",
+        "preview_encoder": "turbojpeg",
+        "preview_encode_workers": 2
+    },
     "controller": {
         "autoclose": false,
         "fps": 30,
         "show_main_gui": true,
+        "use_database": false,
         "show_journal": false,
         "enable_close_from_gui": true,
         "class_names": [

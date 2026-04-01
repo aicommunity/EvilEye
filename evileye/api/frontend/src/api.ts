@@ -4,14 +4,24 @@
  */
 const API_BASE = '/api/v1';
 
+export class ApiError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
+    credentials: 'same-origin',
     ...options,
     headers: { 'Content-Type': 'application/json', ...options?.headers },
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error((err as { detail?: string }).detail ?? res.statusText);
+    throw new ApiError(res.status, (err as { detail?: string }).detail ?? res.statusText);
   }
   return res.json() as Promise<T>;
 }
@@ -27,6 +37,23 @@ export const systemApi = {
   /** GET /api/v1/version */
   version(): Promise<{ evileye: string; api: string }> {
     return request<{ evileye: string; api: string }>('/version');
+  },
+};
+
+export const authApi = {
+  me(): Promise<{ authenticated: boolean; auth_enabled: boolean; user: { username: string; role: string } | null }> {
+    return request('/auth/me');
+  },
+
+  login(username: string, password: string): Promise<{ authenticated: boolean; auth_enabled: boolean; user: { username: string; role: string } | null }> {
+    return request('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ username, password }),
+    });
+  },
+
+  logout(): Promise<{ ok: boolean }> {
+    return request('/auth/logout', { method: 'POST' });
   },
 };
 
@@ -74,6 +101,10 @@ export interface ConfigRun {
   pid: number | null;
   state: string;
   error: string | null;
+  managed?: boolean;
+  source?: string;
+  alive?: boolean;
+  frame_dir?: string | null;
 }
 
 /** GET /api/v1/configs/runs — список всех runs */
@@ -124,8 +155,20 @@ export function streamMjpgUrl(rid: number, fps?: number): string {
 }
 
 /** GET /api/v1/pipelines/{rid}/stream:status */
-export function streamStatus(rid: number): Promise<{ pipeline_id: number; stream_active: boolean }> {
-  return request<{ pipeline_id: number; stream_active: boolean }>(`/pipelines/${rid}/stream:status`);
+export function streamStatus(rid: number): Promise<{
+  pipeline_id: number;
+  stream_active: boolean;
+  has_frame: boolean;
+  web_stream_available: boolean;
+  frame_dir_configured: boolean;
+}> {
+  return request<{
+    pipeline_id: number;
+    stream_active: boolean;
+    has_frame: boolean;
+    web_stream_available: boolean;
+    frame_dir_configured: boolean;
+  }>(`/pipelines/${rid}/stream:status`);
 }
 
 /** POST /api/v1/pipelines/{rid}/stream:stop */

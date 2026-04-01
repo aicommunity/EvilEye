@@ -16,6 +16,10 @@
         <h1 class="logo">EvilEye</h1>
         <p class="tagline">Управление конфигурациями и пайплайнами</p>
       </div>
+      <div id="auth-status" class="auth-status hidden">
+        <span id="auth-user-label" class="auth-user-label">—</span>
+        <button type="button" id="auth-logout-btn" class="btn btn-outline btn-sm">Выйти</button>
+      </div>
       <nav class="tabs">
         <button type="button" id="nav-streaming" class="tab active">Видеопотоки</button>
         <button type="button" id="nav-runs" class="tab">Пайплайны</button>
@@ -153,6 +157,25 @@
 
     <div id="error-toast" class="toast toast-error" role="alert"></div>
     <div id="success-toast" class="toast toast-success" role="alert"></div>
+
+    <div id="auth-modal" class="modal open" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
+      <div class="modal-backdrop"></div>
+      <div class="modal-content auth-modal-content">
+        <div class="modal-header">
+          <h2 id="auth-modal-title">Вход в веб-интерфейс</h2>
+        </div>
+        <div class="modal-body">
+          <p class="hint">Введите имя пользователя и пароль для доступа к API.</p>
+          <label for="auth-username">Имя пользователя</label>
+          <input type="text" id="auth-username" autocomplete="username" aria-label="Имя пользователя">
+          <label for="auth-password">Пароль</label>
+          <input type="password" id="auth-password" autocomplete="current-password" aria-label="Пароль">
+        </div>
+        <div class="modal-footer auth-modal-footer">
+          <button type="button" id="auth-login-btn" class="btn btn-primary">Войти</button>
+        </div>
+      </div>
+    </div>
   </div>
   <script type="module" src="/main.js"></script>
 </body>

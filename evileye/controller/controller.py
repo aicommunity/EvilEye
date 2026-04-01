@@ -50,6 +50,7 @@ from evileye.pipelines import PipelineSurveillance
 from evileye.core.logger import get_module_logger
 from evileye.core.system_diagnostics import SystemDiagnostics
 from evileye.core.memory_monitor import MemoryMonitor
+from evileye.api.core.runtime_registry import register_runtime
 from evileye.controller.services import (
     PipelineService,
     DatabaseService,
@@ -1022,6 +1023,19 @@ class Controller:
                 self.logger.warning(f"Failed to start storage monitor: {e}", exc_info=True)
 
         self.run_flag = True
+        try:
+            register_runtime(
+                rid=int(self.stream_pipeline_id),
+                pid=os.getpid(),
+                config_path=None,
+                name=None,
+                frame_dir=str(self._frame_dir) if self._frame_dir else None,
+                source="process",
+                managed=os.environ.get("EVILEYE_MANAGED_RUN") == "1",
+                state="running",
+            )
+        except Exception:
+            pass
         self.logger.info(f"Starting control thread for stream_pipeline_id: {self.stream_pipeline_id}")
         self.control_thread.start()
         self.logger.info(f"Control thread started successfully")

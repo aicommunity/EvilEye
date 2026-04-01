@@ -3,14 +3,21 @@
  * Каждый метод вызывает ровно один HTTP-эндпоинт.
  */
 const API_BASE = '/api/v1';
+export class ApiError extends Error {
+    constructor(status, message) {
+        super(message);
+        this.status = status;
+    }
+}
 async function request(path, options) {
     const res = await fetch(`${API_BASE}${path}`, {
+        credentials: 'same-origin',
         ...options,
         headers: { 'Content-Type': 'application/json', ...options?.headers },
     });
     if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: res.statusText }));
-        throw new Error(err.detail ?? res.statusText);
+        throw new ApiError(res.status, err.detail ?? res.statusText);
     }
     return res.json();
 }
@@ -23,6 +30,20 @@ export const systemApi = {
     /** GET /api/v1/version */
     version() {
         return request('/version');
+    },
+};
+export const authApi = {
+    me() {
+        return request('/auth/me');
+    },
+    login(username, password) {
+        return request('/auth/login', {
+            method: 'POST',
+            body: JSON.stringify({ username, password }),
+        });
+    },
+    logout() {
+        return request('/auth/logout', { method: 'POST' });
     },
 };
 // ─── Configs: файлы конфигурации (CRUD) ───────────────────────────────

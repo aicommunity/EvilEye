@@ -6,8 +6,21 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from evileye.api.core.config_run_access import get_config_run_manager
+from evileye.api.core.runtime_registry import list_runtime_records, load_runtime_record
 
 router = APIRouter(prefix="/api/v1/configs", tags=["configs"])
+
+
+def _list_combined_runs() -> Dict[int, Dict]:
+    items = list_runtime_records()
+    for rid, item in get_config_run_manager().list().items():
+        existing = items.get(rid, {})
+        merged = {**existing, **item}
+        merged.setdefault("managed", True)
+        merged.setdefault("source", "web")
+        merged.setdefault("alive", merged.get("state") in {"starting", "running"})
+        items[rid] = merged
+    return dict(sorted(items.items(), key=lambda pair: pair[0]))
 
 
 class ConfigCreate(BaseModel):
@@ -38,13 +51,13 @@ async def list_configs() -> List[str]:
 # Маршруты /runs объявлены до /{name}, иначе GET /configs/runs матчится как get_config(name="runs")
 @router.get("/runs")
 async def list_config_runs() -> Dict[int, Dict]:
-    return get_config_run_manager().list()
+    return _list_combined_runs()
 
 
 @router.post("/runs")
 async def create_config_run(payload: ConfigRunCreate) -> Dict:
     data = payload.model_dump()
-    rid = len(get_config_run_manager().list()) + 1
+    rid = get_config_run_manager().next_run_id()
     try:
         return get_config_run_manager().create(
             rid,
@@ -60,9 +73,15 @@ async def create_config_run(payload: ConfigRunCreate) -> Dict:
 
 @router.get("/runs/{rid}")
 async def get_config_run(rid: int) -> Dict:
+    runtime = load_runtime_record(rid)
     try:
-        return get_config_run_manager().describe(rid)
+        current = get_config_run_manager().describe(rid)
+        if runtime is not None:
+            return {**runtime, **current}
+        return current
     except KeyError as exc:
+        if runtime is not None:
+            return runtime
         raise HTTPException(status_code=404, detail="Config run not found") from exc
 
 

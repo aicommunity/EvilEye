@@ -127,6 +127,7 @@
                     0
                 ],
                 "num_detection_threads": 3,
+                "execution_mode": "thread",
                 "model": "models/yolov8n.pt"
             },
             {
@@ -147,6 +148,7 @@
                     1
                 ],
                 "num_detection_threads": 3,
+                "execution_mode": "thread",
                 "model": "models/yolov8n.pt"
             },
             {
@@ -192,6 +194,7 @@
                     2
                 ],
                 "num_detection_threads": 3,
+                "execution_mode": "thread",
                 "model": "models/yolov8n.pt"
             },
             {
@@ -231,6 +234,7 @@
                     3
                 ],
                 "num_detection_threads": 3,
+                "execution_mode": "thread",
                 "model": "models/yolov8n.pt"
             },
             {
@@ -251,6 +255,7 @@
                     4
                 ],
                 "num_detection_threads": 3,
+                "execution_mode": "thread",
                 "model": "models/yolov8n.pt"
             }
         ],
@@ -260,6 +265,7 @@
                     0
                 ],
                 "fps": 5,
+                "execution_mode": "thread",
                 "botsort_cfg": {
                     "appearance_thresh": 0.25,
                     "gmc_method": "sparseOptFlow",
@@ -279,6 +285,7 @@
                     1
                 ],
                 "fps": 5,
+                "execution_mode": "thread",
                 "botsort_cfg": {
                     "appearance_thresh": 0.25,
                     "gmc_method": "sparseOptFlow",
@@ -298,6 +305,7 @@
                     2
                 ],
                 "fps": 5,
+                "execution_mode": "thread",
                 "botsort_cfg": {
                     "appearance_thresh": 0.25,
                     "gmc_method": "sparseOptFlow",
@@ -317,6 +325,7 @@
                     3
                 ],
                 "fps": 5,
+                "execution_mode": "thread",
                 "botsort_cfg": {
                     "appearance_thresh": 0.25,
                     "gmc_method": "sparseOptFlow",
@@ -336,6 +345,7 @@
                     4
                 ],
                 "fps": 5,
+                "execution_mode": "thread",
                 "botsort_cfg": {
                     "appearance_thresh": 0.25,
                     "gmc_method": "sparseOptFlow",

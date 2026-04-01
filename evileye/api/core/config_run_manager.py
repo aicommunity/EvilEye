@@ -9,6 +9,13 @@ import time
 from pathlib import Path
 from typing import Dict, Optional
 
+from evileye.api.core.runtime_registry import (
+    allocate_pipeline_id,
+    delete_runtime_record,
+    load_runtime_record,
+    mark_runtime_stopped,
+    register_runtime,
+)
 from evileye.core.logger import get_module_logger
 
 
@@ -130,6 +137,10 @@ class ConfigRunManager:
         with self._lock:
             return {rid: self._describe_locked(it) for rid, it in self._items.items()}
 
+    def next_run_id(self) -> int:
+        with self._lock:
+            return allocate_pipeline_id(self._items.keys())
+
     def describe(self, rid: int) -> Dict:
         with self._lock:
             item = self._items.get(rid)
@@ -175,10 +186,17 @@ class ConfigRunManager:
         with self._lock:
             item = self._items.get(rid)
             if item is None:
-                raise KeyError("Config run not found")
+                runtime = load_runtime_record(rid)
+                if runtime is None:
+                    raise KeyError("Config run not found")
+                if runtime.get("state") == ConfigRunState.RUNNING:
+                    raise RuntimeError("Stop config run before delete")
+                delete_runtime_record(rid)
+                return {"id": rid, "status": "deleted"}
             if item.state == ConfigRunState.RUNNING:
                 raise RuntimeError("Stop config run before delete")
             self._items.pop(rid)
+            delete_runtime_record(rid)
             self.logger.info(f"ConfigRun '{rid}' deleted")
             return {"id": rid, "status": "deleted"}
 
@@ -186,7 +204,16 @@ class ConfigRunManager:
         with self._lock:
             item = self._items.get(rid)
             if item is None:
-                raise KeyError("Config run not found")
+                runtime = load_runtime_record(rid)
+                if runtime and runtime.get("config_path"):
+                    item = ConfigRunItem(
+                        rid,
+                        runtime.get("name") or Path(runtime["config_path"]).stem,
+                        Path(runtime["config_path"]),
+                    )
+                    self._items[rid] = item
+                else:
+                    raise KeyError("Config run not found")
 
         if item.state in (ConfigRunState.RUNNING, ConfigRunState.STARTING):
             return self.describe(rid)
@@ -202,6 +229,8 @@ class ConfigRunManager:
                 **os.environ,
                 "EVILEYE_PIPELINE_ID": str(rid),
                 "EVILEYE_FRAME_DIR": str(frame_dir),
+                "EVILEYE_PIPELINE_NAME": item.name,
+                "EVILEYE_MANAGED_RUN": "1",
                 "PYTHONUNBUFFERED": "1",
             }
             cmd = [
@@ -215,11 +244,23 @@ class ConfigRunManager:
             proc = subprocess.Popen(cmd, cwd=str(Path.cwd()), env=env)
             item.pid = proc.pid
             item.state = ConfigRunState.RUNNING
+            item.error = None
             self._frame_poller.watch(rid, frame_dir)
+            register_runtime(
+                rid=rid,
+                pid=proc.pid,
+                config_path=str(item.config_path),
+                name=item.name,
+                frame_dir=str(frame_dir),
+                source="web",
+                managed=True,
+                state="running",
+            )
             self.logger.info(f"ConfigRun '{rid}' running with pid {item.pid}, frame_dir={frame_dir}")
         except Exception as e:
             item.state = ConfigRunState.ERROR
             item.error = str(e)
+            mark_runtime_stopped(rid, error=str(e))
             self.logger.error(f"ConfigRun '{rid}' failed to start: {e}")
 
         return self.describe(rid)
@@ -228,13 +269,40 @@ class ConfigRunManager:
         with self._lock:
             item = self._items.get(rid)
             if item is None:
-                raise KeyError("Config run not found")
+                runtime = load_runtime_record(rid)
+                if runtime is None:
+                    raise KeyError("Config run not found")
+                pid = runtime.get("pid")
+                if not pid:
+                    return runtime
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                except Exception as e:
+                    mark_runtime_stopped(rid, error=str(e))
+                    raise
+                for _ in range(10):
+                    try:
+                        os.kill(pid, 0)
+                    except OSError:
+                        break
+                    time.sleep(0.2)
+                else:
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except Exception:
+                        pass
+                mark_runtime_stopped(rid)
+                runtime = load_runtime_record(rid)
+                if runtime is None:
+                    raise KeyError("Config run not found")
+                return runtime
 
         self._frame_poller.unwatch(rid)
 
         if item.pid is None or item.state not in (ConfigRunState.STARTING, ConfigRunState.RUNNING):
             item.state = ConfigRunState.STOPPED
             self._cleanup_frame_dir(item)
+            mark_runtime_stopped(rid)
             return self.describe(rid)
 
         try:
@@ -264,6 +332,7 @@ class ConfigRunManager:
             self.logger.error(f"ConfigRun '{rid}' failed to stop: {e}")
 
         self._cleanup_frame_dir(item)
+        mark_runtime_stopped(rid, error=item.error if item.state == ConfigRunState.ERROR else None)
         return self.describe(rid)
 
     def _cleanup_frame_dir(self, item: ConfigRunItem) -> None:
