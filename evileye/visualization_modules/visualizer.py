@@ -56,6 +56,11 @@ class Visualizer(EvilEyeBase):
         self._perf_diag_env = os.getenv("EVILEYE_PERF_DIAG", "").strip().lower() in {"1", "true", "yes", "on"}
         self._perf_diag_every = int(os.getenv("EVILEYE_PERF_DIAG_EVERY", "60") or "60")
         self._perf_diag_counter = 0
+        self._diag_total_input_frames = 0
+        self._diag_skip_duplicate = 0
+        self._diag_skip_no_exact_objects = 0
+        self._diag_skip_invalid_source = 0
+        self._diag_sent_to_thread = 0
 
 
     def default(self):
@@ -311,6 +316,11 @@ class Visualizer(EvilEyeBase):
         start_update = timer()
         perf_diag_enabled = self._perf_diag_env
         remove_processed_idx = dict()
+        if perf_diag_enabled:
+            try:
+                self._diag_total_input_frames += len(processing_frames) if processing_frames else 0
+            except Exception:
+                pass
         for frame in processing_frames:
             if not frame.source_id in self.processing_frames.keys():
                 self.processing_frames[frame.source_id] = []
@@ -338,6 +348,8 @@ class Visualizer(EvilEyeBase):
                 frame = proc_frames[i]
 
                 if frame.frame_id is not None and self.last_displayed_frame.get(source_id, 0) >= frame.frame_id:
+                    if perf_diag_enabled:
+                        self._diag_skip_duplicate += 1
                     remove_processed_idx[source_id].append(i)
                     continue
 
@@ -354,9 +366,13 @@ class Visualizer(EvilEyeBase):
 
                 start_find_objects = timer()
                 if source_id is None or source_id not in self.source_ids:
+                    if perf_diag_enabled:
+                        self._diag_skip_invalid_source += 1
                     continue
                 source_index = self.source_index_map.get(source_id)
                 if source_index is None:
+                    if perf_diag_enabled:
+                        self._diag_skip_invalid_source += 1
                     continue
                 #objs = objects[source_index].objects
                 objs = objects[source_index].find_objects_by_frame_id(frame.frame_id, use_history=False)
@@ -365,6 +381,8 @@ class Visualizer(EvilEyeBase):
                 # self.logger.debug(f"Found {len(objs)} objects for visualization for source_id={frame.source_id} frame_id={frame.frame_id}")
 
                 if len(objs) == 0 and objects[source_index].get_num_objects() > 0:
+                    if perf_diag_enabled:
+                        self._diag_skip_no_exact_objects += 1
                     # remove_processed_idx[source_id].append(i)
                     continue
 
@@ -374,6 +392,8 @@ class Visualizer(EvilEyeBase):
                     data = (frame, objs, self.source_id_name_table[source_id],
                             self.source_video_duration.get(source_id, None), debug_info)
                     thread.append_data(data)
+                    if perf_diag_enabled:
+                        self._diag_sent_to_thread += 1
                     self.last_displayed_frame[source_id] = frame.frame_id
                     processed_sources.append(source_id)
                     remove_processed_idx[source_id].append(i)
@@ -421,13 +441,18 @@ class Visualizer(EvilEyeBase):
                         except Exception:
                             per_thread_q[thr.source_id] = -1
                     self.logger.info(
-                        "PerfDiag(Visualizer): updates=%d, in_frames=%d, update_ms=%.1f, per_source_buf=%s, video_thread_q=%s, displayed=%s",
+                        "PerfDiag(Visualizer): updates=%d, in_frames=%d, update_ms=%.1f, per_source_buf=%s, video_thread_q=%s, displayed=%s, sent=%d, skip_dup=%d, skip_obj_miss=%d, skip_src=%d, total_in=%d",
                         self._perf_diag_counter,
                         (len(processing_frames) if processing_frames else 0),
                         (timer() - start_update) * 1000.0,
                         per_source_buf,
                         per_thread_q,
                         dict(self.last_displayed_frame),
+                        self._diag_sent_to_thread,
+                        self._diag_skip_duplicate,
+                        self._diag_skip_no_exact_objects,
+                        self._diag_skip_invalid_source,
+                        self._diag_total_input_frames,
                     )
                 except Exception:
                     pass

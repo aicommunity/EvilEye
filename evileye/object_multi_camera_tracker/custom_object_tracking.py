@@ -2,6 +2,8 @@ from typing import Dict, List, Tuple
 import datetime
 from time import sleep
 from collections import deque
+import os
+from timeit import default_timer as timer
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
@@ -34,6 +36,15 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
         self.num_cameras = 0
         self.encoders = None
         self.tracker = None
+        self._perf_diag_env = os.getenv("EVILEYE_PERF_DIAG", "").strip().lower() in {"1", "true", "yes", "on"}
+        self._perf_diag_every = int(os.getenv("EVILEYE_PERF_DIAG_EVERY", "60") or "60")
+        self._perf_diag_counter = 0
+        self._diag_waiting_for_batch = 0
+        self._diag_batches = 0
+        self._diag_emitted = 0
+        self._diag_empty_mc_tracks = 0
+        self._diag_queue_snapshots = []
+        self._diag_last_batch = []
 
     def init_impl(self, **kwargs):
         sources_ids = self.params.get("source_ids", [])
@@ -59,8 +70,12 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
 
     def _process_impl(self):
         while self.run_flag:
+            loop_start = timer()
             sleep(0.01)
-            if self.queue_in.qsize() <= len(self.source_ids):
+            queue_size_before = self.queue_in.qsize()
+            if queue_size_before <= len(self.source_ids):
+                if self._perf_diag_env:
+                    self._diag_waiting_for_batch += 1
                 continue
 
             sc_track_results = []
@@ -68,6 +83,8 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
                 sc_track_results.append(self.queue_in.get())
             if sc_track_results is None:
                 continue
+            if self._perf_diag_env:
+                self._diag_batches += 1
 
             if self.enable == False:
                 for track_info in sc_track_results:
@@ -77,6 +94,7 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
             sc_tracks: List[List[BOTrack]] = []
             images = []
             track_infos = []
+            batch_diag = []
             for results in sc_track_results:
                 track_info, image = results
                 images.append(image)
@@ -85,11 +103,58 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
                 for t in track_info.tracks:
                     tracks.append(t.tracking_data["track_object"])
                 sc_tracks.append(tracks)
+                try:
+                    batch_diag.append(
+                        {
+                            "source_id": getattr(track_info, "source_id", None),
+                            "frame_id": getattr(track_info, "frame_id", None),
+                            "tracks": len(getattr(track_info, "tracks", []) or []),
+                        }
+                    )
+                except Exception:
+                    pass
 
             mc_tracks = self.tracker.update(sc_tracks)
+            if self._perf_diag_env and not mc_tracks:
+                self._diag_empty_mc_tracks += 1
             tracks_infos = self._create_tracks_info(track_infos, mc_tracks)
             for track_info in zip(tracks_infos, images):
                 self._put_out_drop_oldest(track_info)
+            if self._perf_diag_env:
+                self._diag_emitted += len(tracks_infos)
+                self._diag_last_batch = batch_diag
+                try:
+                    self._diag_queue_snapshots.append(
+                        {
+                            "in_q_before": queue_size_before,
+                            "out_q": self.queue_out.qsize(),
+                            "mc_tracks": len(mc_tracks),
+                            "emitted": len(tracks_infos),
+                            "batch": batch_diag,
+                            "loop_ms": (timer() - loop_start) * 1000.0,
+                        }
+                    )
+                    if len(self._diag_queue_snapshots) > 5:
+                        self._diag_queue_snapshots = self._diag_queue_snapshots[-5:]
+                except Exception:
+                    pass
+                self._perf_diag_counter += 1
+                every = max(1, int(self._perf_diag_every or 60))
+                if (self._perf_diag_counter % every) == 0:
+                    try:
+                        self.logger.info(
+                            "PerfDiag(MCTracker): loops=%d, waits=%d, batches=%d, empty_mc=%d, emitted=%d, in_q=%s, out_q=%s, last_batch=%s",
+                            self._perf_diag_counter,
+                            self._diag_waiting_for_batch,
+                            self._diag_batches,
+                            self._diag_empty_mc_tracks,
+                            self._diag_emitted,
+                            self.queue_in.qsize(),
+                            self.queue_out.qsize(),
+                            self._diag_last_batch,
+                        )
+                    except Exception:
+                        pass
 
     def _parse_det_info(self, det_info: DetectionResultList) -> tuple:
         cam_id = det_info.source_id
