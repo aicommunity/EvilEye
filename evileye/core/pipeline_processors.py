@@ -162,7 +162,9 @@ class PipelineProcessors(PipelineBase):
 
     def stop(self):
         """Stop all processors in reverse order"""
-        for processor in reversed(self.processors):
+        source_processors = [p for p in self.processors if p is not None and isinstance(p, ProcessorSource)]
+        other_processors = [p for p in reversed(self.processors) if p is not None and not isinstance(p, ProcessorSource)]
+        for processor in [*source_processors, *other_processors]:
             if processor is not None:
                 stop_done = threading.Event()
                 stop_error: list[Exception] = []

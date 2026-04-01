@@ -1,6 +1,7 @@
 import numpy as np
 import datetime
 from typing import List
+from queue import Empty
 from ultralytics.engine.results import Boxes
 from ultralytics.trackers.bot_sort import BOTrack
 from .object_tracking_base import EXEC_MODE_PROCESS, ObjectTrackingBase
@@ -127,9 +128,12 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
     def _process_impl(self):
         while self.run_flag:
             sleep(0.01)
-            detections = self.queue_in.get()
-            if detections is None:
+            try:
+                detections = self.queue_in.get(timeout=0.5)
+            except Empty:
                 continue
+            if detections is None:
+                break
             if self.tracker is None:
                 continue
             detection_result, image = detections

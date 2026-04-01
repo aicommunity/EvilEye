@@ -1,6 +1,7 @@
 from .base_class import EvilEyeBase
 from abc import ABC, abstractmethod
 from .logger import get_module_logger
+import threading
 
 EXEC_MODE_THREAD = "thread"
 EXEC_MODE_PROCESS = "process"
@@ -97,7 +98,31 @@ class ProcessorBase(ABC):
 
     def stop(self):
         for processor in self.processors:
-            processor.stop()
+            stop_done = threading.Event()
+            stop_error: list[Exception] = []
+
+            def _stop_processor():
+                try:
+                    processor.stop()
+                except Exception as exc:
+                    stop_error.append(exc)
+                finally:
+                    stop_done.set()
+
+            threading.Thread(target=_stop_processor, daemon=True).start()
+            if not stop_done.wait(3.0):
+                try:
+                    self.logger.warning(
+                        "Inner processor stop timeout after 3s: container=%s class=%s processor=%s",
+                        self.processor_name,
+                        self.class_name,
+                        processor.__class__.__name__,
+                    )
+                except Exception:
+                    pass
+                continue
+            if stop_error:
+                raise stop_error[0]
 
     def insert_debug_info_by_id(self, section_name: str, debug_info: dict):
         for processor in self.processors:

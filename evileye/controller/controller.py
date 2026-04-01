@@ -1139,9 +1139,11 @@ class Controller:
     def stop(self):
         self.run_flag = False
         self._publish_runtime_snapshot(state="stopping")
+        self.logger.info("Controller shutdown: stopping pipeline")
         # Stop pipeline first (detectors/trackers/captures) so source reconnect and
         # recorder loops cannot continue while the rest of shutdown is still running.
         self._pipeline_service.stop_pipeline()
+        self.logger.info("Controller shutdown: pipeline stop requested")
         if self.control_thread and self.control_thread.is_alive():
             # Don't block shutdown forever if pipeline.process() is stuck.
             self.control_thread.join(timeout=3.0)
@@ -1153,14 +1155,17 @@ class Controller:
 
         # Stop ObjectsHandler через ObjectsHandlerService
         if self.obj_handler:
+            self.logger.info("Controller shutdown: stopping objects handler")
             self._objects_handler_service.stop_objects_handler()
 
         # Stop visualizer через VisualizationService
         if self.visualizer:
+            self.logger.info("Controller shutdown: stopping visualizer")
             self._visualization_service.stop_visualizer()
 
         # Stop events detectors через EventsService
         if self._events_service:
+            self.logger.info("Controller shutdown: stopping events subsystem")
             self._events_service.stop_detectors()
             # Flush events controller once before stopping
             if self.events_detectors_controller:
@@ -1173,6 +1178,7 @@ class Controller:
                 self.events_processor.stop()
         
         # Stop event recording
+        self.logger.info("Controller shutdown: stopping event recorders")
         for source_id, event_recorder in self.event_recorders.items():
             try:
                 if event_recorder.is_recording():
@@ -1184,18 +1190,21 @@ class Controller:
 
         # Stop database adapters через DatabaseService
         if self.use_database and self._database_service.is_connected():
+            self.logger.info("Controller shutdown: stopping database adapters")
             self._database_service.stop_adapters()
             if self.db_controller:
                 self.db_controller.disconnect()
         
         # Stop storage monitor
         if self.storage_monitor:
+            self.logger.info("Controller shutdown: stopping storage monitor")
             try:
                 self.storage_monitor.stop()
             except Exception as e:
                 self.logger.warning(f"Error stopping storage monitor: {e}", exc_info=True)
         
         # Stop system diagnostics and memory monitoring
+        self.logger.info("Controller shutdown: stopping diagnostics")
         if self.system_diagnostics:
             self.system_diagnostics.stop()
         if self.memory_monitor:
@@ -1203,12 +1212,14 @@ class Controller:
 
         # Stop web server process if running
         if self._server_process_manager is not None:
+            self.logger.info("Controller shutdown: stopping embedded web server")
             try:
                 self._server_process_manager.stop()
             except Exception as e:
                 self.logger.warning(f"Error stopping server process: {e}")
             self._server_process_manager = None
         if self._streaming_service is not None:
+            self.logger.info("Controller shutdown: stopping streaming service")
             self._streaming_service.stop()
         self.logger.info('All controller components stopped')
 
