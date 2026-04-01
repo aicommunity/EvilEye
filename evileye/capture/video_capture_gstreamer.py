@@ -2608,7 +2608,8 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                 monitor_sleep = float(cfg.get('monitor_interval_sec', CaptureConstants.RECONNECT_MONITOR_INTERVAL))
             except Exception:
                 monitor_sleep = CaptureConstants.RECONNECT_MONITOR_INTERVAL
-            time.sleep(monitor_sleep)
+            if self.stop_event.wait(monitor_sleep):
+                break
     
     def _reconnect_loop(self):
         """Reconnect loop for IP cameras (similar to OpenCV _grab_frames reconnect logic)"""
@@ -2642,7 +2643,8 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                         wait_time = max_delay_sec
                 if wait_time > 0:
                     self.logger.debug(f"Waiting {wait_time:.1f}s before reconnect attempt {attempt + 1} for {self.source_names}")
-                    time.sleep(wait_time)
+                    if self.stop_event.wait(wait_time):
+                        break
                 attempt += 1
                 if not self.is_working and self.run_flag:
                     try:
@@ -2667,7 +2669,8 @@ class VideoCaptureGStreamer(VideoCaptureBase):
                         except Exception as e:
                             self.logger.debug(f"Error starting release thread: {e}")
                         # Wait a bit before retry
-                        time.sleep(2.0)
+                        if self.stop_event.wait(2.0):
+                            break
                         # Try to reinitialize with timeout and protocol fallback
                         init_ok = False
                         init_err = None

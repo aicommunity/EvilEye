@@ -87,7 +87,6 @@ class ServerProcessManager:
         self._demand_thread: threading.Thread | None = None
         self._demand_stop = threading.Event()
         self._preview_demand_ts: dict[str, float] = {}
-        self._published_frame_count = 0
 
     def start(self, host="127.0.0.1", port=8080, log_level="info", ssl_certfile=None, ssl_keyfile=None):
         if self._process is not None and self._process.is_alive():
@@ -146,15 +145,6 @@ class ServerProcessManager:
                 except Exception:
                     pass
             self._frame_queue.put_nowait((pipeline_id, jpeg_bytes, metadata or {}))
-            self._published_frame_count += 1
-            if self._published_frame_count <= 5 or (self._published_frame_count % 100) == 0:
-                self.logger.info(
-                    "IPC publish frame #%s pipeline=%s source=%s bytes=%s",
-                    self._published_frame_count,
-                    pipeline_id,
-                    (metadata or {}).get("source_id") if isinstance(metadata, dict) else None,
-                    len(jpeg_bytes) if jpeg_bytes is not None else 0,
-                )
         except Exception:
             pass
 
@@ -192,7 +182,6 @@ class ServerProcessManager:
         self._frame_queue = None
         self._demand_queue = None
         self._preview_demand_ts.clear()
-        self._published_frame_count = 0
         self.logger.info("Web server process stopped")
 
     def is_alive(self) -> bool:

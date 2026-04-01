@@ -34,7 +34,6 @@ class FrameBroker:
         self._ipc_queue: Optional[mp.Queue] = None
         self._ipc_thread: Optional[threading.Thread] = None
         self._ipc_stop = threading.Event()
-        self._ipc_received_count = 0
 
     # -- IPC bridge ------------------------------------------------------
 
@@ -63,15 +62,6 @@ class FrameBroker:
                 else:
                     pipeline_id, jpeg_bytes = item
                     metadata = None
-                self._ipc_received_count += 1
-                if self._ipc_received_count <= 5 or (self._ipc_received_count % 100) == 0:
-                    self.logger.info(
-                        "IPC received frame #%s pipeline=%s source=%s bytes=%s",
-                        self._ipc_received_count,
-                        pipeline_id,
-                        (metadata or {}).get("source_id") if isinstance(metadata, dict) else None,
-                        len(jpeg_bytes) if jpeg_bytes is not None else 0,
-                    )
                 self.publish_jpeg(pipeline_id, jpeg_bytes, metadata=metadata)
                 source_id = (metadata or {}).get("source_id") if isinstance(metadata, dict) else None
                 if source_id is not None:
@@ -88,7 +78,6 @@ class FrameBroker:
                 pass
         if self._ipc_thread and self._ipc_thread.is_alive():
             self._ipc_thread.join(timeout=2.0)
-        self._ipc_received_count = 0
 
     # -- Frame storage ---------------------------------------------------
 

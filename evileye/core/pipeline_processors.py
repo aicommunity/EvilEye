@@ -5,6 +5,7 @@ from .processor_step import ProcessorStep
 from .processor_base import ProcessorBase
 from abc import abstractmethod
 from typing import List, Dict, Any, Optional, Tuple
+import threading
 
 
 class PipelineProcessors(PipelineBase):
@@ -163,7 +164,26 @@ class PipelineProcessors(PipelineBase):
         """Stop all processors in reverse order"""
         for processor in reversed(self.processors):
             if processor is not None:
-                processor.stop()
+                stop_done = threading.Event()
+                stop_error: list[Exception] = []
+
+                def _stop_processor():
+                    try:
+                        processor.stop()
+                    except Exception as exc:
+                        stop_error.append(exc)
+                    finally:
+                        stop_done.set()
+
+                threading.Thread(target=_stop_processor, daemon=True).start()
+                if not stop_done.wait(3.0):
+                    self.logger.warning(
+                        "Processor stop timeout after 3s: %s",
+                        processor.__class__.__name__,
+                    )
+                    continue
+                if stop_error:
+                    raise stop_error[0]
 
     def check_all_sources_finished(self):
         if self.sources_proc is None:

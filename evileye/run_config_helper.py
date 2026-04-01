@@ -1,5 +1,6 @@
 import json
 import os
+import signal
 import sys
 from pathlib import Path
 from typing import Optional
@@ -223,6 +224,7 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
     # Ensure we always stop the controller on app quit (GUI mode).
     # Without this, closing the window may exit Qt loop while leaving background threads running.
     shutdown_state = {"done": False, "thread": None}
+    previous_signal_handlers = {}
     if qt_app is not None and controller_instance is not None:
         try:
             import weakref
@@ -280,6 +282,25 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
             qt_app.aboutToQuit.connect(_shutdown_controller)  # type: ignore[attr-defined]
         except Exception:
             pass
+        def _termination_signal_handler(signum, _frame):
+            try:
+                logger.info(f"Received signal {signum}, requesting application shutdown...")
+            except Exception:
+                pass
+            try:
+                _shutdown_controller()
+            except Exception:
+                pass
+            try:
+                qt_app.quit()
+            except Exception:
+                pass
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                previous_signal_handlers[sig] = signal.getsignal(sig)
+                signal.signal(sig, _termination_signal_handler)
+            except Exception:
+                pass
     
     # Step 4: Start application event loop
     if gui_mode == GUIMode.HEADLESS:
@@ -373,6 +394,14 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
                     logger.warning("Memory leak detected but restart impossible: not launched via CLI")
                     sys.exit(1)
     
+    try:
+        for sig, handler in previous_signal_handlers.items():
+            try:
+                signal.signal(sig, handler)
+            except Exception:
+                pass
+    except Exception:
+        pass
     logger.info(f"Application finished with code: {ret}")
     return ret
 
