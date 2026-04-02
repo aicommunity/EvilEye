@@ -268,14 +268,27 @@ class PipelineSurveillance(PipelineProcessors):
         Это обеспечивает контролируемую задержку в визуализаторе и не позволяет
         ему "убегать" вперёд относительно детектора/трекера.
         """
-        latest = self.peek_latest_result()
-        if not latest:
-            return []
+        # Важно: pipeline results queue маленькая (maxsize=2), а mc_trackers может
+        # возвращать пустой шаг в отдельные тики. Controller/Visualizer берут "последний"
+        # результат и из-за этого GUI мог получать `[]` даже когда совсем недавно был
+        # непустой batch.
+        #
+        # Для визуализации допустимо "sticky" поведение: вернем самые последние
+        # *непустые* кадры из очереди результатов.
         section_name = self.get_final_results_name()
         if not section_name:
             return []
-        res = latest.get(section_name, []) or []
-        return list(res) if isinstance(res, (list, tuple)) else ([res] if res is not None else [])
+
+        last_non_empty = None
+        for result in self.get_results_iterator():
+            if not isinstance(result, dict):
+                continue
+            section = result.get(section_name, [])
+            if isinstance(section, (list, tuple)) and len(section) > 0:
+                last_non_empty = section
+        if last_non_empty is None:
+            return []
+        return list(last_non_empty) if isinstance(last_non_empty, (list, tuple)) else ([last_non_empty] if last_non_empty is not None else [])
 
     def get_latest_objects_results(self) -> list[Any]:
         """
@@ -287,10 +300,6 @@ class PipelineSurveillance(PipelineProcessors):
         - else if detectors enabled -> return detectors section
         - else -> return sources section
         """
-        latest = self.peek_latest_result()
-        if not latest:
-            return []
-
         def _enabled(section: str) -> bool:
             try:
                 params_list = self.get_processor_params(section)
@@ -312,10 +321,22 @@ class PipelineSurveillance(PipelineProcessors):
         else:
             section = "sources"
 
-        res = latest.get(section, []) or []
-        if isinstance(res, (list, tuple)):
-            return list(res)
-        return [res]
+        # Sticky non-empty selection:
+        # Controller uses objects_results to build fallback frames for visualization.
+        # The pipeline results queue is intentionally small (maxsize=2), so
+        # "latest" may temporarily point to an empty stage even when mc_tracker
+        # has produced non-empty output right before/after.
+        last_non_empty = None
+        for result in self.get_results_iterator():
+            if not isinstance(result, dict):
+                continue
+            res = result.get(section, [])
+            if isinstance(res, (list, tuple)) and len(res) > 0:
+                last_non_empty = res
+        if last_non_empty is None:
+            return []
+
+        return list(last_non_empty) if isinstance(last_non_empty, (list, tuple)) else [last_non_empty]
 
     # === ROI Editor integration helpers ===
     def get_detectors(self):

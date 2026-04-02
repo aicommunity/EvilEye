@@ -5,6 +5,7 @@ import os
 from timeit import default_timer as timer
 import threading
 from queue import Empty
+import math
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
@@ -48,6 +49,17 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
         self._diag_replaced_same_source = 0
         self._diag_partial_batches = 0
         self._pending_by_source = {}
+        # Last emitted frame_id per camera to avoid re-emitting identical batches.
+        self._last_emitted_frame_id_by_source: dict[int, int | None] = {}
+        # Throttle emissions to avoid excessive CPU usage when inputs update fast.
+        self._last_emit_time_sec: float = 0.0
+
+        # Per-source diagnostics:
+        # - how often inputs are received by MCTracker (from trackers stage)
+        # - how often MCTracker emits a new frame_id vs repeats for each source
+        self._diag_queue_in_gets_by_source: dict[int, int] = {}
+        self._diag_frame_id_updates_by_source: dict[int, int] = {}
+        self._diag_frame_id_repeats_by_source: dict[int, int] = {}
 
     def init_impl(self, **kwargs) -> bool:
         sources_ids = self.params.get("source_ids", [])
@@ -61,6 +73,11 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
     def reset_impl(self) -> None:
         self.tracker.reset()
         self._pending_by_source = {}
+        self._last_emitted_frame_id_by_source = {}
+        self._last_emit_time_sec = 0.0
+        self._diag_queue_in_gets_by_source = {}
+        self._diag_frame_id_updates_by_source = {}
+        self._diag_frame_id_repeats_by_source = {}
 
     def set_params_impl(self):
         super().set_params_impl()
@@ -77,7 +94,10 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
             loop_start = timer()
             queue_size_before = self.queue_in.qsize()
             latest_by_source = {}
-            collect_deadline = loop_start + 0.15
+            # Детерминированное окно обновления latest_by_source.
+            # Ранее попытки с env-заданием ухудшали частоту выдачи в GUI.
+            collect_deadline_sec = 0.15
+            collect_deadline = loop_start + collect_deadline_sec
             while self.run_flag and timer() < collect_deadline:
                 timeout = max(0.01, min(0.05, collect_deadline - timer()))
                 try:
@@ -115,6 +135,10 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
                     source_id = None
                 if source_id is None:
                     continue
+                if self._perf_diag_env:
+                    self._diag_queue_in_gets_by_source[source_id] = (
+                        self._diag_queue_in_gets_by_source.get(source_id, 0) + 1
+                    )
                 if source_id in latest_by_source and self._perf_diag_env:
                     self._diag_replaced_same_source += 1
                 latest_by_source[source_id] = result
@@ -133,13 +157,55 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
                     self._diag_waiting_for_batch += 1
                     self._diag_partial_batches += 1
                 continue
-            self._pending_by_source = {}
+            # Emit only if enough cameras have new frame_id since last emission.
+            # This reduces frame_id repeats (duplicate metadata) in downstream GUI.
+            new_sources_count = 0
+            frame_id_by_source: dict[int, int | None] = {}
+            for source_id in self.source_ids:
+                try:
+                    track_info, image = self._pending_by_source[source_id]
+                    frame_id = getattr(track_info, "frame_id", None)
+                    if frame_id is None:
+                        frame_id = getattr(image, "frame_id", None)
+                except Exception:
+                    frame_id = None
+                frame_id_by_source[source_id] = frame_id
+                prev_frame_id = self._last_emitted_frame_id_by_source.get(source_id)
+                if frame_id != prev_frame_id:
+                    new_sources_count += 1
+
+            # K-out-of-N rule (deterministic, no env tuning).
+            required_new_sources = max(1, int(math.ceil(len(self.source_ids) * 0.6)))
+
+            if new_sources_count < required_new_sources:
+                continue
+
+            # Minimal interval to avoid excessive emits under high update rates.
+            min_emit_interval_sec = 0.12
+            now_sec = float(timer())
+            if self._last_emit_time_sec > 0.0 and (now_sec - self._last_emit_time_sec) < min_emit_interval_sec:
+                continue
+            self._last_emit_time_sec = now_sec
+
             if self._perf_diag_env:
                 self._diag_batches += 1
 
             if not self.enable:
                 for track_info in sc_track_results:
                     self._put_out_drop_oldest(track_info)
+                for source_id in self.source_ids:
+                    new_frame_id = frame_id_by_source.get(source_id)
+                    if self._perf_diag_env:
+                        prev_frame_id = self._last_emitted_frame_id_by_source.get(source_id)
+                        if new_frame_id != prev_frame_id:
+                            self._diag_frame_id_updates_by_source[source_id] = (
+                                self._diag_frame_id_updates_by_source.get(source_id, 0) + 1
+                            )
+                        else:
+                            self._diag_frame_id_repeats_by_source[source_id] = (
+                                self._diag_frame_id_repeats_by_source.get(source_id, 0) + 1
+                            )
+                    self._last_emitted_frame_id_by_source[source_id] = new_frame_id
                 continue
 
             sc_tracks: List[List[BOTrack]] = []
@@ -169,6 +235,22 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
             tracks_infos = self._create_tracks_info(track_infos, mc_tracks)
             for track_info in zip(tracks_infos, images):
                 self._put_out_drop_oldest(track_info)
+
+            # Remember emitted frame_ids for next-loop deduplication.
+            for source_id in self.source_ids:
+                new_frame_id = frame_id_by_source.get(source_id)
+                if self._perf_diag_env:
+                    prev_frame_id = self._last_emitted_frame_id_by_source.get(source_id)
+                    if new_frame_id != prev_frame_id:
+                        self._diag_frame_id_updates_by_source[source_id] = (
+                            self._diag_frame_id_updates_by_source.get(source_id, 0) + 1
+                        )
+                    else:
+                        self._diag_frame_id_repeats_by_source[source_id] = (
+                            self._diag_frame_id_repeats_by_source.get(source_id, 0) + 1
+                        )
+                self._last_emitted_frame_id_by_source[source_id] = new_frame_id
+
             if self._perf_diag_env:
                 self._diag_emitted += len(tracks_infos)
                 self._diag_last_batch = batch_diag
@@ -192,7 +274,7 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
                 if (self._perf_diag_counter % every) == 0:
                     try:
                         self.logger.info(
-                            "PerfDiag(MCTracker): loops=%d, waits=%d, batches=%d, partial=%d, replaced=%d, empty_mc=%d, emitted=%d, in_q=%s, out_q=%s, last_batch=%s",
+                            "PerfDiag(MCTracker): loops=%d, waits=%d, batches=%d, partial=%d, replaced=%d, empty_mc=%d, emitted=%d, in_q=%s, out_q=%s, last_batch=%s, queue_in_gets=%s, frame_updates=%s, frame_repeats=%s",
                             self._perf_diag_counter,
                             self._diag_waiting_for_batch,
                             self._diag_batches,
@@ -203,7 +285,14 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
                             self.queue_in.qsize(),
                             self.queue_out.qsize(),
                             self._diag_last_batch,
+                            self._diag_queue_in_gets_by_source,
+                            self._diag_frame_id_updates_by_source,
+                            self._diag_frame_id_repeats_by_source,
                         )
+                        # Reset interval counters after we publish stats.
+                        self._diag_queue_in_gets_by_source = {}
+                        self._diag_frame_id_updates_by_source = {}
+                        self._diag_frame_id_repeats_by_source = {}
                     except Exception:
                         pass
 

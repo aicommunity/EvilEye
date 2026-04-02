@@ -3,6 +3,7 @@ import json
 import datetime
 import numpy as np
 import cv2
+import os
 from ..object_tracker.tracking_results import TrackingResult
 from ..objects_handler.object_result import ObjectResultHistory
 import copy
@@ -334,6 +335,34 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
         source_text = "Source Id: " + str(source_name)
     else:
         source_text = str(source_name)
+
+    # Adaptive overlay throttling: heavy scenes can make overlay dominate frame time.
+    # Environment toggles allow quick rollback/tuning without changing UI config.
+    num_objs = len(cameras_objs or [])
+    # Default thresholds tuned to reduce overlay CPU cost.
+    # They can be overridden via environment variables for quick A/B.
+    busy_threshold = int(os.getenv("EVILEYE_OVERLAY_BUSY_THRESHOLD", "8") or "8")
+    busy_overlay = num_objs >= max(1, busy_threshold)
+
+    # Fewer history lines => less overlay work.
+    history_line_every = int(os.getenv("EVILEYE_HISTORY_LINE_EVERY", "4") or "4")
+    if busy_overlay:
+        # In busy scenes, draw fewer trajectory segments.
+        history_line_every = max(history_line_every, 4)
+
+    history_frame_id = getattr(image, "frame_id", None)
+    try:
+        history_frame_id_int = int(history_frame_id) if history_frame_id is not None else None
+    except Exception:
+        history_frame_id_int = None
+    draw_history_lines = (
+        history_line_every <= 1
+        or (history_frame_id_int is not None and history_frame_id_int % history_line_every == 0)
+    )
+
+    attr_max_drawn = int(os.getenv("EVILEYE_ATTR_MAX_DRAWN", "3") or "3")
+    if busy_overlay:
+        attr_max_drawn = min(attr_max_drawn, 2)
     
     # Position source name at bottom-left (10% from left, 10% from bottom)
     put_text_adaptive(image.image, source_text, (10, 90), 
@@ -415,10 +444,18 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
         
         # Draw attributes if available
         if hasattr(obj, 'attributes') and obj.attributes:
-            draw_object_attributes(image.image, obj, last_info.bounding_box, font_face, resolved_font_scale*0.5, resolved_thickness)
+            draw_object_attributes(
+                image.image,
+                obj,
+                last_info.bounding_box,
+                font_face,
+                resolved_font_scale * 0.5,
+                resolved_thickness,
+                max_attrs=attr_max_drawn,
+            )
 
         # utils_logger.error(len(obj['obj_info']))
-        if len(obj.history) > 1:
+        if draw_history_lines and len(obj.history) > 1:
             hist_start_index = max(0, last_hist_index - max_history_segments)
             for i in range(hist_start_index, last_hist_index):
                 first_info = obj.history[i].track
@@ -427,8 +464,13 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
                 first_cm_y = int(first_info.bounding_box[3])
                 second_cm_x = int((second_info.bounding_box[0] + second_info.bounding_box[2]) / 2)
                 second_cm_y = int(second_info.bounding_box[3])
-                cv2.line(image.image, (first_cm_x, first_cm_y),
-                         (second_cm_x, second_cm_y), (0, 0, 255), thickness=font_thickness)
+                cv2.line(
+                    image.image,
+                    (first_cm_x, first_cm_y),
+                    (second_cm_x, second_cm_y),
+                    (0, 0, 255),
+                    thickness=font_thickness,
+                )
 
 
 def draw_debug_info(image: CaptureImage, debug_info: dict):
@@ -765,7 +807,7 @@ def put_text_with_bbox(image, text, bbox, font_face, font_scale, thickness,
     return image
 
 
-def draw_object_attributes(image, obj, bbox, font_face, font_scale, thickness):
+def draw_object_attributes(image, obj, bbox, font_face, font_scale, thickness, max_attrs: int | None = None):
     """
     Draw object attributes as colored indicators.
     
@@ -795,8 +837,12 @@ def draw_object_attributes(image, obj, bbox, font_face, font_scale, thickness):
     attr_thickness = thickness
     attr_font_face = font_face
 
+    attr_items = list(obj.attributes.items())
+    if max_attrs is not None and max_attrs > 0:
+        attr_items = attr_items[:max_attrs]
+
     attr_texts = []
-    for attr_name, attr_data in obj.attributes.items():
+    for attr_name, attr_data in attr_items:
         if isinstance(attr_data, dict):
             state = attr_data.get('state', 'none')
             confidence = attr_data.get('confidence_smooth', 0.0)
