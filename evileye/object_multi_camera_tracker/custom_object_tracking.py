@@ -45,6 +45,9 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
         self._diag_empty_mc_tracks = 0
         self._diag_queue_snapshots = []
         self._diag_last_batch = []
+        self._diag_replaced_same_source = 0
+        self._diag_partial_batches = 0
+        self._pending_by_source = {}
 
     def init_impl(self, **kwargs) -> bool:
         sources_ids = self.params.get("source_ids", [])
@@ -57,6 +60,7 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
 
     def reset_impl(self) -> None:
         self.tracker.reset()
+        self._pending_by_source = {}
 
     def set_params_impl(self):
         super().set_params_impl()
@@ -72,20 +76,64 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
         while self.run_flag:
             loop_start = timer()
             queue_size_before = self.queue_in.qsize()
-            sc_track_results = []
-            for _ in range(len(self.source_ids)):
+            latest_by_source = {}
+            collect_deadline = loop_start + 0.15
+            while self.run_flag and timer() < collect_deadline:
+                timeout = max(0.01, min(0.05, collect_deadline - timer()))
                 try:
-                    result = self.queue_in.get(timeout=0.1)
+                    result = self.queue_in.get(timeout=timeout)
                 except Empty:
-                    break
+                    if len(latest_by_source) >= len(self.source_ids):
+                        break
+                    continue
                 if result is None:
                     continue
-                sc_track_results.append(result)
+                try:
+                    track_info, image = result
+                    # Контракт данных может иногда приходить с пустым `track_info.source_id`,
+                    # при этом `image.source_id` заполнен. Чтобы не "терять" камеру в MC-батчинге,
+                    # пробуем сначала `track_info.source_id`, затем fallback на `image.source_id`.
+                    source_id = getattr(track_info, "source_id", None)
+                    if source_id is None:
+                        source_id = getattr(image, "source_id", None)
+                        # Синхронизируем поля в объекте результата, чтобы downstream (ObjectsHandler/Visualizer)
+                        # использовал корректные ключи.
+                        if source_id is not None:
+                            try:
+                                track_info.source_id = source_id
+                            except Exception:
+                                pass
+                    # Аналогично подстрахуемся от пропущенного frame_id.
+                    track_frame_id = getattr(track_info, "frame_id", None)
+                    image_frame_id = getattr(image, "frame_id", None)
+                    if track_frame_id is None and image_frame_id is not None:
+                        try:
+                            track_info.frame_id = image_frame_id
+                        except Exception:
+                            pass
+                except Exception:
+                    source_id = None
+                if source_id is None:
+                    continue
+                if source_id in latest_by_source and self._perf_diag_env:
+                    self._diag_replaced_same_source += 1
+                latest_by_source[source_id] = result
+                if len(latest_by_source) >= len(self.source_ids):
+                    break
+
+            for source_id, result in latest_by_source.items():
+                if source_id in self._pending_by_source and self._perf_diag_env:
+                    self._diag_replaced_same_source += 1
+                self._pending_by_source[source_id] = result
+
+            sc_track_results = [self._pending_by_source[source_id] for source_id in self.source_ids if source_id in self._pending_by_source]
 
             if len(sc_track_results) < len(self.source_ids):
                 if self._perf_diag_env:
                     self._diag_waiting_for_batch += 1
+                    self._diag_partial_batches += 1
                 continue
+            self._pending_by_source = {}
             if self._perf_diag_env:
                 self._diag_batches += 1
 
@@ -144,10 +192,12 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
                 if (self._perf_diag_counter % every) == 0:
                     try:
                         self.logger.info(
-                            "PerfDiag(MCTracker): loops=%d, waits=%d, batches=%d, empty_mc=%d, emitted=%d, in_q=%s, out_q=%s, last_batch=%s",
+                            "PerfDiag(MCTracker): loops=%d, waits=%d, batches=%d, partial=%d, replaced=%d, empty_mc=%d, emitted=%d, in_q=%s, out_q=%s, last_batch=%s",
                             self._perf_diag_counter,
                             self._diag_waiting_for_batch,
                             self._diag_batches,
+                            self._diag_partial_batches,
+                            self._diag_replaced_same_source,
                             self._diag_empty_mc_tracks,
                             self._diag_emitted,
                             self.queue_in.qsize(),

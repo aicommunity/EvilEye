@@ -23,7 +23,13 @@ class ObjectMultiCameraTrackingBase(EvilEyeBase):
     def set_params_impl(self):
         self.source_ids = self.params.get('source_ids', [])
         self.enable = self.params.get('enable', self.enable)
-        self.queue_in = Queue(maxsize=len(self.source_ids)*2)
+        # queue_out должен быть достаточно большим, чтобы MCTracker успевал
+        # эмитить весь батч (по одному элементу на камеру) без дропа "старейшего"
+        # элемента. Иначе первая камера в batch может постоянно выпадать из вывода.
+        # Эмит батча: len(self.source_ids) элементов.
+        max_out = max(4, len(self.source_ids) * 2)
+        self.queue_in = Queue(maxsize=max(2, len(self.source_ids) * 2))
+        self.queue_out = Queue(maxsize=max_out)
 
     def get_params_impl(self):
         params = dict()
