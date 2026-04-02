@@ -5,7 +5,6 @@ import os
 from timeit import default_timer as timer
 import threading
 from queue import Empty
-import math
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
@@ -174,8 +173,11 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
                 if frame_id != prev_frame_id:
                     new_sources_count += 1
 
-            # K-out-of-N rule (deterministic, no env tuning).
-            required_new_sources = max(1, int(math.ceil(len(self.source_ids) * 0.6)))
+            # K-out-of-N rule (deterministic):
+            # Emit only when a strict majority of cameras have new frame_id.
+            # This avoids emitting batches dominated by repeated (stale) frame_id.
+            num_sources = len(self.source_ids) or 1
+            required_new_sources = max(1, (num_sources // 2) + 1)
 
             if new_sources_count < required_new_sources:
                 continue
