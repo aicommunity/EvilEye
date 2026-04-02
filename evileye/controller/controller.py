@@ -2450,12 +2450,12 @@ class Controller:
     def _init_system_diagnostics(self) -> None:
         """Initialize system diagnostics and memory monitoring."""
         try:
-            # Find latest debug log file
+            # Find latest main log file (debug file may be disabled by default)
             from pathlib import Path
             import glob
             logs_dir = Path("logs")
             if logs_dir.exists():
-                log_files = sorted(glob.glob(str(logs_dir / "*_evileye_debug.log")), reverse=True)
+                log_files = sorted(glob.glob(str(logs_dir / "*_evileye_main.log")), reverse=True)
                 log_file = log_files[0] if log_files else None
             else:
                 log_file = None

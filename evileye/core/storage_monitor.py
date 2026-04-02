@@ -159,9 +159,13 @@ class StorageMonitor:
             # Check retention first (has priority - files older than retention period 
             # are deleted regardless of size/space constraints)
             self._check_retention()
-            
-            # Then check constraints (size and free space limits)
-            self._check_constraints()
+
+            # Startup: constraints check can be very expensive (directory scan + deletion).
+            # On initial start we only do retention cleanup; constraints will be checked
+            # periodically after the system is up.
+            if not is_initial:
+                # Then check constraints (size and free space limits)
+                self._check_constraints()
             
         except Exception as e:
             check_type = "initial" if is_initial else "periodic"

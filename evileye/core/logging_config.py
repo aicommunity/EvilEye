@@ -119,28 +119,21 @@ class EvilEyeLoggingConfig:
             # Основной лог (INFO и выше)
             main_handler = logging.handlers.RotatingFileHandler(
                 self.main_log_file,
+                delay=True,
                 maxBytes=self.max_file_size,
                 backupCount=self.backup_count,
                 encoding='utf-8'
             )
-            main_handler.setLevel(logging.INFO)
+            # Mirror the logger level so that in DEBUG mode we still write debug records
+            # into the same main log file (no separate debug file by default).
+            main_handler.setLevel(self.log_level)
             main_handler.setFormatter(file_formatter)
             logger.addHandler(main_handler)
-            
-            # Отладочный лог (DEBUG и выше)
-            debug_handler = logging.handlers.RotatingFileHandler(
-                self.debug_log_file,
-                maxBytes=self.max_file_size,
-                backupCount=self.backup_count,
-                encoding='utf-8'
-            )
-            debug_handler.setLevel(logging.DEBUG)
-            debug_handler.setFormatter(file_formatter)
-            logger.addHandler(debug_handler)
             
             # Лог ошибок (ERROR и выше)
             error_handler = logging.handlers.RotatingFileHandler(
                 self.error_log_file,
+                delay=True,
                 maxBytes=self.max_file_size,
                 backupCount=self.backup_count,
                 encoding='utf-8'
@@ -165,6 +158,7 @@ class EvilEyeLoggingConfig:
         if self.log_to_file:
             perf_handler = logging.handlers.RotatingFileHandler(
                 self.performance_log_file,
+                delay=True,
                 maxBytes=self.max_file_size,
                 backupCount=self.backup_count,
                 encoding='utf-8'

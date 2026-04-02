@@ -89,14 +89,15 @@ class OnnxEncoder(TrackEncoder):
                 [sys.executable, "-c", probe_script, model_path, provider],
                 capture_output=True,
                 text=True,
-                timeout=20,
+                # Keep startup responsive: probing GPU providers may hang.
+                timeout=4,
                 check=False,
             )
         except subprocess.TimeoutExpired:
-            self.logger.warning("Timed out while probing ONNX provider %s", provider)
+            self.logger.debug("Timed out while probing ONNX provider %s", provider)
             return False
         except Exception as e:
-            self.logger.warning("Failed to probe ONNX provider %s: %s", provider, e)
+            self.logger.debug("Failed to probe ONNX provider %s: %s", provider, e)
             return False
 
         if result.returncode == 0 and "ok" in result.stdout:
@@ -106,7 +107,7 @@ class OnnxEncoder(TrackEncoder):
         stderr = (result.stderr or "").strip()
         stdout = (result.stdout or "").strip()
         details = stderr or stdout or f"exit_code={result.returncode}"
-        self.logger.warning("ONNX provider %s is unavailable: %s", provider, details)
+        self.logger.debug("ONNX provider %s is unavailable: %s", provider, details)
         return False
 
     def inference(self, img: np.ndarray, dets: np.ndarray) -> np.ndarray:

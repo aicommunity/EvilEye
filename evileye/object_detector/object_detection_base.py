@@ -120,7 +120,7 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
             elif model_class_mapping is not None and self.model_class_mapping is None:
                 # Auto-update from thread if not set manually
                 self.model_class_mapping = model_class_mapping
-                self.logger.info(f"Auto-updated model_class_mapping from detection thread: {model_class_mapping}")
+                self.logger.debug(f"Auto-updated model_class_mapping from detection thread: {model_class_mapping}")
                 
                 # CRITICAL: Update classes after getting model_class_mapping
                 self._update_classes_after_model_loading()
@@ -146,7 +146,7 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         if self.class_manager:
             self.classes = self.class_manager.convert_classes_to_ids(self.classes)
             if original_classes != self.classes:
-                self.logger.info(f"Classes updated from {original_classes} to {self.classes} using ClassManager")
+                self.logger.debug(f"Classes updated from {original_classes} to {self.classes} using ClassManager")
         else:
             # Fallback to old logic
             if all(isinstance(cls, str) for cls in self.classes):
@@ -179,7 +179,7 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
             original_classes = self.classes.copy()
             self._process_classes_parameter()
             if original_classes != self.classes:
-                self.logger.info(f"Classes updated from {original_classes} to {self.classes} using model mapping")
+                self.logger.debug(f"Classes updated from {original_classes} to {self.classes} using model mapping")
     
     def set_class_manager(self, class_manager: ClassManager):
         """Set the class manager for this detector"""
@@ -198,7 +198,7 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         if not original_classes:
             return
             
-        self.logger.info(f"Updating classes after model loading. Original: {original_classes}")
+        self.logger.debug(f"Updating classes after model loading. Original: {original_classes}")
         
         # Re-process classes with now-available model_class_mapping
         if all(isinstance(cls, str) for cls in original_classes):
@@ -207,15 +207,15 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
             new_classes = [cls_id for cls_id in new_classes if cls_id != -1]
             
             if new_classes != self.classes:
-                self.logger.info(f"Classes updated from {self.classes} to {new_classes} using model mapping")
+                self.logger.debug(f"Classes updated from {self.classes} to {new_classes} using model mapping")
                 self.classes = new_classes
                 
                 # Update classes in all detection threads
                 self._update_threads_classes()
             else:
-                self.logger.info(f"Classes already correct: {self.classes}")
+                self.logger.debug(f"Classes already correct: {self.classes}")
         else:
-            self.logger.info(f"Classes are IDs, conversion not needed: {self.classes}")
+            self.logger.debug(f"Classes are IDs, conversion not needed: {self.classes}")
     
     def _update_threads_classes(self):
         """Update classes in all detection threads"""
@@ -242,7 +242,7 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
             
             # Check if classes are different from current
             if new_classes != self.classes:
-                self.logger.info(f"Late update: classes from {self.classes} to {new_classes} using model mapping")
+                self.logger.debug(f"Late update: classes from {self.classes} to {new_classes} using model mapping")
                 self.classes = new_classes
                 
                 # Update classes in all detection threads

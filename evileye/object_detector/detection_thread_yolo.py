@@ -41,7 +41,8 @@ class DetectionThreadYolo(DetectionThreadBase):
                 model_exists = os.path.exists(model_path) if model_path else False
                 model_size = os.path.getsize(model_path) if model_exists else 0
                 
-                self.logger.info(f"Loading YOLO model: {model_path}")
+                # This can run in multiple threads; keep it out of INFO logs by default.
+                self.logger.debug(f"Loading YOLO model: {model_path}")
                 self.logger.debug(f"Model file exists: {model_exists}, size: {model_size} bytes, "
                                 f"platform: {platform.system()} {platform.release()}")
                 
@@ -62,7 +63,8 @@ class DetectionThreadYolo(DetectionThreadBase):
                 except Exception as e:
                     self.logger.warning(f"Failed to apply half precision to model (non-critical): {e}")
                 
-                self.logger.info(f"Model loaded successfully. Model names: {self.model.names}")
+                # Keep model load details out of INFO logs by default.
+                self.logger.debug(f"Model loaded successfully. Model names: {self.model.names}")
                 
                 # Update model_class_mapping from model
                 self._update_model_class_mapping_from_model()
@@ -208,4 +210,5 @@ class DetectionThreadYolo(DetectionThreadBase):
         if self.model and hasattr(self.model, 'names') and self.model.names:
             # Create mapping from model names: {class_name: class_id}
             self.model_class_mapping = {name: idx for idx, name in self.model.names.items()}
-            self.logger.info(f"Updated model_class_mapping from YOLO model: {self.model_class_mapping}")
+            # Mapping update can be called multiple times across threads.
+            self.logger.debug(f"Updated model_class_mapping from YOLO model: {self.model_class_mapping}")
