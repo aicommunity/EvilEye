@@ -86,28 +86,70 @@ def _rgb_to_bgr(color_rgb: tuple[int, int, int] | list[int]) -> tuple[int, int, 
 def _draw_zones(image, zones: list[Any]) -> None:
     if image is None or not zones:
         return
+
     h, w = image.shape[:2]
+    red_bgr = (0, 0, 255)
+
+    # Semi-transparent fill for zones (visual clarity).
+    # We blend once for all zones to keep it reasonably cheap.
+    fill_alpha = 0.50
+    overlay = image.copy()
+    # (kind, ...)
+    borders: list[tuple[Any, ...]] = []
+
     for zone in zones:
         try:
             zone_type, zone_coords, _ = zone
         except Exception:
             continue
+
         if not zone_coords:
             continue
+
         zone_name = str(zone_type).strip().lower()
+
+        # Rectangle (normalized coords)
         if zone_name in {"rect", "rectangle"} and len(zone_coords) >= 2:
-            x1, y1 = zone_coords[0]
-            x2, y2 = zone_coords[1]
-            cv2.rectangle(
-                image,
-                (int(x1 * w), int(y1 * h)),
-                (int(x2 * w), int(y2 * h)),
-                (0, 0, 255),
-                thickness=2,
-            )
+            (x1, y1) = zone_coords[0]
+            (x2, y2) = zone_coords[1]
+
+            x_left, x_right = (min(x1, x2), max(x1, x2))
+            y_top, y_bottom = (min(y1, y2), max(y1, y2))
+
+            pt1 = (int(x_left * w), int(y_top * h))
+            pt2 = (int(x_right * w), int(y_bottom * h))
+
+            cv2.rectangle(overlay, pt1, pt2, red_bgr, thickness=-1)
+            borders.append(("rect", pt1, pt2))
             continue
-        points = np.int32([[(int(px * w), int(py * h)) for px, py in zone_coords]])
-        cv2.polylines(image, points, isClosed=True, color=(0, 0, 255), thickness=2)
+
+        # Polygon (normalized points)
+        pts = []
+        for px, py in zone_coords:
+            try:
+                pts.append((int(px * w), int(py * h)))
+            except Exception:
+                continue
+
+        if not pts:
+            continue
+
+        pts_arr = np.asarray(pts, dtype=np.int32)
+        cv2.fillPoly(overlay, [pts_arr], red_bgr)
+        borders.append(("poly", pts_arr))
+
+    # Blend filled areas.
+    cv2.addWeighted(overlay, fill_alpha, image, 1.0 - fill_alpha, 0.0, dst=image)
+
+    # Re-draw borders fully opaque for crisp outlines.
+    for border in borders:
+        kind = border[0]
+        if kind == "rect":
+            _, pt1, pt2 = border
+            cv2.rectangle(image, pt1, pt2, red_bgr, thickness=2)
+        else:
+            _, pts_arr = border
+            cv2.polylines(image, [pts_arr], isClosed=True, color=red_bgr, thickness=2)
 
 
 def _draw_event_overlay(image, context: PreviewRenderContext) -> None:

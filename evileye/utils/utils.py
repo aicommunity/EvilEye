@@ -244,9 +244,22 @@ def draw_preview_boxes(image, width, height, box):
 
 
 def draw_preview_boxes_zones(image, width, height, box, zone_coords):
-    points = [(int(point[0] * width), int(point[1] * height)) for point in zone_coords]
-    image = cv2.rectangle(image, (int(box[0] * width), int(box[1] * height)),
-                          (int(box[2] * width), int(box[3] * height)), (0, 255, 0), thickness=1)
+    points = [(int(point[0] * width), int(point[1] * height)) for point in zone_coords or []]
+    if not points:
+        return image
+
+    # Semi-transparent fill for the zone (preview clarity).
+    overlay = image.copy()
+    cv2.fillPoly(overlay, pts=np.int32([points]), color=(0, 0, 255))
+    cv2.addWeighted(overlay, 0.50, image, 0.50, 0.0, dst=image)
+
+    image = cv2.rectangle(
+        image,
+        (int(box[0] * width), int(box[1] * height)),
+        (int(box[2] * width), int(box[3] * height)),
+        (0, 255, 0),
+        thickness=1,
+    )
     image = cv2.polylines(image, pts=np.int32([points]), isClosed=True, color=(0, 0, 255), thickness=1)
     return image
 
@@ -336,19 +349,9 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
     else:
         source_text = str(source_name)
 
-    # Adaptive overlay throttling: heavy scenes can make overlay dominate frame time.
-    # Environment toggles allow quick rollback/tuning without changing UI config.
-    num_objs = len(cameras_objs or [])
-    # Default thresholds tuned to reduce overlay CPU cost.
-    # They can be overridden via environment variables for quick A/B.
-    busy_threshold = int(os.getenv("EVILEYE_OVERLAY_BUSY_THRESHOLD", "8") or "8")
-    busy_overlay = num_objs >= max(1, busy_threshold)
-
-    # Fewer history lines => less overlay work.
-    history_line_every = int(os.getenv("EVILEYE_HISTORY_LINE_EVERY", "4") or "4")
-    if busy_overlay:
-        # In busy scenes, draw fewer trajectory segments.
-        history_line_every = max(history_line_every, 4)
+    # Use fixed drawing cadence (no adaptive "busy" throttling).
+    # This keeps the visualization consistent and closer to the original look.
+    history_line_every = 2
 
     history_frame_id = getattr(image, "frame_id", None)
     try:
@@ -360,9 +363,8 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
         or (history_frame_id_int is not None and history_frame_id_int % history_line_every == 0)
     )
 
-    attr_max_drawn = int(os.getenv("EVILEYE_ATTR_MAX_DRAWN", "3") or "3")
-    if busy_overlay:
-        attr_max_drawn = min(attr_max_drawn, 2)
+    # Draw more attribute telemetry (fewer artificial simplifications).
+    attr_max_drawn = 4
     
     # Position source name at bottom-left (10% from left, 10% from bottom)
     put_text_adaptive(image.image, source_text, (10, 90), 
@@ -847,8 +849,14 @@ def draw_object_attributes(image, obj, bbox, font_face, font_scale, thickness, m
             state = attr_data.get('state', 'none')
             confidence = attr_data.get('confidence_smooth', 0.0)
             color = state_colors.get(state, (128, 128, 128))
-            # Keep the live overlay compact: long telemetry strings noticeably slow down GUI drawing.
-            attr_text = f"{attr_name}: {state} ({confidence:.2f})"
+            # More complete telemetry (revert earlier "compact" simplifications).
+            frames_present = int(attr_data.get("frames_present", 0) or 0)
+            total_time_ms = int(attr_data.get("total_time_ms", 0) or 0)
+            found_ratio = float(attr_data.get("found_ratio", 0.0) or 0.0)
+            attr_text = (
+                f"{attr_name}: {state} ({confidence:.2f}) "
+                f"f={frames_present} t={total_time_ms}ms fr={found_ratio:.2f}"
+            )
             attr_texts.append((attr_text, color))
     
     # Calculate text height for proper spacing
