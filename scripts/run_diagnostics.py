@@ -71,13 +71,13 @@ class DiagnosticRunner:
         self.shutdown_requested = True
     
     def _find_latest_log_file(self) -> Optional[str]:
-        """Find the latest debug log file."""
+        """Find the latest main log file (debug may be disabled by default)."""
         logs_dir = Path("logs")
         if not logs_dir.exists():
             return None
         
         log_files = sorted(
-            logs_dir.glob("*_evileye_debug.log"),
+            logs_dir.glob("*_evileye_main.log"),
             key=lambda p: p.stat().st_mtime,
             reverse=True
         )
