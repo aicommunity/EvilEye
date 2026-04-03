@@ -67,11 +67,13 @@ class EvilEyeLoggingConfig:
     
     def _generate_session_id(self) -> str:
         """
-        Генерирует уникальный идентификатор сессии в формате YYYYMMDD_HHMMSS
-        
-        Returns:
-            Строка с идентификатором сессии (например, "20260112_103000")
+        Генерирует уникальный идентификатор сессии в формате YYYYMMDD_HHMMSS.
+        Если задано EVILEYE_LOG_SESSION_ID (например, дочерним процессом веб-сервера),
+        используется оно — один запуск приложения пишет в одну группу файлов логов.
         """
+        env_sid = (os.environ.get("EVILEYE_LOG_SESSION_ID") or "").strip()
+        if env_sid:
+            return env_sid
         now = datetime.now()
         return now.strftime("%Y%m%d_%H%M%S")
     
@@ -214,7 +216,10 @@ def setup_evileye_logging(log_level: str = "INFO",
         log_to_file=log_to_file,
         log_dir=log_dir
     )
-    
+    # Один session_id на процесс запуска: дочерние процессы (веб-сервер и т.д.) наследуют
+    # эту переменную и не создают отдельный *_{main,errors}.log с другой меткой времени.
+    os.environ["EVILEYE_LOG_SESSION_ID"] = config.session_id
+
     return config.setup_logging()
 
 

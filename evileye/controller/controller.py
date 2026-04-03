@@ -1693,16 +1693,40 @@ class Controller:
                 if self._streaming_service is not None:
                     self._streaming_service.set_frame_relay(inferred_base_url, relay_token)
             else:
-                from evileye.server import ServerProcessManager
-                self._server_process_manager = ServerProcessManager()
-                self._server_process_manager.start(
-                    host=host,
-                    port=port,
-                    log_level=server_cfg.get("log_level", "info"),
-                )
-                if self._streaming_service is not None:
-                    self._streaming_service.set_server_process_manager(self._server_process_manager)
-                self.logger.info("Web server started in a separate process")
+                try:
+                    from evileye.server import ServerProcessManager
+
+                    self._server_process_manager = ServerProcessManager()
+                    self._server_process_manager.start(
+                        host=host,
+                        port=port,
+                        log_level=server_cfg.get("log_level", "info"),
+                    )
+                    time.sleep(0.2)
+                    if not self._server_process_manager.is_alive():
+                        self.logger.warning(
+                            "Embedded web server process exited immediately (missing API dependencies?). "
+                            "Continuing without in-process API; see requirements.txt."
+                        )
+                        try:
+                            self._server_process_manager.stop(timeout=2.0)
+                        except Exception:
+                            pass
+                        self._server_process_manager = None
+                        if self._streaming_service is not None:
+                            self._streaming_service.set_frame_relay(inferred_base_url, relay_token)
+                    else:
+                        if self._streaming_service is not None:
+                            self._streaming_service.set_server_process_manager(self._server_process_manager)
+                        self.logger.info("Web server started in a separate process")
+                except Exception as e:
+                    self.logger.warning(
+                        "Embedded web server not started (%s). Continuing without it.",
+                        e,
+                    )
+                    self._server_process_manager = None
+                    if self._streaming_service is not None:
+                        self._streaming_service.set_frame_relay(inferred_base_url, relay_token)
 
         self._publish_runtime_snapshot(state="initialized")
 

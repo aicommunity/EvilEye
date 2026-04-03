@@ -13,15 +13,21 @@ from fastapi import FastAPI
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from evileye.api.app import create_app
 from evileye.core.logger import get_module_logger
 from evileye.core.logging_config import setup_evileye_logging, log_system_info
 from evileye.api.core.manager_access import get_manager
 from evileye.api.core.config_run_access import get_config_run_manager
 
 
-def build_app() -> FastAPI:
+def _create_app() -> FastAPI:
+    """Load the FastAPI app lazily so missing optional API deps do not break import of this module."""
+    from evileye.api.app import create_app
+
     return create_app()
+
+
+def build_app() -> FastAPI:
+    return _create_app()
 
 
 def _uvicorn_access_log_enabled() -> bool:
@@ -41,7 +47,19 @@ def _run_server_in_process(host, port, log_level, frame_queue, demand_queue, ssl
     logger = get_module_logger("server.child")
     logger.info(f"Web server child process starting on {host}:{port}")
 
-    app = create_app()
+    try:
+        app = _create_app()
+    except ModuleNotFoundError as e:
+        logger.error(
+            "Web server child exiting: missing dependency %r (%s). Install API requirements (e.g. pip install -r requirements.txt).",
+            e.name,
+            e,
+        )
+        return
+    except Exception as e:
+        logger.error("Web server child exiting: failed to create FastAPI app: %s", e, exc_info=True)
+        return
+
     app.state.preview_demand_queue = demand_queue
 
     # Wire the IPC queue into the broker so frames arrive from main process
