@@ -215,6 +215,16 @@ class VideoCaptureOpencv(VideoCaptureBase):
                 self.reconnects.append((self.params['camera'], timestamp, self.is_working))
                 # Update last_frame_time to give reset time to start producing frames
                 self.last_frame_time = datetime.datetime.now()
+                # release() above stopped OpenCVContinuousRecorder; restart like start() after loop reconnect
+                try:
+                    if self.recording_params and self.recording_params.enabled and self.recording_params.continuous_recording_enabled:
+                        self._start_opencv_recording()
+                except Exception as rec_err:
+                    self.logger.warning(
+                        "Could not restart continuous recording after reconnect for %s: %s",
+                        self.source_names,
+                        rec_err,
+                    )
             else:
                 self.logger.warning(f"Could not reconnect to sources: {self.source_names} (init_result={init_result}, is_inited={self.is_inited}, is_opened={self.is_opened()})")
                 self.is_working = False
