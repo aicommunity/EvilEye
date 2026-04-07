@@ -297,8 +297,10 @@ def run_api_server(host: str = "127.0.0.1", port: int = 8080,
             else:
                 desc = mgr.create(rid, Path(config_name).stem, config_name=config_name)
             logger.info(f"Autorun created config run id={desc['id']}")
-            mgr.start(desc["id"])
-            logger.info(f"Autorun started config run id={desc['id']}")
+            effective_host = host if host != "0.0.0.0" else "127.0.0.1"
+            api_base_url = f"{scheme}://{effective_host}:{port}/api/v1"
+            mgr.start(desc["id"], api_base_url=api_base_url)
+            logger.info(f"Autorun started config run id={desc['id']} (relay → {api_base_url})")
         except Exception as e:
             logger.error(f"Autorun failed: {e}")
 
