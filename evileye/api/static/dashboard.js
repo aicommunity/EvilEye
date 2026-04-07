@@ -5,12 +5,18 @@ const navJournals = document.getElementById('nav-journals');
 const navLogs = document.getElementById('nav-logs');
 const navConfigs = document.getElementById('nav-configs');
 const navRuns = document.getElementById('nav-runs');
+const navHistory = document.getElementById('nav-history');
 const panelOverview = document.getElementById('panel-overview');
 const panelCameras = document.getElementById('panel-cameras');
 const panelJournals = document.getElementById('panel-journals');
 const panelLogs = document.getElementById('panel-logs');
 const panelConfigs = document.getElementById('panel-configs');
 const panelRuns = document.getElementById('panel-runs');
+const panelHistory = document.getElementById('panel-history');
+const historyRefreshBtn = document.getElementById('history-refresh-btn');
+const historyListEl = document.getElementById('history-list');
+const journalFilterSource = document.getElementById('journal-filter-source');
+const journalFilterEvent = document.getElementById('journal-filter-event');
 const overviewRefreshBtn = document.getElementById('overview-refresh-btn');
 const overviewCardsEl = document.getElementById('overview-cards');
 const overviewRunsEl = document.getElementById('overview-runs');
@@ -105,6 +111,8 @@ function escapeHtml(s) {
     return div.innerHTML;
 }
 function hasPermission(permission) {
+    if (!authEnabled)
+        return true;
     return currentPermissions.has(permission) || currentPermissions.has('system:admin');
 }
 function stateBadge(state) {
@@ -144,6 +152,7 @@ function applyAccessPolicy() {
     navLogs.classList.toggle('hidden', !hasPermission('journal:view'));
     navConfigs.classList.toggle('hidden', !hasPermission('config:view'));
     navRuns.classList.toggle('hidden', !hasPermission('runtime:control'));
+    navHistory.classList.toggle('hidden', !hasPermission('runtime:view'));
     configCreateBtn.classList.toggle('hidden', !hasPermission('config:edit'));
     panelRuns.querySelector('.create-card')?.classList.toggle('hidden', !hasPermission('runtime:control'));
 }
@@ -245,12 +254,14 @@ function showPanel(panel) {
     panelLogs.classList.toggle('active', panel === 'logs');
     panelConfigs.classList.toggle('active', panel === 'configs');
     panelRuns.classList.toggle('active', panel === 'runs');
+    panelHistory.classList.toggle('active', panel === 'history');
     navOverview.classList.toggle('active', panel === 'overview');
     navCameras.classList.toggle('active', panel === 'cameras');
     navJournals.classList.toggle('active', panel === 'journals');
     navLogs.classList.toggle('active', panel === 'logs');
     navConfigs.classList.toggle('active', panel === 'configs');
     navRuns.classList.toggle('active', panel === 'runs');
+    navHistory.classList.toggle('active', panel === 'history');
 }
 function renderConfigsList(names, searchQuery) {
     const q = searchQuery.trim().toLowerCase();
@@ -534,17 +545,50 @@ async function loadCameras() {
         return;
     renderCameras((await stateApi.cameras()).items);
 }
+function getJournalFilters() {
+    const filters = {};
+    const src = journalFilterSource?.value?.trim();
+    const evt = journalFilterEvent?.value?.trim();
+    if (src)
+        filters.source_name = src;
+    if (evt)
+        filters.event_type = evt;
+    return filters;
+}
 async function loadJournals() {
     if (!hasPermission('journal:view'))
         return;
+    const filters = getJournalFilters();
     const [events, objects, history] = await Promise.all([
-        journalsApi.events(),
-        journalsApi.objects(),
+        journalsApi.events(0, 30, filters),
+        journalsApi.objects(0, 30, filters),
         journalsApi.configHistory(),
     ]);
     renderJournalTable(journalEventsEl, events.items, ['event_type', 'source_name', 'information', 'ts'], 'События не найдены.');
     renderJournalTable(journalObjectsEl, objects.items, ['event_type', 'source_name', 'information', 'ts'], 'Объекты не найдены.');
     renderJournalTable(journalHistoryEl, history.items, ['job_id', 'project_id', 'configuration_id', 'status', 'creation_time'], 'История конфигураций недоступна.');
+}
+async function loadHistory() {
+    try {
+        const data = await stateApi.runs('all');
+        const runs = data.items ?? [];
+        if (!runs.length) {
+            historyListEl.innerHTML = '<p class="empty">Нет записей истории запусков.</p>';
+            return;
+        }
+        const cols = ['id', 'name', 'pipeline_class', 'state', 'pid', 'error'];
+        const header = cols.map((c) => `<th>${escapeHtml(c)}</th>`).join('');
+        const rows = runs
+            .map((r) => {
+            const rec = r;
+            return `<tr>${cols.map((c) => `<td>${escapeHtml(String(rec[c] ?? '—'))}</td>`).join('')}</tr>`;
+        })
+            .join('');
+        historyListEl.innerHTML = `<table class="journal-table"><thead><tr>${header}</tr></thead><tbody>${rows}</tbody></table>`;
+    }
+    catch (e) {
+        handleApiError(e, 'Не удалось загрузить историю запусков');
+    }
 }
 async function loadLogs() {
     if (!hasPermission('journal:view'))
@@ -564,6 +608,7 @@ async function refreshAll() {
     await loadConfigs();
     await loadJournals();
     await loadLogs();
+    await loadHistory();
 }
 function openRunDetail(rid) {
     runDetailRid.textContent = String(rid);
@@ -832,11 +877,15 @@ export function initDashboard() {
     navLogs.addEventListener('click', () => showPanel('logs'));
     navConfigs.addEventListener('click', () => showPanel('configs'));
     navRuns.addEventListener('click', () => showPanel('runs'));
+    navHistory.addEventListener('click', () => showPanel('history'));
     showPanel('overview');
     overviewRefreshBtn.addEventListener('click', () => void refreshAll());
     camerasRefreshBtn.addEventListener('click', () => void loadCameras());
     journalsRefreshBtn.addEventListener('click', () => void loadJournals());
     logsRefreshBtn.addEventListener('click', () => void loadLogs());
+    historyRefreshBtn.addEventListener('click', () => void loadHistory());
+    journalFilterSource?.addEventListener('change', () => void loadJournals());
+    journalFilterEvent?.addEventListener('change', () => void loadJournals());
     configCreateBtn.addEventListener('click', () => void openConfigModal('create'));
     configModalClose.addEventListener('click', closeConfigModal);
     configModal.querySelector('.modal-backdrop')?.addEventListener('click', closeConfigModal);

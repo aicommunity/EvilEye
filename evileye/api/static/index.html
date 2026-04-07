@@ -27,6 +27,7 @@
         <button type="button" id="nav-logs" class="tab">Логи</button>
         <button type="button" id="nav-runs" class="tab">Запуски</button>
         <button type="button" id="nav-configs" class="tab">Настройки</button>
+        <button type="button" id="nav-history" class="tab">История</button>
       </nav>
     </header>
 
@@ -60,6 +61,8 @@
           <h2>Журналы</h2>
           <p class="hint">Предметные журналы текущей активной конфигурации: события, объекты и история конфигураций.</p>
           <div class="toolbar">
+            <input type="text" id="journal-filter-source" placeholder="Источник (source_name)" class="search-input" aria-label="Фильтр по источнику" style="max-width:200px">
+            <input type="text" id="journal-filter-event" placeholder="Тип события (event_type)" class="search-input" aria-label="Фильтр по типу события" style="max-width:200px">
             <button type="button" id="journals-refresh-btn" class="btn btn-outline">Обновить журналы</button>
           </div>
           <h3 class="section-title">Events</h3>
@@ -122,6 +125,17 @@
             <button type="button" id="run-refresh-btn" class="btn btn-outline">Обновить</button>
           </div>
           <ul id="runs-list" class="runs-list"></ul>
+        </div>
+      </section>
+
+      <section id="panel-history" class="panel">
+        <div class="card">
+          <h2>История запусков</h2>
+          <p class="hint">Все завершённые runtime-запуски из реестра.</p>
+          <div class="toolbar">
+            <button type="button" id="history-refresh-btn" class="btn btn-outline">Обновить историю</button>
+          </div>
+          <div id="history-list"></div>
         </div>
       </section>
     </main>
@@ -201,7 +215,7 @@
     <div id="error-toast" class="toast toast-error" role="alert"></div>
     <div id="success-toast" class="toast toast-success" role="alert"></div>
 
-    <div id="auth-modal" class="modal open" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
+    <div id="auth-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
       <div class="modal-backdrop"></div>
       <div class="modal-content auth-modal-content">
         <div class="modal-header">

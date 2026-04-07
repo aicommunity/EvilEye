@@ -212,12 +212,18 @@ export const stateApi = {
 };
 
 export const journalsApi = {
-  events(page = 0, size = 30): Promise<JournalPage<Record<string, unknown>>> {
-    return request(`/journals/events?page=${page}&size=${size}`);
+  events(page = 0, size = 30, filters?: { source_name?: string; event_type?: string }): Promise<JournalPage<Record<string, unknown>>> {
+    const p = new URLSearchParams({ page: String(page), size: String(size) });
+    if (filters?.source_name) p.set('source_name', filters.source_name);
+    if (filters?.event_type) p.set('event_type', filters.event_type);
+    return request(`/journals/events?${p}`);
   },
 
-  objects(page = 0, size = 30): Promise<JournalPage<Record<string, unknown>>> {
-    return request(`/journals/objects?page=${page}&size=${size}`);
+  objects(page = 0, size = 30, filters?: { source_name?: string; event_type?: string }): Promise<JournalPage<Record<string, unknown>>> {
+    const p = new URLSearchParams({ page: String(page), size: String(size) });
+    if (filters?.source_name) p.set('source_name', filters.source_name);
+    if (filters?.event_type) p.set('event_type', filters.event_type);
+    return request(`/journals/objects?${p}`);
   },
 
   configHistory(limit = 30): Promise<{ available: boolean; items: Record<string, unknown>[] }> {
