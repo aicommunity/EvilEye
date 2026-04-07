@@ -2,7 +2,7 @@ import copy
 import datetime
 from abc import ABC, abstractmethod
 import threading
-from queue import Queue
+from queue import Queue, Empty
 from enum import Enum
 from urllib.parse import urlparse, ParseResult
 from threading import Lock, RLock
@@ -18,6 +18,9 @@ from ..video_recorder.recorder_manager import RecorderManager
 from ..core.frame import CaptureImage, Frame
 from .constants import CaptureConstants, CaptureConfig
 from .queue_utils import DropOldestQueue
+
+EXEC_MODE_THREAD = "thread"
+EXEC_MODE_PROCESS = "process"
 
 
 class CaptureDeviceType(Enum):
@@ -75,6 +78,11 @@ class VideoCaptureBase(EvilEyeBase):
         self.grab_thread = None
         self.retrieve_thread = None
 
+        # Multiprocessing support (execution_mode == "process")
+        self.execution_mode = EXEC_MODE_THREAD
+        self._mp_control = None
+        self._capture_dispatch_thread: threading.Thread | None = None
+
     def is_opened(self) -> bool:
         return False
 
@@ -87,11 +95,32 @@ class VideoCaptureBase(EvilEyeBase):
     def is_running(self) -> bool:
         return self.run_flag
 
+    def init(self, **kwargs):
+        """Override to handle process-mode capture before subclass init."""
+        if self.execution_mode == EXEC_MODE_PROCESS and not self.get_init_flag():
+            self.is_inited = self._init_process_mode()
+            return self.is_inited
+        return super().init(**kwargs)
+
     def get(self) -> list[CaptureImage]:
         captured_images: list[CaptureImage] = []
         if self.get_init_flag():
-            captured_images = self.get_frames_impl()
+            if self.execution_mode == EXEC_MODE_PROCESS:
+                captured_images = self._get_frames_from_queue()
+            else:
+                captured_images = self.get_frames_impl()
         return captured_images
+
+    def _get_frames_from_queue(self) -> list[CaptureImage]:
+        """Read available frames from frames_queue (used in process mode)."""
+        frames: list[CaptureImage] = []
+        try:
+            frame = self.frames_queue.get_nowait()
+            if frame is not None:
+                frames.append(frame)
+        except Empty:
+            pass
+        return frames
 
     def _start_capture_threads(self) -> None:
         """Start capture threads (grab and retrieve).
@@ -202,8 +231,44 @@ class VideoCaptureBase(EvilEyeBase):
             except Exception:
                 pass
 
+    def _init_process_mode(self) -> bool:
+        """Initialise MpControl + MpWorkerCapture for process-based capture."""
+        from ..core.mp_control import MpControl
+        from .mp_worker_capture import MpWorkerCapture
+
+        self._mp_control = MpControl(
+            max_input_size=4,
+            name=f"capture-{'_'.join(str(s) for s in (self.source_ids or [0]))}",
+        )
+        worker = self._mp_control.add_worker(MpWorkerCapture)
+        worker.set_params(self.params if self.params else {})
+        self._mp_control.start()
+        self.logger.info("Capture initialised in PROCESS mode")
+        return True
+
+    def _capture_dispatch_loop(self) -> None:
+        """Read CaptureImage objects from child process and put them into frames_queue."""
+        while self.run_flag:
+            try:
+                frame = self._mp_control.get(timeout=0.5)
+            except Exception:
+                continue
+            if frame is None:
+                continue
+            try:
+                self.frames_queue.put(frame)
+            except Exception:
+                pass
+
     def start(self) -> None:
         """Start video capture threads and recording."""
+        if self.execution_mode == EXEC_MODE_PROCESS and self._mp_control is not None:
+            self.run_flag = True
+            self._capture_dispatch_thread = threading.Thread(
+                target=self._capture_dispatch_loop, daemon=True,
+            )
+            self._capture_dispatch_thread.start()
+            return
         self._start_capture_threads()
         self._start_recording()
 
@@ -211,6 +276,26 @@ class VideoCaptureBase(EvilEyeBase):
         """Stop capture threads and recording, cleanup queues."""
         self.run_flag = False
         self.stop_event.set()
+
+        if self._mp_control is not None:
+            try:
+                self._mp_control.stop()
+            except Exception:
+                pass
+            self._mp_control = None
+            if self._capture_dispatch_thread is not None:
+                try:
+                    self._capture_dispatch_thread.join(timeout=3.0)
+                except Exception:
+                    pass
+                self._capture_dispatch_thread = None
+            self._cleanup_queue()
+            try:
+                self.logger.info(f"Capture (process mode) stopped for {self.source_names}")
+            except Exception:
+                pass
+            return
+
         try:
             if self.recorder_manager:
                 self.recorder_manager.stop()
@@ -232,6 +317,7 @@ class VideoCaptureBase(EvilEyeBase):
 
     def set_params_impl(self) -> None:
         self.release()
+        self.execution_mode = self.params.get('execution_mode', EXEC_MODE_THREAD)
         self.capture_config = CaptureConfig.from_dict(self.params.get('capture'))
         self.split_stream = self.params.get('split', False)
         self.num_split = self.params.get('num_split', None)
@@ -276,6 +362,7 @@ class VideoCaptureBase(EvilEyeBase):
 
     def get_params_impl(self):
         params = dict()
+        params['execution_mode'] = self.execution_mode
         params['split'] = self.split_stream
         params['num_split'] = self.num_split
         params['src_coords'] = self.src_coords
