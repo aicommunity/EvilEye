@@ -109,7 +109,7 @@ export const stateApi = {
     run(rid) {
         return request(`/state/runs/${rid}`);
     },
-    cameras(scope = 'current') {
+    cameras(scope = 'all') {
         return request(`/state/cameras?scope=${scope}`);
     },
 };

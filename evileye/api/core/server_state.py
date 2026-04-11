@@ -178,8 +178,25 @@ def _current_run_candidate_key(run: Dict[str, Any]) -> tuple[int, int, float]:
     return (state_rank, 1 if bool(run.get("latest_frame_available")) else 0, updated_at)
 
 
+def _is_run_active(run: Dict[str, Any]) -> bool:
+    state = str(run.get("state") or "")
+    return bool(run.get("alive")) or state in {"starting", "running", "stopping"}
+
+
+def list_active_run_summaries() -> list[Dict[str, Any]]:
+    runs = [run for run in list_run_summaries() if _is_run_active(run)]
+    runs.sort(
+        key=lambda item: (
+            _current_run_candidate_key(item),
+            int(item.get("id") or 0),
+        ),
+        reverse=True,
+    )
+    return runs
+
+
 def get_current_run_summary() -> Optional[Dict[str, Any]]:
-    runs = list_run_summaries()
+    runs = list_active_run_summaries() or list_run_summaries()
     if not runs:
         return None
     return max(runs, key=_current_run_candidate_key)
@@ -191,6 +208,8 @@ def list_history_run_summaries(*, exclude_current: bool = True) -> list[Dict[str
     current_id = current.get("id") if current else None
     items = []
     for run in runs:
+        if _is_run_active(run):
+            continue
         if exclude_current and current_id is not None and run.get("id") == current_id:
             continue
         items.append(run)
@@ -198,9 +217,14 @@ def list_history_run_summaries(*, exclude_current: bool = True) -> list[Dict[str
     return items
 
 
-def list_camera_summaries(*, current_only: bool = True) -> list[Dict[str, Any]]:
+def list_camera_summaries(*, scope: str = "current") -> list[Dict[str, Any]]:
     cameras: list[Dict[str, Any]] = []
-    runs = [get_current_run_summary()] if current_only else list_run_summaries()
+    if scope == "current":
+        runs = [get_current_run_summary()]
+    elif scope == "active":
+        runs = list_active_run_summaries()
+    else:
+        runs = list_run_summaries()
     for run in runs:
         if not run:
             continue
@@ -228,7 +252,8 @@ def list_camera_summaries(*, current_only: bool = True) -> list[Dict[str, Any]]:
 
 def build_overview() -> Dict[str, Any]:
     current_run = get_current_run_summary()
-    current_cameras = list_camera_summaries(current_only=True)
+    active_runs = list_active_run_summaries()
+    active_cameras = list_camera_summaries(scope="active")
     history_runs = list_history_run_summaries(exclude_current=True)
     log_files = _log_files()
     latest_logs = []
@@ -248,13 +273,15 @@ def build_overview() -> Dict[str, Any]:
             "status": "ok",
             "current_run_id": current_run.get("id") if current_run else None,
             "current_run_state": current_state,
+            "active_runs_total": len(active_runs),
             "history_runs_total": len(history_runs),
-            "cameras_total": len(current_cameras),
-            "web_previews_available": sum(1 for camera in current_cameras if camera.get("preview_available")),
+            "cameras_total": len(active_cameras),
+            "web_previews_available": sum(1 for camera in active_cameras if camera.get("preview_available")),
             "log_files": [path.name for path in log_files[:10]],
         },
         "current_run": current_run,
-        "cameras": current_cameras,
+        "active_runs": active_runs,
+        "cameras": active_cameras,
         "history_runs": history_runs,
         "latest_logs": latest_logs,
     }
@@ -264,6 +291,7 @@ def build_runtime_history() -> Dict[str, Any]:
     current_run = get_current_run_summary()
     return {
         "current_run": current_run,
+        "active_runs": list_active_run_summaries(),
         "items": list_history_run_summaries(exclude_current=True),
     }
 

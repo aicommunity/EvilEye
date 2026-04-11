@@ -185,12 +185,14 @@ export const stateApi = {
       status: string;
       current_run_id: number | null;
       current_run_state: string;
+      active_runs_total: number;
       history_runs_total: number;
       cameras_total: number;
       web_previews_available: number;
       log_files: string[];
     };
     current_run: StateRun | null;
+    active_runs: StateRun[];
     cameras: StateCamera[];
     history_runs: StateRun[];
     latest_logs: Array<{ name: string; updated_at: number; tail: string[] }>;
@@ -198,7 +200,7 @@ export const stateApi = {
     return request('/state/overview');
   },
 
-  runs(scope: 'current' | 'history' | 'all' = 'current'): Promise<{ current_run: StateRun | null; items: StateRun[] }> {
+  runs(scope: 'current' | 'active' | 'history' | 'all' = 'current'): Promise<{ current_run: StateRun | null; items: StateRun[]; active_runs?: StateRun[] }> {
     return request(`/state/runs?scope=${scope}`);
   },
 
@@ -206,7 +208,7 @@ export const stateApi = {
     return request(`/state/runs/${rid}`);
   },
 
-  cameras(scope: 'current' | 'all' = 'current'): Promise<{ items: StateCamera[] }> {
+  cameras(scope: 'current' | 'active' | 'all' = 'all'): Promise<{ items: StateCamera[] }> {
     return request(`/state/cameras?scope=${scope}`);
   },
 };

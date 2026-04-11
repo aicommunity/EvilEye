@@ -183,6 +183,31 @@ body {
   color: var(--text);
 }
 
+.toolbar select {
+  min-width: 180px;
+  font: inherit;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.toolbar-label {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+.panel-summary {
+  margin: 0 0 1rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(59, 130, 246, 0.08);
+  color: var(--text-muted);
+  font-size: 0.875rem;
+}
+
 .runs-toolbar .fps-label {
   display: flex;
   align-items: center;
@@ -285,6 +310,16 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
+.overview-run:last-child {
+  border-bottom: none;
+}
+
+.overview-run-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 0.5rem;
+}
+
 .log-grid {
   display: grid;
   gap: 1rem;
@@ -355,6 +390,32 @@ body {
 
 .camera-actions {
   margin-top: 0.75rem;
+}
+
+.camera-groups {
+  display: grid;
+  gap: 1rem;
+}
+
+.camera-run-group {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem;
+}
+
+.camera-group-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.85rem;
+}
+
+.camera-group-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 1rem;
 }
 
 .journal-table {

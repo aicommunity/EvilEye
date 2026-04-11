@@ -130,8 +130,30 @@ class ConfigRunManager:
             "error": item.error,
         }
 
+    def _refresh_item_state_locked(self, item: ConfigRunItem) -> None:
+        pid = item.pid
+        if not pid or item.state not in (
+            ConfigRunState.STARTING,
+            ConfigRunState.RUNNING,
+            ConfigRunState.STOPPING,
+        ):
+            return
+        try:
+            os.kill(pid, 0)
+            return
+        except OSError:
+            item.pid = None
+            item.state = ConfigRunState.STOPPED
+            item.error = None
+        try:
+            mark_runtime_stopped(item.id)
+        except Exception:
+            pass
+
     def list(self) -> Dict[int, Dict]:
         with self._lock:
+            for item in self._items.values():
+                self._refresh_item_state_locked(item)
             return {rid: self._describe_locked(it) for rid, it in self._items.items()}
 
     def next_run_id(self) -> int:
@@ -143,6 +165,7 @@ class ConfigRunManager:
             item = self._items.get(rid)
             if item is None:
                 raise KeyError("Config run not found")
+            self._refresh_item_state_locked(item)
             return self._describe_locked(item)
 
     def _ensure_configs_dir(self) -> Path:

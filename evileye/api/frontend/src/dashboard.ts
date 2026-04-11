@@ -21,6 +21,7 @@ import {
   streamStop,
   streamStatus,
   type ConfigRun,
+  type StateRun,
   type StateCamera,
 } from './api.js';
 
@@ -149,6 +150,12 @@ function escapeHtml(s: string): string {
   return div.innerHTML;
 }
 
+function parseOptionalNumber(value: string | undefined): number | null {
+  if (value == null || value === '') return null;
+  const parsed = Number(value);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
 function hasPermission(permission: string): boolean {
   if (!authEnabled) return true;
   return currentPermissions.has(permission) || currentPermissions.has('system:admin');
@@ -164,6 +171,44 @@ function stateBadge(state: string): string {
       ? 'badge-pending'
       : 'badge-stopped';
   return `<span class="badge ${badgeClass}">${escapeHtml(stateLabels[state] ?? state)}</span>`;
+}
+
+function sourceCountLabel(count: number): string {
+  if (count % 10 === 1 && count % 100 !== 11) return `${count} источник`;
+  if (count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14)) return `${count} источника`;
+  return `${count} источников`;
+}
+
+function renderOverviewRunItem(run: StateRun, options?: { primary?: boolean }): string {
+  const sourceCount = Array.isArray(run.sources) ? run.sources.length : 0;
+  const label = options?.primary ? 'Выделен сервером' : sourceCount > 0 ? sourceCountLabel(sourceCount) : 'Без источников';
+  return `<li class="overview-run">
+    <span class="run-name">${escapeHtml(run.name ?? `Запуск ${run.id}`)}</span>
+    <span class="run-id">#${run.id}</span>
+    ${stateBadge(run.state)}
+    <span class="run-config">${escapeHtml(run.pipeline_class ?? 'pipeline: n/a')}</span>
+    <span class="run-id">${escapeHtml(label)}</span>
+    ${run.latest_frame_available ? '<span class="badge badge-running">preview</span>' : ''}
+    <span class="overview-run-actions">
+      <button type="button" class="btn btn-sm btn-outline overview-run-detail" data-rid="${run.id}">Просмотр</button>
+      <button type="button" class="btn btn-sm btn-primary overview-run-stream" data-rid="${run.id}" ${run.state === 'running' ? '' : 'disabled'}>Поток</button>
+    </span>
+  </li>`;
+}
+
+function bindOverviewRunActions(): void {
+  overviewRunsEl.querySelectorAll<HTMLElement>('[data-rid]').forEach((btn) => {
+    const ridAttr = btn.dataset.rid;
+    const rid = Number(ridAttr);
+    if (Number.isNaN(rid)) return;
+    btn.addEventListener('click', () => {
+      if (btn.classList.contains('overview-run-detail')) {
+        openRunDetail(rid);
+      } else if (btn.classList.contains('overview-run-stream')) {
+        openStream(rid);
+      }
+    });
+  });
 }
 
 function streamAvailabilityText(status: {
@@ -474,30 +519,59 @@ async function loadRuns(): Promise<void> {
 }
 
 function renderOverview(overview: Awaited<ReturnType<typeof stateApi.overview>>): void {
-  const currentRun = overview.current_run;
+  const activeRuns = overview.active_runs ?? [];
+  const historyRuns = overview.history_runs ?? [];
+  const allRuns = [...activeRuns];
+  historyRuns.forEach((run) => {
+    if (!allRuns.some((item) => item.id === run.id)) allRuns.push(run);
+  });
   overviewCardsEl.innerHTML = `
     <div class="metric-card"><span class="metric-label">Статус сервера</span><strong>${escapeHtml(overview.server.status)}</strong></div>
-    <div class="metric-card"><span class="metric-label">Текущий запуск</span><strong>${currentRun ? `#${currentRun.id}` : '—'}</strong></div>
-    <div class="metric-card"><span class="metric-label">Состояние запуска</span><strong>${escapeHtml(overview.server.current_run_state)}</strong></div>
+    <div class="metric-card"><span class="metric-label">Активные запуски</span><strong>${overview.server.active_runs_total}</strong></div>
     <div class="metric-card"><span class="metric-label">Камеры</span><strong>${overview.server.cameras_total}</strong></div>
-    <div class="metric-card"><span class="metric-label">Web preview</span><strong>${overview.server.web_previews_available}</strong></div>`;
-  overviewRunsEl.innerHTML = currentRun
-    ? `<li class="overview-run"><span class="run-name">${escapeHtml(currentRun.name ?? `Запуск ${currentRun.id}`)}</span><span class="run-id">#${currentRun.id}</span>${stateBadge(currentRun.state)}<span class="run-config">${escapeHtml(currentRun.pipeline_class ?? 'pipeline: n/a')}</span>${currentRun.latest_frame_available ? '<span class="badge badge-running">preview</span>' : ''}</li>`
-    : '<li class="empty">Текущий runtime-запуск не найден.</li>';
+    <div class="metric-card"><span class="metric-label">Web preview</span><strong>${overview.server.web_previews_available}</strong></div>
+    <div class="metric-card"><span class="metric-label">История запусков</span><strong>${overview.server.history_runs_total}</strong></div>`;
+  overviewRunsEl.innerHTML = allRuns.length
+    ? allRuns.map((run) => renderOverviewRunItem(run)).join('')
+    : '<li class="empty">Runtime-запусков нет.</li>';
+  bindOverviewRunActions();
 }
 
 function renderCameras(cameras: StateCamera[]): void {
   const ts = Date.now();
+  const groups = new Map<number, StateCamera[]>();
+  cameras.forEach((camera) => {
+    const runCameras = groups.get(camera.run_id) ?? [];
+    runCameras.push(camera);
+    groups.set(camera.run_id, runCameras);
+  });
   camerasListEl.innerHTML = cameras.length
-    ? cameras
-        .map(
-          (camera) =>
-            `<article class="camera-card"><div class="camera-card-head"><span class="run-name">${escapeHtml(camera.source_name)}</span>${stateBadge(camera.run_state)}</div><p class="hint">Run #${camera.run_id} · source #${camera.source_id ?? '—'} · ${escapeHtml(camera.run_name ?? 'без имени')} · ${escapeHtml(camera.pipeline_class ?? 'pipeline n/a')}</p><p class="camera-meta">${escapeHtml(camera.source_type ?? 'source n/a')} · ${escapeHtml(camera.address ?? 'адрес не указан')}</p>${camera.preview_available ? `<img src="${streamSnapshotUrl(camera.run_id, camera.source_id)}&t=${ts}" alt="Preview ${escapeHtml(camera.source_name)}" class="camera-preview" data-rid="${camera.run_id}" data-sid="${camera.source_id ?? ''}">` : `<div class="camera-preview camera-preview-empty">${camera.run_state === 'running' ? 'Кадр ещё не готов' : 'Запуск остановлен'}</div>`}<div class="camera-actions"><button type="button" class="btn btn-sm btn-outline camera-open-stream" data-rid="${camera.run_id}" data-sid="${camera.source_id ?? ''}" ${camera.preview_available ? '' : 'disabled'}>Открыть поток</button></div></article>`
-        )
-        .join('')
+    ? `<div class="camera-groups">${Array.from(groups.entries())
+        .map(([runId, runCameras]) => {
+          const first = runCameras[0];
+          return `<section class="camera-run-group">
+            <div class="camera-group-header">
+              <span class="run-name">${escapeHtml(first.run_name ?? `Запуск ${runId}`)}</span>
+              <span class="run-id">#${runId}</span>
+              ${stateBadge(first.run_state)}
+              <span class="run-config">${escapeHtml(first.pipeline_class ?? 'pipeline n/a')}</span>
+            </div>
+            <div class="camera-group-grid">
+              ${runCameras
+                .map(
+                  (camera) =>
+                    `<article class="camera-card"><div class="camera-card-head"><span class="run-name">${escapeHtml(camera.source_name)}</span>${stateBadge(camera.run_state)}</div><p class="hint">Run #${camera.run_id} · source #${camera.source_id ?? '—'} · ${escapeHtml(camera.run_name ?? 'без имени')}</p><p class="camera-meta">${escapeHtml(camera.source_type ?? 'source n/a')} · ${escapeHtml(camera.address ?? 'адрес не указан')}</p>${camera.preview_available ? `<img src="${streamSnapshotUrl(camera.run_id, camera.source_id)}&t=${ts}" alt="Preview ${escapeHtml(camera.source_name)}" class="camera-preview" data-rid="${camera.run_id}" data-sid="${camera.source_id ?? ''}">` : `<div class="camera-preview camera-preview-empty">${camera.run_state === 'running' ? 'Кадр ещё не готов' : 'Запуск остановлен'}</div>`}<div class="camera-actions"><button type="button" class="btn btn-sm btn-outline camera-open-stream" data-rid="${camera.run_id}" data-sid="${camera.source_id ?? ''}" ${camera.preview_available ? '' : 'disabled'}>Открыть поток</button></div></article>`
+                )
+                .join('')}
+            </div>
+          </section>`;
+        })
+        .join('')}</div>`
     : '<p class="empty">Сведения о камерах пока недоступны.</p>';
   camerasListEl.querySelectorAll('.camera-open-stream').forEach((btn) => {
-    btn.addEventListener('click', () => openStream(Number((btn as HTMLElement).dataset.rid), Number((btn as HTMLElement).dataset.sid)));
+    btn.addEventListener('click', () =>
+      openStream(Number((btn as HTMLElement).dataset.rid), parseOptionalNumber((btn as HTMLElement).dataset.sid))
+    );
   });
   camerasListEl.querySelectorAll<HTMLImageElement>('.camera-preview[data-rid][data-sid]').forEach((img) => {
     img.addEventListener('error', () => disableCameraPreview(img));
@@ -526,14 +600,15 @@ function disableCameraPreview(img: HTMLImageElement): void {
   }
 }
 
-function requestCameraPreview(img: HTMLImageElement, rid: number, sid: number): void {
+function requestCameraPreview(img: HTMLImageElement, rid: number, sid: number | null): void {
   if (img.dataset.previewLoading === '1') {
     img.dataset.previewPending = '1';
     return;
   }
   img.dataset.previewLoading = '1';
   img.dataset.previewPending = '0';
-  const url = `${streamSnapshotUrl(rid, sid)}&t=${Date.now()}`;
+  const baseUrl = streamSnapshotUrl(rid, sid);
+  const url = `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}t=${Date.now()}`;
   void fetch(url, { credentials: 'same-origin', cache: 'no-store' })
     .then((response) => {
       if (!response.ok) {
@@ -572,8 +647,8 @@ function refreshCameraPreviews(): void {
   }
   camerasListEl.querySelectorAll<HTMLImageElement>('.camera-preview[data-rid][data-sid]').forEach((img) => {
     const rid = Number(img.dataset.rid);
-    const sid = Number(img.dataset.sid);
-    if (!Number.isNaN(rid) && !Number.isNaN(sid)) {
+    const sid = parseOptionalNumber(img.dataset.sid);
+    if (!Number.isNaN(rid)) {
       const run = runsCache.find((item) => item.id === rid);
       if (run && run.state !== 'running') {
         disableCameraPreview(img);
@@ -611,7 +686,7 @@ async function loadOverview(): Promise<void> {
 
 async function loadCameras(): Promise<void> {
   if (!hasPermission('live:view')) return;
-  renderCameras((await stateApi.cameras()).items);
+  renderCameras((await stateApi.cameras('all')).items);
 }
 
 function getJournalFilters(): { source_name?: string; event_type?: string } {
@@ -672,9 +747,9 @@ async function loadLogs(): Promise<void> {
 
 async function refreshAll(): Promise<void> {
   await loadSystemInfo();
+  await loadRuns();
   await loadOverview();
   await loadCameras();
-  await loadRuns();
   await loadConfigs();
   await loadJournals();
   await loadLogs();
