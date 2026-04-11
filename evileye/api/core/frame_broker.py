@@ -126,8 +126,7 @@ class FrameBroker:
             )
             self._stats["published_payloads"] += 1
             self._stats["last_payload_bytes"] = len(payload) if payload is not None else 0
-            if hash(pipeline_id) % 10 == 0:
-                self._cleanup_old_frames()
+            self._cleanup_old_frames()
         self.logger.debug(f"Published frame for pipeline '{pipeline_id}'")
 
     def get_runtime_stats(self) -> dict:
