@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 import numpy as np
+from queue import Empty
 
 from evileye.capture.queue_utils import DropOldestQueue
 from evileye.video_recorder.file_validator import FileValidator
@@ -24,6 +25,13 @@ def test_drop_oldest_queue_drops_and_reports():
     first = q.get()
     second = q.get()
     assert {first, second} == {2, 3}
+
+
+def test_drop_oldest_queue_raises_empty_when_queue_is_empty():
+    q = DropOldestQueue(maxsize=2)
+
+    with pytest.raises(Empty):
+        q.get_nowait()
 
 
 def test_path_generator_creates_expected_structure(tmp_path: Path):
