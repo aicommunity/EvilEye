@@ -5,6 +5,7 @@
       {
         "camera": "videos/planes_sample.mp4",
         "source": "VideoFile",
+        "type": "VideoCaptureOpencv",
         "execution_mode": "process",
         "split": false,
         "num_split": 0,
@@ -80,7 +81,7 @@
     "log_level": "info"
   },
   "controller": {
-    "fps": 30,
+    "fps": 5,
     "enable_close_from_gui": true,
     "class_names": [
       "person",
@@ -172,7 +173,7 @@
     "max_lost_objects": 100,
     "lost_thresh": 5,
     "lost_store_time_secs": 60,
-    "history_len": 1
+    "history_len": 30
   },
   "events_detectors": {
     "CamEventsDetector": {},
@@ -208,6 +209,33 @@
     ],
     "gui_enabled": true,
     "show_debug_info": true,
-    "objects_journal_enabled": true
+    "objects_journal_enabled": true,
+    "preview_track_frame_lag": 300,
+    "text_config": {
+      "font_size_pt": 42,
+      "font_face": 0,
+      "color": [
+        0,
+        0,
+        255
+      ],
+      "thickness": null,
+      "background_color": [
+        0,
+        0,
+        0
+      ],
+      "background_enabled": false,
+      "padding_percent": 1.5,
+      "position_offset_percent": [
+        0,
+        -8
+      ],
+      "font_scale_method": "resolution_based",
+      "base_resolution": [
+        1920,
+        1080
+      ]
+    }
   }
 }
