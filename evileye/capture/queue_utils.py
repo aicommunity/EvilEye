@@ -6,6 +6,7 @@ while maintaining the intentional small size (2) to avoid stale frames.
 """
 
 from collections import deque
+from queue import Empty
 from threading import Lock
 from typing import Optional, Any
 
@@ -37,6 +38,8 @@ class DropOldestQueue:
 
     def get(self, block: bool = False, timeout: Optional[float] = None) -> Any:
         with self._lock:
+            if not self._deque:
+                raise Empty
             return self._deque.popleft()
 
     def get_nowait(self) -> Any:
