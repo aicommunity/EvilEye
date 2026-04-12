@@ -62,11 +62,9 @@ const streamNameEl = document.getElementById('stream-name');
 const streamStateEl = document.getElementById('stream-state');
 const streamStatusEl = document.getElementById('stream-status');
 const streamFrame = document.getElementById('stream-frame');
-const streamSnapshotImg = document.getElementById('stream-snapshot');
 const streamBackBtn = document.getElementById('stream-back-btn');
 const streamFpsInput = document.getElementById('stream-fps-input');
 const streamApplyFpsBtn = document.getElementById('stream-apply-fps-btn');
-const streamSnapshotBtn = document.getElementById('stream-snapshot-btn');
 const footerVersion = document.getElementById('footer-version');
 const errorToast = document.getElementById('error-toast');
 const successToast = document.getElementById('success-toast');
@@ -836,7 +834,6 @@ function openStream(rid, sourceId) {
     streamStateEl.textContent = '…';
     streamStatusEl.textContent = '…';
     streamFrame.src = streamMjpgUrl(rid, fps, currentStreamSourceId);
-    streamSnapshotImg.src = '';
     streamContainer.classList.add('open');
     streamPollTimer = window.setInterval(() => void pollStreamInfo(), 3000);
     void pollStreamInfo();
@@ -849,14 +846,6 @@ function applyStreamFps() {
     streamFpsInput.value = String(safeFps);
     streamFrame.src = streamMjpgUrl(currentStreamRid, safeFps, currentStreamSourceId);
     showSuccess(`FPS установлен: ${safeFps}`);
-}
-function refreshSnapshot() {
-    if (currentStreamRid == null)
-        return;
-    if (streamFrame.src)
-        return;
-    const base = streamSnapshotUrl(currentStreamRid, currentStreamSourceId);
-    streamSnapshotImg.src = `${base}${base.includes('?') ? '&' : '?'}t=${Date.now()}`;
 }
 async function pollStreamInfo() {
     if (currentStreamRid == null)
@@ -878,11 +867,7 @@ async function pollStreamInfo() {
         if (status) {
             streamStatusEl.textContent = streamAvailabilityText(status);
             streamStatusEl.className = status.stream_active || status.has_frame ? 'stream-status-active' : '';
-            if (!status.stream_active && status.has_frame) {
-                const base = streamSnapshotUrl(currentStreamRid, currentStreamSourceId);
-                streamSnapshotImg.src = `${base}${base.includes('?') ? '&' : '?'}t=${Date.now()}`;
-            }
-            else if (!status.web_stream_available) {
+            if (!status.web_stream_available) {
                 streamFrame.src = '';
             }
         }
@@ -898,7 +883,6 @@ function closeStream() {
     const rid = currentStreamRid;
     const sourceId = currentStreamSourceId;
     streamFrame.src = '';
-    streamSnapshotImg.src = '';
     streamContainer.classList.remove('open');
     currentStreamRid = null;
     currentStreamSourceId = null;
@@ -978,7 +962,6 @@ export function initDashboard() {
     runDetailModal.querySelector('.modal-backdrop')?.addEventListener('click', closeRunDetail);
     streamBackBtn.addEventListener('click', closeStream);
     streamApplyFpsBtn.addEventListener('click', applyStreamFps);
-    streamSnapshotBtn.addEventListener('click', refreshSnapshot);
     authLoginBtn.addEventListener('click', () => void login());
     authLogoutBtn.addEventListener('click', () => void logout());
     authPasswordInput.addEventListener('keydown', (event) => {

@@ -95,11 +95,9 @@ const streamNameEl = document.getElementById('stream-name')!;
 const streamStateEl = document.getElementById('stream-state')!;
 const streamStatusEl = document.getElementById('stream-status')!;
 const streamFrame = document.getElementById('stream-frame') as HTMLImageElement;
-const streamSnapshotImg = document.getElementById('stream-snapshot') as HTMLImageElement;
 const streamBackBtn = document.getElementById('stream-back-btn')!;
 const streamFpsInput = document.getElementById('stream-fps-input') as HTMLInputElement;
 const streamApplyFpsBtn = document.getElementById('stream-apply-fps-btn')!;
-const streamSnapshotBtn = document.getElementById('stream-snapshot-btn')!;
 
 const footerVersion = document.getElementById('footer-version')!;
 const errorToast = document.getElementById('error-toast')!;
@@ -900,7 +898,6 @@ function openStream(rid: number, sourceId?: number | null): void {
   streamStateEl.textContent = '…';
   streamStatusEl.textContent = '…';
   streamFrame.src = streamMjpgUrl(rid, fps, currentStreamSourceId);
-  streamSnapshotImg.src = '';
   streamContainer.classList.add('open');
   streamPollTimer = window.setInterval(() => void pollStreamInfo(), 3000);
   void pollStreamInfo();
@@ -913,13 +910,6 @@ function applyStreamFps(): void {
   streamFpsInput.value = String(safeFps);
   streamFrame.src = streamMjpgUrl(currentStreamRid, safeFps, currentStreamSourceId);
   showSuccess(`FPS установлен: ${safeFps}`);
-}
-
-function refreshSnapshot(): void {
-  if (currentStreamRid == null) return;
-  if (streamFrame.src) return;
-  const base = streamSnapshotUrl(currentStreamRid, currentStreamSourceId);
-  streamSnapshotImg.src = `${base}${base.includes('?') ? '&' : '?'}t=${Date.now()}`;
 }
 
 async function pollStreamInfo(): Promise<void> {
@@ -941,10 +931,7 @@ async function pollStreamInfo(): Promise<void> {
     if (status) {
       streamStatusEl.textContent = streamAvailabilityText(status);
       streamStatusEl.className = status.stream_active || status.has_frame ? 'stream-status-active' : '';
-      if (!status.stream_active && status.has_frame) {
-        const base = streamSnapshotUrl(currentStreamRid, currentStreamSourceId);
-        streamSnapshotImg.src = `${base}${base.includes('?') ? '&' : '?'}t=${Date.now()}`;
-      } else if (!status.web_stream_available) {
+      if (!status.web_stream_available) {
         streamFrame.src = '';
       }
     }
@@ -960,7 +947,6 @@ function closeStream(): void {
   const rid = currentStreamRid;
   const sourceId = currentStreamSourceId;
   streamFrame.src = '';
-  streamSnapshotImg.src = '';
   streamContainer.classList.remove('open');
   currentStreamRid = null;
   currentStreamSourceId = null;
@@ -1037,7 +1023,6 @@ export function initDashboard(): void {
 
   streamBackBtn.addEventListener('click', closeStream);
   streamApplyFpsBtn.addEventListener('click', applyStreamFps);
-  streamSnapshotBtn.addEventListener('click', refreshSnapshot);
 
   authLoginBtn.addEventListener('click', () => void login());
   authLogoutBtn.addEventListener('click', () => void logout());
