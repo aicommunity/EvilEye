@@ -33,6 +33,28 @@ class MpWorkerCapture(MpWorker):
     def set_params(self, params: dict) -> None:
         self._capture_params = dict(params) if params else {}
 
+    def _create_capture(self, use_gstreamer: bool):
+        if use_gstreamer:
+            from .video_capture_gstreamer import VideoCaptureGStreamer
+            return VideoCaptureGStreamer()
+
+        from .video_capture_opencv import VideoCaptureOpencv
+        return VideoCaptureOpencv()
+
+    def _init_capture_instance(self, capture, params: dict) -> bool:
+        capture.set_params(**params)
+        if not capture.init():
+            return False
+
+        capture.start()
+        self._capture = capture
+        self.logger.info(
+            "Capture worker initialised: type=%s source=%s",
+            capture.__class__.__name__,
+            params.get("camera", "?"),
+        )
+        return True
+
     # -- MpWorker interface ----------------------------------------------
 
     def init_worker(self) -> None:
@@ -46,26 +68,25 @@ class MpWorkerCapture(MpWorker):
             or params.get("backend") == "gstreamer"
         )
 
-        if use_gstreamer:
-            from .video_capture_gstreamer import VideoCaptureGStreamer
-            self._capture = VideoCaptureGStreamer()
-        else:
-            from .video_capture_opencv import VideoCaptureOpencv
-            self._capture = VideoCaptureOpencv()
-
         child_params = dict(params)
         child_params.pop("execution_mode", None)
+        capture = self._create_capture(use_gstreamer=use_gstreamer)
 
-        self._capture.set_params(**child_params)
-        if not self._capture.init():
-            self.logger.error("Capture init failed in worker")
+        if self._init_capture_instance(capture, child_params):
             return
-        self._capture.start()
-        self.logger.info(
-            "Capture worker initialised: type=%s source=%s",
-            self._capture.__class__.__name__,
-            child_params.get("camera", "?"),
-        )
+
+        if use_gstreamer and not getattr(capture, "gstreamer_available", True):
+            self.logger.warning(
+                "GStreamer runtime is unavailable in worker process; "
+                "falling back to VideoCaptureOpencv for source=%s",
+                child_params.get("camera", "?"),
+            )
+            child_params["type"] = "VideoCaptureOpencv"
+            fallback_capture = self._create_capture(use_gstreamer=False)
+            if self._init_capture_instance(fallback_capture, child_params):
+                return
+
+        self.logger.error("Capture init failed in worker")
 
     def worker_impl(self, data):
         """Not used — continuous loop in __call__ replaces request-response."""
