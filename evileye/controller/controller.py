@@ -626,6 +626,12 @@ class Controller:
         frame_id = getattr(frame, "frame_id", None)
         object_list = objects_by_source.get(source_id, ObjectResultList())
         track_info = object_list.find_objects_by_frame_id(frame_id, use_history=False) if object_list else []
+        if not track_info and object_list:
+            # In multiprocess mode preview may fall back to fresher source frames while
+            # tracker/objects handler still holds results for a slightly older frame_id.
+            # For web preview it is better to render the latest known tracks than to show
+            # a completely unannotated frame.
+            track_info = list(getattr(object_list, "objects", []) or [])
         event_entries = self._get_preview_event_entries(source_id)
         event_cfg = self._get_preview_event_cfg()
         vis_cfg = self._get_preview_visualizer_cfg()

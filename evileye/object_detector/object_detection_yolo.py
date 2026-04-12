@@ -1,5 +1,5 @@
 import os
-from .object_detection_base import EXEC_MODE_PROCESS, ModelBasedDetectorBase
+from .object_detection_base import EXEC_MODE_PROCESS, ModelBasedDetectorBase, ObjectDetectorBase
 from ..core.base_class import EvilEyeBase
 
 
@@ -20,6 +20,11 @@ class ObjectDetectorYolo(ModelBasedDetectorBase):
     def init_impl(self):
         if self.execution_mode != EXEC_MODE_PROCESS:
             return super().init_impl()
+
+        # Process-mode YOLO still needs the detector dispatcher thread from
+        # ObjectDetectorBase: it drains detector.queue_in and forwards frames
+        # into the per-worker DetectionThreadYoloMp instances.
+        ObjectDetectorBase.init_impl(self)
 
         inf_params = {
             "show": self.params.get('show', False),
