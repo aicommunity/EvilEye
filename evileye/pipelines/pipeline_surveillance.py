@@ -287,7 +287,16 @@ class PipelineSurveillance(PipelineProcessors):
             if isinstance(section, (list, tuple)) and len(section) > 0:
                 last_non_empty = section
         if last_non_empty is None:
-            return []
+            # Streaming/UI should still receive the latest source frame while
+            # detector/tracker stages are warming up or temporarily backpressured.
+            for result in self.get_results_iterator():
+                if not isinstance(result, dict):
+                    continue
+                source_section = result.get("sources", [])
+                if isinstance(source_section, (list, tuple)) and len(source_section) > 0:
+                    last_non_empty = source_section
+            if last_non_empty is None:
+                return []
         return list(last_non_empty) if isinstance(last_non_empty, (list, tuple)) else ([last_non_empty] if last_non_empty is not None else [])
 
     def get_latest_objects_results(self) -> list[Any]:
