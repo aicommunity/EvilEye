@@ -95,10 +95,26 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
             self.queue_in.put_nowait(image)
             return True
         except Exception:
-            self.logger.warning(
-                f"Failed to put image {image.source_id}:{image.frame_id} to ObjectDetection queue. Queue is full."
-            )
-            return False
+            try:
+                dropped_image = self.queue_in.get_nowait()
+            except Exception:
+                dropped_image = None
+
+            try:
+                self.queue_in.put_nowait(image)
+                if dropped_image is not None:
+                    try:
+                        self.queue_dropped_id.put_nowait(
+                            [dropped_image.source_id, dropped_image.frame_id]
+                        )
+                    except Exception:
+                        pass
+                return True
+            except Exception:
+                self.logger.warning(
+                    f"Failed to put image {image.source_id}:{image.frame_id} to ObjectDetection queue. Queue is full."
+                )
+                return False
 
     def get(self):
         """Get detection result from output queue."""
