@@ -491,6 +491,7 @@ class VideoCaptureBase(EvilEyeBase):
         capture_image.source_id = source_id
         capture_image.current_video_frame = current_video_frame if current_video_frame is not None else self.video_current_frame
         capture_image.current_video_position = current_video_position if current_video_position is not None else self.video_current_position
+        capture_image.source_video_duration = self.video_duration
         return capture_image
 
     def _handle_split_stream(

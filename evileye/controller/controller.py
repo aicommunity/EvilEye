@@ -631,9 +631,17 @@ class Controller:
         vis_cfg = self._get_preview_visualizer_cfg()
         event_enabled = bool(event_cfg.get("event_signal_enabled", False))
         event_color = tuple(event_cfg.get("event_signal_color", [255, 0, 0]))
+        source_duration_msecs = self.source_video_duration.get(source_id)
+        if source_duration_msecs is None:
+            source_duration_msecs = getattr(frame, "source_video_duration", None)
+            if source_id is not None and source_duration_msecs is not None:
+                try:
+                    self.source_video_duration[source_id] = float(source_duration_msecs)
+                except Exception:
+                    pass
         return PreviewRenderContext(
             source_name=self.source_id_name_table.get(source_id, f"src{source_id}"),
-            source_duration_msecs=self.source_video_duration.get(source_id),
+            source_duration_msecs=source_duration_msecs,
             track_info=track_info,
             debug_info=self.debug_info,
             show_debug_info=bool(vis_cfg.get("show_debug_info", False)),

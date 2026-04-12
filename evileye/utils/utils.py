@@ -378,7 +378,7 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
                      background_enabled=config.get('background_enabled', True))
 
     # Draw time position
-    if image.current_video_position and source_duration_msecs is not None:
+    if image.current_video_position is not None and source_duration_msecs is not None:
         time_position_secs = image.current_video_position / 1000.0
         pos_string = "{:.1f}".format(time_position_secs) + " [" + "{:.1f}".format(source_duration_msecs / 1000.0) + "]"
         

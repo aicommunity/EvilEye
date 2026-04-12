@@ -5,6 +5,7 @@ class Frame:
         self.frame_id = None
         self.current_video_frame = None
         self.current_video_position = None
+        self.source_video_duration = None
         self.time_stamp = None
         self.image = None
         self.subscribers = []

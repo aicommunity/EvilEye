@@ -5,7 +5,7 @@ import time
 import datetime
 from typing import Optional, List, Tuple, Any
 from queue import Queue, Empty, Full
-from .video_capture_base import VideoCaptureBase, CaptureDeviceType
+from .video_capture_base import VideoCaptureBase, CaptureDeviceType, EXEC_MODE_PROCESS
 from .constants import CaptureConstants
 from .exceptions import CaptureInitializationError, CaptureConnectionError
 from ..core.frame import CaptureImage, Frame
@@ -1824,6 +1824,9 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         Returns True on success, False on failure.
         For IP cameras, uses simple approach from api-refactoring without timeout.
         """
+        if self.execution_mode == EXEC_MODE_PROCESS:
+            return super().init()
+
         if not self.gstreamer_available:
             self.logger.error("GStreamer not available, cannot initialize")
             self.is_inited = False
@@ -1924,6 +1927,10 @@ class VideoCaptureGStreamer(VideoCaptureBase):
         Override start() to always launch grab/retrieve threads, even if init() failed.
         This allows reconnect logic to work from the start.
         """
+        if self.execution_mode == EXEC_MODE_PROCESS:
+            super().start()
+            return
+
         self.run_flag = True
         # Always start threads, even if not initialized - reconnect logic will handle it
         self.grab_thread = threading.Thread(target=self._grab_frames, daemon=True)

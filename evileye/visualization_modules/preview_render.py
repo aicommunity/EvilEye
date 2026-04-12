@@ -36,6 +36,7 @@ def clone_capture_image(frame: CaptureImage) -> CaptureImage:
     cloned.frame_id = getattr(frame, "frame_id", None)
     cloned.current_video_frame = getattr(frame, "current_video_frame", None)
     cloned.current_video_position = getattr(frame, "current_video_position", None)
+    cloned.source_video_duration = getattr(frame, "source_video_duration", None)
     image = getattr(frame, "image", None)
     cloned.image = image.copy() if image is not None else None
     try:
