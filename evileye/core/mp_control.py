@@ -14,7 +14,7 @@ class MpControl:
     started together with start()
     """
 
-    def __init__(self, max_input_size=None, name="MpControl"):
+    def __init__(self, max_input_size=None, max_output_size=None, name="MpControl"):
         self.name = name
         self.logger = get_module_logger(f"mp_control.{name}")
         self.workers_list = []
@@ -24,7 +24,10 @@ class MpControl:
         else:
             self.input_queue = mp.Queue()
 
-        self.output_queue = mp.Queue()
+        if max_output_size:
+            self.output_queue = mp.Queue(maxsize=max_output_size)
+        else:
+            self.output_queue = mp.Queue()
         self.processes: list[mp.Process] = []
 
         # Cross-process logging

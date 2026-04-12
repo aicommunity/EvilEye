@@ -238,6 +238,7 @@ class VideoCaptureBase(EvilEyeBase):
 
         self._mp_control = MpControl(
             max_input_size=4,
+            max_output_size=max(2, int(self.capture_config.queue_size or 2)),
             name=f"capture-{'_'.join(str(s) for s in (self.source_ids or [0]))}",
         )
         worker = self._mp_control.add_worker(MpWorkerCapture)
