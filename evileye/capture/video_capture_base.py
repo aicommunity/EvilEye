@@ -259,17 +259,41 @@ class VideoCaptureBase(EvilEyeBase):
             try:
                 frame = self._mp_control.get(timeout=0.5)
             except Exception:
+                self._mark_finished_if_worker_stopped()
                 continue
             if frame is None:
+                self._mark_finished_if_worker_stopped()
                 continue
             try:
                 self.frames_queue.put(frame)
             except Exception:
                 pass
 
+    def _mark_finished_if_worker_stopped(self) -> None:
+        """Mark source as finished when process-mode worker exited and queue is drained."""
+        try:
+            if self._mp_control is None:
+                return
+            if self.finished:
+                return
+            if self._mp_control.is_alive():
+                return
+            if not self._mp_control.output_empty():
+                return
+            self.finished = True
+            try:
+                self.logger.info(
+                    "Capture worker stopped and output queue drained; marking source as finished"
+                )
+            except Exception:
+                pass
+        except Exception:
+            pass
+
     def start(self) -> None:
         """Start video capture threads and recording."""
         if self.execution_mode == EXEC_MODE_PROCESS and self._mp_control is not None:
+            self.finished = False
             self.run_flag = True
             self._capture_dispatch_thread = threading.Thread(
                 target=self._capture_dispatch_loop, daemon=True,

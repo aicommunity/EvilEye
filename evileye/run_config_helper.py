@@ -384,7 +384,44 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
                 pass
     else:
         logger.info("Starting main application loop")
+        # In GUI mode with autoclose enabled, controller may stop after EOF
+        # while Qt loop remains alive. Poll controller state and quit app.
+        gui_autoclose_enabled = False
+        try:
+            gui_autoclose_enabled = bool(
+                (config_data.get("controller", {}) or {}).get("autoclose", False)
+            )
+        except Exception:
+            gui_autoclose_enabled = False
+        gui_stop_timer = None
+        if gui_autoclose_enabled and qt_app is not None and controller_instance is not None:
+            try:
+                gui_stop_timer = QTimer(qt_app)
+                gui_stop_timer.setInterval(1000)
+
+                def _check_gui_controller_finished():
+                    try:
+                        if not controller_instance.is_running():
+                            logger.info(
+                                "Controller stopped in GUI autoclose mode, quitting Qt event loop"
+                            )
+                            qt_app.quit()
+                    except Exception as e:
+                        logger.error(
+                            f"Error while checking controller state in GUI mode: {e}",
+                            exc_info=True,
+                        )
+
+                gui_stop_timer.timeout.connect(_check_gui_controller_finished)
+                gui_stop_timer.start()
+            except Exception:
+                gui_stop_timer = None
         ret = qt_app.exec()
+        try:
+            if gui_stop_timer is not None:
+                gui_stop_timer.stop()
+        except Exception:
+            pass
         # Best-effort wait for shutdown thread if it was started
         try:
             t = shutdown_state.get("thread")

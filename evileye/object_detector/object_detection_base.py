@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from queue import Queue
-import multiprocessing as mp
 import threading
 from time import sleep
 from typing import Optional
@@ -80,14 +79,13 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
 
     def _init_queues(self):
         """Create queues matching current execution_mode."""
-        if self.execution_mode == EXEC_MODE_PROCESS:
-            self.queue_in = mp.Queue(maxsize=DEFAULT_INPUT_QUEUE_SIZE)
-            self.queue_out = mp.Queue(maxsize=DEFAULT_OUTPUT_QUEUE_SIZE)
-            self.queue_dropped_id = mp.Queue()
-        else:
-            self.queue_in = Queue(maxsize=DEFAULT_INPUT_QUEUE_SIZE)
-            self.queue_out = Queue(maxsize=DEFAULT_OUTPUT_QUEUE_SIZE)
-            self.queue_dropped_id = Queue()
+        # Detector dispatcher and pipeline run in the same process.
+        # Keep these queues thread-local even in process execution_mode;
+        # true multiprocessing boundary is inside DetectionThreadYoloMp/MpControl.
+        # This avoids unnecessary pickle/IPC overhead on hot path.
+        self.queue_in = Queue(maxsize=DEFAULT_INPUT_QUEUE_SIZE)
+        self.queue_out = Queue(maxsize=DEFAULT_OUTPUT_QUEUE_SIZE)
+        self.queue_dropped_id = Queue()
 
     def put(self, image: CaptureImage) -> bool:
         """Put image into input queue for processing."""
