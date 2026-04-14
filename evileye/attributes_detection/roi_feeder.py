@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import threading
 import multiprocessing as _mp
-from queue import Queue
-from time import sleep
+from queue import Queue, Full, Empty
 from typing import Any, Dict, List, Tuple
 
 from ..core.base_class import EvilEyeBase
@@ -30,7 +29,7 @@ class RoiFeeder(EvilEyeBase):
         self.execution_mode = EXEC_MODE_THREAD
 
         self.queue_in = Queue(maxsize=2)
-        self.queue_out = Queue()
+        self.queue_out = Queue(maxsize=4)
         self.processing_thread = threading.Thread(target=self._process_impl)
 
         self.source_ids: List[int] = []
@@ -77,10 +76,19 @@ class RoiFeeder(EvilEyeBase):
         return True
 
     def _init_process_mode(self):
-        from ..core.mp_control import MpControl
+        from ..core.mp_control import MpControl, parse_mp_restart_policy
         from .mp_worker_attributes import MpWorkerRoiFeeder
+        restart_on_exit, no_restart_exit_codes = parse_mp_restart_policy(
+            self.params,
+            default_restart_on_exit=True,
+        )
 
-        self._mp_control = MpControl(max_input_size=4, name="roi-feeder")
+        self._mp_control = MpControl(
+            max_input_size=4,
+            name="roi-feeder",
+            restart_on_exit=restart_on_exit,
+            no_restart_exit_codes=no_restart_exit_codes,
+        )
         worker = self._mp_control.add_worker(MpWorkerRoiFeeder)
         worker.set_params(self.params if self.params else {})
         self._mp_control.start()
@@ -119,9 +127,10 @@ class RoiFeeder(EvilEyeBase):
             return True
 
     def get(self):
-        if self.queue_out.empty():
+        try:
+            return self.queue_out.get_nowait()
+        except Empty:
             return None
-        return self.queue_out.get()
 
     def get_source_ids(self) -> List[int]:
         return self.source_ids
@@ -144,14 +153,16 @@ class RoiFeeder(EvilEyeBase):
 
     def _process_impl(self):
         while self.run_flag:
-            sleep(0.01)
-            data_pack = self.queue_in.get()
+            try:
+                data_pack = self.queue_in.get(timeout=0.5)
+            except Empty:
+                continue
             if data_pack is None:
                 continue
 
             (tracking_data, frame) = data_pack
             if frame.source_id not in self.source_ids:
-                self.queue_out.put(data_pack)
+                self._put_out_drop_oldest(data_pack)
                 continue
 
             if frame.source_id not in self._frame_counters:
@@ -161,26 +172,30 @@ class RoiFeeder(EvilEyeBase):
             if self._should_process_frame(frame.source_id):
                 self._extract_rois(tracking_data, frame)
 
-            self.queue_out.put(data_pack)
+            self._put_out_drop_oldest(data_pack)
 
     # -- Process mode dispatch -------------------------------------------
 
     def _process_dispatch_loop(self):
         while self.run_flag:
-            sleep(0.01)
+            if self._mp_control is None:
+                break
             try:
                 data_pack = self.queue_in.get(timeout=0.5)
-            except Exception:
+            except Empty:
                 continue
             if data_pack is None:
                 continue
             try:
                 self._mp_control.put(data_pack)
                 result = self._mp_control.get(timeout=10.0)
-                self.queue_out.put(result)
+                self._put_out_drop_oldest(result)
+            except Empty:
+                continue
             except Exception as e:
-                self.logger.error(f"Error in ROI feeder dispatch: {e}")
-                self.queue_out.put(data_pack)
+                if self.run_flag:
+                    self.logger.error(f"Error in ROI feeder dispatch: {e}")
+                self._put_out_drop_oldest(data_pack)
 
     # -- Helpers ---------------------------------------------------------
 
@@ -193,21 +208,17 @@ class RoiFeeder(EvilEyeBase):
         try:
             roi_data = []
             for track in tracking_data.tracks:
-                roi_image = self._extract_roi_from_bbox(image.image, track.bounding_box)
-                if roi_image is not None:
+                roi_bbox = self._extract_roi_bbox(image.image, track.bounding_box)
+                if roi_bbox is not None:
                     roi_data.append({
                         'track_id': track.track_id,
-                        'roi_image': roi_image,
-                        'bbox': track.bounding_box,
+                        'roi_bbox': roi_bbox,
                         'class_id': track.class_id,
                     })
             if roi_data:
                 tracking_data.roi_data = roi_data
         except Exception:
             pass
-
-        except Exception as e:
-            pass  # Silent error handling
     
     def _is_primary_object(self, track) -> bool:
         """Check if track represents a primary object"""
@@ -230,8 +241,8 @@ class RoiFeeder(EvilEyeBase):
         
         return False
     
-    def _extract_roi_from_bbox(self, image, bbox):
-        """Extract ROI image from bounding box with padding."""
+    def _extract_roi_bbox(self, image, bbox):
+        """Extract padded ROI bbox [x1, y1, x2, y2]."""
         try:
             x1, y1, x2, y2 = bbox
             h, w = image.shape[:2]
@@ -241,10 +252,23 @@ class RoiFeeder(EvilEyeBase):
             y1_pad = max(0, int(y1 - pad_y))
             x2_pad = min(w, int(x2 + pad_x))
             y2_pad = min(h, int(y2 + pad_y))
-            roi = image[y1_pad:y2_pad, x1_pad:x2_pad]
-            if roi.size == 0:
+            if x2_pad <= x1_pad or y2_pad <= y1_pad:
                 return None
-            return roi
+            return [x1_pad, y1_pad, x2_pad, y2_pad]
         except Exception as e:
             self.logger.error(f"Error extracting ROI from bbox: {e}")
             return None
+
+    def _put_out_drop_oldest(self, item) -> None:
+        try:
+            self.queue_out.put_nowait(item)
+            return
+        except Full:
+            try:
+                _ = self.queue_out.get_nowait()
+            except Exception:
+                pass
+            try:
+                self.queue_out.put_nowait(item)
+            except Exception:
+                pass

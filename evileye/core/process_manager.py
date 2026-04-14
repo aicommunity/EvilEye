@@ -2,6 +2,7 @@ import threading
 from typing import Dict, Optional
 from .mp_control import MpControl
 from .logger import get_module_logger
+from .runtime_context import get_runtime_context, update_runtime_context
 
 
 class ProcessManager:
@@ -78,8 +79,12 @@ _instance_lock = threading.Lock()
 
 def get_process_manager() -> ProcessManager:
     global _instance
+    ctx = get_runtime_context()
+    if ctx.process_manager is not None:
+        return ctx.process_manager
     if _instance is None:
         with _instance_lock:
             if _instance is None:
                 _instance = ProcessManager()
+    update_runtime_context(process_manager=_instance)
     return _instance

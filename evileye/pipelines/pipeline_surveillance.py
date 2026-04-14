@@ -27,7 +27,7 @@ class PipelineSurveillance(PipelineProcessors):
         """Initialize surveillance pipeline with specific processor sequence"""
         
         # Get pipeline parameters
-        pipeline_params = self.params
+        pipeline_params = self._normalize_pipeline_params(self.params)
         
         # Initialize encoders first
         self._init_encoders(pipeline_params.get("trackers", []))
@@ -67,6 +67,37 @@ class PipelineSurveillance(PipelineProcessors):
             self._final_results_name = "sources"
 
         return True
+
+    def _normalize_pipeline_params(self, params: Dict) -> Dict:
+        """Normalize ipc/execution modes for all processor sections."""
+        normalized = dict(params or {})
+        ipc_mode = str(normalized.get("ipc_mode", "standard") or "standard")
+        normalized["ipc_mode"] = ipc_mode
+        sections = (
+            "sources",
+            "preprocessors",
+            "detectors",
+            "trackers",
+            "mc_trackers",
+            "attributes_roi",
+            "attributes_classifier",
+        )
+        for section in sections:
+            section_items = normalized.get(section, []) or []
+            if not isinstance(section_items, list):
+                continue
+            updated = []
+            for item in section_items:
+                if not isinstance(item, dict):
+                    updated.append(item)
+                    continue
+                item_copy = dict(item)
+                item_copy.setdefault("execution_mode", "thread")
+                item_copy.setdefault("ipc_mode", ipc_mode)
+                updated.append(item_copy)
+            normalized[section] = updated
+        self.params = normalized
+        return normalized
 
     # Surveillance-specific processor initialization methods
     def _init_sources(self, params: List[Dict], credentials: Dict|None):

@@ -1,6 +1,7 @@
 import os
 from .object_detection_base import EXEC_MODE_PROCESS, ModelBasedDetectorBase, ObjectDetectorBase
 from ..core.base_class import EvilEyeBase
+from ..core.mp_control import parse_mp_restart_policy
 
 
 @EvilEyeBase.register("ObjectDetectorYolo")
@@ -33,10 +34,18 @@ class ObjectDetectorYolo(ModelBasedDetectorBase):
             "imgsz": self.params.get('inference_size', 640),
             "device": self.params.get('device', None),
         }
+        restart_on_exit, no_restart_exit_codes = parse_mp_restart_policy(
+            self.params,
+            default_restart_on_exit=True,
+        )
         self.detection_threads = []
-        return self._init_process_mode(inf_params)
+        return self._init_process_mode(
+            inf_params,
+            restart_on_exit=restart_on_exit,
+            no_restart_exit_codes=no_restart_exit_codes,
+        )
 
-    def _init_process_mode(self, inf_params):
+    def _init_process_mode(self, inf_params, restart_on_exit: bool, no_restart_exit_codes: set[int]):
         """Initialize YOLO inference workers in child processes."""
         from .detection_thread_yolo_mp import DetectionThreadYoloMp
 
@@ -48,7 +57,11 @@ class ObjectDetectorYolo(ModelBasedDetectorBase):
             thread = DetectionThreadYoloMp(
                 model_path, self.stride, self.classes,
                 self.source_ids, self.roi, inf_params,
-                self.queue_out, logger_name=f"det{i}", parent_logger=self.logger,
+                restart_on_exit,
+                no_restart_exit_codes,
+                self.queue_out,
+                logger_name=f"det{i}",
+                parent_logger=self.logger,
             )
             thread.start()
             self.detection_threads.append(thread)

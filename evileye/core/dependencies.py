@@ -54,6 +54,7 @@ class DependencyDefinition:
         factory: Optional[Callable[[], Any]] = None,
         instance: Optional[Any] = None,
         singleton: bool = True,
+        capabilities: Optional[Dict[str, Any]] = None,
     ):
         """Инициализация определения зависимости.
 
@@ -67,6 +68,7 @@ class DependencyDefinition:
         self.factory = factory
         self.instance = instance
         self.singleton = singleton
+        self.capabilities = capabilities or {}
 
 
 # TODO: Планируется интеграция в будущих версиях для снижения связности
@@ -85,6 +87,7 @@ class DependencyRegistry:
         factory: Optional[Callable[[], Any]] = None,
         instance: Optional[Any] = None,
         singleton: bool = True,
+        capabilities: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Зарегистрировать зависимость.
 
@@ -99,6 +102,7 @@ class DependencyRegistry:
             factory=factory,
             instance=instance,
             singleton=singleton,
+            capabilities=capabilities,
         )
 
     def get_definition(self, service_type: Type) -> Optional[DependencyDefinition]:
@@ -146,6 +150,7 @@ def register_dependency(
     factory: Optional[Callable[[], Any]] = None,
     instance: Optional[Any] = None,
     singleton: bool = True,
+    capabilities: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Зарегистрировать зависимость в глобальном реестре.
 
@@ -155,4 +160,10 @@ def register_dependency(
         instance: Готовый экземпляр
         singleton: Создавать ли один экземпляр
     """
-    _global_registry.register(service_type, factory, instance, singleton)
+    _global_registry.register(
+        service_type,
+        factory,
+        instance,
+        singleton,
+        capabilities=capabilities,
+    )

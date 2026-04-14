@@ -29,6 +29,10 @@ class EvilEyeBase(ABC):
         self.id: int = EvilEyeBase._id_counter
         EvilEyeBase._id_counter += 1
         self.params = {}
+        # Runtime capabilities for pipeline compatibility checks.
+        self.accepts_frame_handle = False
+        self.emits_dto_type = None
+        self.requires_materialized_frame = True
         self.logger_name = None
         self.memory_measure_results = None
         self.memory_measure_time = None
@@ -65,6 +69,16 @@ class EvilEyeBase(ABC):
     def get_params(self):
         self.params = self.get_params_impl()
         return self.params
+
+    def get_capability_metadata(self) -> dict:
+        """Return runtime capability metadata used by pipeline validation."""
+        return {
+            "accepts_frame_handle": bool(getattr(self, "accepts_frame_handle", False)),
+            "emits_dto_type": getattr(self, "emits_dto_type", None),
+            "requires_materialized_frame": bool(
+                getattr(self, "requires_materialized_frame", True)
+            ),
+        }
 
     def get_init_flag(self):
         return self.is_inited

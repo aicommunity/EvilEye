@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import threading
-from queue import Queue
-from time import sleep
+from queue import Queue, Empty, Full
 from typing import Any, Dict
 import numpy as np
 
@@ -34,7 +33,7 @@ class AttributeClassifier(EvilEyeBase):
 
         self.run_flag = False
         self.queue_in = Queue(maxsize=2)
-        self.queue_out = Queue()
+        self.queue_out = Queue(maxsize=4)
         self.queue_dropped_id = Queue()
         self.processing_thread = None
 
@@ -90,10 +89,19 @@ class AttributeClassifier(EvilEyeBase):
             return False
 
     def _init_process_mode(self):
-        from ..core.mp_control import MpControl
+        from ..core.mp_control import MpControl, parse_mp_restart_policy
         from .mp_worker_attributes import MpWorkerAttributeClassifier
+        restart_on_exit, no_restart_exit_codes = parse_mp_restart_policy(
+            self.params,
+            default_restart_on_exit=True,
+        )
 
-        self._mp_control = MpControl(max_input_size=4, name="attr-classifier")
+        self._mp_control = MpControl(
+            max_input_size=4,
+            name="attr-classifier",
+            restart_on_exit=restart_on_exit,
+            no_restart_exit_codes=no_restart_exit_codes,
+        )
         worker = self._mp_control.add_worker(MpWorkerAttributeClassifier)
         worker.set_params(self.params if self.params else {})
         self._mp_control.start()
@@ -145,13 +153,15 @@ class AttributeClassifier(EvilEyeBase):
 
     def _process_impl(self):
         while self.run_flag:
-            sleep(0.01)
-            detections = self.queue_in.get()
+            try:
+                detections = self.queue_in.get(timeout=0.5)
+            except Empty:
+                continue
             if detections is None:
                 continue
 
             if not self.enabled or self.yolo_model is None:
-                self.queue_out.put(detections)
+                self._put_out_drop_oldest(detections)
                 continue
 
             tracking_data, frame = detections
@@ -160,7 +170,8 @@ class AttributeClassifier(EvilEyeBase):
                 try:
                     for roi_info in tracking_data.roi_data:
                         track_id = roi_info.get('track_id')
-                        roi_image = roi_info.get('roi_image')
+                        roi_bbox = roi_info.get('roi_bbox')
+                        roi_image = self._crop_roi(frame.image, roi_bbox) if roi_bbox is not None else None
                         if roi_image is not None and track_id is not None:
                             attr_results = self._classify_roi_with_detector(roi_image)
                             if not hasattr(tracking_data, 'attr_results'):
@@ -169,26 +180,30 @@ class AttributeClassifier(EvilEyeBase):
                 except Exception:
                     pass
 
-            self.queue_out.put((tracking_data, frame))
+            self._put_out_drop_oldest((tracking_data, frame))
 
     # -- Process mode dispatch -------------------------------------------
 
     def _process_dispatch_loop(self):
         while self.run_flag:
-            sleep(0.01)
+            if self._mp_control is None:
+                break
             try:
                 detections = self.queue_in.get(timeout=0.5)
-            except Exception:
+            except Empty:
                 continue
             if detections is None:
                 continue
             try:
                 self._mp_control.put(detections)
                 result = self._mp_control.get(timeout=10.0)
-                self.queue_out.put(result)
+                self._put_out_drop_oldest(result)
+            except Empty:
+                continue
             except Exception as e:
-                self.logger.error(f"Error in attribute classifier dispatch: {e}")
-                self.queue_out.put(detections)
+                if self.run_flag:
+                    self.logger.error(f"Error in attribute classifier dispatch: {e}")
+                self._put_out_drop_oldest(detections)
 
     # -- Direct YOLO classification (thread mode) ------------------------
 
@@ -249,9 +264,10 @@ class AttributeClassifier(EvilEyeBase):
         return result
 
     def get(self):
-        if self.queue_out.empty():
+        try:
+            return self.queue_out.get_nowait()
+        except Empty:
             return None
-        return self.queue_out.get()
 
     def get_dropped_ids(self) -> list:
         res = []
@@ -264,3 +280,27 @@ class AttributeClassifier(EvilEyeBase):
 
     def default(self):
         self.params.clear()
+
+    def _crop_roi(self, image, bbox):
+        try:
+            x1, y1, x2, y2 = [int(v) for v in bbox]
+            roi = image[y1:y2, x1:x2]
+            if roi is None or roi.size == 0:
+                return None
+            return roi
+        except Exception:
+            return None
+
+    def _put_out_drop_oldest(self, item):
+        try:
+            self.queue_out.put_nowait(item)
+            return
+        except Full:
+            try:
+                _ = self.queue_out.get_nowait()
+            except Exception:
+                pass
+            try:
+                self.queue_out.put_nowait(item)
+            except Exception:
+                pass

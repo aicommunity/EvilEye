@@ -1,6 +1,6 @@
 from abc import abstractmethod
 from ..core.base_class import EvilEyeBase
-from queue import Full, Queue
+from queue import Full, Queue, Empty
 import multiprocessing as mp
 import threading
 from .tracking_results import TrackingResultList
@@ -130,12 +130,18 @@ class ObjectTrackingBase(EvilEyeBase):
 
     def _init_process_mode(self, **kwargs):
         """Initialize tracking in a child process via MpControl"""
-        from ..core.mp_control import MpControl
+        from ..core.mp_control import MpControl, parse_mp_restart_policy
         from .mp_worker_tracker import MpWorkerTracker
+        restart_on_exit, no_restart_exit_codes = parse_mp_restart_policy(
+            self.params,
+            default_restart_on_exit=True,
+        )
 
         self._mp_control = MpControl(
             max_input_size=4,
             name=f"tracker-{id(self)}",
+            restart_on_exit=restart_on_exit,
+            no_restart_exit_codes=no_restart_exit_codes,
         )
         worker = self._mp_control.add_worker(MpWorkerTracker)
         worker.set_params(self.params if self.params else {})
@@ -149,12 +155,12 @@ class ObjectTrackingBase(EvilEyeBase):
 
     def _process_dispatch_loop(self):
         """Dispatcher loop for process mode"""
-        from time import sleep
         while self.run_flag:
-            sleep(0.01)
+            if self._mp_control is None:
+                break
             try:
                 detections = self.queue_in.get(timeout=0.5)
-            except Exception:
+            except Empty:
                 continue
             if detections is None:
                 continue
@@ -162,8 +168,11 @@ class ObjectTrackingBase(EvilEyeBase):
                 self._mp_control.put(detections)
                 result = self._mp_control.get(timeout=10.0)
                 self._put_out_drop_oldest(result)
+            except Empty:
+                continue
             except Exception as e:
-                self.logger.error(f"Error in tracking dispatch loop: {e}")
+                if self.run_flag:
+                    self.logger.error(f"Error in tracking dispatch loop: {e}")
 
     def release_impl(self):
         if self._mp_control is not None:

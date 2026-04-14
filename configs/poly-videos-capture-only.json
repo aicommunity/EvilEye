@@ -20,7 +20,12 @@
                 "camera": "/home/user/Videos/Test3Cam/1/139932-video_trim.mp4",
                 "type": "VideoCaptureGStreamer",
                 "apiPreference": "CAP_GSTREAMER",
-                "gstreamer_available": true
+                "gstreamer_available": true,
+                "mp_restart_on_exit": false,
+                "mp_no_restart_exit_codes": [
+                    -15,
+                    0
+                ]
             },
             {
                 "split": true,
@@ -53,7 +58,12 @@
                 "camera": "/home/user/Videos/Test3Cam/2/139931-video_trim.mp4",
                 "type": "VideoCaptureGStreamer",
                 "apiPreference": "CAP_GSTREAMER",
-                "gstreamer_available": true
+                "gstreamer_available": true,
+                "mp_restart_on_exit": false,
+                "mp_no_restart_exit_codes": [
+                    -15,
+                    0
+                ]
             },
             {
                 "split": true,
@@ -86,7 +96,12 @@
                 "camera": "/home/user/Videos/Test3Cam/3/139930-video_trim.mp4",
                 "type": "VideoCaptureGStreamer",
                 "apiPreference": "CAP_GSTREAMER",
-                "gstreamer_available": true
+                "gstreamer_available": true,
+                "mp_restart_on_exit": false,
+                "mp_no_restart_exit_codes": [
+                    -15,
+                    0
+                ]
             }
         ],
         "detectors": [],

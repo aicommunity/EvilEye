@@ -3,6 +3,7 @@ import logging
 import logging.handlers
 import threading
 import time
+from typing import Iterable
 from .logger import get_module_logger
 
 
@@ -14,16 +15,29 @@ class MpControl:
     started together with start()
     """
 
-    def __init__(self, max_input_size=None, max_output_size=None, name="MpControl"):
+    def __init__(
+        self,
+        max_input_size=None,
+        max_output_size=None,
+        name="MpControl",
+        restart_on_exit=True,
+        no_restart_exit_codes=None,
+    ):
         self.name = name
         self.logger = get_module_logger(f"mp_control.{name}")
         self.workers_list = []
+        self.restart_on_exit = bool(restart_on_exit)
+        self.no_restart_exit_codes = set(no_restart_exit_codes or {-15})
 
+        if max_input_size is None:
+            max_input_size = 8
         if max_input_size:
             self.input_queue = mp.Queue(maxsize=max_input_size)
         else:
             self.input_queue = mp.Queue()
 
+        if max_output_size is None:
+            max_output_size = 8
         if max_output_size:
             self.output_queue = mp.Queue(maxsize=max_output_size)
         else:
@@ -37,6 +51,8 @@ class MpControl:
         # Health monitoring
         self._monitor_thread = None
         self._monitor_stop = threading.Event()
+        self._stopping = threading.Event()
+        self._suppressed_restart_pids: set[int] = set()
 
     # -- Logging bridge --------------------------------------------------
 
@@ -100,6 +116,8 @@ class MpControl:
 
     def start(self):
         """Spawn all registered workers as daemon processes"""
+        self._stopping.clear()
+        self._suppressed_restart_pids.clear()
         self._start_log_listener()
         for worker in self.workers_list:
             p = mp.Process(target=worker, daemon=True, name=f"{self.name}-worker")
@@ -116,6 +134,7 @@ class MpControl:
         *timeout* seconds for each process to finish.  Processes that
         do not exit in time are terminated forcefully
         """
+        self._stopping.set()
         self._monitor_stop.set()
 
         # Send poison pills
@@ -163,7 +182,20 @@ class MpControl:
     def _health_monitor_loop(self):
         while not self._monitor_stop.is_set():
             for i, p in enumerate(self.processes):
-                if not p.is_alive() and not self._monitor_stop.is_set():
+                if not p.is_alive() and not self._monitor_stop.is_set() and not self._stopping.is_set():
+                    if p.pid in self._suppressed_restart_pids:
+                        continue
+                    if not self.restart_on_exit:
+                        self._suppressed_restart_pids.add(p.pid)
+                        continue
+                    if p.exitcode in self.no_restart_exit_codes:
+                        self.logger.info(
+                            "Worker pid=%s exited with code %s; restart suppressed by policy",
+                            p.pid,
+                            p.exitcode,
+                        )
+                        self._suppressed_restart_pids.add(p.pid)
+                        continue
                     self.logger.warning(
                         f"Worker pid={p.pid} exited with code {p.exitcode}, "
                         f"restarting"
@@ -190,3 +222,32 @@ class MpControl:
 
     def worker_count(self) -> int:
         return sum(1 for p in self.processes if p.is_alive())
+
+
+def parse_mp_restart_policy(
+    params: dict | None,
+    *,
+    default_restart_on_exit: bool,
+    default_no_restart_exit_codes: Iterable[int] | None = None,
+) -> tuple[bool, set[int]]:
+    """Parse restart policy from module params."""
+    params = params or {}
+    restart_on_exit = bool(
+        params.get("mp_restart_on_exit", default_restart_on_exit)
+    )
+    raw_codes = params.get("mp_no_restart_exit_codes", None)
+    if raw_codes is None:
+        codes = set(default_no_restart_exit_codes or {-15})
+    elif isinstance(raw_codes, (list, tuple, set)):
+        codes = set()
+        for value in raw_codes:
+            try:
+                codes.add(int(value))
+            except Exception:
+                continue
+    else:
+        try:
+            codes = {int(raw_codes)}
+        except Exception:
+            codes = set(default_no_restart_exit_codes or {-15})
+    return restart_on_exit, codes

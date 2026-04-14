@@ -1,12 +1,18 @@
 {
   "pipeline": {
     "pipeline_class": "PipelineSurveillance",
+    "ipc_mode": "standard",
     "sources": [
       {
         "camera": "videos/planes_sample.mp4",
         "source": "VideoFile",
         "type": "VideoCaptureOpencv",
         "execution_mode": "process",
+        "mp_restart_on_exit": false,
+        "mp_no_restart_exit_codes": [
+          -15,
+          0
+        ],
         "split": false,
         "num_split": 0,
         "src_coords": [
@@ -40,7 +46,11 @@
         ],
         "vid_stride": 1,
         "num_detection_threads": 1,
-        "execution_mode": "process"
+        "execution_mode": "process",
+        "mp_restart_on_exit": true,
+        "mp_no_restart_exit_codes": [
+          -15
+        ]
       }
     ],
     "trackers": [
@@ -48,8 +58,12 @@
         "source_ids": [
           0
         ],
-        "fps": 5,
+        "fps": 10,
         "execution_mode": "process",
+        "mp_restart_on_exit": true,
+        "mp_no_restart_exit_codes": [
+          -15
+        ],
         "botsort_cfg": {
           "tracker_type": "botsort",
           "track_high_thresh": 0.5,
@@ -81,7 +95,7 @@
     "log_level": "info"
   },
   "controller": {
-    "fps": 5,
+    "fps": 10,
     "enable_close_from_gui": true,
     "class_names": [
       "person",
@@ -205,7 +219,7 @@
       0
     ],
     "fps": [
-      5
+      10
     ],
     "gui_enabled": true,
     "show_debug_info": true,

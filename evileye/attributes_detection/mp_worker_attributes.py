@@ -35,18 +35,17 @@ class MpWorkerRoiFeeder(MpWorker):
     def _extract_rois(self, tracking_data, image):
         roi_data = []
         for track in tracking_data.tracks:
-            roi_image = self._extract_roi_from_bbox(image.image, track.bounding_box)
-            if roi_image is not None:
+            roi_bbox = self._extract_roi_bbox(image.image, track.bounding_box)
+            if roi_bbox is not None:
                 roi_data.append({
                     'track_id': track.track_id,
-                    'roi_image': roi_image,
-                    'bbox': track.bounding_box,
+                    'roi_bbox': roi_bbox,
                     'class_id': track.class_id,
                 })
         if roi_data:
             tracking_data.roi_data = roi_data
 
-    def _extract_roi_from_bbox(self, image, bbox):
+    def _extract_roi_bbox(self, image, bbox):
         try:
             x1, y1, x2, y2 = bbox
             h, w = image.shape[:2]
@@ -56,10 +55,9 @@ class MpWorkerRoiFeeder(MpWorker):
             y1_pad = max(0, int(y1 - pad_y))
             x2_pad = min(w, int(x2 + pad_x))
             y2_pad = min(h, int(y2 + pad_y))
-            roi = image[y1_pad:y2_pad, x1_pad:x2_pad]
-            if roi.size == 0:
+            if x2_pad <= x1_pad or y2_pad <= y1_pad:
                 return None
-            return roi
+            return [x1_pad, y1_pad, x2_pad, y2_pad]
         except Exception:
             return None
 
@@ -110,7 +108,8 @@ class MpWorkerAttributeClassifier(MpWorker):
         if hasattr(tracking_data, 'roi_data') and tracking_data.roi_data:
             for roi_info in tracking_data.roi_data:
                 track_id = roi_info.get('track_id')
-                roi_image = roi_info.get('roi_image')
+                roi_bbox = roi_info.get('roi_bbox')
+                roi_image = self._crop_roi(frame.image, roi_bbox) if roi_bbox is not None else None
                 if roi_image is not None and track_id is not None:
                     attr_results = self._classify_roi(roi_image)
                     if not hasattr(tracking_data, 'attr_results'):
@@ -150,6 +149,16 @@ class MpWorkerAttributeClassifier(MpWorker):
             return attr_results
         except Exception:
             return {}
+
+    def _crop_roi(self, image, bbox):
+        try:
+            x1, y1, x2, y2 = [int(v) for v in bbox]
+            roi = image[y1:y2, x1:x2]
+            if roi is None or roi.size == 0:
+                return None
+            return roi
+        except Exception:
+            return None
 
     def cleanup(self):
         if self.yolo_model is not None:

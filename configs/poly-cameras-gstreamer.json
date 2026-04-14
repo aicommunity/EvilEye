@@ -20,7 +20,12 @@
                 "camera": "rtsp://10.245.1.200",
                 "type": "VideoCaptureGStreamer",
                 "apiPreference": "CAP_GSTREAMER",
-                "gstreamer_available": true
+                "gstreamer_available": true,
+                "mp_restart_on_exit": false,
+                "mp_no_restart_exit_codes": [
+                    -15,
+                    0
+                ]
             },
             {
                 "split": true,
@@ -53,7 +58,12 @@
                 "camera": "rtsp://10.245.1.199",
                 "type": "VideoCaptureGStreamer",
                 "apiPreference": "CAP_GSTREAMER",
-                "gstreamer_available": true
+                "gstreamer_available": true,
+                "mp_restart_on_exit": false,
+                "mp_no_restart_exit_codes": [
+                    -15,
+                    0
+                ]
             },
             {
                 "split": true,
@@ -86,7 +96,12 @@
                 "camera": "rtsp://10.245.1.202",
                 "type": "VideoCaptureGStreamer",
                 "apiPreference": "CAP_GSTREAMER",
-                "gstreamer_available": true
+                "gstreamer_available": true,
+                "mp_restart_on_exit": false,
+                "mp_no_restart_exit_codes": [
+                    -15,
+                    0
+                ]
             }
         ],
         "detectors": [
@@ -128,7 +143,11 @@
                 ],
                 "num_detection_threads": 3,
                 "execution_mode": "thread",
-                "model": "models/yolov8n.pt"
+                "model": "models/yolov8n.pt",
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "roi": [
@@ -149,7 +168,11 @@
                 ],
                 "num_detection_threads": 3,
                 "execution_mode": "thread",
-                "model": "models/yolov8n.pt"
+                "model": "models/yolov8n.pt",
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "roi": [
@@ -195,7 +218,11 @@
                 ],
                 "num_detection_threads": 3,
                 "execution_mode": "thread",
-                "model": "models/yolov8n.pt"
+                "model": "models/yolov8n.pt",
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "roi": [
@@ -235,7 +262,11 @@
                 ],
                 "num_detection_threads": 3,
                 "execution_mode": "thread",
-                "model": "models/yolov8n.pt"
+                "model": "models/yolov8n.pt",
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "roi": [
@@ -256,7 +287,11 @@
                 ],
                 "num_detection_threads": 3,
                 "execution_mode": "thread",
-                "model": "models/yolov8n.pt"
+                "model": "models/yolov8n.pt",
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             }
         ],
         "trackers": [
@@ -278,7 +313,11 @@
                     "tracker_type": "botsort",
                     "fuse_score": true,
                     "with_reid": true
-                }
+                },
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "source_ids": [
@@ -298,7 +337,11 @@
                     "tracker_type": "botsort",
                     "fuse_score": true,
                     "with_reid": true
-                }
+                },
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "source_ids": [
@@ -318,7 +361,11 @@
                     "tracker_type": "botsort",
                     "fuse_score": true,
                     "with_reid": true
-                }
+                },
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "source_ids": [
@@ -338,7 +385,11 @@
                     "tracker_type": "botsort",
                     "fuse_score": true,
                     "with_reid": true
-                }
+                },
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "source_ids": [
@@ -358,7 +409,11 @@
                     "tracker_type": "botsort",
                     "fuse_score": true,
                     "with_reid": true
-                }
+                },
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             }
         ],
         "mc_trackers": [
@@ -370,6 +425,10 @@
                     2,
                     3,
                     4
+                ],
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
                 ]
             }
         ]

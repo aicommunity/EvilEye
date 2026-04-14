@@ -25,6 +25,7 @@ class DetectionThreadYoloMp(DetectionThreadBase):
 
     def __init__(self, model_name: str, stride: int, classes: list,
                  source_ids: list, roi: list, inf_params: dict,
+                 restart_on_exit: bool, no_restart_exit_codes: set[int],
                  queue_out: Queue, logger_name: Optional[str] = None,
                  parent_logger: Optional[logging.Logger] = None):
         from evileye.core.mp_control import MpControl
@@ -33,6 +34,8 @@ class DetectionThreadYoloMp(DetectionThreadBase):
         self.mp_control = MpControl(
             max_input_size=max(len(roi), 2),
             name=f"det-mp-{DetectionThreadYoloMp.id_cnt}",
+            restart_on_exit=restart_on_exit,
+            no_restart_exit_codes=no_restart_exit_codes,
         )
         self.mp_worker = self.mp_control.add_worker(MpWorkerYolo)
         self.model_name = model_name

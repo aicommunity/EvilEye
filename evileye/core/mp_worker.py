@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 import multiprocessing as mp
 import logging
 import logging.handlers
+from queue import Full
 
 from .logger import get_module_logger
 
@@ -30,6 +31,7 @@ class MpWorker(ABC):
         self.output_queue = output_queue
         self.log_queue = log_queue
         self.queue_timeout = 2
+        self.output_timeout = 1.0
         # Родительский логгер нужен до инициализации child-process logging.
         self.logger = get_module_logger("mp_worker")
         # Shared flag so the parent can request a stop without poison pill
@@ -70,7 +72,20 @@ class MpWorker(ABC):
                 if data is None:
                     break
                 results = self.worker_impl(data)
-                self.output_queue.put(results)
+                try:
+                    self.output_queue.put(results, timeout=self.output_timeout)
+                except Full:
+                    try:
+                        _ = self.output_queue.get_nowait()
+                    except Exception:
+                        pass
+                    try:
+                        self.output_queue.put(results, timeout=self.output_timeout)
+                    except Exception:
+                        if self.logger:
+                            self.logger.warning(
+                                "Worker output queue is full, dropping result"
+                            )
             except mp.queues.Empty:
                 continue
             except Exception as e:

@@ -233,13 +233,19 @@ class VideoCaptureBase(EvilEyeBase):
 
     def _init_process_mode(self) -> bool:
         """Initialise MpControl + MpWorkerCapture for process-based capture."""
-        from ..core.mp_control import MpControl
+        from ..core.mp_control import MpControl, parse_mp_restart_policy
         from .mp_worker_capture import MpWorkerCapture
+        restart_on_exit, no_restart_exit_codes = parse_mp_restart_policy(
+            self.params,
+            default_restart_on_exit=False,
+        )
 
         self._mp_control = MpControl(
             max_input_size=4,
             max_output_size=max(2, int(self.capture_config.queue_size or 2)),
             name=f"capture-{'_'.join(str(s) for s in (self.source_ids or [0]))}",
+            restart_on_exit=restart_on_exit,
+            no_restart_exit_codes=no_restart_exit_codes,
         )
         worker = self._mp_control.add_worker(MpWorkerCapture)
         worker.set_params(self.params if self.params else {})

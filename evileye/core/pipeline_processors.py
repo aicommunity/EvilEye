@@ -6,6 +6,7 @@ from .processor_base import ProcessorBase
 from abc import abstractmethod
 from typing import List, Dict, Any, Optional, Tuple
 import threading
+import os
 
 
 class PipelineProcessors(PipelineBase):
@@ -29,6 +30,7 @@ class PipelineProcessors(PipelineBase):
         self.sources_proc: ProcessorSource | None = None
 
         self._final_results_name = ""
+        self._ipc_mode = "standard"
 
         # Perf diagnostics (disabled by default). Enable with env EVILEYE_PERF_DIAG=1
         # or via controller.perf_diag=true (checked in Controller).
@@ -66,7 +68,10 @@ class PipelineProcessors(PipelineBase):
 
     def set_params_impl(self):
         """Set pipeline parameters from self.params - override in subclasses"""
+        self._ipc_mode = str(self.params.get("ipc_mode", "standard") or "standard")
         for section_name in self.params:
+            if section_name in {"pipeline_class", "ipc_mode"}:
+                continue
             section_params = self.params.get(section_name, []) or []
             self._processor_params[section_name] = section_params
 
@@ -162,6 +167,9 @@ class PipelineProcessors(PipelineBase):
 
     def stop(self):
         """Stop all processors in reverse order"""
+        stop_timeout_sec = float(
+            os.getenv("EVILEYE_PROCESSOR_STOP_TIMEOUT_SEC", "8.0") or "8.0"
+        )
         source_processors = [p for p in self.processors if p is not None and isinstance(p, ProcessorSource)]
         other_processors = [p for p in reversed(self.processors) if p is not None and not isinstance(p, ProcessorSource)]
         for processor in [*source_processors, *other_processors]:
@@ -178,9 +186,10 @@ class PipelineProcessors(PipelineBase):
                         stop_done.set()
 
                 threading.Thread(target=_stop_processor, daemon=True).start()
-                if not stop_done.wait(3.0):
+                if not stop_done.wait(stop_timeout_sec):
                     self.logger.warning(
-                        "Processor stop timeout after 3s: %s",
+                        "Processor stop timeout after %.1fs: %s",
+                        stop_timeout_sec,
                         processor.__class__.__name__,
                     )
                     continue
@@ -290,6 +299,9 @@ class PipelineProcessors(PipelineBase):
     def set_processor_params(self, processor_name: str, params: List[Dict]):
         """Set parameters for specific processor type"""
         self._processor_params[processor_name] = params
+
+    def get_ipc_mode(self) -> str:
+        return self._ipc_mode
 
     # Protected methods for processor management
     def _add_processor(self, processor: ProcessorBase):

@@ -1,6 +1,7 @@
 {
     "pipeline": {
         "pipeline_class": "PipelineSurveillance",
+        "ipc_mode": "standard",
         "sources": [
             {
                 "split": false,
@@ -20,7 +21,12 @@
                 "camera": "/home/user/Videos/Test3Cam/1/139932-video_trim.mp4",
                 "type": "VideoCaptureGStreamer",
                 "apiPreference": "CAP_GSTREAMER",
-                "gstreamer_available": true
+                "gstreamer_available": true,
+                "mp_restart_on_exit": false,
+                "mp_no_restart_exit_codes": [
+                    -15,
+                    0
+                ]
             },
             {
                 "split": true,
@@ -53,7 +59,12 @@
                 "camera": "/home/user/Videos/Test3Cam/2/139931-video_trim.mp4",
                 "type": "VideoCaptureGStreamer",
                 "apiPreference": "CAP_GSTREAMER",
-                "gstreamer_available": true
+                "gstreamer_available": true,
+                "mp_restart_on_exit": false,
+                "mp_no_restart_exit_codes": [
+                    -15,
+                    0
+                ]
             },
             {
                 "split": true,
@@ -86,7 +97,12 @@
                 "camera": "/home/user/Videos/Test3Cam/3/139930-video_trim.mp4",
                 "type": "VideoCaptureGStreamer",
                 "apiPreference": "CAP_GSTREAMER",
-                "gstreamer_available": true
+                "gstreamer_available": true,
+                "mp_restart_on_exit": false,
+                "mp_no_restart_exit_codes": [
+                    -15,
+                    0
+                ]
             }
         ],
         "detectors": [
@@ -127,7 +143,12 @@
                     0
                 ],
                 "num_detection_threads": 3,
-                "model": "models/yolov8n.pt"
+                "execution_mode": "thread",
+                "model": "models/yolov8n.pt",
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "roi": [
@@ -147,7 +168,12 @@
                     1
                 ],
                 "num_detection_threads": 3,
-                "model": "models/yolov8n.pt"
+                "execution_mode": "thread",
+                "model": "models/yolov8n.pt",
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "roi": [
@@ -192,7 +218,12 @@
                     2
                 ],
                 "num_detection_threads": 3,
-                "model": "models/yolov8n.pt"
+                "execution_mode": "thread",
+                "model": "models/yolov8n.pt",
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "roi": [
@@ -231,7 +262,12 @@
                     3
                 ],
                 "num_detection_threads": 3,
-                "model": "models/yolov8n.pt"
+                "execution_mode": "thread",
+                "model": "models/yolov8n.pt",
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "roi": [
@@ -251,7 +287,12 @@
                     4
                 ],
                 "num_detection_threads": 3,
-                "model": "models/yolov8n.pt"
+                "execution_mode": "thread",
+                "model": "models/yolov8n.pt",
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             }
         ],
         "trackers": [
@@ -272,7 +313,11 @@
                     "tracker_type": "botsort",
                     "fuse_score": true,
                     "with_reid": true
-                }
+                },
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "source_ids": [
@@ -291,7 +336,11 @@
                     "tracker_type": "botsort",
                     "fuse_score": true,
                     "with_reid": true
-                }
+                },
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "source_ids": [
@@ -310,7 +359,11 @@
                     "tracker_type": "botsort",
                     "fuse_score": true,
                     "with_reid": true
-                }
+                },
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "source_ids": [
@@ -329,7 +382,11 @@
                     "tracker_type": "botsort",
                     "fuse_score": true,
                     "with_reid": true
-                }
+                },
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "source_ids": [
@@ -348,7 +405,11 @@
                     "tracker_type": "botsort",
                     "fuse_score": true,
                     "with_reid": true
-                }
+                },
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             }
         ],
         "mc_trackers": [
@@ -360,6 +421,10 @@
                     2,
                     3,
                     4
+                ],
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
                 ]
             }
         ]
@@ -492,7 +557,19 @@
     "objects_handler": {
         "history_len": 30,
         "lost_store_time_secs": 60,
-        "lost_thresh": 5
+        "lost_thresh": 5,
+        "save_object_images": false,
+        "save_labeling_data": false,
+        "save_min_interval_sec": 0.5
+    },
+    "server": {
+        "enabled": true,
+        "execution_mode": "process",
+        "host": "127.0.0.1",
+        "port": 8080,
+        "log_level": "info",
+        "preview_encoder": "turbojpeg",
+        "preview_encode_workers": 2
     },
     "controller": {
         "autoclose": false,
@@ -583,8 +660,8 @@
             "hair drier": 78,
             "toothbrush": 79
         },
-        "memory_periodic_check_sec": 54000,
-        "show_memory_usage": false,
+        "memory_periodic_check_sec": 300,
+        "show_memory_usage": true,
         "max_memory_usage_mb": 16384,
         "auto_restart": true,
         "use_database": false,
@@ -595,8 +672,6 @@
             "interval_minutes": 0
         }
     },
-    "pipeline_class": "PipelineSurveillance",
-    "database": {},
     "storage_monitor": {
         "enabled": true,
         "check_interval_seconds": 300,
@@ -609,5 +684,6 @@
             "event_images": 180
         },
         "active_file_age_seconds": 60
-    }
+    },
+    "database": {}
 }

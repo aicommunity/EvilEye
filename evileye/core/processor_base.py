@@ -2,6 +2,7 @@ from .base_class import EvilEyeBase
 from abc import ABC, abstractmethod
 from .logger import get_module_logger
 import threading
+import os
 
 EXEC_MODE_THREAD = "thread"
 EXEC_MODE_PROCESS = "process"
@@ -20,6 +21,7 @@ class ProcessorBase(ABC):
         # Создание процессоров вынесено в отдельный метод для снижения связности
         self.dummy_processor = self._create_processor_instance(class_name)
         self.execution_mode = EXEC_MODE_THREAD
+        self.ipc_mode = "standard"
         self.dummy_processor = self._create_processor_instance(class_name)
         self.processors = []
         for i in range(0, num_processors):
@@ -64,9 +66,30 @@ class ProcessorBase(ABC):
         # Detect execution_mode from the first param block (shared across all)
         if params and isinstance(params, list) and len(params) > 0:
             self.execution_mode = params[0].get('execution_mode', EXEC_MODE_THREAD)
+            self.ipc_mode = params[0].get("ipc_mode", "standard")
 
         for i in range(0, self.num_processors):
             self.processors[i].set_params(**params[i])
+            self._validate_processor_capabilities(self.processors[i], i)
+
+    def _validate_processor_capabilities(self, processor: EvilEyeBase, idx: int) -> None:
+        """Warn about incompatible stage capabilities for selected transport mode."""
+        try:
+            if self.ipc_mode != "descriptor":
+                return
+            accepts_frame_handle = bool(
+                getattr(processor, "accepts_frame_handle", False)
+            )
+            if not accepts_frame_handle:
+                self.logger.warning(
+                    "Processor %s[%d] (%s) does not declare descriptor transport "
+                    "support; running in standard payload mode for this stage",
+                    self.processor_name,
+                    idx,
+                    processor.__class__.__name__,
+                )
+        except Exception:
+            pass
 
     def get_params(self):
         processors_params = list()
@@ -97,6 +120,7 @@ class ProcessorBase(ABC):
             processor.start()
 
     def stop(self):
+        stop_timeout_sec = float(os.getenv("EVILEYE_PROCESSOR_STOP_TIMEOUT_SEC", "8.0") or "8.0")
         for processor in self.processors:
             stop_done = threading.Event()
             stop_error: list[Exception] = []
@@ -110,10 +134,11 @@ class ProcessorBase(ABC):
                     stop_done.set()
 
             threading.Thread(target=_stop_processor, daemon=True).start()
-            if not stop_done.wait(3.0):
+            if not stop_done.wait(stop_timeout_sec):
                 try:
                     self.logger.warning(
-                        "Inner processor stop timeout after 3s: container=%s class=%s processor=%s",
+                        "Inner processor stop timeout after %.1fs: container=%s class=%s processor=%s",
+                        stop_timeout_sec,
                         self.processor_name,
                         self.class_name,
                         processor.__class__.__name__,
