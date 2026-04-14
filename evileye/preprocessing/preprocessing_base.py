@@ -78,11 +78,22 @@ class PreprocessingBase(EvilEyeBase):
             return frame
         handle = getattr(frame, "frame_handle", None)
         if handle is None:
+            handle = getattr(frame, "frame_ref", None)
+        if handle is None:
             return frame
         try:
             from ..core.frame_transport import SharedFrameTransport
             transport = SharedFrameTransport()
             frame.image = transport.get_frame_view(handle)
+            try:
+                transport.release_frame(handle)
+            except Exception:
+                pass
+            try:
+                setattr(frame, "frame_handle", None)
+                setattr(frame, "frame_ref", None)
+            except Exception:
+                pass
         except Exception:
             # Keep standard behavior when descriptor materialization is unavailable.
             return frame

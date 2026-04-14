@@ -16,6 +16,7 @@ from ..core.base_class import EvilEyeBase
 from ..video_recorder.recording_params import RecordingParams
 from ..video_recorder.recorder_manager import RecorderManager
 from ..core.frame import CaptureImage, Frame
+from ..core.frame_transport import FrameHandle, SharedFrameTransport
 from .constants import CaptureConstants, CaptureConfig
 from .queue_utils import DropOldestQueue
 
@@ -82,6 +83,7 @@ class VideoCaptureBase(EvilEyeBase):
         self.execution_mode = EXEC_MODE_THREAD
         self._mp_control = None
         self._capture_dispatch_thread: threading.Thread | None = None
+        self._frame_transport = SharedFrameTransport()
 
     def is_opened(self) -> bool:
         return False
@@ -257,10 +259,11 @@ class VideoCaptureBase(EvilEyeBase):
         """Read CaptureImage objects from child process and put them into frames_queue."""
         while self.run_flag:
             try:
-                frame = self._mp_control.get(timeout=0.5)
+                payload = self._mp_control.get(timeout=0.5)
             except Exception:
                 self._mark_finished_if_worker_stopped()
                 continue
+            frame = self._unpack_capture_payload(payload)
             if frame is None:
                 self._mark_finished_if_worker_stopped()
                 continue
@@ -268,6 +271,33 @@ class VideoCaptureBase(EvilEyeBase):
                 self.frames_queue.put(frame)
             except Exception:
                 pass
+
+    def _unpack_capture_payload(self, payload):
+        """Convert descriptor payload from capture worker to CaptureImage."""
+        if isinstance(payload, dict) and "frame_handle" in payload:
+            try:
+                handle = payload.get("frame_handle")
+                if not isinstance(handle, FrameHandle):
+                    return None
+                meta = payload.get("frame_meta", {}) or {}
+                frame = Frame()
+                frame.source_id = meta.get("source_id")
+                frame.frame_id = meta.get("frame_id")
+                frame.current_video_frame = meta.get("current_video_frame")
+                frame.current_video_position = meta.get("current_video_position")
+                frame.source_video_duration = meta.get("source_video_duration")
+                frame.time_stamp = meta.get("time_stamp")
+                # Materialize immediately in parent process. This avoids keeping
+                # shm handles alive after capture worker shutdown (SIGBUS risk).
+                frame.image = self._frame_transport.get_frame_view(handle)
+                try:
+                    self._frame_transport.release_frame(handle)
+                except Exception:
+                    pass
+                return frame
+            except Exception:
+                return None
+        return payload
 
     def _mark_finished_if_worker_stopped(self) -> None:
         """Mark source as finished when process-mode worker exited and queue is drained."""

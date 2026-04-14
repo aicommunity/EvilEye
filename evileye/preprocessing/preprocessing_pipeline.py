@@ -52,7 +52,7 @@ class PreprocessingPipeline(PreprocessingBase):
             if image is not None and getattr(image, "image", None) is not None:
                 processed_image.image = np.array(image.image, copy=True)
 
-        if self.preprocessSequence is not None:
+        if self.preprocessSequence is not None and getattr(processed_image, "image", None) is not None:
             processed_image.image = self.preprocessSequence.applySequence(processed_image.image)
 
         prev_version = int(getattr(image, "frame_version", 0) or 0)

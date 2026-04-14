@@ -30,9 +30,14 @@ class ProcessorStep(ProcessorBase):
         If stage receives a frame with frame_handle and target processor requires
         materialized image, attempt best-effort materialization.
         """
-        if not isinstance(input_item, (list, tuple)) or len(input_item) < 2:
+        data = None
+        frame = None
+        if isinstance(input_item, (list, tuple)) and len(input_item) >= 2:
+            data, frame = input_item[0], input_item[1]
+        elif isinstance(input_item, Frame):
+            frame = input_item
+        else:
             return input_item
-        data, frame = input_item[0], input_item[1]
         try:
             requires_materialized = bool(
                 getattr(processor, "requires_materialized_frame", True)
@@ -43,11 +48,24 @@ class ProcessorStep(ProcessorBase):
                 return input_item
             frame_handle = getattr(frame, "frame_handle", None)
             if frame_handle is None:
+                frame_handle = getattr(frame, "frame_ref", None)
+            if frame_handle is None:
                 return input_item
             from .frame_transport import SharedFrameTransport
             transport = SharedFrameTransport()
             frame.image = transport.get_frame_view(frame_handle)
-            return [data, frame]
+            try:
+                transport.release_frame(frame_handle)
+            except Exception:
+                pass
+            try:
+                setattr(frame, "frame_handle", None)
+                setattr(frame, "frame_ref", None)
+            except Exception:
+                pass
+            if isinstance(input_item, (list, tuple)) and len(input_item) >= 2:
+                return [data, frame]
+            return frame
         except Exception:
             return input_item
 

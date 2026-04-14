@@ -2,6 +2,7 @@ import json
 import os
 import signal
 import sys
+import warnings
 from pathlib import Path
 from typing import Optional
 
@@ -20,6 +21,19 @@ from evileye.utils.utils import normalize_config_path
 from evileye.core.logger import get_module_logger
 from evileye.core.config_validator import ConfigValidator
 from evileye.gui import GUIManager, GUIMode, determine_gui_mode
+
+# Shared-memory descriptor path can trigger noisy shutdown warnings from
+# multiprocessing resource_tracker when segments are already cleaned up.
+warnings.filterwarnings(
+    "ignore",
+    message=r"resource_tracker: '.*': \[Errno 2\] No such file or directory: '.*'",
+    category=UserWarning,
+)
+# Ensure child/resource-tracker processes inherit suppression as well.
+os.environ.setdefault(
+    "PYTHONWARNINGS",
+    "ignore:resource_tracker:UserWarning",
+)
 
 
 def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> int:

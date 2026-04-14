@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from multiprocessing import shared_memory
+from multiprocessing import resource_tracker
 from threading import Lock
 from typing import Dict, Tuple
 
@@ -25,6 +26,18 @@ class SharedFrameTransport:
         self._segments: Dict[str, shared_memory.SharedMemory] = {}
         self._lock = Lock()
 
+    @staticmethod
+    def _detach_from_resource_tracker(shm: shared_memory.SharedMemory) -> None:
+        """
+        Detach an attached (non-owner) segment from resource_tracker.
+        Prevents child processes from trying to unlink segments they do not own.
+        """
+        try:
+            raw_name = getattr(shm, "_name", None) or shm.name
+            resource_tracker.unregister(raw_name, "shared_memory")
+        except Exception:
+            pass
+
     def alloc_frame(self, image: np.ndarray, frame_id: int, timestamp: float) -> FrameHandle:
         arr = np.ascontiguousarray(image)
         shm = shared_memory.SharedMemory(create=True, size=arr.nbytes)
@@ -43,6 +56,7 @@ class SharedFrameTransport:
 
     def get_frame_view(self, handle: FrameHandle) -> np.ndarray:
         shm = shared_memory.SharedMemory(name=handle.shm_name)
+        self._detach_from_resource_tracker(shm)
         try:
             view = np.ndarray(handle.shape, dtype=np.dtype(handle.dtype), buffer=shm.buf)
             return np.array(view, copy=True)
@@ -58,11 +72,11 @@ class SharedFrameTransport:
             finally:
                 shm.unlink()
             return
+        # Foreign segment (created in another process): only close local handle.
+        # Unlink is responsibility of the owner process to avoid cross-process
+        # double-unlink warnings from multiprocessing resource_tracker.
         shm = shared_memory.SharedMemory(name=handle.shm_name)
         try:
             shm.close()
-        finally:
-            try:
-                shm.unlink()
-            except FileNotFoundError:
-                pass
+        except FileNotFoundError:
+            pass

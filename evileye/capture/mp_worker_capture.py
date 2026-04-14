@@ -12,6 +12,7 @@ import time
 from queue import Empty, Full
 
 from ..core.mp_worker import MpWorker
+from ..core.frame_transport import SharedFrameTransport
 
 
 class MpWorkerCapture(MpWorker):
@@ -29,6 +30,7 @@ class MpWorkerCapture(MpWorker):
         super().__init__(input_queue, output_queue, log_queue=log_queue)
         self._capture_params: dict = {}
         self._capture = None
+        self._frame_transport = SharedFrameTransport()
 
     def set_params(self, params: dict) -> None:
         self._capture_params = dict(params) if params else {}
@@ -130,16 +132,19 @@ class MpWorkerCapture(MpWorker):
                 continue
 
             for frame in frames:
+                packed = self._pack_frame_for_ipc(frame)
                 try:
-                    self.output_queue.put(frame, timeout=0.5)
+                    self.output_queue.put(packed, timeout=0.5)
                 except Full:
                     try:
-                        self.output_queue.get_nowait()
+                        dropped = self.output_queue.get_nowait()
+                        self._release_packed_frame(dropped)
                     except Empty:
                         pass
                     try:
-                        self.output_queue.put_nowait(frame)
+                        self.output_queue.put_nowait(packed)
                     except Full:
+                        self._release_packed_frame(packed)
                         pass
 
         try:
@@ -147,6 +152,36 @@ class MpWorkerCapture(MpWorker):
         except Exception:
             pass
         self.logger.info("Capture worker exiting")
+
+    def _pack_frame_for_ipc(self, frame):
+        image = getattr(frame, "image", None)
+        if image is None:
+            return frame
+        frame_id = int(getattr(frame, "frame_id", 0) or 0)
+        timestamp = float(getattr(frame, "time_stamp", time.time()) or time.time())
+        handle = self._frame_transport.alloc_frame(image, frame_id=frame_id, timestamp=timestamp)
+        return {
+            "frame_handle": handle,
+            "frame_meta": {
+                "source_id": getattr(frame, "source_id", None),
+                "frame_id": getattr(frame, "frame_id", None),
+                "current_video_frame": getattr(frame, "current_video_frame", None),
+                "current_video_position": getattr(frame, "current_video_position", None),
+                "source_video_duration": getattr(frame, "source_video_duration", None),
+                "time_stamp": getattr(frame, "time_stamp", None),
+            },
+        }
+
+    def _release_packed_frame(self, packed):
+        try:
+            if not isinstance(packed, dict):
+                return
+            handle = packed.get("frame_handle")
+            if handle is None:
+                return
+            self._frame_transport.release_frame(handle)
+        except Exception:
+            pass
 
     def cleanup(self) -> None:
         if self._capture is not None:
