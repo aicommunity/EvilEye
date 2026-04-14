@@ -36,13 +36,7 @@ class MpWorkerYolo(MpWorker):
             try:
                 boxes = res.boxes
                 if boxes is not None:
-                    try:
-                        arr = boxes.cpu().numpy()
-                    except Exception:
-                        arr = boxes.numpy()
-                    coords = arr.xyxy.tolist() if arr.xyxy is not None else []
-                    confs = arr.conf.tolist() if arr.conf is not None else []
-                    cls_ids = arr.cls.tolist() if arr.cls is not None else []
+                    coords, confs, cls_ids = self._extract_box_arrays(boxes)
                     for bbox, conf, cls_id in zip(coords, confs, cls_ids):
                         items.append(
                             {
@@ -58,6 +52,39 @@ class MpWorkerYolo(MpWorker):
             dto_results.append(items)
         del results
         return dto_results
+
+    def _extract_box_arrays(self, boxes):
+        """Extract xyxy/conf/cls arrays with minimal conversions."""
+        try:
+            xyxy = getattr(boxes, "xyxy", None)
+            conf = getattr(boxes, "conf", None)
+            cls_ids = getattr(boxes, "cls", None)
+            if xyxy is not None and conf is not None and cls_ids is not None:
+                try:
+                    if hasattr(xyxy, "cpu"):
+                        xyxy = xyxy.cpu()
+                    if hasattr(conf, "cpu"):
+                        conf = conf.cpu()
+                    if hasattr(cls_ids, "cpu"):
+                        cls_ids = cls_ids.cpu()
+                except Exception:
+                    pass
+                coords = xyxy.tolist() if hasattr(xyxy, "tolist") else list(xyxy)
+                confs = conf.tolist() if hasattr(conf, "tolist") else list(conf)
+                cls = cls_ids.tolist() if hasattr(cls_ids, "tolist") else list(cls_ids)
+                return coords or [], confs or [], cls or []
+        except Exception:
+            pass
+
+        # Backward-compatible path for older ultralytics boxes wrappers.
+        try:
+            arr = boxes.cpu().numpy()
+        except Exception:
+            arr = boxes.numpy()
+        coords = arr.xyxy.tolist() if arr.xyxy is not None else []
+        confs = arr.conf.tolist() if arr.conf is not None else []
+        cls = arr.cls.tolist() if arr.cls is not None else []
+        return coords, confs, cls
 
     def cleanup(self):
         if self.model is not None:

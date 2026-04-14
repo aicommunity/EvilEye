@@ -1,7 +1,6 @@
 from abc import abstractmethod
 from ..core.base_class import EvilEyeBase
 from queue import Full, Queue, Empty
-import multiprocessing as mp
 import threading
 from .tracking_results import TrackingResultList
 
@@ -31,14 +30,12 @@ class ObjectTrackingBase(EvilEyeBase):
         self._stopping = threading.Event()
 
     def _init_queues(self):
-        if self.execution_mode == EXEC_MODE_PROCESS:
-            self.queue_in = mp.Queue(maxsize=2)
-            self.queue_out = mp.Queue(maxsize=4)
-            self.queue_dropped_id = mp.Queue()
-        else:
-            self.queue_in = Queue(maxsize=2)
-            self.queue_out = Queue(maxsize=4)
-            self.queue_dropped_id = Queue()
+        # Tracker dispatcher and pipeline live in the same process.
+        # Keep local queues thread-based even in process execution mode;
+        # true IPC boundary is _mp_control worker queues.
+        self.queue_in = Queue(maxsize=2)
+        self.queue_out = Queue(maxsize=4)
+        self.queue_dropped_id = Queue()
 
     def put(self, det_info, force=False):
         dropped_id = []
