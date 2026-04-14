@@ -469,14 +469,7 @@ class Controller:
                 try:
                     source_id = getattr(image, "source_id", None)
                     frame_id = getattr(image, "frame_id", None)
-                    has_payload = False
-                    if data is not None:
-                        tracks = getattr(data, "tracks", None)
-                        detections = getattr(data, "detections", None)
-                        if tracks is not None:
-                            has_payload = bool(tracks)
-                        elif detections is not None:
-                            has_payload = bool(detections)
+                    has_payload = self._has_non_empty_payload(data)
                     heartbeat_every = 10  # send empty update once per 10 frames
                     should_send = True
                     if not has_payload and source_id is not None and frame_id is not None:
@@ -549,6 +542,45 @@ class Controller:
 
         self.logger.debug(f"Collected {len(processing_frames)} frames for processing")
         return processing_frames
+
+    def _has_non_empty_payload(self, data) -> bool:
+        """Return True when tracking/detection payload contains objects."""
+        if data is None:
+            return False
+        try:
+            tracks = getattr(data, "tracks", None)
+            if tracks is not None:
+                return bool(tracks)
+            detections = getattr(data, "detections", None)
+            if detections is not None:
+                return bool(detections)
+        except Exception:
+            pass
+        if isinstance(data, dict):
+            if "tracks" in data:
+                try:
+                    return bool(data.get("tracks"))
+                except Exception:
+                    return False
+            if "detections" in data:
+                try:
+                    return bool(data.get("detections"))
+                except Exception:
+                    return False
+            dto_obj = data.get("tracking_dto")
+            if dto_obj is not None:
+                try:
+                    return bool(getattr(dto_obj, "tracks", None))
+                except Exception:
+                    return False
+            return False
+        dto_obj = getattr(data, "tracking_dto", None)
+        if dto_obj is not None:
+            try:
+                return bool(getattr(dto_obj, "tracks", None))
+            except Exception:
+                return False
+        return False
 
     def _process_tracking_results(self, mc_tracking_results) -> list:
         """Backward compatible wrapper."""

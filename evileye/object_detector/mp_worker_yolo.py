@@ -36,7 +36,10 @@ class MpWorkerYolo(MpWorker):
             try:
                 boxes = res.boxes
                 if boxes is not None:
-                    arr = boxes.numpy()
+                    try:
+                        arr = boxes.cpu().numpy()
+                    except Exception:
+                        arr = boxes.numpy()
                     coords = arr.xyxy.tolist() if arr.xyxy is not None else []
                     confs = arr.conf.tolist() if arr.conf is not None else []
                     cls_ids = arr.cls.tolist() if arr.cls is not None else []
