@@ -2,7 +2,9 @@ from abc import abstractmethod
 from ..core.base_class import EvilEyeBase
 from queue import Full, Queue, Empty
 import threading
+import time
 from .tracking_results import TrackingResultList
+from ..core.frame_transport import SharedFrameTransport
 
 EXEC_MODE_THREAD = "thread"
 EXEC_MODE_PROCESS = "process"
@@ -28,6 +30,7 @@ class ObjectTrackingBase(EvilEyeBase):
         # Multiprocessing pool (used when execution_mode == "process")
         self._mp_control = None
         self._stopping = threading.Event()
+        self._frame_transport = SharedFrameTransport()
 
     def _init_queues(self):
         # Tracker dispatcher and pipeline live in the same process.
@@ -172,8 +175,9 @@ class ObjectTrackingBase(EvilEyeBase):
             if detections is None:
                 continue
             try:
+                packed, frame_handle = self._pack_for_worker(detections)
                 try:
-                    self._mp_control.put_nowait(detections)
+                    self._mp_control.put_nowait(packed)
                 except Exception:
                     # Drop oldest pending input and retry non-blocking put.
                     try:
@@ -181,8 +185,13 @@ class ObjectTrackingBase(EvilEyeBase):
                     except Exception:
                         pass
                     try:
-                        self._mp_control.put_nowait(detections)
+                        self._mp_control.put_nowait(packed)
                     except Exception:
+                        if frame_handle is not None:
+                            try:
+                                self._frame_transport.release_frame(frame_handle)
+                            except Exception:
+                                pass
                         continue
                 result = None
                 while self.run_flag and not self._stopping.is_set():
@@ -194,8 +203,29 @@ class ObjectTrackingBase(EvilEyeBase):
                     except Exception:
                         break
                 if result is None:
+                    if frame_handle is not None:
+                        try:
+                            self._frame_transport.release_frame(frame_handle)
+                        except Exception:
+                            pass
                     continue
-                self._put_out_drop_oldest(result)
+                if isinstance(result, (list, tuple)) and len(result) == 2:
+                    self._put_out_drop_oldest(result)
+                else:
+                    # New fast-path: worker returns only tracking payload,
+                    # keep original frame in parent process.
+                    if (
+                        isinstance(detections, (list, tuple))
+                        and len(detections) >= 2
+                    ):
+                        self._put_out_drop_oldest((result, detections[1]))
+                    else:
+                        self._put_out_drop_oldest(result)
+                if frame_handle is not None:
+                    try:
+                        self._frame_transport.release_frame(frame_handle)
+                    except Exception:
+                        pass
             except Full:
                 # Backpressure: keep tracker loop responsive during shutdown/load spikes.
                 continue
@@ -204,6 +234,34 @@ class ObjectTrackingBase(EvilEyeBase):
             except Exception as e:
                 if self.run_flag:
                     self.logger.error(f"Error in tracking dispatch loop: {e}")
+
+    def _pack_for_worker(self, detections):
+        """Pack tracking input for child process using frame descriptor."""
+        if not (isinstance(detections, (list, tuple)) and len(detections) >= 2):
+            return detections, None
+        det_result, frame = detections[0], detections[1]
+        image = getattr(frame, "image", None)
+        if image is None:
+            return detections, None
+        frame_handle = self._frame_transport.alloc_frame(
+            image=image,
+            frame_id=int(getattr(frame, "frame_id", 0) or 0),
+            timestamp=float(getattr(frame, "time_stamp", time.time()) or time.time()),
+        )
+        frame_meta = {
+            "source_id": getattr(frame, "source_id", None),
+            "frame_id": getattr(frame, "frame_id", None),
+            "time_stamp": getattr(frame, "time_stamp", None),
+            "current_video_frame": getattr(frame, "current_video_frame", None),
+            "current_video_position": getattr(frame, "current_video_position", None),
+            "source_video_duration": getattr(frame, "source_video_duration", None),
+        }
+        packed = {
+            "detection_result": det_result,
+            "frame_handle": frame_handle,
+            "frame_meta": frame_meta,
+        }
+        return packed, frame_handle
 
     def release_impl(self):
         if self._mp_control is not None:

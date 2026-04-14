@@ -1,8 +1,10 @@
 from queue import Queue
 import logging
+import time
 from typing import Optional
 
 from .detection_thread_base import DetectionThreadBase
+from ..core.frame_transport import FrameHandle, SharedFrameTransport
 
 utils = None
 
@@ -40,6 +42,7 @@ class DetectionThreadYoloMp(DetectionThreadBase):
         self.mp_worker = self.mp_control.add_worker(MpWorkerYolo)
         self.model_name = model_name
         self.model = None
+        self._frame_transport = SharedFrameTransport()
         super().__init__(stride, classes, source_ids, roi, inf_params, queue_out)
         if parent_logger is not None:
             self.logger = parent_logger
@@ -52,9 +55,27 @@ class DetectionThreadYoloMp(DetectionThreadBase):
         return None
 
     def predict(self, images: list) -> list:
-        self.mp_control.put(images)
-        res = self.mp_control.get()
-        return res
+        frame_handles: list[FrameHandle] = []
+        payload = []
+        now_ts = time.time()
+        for idx, image in enumerate(images):
+            handle = self._frame_transport.alloc_frame(
+                image=image,
+                frame_id=idx,
+                timestamp=now_ts,
+            )
+            frame_handles.append(handle)
+            payload.append(handle)
+        try:
+            self.mp_control.put(payload)
+            res = self.mp_control.get()
+            return res
+        finally:
+            for handle in frame_handles:
+                try:
+                    self._frame_transport.release_frame(handle)
+                except Exception:
+                    pass
 
     def get_bboxes(self, result, roi: list) -> tuple[list, list, list]:
         bboxes_coords = []

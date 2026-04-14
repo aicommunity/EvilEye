@@ -1,5 +1,6 @@
 from ..core.mp_worker import MpWorker
 from ultralytics import YOLO
+from ..core.frame_transport import FrameHandle, SharedFrameTransport
 
 
 class MpWorkerYolo(MpWorker):
@@ -10,6 +11,7 @@ class MpWorkerYolo(MpWorker):
         self.classes = []
         self.inf_params = dict()
         self.is_init = False
+        self._frame_transport = SharedFrameTransport()
 
     def set_params(self, model_name, classes, inf_params):
         self.model_name = model_name
@@ -29,7 +31,10 @@ class MpWorkerYolo(MpWorker):
             self.model.half()
 
     def worker_impl(self, data: list):
-        results = self.model.predict(data, classes=self.classes, verbose=False, **self.inf_params)
+        model_input = self._materialize_input_data(data)
+        if any(item is None for item in model_input):
+            return [[] for _ in data]
+        results = self.model.predict(model_input, classes=self.classes, verbose=False, **self.inf_params)
         dto_results = []
         for res in results:
             items = []
@@ -52,6 +57,19 @@ class MpWorkerYolo(MpWorker):
             dto_results.append(items)
         del results
         return dto_results
+
+    def _materialize_input_data(self, data: list):
+        materialized = []
+        for item in data:
+            if isinstance(item, FrameHandle):
+                try:
+                    materialized.append(self._frame_transport.get_frame_view(item))
+                    continue
+                except Exception:
+                    materialized.append(None)
+                    continue
+            materialized.append(item)
+        return materialized
 
     def _extract_box_arrays(self, boxes):
         """Extract xyxy/conf/cls arrays with minimal conversions."""

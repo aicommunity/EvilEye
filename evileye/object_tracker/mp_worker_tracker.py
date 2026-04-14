@@ -1,4 +1,5 @@
 from ..core.mp_worker import MpWorker
+from ..core.frame_transport import FrameHandle, SharedFrameTransport
 
 
 class MpWorkerTracker(MpWorker):
@@ -14,6 +15,7 @@ class MpWorkerTracker(MpWorker):
         self.tracker_params = {}
         self.tracker = None
         self.encoders = None
+        self._frame_transport = SharedFrameTransport()
 
     def set_params(self, tracker_params: dict):
         """Store params to be used during init_worker inside child process"""
@@ -67,9 +69,9 @@ class MpWorkerTracker(MpWorker):
         from ultralytics.engine.results import Boxes
         from .tracking_results import TrackingResult, TrackingResultList
 
-        detection_result, image = data
+        detection_result, image = self._unpack_input(data)
         if image is None or image.image is None:
-            return data
+            return None
 
         cam_id = detection_result.source_id
         objects = detection_result.detections
@@ -107,7 +109,34 @@ class MpWorkerTracker(MpWorker):
                 obj.tracking_data = {"track_object": tracks[i]}
                 tracks_info.tracks.append(obj)
 
-        return (tracks_info, image)
+        return tracks_info
+
+    def _unpack_input(self, data):
+        """Unpack either legacy tuple payload or descriptor payload."""
+        if isinstance(data, dict) and "detection_result" in data:
+            det = data.get("detection_result")
+            handle = data.get("frame_handle")
+            if isinstance(handle, FrameHandle):
+                image_np = self._frame_transport.get_frame_view(handle)
+            else:
+                image_np = None
+            frame_meta = data.get("frame_meta", {}) or {}
+
+            class _FrameLike:
+                pass
+
+            frame = _FrameLike()
+            frame.image = image_np
+            frame.source_id = frame_meta.get("source_id")
+            frame.frame_id = frame_meta.get("frame_id")
+            frame.time_stamp = frame_meta.get("time_stamp")
+            frame.current_video_frame = frame_meta.get("current_video_frame")
+            frame.current_video_position = frame_meta.get("current_video_position")
+            frame.source_video_duration = frame_meta.get("source_video_duration")
+            return det, frame
+        if isinstance(data, (list, tuple)) and len(data) >= 2:
+            return data[0], data[1]
+        return None, None
 
     def cleanup(self):
         self.tracker = None
