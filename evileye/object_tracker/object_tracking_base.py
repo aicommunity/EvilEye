@@ -28,6 +28,7 @@ class ObjectTrackingBase(EvilEyeBase):
 
         # Multiprocessing pool (used when execution_mode == "process")
         self._mp_control = None
+        self._stopping = threading.Event()
 
     def _init_queues(self):
         if self.execution_mode == EXEC_MODE_PROCESS:
@@ -94,6 +95,7 @@ class ObjectTrackingBase(EvilEyeBase):
 
     def start(self):
         self.run_flag = True
+        self._stopping.clear()
         if self.execution_mode == EXEC_MODE_PROCESS and self._mp_control is not None:
             # Child process is already started during init
             # Start the dispatcher thread that feeds queue_in -> mp_control
@@ -104,17 +106,25 @@ class ObjectTrackingBase(EvilEyeBase):
 
     def stop(self):
         self.run_flag = False
+        self._stopping.set()
         try:
-            self.queue_in.put(None)
+            self.queue_in.put_nowait(None)
         except Exception:
-            pass
-        if self.processing_thread and self.processing_thread.is_alive():
-            self.processing_thread.join(timeout=2.0)
-            if self.processing_thread.is_alive():
-                self.logger.warning("Tracker processing_thread did not stop within 2s")
+            try:
+                _ = self.queue_in.get_nowait()
+            except Exception:
+                pass
+            try:
+                self.queue_in.put_nowait(None)
+            except Exception:
+                pass
         if self._mp_control is not None:
             self._mp_control.stop()
             self._mp_control = None
+        if self.processing_thread and self.processing_thread.is_alive():
+            self.processing_thread.join(timeout=1.5)
+            if self.processing_thread.is_alive():
+                self.logger.warning("Tracker processing_thread did not stop within 1.5s")
         self.logger.info('Tracker stopped')
 
     def init_impl(self, **kwargs):
@@ -165,9 +175,33 @@ class ObjectTrackingBase(EvilEyeBase):
             if detections is None:
                 continue
             try:
-                self._mp_control.put(detections)
-                result = self._mp_control.get(timeout=10.0)
+                try:
+                    self._mp_control.put_nowait(detections)
+                except Exception:
+                    # Drop oldest pending input and retry non-blocking put.
+                    try:
+                        _ = self._mp_control.input_queue.get_nowait()
+                    except Exception:
+                        pass
+                    try:
+                        self._mp_control.put_nowait(detections)
+                    except Exception:
+                        continue
+                result = None
+                while self.run_flag and not self._stopping.is_set():
+                    try:
+                        result = self._mp_control.get(timeout=0.25)
+                        break
+                    except Empty:
+                        continue
+                    except Exception:
+                        break
+                if result is None:
+                    continue
                 self._put_out_drop_oldest(result)
+            except Full:
+                # Backpressure: keep tracker loop responsive during shutdown/load spikes.
+                continue
             except Empty:
                 continue
             except Exception as e:

@@ -24,6 +24,33 @@ class ProcessorStep(ProcessorBase):
         self._trackers_updates_by_source: dict[int, int] = defaultdict(int)
         self._trackers_repeats_by_source: dict[int, int] = defaultdict(int)
 
+    def _adapt_input_for_processor(self, input_item, processor):
+        """
+        Compatibility adapter between standard and descriptor payloads.
+        If stage receives a frame with frame_handle and target processor requires
+        materialized image, attempt best-effort materialization.
+        """
+        if not isinstance(input_item, (list, tuple)) or len(input_item) < 2:
+            return input_item
+        data, frame = input_item[0], input_item[1]
+        try:
+            requires_materialized = bool(
+                getattr(processor, "requires_materialized_frame", True)
+            )
+            if not requires_materialized:
+                return input_item
+            if getattr(frame, "image", None) is not None:
+                return input_item
+            frame_handle = getattr(frame, "frame_handle", None)
+            if frame_handle is None:
+                return input_item
+            from .frame_transport import SharedFrameTransport
+            transport = SharedFrameTransport()
+            frame.image = transport.get_frame_view(frame_handle)
+            return [data, frame]
+        except Exception:
+            return input_item
+
     def process(self, input_list=None):
         processing_results = []
         if input_list is not None:
@@ -41,7 +68,7 @@ class ProcessorStep(ProcessorBase):
                 for processor in self.processors:
                     source_ids = processor.get_source_ids()
                     if frame.source_id in source_ids:
-                        processor.put(input)
+                        processor.put(self._adapt_input_for_processor(input, processor))
                         is_processor_found = True
 
                     if is_processor_found:

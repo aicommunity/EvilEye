@@ -4,6 +4,7 @@ import logging.handlers
 import threading
 import time
 from typing import Iterable
+from timeit import default_timer as timer
 from .logger import get_module_logger
 
 
@@ -53,6 +54,14 @@ class MpControl:
         self._monitor_stop = threading.Event()
         self._stopping = threading.Event()
         self._suppressed_restart_pids: set[int] = set()
+        self._stats_lock = threading.Lock()
+        self._stats = {
+            "put_calls_total": 0,
+            "put_wait_ms_total": 0.0,
+            "get_calls_total": 0,
+            "worker_restart_total": 0,
+            "restart_suppressed_total": 0,
+        }
 
     # -- Logging bridge --------------------------------------------------
 
@@ -98,13 +107,20 @@ class MpControl:
     # -- Queue helpers ---------------------------------------------------
 
     def put(self, data, block=True, timeout=None):
+        started = timer()
         self.input_queue.put(data, block=block, timeout=timeout)
+        with self._stats_lock:
+            self._stats["put_calls_total"] += 1
+            self._stats["put_wait_ms_total"] += (timer() - started) * 1000.0
 
     def put_nowait(self, data):
         self.input_queue.put_nowait(data)
 
     def get(self, block=True, timeout=None):
-        return self.output_queue.get(block=block, timeout=timeout)
+        result = self.output_queue.get(block=block, timeout=timeout)
+        with self._stats_lock:
+            self._stats["get_calls_total"] += 1
+        return result
 
     def get_nowait(self):
         return self.output_queue.get_nowait()
@@ -186,6 +202,8 @@ class MpControl:
                     if p.pid in self._suppressed_restart_pids:
                         continue
                     if not self.restart_on_exit:
+                        with self._stats_lock:
+                            self._stats["restart_suppressed_total"] += 1
                         self._suppressed_restart_pids.add(p.pid)
                         continue
                     if p.exitcode in self.no_restart_exit_codes:
@@ -194,6 +212,8 @@ class MpControl:
                             p.pid,
                             p.exitcode,
                         )
+                        with self._stats_lock:
+                            self._stats["restart_suppressed_total"] += 1
                         self._suppressed_restart_pids.add(p.pid)
                         continue
                     self.logger.warning(
@@ -208,6 +228,8 @@ class MpControl:
                         )
                         new_p.start()
                         self.processes[i] = new_p
+                        with self._stats_lock:
+                            self._stats["worker_restart_total"] += 1
                         self.logger.info(
                             f"Restarted worker as pid={new_p.pid}"
                         )
@@ -222,6 +244,19 @@ class MpControl:
 
     def worker_count(self) -> int:
         return sum(1 for p in self.processes if p.is_alive())
+
+    def get_metrics(self) -> dict:
+        with self._stats_lock:
+            snapshot = dict(self._stats)
+        put_calls = snapshot.get("put_calls_total", 0) or 0
+        if put_calls > 0:
+            snapshot["avg_put_wait_ms"] = snapshot["put_wait_ms_total"] / float(put_calls)
+        else:
+            snapshot["avg_put_wait_ms"] = 0.0
+        snapshot["input_queue_size"] = self.input_queue.qsize()
+        snapshot["output_queue_size"] = self.output_queue.qsize()
+        snapshot["alive_workers"] = self.worker_count()
+        return snapshot
 
 
 def parse_mp_restart_policy(

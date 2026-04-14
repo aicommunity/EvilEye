@@ -3,6 +3,7 @@ import multiprocessing as mp
 import logging
 import logging.handlers
 from queue import Full
+from timeit import default_timer as timer
 
 from .logger import get_module_logger
 
@@ -36,6 +37,11 @@ class MpWorker(ABC):
         self.logger = get_module_logger("mp_worker")
         # Shared flag so the parent can request a stop without poison pill
         self._stop_event = mp.Event()
+        self.stats = {
+            "processed_total": 0,
+            "drops_total": 0,
+            "put_wait_ms_total": 0.0,
+        }
 
     def _init_logger(self):
         """Initialize logger inside child process"""
@@ -72,8 +78,10 @@ class MpWorker(ABC):
                 if data is None:
                     break
                 results = self.worker_impl(data)
+                put_started = timer()
                 try:
                     self.output_queue.put(results, timeout=self.output_timeout)
+                    self.stats["put_wait_ms_total"] += (timer() - put_started) * 1000.0
                 except Full:
                     try:
                         _ = self.output_queue.get_nowait()
@@ -81,11 +89,15 @@ class MpWorker(ABC):
                         pass
                     try:
                         self.output_queue.put(results, timeout=self.output_timeout)
+                        self.stats["put_wait_ms_total"] += (timer() - put_started) * 1000.0
+                        self.stats["drops_total"] += 1
                     except Exception:
+                        self.stats["drops_total"] += 1
                         if self.logger:
                             self.logger.warning(
                                 "Worker output queue is full, dropping result"
                             )
+                self.stats["processed_total"] += 1
             except mp.queues.Empty:
                 continue
             except Exception as e:
@@ -102,4 +114,14 @@ class MpWorker(ABC):
             pass
 
         if self.logger:
+            if self.stats["processed_total"] > 0:
+                avg_put_wait_ms = self.stats["put_wait_ms_total"] / float(
+                    self.stats["processed_total"]
+                )
+                self.logger.info(
+                    "Worker stats: processed_total=%d drops_total=%d avg_put_wait_ms=%.3f",
+                    self.stats["processed_total"],
+                    self.stats["drops_total"],
+                    avg_put_wait_ms,
+                )
             self.logger.info(f"Process {mp.current_process().name} exiting")

@@ -26,6 +26,7 @@ from ..object_tracker.trackers.sctrack import SCTrack
 from dataclasses import dataclass
 from pympler import asizeof
 from ..core.base_class import EvilEyeBase
+from ..core.ipc_contracts import BatchMeta
 
 
 @EvilEyeBase.register("ObjectMultiCameraTracking")
@@ -151,7 +152,8 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
 
             sc_track_results = [self._pending_by_source[source_id] for source_id in self.source_ids if source_id in self._pending_by_source]
 
-            if len(sc_track_results) < len(self.source_ids):
+            is_partial = len(sc_track_results) < len(self.source_ids)
+            if is_partial:
                 if self._perf_diag_env:
                     self._diag_waiting_for_batch += 1
                     self._diag_partial_batches += 1
@@ -194,6 +196,7 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
 
             if not self.enable:
                 for track_info in sc_track_results:
+                    self._attach_batch_meta(track_info, frame_id_by_source, is_partial=is_partial)
                     self._put_out_drop_oldest(track_info)
                 for source_id in self.source_ids:
                     new_frame_id = frame_id_by_source.get(source_id)
@@ -236,6 +239,7 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
                 self._diag_empty_mc_tracks += 1
             tracks_infos = self._create_tracks_info(track_infos, mc_tracks)
             for track_info in zip(tracks_infos, images):
+                self._attach_batch_meta(track_info, frame_id_by_source, is_partial=is_partial)
                 self._put_out_drop_oldest(track_info)
 
             # Remember emitted frame_ids for next-loop deduplication.
@@ -297,6 +301,42 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
                         self._diag_frame_id_repeats_by_source = {}
                     except Exception:
                         pass
+
+    def _attach_batch_meta(self, track_info_with_image, frame_id_by_source, is_partial: bool):
+        """Attach lightweight batch metadata for downstream diagnostics."""
+        try:
+            track_info, image = track_info_with_image
+        except Exception:
+            return
+        try:
+            source_id = getattr(track_info, "source_id", None)
+            frame_id = getattr(track_info, "frame_id", None)
+            if frame_id is None and source_id in frame_id_by_source:
+                frame_id = frame_id_by_source.get(source_id)
+            frame_ref = getattr(image, "frame_handle", None)
+            batch_meta = {
+                "payload_version": 1,
+                "source_id": source_id,
+                "frame_id": frame_id,
+                "batch_age_ms": 0.0,
+                "is_partial": bool(is_partial),
+            }
+            setattr(track_info, "batch_meta", batch_meta)
+            setattr(
+                track_info,
+                "batch_meta_obj",
+                BatchMeta(
+                    payload_version=1,
+                    source_id=source_id,
+                    frame_id=frame_id,
+                    batch_age_ms=0.0,
+                    is_partial=bool(is_partial),
+                ),
+            )
+            if frame_ref is not None:
+                setattr(track_info, "frame_ref", frame_ref)
+        except Exception:
+            return
 
     def _parse_det_info(self, det_info: DetectionResultList) -> tuple:
         cam_id = det_info.source_id

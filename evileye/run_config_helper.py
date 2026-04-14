@@ -232,6 +232,8 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
         except Exception:
             ctrl_ref = None
 
+        use_async_shutdown = gui_mode != GUIMode.HEADLESS
+
         def _shutdown_controller():
             if shutdown_state["done"]:
                 return
@@ -264,13 +266,20 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
                         pass
 
             try:
-                import threading as _threading
-                # Run shutdown in a daemon thread so Qt aboutToQuit can return
-                # immediately and the process is not kept alive forever by a
-                # stuck controller.release()/stop() path.
-                t = _threading.Thread(target=_do_shutdown, name="evileye-gui-shutdown", daemon=True)
-                shutdown_state["thread"] = t
-                t.start()
+                if use_async_shutdown:
+                    import threading as _threading
+                    # GUI mode: aboutToQuit must return quickly.
+                    t = _threading.Thread(
+                        target=_do_shutdown,
+                        name="evileye-gui-shutdown",
+                        daemon=True,
+                    )
+                    shutdown_state["thread"] = t
+                    t.start()
+                else:
+                    # Headless mode: perform shutdown synchronously to avoid
+                    # lingering daemon shutdown threads and timeout warnings.
+                    _do_shutdown()
             except Exception:
                 # Fallback to best-effort sync shutdown (last resort)
                 try:
@@ -355,16 +364,17 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
         logger.info("Controller started in headless mode, entering Qt event loop...")
         ret = qt_app.exec()
         # Best-effort wait for shutdown thread if it was started
-        try:
-            t = shutdown_state.get("thread")
-            if t is not None:
-                import threading as _threading
-                if isinstance(t, _threading.Thread) and t.is_alive():
-                    t.join(timeout=15.0)
-                    if t.is_alive():
-                        logger.warning("GUI shutdown thread is still alive after 15s timeout")
-        except Exception:
-            pass
+        if use_async_shutdown:
+            try:
+                t = shutdown_state.get("thread")
+                if t is not None:
+                    import threading as _threading
+                    if isinstance(t, _threading.Thread) and t.is_alive():
+                        t.join(timeout=15.0)
+                        if t.is_alive():
+                            logger.warning("GUI shutdown thread is still alive after 15s timeout")
+            except Exception:
+                pass
     else:
         logger.info("Starting main application loop")
         ret = qt_app.exec()
