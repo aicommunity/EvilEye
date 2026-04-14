@@ -83,5 +83,27 @@ class ObjectResultList:
 
         return objs
 
+    def find_objects_near_frame_id(self, frame_id: int, max_delta: int = 1, use_history: bool = True):
+        """
+        Return objects whose latest known frame_id is close to the requested frame.
+        Useful for visualization when payload/frame can drift by 1-2 frames.
+        """
+        if frame_id is None:
+            return list(self.objects)
+        max_delta = max(0, int(max_delta or 0))
+        matched = []
+        for obj in self.objects:
+            obj_frame_id = getattr(obj, "frame_id", None)
+            if obj_frame_id is not None and abs(int(obj_frame_id) - int(frame_id)) <= max_delta:
+                matched.append(obj)
+                continue
+            if use_history and getattr(obj, "history", None):
+                for hist in obj.history:
+                    hist_frame = getattr(hist, "frame_id", None)
+                    if hist_frame is not None and abs(int(hist_frame) - int(frame_id)) <= max_delta:
+                        matched.append(obj)
+                        break
+        return matched
+
     def get_num_objects(self):
         return len(self.objects)

@@ -21,6 +21,10 @@ def _build_controller_for_test():
     ctrl.skip_objects_handler = False
     ctrl.obj_handler = _DummyObjHandler()
     ctrl._obj_handler_last_sent_frame_id = {}
+    ctrl.obj_handler_empty_heartbeat_every = 3
+    ctrl._track_continuity_last_ids = {}
+    ctrl._track_continuity_switches = 0
+    ctrl._track_payload_without_track_object = 0
     ctrl.source_last_processed_frame_id = {}
     ctrl._per_source_frame_debug_counter = {}
     ctrl.recording_params = None

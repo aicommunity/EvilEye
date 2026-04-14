@@ -12,6 +12,13 @@ from ..core.logger import get_module_logger
 
 # Инициализация логгера для утилит
 utils_logger = get_module_logger("utils")
+_track_line_diag_state = {
+    "total_objects": 0,
+    "bbox_without_line": 0,
+    "exact_match": 0,
+    "history_match": 0,
+    "fallback_current": 0,
+}
 
 from sympy.multipledispatch.dispatcher import source
 
@@ -349,9 +356,14 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
     else:
         source_text = str(source_name)
 
-    # Use fixed drawing cadence (no adaptive "busy" throttling).
-    # This keeps the visualization consistent and closer to the original look.
-    history_line_every = 2
+    # Configurable drawing cadence for track history lines.
+    # 1 means draw every rendered frame.
+    history_line_every = 1
+    try:
+        history_line_every = int(config.get("history_line_every", history_line_every) or history_line_every)
+    except Exception:
+        history_line_every = 1
+    history_line_every = max(1, history_line_every)
 
     history_frame_id = getattr(image, "frame_id", None)
     try:
@@ -362,6 +374,8 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
         history_line_every <= 1
         or (history_frame_id_int is not None and history_frame_id_int % history_line_every == 0)
     )
+    perf_diag_enabled = os.getenv("EVILEYE_PERF_DIAG", "").strip().lower() in {"1", "true", "yes", "on"}
+    perf_diag_every = int(os.getenv("EVILEYE_PERF_DIAG_EVERY", "60") or "60")
 
     # Draw more attribute telemetry (fewer artificial simplifications).
     attr_max_drawn = 4
@@ -401,12 +415,18 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
 
         last_hist_index = len(obj.history) - 1
         last_info = obj.track
+        match_mode = "fallback_current"
         if obj.frame_id != image.frame_id:
+            matched_history = False
             for i in range(len(obj.history) - 1):
                 if obj.history[i].frame_id == image.frame_id:
                     last_hist_index = i
                     last_info = obj.history[i].track
+                    matched_history = True
                     break
+            match_mode = "history_match" if matched_history else "fallback_current"
+        else:
+            match_mode = "exact_match"
 
         cv2.rectangle(image.image, (int(last_info.bounding_box[0]), int(last_info.bounding_box[1])),
                       (int(last_info.bounding_box[2]), int(last_info.bounding_box[3])), (0, 255, 0), thickness=font_thickness)
@@ -459,6 +479,7 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
         # utils_logger.error(len(obj['obj_info']))
         if draw_history_lines and len(obj.history) > 1:
             hist_start_index = max(0, last_hist_index - max_history_segments)
+            line_segments_drawn = 0
             for i in range(hist_start_index, last_hist_index):
                 first_info = obj.history[i].track
                 second_info = obj.history[i + 1].track
@@ -473,6 +494,58 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
                     (0, 0, 255),
                     thickness=font_thickness,
                 )
+                line_segments_drawn += 1
+            if perf_diag_enabled:
+                _track_line_diag_state["total_objects"] += 1
+                if match_mode == "exact_match":
+                    _track_line_diag_state["exact_match"] += 1
+                elif match_mode == "history_match":
+                    _track_line_diag_state["history_match"] += 1
+                else:
+                    _track_line_diag_state["fallback_current"] += 1
+                if line_segments_drawn == 0:
+                    _track_line_diag_state["bbox_without_line"] += 1
+                    utils_logger.info(
+                        "TrackLineDiag: bbox_without_line src=%s frame=%s obj_id=%s obj_frame=%s match_mode=%s history_len=%d last_hist_index=%d",
+                        getattr(image, "source_id", None),
+                        getattr(image, "frame_id", None),
+                        getattr(obj, "object_id", None),
+                        getattr(obj, "frame_id", None),
+                        match_mode,
+                        len(obj.history),
+                        last_hist_index,
+                    )
+        elif perf_diag_enabled:
+            _track_line_diag_state["total_objects"] += 1
+            if match_mode == "exact_match":
+                _track_line_diag_state["exact_match"] += 1
+            elif match_mode == "history_match":
+                _track_line_diag_state["history_match"] += 1
+            else:
+                _track_line_diag_state["fallback_current"] += 1
+            _track_line_diag_state["bbox_without_line"] += 1
+            utils_logger.info(
+                "TrackLineDiag: bbox_without_line src=%s frame=%s obj_id=%s obj_frame=%s match_mode=%s history_len=%d last_hist_index=%d reason=no_history_or_skip",
+                getattr(image, "source_id", None),
+                getattr(image, "frame_id", None),
+                getattr(obj, "object_id", None),
+                getattr(obj, "frame_id", None),
+                match_mode,
+                len(obj.history),
+                last_hist_index,
+            )
+
+    if perf_diag_enabled and history_frame_id_int is not None and (history_frame_id_int % max(1, perf_diag_every)) == 0:
+        utils_logger.info(
+            "TrackLineDiagSummary: src=%s frame=%s total=%d bbox_without_line=%d exact=%d history_match=%d fallback_current=%d",
+            getattr(image, "source_id", None),
+            history_frame_id_int,
+            _track_line_diag_state["total_objects"],
+            _track_line_diag_state["bbox_without_line"],
+            _track_line_diag_state["exact_match"],
+            _track_line_diag_state["history_match"],
+            _track_line_diag_state["fallback_current"],
+        )
 
 
 def draw_debug_info(image: CaptureImage, debug_info: dict):
@@ -905,6 +978,7 @@ def get_default_text_config():
         "background_enabled": False,  # Enable/disable background
         "padding_percent": 2.0,
         "position_offset_percent": (0, -10),
+        "history_line_every": 1,
         "font_scale_method": "resolution_based",  # "resolution_based" or "simple"
         "base_resolution": (1920, 1080)  # Base resolution for scaling
     }

@@ -246,6 +246,7 @@
         -8
       ],
       "font_scale_method": "resolution_based",
+      "history_line_every": 1,
       "base_resolution": [
         1920,
         1080

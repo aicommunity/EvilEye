@@ -51,6 +51,7 @@ class Visualizer(EvilEyeBase):
         self.signal_color = (255, 0, 0)
         # Zones display toggle
         self.display_zones = False
+        self.track_frame_match_window = 1
 
         # Perf diagnostics (disabled by default). Enable with env EVILEYE_PERF_DIAG=1
         self._perf_diag_env = os.getenv("EVILEYE_PERF_DIAG", "").strip().lower() in {"1", "true", "yes", "on"}
@@ -161,6 +162,7 @@ class Visualizer(EvilEyeBase):
         self.signal_enabled = self.params.get('event_signal_enabled', False)
         self.signal_color = tuple(self.params.get('event_signal_color', [255, 0, 0]))
         self.display_zones = self.params.get('display_zones', False)
+        self.track_frame_match_window = int(self.params.get("track_frame_match_window", 1) or 1)
 
     def get_params_impl(self):
         params = dict()
@@ -173,6 +175,7 @@ class Visualizer(EvilEyeBase):
         params['visual_buffer_num_frames'] = self.visual_buffer_num_frames
         params['text_config'] = self.text_config
         params['display_zones'] = self.display_zones
+        params['track_frame_match_window'] = self.track_frame_match_window
         return params
 
     def start(self):
@@ -376,6 +379,15 @@ class Visualizer(EvilEyeBase):
                     continue
                 #objs = objects[source_index].objects
                 objs = objects[source_index].find_objects_by_frame_id(frame.frame_id, use_history=False)
+                if len(objs) == 0 and self.track_frame_match_window > 0:
+                    try:
+                        objs = objects[source_index].find_objects_near_frame_id(
+                            frame.frame_id,
+                            max_delta=self.track_frame_match_window,
+                            use_history=True,
+                        )
+                    except Exception:
+                        objs = []
 
                 #self.logger.debug(f"source={source_id} num_objs={len(objs)}")
                 # self.logger.debug(f"Found {len(objs)} objects for visualization for source_id={frame.source_id} frame_id={frame.frame_id}")

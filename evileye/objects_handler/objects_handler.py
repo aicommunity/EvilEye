@@ -110,6 +110,9 @@ class ObjectsHandler(EvilEyeBase):
         self._perf_diag_env = os.getenv("EVILEYE_PERF_DIAG", "").strip().lower() in {"1", "true", "yes", "on"}
         self._perf_diag_every = int(os.getenv("EVILEYE_PERF_DIAG_EVERY", "60") or "60")
         self._perf_diag_counter = 0
+        self._diag_track_id_changes = 0
+        self._diag_missing_track_object = 0
+        self._diag_prev_track_ids_by_source: dict[int, set[int]] = {}
 
         # IO throttling for saving images/labeling data to avoid backlog and freezes under load
         self.save_object_images = True
@@ -121,7 +124,12 @@ class ObjectsHandler(EvilEyeBase):
         """Initialize object_id counter from existing data to avoid ID conflicts."""
         try:
             # Get the maximum object_id from existing data
-            max_existing_id = self.labeling_manager._preload_existing_data()
+            preload_fn = getattr(self.labeling_manager, "_preload_existing_data", None)
+            if not callable(preload_fn):
+                self.object_id_counter = 1
+                self.logger.debug("LabelingManager preload is unavailable; starting object_id from 1")
+                return
+            max_existing_id = preload_fn()
             
             if max_existing_id > 0:
                 # Set counter to next available ID
@@ -432,12 +440,14 @@ class ObjectsHandler(EvilEyeBase):
                         except Exception:
                             qsz = -1
                         self.logger.info(
-                            "PerfDiag(ObjectsHandler): processed=%d, qsize=%s, active=%d, lost=%d, proc_ms=%.1f",
+                            "PerfDiag(ObjectsHandler): processed=%d, qsize=%s, active=%d, lost=%d, proc_ms=%.1f, track_id_changes=%d, missing_track_object=%d",
                             self._perf_diag_counter,
                             qsz,
                             (len(self.active_objs.objects) if self.active_objs else -1),
                             (len(self.lost_objs.objects) if self.lost_objs else -1),
                             (timer() - begin_it) * 1000.0,
+                            self._diag_track_id_changes,
+                            self._diag_missing_track_object,
                         )
                 except Exception:
                     pass
@@ -613,6 +623,25 @@ class ObjectsHandler(EvilEyeBase):
         if not hasattr(tracking_results, 'tracks') or tracking_results.tracks is None:
             self.logger.warning(f"tracking_results has no tracks attribute, skipping frame {image.frame_id if image else 'unknown'}")
             return
+        try:
+            source_id = getattr(tracking_results, "source_id", None)
+            current_ids = {
+                int(getattr(tr, "track_id", -1))
+                for tr in (tracking_results.tracks or [])
+                if getattr(tr, "track_id", None) is not None
+            }
+            if source_id is not None:
+                prev_ids = self._diag_prev_track_ids_by_source.get(source_id, set())
+                if prev_ids and current_ids and prev_ids != current_ids:
+                    self._diag_track_id_changes += 1
+                if current_ids:
+                    self._diag_prev_track_ids_by_source[source_id] = current_ids
+            for tr in (tracking_results.tracks or []):
+                tdata = getattr(tr, "tracking_data", None)
+                if isinstance(tdata, dict) and "track_object" not in tdata:
+                    self._diag_missing_track_object += 1
+        except Exception:
+            pass
 
         for track in tracking_results.tracks:
             track_object = None

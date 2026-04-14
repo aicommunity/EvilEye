@@ -701,6 +701,30 @@ class LabelingManager:
         if self.save_thread.is_alive():
             self.save_thread.join(timeout=5)
 
+    def _preload_existing_data(self, timeout: float = 5.0):
+        """
+        Best-effort preload for compatibility with ObjectsHandler startup path.
+        Returns maximum existing object_id or 0 when data is unavailable.
+        """
+        _ = timeout
+        try:
+            max_existing = 0
+            found_data = self._load_json(self.found_labels_file, self.found_file_lock)
+            for obj in (found_data.get("objects", []) or []):
+                try:
+                    max_existing = max(max_existing, int(obj.get("object_id", 0) or 0))
+                except Exception:
+                    continue
+            lost_data = self._load_json(self.lost_labels_file, self.lost_file_lock)
+            for obj in (lost_data.get("objects", []) or []):
+                try:
+                    max_existing = max(max_existing, int(obj.get("object_id", 0) or 0))
+                except Exception:
+                    continue
+            return max_existing
+        except Exception:
+            return 0
+
 
 try:
     atexit.register(LabelingManager.shutdown_all)

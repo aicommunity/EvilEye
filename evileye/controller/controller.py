@@ -106,6 +106,10 @@ class Controller:
         self._per_source_frame_debug_counter: dict[int, int] = {}
         # Throttle ObjectsHandler updates to avoid backlog under load
         self._obj_handler_last_sent_frame_id: dict[int, int] = {}
+        self.obj_handler_empty_heartbeat_every = 3
+        self._track_continuity_last_ids: dict[int, set[int]] = {}
+        self._track_continuity_switches = 0
+        self._track_payload_without_track_object = 0
         self._preview_active_events_by_source: dict[int, dict[tuple[int, str], dict]] = {}
         self._preview_events_lock = threading.Lock()
         self._preview_zones_by_source: dict[int, list] = {}
@@ -470,12 +474,14 @@ class Controller:
                     source_id = getattr(image, "source_id", None)
                     frame_id = getattr(image, "frame_id", None)
                     has_payload = self._has_non_empty_payload(data)
-                    heartbeat_every = 10  # send empty update once per 10 frames
+                    heartbeat_every = max(1, int(self.obj_handler_empty_heartbeat_every or 3))
                     should_send = True
                     if not has_payload and source_id is not None and frame_id is not None:
                         last_sent = self._obj_handler_last_sent_frame_id.get(source_id)
                         if last_sent is not None and (frame_id - last_sent) < heartbeat_every:
                             should_send = False
+                    if has_payload and source_id is not None:
+                        self._update_track_continuity_diag(source_id, data)
                     if should_send:
                         self.obj_handler.put(track_info)
                         if source_id is not None and frame_id is not None:
@@ -582,6 +588,48 @@ class Controller:
                 return False
         return False
 
+    def _extract_track_ids(self, data) -> tuple[set[int], int]:
+        track_ids: set[int] = set()
+        missing_track_object = 0
+        tracks = None
+        try:
+            tracks = getattr(data, "tracks", None)
+        except Exception:
+            tracks = None
+        if tracks is None and isinstance(data, dict):
+            tracks = data.get("tracks")
+        if tracks is None:
+            dto_obj = data.get("tracking_dto") if isinstance(data, dict) else getattr(data, "tracking_dto", None)
+            tracks = getattr(dto_obj, "tracks", None) if dto_obj is not None else None
+        for tr in (tracks or []):
+            try:
+                tid = getattr(tr, "track_id", None)
+                if tid is None and isinstance(tr, dict):
+                    tid = tr.get("track_id")
+                if tid is not None:
+                    track_ids.add(int(tid))
+                tdata = getattr(tr, "tracking_data", None)
+                if tdata is None and isinstance(tr, dict):
+                    tdata = tr.get("tracking_data", {})
+                if isinstance(tdata, dict) and "track_object" not in tdata:
+                    missing_track_object += 1
+            except Exception:
+                continue
+        return track_ids, missing_track_object
+
+    def _update_track_continuity_diag(self, source_id: int, data) -> None:
+        try:
+            track_ids, missing_track_object = self._extract_track_ids(data)
+            if missing_track_object > 0:
+                self._track_payload_without_track_object += missing_track_object
+            prev = self._track_continuity_last_ids.get(source_id, set())
+            if prev and track_ids and prev != track_ids:
+                self._track_continuity_switches += 1
+            if track_ids:
+                self._track_continuity_last_ids[source_id] = track_ids
+        except Exception:
+            return
+
     def _process_tracking_results(self, mc_tracking_results) -> list:
         """Backward compatible wrapper."""
         return self._process_pipeline_results(mc_tracking_results)
@@ -659,6 +707,11 @@ class Controller:
         frame_id = getattr(frame, "frame_id", None)
         object_list = objects_by_source.get(source_id, ObjectResultList())
         track_info = object_list.find_objects_by_frame_id(frame_id, use_history=False) if object_list else []
+        if not track_info and object_list:
+            try:
+                track_info = object_list.find_objects_near_frame_id(frame_id, max_delta=1, use_history=True)
+            except Exception:
+                track_info = []
         if not track_info and object_list:
             # In multiprocess mode preview may fall back to fresher source frames while
             # tracker/objects handler still holds results for a slightly older frame_id.
@@ -1037,6 +1090,11 @@ class Controller:
                                 ((t5 - t4) * 1000.0 if (t4 is not None and t5 is not None) else -1.0),
                                 ((t5 - t0) * 1000.0 if (t0 is not None and t5 is not None) else -1.0),
                                 (f", lag_ms={lag_ms:.1f}" if lag_ms is not None else ""),
+                            )
+                            self.logger.info(
+                                "PerfDiag(TrackContinuity): switches_total=%d, missing_track_object_total=%d",
+                                self._track_continuity_switches,
+                                self._track_payload_without_track_object,
                             )
                         except Exception:
                             pass
@@ -1421,6 +1479,12 @@ class Controller:
             self.show_main_gui = self.params['controller'].get("show_main_gui", self.show_main_gui)
             self.gui_enabled = self.params['controller'].get("gui_enabled", self.gui_enabled)
             self.skip_objects_handler = self.params['controller'].get("skip_objects_handler", self.skip_objects_handler)
+            self.obj_handler_empty_heartbeat_every = int(
+                self.params['controller'].get(
+                    "obj_handler_empty_heartbeat_every",
+                    self.obj_handler_empty_heartbeat_every,
+                ) or self.obj_handler_empty_heartbeat_every
+            )
 
             self.show_journal = self.params['controller'].get("show_journal", self.show_journal)
             self.enable_close_from_gui = self.params['controller'].get("enable_close_from_gui", self.enable_close_from_gui)
@@ -1798,6 +1862,7 @@ class Controller:
         self.params['controller']["gui_enabled"] = self.gui_enabled
         self.params['controller']["show_journal"] = self.show_journal
         self.params['controller']["enable_close_from_gui"] = self.enable_close_from_gui
+        self.params['controller']["obj_handler_empty_heartbeat_every"] = self.obj_handler_empty_heartbeat_every
         # Сохраняем class_mapping только если он присутствовал в исходной конфигурации
         try:
             orig_ctrl = (self.loaded_config or {}).get('controller', {})

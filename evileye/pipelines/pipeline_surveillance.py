@@ -22,6 +22,7 @@ class PipelineSurveillance(PipelineProcessors):
         super().__init__()
         # Инициализация для избежания hasattr проверок
         self.detectors = []
+        self.results_selection_mode = "sticky_non_empty"
 
     def init_impl(self, **kwargs):
         """Initialize surveillance pipeline with specific processor sequence"""
@@ -42,6 +43,10 @@ class PipelineSurveillance(PipelineProcessors):
 
         self._init_attributes_roi(pipeline_params.get("attributes_roi", []))
         self._init_attribute_classifier(pipeline_params.get("attributes_classifier", []))
+        self.results_selection_mode = str(
+            pipeline_params.get("results_selection_mode", self.results_selection_mode)
+            or "sticky_non_empty"
+        ).lower()
 
         # Выбираем "финальную" секцию результатов детерминированно по enable-флагам.
         # Это определяет, какие (data, frame) считаются "прошедшими обработку" для визуализации/стриминга.
@@ -309,6 +314,14 @@ class PipelineSurveillance(PipelineProcessors):
         section_name = self.get_final_results_name()
         if not section_name:
             return []
+        if self.results_selection_mode == "strict_latest":
+            latest = self.peek_latest_result()
+            if not isinstance(latest, dict):
+                return []
+            section = latest.get(section_name, [])
+            if isinstance(section, (list, tuple)):
+                return list(section)
+            return [section] if section is not None else []
 
         last_non_empty = None
         for result in self.get_results_iterator():
@@ -360,6 +373,14 @@ class PipelineSurveillance(PipelineProcessors):
             section = "detectors"
         else:
             section = "sources"
+        if self.results_selection_mode == "strict_latest":
+            latest = self.peek_latest_result()
+            if not isinstance(latest, dict):
+                return []
+            section_data = latest.get(section, [])
+            if isinstance(section_data, (list, tuple)):
+                return list(section_data)
+            return [section_data] if section_data is not None else []
 
         # Sticky non-empty selection:
         # Controller uses objects_results to build fallback frames for visualization.
