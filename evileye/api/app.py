@@ -17,7 +17,6 @@ from evileye.api.routes.streaming import router as streaming_router
 # from evileye.api.routes.events import router as events_router  # DEPRECATED
 from evileye.api.routes.internal import router as internal_router
 from evileye.api.core.config_run_access import get_config_run_manager
-from evileye.api.core.manager_access import get_manager
 from evileye.api.security import (
     current_user,
     is_api_request_protected,

@@ -243,6 +243,7 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
             # leaving the process "hung" after GUI closes. Run controller shutdown in a daemon thread.
             def _do_shutdown():
                 try:
+                    from evileye.core.runtime_context import reset_runtime_context
                     ctrl = ctrl_ref() if ctrl_ref else controller_instance
                     if ctrl is None:
                         return
@@ -262,6 +263,12 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
                 except Exception as e:
                     try:
                         logger.error(f"Error during Qt shutdown controller stop: {e}", exc_info=True)
+                    except Exception:
+                        pass
+                finally:
+                    # Ensure runtime-scoped singletons do not leak across sequential runs.
+                    try:
+                        reset_runtime_context()
                     except Exception:
                         pass
 

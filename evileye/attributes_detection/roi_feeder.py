@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Tuple
 
 from ..core.base_class import EvilEyeBase
 from ..core.frame import Frame
+from ..core.tracking_dto import ensure_tracking_result_list
 
 EXEC_MODE_THREAD = "thread"
 EXEC_MODE_PROCESS = "process"
@@ -161,6 +162,7 @@ class RoiFeeder(EvilEyeBase):
                 continue
 
             (tracking_data, frame) = data_pack
+            tracking_data = ensure_tracking_result_list(tracking_data)
             if frame.source_id not in self.source_ids:
                 self._put_out_drop_oldest(data_pack)
                 continue
@@ -172,7 +174,7 @@ class RoiFeeder(EvilEyeBase):
             if self._should_process_frame(frame.source_id):
                 self._extract_rois(tracking_data, frame)
 
-            self._put_out_drop_oldest(data_pack)
+            self._put_out_drop_oldest((tracking_data, frame))
 
     # -- Process mode dispatch -------------------------------------------
 

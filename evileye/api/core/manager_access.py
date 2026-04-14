@@ -1,18 +1,26 @@
+from __future__ import annotations
+
+import warnings
 from typing import Optional
 from .pipeline_manager import PipelineManager
-from evileye.core.runtime_context import get_runtime_context, update_runtime_context
+from evileye.core.runtime_services import get_pipeline_manager
 
-""" Module for accessing the pipeline manager, singleton """
+"""Compatibility facade for pipeline manager access.
 
-_manager: Optional[PipelineManager] = None
+Deprecated: use ``evileye.core.runtime_services.get_pipeline_manager``.
+"""
 
+_DEPRECATION_WARNED = False
 
 def get_manager() -> PipelineManager:
-    global _manager
-    ctx = get_runtime_context()
-    if ctx.manager is not None:
-        return ctx.manager
-    if _manager is None:
-        _manager = PipelineManager()
-    update_runtime_context(manager=_manager)
-    return _manager
+    global _DEPRECATION_WARNED
+    if not _DEPRECATION_WARNED:
+        warnings.warn(
+            "evileye.api.core.manager_access.get_manager() is deprecated; "
+            "use evileye.core.runtime_services.get_pipeline_manager()",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        _DEPRECATION_WARNED = True
+    manager: Optional[PipelineManager] = get_pipeline_manager()
+    return manager

@@ -63,10 +63,15 @@ class DetectionThreadYoloMp(DetectionThreadBase):
         if result is None:
             return bboxes_coords, confidences, ids
         try:
-            boxes = result.boxes.numpy()
-            coords = boxes.xyxy
-            confs = boxes.conf
-            class_ids = boxes.cls
+            if isinstance(result, list):
+                coords = [x.get("bbox_xyxy", []) for x in result if isinstance(x, dict)]
+                confs = [x.get("confidence", 0.0) for x in result if isinstance(x, dict)]
+                class_ids = [x.get("class_id", -1) for x in result if isinstance(x, dict)]
+            else:
+                boxes = result.boxes.numpy()
+                coords = boxes.xyxy
+                confs = boxes.conf
+                class_ids = boxes.cls
             for coord, class_id, conf in zip(coords, class_ids, confs):
                 utils_module = get_utils()
                 abs_coords = utils_module.roi_to_image(coord, roi[1][0], roi[1][1])

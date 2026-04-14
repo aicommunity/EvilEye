@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Optional
+from evileye.core.di_container import DIContainer
 
 from evileye.controller.services.config_service import ConfigurationService
 from evileye.controller.services.database_service import DatabaseService
@@ -19,6 +20,7 @@ class ServiceLocator:
 
     def __init__(self):
         """Инициализация локатора сервисов."""
+        self._container = DIContainer()
         self._pipeline_service: Optional[PipelineService] = None
         self._database_service: Optional[DatabaseService] = None
         self._events_service: Optional[EventsService] = None
@@ -35,6 +37,7 @@ class ServiceLocator:
             service: Сервис pipeline
         """
         self._pipeline_service = service
+        self._container.register_instance(PipelineService, service)
 
     def register_database_service(self, service: DatabaseService) -> None:
         """Зарегистрировать сервис БД.
@@ -43,6 +46,7 @@ class ServiceLocator:
             service: Сервис БД
         """
         self._database_service = service
+        self._container.register_instance(DatabaseService, service)
 
     def register_events_service(self, service: EventsService) -> None:
         """Зарегистрировать сервис событий.
@@ -51,6 +55,7 @@ class ServiceLocator:
             service: Сервис событий
         """
         self._events_service = service
+        self._container.register_instance(EventsService, service)
 
     def register_visualization_service(self, service: VisualizationService) -> None:
         """Зарегистрировать сервис визуализации.
@@ -59,6 +64,7 @@ class ServiceLocator:
             service: Сервис визуализации
         """
         self._visualization_service = service
+        self._container.register_instance(VisualizationService, service)
 
     def register_config_service(self, service: ConfigurationService) -> None:
         """Зарегистрировать сервис конфигурации.
@@ -67,6 +73,7 @@ class ServiceLocator:
             service: Сервис конфигурации
         """
         self._config_service = service
+        self._container.register_instance(ConfigurationService, service)
 
     def get_pipeline_service(self) -> Optional[PipelineService]:
         """Получить сервис pipeline.
@@ -110,12 +117,14 @@ class ServiceLocator:
 
     def register_streaming_service(self, service: StreamingService) -> None:
         self._streaming_service = service
+        self._container.register_instance(StreamingService, service)
 
     def get_streaming_service(self) -> Optional[StreamingService]:
         return self._streaming_service
 
     def register_preview_render_service(self, service: PreviewRenderService) -> None:
         self._preview_render_service = service
+        self._container.register_instance(PreviewRenderService, service)
 
     def get_preview_render_service(self) -> Optional[PreviewRenderService]:
         return self._preview_render_service
@@ -127,6 +136,7 @@ class ServiceLocator:
             service: Сервис ObjectsHandler
         """
         self._objects_handler_service = service
+        self._container.register_instance(ObjectsHandlerService, service)
 
     def get_objects_handler_service(self) -> Optional[ObjectsHandlerService]:
         """Получить сервис ObjectsHandler.
@@ -142,22 +152,35 @@ class ServiceLocator:
         Args:
             class_manager: Менеджер классов для передачи в сервисы
         """
-        if self._pipeline_service is None:
-            self._pipeline_service = PipelineService(class_manager=class_manager)
-        if self._database_service is None:
-            self._database_service = DatabaseService()
-        if self._events_service is None:
-            self._events_service = EventsService()
-        if self._visualization_service is None:
-            self._visualization_service = VisualizationService()
-        if self._config_service is None:
-            self._config_service = ConfigurationService()
-        if self._objects_handler_service is None:
-            self._objects_handler_service = ObjectsHandlerService(class_manager=class_manager)
-        if self._streaming_service is None:
-            self._streaming_service = StreamingService()
-        if self._preview_render_service is None:
-            self._preview_render_service = PreviewRenderService()
+        if not self._container.has(PipelineService):
+            self._container.register_singleton(
+                PipelineService, lambda: PipelineService(class_manager=class_manager)
+            )
+        if not self._container.has(DatabaseService):
+            self._container.register_singleton(DatabaseService, DatabaseService)
+        if not self._container.has(EventsService):
+            self._container.register_singleton(EventsService, EventsService)
+        if not self._container.has(VisualizationService):
+            self._container.register_singleton(VisualizationService, VisualizationService)
+        if not self._container.has(ConfigurationService):
+            self._container.register_singleton(ConfigurationService, ConfigurationService)
+        if not self._container.has(ObjectsHandlerService):
+            self._container.register_singleton(
+                ObjectsHandlerService, lambda: ObjectsHandlerService(class_manager=class_manager)
+            )
+        if not self._container.has(StreamingService):
+            self._container.register_singleton(StreamingService, StreamingService)
+        if not self._container.has(PreviewRenderService):
+            self._container.register_singleton(PreviewRenderService, PreviewRenderService)
+
+        self._pipeline_service = self._container.get(PipelineService)
+        self._database_service = self._container.get(DatabaseService)
+        self._events_service = self._container.get(EventsService)
+        self._visualization_service = self._container.get(VisualizationService)
+        self._config_service = self._container.get(ConfigurationService)
+        self._objects_handler_service = self._container.get(ObjectsHandlerService)
+        self._streaming_service = self._container.get(StreamingService)
+        self._preview_render_service = self._container.get(PreviewRenderService)
 
     def release_all(self) -> None:
         """Освободить все сервисы."""

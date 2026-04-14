@@ -1,4 +1,5 @@
 from ..core.mp_worker import MpWorker
+from ..core.tracking_dto import ensure_tracking_result_list
 
 
 class MpWorkerRoiFeeder(MpWorker):
@@ -24,6 +25,7 @@ class MpWorkerRoiFeeder(MpWorker):
 
     def worker_impl(self, data):
         tracking_data, frame = data
+        tracking_data = ensure_tracking_result_list(tracking_data)
         sid = frame.source_id
         self._frame_counters[sid] = self._frame_counters.get(sid, 0) + 1
 
@@ -102,6 +104,7 @@ class MpWorkerAttributeClassifier(MpWorker):
 
     def worker_impl(self, data):
         tracking_data, frame = data
+        tracking_data = ensure_tracking_result_list(tracking_data)
         if self.yolo_model is None:
             return data
 

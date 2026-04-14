@@ -19,6 +19,7 @@ from timeit import default_timer as timer
 from .object_result import ObjectResultHistory, ObjectResult, ObjectResultList
 from .labeling_manager import LabelingManager
 from ..core.object_pool import ObjectPool
+from ..core.tracking_dto import ensure_tracking_result_list
 from pympler import asizeof
 import cv2
 from ..utils import utils
@@ -556,6 +557,7 @@ class ObjectsHandler(EvilEyeBase):
                 }
 
     def _handle_active(self, tracking_results: TrackingResultList, image):
+        tracking_results = ensure_tracking_result_list(tracking_results)
         for active_obj in self.active_objs.objects:
             active_obj.last_update = False
 

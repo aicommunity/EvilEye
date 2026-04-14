@@ -4,7 +4,7 @@ work without file-based frame handoff.
 """
 from fastapi import APIRouter, Request, HTTPException, Query
 
-from evileye.api.core.broker_access import get_broker
+from evileye.core.runtime_services import get_frame_broker
 
 router = APIRouter(prefix="/api/v1/internal", tags=["internal"], include_in_schema=False)
 
@@ -20,7 +20,7 @@ async def receive_frame(rid: int, request: Request, source_id: int | None = Quer
         "content_type": request.headers.get("content-type", "image/jpeg"),
         "transport": "http_internal",
     }
-    broker = get_broker()
+    broker = get_frame_broker()
     broker.publish_jpeg(str(rid), body, metadata=metadata)
     if source_id is not None:
         broker.publish_jpeg(f"{rid}:{source_id}", body, metadata=metadata)

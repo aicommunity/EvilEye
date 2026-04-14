@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from evileye.core.logger import get_module_logger
 from evileye.core.logging_config import setup_evileye_logging, log_system_info
-from evileye.api.core.manager_access import get_manager
+from evileye.core.runtime_services import get_frame_broker, get_pipeline_manager
 from evileye.api.core.config_run_access import get_config_run_manager
 
 
@@ -63,8 +63,7 @@ def _run_server_in_process(host, port, log_level, frame_queue, demand_queue, ssl
     app.state.preview_demand_queue = demand_queue
 
     # Wire the IPC queue into the broker so frames arrive from main process
-    from evileye.api.core.broker_access import get_broker
-    broker = get_broker()
+    broker = get_frame_broker()
     if frame_queue is not None:
         broker.set_ipc_queue(frame_queue)
 
@@ -252,7 +251,7 @@ def run_api_server(host: str = "127.0.0.1", port: int = 8080,
         )
         workers = 1
 
-    manager = get_manager()
+    manager = get_pipeline_manager()
     logger.info("PipelineManager initialized")
 
     cleanup_called = False

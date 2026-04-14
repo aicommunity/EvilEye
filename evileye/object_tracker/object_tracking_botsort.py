@@ -135,19 +135,33 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
             if self.tracker is None:
                 continue
             detection_result, image = detections
+            source_id = getattr(detection_result, "source_id", None)
+            frame_id = getattr(detection_result, "frame_id", None)
+            if isinstance(detection_result, dict):
+                source_id = detection_result.get("source_id", source_id)
+                frame_id = detection_result.get("frame_id", frame_id)
             
             # Check if image is valid
             if image is None or image.image is None:
-                self.logger.warning(f"Received None image for source {detection_result.source_id if detection_result else 'unknown'}, skipping")
+                self.logger.warning(
+                    f"Received None image for source {source_id if detection_result else 'unknown'}, skipping"
+                )
                 continue
 
             # Important contract: emit a result per processed frame (even if empty).
             # Otherwise downstream visualization buffering can stall when there are no detections.
             try:
                 if detection_result is None or not getattr(detection_result, "detections", None):
+                    if isinstance(detection_result, dict):
+                        has_detections = bool(detection_result.get("detections", []))
+                    else:
+                        has_detections = bool(getattr(detection_result, "detections", None))
+                else:
+                    has_detections = True
+                if not has_detections:
                     tracks_info = TrackingResultList()
-                    tracks_info.source_id = getattr(detection_result, "source_id", None)
-                    tracks_info.frame_id = getattr(detection_result, "frame_id", None)
+                    tracks_info.source_id = source_id
+                    tracks_info.frame_id = frame_id
                     tracks_info.time_stamp = datetime.datetime.now()
                     self._put_out_drop_oldest((tracks_info, image))
                     continue
@@ -160,19 +174,27 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
                 tracks = self.tracker.update(boxes, image.image)
                 if len(tracks) > 0:
                     pass
-                tracks_info = self._create_tracks_info(cam_id, detection_result.frame_id, None, tracks)
+                tracks_info = self._create_tracks_info(cam_id, frame_id, None, tracks)
                 # Keep only the freshest tracking results to avoid unbounded memory growth
                 self._put_out_drop_oldest((tracks_info, image))
             except Exception as e:
-                self.logger.error(f"Error processing detection for source {detection_result.source_id if detection_result else 'unknown'}: {e}", exc_info=True)
+                self.logger.error(
+                    f"Error processing detection for source {source_id if detection_result else 'unknown'}: {e}",
+                    exc_info=True,
+                )
                 continue
 
     def _parse_det_info(self, det_info: DetectionResultList, image: np.ndarray) -> tuple:
         if image is None:
             raise ValueError("image cannot be None")
         
-        cam_id = det_info.source_id
-        objects = det_info.detections
+        cam_id = getattr(det_info, "source_id", None)
+        objects = getattr(det_info, "detections", None)
+        if objects is None and isinstance(det_info, dict):
+            cam_id = det_info.get("source_id", cam_id)
+            objects = det_info.get("detections", [])
+        if objects is None:
+            objects = []
 
         if len(objects) == 0:
             boxes_array = np.empty((0, 6), dtype=np.float32)
@@ -185,9 +207,17 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
         class_ids = np.empty((num_objects, 1), dtype=np.float32)
 
         for i, obj in enumerate(objects):
-            bboxes_xyxy[i] = obj.bounding_box
-            confidences[i] = obj.confidence
-            class_ids[i] = obj.class_id
+            if isinstance(obj, dict):
+                bbox = obj.get("bounding_box", obj.get("bbox_xyxy", [0, 0, 0, 0]))
+                conf = obj.get("confidence", 0.0)
+                cls_id = obj.get("class_id", -1)
+            else:
+                bbox = obj.bounding_box
+                conf = obj.confidence
+                cls_id = obj.class_id
+            bboxes_xyxy[i] = bbox
+            confidences[i] = conf
+            class_ids[i] = cls_id
         
         boxes_array = np.concatenate([bboxes_xyxy, confidences, class_ids], axis=1)
         

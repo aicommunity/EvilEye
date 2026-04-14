@@ -5,9 +5,9 @@ from fastapi.responses import StreamingResponse
 from typing import AsyncGenerator
 import threading
 
-from evileye.api.core.broker_access import get_broker
 from evileye.api.core.config_run_access import get_config_run_manager
 from evileye.api.core.runtime_registry import load_runtime_record
+from evileye.core.runtime_services import get_frame_broker
 
 router = APIRouter(prefix="/api/v1", tags=["streaming"])
 
@@ -53,9 +53,10 @@ def _resolve_run(rid: int) -> dict:
 def _load_latest_frame(run_info: dict, *, source_id: int | None = None) -> bytes | None:
     run_id_str = str(run_info["id"])
     broker_key = f"{run_id_str}:{source_id}" if source_id is not None else run_id_str
-    data = get_broker().latest_jpeg(broker_key)
+    broker = get_frame_broker()
+    data = broker.latest_jpeg(broker_key)
     if not data and source_id is not None:
-        data = get_broker().latest_jpeg(run_id_str)
+        data = broker.latest_jpeg(run_id_str)
     if data:
         return data
     return None
@@ -70,7 +71,7 @@ def _web_stream_available(run_info: dict, *, source_id: int | None = None, has_f
 def _stream_status_payload(rid: int, run_info: dict, *, source_id: int | None = None) -> dict:
     run_id_str = str(run_info["id"])
     stream_key = f"{run_id_str}:{source_id}" if source_id is not None else run_id_str
-    is_active = get_broker().is_stream_active(stream_key)
+    is_active = get_frame_broker().is_stream_active(stream_key)
     has_frame = _load_latest_frame(run_info, source_id=source_id) is not None
     web_stream_available = _web_stream_available(run_info, source_id=source_id, has_frame=has_frame)
     return {
@@ -141,7 +142,7 @@ async def _mjpeg_generator(
                 elapsed += check_interval
     finally:
         try:
-            get_broker().stop_stream(stream_key)
+            get_frame_broker().stop_stream(stream_key)
         except Exception:
             pass
 
@@ -167,7 +168,7 @@ async def _mjpeg_stream_impl(
         )
     run_id_str = str(run_info["id"])
     stream_key = f"{run_id_str}:{source_id}" if source_id is not None else run_id_str
-    stop_event = get_broker().start_stream(stream_key)
+    stop_event = get_frame_broker().start_stream(stream_key)
 
     return StreamingResponse(
         _mjpeg_generator(run_info, fps, stop_event, source_id=source_id),
@@ -208,7 +209,7 @@ async def _stop_stream_impl(rid: int, source_id: int | None = None):
     run_info = _resolve_run(rid)
     run_id_str = str(run_info["id"])
     stream_key = f"{run_id_str}:{source_id}" if source_id is not None else run_id_str
-    stopped = get_broker().stop_stream(stream_key)
+    stopped = get_frame_broker().stop_stream(stream_key)
 
     if stopped:
         return {

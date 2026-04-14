@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from pympler import asizeof
 from ..core.base_class import EvilEyeBase
 from ..core.ipc_contracts import BatchMeta
+from ..core.tracking_dto import TrackingDTO, TrackingObjectDTO
 
 
 @EvilEyeBase.register("ObjectMultiCameraTracking")
@@ -335,8 +336,29 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
             )
             if frame_ref is not None:
                 setattr(track_info, "frame_ref", frame_ref)
+            setattr(track_info, "tracking_dto", self._build_tracking_dto(track_info))
         except Exception:
             return
+
+    def _build_tracking_dto(self, track_info):
+        dto = TrackingDTO(
+            source_id=getattr(track_info, "source_id", None),
+            frame_id=getattr(track_info, "frame_id", None),
+            payload_version=1,
+            tracks=[],
+        )
+        for tr in getattr(track_info, "tracks", []) or []:
+            tracking_data = getattr(tr, "tracking_data", {}) or {}
+            dto.tracks.append(
+                TrackingObjectDTO(
+                    track_id=int(getattr(tr, "track_id", 0)),
+                    class_id=int(getattr(tr, "class_id", -1)),
+                    confidence=float(getattr(tr, "confidence", 0.0)),
+                    bbox_xyxy=[float(x) for x in (getattr(tr, "bounding_box", []) or [])],
+                    global_id=tracking_data.get("global_id"),
+                )
+            )
+        return dto
 
     def _parse_det_info(self, det_info: DetectionResultList) -> tuple:
         cam_id = det_info.source_id

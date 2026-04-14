@@ -16,6 +16,7 @@ from evileye.api.core.runtime_registry import (
 )
 from evileye.api.security import load_web_auth_config
 from evileye.core.logger import get_module_logger
+from evileye.core.runtime_services import get_frame_broker
 
 
 class ConfigRunState:
@@ -66,8 +67,7 @@ class _FramePoller:
         self._thread.join(timeout=3.0)
 
     def _loop(self) -> None:
-        from evileye.api.core.broker_access import get_broker
-        broker = get_broker()
+        broker = get_frame_broker()
         first_frame_logged: dict = {}
         miss_counter: dict = {}
         while not self._stop.is_set():

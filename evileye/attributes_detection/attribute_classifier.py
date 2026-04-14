@@ -6,6 +6,7 @@ from typing import Any, Dict
 import numpy as np
 
 from ..core.base_class import EvilEyeBase
+from ..core.tracking_dto import ensure_tracking_result_list
 
 EXEC_MODE_THREAD = "thread"
 EXEC_MODE_PROCESS = "process"
@@ -165,6 +166,7 @@ class AttributeClassifier(EvilEyeBase):
                 continue
 
             tracking_data, frame = detections
+            tracking_data = ensure_tracking_result_list(tracking_data)
 
             if hasattr(tracking_data, 'roi_data') and tracking_data.roi_data:
                 try:

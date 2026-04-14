@@ -6,9 +6,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
-from evileye.api.core.broker_access import get_broker
 from evileye.api.core.config_run_access import get_config_run_manager
 from evileye.api.core.runtime_registry import list_runtime_records, load_runtime_record, load_runtime_snapshot
+from evileye.core.runtime_services import get_frame_broker
 
 
 @dataclass
@@ -133,7 +133,7 @@ def _run_summary(record: Dict[str, Any]) -> Dict[str, Any]:
     latest_frame_exists = False
     try:
         rid = record.get("id")
-        latest_frame_exists = bool(rid is not None and get_broker().latest_jpeg(str(rid)))
+        latest_frame_exists = bool(rid is not None and get_frame_broker().latest_jpeg(str(rid)))
     except Exception:
         latest_frame_exists = False
     return {

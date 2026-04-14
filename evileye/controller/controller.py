@@ -13,6 +13,7 @@ from evileye.object_detector.object_detection_base import DetectionResultList
 from evileye.object_tracker import object_tracking_botsort
 from evileye.object_tracker.trackers.onnx_encoder import OnnxEncoder
 from evileye.object_tracker.tracking_results import TrackingResultList, TrackingResult
+from evileye.core.tracking_dto import ensure_tracking_result_list
 from evileye.objects_handler import objects_handler
 from evileye.objects_handler.object_result import ObjectResult, ObjectResultList
 import time
@@ -765,6 +766,7 @@ class Controller:
                 tracking_result, image = track_info
             else:
                 continue
+            tracking_result = ensure_tracking_result_list(tracking_result)
                 
             if image is None:
                 continue

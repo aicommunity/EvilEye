@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from evileye.core.logger import get_module_logger
+from evileye.core.runtime_services import get_frame_broker
 
 from .jpeg_encoder import JpegEncoderBackend, create_jpeg_encoder
 
@@ -225,9 +226,8 @@ class StreamingService:
     def _get_consumer_state(self, throttle_key: str) -> tuple[bool, bool, bool, bool]:
         has_local_stream = False
         try:
-            from evileye.api.core.broker_access import get_broker
-
-            has_local_stream = get_broker().is_stream_active(throttle_key) or get_broker().is_stream_active(self._pipeline_id)
+            broker = get_frame_broker()
+            has_local_stream = broker.is_stream_active(throttle_key) or broker.is_stream_active(self._pipeline_id)
         except Exception:
             has_local_stream = False
 
@@ -272,11 +272,10 @@ class StreamingService:
             "frame_id": job.frame_id,
             "content_type": "image/jpeg",
         }
-        from evileye.api.core.broker_access import get_broker
-
-        get_broker().publish_jpeg(pipeline_id, jpeg_bytes, metadata=metadata)
+        broker = get_frame_broker()
+        broker.publish_jpeg(pipeline_id, jpeg_bytes, metadata=metadata)
         if job.source_id is not None:
-            get_broker().publish_jpeg(f"{pipeline_id}:{job.source_id}", jpeg_bytes, metadata=metadata)
+            broker.publish_jpeg(f"{pipeline_id}:{job.source_id}", jpeg_bytes, metadata=metadata)
         if self._server_process_manager is not None:
             try:
                 self._server_process_manager.publish_frame(pipeline_id, jpeg_bytes, metadata=metadata)

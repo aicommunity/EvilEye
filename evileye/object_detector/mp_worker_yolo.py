@@ -30,12 +30,31 @@ class MpWorkerYolo(MpWorker):
 
     def worker_impl(self, data: list):
         results = self.model.predict(data, classes=self.classes, verbose=False, **self.inf_params)
-        cpu_results = []
+        dto_results = []
         for res in results:
-            cpu_results.append(res.cpu())
-
+            items = []
+            try:
+                boxes = res.boxes
+                if boxes is not None:
+                    arr = boxes.numpy()
+                    coords = arr.xyxy.tolist() if arr.xyxy is not None else []
+                    confs = arr.conf.tolist() if arr.conf is not None else []
+                    cls_ids = arr.cls.tolist() if arr.cls is not None else []
+                    for bbox, conf, cls_id in zip(coords, confs, cls_ids):
+                        items.append(
+                            {
+                                "bbox_xyxy": [float(x) for x in bbox],
+                                "confidence": float(conf),
+                                "class_id": int(cls_id),
+                            }
+                        )
+            except Exception:
+                # Keep processing robust; malformed model output for one ROI
+                # should not crash the whole detector worker.
+                items = []
+            dto_results.append(items)
         del results
-        return cpu_results
+        return dto_results
 
     def cleanup(self):
         if self.model is not None:
