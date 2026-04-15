@@ -18,6 +18,14 @@
 - **[Руководство по рефакторингу GUI](GUI_REFACTORING_GUIDE.md)** - Архитектура GUI системы, компоненты и лучшие практики
 - **[Руководство по Dependency Injection](DEPENDENCY_INJECTION_GUIDE.md)** - Подробное описание механизма Dependency Injection, DIContainer и DependencyRegistry с примерами использования
 
+### Что нового по мультипроцессному режиму
+
+- Поддерживается гибридная схема: часть компонентов может работать в `thread`, часть в `process`.
+- Основная настройка выполняется через параметр `execution_mode` в секциях детекции, трекинга и атрибутов.
+- Добавлены актуальные сценарии запуска (`evileye run` как основной operational path и `evileye server` как service mode).
+- Расширены материалы по life-cycle процессов, graceful shutdown и автоперезапуску воркеров.
+- Детальное описание и примеры конфигураций см. в [MULTIPROCESSING.md](MULTIPROCESSING.md).
+
 ### Функциональность
 
 - **[Система детекции атрибутов](ATTRIBUTES_DETECTION_README.md)** - Детекция и трекинг атрибутов объектов (каска, рюкзак и т.д.)

@@ -1,0 +1,71 @@
+@startuml
+!theme plain
+skinparam componentStyle rectangle
+title EvilEye mt_refactoring2 - Component Diagram
+
+package "Entry Points" {
+  [CLI]
+  [GUI]
+  [API Server]
+}
+
+package "Application Layer" {
+  [Controller]
+  [PipelineManager]
+  [ConfigRunManager]
+  [ServerState]
+}
+
+package "Pipeline Layer" {
+  [PipelineSurveillance]
+  [ProcessorStep]
+  [ObjectsHandler]
+}
+
+package "Runtime and IPC" {
+  [RuntimeContext]
+  [RuntimeServices]
+  [FrameTransport]
+  [IPCContracts]
+  [MpControl]
+  [MpSessionRegistry]
+}
+
+package "Workers" {
+  [MpWorkerDetector]
+  [MpWorkerTracker]
+  [MpWorkerAttributes]
+}
+
+package "Data and Streaming" {
+  [DatabaseAdapters]
+  [FrameBroker]
+  [StreamingService]
+}
+
+[CLI] --> [Controller]
+[GUI] --> [Controller]
+[API Server] --> [PipelineManager]
+[API Server] --> [ConfigRunManager]
+[API Server] --> [ServerState]
+
+[Controller] --> [PipelineSurveillance]
+[Controller] --> [RuntimeServices]
+[PipelineManager] --> [Controller]
+[ConfigRunManager] --> [RuntimeContext]
+
+[PipelineSurveillance] --> [ProcessorStep]
+[ProcessorStep] --> [FrameTransport]
+[FrameTransport] --> [IPCContracts]
+[IPCContracts] --> [MpControl]
+[MpControl] --> [MpWorkerDetector]
+[MpControl] --> [MpWorkerTracker]
+[MpControl] --> [MpWorkerAttributes]
+[MpControl] --> [MpSessionRegistry]
+
+[PipelineSurveillance] --> [ObjectsHandler]
+[ObjectsHandler] --> [DatabaseAdapters]
+[Controller] --> [StreamingService]
+[StreamingService] --> [FrameBroker]
+
+@enduml

@@ -895,14 +895,19 @@ For more details on creating pipelines, see [Pipeline Architecture Guide](docs/P
 Detailed documentation is located in the [docs/](docs/) folder:
 
 - **[Main Documentation Index](docs/README.md)** - Navigation for all documentation
-- **[System Architecture](docs/ARCHITECTURE.md)** - Complete architecture description at 7 levels of abstraction with diagrams
+- **[System Architecture](docs/ARCHITECTURE.md)** - Updated architecture for `mt_refactoring2`
+- **[Pipeline Architecture](docs/PIPELINE_ARCHITECTURE.md)** - End-to-end contracts and processing stages
+- **[Multiprocessing](docs/MULTIPROCESSING.md)** - `MpControl`/`MpWorker` lifecycle and restart policies
+- **[Configuration Guide](docs/CONFIGURATION_GUIDE.md)** - Current config map and migration notes
+- **[Branch Change Report](docs/MT_REFACTORING2_CHANGES.md)** - Detailed changes in `mt_refactoring2` vs `mt_refactoring`
 
 ### Main Documentation Sections
 
 #### Architecture and Design
 
-- **[System Architecture](docs/ARCHITECTURE.md)** - Detailed architecture description at all levels (CLI, Controller, Pipeline, Video, Objects, Events, Database) with interactive Mermaid diagrams and static UML diagrams
-- **[Pipeline Architecture](docs/PIPELINE_ARCHITECTURE.md)** - Pipeline architecture description, base classes, and ways to create custom pipelines
+- **[System Architecture](docs/ARCHITECTURE.md)** - Current layered architecture and runtime orchestration
+- **[Pipeline Architecture](docs/PIPELINE_ARCHITECTURE.md)** - DTO contracts and stage-by-stage data-flow
+- **[Multiprocessing](docs/MULTIPROCESSING.md)** - Process mode model, worker lifecycle, and KPI context
 - **[GUI Refactoring Guide](docs/GUI_REFACTORING_GUIDE.md)** - GUI system architecture, components, and best practices
 
 #### Installation and Setup

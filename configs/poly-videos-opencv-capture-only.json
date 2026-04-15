@@ -1,0 +1,293 @@
+{
+    "pipeline": {
+        "pipeline_class": "PipelineSurveillance",
+        "sources": [
+            {
+                "split": false,
+                "num_split": 0,
+                "src_coords": [
+                    0
+                ],
+                "source_ids": [
+                    0
+                ],
+                "desired_fps": null,
+                "source_names": [
+                    "Cam1"
+                ],
+                "loop_play": true,
+                "source": "VideoFile",
+                "camera": "/home/user/Videos/Test3Cam/1/139932-video_trim.mp4",
+                "type": "VideoCaptureOpencv",
+                "apiPreference": "CAP_FFMPEG",
+                "mp_restart_on_exit": false,
+                "mp_no_restart_exit_codes": [
+                    -15,
+                    0
+                ]
+            },
+            {
+                "split": true,
+                "num_split": 2,
+                "src_coords": [
+                    [
+                        0,
+                        0,
+                        2304,
+                        1300
+                    ],
+                    [
+                        0,
+                        1300,
+                        2304,
+                        1292
+                    ]
+                ],
+                "source_ids": [
+                    1,
+                    2
+                ],
+                "desired_fps": null,
+                "source_names": [
+                    "Cam2",
+                    "Cam3"
+                ],
+                "loop_play": true,
+                "source": "VideoFile",
+                "camera": "/home/user/Videos/Test3Cam/2/139931-video_trim.mp4",
+                "type": "VideoCaptureOpencv",
+                "apiPreference": "CAP_FFMPEG",
+                "mp_restart_on_exit": false,
+                "mp_no_restart_exit_codes": [
+                    -15,
+                    0
+                ]
+            },
+            {
+                "split": true,
+                "num_split": 2,
+                "src_coords": [
+                    [
+                        0,
+                        0,
+                        2304,
+                        1300
+                    ],
+                    [
+                        0,
+                        1300,
+                        2304,
+                        1292
+                    ]
+                ],
+                "source_ids": [
+                    3,
+                    4
+                ],
+                "desired_fps": null,
+                "source_names": [
+                    "Cam4",
+                    "Cam5"
+                ],
+                "loop_play": true,
+                "source": "VideoFile",
+                "camera": "/home/user/Videos/Test3Cam/3/139930-video_trim.mp4",
+                "type": "VideoCaptureOpencv",
+                "apiPreference": "CAP_FFMPEG",
+                "mp_restart_on_exit": false,
+                "mp_no_restart_exit_codes": [
+                    -15,
+                    0
+                ]
+            }
+        ],
+        "detectors": [],
+        "trackers": [],
+        "mc_trackers": []
+    },
+    "events_detectors": {},
+    "events_processor": {},
+    "visualizer": {
+        "source_ids": [
+            0,
+            1,
+            2,
+            3,
+            4
+        ],
+        "show_debug_info": true,
+        "fps": [
+            30,
+            30,
+            30,
+            30,
+            30
+        ],
+        "font_params": null,
+        "num_height": 2,
+        "num_width": 3,
+        "visual_buffer_num_frames": 10,
+        "text_config": {
+            "font_size_pt": 42,
+            "font_face": 0,
+            "color": [
+                0,
+                0,
+                255
+            ],
+            "thickness": null,
+            "background_color": [
+                0,
+                0,
+                0
+            ],
+            "background_enabled": false,
+            "padding_percent": 1.5,
+            "position_offset_percent": [
+                0,
+                -8
+            ],
+            "font_scale_method": "resolution_based",
+            "base_resolution": [
+                1920,
+                1080
+            ]
+        },
+        "display_zones": false
+    },
+    "record": {
+        "enabled": true,
+        "continuous_recording_enabled": true,
+        "event_recording_enabled": false,
+        "event_pre_seconds": 10,
+        "event_post_seconds": 10,
+        "event_buffer_fps": null,
+        "enabled_sources": [],
+        "container": "mp4",
+        "segment_length_sec": 300,
+        "retention_days": 3,
+        "min_free_space_pct": 80,
+        "filename_tmpl": "{source_name}_{start_time}_{seq}.{ext}"
+    },
+    "objects_handler": {
+        "history_len": 30,
+        "lost_store_time_secs": 60,
+        "lost_thresh": 5
+    },
+    "controller": {
+        "autoclose": false,
+        "fps": 30,
+        "show_main_gui": true,
+        "gui_enabled": true,
+        "show_journal": false,
+        "enable_close_from_gui": true,
+        "class_mapping": {
+            "person": 0,
+            "bicycle": 1,
+            "car": 2,
+            "motorcycle": 3,
+            "airplane": 4,
+            "bus": 5,
+            "train": 6,
+            "truck": 7,
+            "boat": 8,
+            "traffic light": 9,
+            "fire hydrant": 10,
+            "stop sign": 11,
+            "parking meter": 12,
+            "bench": 13,
+            "bird": 14,
+            "cat": 15,
+            "dog": 16,
+            "horse": 17,
+            "sheep": 18,
+            "cow": 19,
+            "elephant": 20,
+            "bear": 21,
+            "zebra": 22,
+            "giraffe": 23,
+            "backpack": 24,
+            "umbrella": 25,
+            "handbag": 26,
+            "tie": 27,
+            "suitcase": 28,
+            "frisbee": 29,
+            "skis": 30,
+            "snowboard": 31,
+            "sports ball": 32,
+            "kite": 33,
+            "baseball bat": 34,
+            "baseball glove": 35,
+            "skateboard": 36,
+            "surfboard": 37,
+            "tennis racket": 38,
+            "bottle": 39,
+            "wine glass": 40,
+            "cup": 41,
+            "fork": 42,
+            "knife": 43,
+            "spoon": 44,
+            "bowl": 45,
+            "banana": 46,
+            "apple": 47,
+            "sandwich": 48,
+            "orange": 49,
+            "broccoli": 50,
+            "carrot": 51,
+            "hot dog": 52,
+            "pizza": 53,
+            "donut": 54,
+            "cake": 55,
+            "chair": 56,
+            "couch": 57,
+            "potted plant": 58,
+            "bed": 59,
+            "dining table": 60,
+            "toilet": 61,
+            "tv": 62,
+            "laptop": 63,
+            "mouse": 64,
+            "remote": 65,
+            "keyboard": 66,
+            "cell phone": 67,
+            "microwave": 68,
+            "oven": 69,
+            "toaster": 70,
+            "sink": 71,
+            "refrigerator": 72,
+            "book": 73,
+            "clock": 74,
+            "vase": 75,
+            "scissors": 76,
+            "teddy bear": 77,
+            "hair drier": 78,
+            "toothbrush": 79
+        },
+        "memory_periodic_check_sec": 54000,
+        "show_memory_usage": false,
+        "max_memory_usage_mb": 16384,
+        "auto_restart": true,
+        "use_database": false,
+        "scheduled_restart": {
+            "enabled": false,
+            "mode": "daily_time",
+            "time": "01:00",
+            "interval_minutes": 0
+        }
+    },
+    "pipeline_class": "PipelineSurveillance",
+    "database": {},
+    "storage_monitor": {
+        "enabled": true,
+        "check_interval_seconds": 300,
+        "max_dir_size_gb": 200,
+        "min_free_space_percent": 10,
+        "retention_days": {
+            "streaming_video": 7,
+            "event_videos": 7,
+            "object_images": 180,
+            "event_images": 180
+        },
+        "active_file_age_seconds": 60
+    }
+}
