@@ -145,6 +145,12 @@ class ProcessorBase(ABC):
                     )
                 except Exception:
                     pass
+                try:
+                    force_stop = getattr(processor, "force_stop", None)
+                    if callable(force_stop):
+                        force_stop()
+                except Exception:
+                    pass
                 continue
             if stop_error:
                 raise stop_error[0]

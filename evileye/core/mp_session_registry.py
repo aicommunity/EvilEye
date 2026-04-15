@@ -1,0 +1,186 @@
+from __future__ import annotations
+
+import json
+import os
+import signal
+import time
+from pathlib import Path
+from threading import Lock
+
+
+_LOCK = Lock()
+
+
+def _registry_dir() -> Path:
+    base = Path(os.getenv("XDG_RUNTIME_DIR") or "/tmp")
+    path = base / "evileye_mp_sessions"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _session_id() -> str | None:
+    return os.getenv("EVILEYE_SESSION_ID")
+
+
+def _session_file(session_id: str) -> Path:
+    return _registry_dir() / f"{session_id}.json"
+
+
+def _read_json(path: Path) -> dict:
+    try:
+        if not path.exists():
+            return {}
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _write_json(path: Path, data: dict) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _pid_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except Exception:
+        return False
+
+
+def _cmdline(pid: int) -> str:
+    try:
+        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
+        if not raw:
+            return ""
+        return raw.replace(b"\x00", b" ").decode("utf-8", errors="ignore").strip()
+    except Exception:
+        return ""
+
+
+def _is_evileye_python_process(pid: int) -> bool:
+    cmd = _cmdline(pid).lower()
+    if not cmd:
+        return False
+    return ("python" in cmd) and ("evileye" in cmd)
+
+
+def _terminate_pid(pid: int, timeout_sec: float = 2.0) -> bool:
+    if not _pid_exists(pid):
+        return True
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except Exception:
+        return False
+    deadline = time.monotonic() + max(0.1, timeout_sec)
+    while time.monotonic() < deadline:
+        if not _pid_exists(pid):
+            return True
+        time.sleep(0.05)
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except Exception:
+        return not _pid_exists(pid)
+    return not _pid_exists(pid)
+
+
+def register_worker_pid(pid: int, worker_name: str) -> None:
+    sid = _session_id()
+    if not sid or not pid:
+        return
+    with _LOCK:
+        path = _session_file(sid)
+        payload = _read_json(path)
+        if not payload:
+            payload = {
+                "session_id": sid,
+                "owner_pid": os.getpid(),
+                "started_at": time.time(),
+                "workers": {},
+            }
+        workers = payload.setdefault("workers", {})
+        workers[str(int(pid))] = {
+            "worker_name": worker_name,
+            "registered_at": time.time(),
+        }
+        _write_json(path, payload)
+
+
+def unregister_worker_pid(pid: int) -> None:
+    sid = _session_id()
+    if not sid or not pid:
+        return
+    with _LOCK:
+        path = _session_file(sid)
+        payload = _read_json(path)
+        workers = payload.get("workers", {})
+        workers.pop(str(int(pid)), None)
+        payload["workers"] = workers
+        _write_json(path, payload)
+
+
+def cleanup_current_session_workers() -> int:
+    """
+    Best-effort cleanup of remaining workers from current EVILEYE_SESSION_ID.
+    Returns number of terminated processes.
+    """
+    sid = _session_id()
+    if not sid:
+        return 0
+    with _LOCK:
+        path = _session_file(sid)
+        payload = _read_json(path)
+        workers = payload.get("workers", {})
+        killed = 0
+        for pid_str in list(workers.keys()):
+            try:
+                pid = int(pid_str)
+            except Exception:
+                continue
+            if _pid_exists(pid) and _is_evileye_python_process(pid):
+                if _terminate_pid(pid):
+                    killed += 1
+            workers.pop(pid_str, None)
+        payload["workers"] = workers
+        _write_json(path, payload)
+        return killed
+
+
+def cleanup_stale_sessions() -> int:
+    """
+    Cleanup orphaned worker processes from stale EvilEye sessions.
+    Safety:
+    - never touches non-Python or non-EvilEye processes
+    - skips sessions whose owner_pid is still alive with evileye cmdline
+    """
+    current_sid = _session_id()
+    killed_total = 0
+    with _LOCK:
+        for path in _registry_dir().glob("*.json"):
+            payload = _read_json(path)
+            sid = str(payload.get("session_id") or path.stem)
+            if current_sid and sid == current_sid:
+                continue
+            owner_pid = int(payload.get("owner_pid") or 0)
+            owner_alive = _pid_exists(owner_pid) and _is_evileye_python_process(owner_pid)
+            if owner_alive:
+                # Another active EvilEye run; do not touch.
+                continue
+            workers = payload.get("workers", {})
+            for pid_str in list(workers.keys()):
+                try:
+                    pid = int(pid_str)
+                except Exception:
+                    continue
+                if _pid_exists(pid) and _is_evileye_python_process(pid):
+                    if _terminate_pid(pid):
+                        killed_total += 1
+                workers.pop(pid_str, None)
+            payload["workers"] = workers
+            _write_json(path, payload)
+    return killed_total

@@ -21,6 +21,7 @@ from evileye.utils.utils import normalize_config_path
 from evileye.core.logger import get_module_logger
 from evileye.core.config_validator import ConfigValidator
 from evileye.gui import GUIManager, GUIMode, determine_gui_mode
+from evileye.core.mp_session_registry import cleanup_current_session_workers
 
 # Shared-memory descriptor path can trigger noisy shutdown warnings from
 # multiprocessing resource_tracker when segments are already cleaned up.
@@ -103,6 +104,7 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
     logger.info("Step 1: Initializing core system (Controller)")
     
     initialization_result = {'controller': None, 'error': None, 'completed': False}
+    startup_state = {"init_completed": False}
     
     # Progress callback for initialization
     progress_callback = None
@@ -152,6 +154,48 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
             progress_callback = on_progress_updated
     
     main_window_created = {'done': False}
+    previous_signal_handlers = {}
+    shutdown_state = {
+        "requested": False,
+        "requested_signal": None,
+        "done": False,
+        "thread": None,
+    }
+    shutdown_controller_fn = {"fn": None}
+
+    def _termination_signal_handler(signum, _frame):
+        try:
+            logger.info(f"Received signal {signum}, requesting application shutdown...")
+        except Exception:
+            pass
+        shutdown_state["requested"] = True
+        shutdown_state["requested_signal"] = signum
+        shutdown_fn = shutdown_controller_fn.get("fn")
+        # If startup is still in progress, defer shutdown until controller is fully initialized.
+        if shutdown_fn is None:
+            try:
+                logger.info(
+                    "Shutdown requested before startup completion; waiting for startup to finish before stopping components"
+                )
+            except Exception:
+                pass
+            return
+        try:
+            shutdown_fn()
+        except Exception:
+            pass
+        try:
+            if qt_app is not None:
+                qt_app.quit()
+        except Exception:
+            pass
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            previous_signal_handlers[sig] = signal.getsignal(sig)
+            signal.signal(sig, _termination_signal_handler)
+        except Exception:
+            pass
     
     def on_initialization_complete(controller_instance):
         try:
@@ -160,6 +204,7 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
             pass
         initialization_result['controller'] = controller_instance
         initialization_result['completed'] = True
+        startup_state["init_completed"] = True
         logger.info("Controller initialization completed")
         
         # Step 3: Connect GUI to controller (if GUI mode)
@@ -185,6 +230,7 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
     def on_initialization_failed(error_message):
         initialization_result['error'] = error_message
         initialization_result['completed'] = True
+        startup_state["init_completed"] = True
         main_window_created['done'] = True
         if progress_window:
             progress_window.close()
@@ -237,8 +283,6 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
     controller_instance = initialization_result['controller']
     # Ensure we always stop the controller on app quit (GUI mode).
     # Without this, closing the window may exit Qt loop while leaving background threads running.
-    shutdown_state = {"done": False, "thread": None}
-    previous_signal_handlers = {}
     if qt_app is not None and controller_instance is not None:
         try:
             import weakref
@@ -312,9 +356,13 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
             qt_app.aboutToQuit.connect(_shutdown_controller)  # type: ignore[attr-defined]
         except Exception:
             pass
-        def _termination_signal_handler(signum, _frame):
+        shutdown_controller_fn["fn"] = _shutdown_controller
+        if shutdown_state.get("requested"):
             try:
-                logger.info(f"Received signal {signum}, requesting application shutdown...")
+                logger.info(
+                    "Applying deferred shutdown request received during startup (signal=%s)",
+                    shutdown_state.get("requested_signal"),
+                )
             except Exception:
                 pass
             try:
@@ -323,12 +371,6 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
                 pass
             try:
                 qt_app.quit()
-            except Exception:
-                pass
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            try:
-                previous_signal_handlers[sig] = signal.getsignal(sig)
-                signal.signal(sig, _termination_signal_handler)
             except Exception:
                 pass
     
@@ -391,9 +433,15 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
                 if t is not None:
                     import threading as _threading
                     if isinstance(t, _threading.Thread) and t.is_alive():
-                        t.join(timeout=15.0)
+                        shutdown_join_timeout = float(
+                            os.environ.get("EVILEYE_SHUTDOWN_THREAD_JOIN_TIMEOUT_SEC", "45.0")
+                        )
+                        t.join(timeout=shutdown_join_timeout)
                         if t.is_alive():
-                            logger.warning("GUI shutdown thread is still alive after 15s timeout")
+                            logger.warning(
+                                "GUI shutdown thread is still alive after %.1fs timeout",
+                                shutdown_join_timeout,
+                            )
             except Exception:
                 pass
     else:
@@ -442,9 +490,21 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
             if t is not None:
                 import threading as _threading
                 if isinstance(t, _threading.Thread) and t.is_alive():
-                    t.join(timeout=15.0)
+                    shutdown_join_timeout = float(
+                        os.environ.get("EVILEYE_SHUTDOWN_THREAD_JOIN_TIMEOUT_SEC", "45.0")
+                    )
+                    t.join(timeout=shutdown_join_timeout)
                     if t.is_alive():
-                        logger.warning("GUI shutdown thread is still alive after 15s timeout")
+                        try:
+                            cleaned = cleanup_current_session_workers()
+                            if cleaned:
+                                logger.warning(
+                                    "GUI shutdown thread alive after %.1fs timeout; cleaned %d lingering worker process(es)",
+                                    shutdown_join_timeout,
+                                    cleaned,
+                                )
+                        except Exception:
+                            pass
         except Exception:
             pass
         
@@ -468,6 +528,12 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
                 signal.signal(sig, handler)
             except Exception:
                 pass
+    except Exception:
+        pass
+    try:
+        cleaned = cleanup_current_session_workers()
+        if cleaned:
+            logger.info("Shutdown MP cleanup: terminated %d lingering worker process(es)", cleaned)
     except Exception:
         pass
     logger.info(f"Application finished with code: {ret}")

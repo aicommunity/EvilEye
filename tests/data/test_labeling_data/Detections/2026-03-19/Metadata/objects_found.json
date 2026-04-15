@@ -1,18 +1,17 @@
 {
   "metadata": {
     "version": "1.0",
-    "created": "2026-01-17T22:34:47.992800",
+    "created": "2026-03-19T12:40:02.942437",
     "description": "Object detection labels",
     "total_objects": 1,
-    "last_updated": "2026-01-17T22:34:47.992830"
+    "last_updated": "2026-03-19T12:40:02.942474"
   },
   "objects": [
     {
       "object_id": 1,
       "frame_id": 1234,
-      "detected_timestamp": "2026-01-17T22:34:17.782801",
-      "lost_timestamp": "2026-01-17T22:34:17.782829",
-      "image_filename": "lost_frames/test_lost_frame.jpeg",
+      "timestamp": "2026-03-19T12:40:02.937154",
+      "image_filename": "detected_frames/test_frame.jpeg",
       "bounding_box": {
         "x": 100,
         "y": 150,
@@ -25,8 +24,7 @@
       "source_id": 0,
       "source_name": "camera_0",
       "track_id": 1,
-      "global_id": null,
-      "lost_frames": 5
+      "global_id": null
     }
   ]
 }

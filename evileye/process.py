@@ -1,6 +1,7 @@
 import argparse
 import os
 import sys
+import uuid
 from pathlib import Path
 
 try:
@@ -17,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from evileye.core.logging_config import setup_evileye_logging, log_system_info
 from evileye.api.core.runtime_registry import allocate_pipeline_id, mark_runtime_stopped, register_runtime, update_runtime_snapshot
+from evileye.core.mp_session_registry import cleanup_stale_sessions
 
 def create_args_parser():
     pars = argparse.ArgumentParser()
@@ -48,6 +50,13 @@ def main():
     args = create_args_parser()
     # Инициализация логирования после парсинга аргументов
     logger = setup_evileye_logging(log_level=args.log_level.upper(), log_to_console=True, log_to_file=True)
+    os.environ.setdefault("EVILEYE_SESSION_ID", uuid.uuid4().hex)
+    try:
+        cleaned = cleanup_stale_sessions()
+        if cleaned:
+            logger.info("Startup MP cleanup: terminated %d stale worker process(es)", cleaned)
+    except Exception:
+        pass
 
     logger.info(f"Starting system with CLI arguments: {args}")
     log_system_info(logger)

@@ -1,9 +1,9 @@
 {
     "pipeline": {
         "pipeline_class": "PipelineSurveillance",
-        "ipc_mode": "standard",
         "sources": [
             {
+                "execution_mode": "thread",
                 "split": false,
                 "num_split": 0,
                 "src_coords": [
@@ -16,19 +16,15 @@
                 "source_names": [
                     "Cam1"
                 ],
-                "loop_play": true,
+                "loop_play": false,
                 "source": "VideoFile",
                 "camera": "/home/user/Videos/Test3Cam/1/139932-video_trim.mp4",
                 "type": "VideoCaptureGStreamer",
                 "apiPreference": "CAP_GSTREAMER",
-                "gstreamer_available": true,
-                "mp_restart_on_exit": false,
-                "mp_no_restart_exit_codes": [
-                    -15,
-                    0
-                ]
+                "gstreamer_available": true
             },
             {
+                "execution_mode": "thread",
                 "split": true,
                 "num_split": 2,
                 "src_coords": [
@@ -54,19 +50,15 @@
                     "Cam2",
                     "Cam3"
                 ],
-                "loop_play": true,
+                "loop_play": false,
                 "source": "VideoFile",
                 "camera": "/home/user/Videos/Test3Cam/2/139931-video_trim.mp4",
                 "type": "VideoCaptureGStreamer",
                 "apiPreference": "CAP_GSTREAMER",
-                "gstreamer_available": true,
-                "mp_restart_on_exit": false,
-                "mp_no_restart_exit_codes": [
-                    -15,
-                    0
-                ]
+                "gstreamer_available": true
             },
             {
+                "execution_mode": "thread",
                 "split": true,
                 "num_split": 2,
                 "src_coords": [
@@ -92,17 +84,12 @@
                     "Cam4",
                     "Cam5"
                 ],
-                "loop_play": true,
+                "loop_play": false,
                 "source": "VideoFile",
                 "camera": "/home/user/Videos/Test3Cam/3/139930-video_trim.mp4",
                 "type": "VideoCaptureGStreamer",
                 "apiPreference": "CAP_GSTREAMER",
-                "gstreamer_available": true,
-                "mp_restart_on_exit": false,
-                "mp_no_restart_exit_codes": [
-                    -15,
-                    0
-                ]
+                "gstreamer_available": true
             }
         ],
         "detectors": [
@@ -144,11 +131,7 @@
                 ],
                 "num_detection_threads": 3,
                 "execution_mode": "thread",
-                "model": "models/yolov8n.pt",
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
-                ]
+                "model": "models/yolov8n.pt"
             },
             {
                 "roi": [
@@ -169,11 +152,7 @@
                 ],
                 "num_detection_threads": 3,
                 "execution_mode": "thread",
-                "model": "models/yolov8n.pt",
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
-                ]
+                "model": "models/yolov8n.pt"
             },
             {
                 "roi": [
@@ -219,11 +198,7 @@
                 ],
                 "num_detection_threads": 3,
                 "execution_mode": "thread",
-                "model": "models/yolov8n.pt",
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
-                ]
+                "model": "models/yolov8n.pt"
             },
             {
                 "roi": [
@@ -263,11 +238,7 @@
                 ],
                 "num_detection_threads": 3,
                 "execution_mode": "thread",
-                "model": "models/yolov8n.pt",
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
-                ]
+                "model": "models/yolov8n.pt"
             },
             {
                 "roi": [
@@ -288,11 +259,7 @@
                 ],
                 "num_detection_threads": 3,
                 "execution_mode": "thread",
-                "model": "models/yolov8n.pt",
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
-                ]
+                "model": "models/yolov8n.pt"
             }
         ],
         "trackers": [
@@ -313,11 +280,7 @@
                     "tracker_type": "botsort",
                     "fuse_score": true,
                     "with_reid": true
-                },
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
-                ]
+                }
             },
             {
                 "source_ids": [
@@ -336,11 +299,7 @@
                     "tracker_type": "botsort",
                     "fuse_score": true,
                     "with_reid": true
-                },
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
-                ]
+                }
             },
             {
                 "source_ids": [
@@ -359,11 +318,7 @@
                     "tracker_type": "botsort",
                     "fuse_score": true,
                     "with_reid": true
-                },
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
-                ]
+                }
             },
             {
                 "source_ids": [
@@ -382,11 +337,7 @@
                     "tracker_type": "botsort",
                     "fuse_score": true,
                     "with_reid": true
-                },
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
-                ]
+                }
             },
             {
                 "source_ids": [
@@ -405,11 +356,7 @@
                     "tracker_type": "botsort",
                     "fuse_score": true,
                     "with_reid": true
-                },
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
-                ]
+                }
             }
         ],
         "mc_trackers": [
@@ -421,10 +368,6 @@
                     2,
                     3,
                     4
-                ],
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
                 ]
             }
         ]
@@ -572,12 +515,13 @@
         "preview_encode_workers": 2
     },
     "controller": {
-        "autoclose": false,
+        "autoclose": true,
         "fps": 30,
         "show_main_gui": true,
         "gui_enabled": true,
         "show_journal": false,
         "enable_close_from_gui": true,
+        "obj_handler_empty_heartbeat_every": 3,
         "class_mapping": {
             "person": 0,
             "bicycle": 1,

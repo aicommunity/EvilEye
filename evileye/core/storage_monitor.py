@@ -63,6 +63,10 @@ class StorageMonitor:
         self.min_free_space_percent = default_config.get("min_free_space_percent", 10)
         self.retention_days = default_config.get("retention_days", {})
         self.active_file_age_seconds = default_config.get("active_file_age_seconds", 60)
+        # Default to slower, safer shutdown for heavy filesystems/cleanup.
+        self.stop_timeout_seconds = float(
+            os.environ.get("EVILEYE_STORAGE_MONITOR_STOP_TIMEOUT_SEC", "20.0")
+        )
         
         # Threading
         self._monitor_thread: Optional[threading.Thread] = None
@@ -102,9 +106,12 @@ class StorageMonitor:
         self._running = False
         
         if self._monitor_thread and self._monitor_thread.is_alive():
-            self._monitor_thread.join(timeout=5.0)
+            self._monitor_thread.join(timeout=self.stop_timeout_seconds)
             if self._monitor_thread.is_alive():
-                self.logger.warning("Storage monitor thread did not stop in time")
+                self.logger.warning(
+                    "Storage monitor thread did not stop in %.1fs timeout",
+                    self.stop_timeout_seconds,
+                )
             else:
                 self.logger.info("Storage monitor stopped")
     

@@ -6,6 +6,11 @@ import time
 from typing import Iterable
 from timeit import default_timer as timer
 from .logger import get_module_logger
+from .mp_session_registry import (
+    cleanup_current_session_workers,
+    register_worker_pid,
+    unregister_worker_pid,
+)
 
 
 class MpControl:
@@ -139,6 +144,10 @@ class MpControl:
             p = mp.Process(target=worker, daemon=True, name=f"{self.name}-worker")
             p.start()
             self.processes.append(p)
+            try:
+                register_worker_pid(int(p.pid), self.name)
+            except Exception:
+                pass
             self.logger.info(f"Started worker process pid={p.pid}")
 
         self._start_health_monitor()
@@ -177,8 +186,17 @@ class MpControl:
                 if p.is_alive():
                     self.logger.error(f"Force-killing worker pid={p.pid}")
                     p.kill()
+            try:
+                unregister_worker_pid(int(p.pid))
+            except Exception:
+                pass
 
         self.processes.clear()
+        # Extra safety for crashed/half-stopped workers from this session.
+        try:
+            cleanup_current_session_workers()
+        except Exception:
+            pass
         self._stop_log_listener()
 
         if self._monitor_thread and self._monitor_thread.is_alive():
@@ -228,6 +246,10 @@ class MpControl:
                         )
                         new_p.start()
                         self.processes[i] = new_p
+                        try:
+                            register_worker_pid(int(new_p.pid), self.name)
+                        except Exception:
+                            pass
                         with self._stats_lock:
                             self._stats["worker_restart_total"] += 1
                         self.logger.info(

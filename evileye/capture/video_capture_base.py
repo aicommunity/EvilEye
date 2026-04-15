@@ -340,13 +340,15 @@ class VideoCaptureBase(EvilEyeBase):
 
         if self._mp_control is not None:
             try:
-                self._mp_control.stop()
+                # Keep source shutdown bounded: ProcessorBase stop timeout is 8s.
+                # Capture stop path must complete faster to avoid container-level timeouts.
+                self._mp_control.stop(timeout=2.0)
             except Exception:
                 pass
             self._mp_control = None
             if self._capture_dispatch_thread is not None:
                 try:
-                    self._capture_dispatch_thread.join(timeout=3.0)
+                    self._capture_dispatch_thread.join(timeout=1.0)
                 except Exception:
                     pass
                 self._capture_dispatch_thread = None
@@ -375,6 +377,24 @@ class VideoCaptureBase(EvilEyeBase):
             self.logger.info(f"Capture stopped for {self.source_names}, dropped_frames={self.dropped_frames}")
         except Exception:
             pass
+
+    def force_stop(self) -> None:
+        """Aggressive emergency stop used when normal stop exceeds timeout."""
+        self.run_flag = False
+        self.stop_event.set()
+        try:
+            if self._mp_control is not None:
+                self._mp_control.stop(timeout=0.5)
+        except Exception:
+            pass
+        self._mp_control = None
+        try:
+            if self._capture_dispatch_thread is not None:
+                self._capture_dispatch_thread.join(timeout=0.2)
+        except Exception:
+            pass
+        self._capture_dispatch_thread = None
+        self._cleanup_queue()
 
     def set_params_impl(self) -> None:
         self.release()
