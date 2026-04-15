@@ -21,20 +21,29 @@
 ## Карта «было -> стало»
 
 ```mermaid
-flowchart TD
-  a[BeforeModel] --> b[AfterModel]
-  a --> c[ImplicitDataContracts]
-  a --> d[MixedAPI_RuntimeResponsibilities]
-  a --> e[AdHocProcessControl]
-  b --> f[DTOAndTransportContracts]
-  b --> g[RuntimeContextAndRuntimeServices]
-  b --> h[UnifiedMpControlWorkerLifecycle]
-  b --> i[KPIBenchAndGate]
+flowchart LR
+  subgraph beforeState [Before]
+    b1[ImplicitDataContracts]
+    b2[MixedAPI_RuntimeResponsibilities]
+    b3[AdHocProcessControl]
+    b4[WeakRegressionGuard]
+  end
+  subgraph afterState [After]
+    a1[DTOAndTransportContracts]
+    a2[RuntimeContextAndRuntimeServices]
+    a3[UnifiedMpControlWorkerLifecycle]
+    a4[KPIBenchAndGate]
+  end
+  b1 --> a1
+  b2 --> a2
+  b3 --> a3
+  b4 --> a4
 ```
 
-**Что показывает схема:** переход от «локально работающих, но разрозненных»
-механизмов к целостной архитектуре с явными контрактами, слоями ответственности
-и контролируемым качеством.
+**Что показывает схема:** это карта соответствий «проблема -> архитектурное решение».
+Слева зафиксированы ключевые ограничения старой модели, справа — конкретные
+механизмы, которыми `mt_refactoring2` их закрывает. То есть переход читается
+по строкам сверху вниз как 1:1 трансформация, а не как вложенная иерархия.
 
 ---
 
