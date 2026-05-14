@@ -86,7 +86,7 @@ def _process_tree_stats(pid: int) -> tuple[float | None, float | None, int | Non
     alive = 0
     for proc in processes:
         try:
-            cpu_total += float(proc.cpu_percent(interval=None))
+            cpu_total += float(proc.cpu_percent(interval=0.01))
             rss_total += float(proc.memory_info().rss) / (1024 * 1024)
             threads_total += int(proc.num_threads())
             alive += 1
@@ -95,12 +95,15 @@ def _process_tree_stats(pid: int) -> tuple[float | None, float | None, int | Non
     return cpu_total, rss_total, threads_total, alive
 
 
-def _terminate_process_tree(proc: subprocess.Popen[Any]) -> None:
+def _terminate_process_tree(proc: subprocess.Popen[Any]) -> bool:
     try:
         import psutil  # type: ignore
     except ImportError:
-        proc.terminate()
-        return
+        try:
+            proc.terminate()
+            return True
+        except (OSError, PermissionError):
+            return False
 
     try:
         parent = psutil.Process(proc.pid)
@@ -117,8 +120,13 @@ def _terminate_process_tree(proc: subprocess.Popen[Any]) -> None:
                 item.kill()
             except (psutil.Error, OSError):
                 pass
+        return True
     except (psutil.Error, OSError):
-        proc.kill()
+        try:
+            proc.kill()
+            return True
+        except (OSError, PermissionError):
+            return False
 
 
 def _sample_resources(
@@ -171,9 +179,11 @@ def _run_one(
     logs_dir: Path,
     samples_dir: Path,
     timeout_sec: int,
+    duration_sec: int | None,
     sample_interval_sec: float,
     perf_every: int,
     python_executable: str,
+    autoclose: bool,
 ) -> dict[str, Any]:
     camera_count = int(run["camera_count"])
     mode = str(run["mode"])
@@ -189,13 +199,15 @@ def _run_one(
         "--config",
         str(config_path),
         "--no-gui",
-        "--autoclose",
+        "--autoclose" if autoclose else "--no-autoclose",
         "--log-level",
         "INFO",
     ]
     env = os.environ.copy()
     env["EVILEYE_PERF_DIAG"] = "1"
     env["EVILEYE_PERF_DIAG_EVERY"] = str(perf_every)
+    if duration_sec is not None:
+        env["EVILEYE_BENCHMARK_DURATION_SEC"] = str(duration_sec)
     env.setdefault("EVILEYE_RESOURCE_STATS_EVERY_SEC", str(max(1, int(sample_interval_sec))))
     env.setdefault("PYTHONUNBUFFERED", "1")
 
@@ -203,6 +215,8 @@ def _run_one(
     samples_dir.mkdir(parents=True, exist_ok=True)
     started = time.time()
     timed_out = False
+    terminate_ok = True
+    stopped_by_duration = False
 
     with log_path.open("w", encoding="utf-8", newline="") as log:
         log.write(f"# command: {' '.join(cmd)}\n")
@@ -227,14 +241,30 @@ def _run_one(
         )
         sampler.start()
 
+        wait_limit = timeout_sec
+        if duration_sec is not None:
+            wait_limit = max(timeout_sec, duration_sec + 120)
         try:
-            exit_code = proc.wait(timeout=timeout_sec)
+            exit_code = proc.wait(timeout=wait_limit)
         except subprocess.TimeoutExpired:
-            timed_out = True
-            log.write(f"\n# timeout after {timeout_sec}s\n")
-            log.flush()
-            _terminate_process_tree(proc)
-            exit_code = 124
+            if duration_sec is not None:
+                timed_out = True
+                log.write(f"\n# stopped_by_duration after {duration_sec}s\n")
+                log.flush()
+                terminate_ok = _terminate_process_tree(proc)
+                if not terminate_ok:
+                    log.write("# terminate_failed: could not stop process tree after duration\n")
+                    log.flush()
+                exit_code = 124
+            else:
+                timed_out = True
+                log.write(f"\n# timeout after {timeout_sec}s\n")
+                log.flush()
+                terminate_ok = _terminate_process_tree(proc)
+                if not terminate_ok:
+                    log.write("# terminate_failed: could not stop process tree after timeout\n")
+                    log.flush()
+                exit_code = 124
         finally:
             stop_event.set()
             sampler.join(timeout=3)
@@ -249,6 +279,8 @@ def _run_one(
         "samples": str(sample_path.relative_to(repo_root)),
         "exit_code": exit_code,
         "timed_out": timed_out,
+        "stopped_by_duration": stopped_by_duration or (duration_sec is not None and exit_code == 0),
+        "terminate_ok": terminate_ok,
         "elapsed_sec": round(time.time() - started, 3),
     }
 
@@ -276,6 +308,8 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         "started_at": started_at,
         "manifest": str(manifest_path.relative_to(repo_root)),
         "timeout_sec": args.timeout_sec,
+        "duration_sec": args.duration_sec,
+        "autoclose": args.autoclose,
         "sample_interval_sec": args.sample_interval_sec,
         "runs": [],
     }
@@ -288,9 +322,11 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                 logs_dir=logs_dir,
                 samples_dir=samples_dir,
                 timeout_sec=args.timeout_sec,
+                duration_sec=args.duration_sec,
                 sample_interval_sec=args.sample_interval_sec,
                 perf_every=args.perf_every,
                 python_executable=args.python,
+                autoclose=args.autoclose,
             )
         )
 
@@ -308,11 +344,23 @@ def main() -> int:
     parser.add_argument("--manifest", default=DEFAULT_MANIFEST)
     parser.add_argument("--out-dir", default=DEFAULT_OUT_DIR)
     parser.add_argument("--timeout-sec", type=int, default=180)
+    parser.add_argument(
+        "--duration-sec",
+        type=int,
+        default=None,
+        help="Фиксированная длительность измерения. По истечении процесс останавливается штатно и не считается timeout.",
+    )
     parser.add_argument("--sample-interval-sec", type=float, default=2.0)
     parser.add_argument("--perf-every", type=int, default=30)
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--camera-counts", type=int, nargs="*")
     parser.add_argument("--modes", choices=["thread", "process"], nargs="*")
+    parser.add_argument(
+        "--autoclose",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Передавать ли --autoclose в evileye.process. Для duration benchmark используйте --no-autoclose.",
+    )
     args = parser.parse_args()
 
     run_benchmark(args)

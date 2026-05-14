@@ -1,6 +1,8 @@
 # Методика тестирования производительности мультипроцессного режима
 
-Документ описывает воспроизводимый сценарий сравнения однопроцессного режима `thread` и мультипроцессного режима `process` для системы EvilEye. Цель тестов — показать, как мультипроцессное выполнение влияет на пропускную способность и стабильность обработки при росте числа камер.
+Документ описывает воспроизводимый сценарий сравнения однопроцессного режима `thread` и мультипроцессного режима `process` для системы EvilEye. Цель зачётных тестов — измерить прирост производительности от вынесения тяжёлой стадии (YOLO) в отдельный процесс при росте числа камер, **включая визуализацию**: когда инференс и цикл отображения больше не делят один GIL в одном процессе, частота обновления выхода пайплайна может вырасти вместе с пропускной способностью захвата, детекции и трекинга.
+
+На произвольном железе нельзя гарантировать выигрыш по каждой метрике в каждой точке (IPC, число ядер, GPU/CPU), поэтому ниже зафиксирован **сценарий сравнения в одинаковых условиях**, который максимизирует шанс увидеть ожидаемый эффект.
 
 ## Базовый принцип
 
@@ -15,16 +17,43 @@
 
 Сгенерировать пары конфигов `thread`/`process`:
 
+**Рекомендуемый зачётный сценарий** (одна модель YOLO на все камеры; в режиме `process` **и захват (sources), и детектор** в отдельных процессах; трекинг и прочее — в потоках главного процесса):
+
 ```bash
-python scripts/prepare_multiprocessing_benchmark.py
+python3 scripts/prepare_multiprocessing_benchmark.py \
+  --base-config configs/multi_videos.json \
+  --max-cameras 4 --repeat-cameras \
+  --out-dir reports/bench_multiprocessing/configs_pool_cap_det_process \
+  --shared-detector-pool \
+  --capture-and-detector-process-only \
+  --num-detection-threads 1 \
+  --target-fps 30
 ```
 
-По умолчанию скрипт использует Linux/GStreamer-конфиг `configs/poly-videos-gst_gui_fixcheck_bench30.json`, генерирует точки 1..4 камеры и сохраняет результат в `reports/bench_multiprocessing/configs/`.
+Эквивалентно `--detector-process-only --capture-process-also`. Вариант только с детектором в process (`--detector-process-only` без захвата) оставлен для сравнения накладных расходов IPC.
+
+```bash
+python3 scripts/prepare_multiprocessing_benchmark.py \
+  --base-config configs/multi_videos.json \
+  --max-cameras 4 --repeat-cameras \
+  --shared-detector-pool \
+  --detector-process-only \
+  --num-detection-threads 1 \
+  --target-fps 30
+```
+
+Для зачётного прогона используется `configs/multi_videos.json`: видео лежат в `videos/`, у источников включён `loop_play`, а `--repeat-cameras` повторяет доступные ролики для точек 3 и 4 камеры. Параметр `--target-fps 30` задаёт единый лимит для `desired_fps`, visualizer-а и controller-а, чтобы графики не упирались в низкий потолок FPS.
+
+`--shared-detector-pool` объединяет совместимые detector-конфиги **и в `thread`, и в `process`**: в обоих режимах одна общая запись детектора на все выбранные камеры (одна загрузка модели, один инференс-пайплайн по смыслу сравнения). Отличается только `execution_mode` детектора: поток внутри процесса против отдельного процесса для YOLO.
+
+`--detector-process-only` в парах с `mode=process` по умолчанию оставляет источники в `thread`. С **`--capture-process-also`** (или **`--capture-and-detector-process-only`**) источники тоже переводятся в `process` — отдельный процесс захвата на каждый video-source entry, детектор — в своём процессе (при пуле один процесс YOLO на все камеры).
+
+`--capture-and-detector-process-only` — сокращение для пары флагов выше.
 
 Если видеофайлы из исходного конфига недоступны на текущей машине, скрипт завершится с понятным списком отсутствующих путей. Для подготовки шаблонов без проверки запуска можно использовать:
 
 ```bash
-python scripts/prepare_multiprocessing_benchmark.py --allow-missing
+python3 scripts/prepare_multiprocessing_benchmark.py --max-cameras 4 --allow-missing
 ```
 
 Полезные параметры:
@@ -32,21 +61,31 @@ python scripts/prepare_multiprocessing_benchmark.py --allow-missing
 - `--base-config` — путь к исходному video-config.
 - `--max-cameras` — максимальное число логических камер для генерации; для зачётного теста используется значение `4`.
 - `--enable-server` — оставить web server включенным и переключать его `execution_mode` вместе с остальными стадиями.
+- `--target-fps` — единый FPS-лимит для источников, visualizer-а и controller-а.
+- `--shared-detector-pool` — один объединённый detector (несколько `source_ids`) в **обоих** режимах; иначе в `thread` получилось бы N моделей против одной в `process`, что некорректно для вывода про мультипроцессность.
+- `--detector-process-only` — в `process`-конфигах вынести детекторы в process; остальное по умолчанию в thread.
+- `--capture-process-also` — вместе с предыдущим: также sources (захват) в process.
+- `--capture-and-detector-process-only` — оба пункта сразу (основной зачётный сценарий с захватом и YOLO в отдельных процессах).
 
 ## Запуск тестов
 
 После подготовки конфигов выполнить headless-прогоны:
 
 ```bash
-python scripts/run_multiprocessing_benchmark.py --camera-counts 1 2 3 4 --timeout-sec 180
+venv/bin/python scripts/run_multiprocessing_benchmark.py \
+  --manifest reports/bench_multiprocessing/configs_pool_cap_det_process/manifest.json \
+  --out-dir reports/bench_multiprocessing_fps30_pool_cap_det_process \
+  --camera-counts 1 2 3 4 --modes thread process \
+  --duration-sec 60 --timeout-sec 480 --sample-interval-sec 2 --perf-every 30 --no-autoclose \
+  --python venv/bin/python
 ```
 
-Runner запускает `python -m evileye.process --no-gui --autoclose`, включает `EVILEYE_PERF_DIAG=1`, сохраняет логи в `reports/bench_multiprocessing/logs/` и системные сэмплы в `reports/bench_multiprocessing/samples/`.
+Используйте виртуальное окружение репозитория `venv/` (как при обычном запуске EvilEye) и явный `--python venv/bin/python`, чтобы дочерние процессы бенчмарка шли с тем же интерпретатором, где установлены PyQt и зависимости. Runner вызывает `-m evileye.process --no-gui`; при `--no-autoclose` длительность задаётся через `EVILEYE_BENCHMARK_DURATION_SEC`. Логи и CSV попадают в каталог из `--out-dir`.
 
 Для частичного запуска отдельных точек:
 
 ```bash
-python scripts/run_multiprocessing_benchmark.py --camera-counts 1 3 4 --modes thread process
+python3 scripts/run_multiprocessing_benchmark.py --camera-counts 1 3 4 --modes thread process
 ```
 
 Рекомендуется перед зачётными измерениями выполнить один прогревочный запуск, чтобы загрузка моделей и инициализация библиотек не искажали steady-state результаты.
@@ -56,7 +95,8 @@ python scripts/run_multiprocessing_benchmark.py --camera-counts 1 3 4 --modes th
 После завершения прогонов:
 
 ```bash
-python scripts/render_multiprocessing_benchmark_report.py
+venv/bin/python scripts/render_multiprocessing_benchmark_report.py \
+  --out-dir reports/bench_multiprocessing_fps30_pool_cap_det_process
 ```
 
 Скрипт создаёт:
@@ -69,7 +109,7 @@ python scripts/render_multiprocessing_benchmark_report.py
 
 Основные показатели:
 
-- `Захват, кадры/с` — средний FPS источников по диагностическим строкам захвата.
+- `Захват, кадры/с` — средний FPS источников по диагностическим строкам захвата; если прямые строки `FPS=...` не попали в лог, используется оценка по стадии `sources` из `PerfDiag(Pipeline)`.
 - `Обнаружение, кадры/с` — оценка пропускной способности стадии detector по `PerfDiag(Pipeline)`.
 - `Отслеживание, кадры/с` — оценка пропускной способности стадии tracker.
 - `Визуализация, кадры/с` — оценка частоты обработки кадров для публикации/визуализации.
@@ -78,6 +118,8 @@ python scripts/render_multiprocessing_benchmark_report.py
 - `Ошибки`, `Traceback`, `Перезапуски` — признаки невалидного или нестабильного прогона.
 
 GPU-RAM заполняется только при наличии `nvidia-smi`. Если GPU недоступен, поле останется пустым.
+
+По умолчанию генератор отчёта отбрасывает первое диагностическое окно как прогрев. Значение можно изменить параметром `--warmup-windows`.
 
 ## Интерпретация результата
 
@@ -88,4 +130,4 @@ GPU-RAM заполняется только при наличии `nvidia-smi`. 
 снижение задержки = (p95_thread - p95_process) / p95_thread
 ```
 
-Ожидаемый эффект должен проявляться сильнее при увеличении числа камер: однопроцессный режим чаще упирается в общий цикл, очереди и конкуренцию потоков, а мультипроцессный режим позволяет изолировать тяжёлые стадии и лучше распределять работу между ядрами CPU. При этом вывод считается корректным только для прогонов без ошибок, tracebacks, таймаутов и неконтролируемых перезапусков воркеров.
+Ожидаемый эффект в рекомендуемом сценарии: тяжёлый YOLO не соревнуется с циклом контроллера и визуализации за GIL в главном процессе, поэтому прирост возможен **одновременно** по метрикам захвата, детекции, трекинга и частоте визуализации. С ростом числа камер конкуренция в однопроцессном режиме обычно усиливается. Итоговые цифры всё равно зависят от CPU/GPU и версий библиотек; вывод считается корректным только для прогонов без ошибок, tracebacks, таймаутов и неконтролируемых перезапусков воркеров.

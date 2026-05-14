@@ -424,6 +424,28 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
             timer.timeout.connect(_check_controller_finished)
             timer.start()
 
+            benchmark_duration = 0.0
+            try:
+                benchmark_duration = float(os.environ.get("EVILEYE_BENCHMARK_DURATION_SEC", "0") or "0")
+            except Exception:
+                benchmark_duration = 0.0
+            if benchmark_duration > 0:
+                def _stop_benchmark_run():
+                    try:
+                        logger.info("Benchmark duration reached: %.1fs, stopping controller", benchmark_duration)
+                        _shutdown_controller()
+                    finally:
+                        try:
+                            qt_app.quit()
+                        except Exception:
+                            pass
+
+                benchmark_timer = QTimer(qt_app)
+                benchmark_timer.setSingleShot(True)
+                benchmark_timer.setInterval(max(1, int(benchmark_duration * 1000)))
+                benchmark_timer.timeout.connect(_stop_benchmark_run)
+                benchmark_timer.start()
+
         logger.info("Controller started in headless mode, entering Qt event loop...")
         ret = qt_app.exec()
         # Best-effort wait for shutdown thread if it was started

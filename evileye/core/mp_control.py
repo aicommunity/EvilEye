@@ -6,11 +6,7 @@ import time
 from typing import Iterable
 from timeit import default_timer as timer
 from .logger import get_module_logger
-from .mp_session_registry import (
-    cleanup_current_session_workers,
-    register_worker_pid,
-    unregister_worker_pid,
-)
+from .mp_session_registry import register_worker_pid, unregister_worker_pid
 
 
 class MpControl:
@@ -192,11 +188,6 @@ class MpControl:
                 pass
 
         self.processes.clear()
-        # Extra safety for crashed/half-stopped workers from this session.
-        try:
-            cleanup_current_session_workers()
-        except Exception:
-            pass
         self._stop_log_listener()
 
         if self._monitor_thread and self._monitor_thread.is_alive():

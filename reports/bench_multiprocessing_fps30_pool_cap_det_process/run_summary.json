@@ -1,0 +1,107 @@
+{
+  "started_at": "2026-05-14T14:09:42",
+  "manifest": "reports/bench_multiprocessing/configs_pool_cap_det_process/manifest.json",
+  "timeout_sec": 480,
+  "duration_sec": 60,
+  "autoclose": false,
+  "sample_interval_sec": 2.0,
+  "runs": [
+    {
+      "camera_count": 1,
+      "mode": "thread",
+      "config": "reports/bench_multiprocessing/configs_pool_cap_det_process/bench_01cam_thread.json",
+      "log": "reports/bench_multiprocessing_fps30_pool_cap_det_process/logs/01cam_thread.log",
+      "samples": "reports/bench_multiprocessing_fps30_pool_cap_det_process/samples/01cam_thread.csv",
+      "exit_code": 0,
+      "timed_out": false,
+      "stopped_by_duration": true,
+      "terminate_ok": true,
+      "elapsed_sec": 70.931
+    },
+    {
+      "camera_count": 1,
+      "mode": "process",
+      "config": "reports/bench_multiprocessing/configs_pool_cap_det_process/bench_01cam_process.json",
+      "log": "reports/bench_multiprocessing_fps30_pool_cap_det_process/logs/01cam_process.log",
+      "samples": "reports/bench_multiprocessing_fps30_pool_cap_det_process/samples/01cam_process.csv",
+      "exit_code": 0,
+      "timed_out": false,
+      "stopped_by_duration": true,
+      "terminate_ok": true,
+      "elapsed_sec": 68.648
+    },
+    {
+      "camera_count": 2,
+      "mode": "thread",
+      "config": "reports/bench_multiprocessing/configs_pool_cap_det_process/bench_02cam_thread.json",
+      "log": "reports/bench_multiprocessing_fps30_pool_cap_det_process/logs/02cam_thread.log",
+      "samples": "reports/bench_multiprocessing_fps30_pool_cap_det_process/samples/02cam_thread.csv",
+      "exit_code": 0,
+      "timed_out": false,
+      "stopped_by_duration": true,
+      "terminate_ok": true,
+      "elapsed_sec": 71.276
+    },
+    {
+      "camera_count": 2,
+      "mode": "process",
+      "config": "reports/bench_multiprocessing/configs_pool_cap_det_process/bench_02cam_process.json",
+      "log": "reports/bench_multiprocessing_fps30_pool_cap_det_process/logs/02cam_process.log",
+      "samples": "reports/bench_multiprocessing_fps30_pool_cap_det_process/samples/02cam_process.csv",
+      "exit_code": 0,
+      "timed_out": false,
+      "stopped_by_duration": true,
+      "terminate_ok": true,
+      "elapsed_sec": 68.074
+    },
+    {
+      "camera_count": 3,
+      "mode": "thread",
+      "config": "reports/bench_multiprocessing/configs_pool_cap_det_process/bench_03cam_thread.json",
+      "log": "reports/bench_multiprocessing_fps30_pool_cap_det_process/logs/03cam_thread.log",
+      "samples": "reports/bench_multiprocessing_fps30_pool_cap_det_process/samples/03cam_thread.csv",
+      "exit_code": 0,
+      "timed_out": false,
+      "stopped_by_duration": true,
+      "terminate_ok": true,
+      "elapsed_sec": 71.238
+    },
+    {
+      "camera_count": 3,
+      "mode": "process",
+      "config": "reports/bench_multiprocessing/configs_pool_cap_det_process/bench_03cam_process.json",
+      "log": "reports/bench_multiprocessing_fps30_pool_cap_det_process/logs/03cam_process.log",
+      "samples": "reports/bench_multiprocessing_fps30_pool_cap_det_process/samples/03cam_process.csv",
+      "exit_code": 0,
+      "timed_out": false,
+      "stopped_by_duration": true,
+      "terminate_ok": true,
+      "elapsed_sec": 68.421
+    },
+    {
+      "camera_count": 4,
+      "mode": "thread",
+      "config": "reports/bench_multiprocessing/configs_pool_cap_det_process/bench_04cam_thread.json",
+      "log": "reports/bench_multiprocessing_fps30_pool_cap_det_process/logs/04cam_thread.log",
+      "samples": "reports/bench_multiprocessing_fps30_pool_cap_det_process/samples/04cam_thread.csv",
+      "exit_code": 0,
+      "timed_out": false,
+      "stopped_by_duration": true,
+      "terminate_ok": true,
+      "elapsed_sec": 70.497
+    },
+    {
+      "camera_count": 4,
+      "mode": "process",
+      "config": "reports/bench_multiprocessing/configs_pool_cap_det_process/bench_04cam_process.json",
+      "log": "reports/bench_multiprocessing_fps30_pool_cap_det_process/logs/04cam_process.log",
+      "samples": "reports/bench_multiprocessing_fps30_pool_cap_det_process/samples/04cam_process.csv",
+      "exit_code": 0,
+      "timed_out": false,
+      "stopped_by_duration": true,
+      "terminate_ok": true,
+      "elapsed_sec": 68.422
+    }
+  ],
+  "finished_at": "2026-05-14T14:19:00"
+}

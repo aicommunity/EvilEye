@@ -2,15 +2,18 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import csv
 import json
 import math
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 
 DEFAULT_OUT_DIR = "reports/bench_multiprocessing"
+DEFAULT_WARMUP_WINDOWS = 1
 MODE_LABELS = {
     "thread": "Однопроцессный",
     "process": "Мультипроцессный",
@@ -57,8 +60,97 @@ def _fps_from_ms(ms: float | None) -> float | None:
     return 1000.0 / ms
 
 
+def _drop_warmup(values: list[Any], warmup_windows: int) -> list[Any]:
+    """Drop startup diagnostic windows while preserving very short runs."""
+    if warmup_windows <= 0 or len(values) <= warmup_windows:
+        return values
+    return values[warmup_windows:]
+
+
+def _coalesce_float(*values: Any) -> float | None:
+    for value in values:
+        parsed = _safe_float(value)
+        if parsed is not None:
+            return parsed
+    return None
+
+
 def _count(pattern: str, text: str) -> int:
     return len(re.findall(pattern, text, flags=re.MULTILINE))
+
+
+def _parse_log_timestamp(value: str) -> float | None:
+    try:
+        return datetime.strptime(value, "%Y-%m-%d %H:%M:%S,%f").timestamp()
+    except ValueError:
+        return None
+
+
+def _parse_updates(value: str) -> dict[int, int]:
+    try:
+        parsed = ast.literal_eval(value)
+    except (SyntaxError, ValueError):
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    result: dict[int, int] = {}
+    for key, count in parsed.items():
+        try:
+            result[int(key)] = int(count)
+        except (TypeError, ValueError):
+            continue
+    return result
+
+
+def _update_fps_from_diag(text: str, stage: str, camera_count: int, warmup_windows: int) -> float | None:
+    samples: list[tuple[float, dict[int, int]]] = []
+    pattern = rf"^(\d{{4}}-\d{{2}}-\d{{2}} \d{{2}}:\d{{2}}:\d{{2}},\d{{3}}).*PerfDiag\({stage}\): window=\d+ updates=({{.*?}}) repeats="
+    for match in re.finditer(pattern, text, flags=re.MULTILINE):
+        timestamp = _parse_log_timestamp(match.group(1))
+        if timestamp is None:
+            continue
+        samples.append((timestamp, _parse_updates(match.group(2))))
+    samples = _drop_warmup(samples, warmup_windows)
+    if len(samples) < 2:
+        return None
+
+    source_count = max(1, int(camera_count or 1))
+    fps_values: list[float] = []
+    previous_ts = samples[0][0]
+    for timestamp, updates in samples[1:]:
+        elapsed = timestamp - previous_ts
+        previous_ts = timestamp
+        if elapsed <= 0:
+            continue
+        fps_values.append(sum(updates.values()) / source_count / elapsed)
+    return _avg(fps_values)
+
+
+def _visual_fps_from_controller(text: str, camera_count: int, warmup_windows: int) -> float | None:
+    samples: list[tuple[float, int, int]] = []
+    pattern = r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}).*PerfDiag: loop=(\d+), frames=(\d+),"
+    for match in re.finditer(pattern, text, flags=re.MULTILINE):
+        timestamp = _parse_log_timestamp(match.group(1))
+        if timestamp is None:
+            continue
+        samples.append((timestamp, int(match.group(2)), int(match.group(3))))
+    samples = _drop_warmup(samples, warmup_windows)
+    if len(samples) < 2:
+        return None
+
+    source_count = max(1, int(camera_count or 1))
+    fps_values: list[float] = []
+    previous_ts, previous_loop, _previous_frames = samples[0]
+    for timestamp, loop, frames in samples[1:]:
+        elapsed = timestamp - previous_ts
+        loop_delta = loop - previous_loop
+        previous_ts = timestamp
+        previous_loop = loop
+        if elapsed <= 0 or loop_delta <= 0:
+            continue
+        loop_hz = loop_delta / elapsed
+        fps_values.append(loop_hz * (frames / source_count))
+    return _avg(fps_values)
 
 
 def _parse_log_metadata(text: str) -> dict[str, Any]:
@@ -77,12 +169,17 @@ def _parse_log_metadata(text: str) -> dict[str, Any]:
     return result
 
 
-def parse_log(path: Path) -> dict[str, Any]:
+def parse_log(path: Path, *, warmup_windows: int = DEFAULT_WARMUP_WINDOWS) -> dict[str, Any]:
     text = path.read_text(encoding="utf-8", errors="ignore")
     metadata = _parse_log_metadata(text)
+    camera_count = int(metadata.get("camera_count") or 1)
 
     capture_fps = [_safe_float(value) for value in re.findall(r"\bFPS=([0-9.]+)\b", text)]
-    capture_fps_values = [value for value in capture_fps if value is not None]
+    capture_fps_values = _drop_warmup([value for value in capture_fps if value is not None], warmup_windows)
+    capture_fps_diag = _update_fps_from_diag(text, "DetectorsIn", camera_count, warmup_windows)
+    detector_fps_diag = _update_fps_from_diag(text, "TrackersIn", camera_count, warmup_windows)
+    tracker_fps_diag = _update_fps_from_diag(text, "TrackersOut", camera_count, warmup_windows)
+    visual_fps_diag = _visual_fps_from_controller(text, camera_count, warmup_windows)
 
     pipeline_total_ms: list[float] = []
     stage_ms: dict[str, list[float]] = {}
@@ -95,6 +192,11 @@ def parse_log(path: Path) -> dict[str, Any]:
             parsed = _safe_float(ms_value)
             if parsed is not None:
                 stage_ms.setdefault(stage_name, []).append(parsed)
+    pipeline_total_ms = _drop_warmup(pipeline_total_ms, warmup_windows)
+    stage_ms = {
+        stage_name: _drop_warmup(values, warmup_windows)
+        for stage_name, values in stage_ms.items()
+    }
 
     controller_total_ms: list[float] = []
     controller_frames: list[int] = []
@@ -109,6 +211,9 @@ def parse_log(path: Path) -> dict[str, Any]:
         total = _safe_float(match.group(2))
         if total is not None:
             controller_total_ms.append(total)
+    if warmup_windows > 0 and len(controller_total_ms) > warmup_windows:
+        controller_total_ms = controller_total_ms[warmup_windows:]
+        controller_frames = controller_frames[warmup_windows:]
 
     visual_fps_values: list[float] = []
     for frames, total_ms in zip(controller_frames, controller_total_ms):
@@ -119,31 +224,35 @@ def parse_log(path: Path) -> dict[str, Any]:
         **metadata,
         "log_path": str(path),
         "warnings": _count(r"\bWARNING\b", text),
-        "errors": _count(r"\bERROR\b", text),
+        "errors": _count(r" - ERROR - ", text),
+        "opencv_errors": _count(r"\[ERROR:", text),
         "tracebacks": _count(r"Traceback \(most recent call last\):", text),
         "restart_events": _count(r"\brestarting\b", text),
         "restart_suppressed": _count(r"restart suppressed by policy", text),
         "stop_timeouts": _count(r"stop timeout", text),
         "force_kills": _count(r"Force-killing worker|Force-terminating worker", text),
-        "avg_capture_fps": _avg(capture_fps_values),
+        "capture_fps_direct": _avg(capture_fps_values),
         "p95_pipeline_ms": _p95(pipeline_total_ms),
         "avg_pipeline_ms": _avg(pipeline_total_ms),
         "pipeline_samples": len(pipeline_total_ms),
-        "detector_fps_est": _fps_from_ms(_avg(stage_ms.get("detectors", []))),
-        "tracker_fps_est": _fps_from_ms(_avg(stage_ms.get("trackers", []))),
+        "detector_fps_est": _coalesce_float(detector_fps_diag, _fps_from_ms(_avg(stage_ms.get("detectors", [])))),
+        "tracker_fps_est": _coalesce_float(tracker_fps_diag, _fps_from_ms(_avg(stage_ms.get("trackers", [])))),
         "source_fps_est": _fps_from_ms(_avg(stage_ms.get("sources", []))),
-        "visual_fps_est": _avg(visual_fps_values),
+        "avg_capture_fps": _coalesce_float(_avg(capture_fps_values), capture_fps_diag),
+        "visual_fps_est": _coalesce_float(visual_fps_diag, _avg(visual_fps_values)),
         "controller_samples": len(controller_total_ms),
     }
 
 
-def parse_samples(path: Path) -> dict[str, Any]:
+def parse_samples(path: Path, *, warmup_windows: int = DEFAULT_WARMUP_WINDOWS) -> dict[str, Any]:
     if not path.exists():
         return {}
     rows: list[dict[str, str]] = []
     with path.open("r", encoding="utf-8", newline="") as inp:
         reader = csv.DictReader(inp)
         rows = list(reader)
+    if warmup_windows > 0 and len(rows) > warmup_windows:
+        rows = rows[warmup_windows:]
 
     def values(column: str) -> list[float]:
         result: list[float] = []
@@ -193,7 +302,7 @@ def _discover_runs(out_dir: Path) -> list[dict[str, Any]]:
     return runs
 
 
-def collect_rows(out_dir: Path) -> list[dict[str, Any]]:
+def collect_rows(out_dir: Path, *, warmup_windows: int = DEFAULT_WARMUP_WINDOWS) -> list[dict[str, Any]]:
     repo_root = _repo_root()
     rows: list[dict[str, Any]] = []
     for run in _discover_runs(out_dir):
@@ -201,10 +310,14 @@ def collect_rows(out_dir: Path) -> list[dict[str, Any]]:
         if not log_path.exists():
             continue
         sample_path = repo_root / str(run.get("samples", ""))
-        log_metrics = parse_log(log_path)
-        sample_metrics = parse_samples(sample_path)
+        log_metrics = parse_log(log_path, warmup_windows=warmup_windows)
+        sample_metrics = parse_samples(sample_path, warmup_windows=warmup_windows)
         camera_count = int(run.get("camera_count") or log_metrics.get("camera_count") or 0)
         mode = str(run.get("mode") or log_metrics.get("mode") or "")
+        exit_code = run.get("exit_code")
+        timed_out = bool(run.get("timed_out"))
+        errors = int(log_metrics.get("errors") or 0)
+        tracebacks = int(log_metrics.get("tracebacks") or 0)
         rows.append(
             {
                 "camera_count": camera_count,
@@ -212,9 +325,10 @@ def collect_rows(out_dir: Path) -> list[dict[str, Any]]:
                 "mode_label": MODE_LABELS.get(mode, mode),
                 **log_metrics,
                 **sample_metrics,
-                "exit_code": run.get("exit_code"),
-                "timed_out": run.get("timed_out"),
+                "exit_code": exit_code,
+                "timed_out": timed_out,
                 "elapsed_sec": run.get("elapsed_sec", log_metrics.get("elapsed_sec")),
+                "valid_run": (exit_code in (0, None)) and not timed_out and errors == 0 and tracebacks == 0,
             }
         )
     return sorted(rows, key=lambda row: (int(row["camera_count"]), str(row["mode"])))
@@ -243,6 +357,7 @@ def write_results_csv(rows: list[dict[str, Any]], path: Path) -> None:
         "Ошибки",
         "Traceback",
         "Перезапуски",
+        "Валидный прогон",
         "Таймаут",
         "Код выхода",
     ]
@@ -265,6 +380,7 @@ def write_results_csv(rows: list[dict[str, Any]], path: Path) -> None:
                     "Ошибки": row.get("errors", 0),
                     "Traceback": row.get("tracebacks", 0),
                     "Перезапуски": row.get("restart_events", 0),
+                    "Валидный прогон": "да" if row.get("valid_run") else "нет",
                     "Таймаут": "да" if row.get("timed_out") else "нет",
                     "Код выхода": row.get("exit_code"),
                 }
@@ -273,12 +389,12 @@ def write_results_csv(rows: list[dict[str, Any]], path: Path) -> None:
 
 def _markdown_table(rows: list[dict[str, Any]]) -> list[str]:
     lines = [
-        "| Камер | Режим | Захват, кадр/с | Обнаружение, кадр/с | Отслеживание, кадр/с | Визуализация, кадр/с | p95 цикла, мс | CPU, % | RAM, ГБ | GPU-RAM, ГБ | Ошибки |",
-        "| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Камер | Режим | Захват, кадр/с | Обнаружение, кадр/с | Отслеживание, кадр/с | Визуализация, кадр/с | p95 цикла, мс | CPU, % | RAM, ГБ | GPU-RAM, ГБ | Ошибки | Валиден |",
+        "| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
     ]
     for row in rows:
         lines.append(
-            "| {cams} | {mode} | {cap} | {det} | {trk} | {vis} | {p95} | {cpu} | {ram} | {gpu} | {err} |".format(
+            "| {cams} | {mode} | {cap} | {det} | {trk} | {vis} | {p95} | {cpu} | {ram} | {gpu} | {err} | {valid} |".format(
                 cams=row.get("camera_count"),
                 mode=row.get("mode_label"),
                 cap=_fmt(row.get("avg_capture_fps")),
@@ -290,6 +406,7 @@ def _markdown_table(rows: list[dict[str, Any]]) -> list[str]:
                 ram=_fmt(row.get("max_ram_gb")),
                 gpu=_fmt(row.get("max_gpu_ram_gb")),
                 err=row.get("errors", 0),
+                valid="да" if row.get("valid_run") else "нет",
             )
         )
     return lines
@@ -331,13 +448,14 @@ def _efficiency_lines(rows: list[dict[str, Any]]) -> list[str]:
     return lines
 
 
-def write_report(rows: list[dict[str, Any]], path: Path, plots: list[Path]) -> None:
+def write_report(rows: list[dict[str, Any]], path: Path, plots: list[Path], *, warmup_windows: int) -> None:
     lines = [
         "# Отчёт о сравнении однопроцессного и мультипроцессного режимов",
         "",
         "## Методика",
         "Для каждой конфигурации используется одинаковый набор видеоисточников, модель и параметры FPS. "
         "Сравниваются режимы `thread` и `process`; GUI выключен, метрики собираются из `PerfDiag` и системных сэмплов runner-а.",
+        f"Первые диагностические окна прогрева отброшены: {warmup_windows}.",
         "",
         "## Сводная таблица",
         "",
@@ -358,6 +476,7 @@ def write_report(rows: list[dict[str, Any]], path: Path, plots: list[Path]) -> N
         [
             "",
             "## Примечания",
+            "- `Захват` — среднее по строкам `FPS=...` в логе; при отсутствии — оценка по окнам `PerfDiag(DetectorsIn)` (прирост кадров на вход детектора на одну камеру за интервал).",
             "- `Обнаружение`, `Отслеживание` и `Визуализация` вычисляются как оценки FPS по диагностическим временам стадий.",
             "- `GPU-RAM` заполняется только если во время запуска доступна команда `nvidia-smi`.",
             "- При интерпретации учитывайте ошибки, перезапуски и таймауты: такие прогоны нельзя считать валидным доказательством ускорения.",
@@ -397,7 +516,8 @@ def write_plots(rows: list[dict[str, Any]], plots_dir: Path) -> list[Path]:
     created: list[Path] = []
     for metric, title, filename in plot_specs:
         cameras, series = _metric_values(rows, metric)
-        if not cameras or not any(series[mode] for mode in series):
+        has_values = any(_safe_float(row.get(metric)) is not None for row in rows)
+        if not cameras or not has_values:
             continue
         x = list(range(len(cameras)))
         width = 0.38
@@ -422,7 +542,7 @@ def write_plots(rows: list[dict[str, Any]], plots_dir: Path) -> list[Path]:
 def render(args: argparse.Namespace) -> list[dict[str, Any]]:
     repo_root = _repo_root()
     out_dir = (repo_root / args.out_dir).resolve()
-    rows = collect_rows(out_dir)
+    rows = collect_rows(out_dir, warmup_windows=args.warmup_windows)
     if not rows:
         raise SystemExit(
             "Не найдены логи benchmark. Сначала запустите scripts/run_multiprocessing_benchmark.py "
@@ -433,7 +553,12 @@ def render(args: argparse.Namespace) -> list[dict[str, Any]]:
     report_md = out_dir / "report.md"
     plots = write_plots(rows, out_dir / "plots")
     write_results_csv(rows, results_csv)
-    write_report(rows, report_md, [path.relative_to(repo_root) for path in plots])
+    write_report(
+        rows,
+        report_md,
+        [path.relative_to(repo_root) for path in plots],
+        warmup_windows=args.warmup_windows,
+    )
     print(f"CSV: {results_csv.relative_to(repo_root)}")
     print(f"Отчёт: {report_md.relative_to(repo_root)}")
     if plots:
@@ -446,6 +571,12 @@ def main() -> int:
         description="Сформировать русскоязычные таблицы и графики benchmark multiprocessing."
     )
     parser.add_argument("--out-dir", default=DEFAULT_OUT_DIR)
+    parser.add_argument(
+        "--warmup-windows",
+        type=int,
+        default=DEFAULT_WARMUP_WINDOWS,
+        help="Сколько первых диагностических окон отбросить как прогрев.",
+    )
     args = parser.parse_args()
     render(args)
     return 0
