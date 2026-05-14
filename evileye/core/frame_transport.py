@@ -70,13 +70,36 @@ class SharedFrameTransport:
             try:
                 shm.close()
             finally:
-                shm.unlink()
+                try:
+                    shm.unlink()
+                except FileNotFoundError:
+                    pass
             return
-        # Foreign segment (created in another process): only close local handle.
-        # Unlink is responsibility of the owner process to avoid cross-process
-        # double-unlink warnings from multiprocessing resource_tracker.
-        shm = shared_memory.SharedMemory(name=handle.shm_name)
+        # Foreign segment (created in another process): after the receiver has
+        # copied the frame, unlink the name so /dev/shm does not fill up during
+        # long process-mode capture runs. The creator may still close its local
+        # handle later; FileNotFoundError is expected in that case.
+        try:
+            shm = shared_memory.SharedMemory(name=handle.shm_name)
+        except FileNotFoundError:
+            return
         try:
             shm.close()
-        except FileNotFoundError:
-            pass
+        finally:
+            try:
+                shm.unlink()
+            except FileNotFoundError:
+                pass
+
+    def release_all(self) -> None:
+        with self._lock:
+            segments = list(self._segments.values())
+            self._segments.clear()
+        for shm in segments:
+            try:
+                shm.close()
+            finally:
+                try:
+                    shm.unlink()
+                except FileNotFoundError:
+                    pass

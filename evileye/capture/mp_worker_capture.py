@@ -194,3 +194,7 @@ class MpWorkerCapture(MpWorker):
             except Exception:
                 pass
             self._capture = None
+        try:
+            self._frame_transport.release_all()
+        except Exception:
+            pass
