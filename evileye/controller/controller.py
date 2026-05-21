@@ -1965,7 +1965,12 @@ class Controller:
         # Дополнительная защита: сразу после обновления параметров удаляем чувствительные поля,
         # model_class_mapping и ограничиваем секцию database ключами исходной конфигурации
         try:
-            self._reconcile_credentials_fields(self.params, self.loaded_config, self.credentials_loaded)
+            if self._config_service is not None:
+                self._config_service.reconcile_credentials_fields(
+                    self.params, self.loaded_config, self.credentials_loaded
+                )
+            else:
+                self._reconcile_credentials_fields(self.params, self.loaded_config, self.credentials_loaded)
         except Exception:
             pass
         try:
@@ -1979,6 +1984,8 @@ class Controller:
             pass
 
     def _atomic_json_dump(self, path: str, data: dict) -> bool:
+        if self._config_service is not None:
+            return self._config_service.save_config(data, path)
         from evileye.utils.json_io import save_json_atomic
 
         if not path:
@@ -2005,75 +2012,11 @@ class Controller:
             pass
 
     def _reconcile_credentials_fields(self, params: dict, loaded_config: dict, credentials_loaded: bool) -> None:
-        try:
-            pipeline = params.get('pipeline', {}) if isinstance(params, dict) else {}
-            sources = pipeline.get('sources', []) if isinstance(pipeline, dict) else []
-            if not isinstance(sources, list) or not sources:
-                return
-
-            try:
-                orig_pipeline = (loaded_config or {}).get('pipeline', {})
-                orig_sources = orig_pipeline.get('sources', []) if isinstance(orig_pipeline, dict) else []
-            except Exception:
-                orig_sources = []
-
-            CRED_KEYS = {
-                'user_name', 'username', 'password', 'pwd', 'login', 'token',
-                'rtsp_user', 'rtsp_password', 'auth', 'api_key', 'camera_login', 'camera_password'
-            }
-
-            def _strip_userinfo_from_url(url: str) -> str:
-                try:
-                    from urllib.parse import urlsplit, urlunsplit
-                    parts = urlsplit(url)
-                    netloc = parts.netloc
-                    if '@' in netloc:
-                        # remove userinfo
-                        hostport = netloc.split('@', 1)[1]
-                        new_parts = (parts.scheme, hostport, parts.path, parts.query, parts.fragment)
-                        return urlunsplit(new_parts)
-                    return url
-                except Exception:
-                    return url
-
-            def _has_userinfo(url: str) -> bool:
-                try:
-                    from urllib.parse import urlsplit
-                    parts = urlsplit(url)
-                    return ('@' in parts.netloc)
-                except Exception:
-                    return ('@' in (url or ''))
-
-            for idx, src in enumerate(sources):
-                if not isinstance(src, dict):
-                    continue
-                orig_src = orig_sources[idx] if idx < len(orig_sources) and isinstance(orig_sources[idx], dict) else {}
-                orig_cred_keys = {k for k in (orig_src.keys() if isinstance(orig_src, dict) else []) if k in CRED_KEYS}
-                keys_to_remove = set()
-                for k in list(src.keys()):
-                    if k in CRED_KEYS and k not in orig_cred_keys:
-                        keys_to_remove.add(k)
-                for k in keys_to_remove:
-                    try:
-                        del src[k]
-                    except Exception:
-                        pass
-
-                # Additionally: handle embedded credentials in camera URL
-                try:
-                    cam_now = src.get('camera')
-                    cam_orig = orig_src.get('camera') if isinstance(orig_src, dict) else None
-                    if isinstance(cam_now, str):
-                        # If original didn't have userinfo in URL, strip userinfo from current
-                        if not isinstance(cam_orig, str) or not _has_userinfo(cam_orig):
-                            src['camera'] = _strip_userinfo_from_url(cam_now)
-                        else:
-                            # original had userinfo -> keep presence allowed; do not alter
-                            pass
-                except Exception:
-                    pass
-        except Exception:
-            pass
+        """Backward-compatible delegate to ConfigurationService."""
+        if self._config_service is not None:
+            self._config_service.reconcile_credentials_fields(
+                params, loaded_config, credentials_loaded
+            )
 
     def _ensure_api_preference(self, params: dict, loaded_config: dict) -> None:
         try:
@@ -2131,7 +2074,12 @@ class Controller:
             final_params = self.params if isinstance(self.params, dict) else {}
 
         try:
-            self._reconcile_credentials_fields(final_params, self.loaded_config, self.credentials_loaded)
+            if self._config_service is not None:
+                self._config_service.reconcile_credentials_fields(
+                    final_params, self.loaded_config, self.credentials_loaded
+                )
+            else:
+                self._reconcile_credentials_fields(final_params, self.loaded_config, self.credentials_loaded)
         except Exception:
             pass
 
@@ -2260,83 +2208,45 @@ class Controller:
         self.db_adapter_system_events.init()
 
     def _init_events_detectors(self, params):
-        """DEPRECATED: Используйте EventsService вместо этого метода."""
-        self.cam_events_detector = CamEventsDetector(self.pipeline.get_sources())
-        self.cam_events_detector.set_params(**params.get('CamEventsDetector', dict()))
-        self.cam_events_detector.init()
-
-        self.fov_events_detector = FieldOfViewEventsDetector(self.obj_handler)
-        self.fov_events_detector.set_params(**params.get('FieldOfViewEventsDetector', dict()))
-        self.fov_events_detector.init()
-
-        self.zone_events_detector = ZoneEventsDetector(self.obj_handler)
-        self.zone_events_detector.set_params(**params.get('ZoneEventsDetector', dict()))
-        self.zone_events_detector.init()
-
-        # Initialize AttributeEventsDetector
-        self.attr_events_detector = AttributeEventsDetector(self.obj_handler)
-        self.attr_events_detector.set_params(**params.get('AttributeEventsDetector', dict()))
-        self.attr_events_detector.init()
-
-        # Initialize SystemEventsDetector
-        self.system_events_detector = SystemEventsDetector()
-        self.system_events_detector.set_params(**params.get('SystemEventsDetector', dict()))
-        self.system_events_detector.init()
-
-        self.obj_handler.subscribe(self.fov_events_detector, self.zone_events_detector, self.attr_events_detector)
-        for source in self.pipeline.get_sources():
-            source.subscribe(self.cam_events_detector)
-        
-        # Инициализация атрибутных процессоров, если они есть в пайплайне
-        self._init_attributes_processors(params)
+        """DEPRECATED: delegates to EventsService.initialize_detectors."""
+        self._events_service.initialize_detectors(
+            params=params,
+            pipeline=self.pipeline,
+            objects_handler=self.obj_handler,
+            use_database=True,
+        )
+        self._sync_event_detector_refs_from_service()
+        self._events_service.initialize_attribute_processors(
+            pipeline=self.pipeline,
+            objects_handler=self.obj_handler,
+            params=params if isinstance(params, dict) else self.params,
+        )
 
     def _init_attributes_processors(self, params):
-        """DEPRECATED: Используйте EventsService.initialize_attribute_processors вместо этого метода."""
-        # Проверяем, есть ли атрибутные процессоры в пайплайне
-        # PipelineProcessors инициализирует processors в __init__, поэтому прямой доступ безопасен
-        if hasattr(self.pipeline, 'processors') and self.pipeline.processors:
-            for processor in self.pipeline.processors:
-                # ProcessorBase определяет get_name как метод, поэтому прямой вызов безопасен
-                proc_name = processor.get_name()
-                if proc_name in ['attributes_roi', 'attributes_classifier']:
-                        # Получаем параметры для атрибутных процессоров
-                        attr_params = params.get('attributes_detection', {})
-                        if attr_params:
-                            # Прокидываем параметры в ObjectsHandler
-                            if 'objects_handler' not in self.obj_handler.params:
-                                self.obj_handler.params['objects_handler'] = {}
-                            self.obj_handler.params['objects_handler']['attributes_detection'] = attr_params
-                            self.obj_handler.set_params_impl()
-                            self.logger.info(f"Attribute detection configured for {proc_name}")
+        """DEPRECATED: delegates to EventsService.initialize_attribute_processors."""
+        self._events_service.initialize_attribute_processors(
+            pipeline=self.pipeline,
+            objects_handler=self.obj_handler,
+            params=params,
+        )
 
     def _init_events_detectors_without_db(self, params):
-        """DEPRECATED: Используйте EventsService вместо этого метода."""
-        self.cam_events_detector = CamEventsDetector(self.pipeline.get_sources())
-        self.cam_events_detector.set_params(**params.get('CamEventsDetector', dict()))
-        self.cam_events_detector.init()
+        """DEPRECATED: delegates to EventsService.initialize_detectors (no DB)."""
+        self._events_service.initialize_detectors(
+            params=params,
+            pipeline=self.pipeline,
+            objects_handler=self.obj_handler,
+            use_database=False,
+        )
+        self._sync_event_detector_refs_from_service()
 
-        # Initialize FOV and Zone detectors without database functionality
-        self.fov_events_detector = FieldOfViewEventsDetector(self.obj_handler)
-        self.fov_events_detector.set_params(**params.get('FieldOfViewEventsDetector', dict()))
-        self.fov_events_detector.init()
-
-        self.zone_events_detector = ZoneEventsDetector(self.obj_handler)
-        self.zone_events_detector.set_params(**params.get('ZoneEventsDetector', dict()))
-        self.zone_events_detector.init()
-
-        # Initialize AttributeEventsDetector
-        self.attr_events_detector = AttributeEventsDetector(self.obj_handler)
-        self.attr_events_detector.set_params(**params.get('AttributeEventsDetector', dict()))
-        self.attr_events_detector.init()
-
-        # Initialize SystemEventsDetector
-        self.system_events_detector = SystemEventsDetector()
-        self.system_events_detector.set_params(**params.get('SystemEventsDetector', dict()))
-        self.system_events_detector.init()
-
-        self.obj_handler.subscribe(self.fov_events_detector, self.zone_events_detector, self.attr_events_detector)
-        for source in self.pipeline.get_sources():
-            source.subscribe(self.cam_events_detector)
+    def _sync_event_detector_refs_from_service(self) -> None:
+        """Keep legacy Controller attributes in sync with EventsService."""
+        self.cam_events_detector = self._events_service.get_detector('CamEventsDetector')
+        self.fov_events_detector = self._events_service.get_detector('FieldOfViewEventsDetector')
+        self.zone_events_detector = self._events_service.get_detector('ZoneEventsDetector')
+        self.attr_events_detector = self._events_service.get_detector('AttributeEventsDetector')
+        self.system_events_detector = self._events_service.get_detector('SystemEventsDetector')
 
     def _init_events_detectors_controller(self, params):
         detectors = [self.cam_events_detector, self.fov_events_detector, self.zone_events_detector]
