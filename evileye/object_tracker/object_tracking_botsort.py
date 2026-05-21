@@ -12,23 +12,8 @@ from ..object_detector.object_detection_base import DetectionResult
 from ..object_detector.object_detection_base import DetectionResultList
 from .tracking_results import TrackingResult
 from .tracking_results import TrackingResultList
-from dataclasses import dataclass
 from ..core.base_class import EvilEyeBase
-
-@dataclass
-class BostSortCfg:
-    appearance_thresh: float = 0.25
-    gmc_method: str = "sparseOptFlow"
-    match_thresh: float = 0.8
-    new_track_thresh: float = 0.6
-    proximity_thresh: float = 0.5
-    track_buffer: int = 30
-    track_high_thresh: float = 0.5
-    track_low_thresh: float = 0.1
-    tracker_type: str = "botsort"
-    fuse_score: bool = True
-    with_reid: bool = False
-
+from .botsort_config import BostSortCfg
 
 
 @EvilEyeBase.register("ObjectTrackingBotsort")

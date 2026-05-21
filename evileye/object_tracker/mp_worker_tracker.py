@@ -1,5 +1,10 @@
 from ..core.mp_worker import MpWorker
-from ..core.frame_transport import FrameHandle, SharedFrameTransport
+from ..core.frame_transport import (
+    FrameHandle,
+    SharedFrameTransport,
+    materialize_payload_item,
+)
+from .botsort_config import botsort_cfg_from_dict
 
 
 class MpWorkerTracker(MpWorker):
@@ -24,25 +29,8 @@ class MpWorkerTracker(MpWorker):
     def init_worker(self):
         """Initialize BOTSORT tracker inside the child process"""
         from .trackers.bot_sort import BOTSORT
-        from dataclasses import dataclass
 
-        @dataclass
-        class BotSortCfg:
-            appearance_thresh: float = 0.25
-            gmc_method: str = "sparseOptFlow"
-            match_thresh: float = 0.8
-            new_track_thresh: float = 0.6
-            proximity_thresh: float = 0.5
-            track_buffer: int = 30
-            track_high_thresh: float = 0.5
-            track_low_thresh: float = 0.1
-            tracker_type: str = "botsort"
-            fuse_score: bool = True
-            with_reid: bool = False
-
-        cfg_dict = self.tracker_params.get('botsort_cfg', {})
-        valid_fields = {f.name for f in __import__('dataclasses').fields(BotSortCfg)}
-        cfg = BotSortCfg(**{k: v for k, v in cfg_dict.items() if k in valid_fields})
+        cfg = botsort_cfg_from_dict(self.tracker_params.get("botsort_cfg", {}))
 
         # Initialize ONNX encoder inside child process
         onnx_path = self.tracker_params.get("tracker_onnx", "")
@@ -117,7 +105,7 @@ class MpWorkerTracker(MpWorker):
             det = data.get("detection_result")
             handle = data.get("frame_handle")
             if isinstance(handle, FrameHandle):
-                image_np = self._frame_transport.get_frame_view(handle)
+                image_np = materialize_payload_item(handle, self._frame_transport)
             else:
                 image_np = None
             frame_meta = data.get("frame_meta", {}) or {}
