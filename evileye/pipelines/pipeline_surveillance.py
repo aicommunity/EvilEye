@@ -96,7 +96,6 @@ class PipelineSurveillance(PipelineProcessors):
                     updated.append(item)
                     continue
                 item_copy = dict(item)
-                item_copy.setdefault("execution_mode", "thread")
                 item_copy.setdefault("ipc_mode", ipc_mode)
                 updated.append(item_copy)
             normalized[section] = updated
@@ -283,7 +282,7 @@ class PipelineSurveillance(PipelineProcessors):
         for tracker_params in tracker_params_list or []:
             if not isinstance(tracker_params, dict):
                 continue
-            if str(tracker_params.get("execution_mode", "thread")).lower() == "process":
+            if str(tracker_params.get("execution_mode", "process")).lower() == "process":
                 return True
         return False
 
@@ -325,31 +324,27 @@ class PipelineSurveillance(PipelineProcessors):
         self.set_params(**params)
         self.init()
 
-    def get_latest_visualization_frames(self) -> list[Any]:
-        """
-        Вернуть кадры/результаты, которые уже прошли обработку (final stage).
-        Это обеспечивает контролируемую задержку в визуализаторе и не позволяет
-        ему "убегать" вперёд относительно детектора/трекера.
-        """
-        # Важно: pipeline results queue маленькая (maxsize=2), а mc_trackers может
-        # возвращать пустой шаг в отдельные тики. Controller/Visualizer берут "последний"
-        # результат и из-за этого GUI мог получать `[]` даже когда совсем недавно был
-        # непустой batch.
-        #
-        # Для визуализации допустимо "sticky" поведение: вернем самые последние
-        # *непустые* кадры из очереди результатов.
-        section_name = self.get_final_results_name()
-        if not section_name:
-            return []
-        if self.results_selection_mode == "strict_latest":
-            latest = self.peek_latest_result()
-            if not isinstance(latest, dict):
-                return []
-            section = latest.get(section_name, [])
-            if isinstance(section, (list, tuple)):
-                return list(section)
-            return [section] if section is not None else []
+    def _enabled_pipeline_section(self, section: str) -> bool:
+        try:
+            params_list = self.get_processor_params(section) or []
+            if not isinstance(params_list, list) or not params_list:
+                return False
+            for p in params_list:
+                if isinstance(p, dict) and bool(p.get("enable", True)):
+                    return True
+            return False
+        except Exception:
+            return False
 
+    @staticmethod
+    def _normalize_results_section(section_data: Any) -> list[Any]:
+        if isinstance(section_data, (list, tuple)):
+            return list(section_data)
+        if section_data is not None:
+            return [section_data]
+        return []
+
+    def _sticky_non_empty_section(self, section_name: str) -> list[Any]:
         last_non_empty = None
         for result in self.get_results_iterator():
             if not isinstance(result, dict):
@@ -357,76 +352,30 @@ class PipelineSurveillance(PipelineProcessors):
             section = result.get(section_name, [])
             if isinstance(section, (list, tuple)) and len(section) > 0:
                 last_non_empty = section
-        if last_non_empty is None:
-            # Streaming/UI should still receive the latest source frame while
-            # detector/tracker stages are warming up or temporarily backpressured.
-            for result in self.get_results_iterator():
-                if not isinstance(result, dict):
-                    continue
-                source_section = result.get("sources", [])
-                if isinstance(source_section, (list, tuple)) and len(source_section) > 0:
-                    last_non_empty = source_section
-            if last_non_empty is None:
-                return []
-        return list(last_non_empty) if isinstance(last_non_empty, (list, tuple)) else (
-            [last_non_empty] if last_non_empty is not None else [])
+        return self._normalize_results_section(last_non_empty)
 
-    def get_latest_objects_results(self) -> list[Any]:
-        """
-        Return object results for ObjectsHandler deterministically based on enabled stages.
-
-        Rules (no fallback by emptiness):
-        - if mc_trackers enabled -> return mc_trackers section
-        - else if trackers enabled -> return trackers section
-        - else if detectors enabled -> return detectors section
-        - else -> return sources section
-        """
-
-        def _enabled(section: str) -> bool:
-            try:
-                params_list = self.get_processor_params(section)
-                if not isinstance(params_list, list) or not params_list:
-                    return False
-                for p in params_list:
-                    if isinstance(p, dict) and bool(p.get("enable", True)):
-                        return True
-                return False
-            except Exception:
-                return False
-
-        if _enabled("mc_trackers"):
-            section = "mc_trackers"
-        elif _enabled("trackers"):
-            section = "trackers"
-        elif _enabled("detectors"):
-            section = "detectors"
-        else:
-            section = "sources"
-        if self.results_selection_mode == "strict_latest":
+    def _resolve_final_section_results(self, *, sticky: bool) -> list[Any]:
+        section = self.get_final_results_name()
+        if not section:
+            return []
+        if not sticky:
             latest = self.peek_latest_result()
             if not isinstance(latest, dict):
                 return []
-            section_data = latest.get(section, [])
-            if isinstance(section_data, (list, tuple)):
-                return list(section_data)
-            return [section_data] if section_data is not None else []
+            return self._normalize_results_section(latest.get(section, []))
+        return self._sticky_non_empty_section(section)
 
-        # Sticky non-empty selection:
-        # Controller uses objects_results to build fallback frames for visualization.
-        # The pipeline results queue is intentionally small (maxsize=2), so
-        # "latest" may temporarily point to an empty stage even when mc_tracker
-        # has produced non-empty output right before/after.
-        last_non_empty = None
-        for result in self.get_results_iterator():
-            if not isinstance(result, dict):
-                continue
-            res = result.get(section, [])
-            if isinstance(res, (list, tuple)) and len(res) > 0:
-                last_non_empty = res
-        if last_non_empty is None:
-            return []
+    def get_latest_visualization_frames(self) -> list[Any]:
+        """
+        Return frames from the pipeline final stage only (same section as objects).
+        """
+        sticky = self.results_selection_mode != "strict_latest"
+        return self._resolve_final_section_results(sticky=sticky)
 
-        return list(last_non_empty) if isinstance(last_non_empty, (list, tuple)) else [last_non_empty]
+    def get_latest_objects_results(self) -> list[Any]:
+        """Return object results from the pipeline final stage only."""
+        sticky = self.results_selection_mode != "strict_latest"
+        return self._resolve_final_section_results(sticky=sticky)
 
     # === ROI Editor integration helpers ===
     def get_detectors(self):
