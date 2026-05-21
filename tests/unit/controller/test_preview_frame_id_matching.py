@@ -23,7 +23,7 @@ class _PreviewHost(ControllerProcessingMixin):
         return {}
 
 
-def test_preview_does_not_use_all_objects_on_frame_mismatch():
+def test_preview_falls_back_to_all_objects_on_frame_mismatch():
     host = _PreviewHost()
     frame = Frame()
     frame.source_id = 0
@@ -39,4 +39,4 @@ def test_preview_does_not_use_all_objects_on_frame_mismatch():
         frame,
         {0: obj_list},
     )
-    assert ctx.track_info == []
+    assert ctx.track_info == [obj]

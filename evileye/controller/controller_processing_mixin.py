@@ -25,6 +25,12 @@ class ControllerProcessingMixin:
                 track_info = object_list.find_objects_near_frame_id(frame_id, max_delta=1, use_history=True)
             except Exception:
                 track_info = []
+        if not track_info and object_list:
+            # In multiprocess mode preview may fall back to fresher source frames while
+            # tracker/objects handler still holds results for a slightly older frame_id.
+            # For web preview it is better to render the latest known tracks than to show
+            # a completely unannotated frame.
+            track_info = list(object_list.objects or [])
         event_entries = self._get_preview_event_entries(source_id)
         event_cfg = self._get_preview_event_cfg()
         vis_cfg = self._get_preview_visualizer_cfg()

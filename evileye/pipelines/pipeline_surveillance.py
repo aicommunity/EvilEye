@@ -367,10 +367,49 @@ class PipelineSurveillance(PipelineProcessors):
 
     def get_latest_visualization_frames(self) -> list[Any]:
         """
-        Return frames from the pipeline final stage only (same section as objects).
+        Return frames for visualization/streaming.
+
+        Prefer the final pipeline stage (sticky non-empty), but fall back to
+        raw sources when the final section is empty so the GUI keeps showing
+        video while mc_trackers/trackers are warming up or backpressured.
         """
-        sticky = self.results_selection_mode != "strict_latest"
-        return self._resolve_final_section_results(sticky=sticky)
+        section_name = self.get_final_results_name()
+        if not section_name:
+            return []
+
+        if self.results_selection_mode == "strict_latest":
+            latest = self.peek_latest_result()
+            if not isinstance(latest, dict):
+                return []
+            section = latest.get(section_name, [])
+            if isinstance(section, (list, tuple)):
+                frames = list(section)
+            else:
+                frames = [section] if section is not None else []
+            if frames:
+                return frames
+            source_section = latest.get("sources", [])
+            if isinstance(source_section, (list, tuple)):
+                return list(source_section)
+            return [source_section] if source_section is not None else []
+
+        last_non_empty = None
+        for result in self.get_results_iterator():
+            if not isinstance(result, dict):
+                continue
+            section = result.get(section_name, [])
+            if isinstance(section, (list, tuple)) and len(section) > 0:
+                last_non_empty = section
+        if last_non_empty is None:
+            for result in self.get_results_iterator():
+                if not isinstance(result, dict):
+                    continue
+                source_section = result.get("sources", [])
+                if isinstance(source_section, (list, tuple)) and len(source_section) > 0:
+                    last_non_empty = source_section
+            if last_non_empty is None:
+                return []
+        return self._normalize_results_section(last_non_empty)
 
     def get_latest_objects_results(self) -> list[Any]:
         """Return object results from the pipeline final stage only."""
