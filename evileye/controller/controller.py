@@ -164,6 +164,7 @@ class Controller(ControllerProcessingMixin):
         self._objects_handler_service = self.service_locator.get_objects_handler_service()
         self._streaming_service = self.service_locator.get_streaming_service()
         self._preview_render_service = self.service_locator.get_preview_render_service()
+        self._event_recording_service = self.service_locator.get_event_recording_service()
         
         # Default COCO class mapping: class_name -> class_id
         self.class_mapping = {
@@ -874,6 +875,47 @@ class Controller(ControllerProcessingMixin):
             self._streaming_service.stop()
         self.logger.info('All controller components stopped')
 
+    def _setup_objects_and_events(self, db_initialized: bool, params: dict) -> None:
+        """Create ObjectsHandler and wire events stack (DB or JSON-only)."""
+        if db_initialized:
+            db_adapter_obj = self._database_service.get_adapter("DatabaseAdapterObjects")
+            db_controller = self.db_controller
+        else:
+            self.logger.info(
+                "Database functionality disabled. Working without database connection."
+            )
+            db_adapter_obj = None
+            db_controller = None
+
+        self.obj_handler = self._objects_handler_service.create_objects_handler(
+            db_controller=db_controller,
+            db_adapter=db_adapter_obj,
+        )
+        self.obj_handler = self._objects_handler_service.initialize_objects_handler(
+            objects_handler=self.obj_handler,
+            params=params.get("objects_handler") or dict(),
+            pipeline=self.pipeline,
+        )
+
+        stack_kwargs = dict(
+            pipeline=self.pipeline,
+            objects_handler=self.obj_handler,
+            params=self.params,
+            use_database=db_initialized,
+            db_controller=db_controller,
+            legacy_host=self,
+            ui_callback=self._on_event_signalization,
+        )
+        if db_initialized:
+            stack_kwargs.update(
+                db_adapter_fov_events=self.db_adapter_fov_events,
+                db_adapter_cam_events=self.db_adapter_cam_events,
+                db_adapter_zone_events=self.db_adapter_zone_events,
+                db_adapter_attr_events=self.db_adapter_attr_events,
+                db_adapter_system_events=self.db_adapter_system_events,
+            )
+        self._events_service.initialize_events_stack(**stack_kwargs)
+
     def init(self, params):
         self.params = params
         # Сохраняем исходный конфиг для правил частичного сохранения
@@ -927,95 +969,12 @@ class Controller(ControllerProcessingMixin):
         except FileNotFoundError as ex:
             self.credentials_loaded = False
 
-        # Initialize processing pipeline (sources, preprocessors, detectors, trackers)
         pipeline_params = self.params.get("pipeline", {})
-        # Propagate global recording config into each source (so capture can access it)
-        try:
-            record_cfg = (self.params or {}).get("record", {}) or {}
-            if isinstance(record_cfg, dict) and record_cfg:
-                # Recording base dir policy:
-                # - By default, base path is database.image_dir (even if record.out_dir is set)
-                # - For backward compatibility (tests/custom setups), set record.allow_custom_out_dir=true
-                allow_custom_out_dir = bool(record_cfg.get("allow_custom_out_dir", False))
-                db_image_dir = (((self.params or {}).get('database', {}) or {}).get('image_dir')) or 'EvilEyeData'
-                # Base path for ALL recordings (continuous and event-based): image_dir
-                # Resolve relative paths relative to working directory, keep absolute paths as-is
-                # Concrete recorders add their own subfolders: Streams/... or Events/.../Videos/...
-                image_dir_path = Path(db_image_dir)
-                if image_dir_path.is_absolute():
-                    default_out_dir = str(image_dir_path)
-                else:
-                    # Resolve relative path relative to current working directory
-                    default_out_dir = str(image_dir_path.resolve())
-
-                srcs = pipeline_params.get("sources", []) or []
-                enabled_list = record_cfg.get("enabled_sources")
-                for idx, s in enumerate(srcs):
-                    if not isinstance(s, dict):
-                        continue
-                    # Merge: keep per-source overrides, fill missing from root
-                    per = dict(s.get("record", {})) if isinstance(s.get("record", {}), dict) else {}
-                    merged = {**record_cfg, **per}
-                    # Ensure out_dir:
-                    # - default behavior: always force Streams under database.image_dir
-                    # - compatibility: if allow_custom_out_dir=true, keep existing out_dir if provided
-                    if allow_custom_out_dir:
-                        if not merged.get('out_dir'):
-                            merged['out_dir'] = default_out_dir
-                    else:
-                        merged['out_dir'] = default_out_dir
-                    # Apply enabled per source if list provided
-                    if enabled_list and len(enabled_list) > 0:
-                        # If enabled_sources list is provided, only enable matching sources
-                        enabled = False
-                        # Match by numeric source id (first in source_ids) or by source_names
-                        try:
-                            sid = (s.get('source_ids') or [idx])[0]
-                        except Exception:
-                            sid = idx
-                        sname = None
-                        try:
-                            sname = (s.get('source_names') or [None])[0]
-                        except Exception:
-                            sname = None
-                        for it in enabled_list:
-                            if isinstance(it, int) and it == sid:
-                                enabled = True
-                                break
-                            if isinstance(it, str) and sname and it == sname:
-                                enabled = True
-                                break
-                        merged['enabled'] = enabled
-                    else:
-                        # If enabled_sources is empty/None, use root enabled flag
-                        # Backward compatibility:
-                        # - If only legacy `enabled` is provided (no new flags), treat it as continuous recording.
-                        # New behavior:
-                        # - `enabled` is a master switch and MUST NOT implicitly enable continuous/event when new flags exist.
-                        has_new_flags = ('continuous_recording_enabled' in merged) or ('event_recording_enabled' in merged)
-                        if not has_new_flags:
-                            # Legacy mode: enabled -> continuous_recording_enabled
-                            if 'enabled' in merged:
-                                merged['continuous_recording_enabled'] = bool(merged.get('enabled', False))
-                                merged['event_recording_enabled'] = False
-                            else:
-                                # No record config at all -> default to disabled
-                                merged['enabled'] = False
-                                merged['continuous_recording_enabled'] = False
-                                merged['event_recording_enabled'] = False
-                        else:
-                            # New mode: ensure master flag exists, but do not derive it from new flags.
-                            if 'enabled' not in merged:
-                                merged['enabled'] = True
-                    s['record'] = merged
-                    try:
-                        sid_log = (s.get('source_ids') or [idx])[0]
-                        sname_log = (s.get('source_names') or [None])[0]
-                        self.logger.info(f"Record config for source id={sid_log} name={sname_log}: enabled={merged.get('enabled')} out_dir={merged.get('out_dir')} container={merged.get('container')}")
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+        if self._config_service is not None:
+            self._config_service.set_loaded_config(self.loaded_config)
+            self._config_service.propagate_record_config_to_sources(
+                pipeline_params, self.params
+            )
         # Инициализация pipeline через PipelineService
         pipeline_class_name = pipeline_params.get("pipeline_class")
         self.logger.info(f"Using EVILEYE_PIPELINE_ID for streaming: {self.stream_pipeline_id}")
@@ -1079,56 +1038,16 @@ class Controller(ControllerProcessingMixin):
                 self.db_controller = None
                 self.database_config = {"database": {}, "database_adapters": {}}
         
-        # Инициализация ObjectsHandler через ObjectsHandlerService
-        if db_initialized:
-            db_adapter_obj = self._database_service.get_adapter('DatabaseAdapterObjects')
-            self.obj_handler = self._objects_handler_service.create_objects_handler(
-                db_controller=self.db_controller,
-                db_adapter=db_adapter_obj,
+        self._setup_objects_and_events(db_initialized, params)
+
+        if self._event_recording_service is not None:
+            self._event_recording_service.initialize_event_recording(
+                self,
+                params,
+                self.pipeline,
+                events_processor=self.events_processor,
+                on_event_recording=self._on_event_recording,
             )
-            self.obj_handler = self._objects_handler_service.initialize_objects_handler(
-                objects_handler=self.obj_handler,
-                params=params.get('objects_handler') or dict(),
-                pipeline=self.pipeline,
-            )
-            self._events_service.initialize_events_stack(
-                pipeline=self.pipeline,
-                objects_handler=self.obj_handler,
-                params=self.params,
-                use_database=True,
-                db_controller=self.db_controller,
-                legacy_host=self,
-                ui_callback=self._on_event_signalization,
-                db_adapter_fov_events=self.db_adapter_fov_events,
-                db_adapter_cam_events=self.db_adapter_cam_events,
-                db_adapter_zone_events=self.db_adapter_zone_events,
-                db_adapter_attr_events=self.db_adapter_attr_events,
-                db_adapter_system_events=self.db_adapter_system_events,
-            )
-        else:
-            self.logger.info("Database functionality disabled. Working without database connection.")
-            # Инициализация ObjectsHandler без БД через ObjectsHandlerService
-            self.obj_handler = self._objects_handler_service.create_objects_handler(
-                db_controller=None,
-                db_adapter=None,
-            )
-            self.obj_handler = self._objects_handler_service.initialize_objects_handler(
-                objects_handler=self.obj_handler,
-                params=params.get('objects_handler') or dict(),
-                pipeline=self.pipeline,
-            )
-            self._events_service.initialize_events_stack(
-                pipeline=self.pipeline,
-                objects_handler=self.obj_handler,
-                params=self.params,
-                use_database=False,
-                db_controller=None,
-                legacy_host=self,
-                ui_callback=self._on_event_signalization,
-            )
-        
-        # Initialize event-based recording components
-        self._init_event_recording(params)
 
         server_cfg = self.params.get("server", {}) if isinstance(self.params, dict) else {}
         relay_base_url = os.environ.get("EVILEYE_WEB_API_BASE")
@@ -1354,104 +1273,15 @@ class Controller(ControllerProcessingMixin):
         # Text configuration is now part of visualizer section
         # No need to add separate text_config here
 
-        # Дополнительная защита: сразу после обновления параметров удаляем чувствительные поля,
-        # model_class_mapping и ограничиваем секцию database ключами исходной конфигурации
-        try:
-            if self._config_service is not None:
-                self._config_service.reconcile_credentials_fields(
-                    self.params, self.loaded_config, self.credentials_loaded
+        if self._config_service is not None:
+            try:
+                self._config_service.apply_save_sanitizers(
+                    self.params,
+                    self.loaded_config,
+                    self.credentials_loaded,
                 )
-            else:
-                self._reconcile_credentials_fields(self.params, self.loaded_config, self.credentials_loaded)
-        except Exception:
-            pass
-        try:
-            self._filter_model_class_mapping(self.params, self.loaded_config)
-        except Exception:
-            pass
-        try:
-            if isinstance(self.loaded_config, dict) and self.loaded_config:
-                self._restrict_database_keys(self.params, self.loaded_config)
-        except Exception:
-            pass
-
-    def _atomic_json_dump(self, path: str, data: dict) -> bool:
-        if self._config_service is not None:
-            return self._config_service.save_config(data, path)
-        from evileye.utils.json_io import save_json_atomic
-
-        if not path:
-            self.logger.error("No config file path specified for saving")
-            return False
-        ok = save_json_atomic(path, data)
-        if not ok:
-            self.logger.error("Failed to save configuration atomically: %s", path)
-        return ok
-
-    def _restrict_database_keys(self, params: dict, loaded_config: dict) -> None:
-        try:
-            orig_db = (loaded_config or {}).get('database', {}) or {}
-            if not isinstance(orig_db, dict):
-                return
-            current_db = params.get('database', {}) or {}
-            if not isinstance(current_db, dict):
-                params['database'] = {}
-                return
-            allowed_keys = set(orig_db.keys())
-            params['database'] = {k: current_db[k] for k in current_db.keys() if k in allowed_keys}
-        except Exception:
-            # В случае ошибки не модифицируем секцию
-            pass
-
-    def _reconcile_credentials_fields(self, params: dict, loaded_config: dict, credentials_loaded: bool) -> None:
-        """Backward-compatible delegate to ConfigurationService."""
-        if self._config_service is not None:
-            self._config_service.reconcile_credentials_fields(
-                params, loaded_config, credentials_loaded
-            )
-
-    def _ensure_api_preference(self, params: dict, loaded_config: dict) -> None:
-        try:
-            pipeline = params.get('pipeline', {}) if isinstance(params, dict) else {}
-            sources = pipeline.get('sources', []) if isinstance(pipeline, dict) else []
-            if not isinstance(sources, list) or not sources:
-                return
-            try:
-                orig_pipeline = (loaded_config or {}).get('pipeline', {})
-                orig_sources = orig_pipeline.get('sources', []) if isinstance(orig_pipeline, dict) else []
             except Exception:
-                orig_sources = []
-            for idx, src in enumerate(sources):
-                if not isinstance(src, dict):
-                    continue
-                orig_src = orig_sources[idx] if idx < len(orig_sources) and isinstance(orig_sources[idx], dict) else {}
-                if isinstance(orig_src, dict) and ('apiPreference' in orig_src):
-                    src['apiPreference'] = orig_src.get('apiPreference')
-        except Exception:
-            pass
-
-    def _filter_model_class_mapping(self, params: dict, loaded_config: dict) -> None:
-        try:
-            pipeline = params.get('pipeline', {}) if isinstance(params, dict) else {}
-            detectors = pipeline.get('detectors', []) if isinstance(pipeline, dict) else []
-            if not isinstance(detectors, list) or not detectors:
-                return
-            try:
-                orig_pipeline = (loaded_config or {}).get('pipeline', {})
-                orig_detectors = orig_pipeline.get('detectors', []) if isinstance(orig_pipeline, dict) else []
-            except Exception:
-                orig_detectors = []
-            for idx, det in enumerate(detectors):
-                if not isinstance(det, dict):
-                    continue
-                orig_det = orig_detectors[idx] if idx < len(orig_detectors) and isinstance(orig_detectors[idx], dict) else {}
-                if 'model_class_mapping' in det and ('model_class_mapping' not in orig_det):
-                    try:
-                        del det['model_class_mapping']
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+                pass
 
     def save_config(self, file_path: str | None = None) -> bool:
         try:
@@ -1465,46 +1295,24 @@ class Controller(ControllerProcessingMixin):
         except Exception:
             final_params = self.params if isinstance(self.params, dict) else {}
 
-        try:
-            if self._config_service is not None:
-                self._config_service.reconcile_credentials_fields(
-                    final_params, self.loaded_config, self.credentials_loaded
+        if self._config_service is not None:
+            try:
+                self._config_service.apply_save_sanitizers(
+                    final_params,
+                    self.loaded_config,
+                    self.credentials_loaded,
                 )
-            else:
-                self._reconcile_credentials_fields(final_params, self.loaded_config, self.credentials_loaded)
-        except Exception:
-            pass
+                self._config_service.strip_root_pipeline_sections(final_params)
+            except Exception:
+                pass
 
-        try:
-            if isinstance(self.loaded_config, dict) and self.loaded_config:
-                self._restrict_database_keys(final_params, self.loaded_config)
-        except Exception:
-            pass
-
-        # Отфильтровать model_class_mapping перед записью
-        try:
-            self._filter_model_class_mapping(final_params, self.loaded_config)
-        except Exception:
-            pass
-
-        # Финальная защита: убрать любые секции пайплайна с корня перед записью
-        try:
-            pipe_keys = [
-                'sources', 'preprocessors', 'detectors', 'trackers', 'mc_trackers',
-                'attributes_roi', 'attributes_classifier'
-            ]
-            for k in pipe_keys:
-                if k in final_params:
-                    try:
-                        del final_params[k]
-                    except Exception:
-                        pass
-        except Exception:
-            pass
-
-        # params_path инициализируется в __init__ контроллера, поэтому прямой доступ безопасен
         path = file_path or self.params_path
-        ok = self._atomic_json_dump(path, final_params)
+        if self._config_service is not None:
+            ok = self._config_service.save_config(final_params, path)
+        else:
+            from evileye.utils.json_io import save_json_atomic
+
+            ok = bool(path) and save_json_atomic(path, final_params)
         if ok:
             try:
                 self.logger.info(f"Configuration saved by controller to: {path}")
@@ -1548,123 +1356,6 @@ class Controller(ControllerProcessingMixin):
                 self.visualizer.set_event_state(source_id, object_id, event_name, is_on, bbox_px)
         except Exception:
             pass
-    
-    def _init_event_recording(self, params):
-        """Initialize event-based recording components (EventBuffer and EventRecorder)."""
-        try:
-            from evileye.video_recorder.recording_params import RecordingParams
-            from evileye.video_recorder.event_buffer import EventBuffer
-            from evileye.video_recorder.event_recorder import EventRecorder
-            from evileye.video_recorder.recorder_base import SourceMeta
-            
-            # Load recording parameters
-            self.recording_params = RecordingParams.from_config(params)
-            
-            # Override out_dir with database.image_dir if available (always use image_dir as base)
-            # Resolve relative paths relative to working directory, keep absolute paths as-is
-            db_image_dir = (((params or {}).get('database', {}) or {}).get('image_dir')) or 'EvilEyeData'
-            image_dir_path = Path(db_image_dir)
-            if image_dir_path.is_absolute():
-                self.recording_params.out_dir = str(image_dir_path)
-            else:
-                # Resolve relative path relative to current working directory
-                self.recording_params.out_dir = str(image_dir_path.resolve())
-            self.logger.info(f"Event recording out_dir set to database.image_dir: {self.recording_params.out_dir}")
-
-            # Pre-validate out_dir early to avoid capture init failures / reconnect log flood.
-            # If path is not writable/available (e.g. missing mount), disable recording and continue.
-            try:
-                ok, reason = self.recording_params.check_out_dir_writable()
-                if not ok:
-                    # Disable both event and continuous recording (global params)
-                    self.recording_params.enabled = False
-                    self.recording_params.continuous_recording_enabled = False
-                    self.recording_params.event_recording_enabled = False
-                    self.logger.warning(
-                        f"Recording disabled because out_dir is not writable/available: {self.recording_params.out_dir} "
-                        f"(reason: {reason})"
-                    )
-            except Exception:
-                # Never block controller init on validation errors
-                pass
-            
-            # `enabled` is a master switch; event recording must be explicitly enabled.
-            if not (self.recording_params.enabled and self.recording_params.event_recording_enabled):
-                self.logger.info("Event-based recording is disabled")
-                return
-            
-            # Get sources from pipeline
-            # PipelineBase определяет get_sources как абстрактный метод, поэтому прямой вызов безопасен
-            sources = self.pipeline.get_sources()
-            if not sources:
-                self.logger.warning("No sources found, event recording disabled")
-                return
-            
-            # Initialize EventBuffer and EventRecorder for each source
-            max_buffer_duration = self.recording_params.event_pre_seconds + self.recording_params.event_post_seconds + 5.0  # 5s margin
-            
-            for source in sources:
-                # VideoCaptureBase инициализирует source_ids в __init__, поэтому прямой доступ безопасен
-                if not source.source_ids:
-                    continue
-                
-                # Get source metadata
-                source_id = source.source_ids[0] if source.source_ids else 0
-                # VideoCaptureBase инициализирует source_names в __init__, поэтому прямой доступ безопасен
-                source_name = source.source_names[0] if source.source_names else f"source_{source_id}"
-                
-                # Get FPS for buffer
-                buffer_fps = self.recording_params.event_buffer_fps
-                if buffer_fps is None:
-                    # Defaulting to full source FPS makes EventBuffer extremely memory-hungry
-                    # because it stores full-frame numpy copies. Cap it by default.
-                    try:
-                        import os as _os
-                        max_buf_fps = float(_os.environ.get('EVILEYE_EVENT_BUFFER_FPS_MAX', '5') or 5.0)
-                    except Exception:
-                        max_buf_fps = 5.0
-                    try:
-                        src_fps = float(source.source_fps) if source.source_fps else 25.0
-                    except Exception:
-                        src_fps = 25.0
-                    buffer_fps = min(src_fps, max_buf_fps)
-                
-                # Create EventBuffer
-                event_buffer = EventBuffer(max_buffer_duration, buffer_fps)
-                self.event_buffers[source_id] = event_buffer
-                
-                # Create SourceMeta for EventRecorder
-                # VideoCaptureBase инициализирует все эти атрибуты в __init__, поэтому прямой доступ безопасен
-                source_meta = SourceMeta(
-                    source_name=source_name,
-                    source_address=source.source_address,
-                    source_type=str(source.source_type) if source.source_type else 'unknown',
-                    width=None,  # VideoCaptureBase не инициализирует width/height в __init__, используем None
-                    height=None,
-                    fps=buffer_fps,
-                    username=source.username,
-                    password=source.password,
-                    source_names=source.source_names,
-                    source_ids=source.source_ids,
-                )
-                
-                # Create EventRecorder
-                event_recorder = EventRecorder(source_meta, self.recording_params, event_buffer)
-                self.event_recorders[source_id] = event_recorder
-                
-                self.logger.info(f"Initialized event recording for source {source_id} ({source_name}): "
-                               f"buffer_duration={max_buffer_duration}s, fps={buffer_fps}")
-            
-            # Set callback for EventsProcessor
-            if self.events_processor:
-                self.events_processor.set_event_recording_callback(self._on_event_recording)
-                self.logger.info("Event recording callback registered with EventsProcessor")
-            
-        except Exception as e:
-            self.logger.error(f"Failed to initialize event recording: {e}", exc_info=True)
-            # Clear partial initialization
-            self.event_buffers.clear()
-            self.event_recorders.clear()
     
     def _init_system_diagnostics(self) -> None:
         """Initialize system diagnostics and memory monitoring."""
