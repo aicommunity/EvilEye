@@ -3,15 +3,22 @@ from .db_adapter import DatabaseAdapterBase
 from .constants import QueryType, EventType
 from ..utils import threading_events
 from ..utils import utils
-import os
 import copy
-import cv2
 from psycopg2 import sql
+from .event_image_writer import EventImageWriter
 
 
 class DatabaseAdapterAttributeEvents(DatabaseAdapterBase):
     def __init__(self, db_controller):
         super().__init__(db_controller)
+        self._event_image_writer = EventImageWriter(
+            "",
+            150,
+            100,
+            db_controller=self.db_controller,
+            db_params=self.db_params,
+            logger=self.logger,
+        )
 
     def set_params_impl(self):
         super().set_params_impl()
@@ -115,28 +122,7 @@ class DatabaseAdapterAttributeEvents(DatabaseAdapterBase):
         return (list(fields_for_updating.keys()), list(fields_for_updating.values()), fields_for_updating['preview_path_finished'], fields_for_updating['frame_path_finished'])
 
     def _save_image(self, preview_path, frame_path, image, box):
-        # Centralized storage (preferred)
-        try:
-            if hasattr(self.db_controller, "_save_image"):
-                self.db_controller._save_image(preview_path, frame_path, image, box)
-                return
-        except Exception:
-            pass
-
-        # Legacy fallback
-        save_dir = self.db_params["image_dir"]
-        preview_save_dir = os.path.join(save_dir, preview_path)
-        frame_save_dir = os.path.join(save_dir, frame_path)
-        try:
-            preview_width = self.db_params.get("preview_width", 300)
-            preview_height = self.db_params.get("preview_height", 150)
-            preview = cv2.resize(image.image.copy(), (preview_width, preview_height), cv2.INTER_NEAREST)
-            os.makedirs(os.path.dirname(preview_save_dir), exist_ok=True)
-            os.makedirs(os.path.dirname(frame_save_dir), exist_ok=True)
-            cv2.imwrite(preview_save_dir, preview)
-            cv2.imwrite(frame_save_dir, image.image)
-        except Exception as e:
-            self.logger.error(f"Attribute event image saving error: {e}")
+        self._event_image_writer.save(preview_path, frame_path, image, box=box, draw_boxes=False)
 
     def _get_img_path(self, image_type, obj_event_type, event, time_stamp=None, time_lost=None):
         save_dir = self.db_params['image_dir']

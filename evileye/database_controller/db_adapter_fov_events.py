@@ -8,6 +8,7 @@ import cv2
 from ..utils import threading_events
 from ..utils import utils
 from psycopg2 import sql
+from .event_image_writer import EventImageWriter
 
 
 class DatabaseAdapterFieldOfViewEvents(DatabaseAdapterBase):
@@ -17,6 +18,13 @@ class DatabaseAdapterFieldOfViewEvents(DatabaseAdapterBase):
         self.preview_width = self.db_params['preview_width']
         self.preview_height = self.db_params['preview_height']
         self.preview_size = (self.preview_width, self.preview_height)
+        self._event_image_writer = EventImageWriter(
+            self.image_dir,
+            self.preview_width,
+            self.preview_height,
+            db_controller=self.db_controller,
+            logger=self.logger,
+        )
 
     def set_params_impl(self):
         super().set_params_impl()
@@ -70,14 +78,7 @@ class DatabaseAdapterFieldOfViewEvents(DatabaseAdapterBase):
             threading_events.notify(EventType.UPDATE_EVENT)
 
     def _save_image(self, preview_path, frame_path, image, box):
-        preview_save_dir = os.path.join(self.image_dir, preview_path)
-        frame_save_dir = os.path.join(self.image_dir, frame_path)
-        preview = cv2.resize(image.image.copy(), self.preview_size, cv2.INTER_NEAREST)
-        preview_boxes = utils.draw_preview_boxes(preview, self.preview_width, self.preview_height, box)
-        preview_saved = cv2.imwrite(preview_save_dir, preview_boxes)
-        frame_saved = cv2.imwrite(frame_save_dir, image.image)
-        if not preview_saved or not frame_saved:
-            self.logger.error(f'ERROR: can\'t save image file {frame_save_dir}')
+        self._event_image_writer.save(preview_path, frame_path, image, box=box)
 
     def _prepare_for_updating(self, event):
         fields_for_updating = {'time_lost': event.time_lost,

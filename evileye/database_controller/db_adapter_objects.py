@@ -13,6 +13,7 @@ import cv2
 from ..utils import threading_events
 from ..utils import utils
 from psycopg2 import sql
+from .event_image_writer import EventImageWriter
 
 
 class DatabaseAdapterObjects(DatabaseAdapterBase):
@@ -22,6 +23,13 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
         self.preview_width = self.db_params['preview_width']
         self.preview_height = self.db_params['preview_height']
         self.preview_size = (self.preview_width, self.preview_height)
+        self._event_image_writer = EventImageWriter(
+            self.image_dir,
+            self.preview_width,
+            self.preview_height,
+            db_controller=self.db_controller,
+            logger=self.logger,
+        )
 
     def _insert_impl(self, obj):
         fields, data, preview_path, frame_path = self._prepare_for_saving(obj)
@@ -97,15 +105,9 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
             threading_events.notify(EventType.HANDLER_UPDATE_OBJECT)
 
     def _save_image(self, preview_path, frame_path, image, box):
-        preview_save_dir = os.path.join(self.image_dir, preview_path)
-        frame_save_dir = os.path.join(self.image_dir, frame_path)
-        # Save clean preview without overlays
-        preview = cv2.resize(image.image.copy(), self.preview_size, cv2.INTER_NEAREST)
-        preview_saved = cv2.imwrite(preview_save_dir, preview)
-        # Save original frame without overlays
-        frame_saved = cv2.imwrite(frame_save_dir, image.image)
-        if not preview_saved or not frame_saved:
-            self.logger.error(f'ERROR: can\'t save image file {frame_save_dir}')
+        self._event_image_writer.save(
+            preview_path, frame_path, image, box=box, draw_boxes=False
+        )
 
     def _prepare_for_updating(self, obj):
         fields_for_updating = {'lost_bounding_box': obj.track.bounding_box,
