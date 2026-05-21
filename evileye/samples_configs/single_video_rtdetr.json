@@ -3,6 +3,7 @@
         "pipeline_class": "PipelineSurveillance",
         "sources": [
             {
+                "execution_mode": "thread",
                 "camera": "videos/planes_sample.mp4",
                 "source": "VideoFile",
                 "split": false,
@@ -20,6 +21,7 @@
         ],
         "detectors": [
             {
+                "execution_mode": "thread",
                 "type": "ObjectDetectorRtdetr",
                 "model": "models/rtdetr-l.pt",
                 "classes": [
@@ -45,6 +47,7 @@
         ],
         "trackers": [
             {
+                "execution_mode": "thread",
                 "source_ids": [
                     0
                 ],

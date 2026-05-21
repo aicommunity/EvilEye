@@ -3,7 +3,7 @@
         "pipeline_class": "PipelineSurveillance",
         "sources": [
             {
-                "execution_mode": "thread",
+                "execution_mode": "process",
                 "split": false,
                 "num_split": 0,
                 "src_coords": [
@@ -24,7 +24,7 @@
                 "gstreamer_available": true
             },
             {
-                "execution_mode": "thread",
+                "execution_mode": "process",
                 "split": true,
                 "num_split": 2,
                 "src_coords": [
@@ -58,7 +58,7 @@
                 "gstreamer_available": true
             },
             {
-                "execution_mode": "thread",
+                "execution_mode": "process",
                 "split": true,
                 "num_split": 2,
                 "src_coords": [
@@ -130,7 +130,7 @@
                     0
                 ],
                 "num_detection_threads": 3,
-                "execution_mode": "thread",
+                "execution_mode": "process",
                 "model": "models/yolov8n.pt"
             },
             {
@@ -151,7 +151,7 @@
                     1
                 ],
                 "num_detection_threads": 3,
-                "execution_mode": "thread",
+                "execution_mode": "process",
                 "model": "models/yolov8n.pt"
             },
             {
@@ -197,7 +197,7 @@
                     2
                 ],
                 "num_detection_threads": 3,
-                "execution_mode": "thread",
+                "execution_mode": "process",
                 "model": "models/yolov8n.pt"
             },
             {
@@ -237,7 +237,7 @@
                     3
                 ],
                 "num_detection_threads": 3,
-                "execution_mode": "thread",
+                "execution_mode": "process",
                 "model": "models/yolov8n.pt"
             },
             {
@@ -258,7 +258,7 @@
                     4
                 ],
                 "num_detection_threads": 3,
-                "execution_mode": "thread",
+                "execution_mode": "process",
                 "model": "models/yolov8n.pt"
             }
         ],

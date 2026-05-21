@@ -3,7 +3,6 @@
         "pipeline_class": "PipelineSurveillance",
         "sources": [
             {
-                "execution_mode": "thread",
                 "split": false,
                 "num_split": 0,
                 "src_coords": [
@@ -23,7 +22,6 @@
                 "apiPreference": "CAP_FFMPEG"
             },
             {
-                "execution_mode": "thread",
                 "split": true,
                 "num_split": 2,
                 "src_coords": [
@@ -56,7 +54,6 @@
                 "apiPreference": "CAP_FFMPEG"
             },
             {
-                "execution_mode": "thread",
                 "split": true,
                 "num_split": 2,
                 "src_coords": [
@@ -127,7 +124,6 @@
                     0
                 ],
                 "num_detection_threads": 3,
-                "execution_mode": "thread",
                 "model": "models/yolov8n.pt"
             },
             {
@@ -148,7 +144,6 @@
                     1
                 ],
                 "num_detection_threads": 3,
-                "execution_mode": "thread",
                 "model": "models/yolov8n.pt"
             },
             {
@@ -194,7 +189,6 @@
                     2
                 ],
                 "num_detection_threads": 3,
-                "execution_mode": "thread",
                 "model": "models/yolov8n.pt"
             },
             {
@@ -234,7 +228,6 @@
                     3
                 ],
                 "num_detection_threads": 3,
-                "execution_mode": "thread",
                 "model": "models/yolov8n.pt"
             },
             {
@@ -255,7 +248,6 @@
                     4
                 ],
                 "num_detection_threads": 3,
-                "execution_mode": "thread",
                 "model": "models/yolov8n.pt"
             }
         ],

@@ -3,6 +3,7 @@
         "pipeline_class": "PipelineSurveillance",
         "sources": [
             {
+                "execution_mode": "thread",
                 "camera": "videos/planes_sample.mp4",
                 "source": "VideoFile",
                 "split": false,
@@ -20,6 +21,7 @@
         ],
         "detectors": [
             {
+                "execution_mode": "thread",
                 "model": "models/yolo11n.pt",
                 "classes": [
                     0,
@@ -42,6 +44,7 @@
         ],
         "trackers": [
             {
+                "execution_mode": "thread",
                 "source_ids": [
                     0
                 ],

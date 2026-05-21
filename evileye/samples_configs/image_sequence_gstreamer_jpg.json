@@ -3,6 +3,7 @@
         "pipeline_class": "PipelineSurveillance",
         "sources": [
             {
+                "execution_mode": "thread",
                 "camera": "images/sequence_%03d.jpg",
                 "source": "ImageSequence",
                 "type": "VideoCaptureGStreamer",
@@ -22,6 +23,7 @@
         ],
         "detectors": [
             {
+                "execution_mode": "thread",
                 "model": "models/yolo11n.pt",
                 "classes": [
                     0,
@@ -45,6 +47,7 @@
         ],
         "trackers": [
             {
+                "execution_mode": "thread",
                 "type": "ObjectTrackingBotsort",
                 "source_ids": [
                     0

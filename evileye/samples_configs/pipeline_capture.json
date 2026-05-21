@@ -3,6 +3,7 @@
         "pipeline_class": "PipelineCapture",
         "sources": [
             {
+                "execution_mode": "thread",
                 "camera": "videos/planes_sample.mp4",
                 "source": "VideoFile",
                 "split": false,

@@ -1,17 +1,17 @@
 {
-  "configs": [
-    "configs/single_video_multiprocess.json",
-    "configs/poly-videos-gst.json"
-  ],
-  "thresholds": {
-    "timeout_sec": 45,
-    "max_errors": 0,
-    "max_tracebacks": 0,
-    "max_stop_timeouts": 0,
-    "max_force_kills": 0,
-    "max_restarts": 20,
-    "max_p95_pipeline_ms": 350.0,
-    "max_rss_mb": 4096.0,
-    "min_pipeline_samples": 1
-  }
+    "configs": [
+        "configs/single_video_multiprocess.json",
+        "configs/poly-videos-gst.json"
+    ],
+    "thresholds": {
+        "timeout_sec": 45,
+        "max_errors": 0,
+        "max_tracebacks": 0,
+        "max_stop_timeouts": 0,
+        "max_force_kills": 0,
+        "max_restarts": 20,
+        "max_p95_pipeline_ms": 350.0,
+        "max_rss_mb": 4096.0,
+        "min_pipeline_samples": 1
+    }
 }
