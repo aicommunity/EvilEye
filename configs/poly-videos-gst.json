@@ -16,7 +16,7 @@
                 "source_names": [
                     "Cam1"
                 ],
-                "loop_play": false,
+                "loop_play": true,
                 "source": "VideoFile",
                 "camera": "/home/user/Videos/Test3Cam/1/139932-video_trim.mp4",
                 "type": "VideoCaptureGStreamer",
@@ -50,7 +50,7 @@
                     "Cam2",
                     "Cam3"
                 ],
-                "loop_play": false,
+                "loop_play": true,
                 "source": "VideoFile",
                 "camera": "/home/user/Videos/Test3Cam/2/139931-video_trim.mp4",
                 "type": "VideoCaptureGStreamer",
@@ -84,7 +84,7 @@
                     "Cam4",
                     "Cam5"
                 ],
-                "loop_play": false,
+                "loop_play": true,
                 "source": "VideoFile",
                 "camera": "/home/user/Videos/Test3Cam/3/139930-video_trim.mp4",
                 "type": "VideoCaptureGStreamer",
@@ -515,7 +515,7 @@
         "preview_encode_workers": 2
     },
     "controller": {
-        "autoclose": true,
+        "autoclose": false,
         "fps": 30,
         "show_main_gui": true,
         "gui_enabled": true,

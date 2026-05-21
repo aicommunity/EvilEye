@@ -123,11 +123,16 @@ class DetectionThreadBase:
     def _process_impl(self) -> None:
         """Main processing loop for detection thread."""
         while self.run_flag:
+            if not self.run_flag:
+                break
             self.init_detection_implementation()
             try:
                 image = self.queue_in.get(timeout=PROCESSING_SLEEP_INTERVAL)
             except Exception:
                 image = None
+
+            if not self.run_flag:
+                break
 
             if not image:
                 sleep(PROCESSING_SLEEP_INTERVAL)

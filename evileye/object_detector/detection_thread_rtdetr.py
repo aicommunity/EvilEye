@@ -28,7 +28,9 @@ class DetectionThreadRtdetr(DetectionThreadBase):
         super().__init__(stride, classes, source_ids, roi, inf_params, queue_out)
 
     def init_detection_implementation(self) -> None:
-        if self.model is None:
+        if not self.run_flag:
+            return
+        if getattr(self, "model", None) is None:
             self.model = RTDETR(self.model_name)
             from .ultralytics_postprocess import apply_ultralytics_optimizations
 
@@ -127,13 +129,11 @@ class DetectionThreadRtdetr(DetectionThreadBase):
         return bboxes_coords, confidences, ids
     
     def _release_model(self) -> None:
-        if self.model is not None:
-            del self.model
-            self.model = None
+        self.model = None
 
     def stop(self) -> None:
-        self._release_model()
         super().stop()
+        self._release_model()
 
     def _update_model_class_mapping_from_model(self):
         """Update model_class_mapping from RTDETR model names"""

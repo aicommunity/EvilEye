@@ -33,8 +33,11 @@ class DetectionThreadYolo(DetectionThreadBase):
         import os
         import platform
         import sys
-        
-        if self.model is None:
+
+        if not self.run_flag:
+            return
+
+        if getattr(self, "model", None) is None:
             try:
                 # Log model loading context
                 model_path = self.model_name
@@ -182,13 +185,11 @@ class DetectionThreadYolo(DetectionThreadBase):
             return [], [], []
 
     def _release_model(self) -> None:
-        if self.model is not None:
-            del self.model
-            self.model = None
+        self.model = None
 
     def stop(self) -> None:
-        self._release_model()
         super().stop()
+        self._release_model()
     
     def _update_model_class_mapping_from_model(self):
         """Update model_class_mapping from YOLO model names"""
