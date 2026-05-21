@@ -6,13 +6,6 @@ Last reviewed: plan completion sweep, 2026-05-21
 
 | ID | Description | File / area | Introduced | Target phase | Priority |
 |----|-------------|-------------|------------|--------------|----------|
-| TD-011 | PG `EventImageWriter` for db event adapters | `database_controller/` | plan audit | completion | medium |
-| TD-012 | Shared `botsort_config` (thread + mp worker) | `object_tracker/` | plan audit | completion | low |
-| TD-013 | Subprocess test: YOLO init only in mp child | `tests/unit/object_detector/` | plan §2.7 | completion | low |
-| TD-014 | `materialize_payload` in mp_worker_tracker | `object_tracker/mp_worker_tracker.py` | plan §3.1 | completion | low |
-| TD-015 | Consolidate stream_player integration tests | `tests/integration/visualization/stream_player/` | plan §5 | completion | low |
-| TD-016 | KPI-gate + integration pytest after refactor branch | CI / scripts | plan §5 | completion | medium |
-| TD-017 | MULTIPROCESSING attrs YOLO table outdated | `docs/MULTIPROCESSING.md` | plan audit | completion | low |
 
 ## In progress
 
@@ -38,6 +31,13 @@ Last reviewed: plan completion sweep, 2026-05-21
 | TD-008 | TD-008/TD-009 | Events journal: `conftest`/`helpers`, removed log-only dupes, moved legacy `journal/` tests |
 | TD-009 | TD-008/TD-009 | `broker_access`/`manager_access` thin shims → `runtime_services`; tests use canonical accessors |
 | TD-010 | TD-010 | GStreamer split into mixins; `ControllerProcessingMixin`; init/recording services |
+| TD-011 | completion | `EventImageWriter` for PG db adapters |
+| TD-012 | completion | `botsort_config.py` shared by thread + `MpWorkerTracker` |
+| TD-013 | completion | `test_yolo_mp_subprocess.py` child-process guard |
+| TD-014 | completion | `materialize_payload_item` in `MpWorkerTracker._unpack_input` |
+| TD-015 | completion | `stream_player` `conftest.py` + README |
+| TD-016 | completion | unit pytest + integration subset + KPI gate PASS `20260521_145543` |
+| TD-017 | completion | MULTIPROCESSING/CONFIGURATION_GUIDE YOLO thread + memory notes |
 
 ## Deferred (explicitly out of scope)
 
