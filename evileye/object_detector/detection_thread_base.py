@@ -178,8 +178,22 @@ class DetectionThreadBase:
 
         images = [img[0].image for img in split_image]
         predict_results = self._run_prediction(images, len(split_image))
-        # Important contract: we must emit a result for each processed input frame (even if empty),
-        # otherwise downstream visualization buffering can stall when there are no detections.
+        return self._detection_result_from_predict(split_image, predict_results)
+
+    def _detection_result_from_predict(
+        self, split_image: list, predict_results: list | None
+    ) -> Optional[DetectionResultList]:
+        """Build DetectionResultList from model outputs (shared by thread and MP drain)."""
+        if not split_image:
+            return None
+        try:
+            first = split_image[0][0] if split_image and split_image[0] else None
+        except Exception:
+            first = None
+        if first is None:
+            return None
+
+        # Important contract: emit a result per input frame (even if empty).
         if not predict_results:
             detection_result_list = DetectionResultList()
             detection_result_list.source_id = first.source_id

@@ -322,7 +322,7 @@ ProcessorStep не знает, работает ли компонент в по�
 
 | Компонент | Класс | Файл воркера | Что выносится в процесс |
 |-----------|-------|-------------|------------------------|
-| **Детекция** | `ObjectDetectorYolo` | `mp_worker_yolo.py` | YOLO/RT-DETR инференс (GPU) |
+| **Детекция** | `ObjectDetectorYolo` | `mp_worker_yolo.py` | YOLO/RT-DETR инференс (GPU); `DetectionThreadYoloMp` — feed/drain |
 | **Трекинг** | `ObjectTrackingBotsort` | `mp_worker_tracker.py` | BOTSORT + ONNX-энкодер (CPU) |
 | **ROI Feeder** | `RoiFeeder` | `mp_worker_attributes.py` | ROI |
 | **Атрибуты** | `AttributeClassifier` | `mp_worker_attributes.py` | YOLO |
@@ -1077,10 +1077,10 @@ API и используется как стандартный механизм �
 
 **Что изменилось**:
 - `__init__` создаёт `MpControl` с уникальным именем (`det-mp-0`, `det-mp-1`, ...)
-- `MpWorkerYolo` получает `log_queue` через `MpControl.add_worker()`
-- Добавлен `stop()` для остановки `MpControl`
-- Интерфейс `predict()` / `get_bboxes()` не изменился — остальной пайплайн
-  не знает, что внутри работает отдельный процесс
+- Вместо блокирующего `predict()` → `get()` в `_process_impl`: потоки **feed** и **drain**
+  (как у thread-режима: `queue_in` / `queue_out`, результаты догоняют pipeline на следующих тиках)
+- `_detection_result_from_predict()` в `DetectionThreadBase` — общая сборка bbox после worker
+- `predict()` оставлен для синхронных тестов; production — feed/drain
 
 ---
 
@@ -1100,7 +1100,7 @@ API и используется как стандартный механизм �
 | `execution_mode` | `str` | `"thread"` или `"process"` |
 | `_mp_control` | `MpControl \| None` | Пул процессов |
 | `_init_process_mode()` | Метод | Создаёт `MpControl` + `MpWorkerTracker` + dispatcher thread |
-| `_process_dispatch_loop()` | Метод | Dispatcher: `queue_in` → `mp_control.put()` → `mp_control.get()` → `queue_out` |
+| `_mp_tracker_feed_loop()` / `_mp_tracker_drain_loop()` | Метод | Async: feed → `put_nowait`, drain → poll `get` → `queue_out` |
 
 **Паттерн Dispatcher Thread**:
 
