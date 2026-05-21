@@ -26,8 +26,21 @@ from ..object_tracker.trackers.sctrack import SCTrack
 from dataclasses import dataclass
 from pympler import asizeof
 from ..core.base_class import EvilEyeBase
+from ..core.frame import Frame
 from ..core.ipc_contracts import BatchMeta
 from ..core.tracking_dto import TrackingDTO, TrackingObjectDTO
+
+MC_MAX_FRAME_ID_SPREAD = 3
+
+
+def _sync_tracking_result_with_frame(
+    track_info: TrackingResultList,
+    frame: Frame,
+) -> None:
+    if track_info.source_id is None:
+        track_info.source_id = frame.source_id
+    if track_info.frame_id is None:
+        track_info.frame_id = frame.frame_id
 
 
 @EvilEyeBase.register("ObjectMultiCameraTracking")
@@ -61,6 +74,14 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
         self._diag_queue_in_gets_by_source: dict[int, int] = {}
         self._diag_frame_id_updates_by_source: dict[int, int] = {}
         self._diag_frame_id_repeats_by_source: dict[int, int] = {}
+        self._pipeline_tick_batch = True
+        self._diag_tick_batch_skip = 0
+
+    def start(self):
+        self.run_flag = True
+        if self._pipeline_tick_batch:
+            return
+        super().start()
 
     def init_impl(self, **kwargs) -> bool:
         sources_ids = self.params.get("source_ids", [])
@@ -89,6 +110,95 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
 
     def default(self):
         self.params.clear()
+
+    def process_tick_batch(
+        self,
+        batch: dict[int, tuple[TrackingResultList, Frame]],
+    ) -> list[tuple[TrackingResultList, Frame]]:
+        """Process one pipeline tick: all cameras must be present and frame-aligned."""
+        if not batch:
+            return []
+
+        for track_info, frame in batch.values():
+            if not isinstance(track_info, TrackingResultList) or not isinstance(frame, Frame):
+                self._diag_tick_batch_skip += 1
+                return []
+            _sync_tracking_result_with_frame(track_info, frame)
+
+        for sid in self.source_ids:
+            if sid not in batch:
+                if self._perf_diag_env:
+                    self._diag_partial_batches += 1
+                self._diag_tick_batch_skip += 1
+                return []
+
+        frame_id_by_source: dict[int, int | None] = {}
+        frame_ids: list[int] = []
+        for sid in self.source_ids:
+            track_info, image = batch[sid]
+            frame_id = track_info.frame_id
+            if frame_id is None:
+                frame_id = image.frame_id
+            frame_id_by_source[sid] = frame_id
+            if frame_id is None:
+                self._diag_tick_batch_skip += 1
+                return []
+            frame_ids.append(int(frame_id))
+
+        if max(frame_ids) - min(frame_ids) > MC_MAX_FRAME_ID_SPREAD:
+            self._diag_tick_batch_skip += 1
+            return []
+
+        new_sources_count = 0
+        for sid in self.source_ids:
+            frame_id = frame_id_by_source[sid]
+            if frame_id != self._last_emitted_frame_id_by_source.get(sid):
+                new_sources_count += 1
+        if new_sources_count < 1:
+            self._diag_tick_batch_skip += 1
+            return []
+
+        sc_track_results = [batch[sid] for sid in self.source_ids]
+        is_partial = False
+        outputs: list[tuple[TrackingResultList, Frame]] = []
+
+        if not self.enable:
+            for track_info, image in sc_track_results:
+                item = (track_info, image)
+                self._attach_batch_meta(item, frame_id_by_source, is_partial=is_partial)
+                outputs.append(item)
+            for sid in self.source_ids:
+                self._last_emitted_frame_id_by_source[sid] = frame_id_by_source[sid]
+            if self._perf_diag_env:
+                self._diag_batches += 1
+                self._diag_emitted += len(outputs)
+            return outputs
+
+        sc_tracks: List[List[BOTrack]] = []
+        images = []
+        track_infos = []
+        for track_info, image in sc_track_results:
+            images.append(image)
+            track_infos.append(track_info)
+            tracks = [t.tracking_data["track_object"] for t in track_info.tracks]
+            sc_tracks.append(tracks)
+
+        mc_tracks = self.tracker.update(sc_tracks)
+        if self._perf_diag_env and not mc_tracks:
+            self._diag_empty_mc_tracks += 1
+        tracks_infos = self._create_tracks_info(track_infos, mc_tracks)
+        for track_info, image in zip(tracks_infos, images):
+            item = (track_info, image)
+            self._attach_batch_meta(item, frame_id_by_source, is_partial=is_partial)
+            outputs.append(item)
+
+        for sid in self.source_ids:
+            self._last_emitted_frame_id_by_source[sid] = frame_id_by_source[sid]
+
+        if self._perf_diag_env:
+            self._diag_batches += 1
+            self._diag_emitted += len(outputs)
+        return outputs
 
     def _process_impl(self):
         while self.run_flag:
@@ -154,7 +264,9 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
             sc_track_results = [self._pending_by_source[source_id] for source_id in self.source_ids if
                                 source_id in self._pending_by_source]
 
-            is_partial = len(sc_track_results) < len(self.source_ids)
+            num_sources = len(self.source_ids) or 1
+            min_sources_for_batch = max(1, (num_sources // 2) + 1)
+            is_partial = len(sc_track_results) < min_sources_for_batch
             if is_partial:
                 if self._perf_diag_env:
                     self._diag_waiting_for_batch += 1
@@ -282,11 +394,12 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
                 if (self._perf_diag_counter % every) == 0:
                     try:
                         self.logger.info(
-                            "PerfDiag(MCTracker): loops=%d, waits=%d, batches=%d, partial=%d, replaced=%d, empty_mc=%d, emitted=%d, in_q=%s, out_q=%s, last_batch=%s, queue_in_gets=%s, frame_updates=%s, frame_repeats=%s",
+                            "PerfDiag(MCTracker): loops=%d, waits=%d, batches=%d, partial=%d, tick_skip=%d, replaced=%d, empty_mc=%d, emitted=%d, in_q=%s, out_q=%s, last_batch=%s, queue_in_gets=%s, frame_updates=%s, frame_repeats=%s",
                             self._perf_diag_counter,
                             self._diag_waiting_for_batch,
                             self._diag_batches,
                             self._diag_partial_batches,
+                            self._diag_tick_batch_skip,
                             self._diag_replaced_same_source,
                             self._diag_empty_mc_tracks,
                             self._diag_emitted,

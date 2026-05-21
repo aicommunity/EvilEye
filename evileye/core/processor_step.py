@@ -65,7 +65,60 @@ class ProcessorStep(ProcessorBase):
         except Exception:
             return input_item
 
+    def _process_mc_trackers_sync(self, input_list) -> list:
+        from evileye.core.frame import Frame
+        from evileye.object_multi_camera_tracker.custom_object_tracking import (
+            ObjectMultiCameraTracking,
+        )
+        from evileye.object_tracker.tracking_results import TrackingResultList
+
+        if not self.processors:
+            return []
+        mc = self.processors[0]
+        if not isinstance(mc, ObjectMultiCameraTracking):
+            raise RuntimeError("mc_trackers expects ObjectMultiCameraTracking")
+
+        batch: dict[int, tuple[TrackingResultList, Frame]] = {}
+        for inp in input_list:
+            adapted = self._adapt_input_for_processor(inp, mc)
+            if not (isinstance(adapted, (list, tuple)) and len(adapted) >= 2):
+                continue
+            track_info, frame = adapted[0], adapted[1]
+            if not isinstance(frame, Frame):
+                continue
+            if frame.source_id is None:
+                continue
+            batch[frame.source_id] = (track_info, frame)
+
+        emitted = mc.process_tick_batch(batch)
+        processing_results = []
+        for item in emitted or []:
+            processing_results.append(self._normalize_result_meta(item))
+        return processing_results
+
+    @staticmethod
+    def _normalize_result_meta(result):
+        try:
+            if not (isinstance(result, (list, tuple)) and len(result) >= 2):
+                return result
+            data = result[0]
+            frame = result[1]
+            if data is None or frame is None:
+                return result
+            if hasattr(data, "source_id") and hasattr(frame, "source_id"):
+                data.source_id = frame.source_id
+            if hasattr(data, "frame_id") and hasattr(frame, "frame_id"):
+                data.frame_id = frame.frame_id
+            if hasattr(data, "time_stamp") and hasattr(frame, "time_stamp"):
+                data.time_stamp = frame.time_stamp
+        except Exception:
+            pass
+        return result
+
     def process(self, input_list=None):
+        if self.processor_name == "mc_trackers" and input_list is not None:
+            return self._process_mc_trackers_sync(input_list)
+
         processing_results = []
         if input_list is not None:
             for input in input_list:
@@ -114,29 +167,6 @@ class ProcessorStep(ProcessorBase):
                             self._input_updates_by_source[sid] += 1
                         self._input_last_frame_id_by_source[sid] = fid
 
-        def _normalize_result_meta(result):
-            """
-            Ensure result metadata matches the paired frame.
-            Contract for downstream (ObjectsHandler/Visualizer): if result is (data, Frame),
-            then data.source_id/frame_id/time_stamp must equal Frame.source_id/frame_id/time_stamp when those attrs exist.
-            """
-            try:
-                if not (isinstance(result, (list, tuple)) and len(result) >= 2):
-                    return result
-                data = result[0]
-                frame = result[1]
-                if data is None or frame is None:
-                    return result
-                if hasattr(data, "source_id") and hasattr(frame, "source_id"):
-                    data.source_id = frame.source_id
-                if hasattr(data, "frame_id") and hasattr(frame, "frame_id"):
-                    data.frame_id = frame.frame_id
-                if hasattr(data, "time_stamp") and hasattr(frame, "time_stamp"):
-                    data.time_stamp = frame.time_stamp
-            except Exception:
-                pass
-            return result
-
         # Drain outputs from all processors.
         # Previously output queues were effectively unbounded so slow draining didn't surface as "queue full"
         # (but could accumulate memory). Now that outputs are bounded, we must drain more than 1 item per tick.
@@ -148,7 +178,7 @@ class ProcessorStep(ProcessorBase):
                 if not result:
                     break
 
-                normalized = _normalize_result_meta(result)
+                normalized = self._normalize_result_meta(result)
                 # Stage-specific freshness diagnostics: how often trackers emit new frame_id per source.
                 if self._perf_diag_env and self.processor_name == "trackers" and normalized is not None:
                     data = None
