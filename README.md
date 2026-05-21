@@ -607,8 +607,8 @@ evileye server --log-level debug
 **Options:**
 - `--host HOST` - Bind host (default: 127.0.0.1)
 - `--port PORT` - Bind port (default: 8080)
-- `--reload` / `--no-reload` - Auto-reload on code changes (default: enabled)
-- `--workers N` - Number of worker processes (default: 1)
+- `--reload` / `--no-reload` - Request reload (currently not supported when passing the app instance; server logs a warning and runs without reload)
+- `--workers N` - Worker count (values other than `1` are ignored; API uses in-process shared state)
 - `--config CONFIG` - Auto-run selected config after server starts
 - `--log-level LEVEL` - Logging level (default: info)
 - `--verbose` - Enable verbose logging
@@ -782,29 +782,25 @@ evileye server --host 0.0.0.0 --port 8080 --config configs/api_config.json
 
 ### Project Structure
 
+См. полное описание в [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Кратко:
+
 ```
-evileye/
-├── core/                    # Core pipeline components
-│   ├── pipeline.py         # Base pipeline class
-│   ├── processor_base.py   # Base processor class
-│   └── ...
-├── pipelines/              # Pipeline implementations
-│   └── pipeline_surveillance.py
-├── object_detector/        # Object detection modules
-├── object_tracker/         # Object tracking modules
-├── object_multi_camera_tracker/  # Multi-camera tracking
-├── events_detectors/       # Event detection
-├── database_controller/    # Database integration
-├── visualization_modules/  # Main application GUI components
-├── configs/               # Configuration files
-├── tests/                 # Test suite
-├── evileye/               # Package entry points
-│   ├── cli.py            # Command-line interface
-│   ├── launch.py         # Configuration GUI launcher
-│   └── __init__.py       # Package initialization
-├── pyproject.toml        # Project configuration
-├── Makefile              # Development commands
-└── README.md             # This file
+EvilEye/                      # repository root
+├── evileye/                  # Python package
+│   ├── core/                 # pipeline_base, processors, MP, frame transport
+│   ├── pipelines/            # PipelineSurveillance, PipelineCapture, …
+│   ├── controller/           # Controller + services
+│   ├── object_detector/      # YOLO / RT-DETR / RF-DETR
+│   ├── capture/              # OpenCV / GStreamer sources
+│   ├── api/                  # FastAPI + frontend
+│   ├── visualization_modules/
+│   ├── cli.py, process.py, server.py, launch.py
+│   └── samples_configs/      # sample JSON (deploy-samples)
+├── configs/                  # working configs (not inside package)
+├── tests/                    # unit + integration
+├── docs/                     # architecture and guides
+├── TECH_DEBT.md              # technical debt ledger
+└── pyproject.toml
 ```
 
 ## Architecture
@@ -867,7 +863,7 @@ evileye create --list-pipelines
 
 #### Creating Custom Pipelines
 
-Create custom pipelines by extending the base `Pipeline` class and placing them in a local `pipelines/` folder:
+Create custom pipelines by extending `PipelineProcessors` (or `PipelineBase` for simpler flows) and placing them in a local `pipelines/` folder:
 
 ```python
 from evileye.core.pipeline_processors import PipelineProcessors
