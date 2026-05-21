@@ -461,9 +461,11 @@ ProcessorStep не знает, работает ли компонент в по�
 
 ### Трекер в `execution_mode: process`
 
-- На каждый принятый кадр dispatcher обязан положить результат в `queue_out`:
-  либо треки от worker, либо пустой `TrackingResultList` при timeout worker
-  (`MP_GET_MAX_ROUNDS` × 0.25 s).
+- Два потока в родителе (как у thread-режима с одной очередью, но граница IPC):
+  **feed** (`queue_in` → `mp_control.put_nowait`) и **drain** (`mp_control.get` poll → `queue_out`).
+  Один worker обрабатывает FIFO; `pending` связывает ответ с кадром и освобождает `frame_handle`.
+- Нет синхронного `put`+`get` на каждый кадр в одном потоке — результаты догоняют pipeline
+  на следующих тиках, как в thread-режиме.
 - При двойном сбое `put` в `MpControl` frame_id пишется в `queue_dropped_id`.
 
 ### Multi-camera tracker (tick-batch)
