@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from .gstreamer_capture_common import (
     CaptureConstants,
+    CaptureDeviceType,
     CaptureImage,
     Empty,
     Frame,
