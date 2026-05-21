@@ -35,7 +35,7 @@ cd EvilEye
 pip install -e "."
 
 # Fix entry points
-python fix_entry_points.py
+python scripts/setup/fix_entry_points.py
 
 Next you can use the 'evileye' command to work, or if the command does not work:
 python3 -m evileye.cli_wrapper
@@ -128,16 +128,13 @@ The `credentials.json` file contains database and camera access credentials:
     }
   },
   "database": {
-    "user_name": "postgres",
-    "password": "your_db_password",
-    "database_name": "evil_eye_db",
-    "host_name": "localhost",
-    "port": 5432,
-    "default_database_name": "postgres",
-    "default_password": "your_default_password",
-    "default_user_name": "postgres",
-    "default_host_name": "localhost",
-    "default_port": 5432
+    "admin_user_name": "postgres",
+    "admin_password": "your_db_password"
+  },
+  "web_auth": {
+    "enabled": false,
+    "username": "admin",
+    "password": "change_me"
   }
 }
 ```
@@ -950,7 +947,7 @@ Historical development reports are located in the [reports/](reports/) folder.
 - Follow PEP 8 guidelines
 - Use type hints
 - Write docstrings for all functions and classes
-- Run `make quality` before submitting PRs
+- Run `make lint` and `make test` before submitting PRs
 
 ## License
 

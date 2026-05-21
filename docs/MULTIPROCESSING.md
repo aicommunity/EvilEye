@@ -114,6 +114,7 @@ evileye-process --config configs/single_video_multiprocess.json --no-gui
 ```bash
 evileye-launch
 evileye-launch configs/single_video_multiprocess.json
+# или: evileye-launch -u   (GUI без позиционного конфига)
 ```
 
 ### Веб-сервер: актуальные схемы запуска
@@ -1118,9 +1119,24 @@ ProcessorStep                    Dispatcher Thread              Child Process
 **Что изменилось**:
 - Добавлен `execution_mode` в `__init__`, `set_params_impl`, `get_params_impl`
 - `init_impl()` ветвится на `_init_thread_mode()` и `_init_process_mode()`
-- В потоковом режиме: YOLO-модель загружается в основном процессе
-- В процессном режиме: `MpControl` + `MpWorkerAttributeClassifier` + dispatcher thread
+- В потоковом режиме: `YOLO()` вызывается в `init_impl` (поток инициализации pipeline); инференс — в отдельном `processing_thread` (см. [Контексты загрузки моделей](#контексты-загрузки-ultralytics-моделей))
+- В процессном режиме: `MpControl` + `MpWorkerAttributeClassifier`; `YOLO()` только в `init_worker()` дочернего процесса
 - `model_path` и `attrs` инициализированы в `__init__` (ранее определялись только в `set_params_impl`)
+
+---
+
+### Контексты загрузки Ultralytics-моделей
+
+| Контекст | Где вызывается `YOLO()` / `RTDETR()` | Где `predict` |
+|----------|--------------------------------------|-----------------|
+| Детекция, `execution_mode=thread` | `DetectionThreadYolo.init_detection_implementation` в `processing_thread` | тот же поток |
+| Детекция, `execution_mode=process` | `MpWorkerYolo.init_worker` в дочернем процессе | child `worker_impl`; родитель только SHM + queues |
+| Атрибуты, `thread` | `AttributeClassifier._init_thread_mode` в `init_impl` | `processing_thread` |
+| Атрибуты, `process` | `MpWorkerAttributeClassifier.init_worker` | child process |
+
+**Запрещено:** singleton-кэш модели между потоками/процессами; передача загруженной модели через `mp.Queue`/pickle.
+
+**Общий код:** только пост-обработка (`fuse`, `half`) через `evileye.object_detector.ultralytics_postprocess` — после локального `YOLO()` в том же потоке/процессе.
 
 ---
 
@@ -1744,23 +1760,25 @@ curl http://localhost:8080/api/v1/configs/runs/1
 **Шаг 7. Смотреть видеопоток (MJPEG)**
 
 ```
-GET /api/v1/pipelines/{rid}/stream.mjpg?fps=5
+GET /api/v1/runs/{rid}/stream.mjpg?fps=5
 ```
 
 Откройте в браузере:
 
 ```
-http://localhost:8080/api/v1/pipelines/1/stream.mjpg?fps=5
+http://localhost:8080/api/v1/runs/1/stream.mjpg?fps=5
 ```
+
+(Устаревший alias: `/api/v1/pipelines/{rid}/...` — deprecated.)
 
 Или получите один кадр:
 
 ```
-GET /api/v1/pipelines/{rid}/snapshot
+GET /api/v1/runs/{rid}/snapshot
 ```
 
 ```bash
-curl http://localhost:8080/api/v1/pipelines/1/snapshot --output frame.jpg
+curl http://localhost:8080/api/v1/runs/1/snapshot --output frame.jpg
 ```
 
 ---

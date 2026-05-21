@@ -460,22 +460,46 @@ class EvilEyeGUI(QMainWindow):
 
 
 def main():
-    """Main entry point for GUI"""
-    # Инициализация логирования
+    """Main entry point for GUI or config launcher."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="EvilEye GUI launcher")
+    parser.add_argument(
+        "config",
+        nargs="?",
+        help="Optional JSON config path; launches pipeline via process.py with GUI",
+    )
+    parser.add_argument(
+        "-u",
+        "--unified",
+        action="store_true",
+        help="Use unified launcher window instead of legacy GUI",
+    )
+    args = parser.parse_args()
+
     logger = setup_evileye_logging(log_level="INFO", log_to_console=True, log_to_file=True)
     log_system_info(logger)
-    
+
+    if args.config:
+        config_path = normalize_config_path(args.config)
+        if not Path(config_path).is_file():
+            logger.error("Configuration file not found: %s", config_path)
+            sys.exit(1)
+        logger.info("Launching config via process.py: %s", config_path)
+        launcher = ConfigLauncher(config_path)
+        launcher.launch()
+        return
+
     if not PYQT_AVAILABLE:
         logger.error("PyQt6 is required for GUI. Install with: pip install PyQt6")
         sys.exit(1)
-    
+
     logger.info("Initializing PyQt application")
     app = QApplication(sys.argv)
     app.setApplicationName("EvilEye")
-    app.setApplicationVersion("1.0.0")
-    
-    # Проверяем аргументы командной строки для выбора лаунчера
-    use_unified_launcher = "--unified" in sys.argv or "-u" in sys.argv
+    app.setApplicationVersion("0.0.9")
+
+    use_unified_launcher = args.unified
     
     if use_unified_launcher:
         logger.info("Creating unified launcher window")

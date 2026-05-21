@@ -11,7 +11,7 @@ install:
 	@echo "Installing EvilEye package..."
 	pip install -e .
 	@echo "Fixing entry points..."
-	python fix_entry_points.py
+	python scripts/setup/fix_entry_points.py
 	@echo "✅ Installation complete!"
 
 # Install with development dependencies
@@ -19,16 +19,11 @@ install-dev:
 	@echo "Installing EvilEye package with development dependencies..."
 	pip install -e ".[dev]"
 	@echo "Fixing entry points..."
-	python fix_entry_points.py
+	python scripts/setup/fix_entry_points.py
 	@echo "✅ Development installation complete!"
 
-# Install with all dependencies
-install-full:
-	@echo "Installing EvilEye package with all dependencies..."
-	pip install -e ".[full]"
-	@echo "Fixing entry points..."
-	python fix_entry_points.py
-	@echo "✅ Full installation complete!"
+# Install with development dependencies (alias; [full] extra does not exist)
+install-full: install-dev
 
 # Uninstall package
 uninstall:
@@ -75,7 +70,7 @@ docs:
 # Fix entry points manually
 fix-entry-points:
 	@echo "Fixing entry points..."
-	python fix_entry_points.py
+	python scripts/setup/fix_entry_points.py
 
 # Reinstall (uninstall + install)
 reinstall: uninstall install

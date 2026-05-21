@@ -1,6 +1,8 @@
 import argparse
+import json
 import os
 import sys
+import tempfile
 import uuid
 from pathlib import Path
 
@@ -24,6 +26,8 @@ def create_args_parser():
     pars = argparse.ArgumentParser()
     pars.add_argument('--config', nargs='?', const="1", type=str,
                       help="system configuration")
+    pars.add_argument('--video', type=str, default=None,
+                      help="Video file path; uses default single_video config with patched source")
     pars.add_argument('--gui', action=argparse.BooleanOptionalAction, default=True,
                       help="Show gui when processing")
     pars.add_argument('--autoclose', action=argparse.BooleanOptionalAction, default=False,
@@ -38,6 +42,35 @@ def create_args_parser():
     return result
 
 
+
+
+def _config_path_for_video(video_path: str, logger) -> str:
+    """Build a temp config from default single_video template with the given video path."""
+    video = Path(video_path).resolve()
+    if not video.is_file():
+        logger.error("Video file not found: %s", video)
+        sys.exit(1)
+    candidates = [
+        Path("configs/single_video.json"),
+        Path(__file__).resolve().parent.parent / "configs/single_video.json",
+        Path(__file__).resolve().parent / "samples_configs/single_video.json",
+    ]
+    template = next((p for p in candidates if p.is_file()), None)
+    if template is None:
+        logger.error("Default single_video.json template not found for --video mode")
+        sys.exit(1)
+    with open(template, encoding="utf-8") as f:
+        cfg = json.load(f)
+    sources = cfg.get("pipeline", {}).get("sources", [])
+    if sources:
+        sources[0]["camera"] = str(video)
+    fd, tmp = tempfile.mkstemp(suffix=".json", prefix="evileye_video_")
+    os.close(fd)
+    tmp_path = Path(tmp)
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=4)
+    logger.info("Using generated config for --video: %s", tmp_path)
+    return str(tmp_path)
 
 
 def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> int:
@@ -61,8 +94,11 @@ def main():
     logger.info(f"Starting system with CLI arguments: {args}")
     log_system_info(logger)
 
-    if args.config is None:
-        logger.error("Configuration file not specified")
+    config_path = args.config
+    if config_path is None and args.video:
+        config_path = _config_path_for_video(args.video, logger)
+    if config_path is None:
+        logger.error("Configuration file not specified (use --config or --video)")
         sys.exit(1)
 
     pipeline_id = os.environ.get("EVILEYE_PIPELINE_ID")
@@ -70,7 +106,7 @@ def main():
         pipeline_id = str(allocate_pipeline_id())
         os.environ["EVILEYE_PIPELINE_ID"] = pipeline_id
 
-    config_path = str(Path(args.config).resolve())
+    config_path = str(Path(config_path).resolve())
     config_name = Path(config_path).stem
 
     register_runtime(

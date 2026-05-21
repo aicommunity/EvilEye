@@ -188,7 +188,25 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["core", "pipelines", "object_tracker", "object_detector", "object_multi_camera_tracker", "events_detectors", "events_control", "database_controller", "visualization_modules", "utils", "preprocessing", "capture", "objects_handler"]
+source = [
+    "evileye",
+    "evileye.core",
+    "evileye.pipelines",
+    "evileye.controller",
+    "evileye.api",
+    "evileye.object_tracker",
+    "evileye.object_detector",
+    "evileye.object_multi_camera_tracker",
+    "evileye.events_detectors",
+    "evileye.events_control",
+    "evileye.database_controller",
+    "evileye.visualization_modules",
+    "evileye.utils",
+    "evileye.preprocessing",
+    "evileye.capture",
+    "evileye.objects_handler",
+    "evileye.attributes_detection",
+]
 omit = [
     "*/tests/*",
     "*/test_*",

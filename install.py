@@ -38,8 +38,10 @@ def install_package(extra_deps=None):
 def fix_entry_points():
     """Fix entry points after installation"""
     # Use Python script for fixing entry points
-    fix_script_py = Path("fix_entry_points.py")
-    
+    fix_script_py = Path("scripts/setup/fix_entry_points.py")
+    if not fix_script_py.is_file():
+        fix_script_py = Path("fix_entry_points.py")
+
     if fix_script_py.exists():
         return run_command(f"python {fix_script_py}", "Fixing entry points with Python script")
     else:
