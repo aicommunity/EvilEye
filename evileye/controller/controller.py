@@ -964,6 +964,8 @@ class Controller:
             pass
 
     def run(self):
+        from evileye.controller.processing_service import ProcessingService
+
         self.logger.info(f"Controller main loop started, stream_pipeline_id: {self.stream_pipeline_id}")
         # Emit system started via detector (unified path)
         if self.system_events_detector:
@@ -983,7 +985,9 @@ class Controller:
                                 pass
                     now_ts = time.time()
                     every = float(self._resource_stats_every_sec or 0.0)
-                    if every > 0 and (self._resource_stats_last_ts <= 0 or (now_ts - self._resource_stats_last_ts) >= every):
+                    if ProcessingService.should_log_resource_stats(
+                        self._resource_stats_last_ts, every, now_ts=now_ts
+                    ):
                         self._resource_stats_last_ts = now_ts
                         self._log_resource_stats(context="periodic")
                 except Exception:
@@ -1023,19 +1027,9 @@ class Controller:
                     self.run_flag = False
 
                 fallback_processing_frames = self._process_pipeline_results(objects_results)
-
-                processing_frames = []
-                try:
-                    for item in (vis_frames or []):
-                        if isinstance(item, (tuple, list)) and len(item) == 2:
-                            _, img = item
-                            processing_frames.append(img)
-                        else:
-                            processing_frames.append(item)
-                except Exception:
-                    processing_frames = []
-                if not processing_frames:
-                    processing_frames = list(fallback_processing_frames or [])
+                processing_frames = ProcessingService.collect_processing_frames(
+                    vis_frames, fallback_processing_frames
+                )
 
                 t3 = timer() if perf_diag_enabled else None
                 self._process_events_once()
@@ -1053,13 +1047,9 @@ class Controller:
                 end_it = timer()
                 elapsed_seconds = end_it - begin_it
 
-                if self.fps:
-                    sleep_seconds = 1. / self.fps - elapsed_seconds
-                    if sleep_seconds <= 0.0:
-                        sleep_seconds = 0.001
-                else:
-                    sleep_seconds = 0.03
-
+                sleep_seconds = ProcessingService.compute_loop_sleep_seconds(
+                    self.fps, elapsed_seconds
+                )
                 time.sleep(sleep_seconds)
 
                 if perf_diag_enabled:
