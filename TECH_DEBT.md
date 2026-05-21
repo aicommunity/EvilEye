@@ -1,6 +1,6 @@
 # Technical debt ledger
 
-Last reviewed: phase 5, 2026-05-21
+Last reviewed: phase 5 follow-up, 2026-05-21
 
 ## Open
 
@@ -27,7 +27,9 @@ Last reviewed: phase 5, 2026-05-21
 | TD-003 | phase 1 | AttributeClassifier loads YOLO in `processing_thread` |
 | TD-004 | phase 1 | `stop()` releases model in detection threads (yolo, rtdetr, attribute_detection_thread) |
 | TD-007 | phase 2–4 | Events/config delegates; `ProcessingService` loop helpers; partial controller slimming |
-| TD-003-phase3 | phase 3 | JSON event adapters use `json_event_io` + `event_image_paths` (zone, fov) |
+| TD-003-phase3 | phase 5 follow-up | All JSON event adapters use `json_event_io` (+ `event_image_paths` where images) |
+| TD-005b | phase 5 follow-up | README D9/D10, server options, CLI_DEPLOY credentials |
+| TD-006b | phase 5 follow-up | GStreamer `_log_resource_stats` uses `resource_stats` helper |
 | TD-008-partial | phase 5 | Removed `test_attributes_detection.py.unittest_backup` |
 
 ## Deferred (explicitly out of scope)
