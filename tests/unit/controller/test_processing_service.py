@@ -3,7 +3,8 @@ from evileye.controller.processing_service import ProcessingService
 
 def test_should_log_resource_stats():
     assert ProcessingService.should_log_resource_stats(0, 5.0, now_ts=100.0) is True
-    assert ProcessingService.should_log_resource_stats(96.0, 5.0, now_ts=100.0) is True
+    assert ProcessingService.should_log_resource_stats(95.0, 5.0, now_ts=100.0) is True
+    assert ProcessingService.should_log_resource_stats(96.0, 5.0, now_ts=100.0) is False
     assert ProcessingService.should_log_resource_stats(98.0, 5.0, now_ts=100.0) is False
     assert ProcessingService.should_log_resource_stats(0, 0) is False
 

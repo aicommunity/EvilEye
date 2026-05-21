@@ -14,26 +14,10 @@ from evileye.object_tracker import object_tracking_botsort
 from evileye.object_tracker.trackers.onnx_encoder import OnnxEncoder
 from evileye.object_tracker.tracking_results import TrackingResultList, TrackingResult
 from evileye.core.tracking_dto import ensure_tracking_result_list
-from evileye.objects_handler import objects_handler
 from evileye.objects_handler.object_result import ObjectResult, ObjectResultList
 import time
 from timeit import default_timer as timer
 from evileye.visualization_modules.visualizer import Visualizer
-from evileye.database_controller.db_adapter_objects import DatabaseAdapterObjects
-from evileye.database_controller.db_adapter_cam_events import DatabaseAdapterCamEvents
-from evileye.database_controller.db_adapter_fov_events import DatabaseAdapterFieldOfViewEvents
-from evileye.database_controller.db_adapter_zone_events import DatabaseAdapterZoneEvents
-from evileye.database_controller.db_adapter_system_events import DatabaseAdapterSystemEvents
-from evileye.database_controller.db_adapter_attribute_events import DatabaseAdapterAttributeEvents
-from evileye.database_controller.json_adapter_attribute_events import JsonAdapterAttributeEvents
-from evileye.database_controller.json_adapter_fov_events import JsonAdapterFovEvents
-from evileye.database_controller.json_adapter_zone_events import JsonAdapterZoneEvents
-from evileye.database_controller.json_adapter_cam_events import JsonAdapterCamEvents
-from evileye.database_controller.json_adapter_attribute_events import JsonAdapterAttributeEvents
-from evileye.database_controller.json_adapter_system_events import JsonAdapterSystemEvents
-from evileye.events_control.events_processor import EventsProcessor
-from evileye.database_controller.database_controller_pg import DatabaseControllerPg
-from evileye.events_control.events_controller import EventsDetectorsController
 from evileye.events_detectors.cam_events_detector import CamEventsDetector
 from evileye.events_detectors.fov_events_detector import FieldOfViewEventsDetector
 from evileye.events_detectors.zone_events_detector import ZoneEventsDetector
@@ -1107,39 +1091,20 @@ class Controller(ControllerProcessingMixin):
                 params=params.get('objects_handler') or dict(),
                 pipeline=self.pipeline,
             )
-            # Инициализация событий через EventsService
-            self._events_service.initialize_detectors(
-                params=self.params.get('events_detectors', dict()),
-                pipeline=self.pipeline,
-                objects_handler=self.obj_handler,
-                use_database=True,
-            )
-            # Сохраняем ссылки для обратной совместимости
-            self.cam_events_detector = self._events_service.get_detector('CamEventsDetector')
-            self.fov_events_detector = self._events_service.get_detector('FieldOfViewEventsDetector')
-            self.zone_events_detector = self._events_service.get_detector('ZoneEventsDetector')
-            self.attr_events_detector = self._events_service.get_detector('AttributeEventsDetector')
-            self.system_events_detector = self._events_service.get_detector('SystemEventsDetector')
-            
-            # Инициализация атрибутных процессоров
-            self._events_service.initialize_attribute_processors(
+            self._events_service.initialize_events_stack(
                 pipeline=self.pipeline,
                 objects_handler=self.obj_handler,
                 params=self.params,
-            )
-            
-            self._events_service.initialize_controller(self.params.get('events_detectors', dict()))
-            self.events_detectors_controller = self._events_service.get_detectors_controller()
-            
-            # Инициализация процессора событий
-            adapters = self._get_event_adapters()
-            self._events_service.initialize_processor(
-                params=self.params.get('events_processor', dict()),
-                adapters=adapters,
+                use_database=True,
                 db_controller=self.db_controller,
+                legacy_host=self,
                 ui_callback=self._on_event_signalization,
+                db_adapter_fov_events=self.db_adapter_fov_events,
+                db_adapter_cam_events=self.db_adapter_cam_events,
+                db_adapter_zone_events=self.db_adapter_zone_events,
+                db_adapter_attr_events=self.db_adapter_attr_events,
+                db_adapter_system_events=self.db_adapter_system_events,
             )
-            self.events_processor = self._events_service.get_events_processor()
         else:
             self.logger.info("Database functionality disabled. Working without database connection.")
             # Инициализация ObjectsHandler без БД через ObjectsHandlerService
@@ -1152,39 +1117,15 @@ class Controller(ControllerProcessingMixin):
                 params=params.get('objects_handler') or dict(),
                 pipeline=self.pipeline,
             )
-            # Инициализация событий без БД через EventsService
-            self._events_service.initialize_detectors(
-                params=self.params.get('events_detectors', dict()),
-                pipeline=self.pipeline,
-                objects_handler=self.obj_handler,
-                use_database=False,
-            )
-            # Сохраняем ссылки для обратной совместимости
-            self.cam_events_detector = self._events_service.get_detector('CamEventsDetector')
-            self.fov_events_detector = self._events_service.get_detector('FieldOfViewEventsDetector')
-            self.zone_events_detector = self._events_service.get_detector('ZoneEventsDetector')
-            self.attr_events_detector = self._events_service.get_detector('AttributeEventsDetector')
-            self.system_events_detector = self._events_service.get_detector('SystemEventsDetector')
-            
-            # Инициализация атрибутных процессоров
-            self._events_service.initialize_attribute_processors(
+            self._events_service.initialize_events_stack(
                 pipeline=self.pipeline,
                 objects_handler=self.obj_handler,
                 params=self.params,
-            )
-            
-            self._events_service.initialize_controller(self.params.get('events_detectors', dict()))
-            self.events_detectors_controller = self._events_service.get_detectors_controller()
-            
-            # Инициализация процессора событий без БД
-            adapters = self._get_event_adapters()
-            self._events_service.initialize_processor(
-                params=self.params.get('events_processor', dict()),
-                adapters=adapters,
+                use_database=False,
                 db_controller=None,
+                legacy_host=self,
                 ui_callback=self._on_event_signalization,
             )
-            self.events_processor = self._events_service.get_events_processor()
         
         # Initialize event-based recording components
         self._init_event_recording(params)
@@ -1583,193 +1524,6 @@ class Controller(ControllerProcessingMixin):
     def set_current_main_widget_size(self, width, height):
         self.current_main_widget_size = [width, height]
         self.visualizer.set_current_main_widget_size(width, height)
-
-    def _init_object_handler(self, db_controller, params):
-        """DEPRECATED: Используйте ObjectsHandlerService вместо этого метода."""
-        self.obj_handler = objects_handler.ObjectsHandler(db_controller=db_controller, db_adapter=self.db_adapter_obj)
-        safe_params = params or {}
-        self.obj_handler.set_params(**safe_params)
-        # Set class manager for ObjectsHandler
-        self.obj_handler.class_manager = self.class_manager
-        self.obj_handler.init()
-
-    def _init_object_handler_without_db(self, params):
-        """DEPRECATED: Используйте ObjectsHandlerService вместо этого метода."""
-        """Initialize object handler without database connection."""
-        self.obj_handler = objects_handler.ObjectsHandler(db_controller=None, db_adapter=None)
-        
-        # Set cameras parameters from pipeline sources
-        # PipelineBase определяет get_sources как абстрактный метод, поэтому прямой вызов безопасен
-        sources = self.pipeline.get_sources()
-        if sources:
-            cameras_params = []
-            for source in sources:
-                # VideoCaptureBase инициализирует source_ids, source_names в __init__, поэтому прямой доступ безопасен
-                if source.source_ids and source.source_names:
-                    camera_param = {
-                        'source_ids': source.source_ids,
-                        'source_names': source.source_names,
-                        'camera': source.source_address if source.source_address else ''
-                    }
-                    cameras_params.append(camera_param)
-                
-                # Set cameras params in obj_handler using инкапсулированный API
-                try:
-                    self.obj_handler.set_cameras_params(cameras_params)
-                except Exception:
-                    # Fallback для старого API
-                    self.obj_handler.cameras_params = cameras_params
-        
-        safe_params = params or {}
-        self.obj_handler.set_params(**safe_params)
-        # Set class manager for ObjectsHandler
-        self.obj_handler.class_manager = self.class_manager
-        self.obj_handler.init()
-
-    def _init_db_controller(self, params, system_params):
-        """DEPRECATED: Используйте DatabaseService вместо этого метода."""
-        self.db_controller = DatabaseControllerPg(system_params)
-        self.db_controller.set_params(**params)
-        self.db_controller.init()
-
-    def _init_db_adapters(self, params):
-        """DEPRECATED: Используйте DatabaseService вместо этого метода."""
-        self.db_adapter_obj = DatabaseAdapterObjects(self.db_controller)
-        self.db_adapter_obj.set_params(**params['DatabaseAdapterObjects'])
-        self.db_adapter_obj.init()
-
-        self.db_adapter_cam_events = DatabaseAdapterCamEvents(self.db_controller)
-        self.db_adapter_cam_events.set_params(**params['DatabaseAdapterCamEvents'])
-        self.db_adapter_cam_events.init()
-
-        self.db_adapter_fov_events = DatabaseAdapterFieldOfViewEvents(self.db_controller)
-        self.db_adapter_fov_events.set_params(**params['DatabaseAdapterFieldOfViewEvents'])
-        self.db_adapter_fov_events.init()
-
-        self.db_adapter_zone_events = DatabaseAdapterZoneEvents(self.db_controller)
-        self.db_adapter_zone_events.set_params(**params['DatabaseAdapterZoneEvents'])
-        self.db_adapter_zone_events.init()
-
-        self.db_adapter_attr_events = DatabaseAdapterAttributeEvents(self.db_controller)
-        self.db_adapter_attr_events.set_params(**params['DatabaseAdapterAttributeEvents'])
-        self.db_adapter_attr_events.init()
-
-        self.db_adapter_system_events = DatabaseAdapterSystemEvents(self.db_controller)
-        self.db_adapter_system_events.set_params(**params['DatabaseAdapterSystemEvents'])
-        self.db_adapter_system_events.init()
-
-    def _init_events_detectors(self, params):
-        """DEPRECATED: delegates to EventsService.initialize_detectors."""
-        self._events_service.initialize_detectors(
-            params=params,
-            pipeline=self.pipeline,
-            objects_handler=self.obj_handler,
-            use_database=True,
-        )
-        self._sync_event_detector_refs_from_service()
-        self._events_service.initialize_attribute_processors(
-            pipeline=self.pipeline,
-            objects_handler=self.obj_handler,
-            params=params if isinstance(params, dict) else self.params,
-        )
-
-    def _init_attributes_processors(self, params):
-        """DEPRECATED: delegates to EventsService.initialize_attribute_processors."""
-        self._events_service.initialize_attribute_processors(
-            pipeline=self.pipeline,
-            objects_handler=self.obj_handler,
-            params=params,
-        )
-
-    def _init_events_detectors_without_db(self, params):
-        """DEPRECATED: delegates to EventsService.initialize_detectors (no DB)."""
-        self._events_service.initialize_detectors(
-            params=params,
-            pipeline=self.pipeline,
-            objects_handler=self.obj_handler,
-            use_database=False,
-        )
-        self._sync_event_detector_refs_from_service()
-
-    def _sync_event_detector_refs_from_service(self) -> None:
-        """Keep legacy Controller attributes in sync with EventsService."""
-        self.cam_events_detector = self._events_service.get_detector('CamEventsDetector')
-        self.fov_events_detector = self._events_service.get_detector('FieldOfViewEventsDetector')
-        self.zone_events_detector = self._events_service.get_detector('ZoneEventsDetector')
-        self.attr_events_detector = self._events_service.get_detector('AttributeEventsDetector')
-        self.system_events_detector = self._events_service.get_detector('SystemEventsDetector')
-
-    def _init_events_detectors_controller(self, params):
-        detectors = [self.cam_events_detector, self.fov_events_detector, self.zone_events_detector]
-        if self.attr_events_detector:
-            detectors.append(self.attr_events_detector)
-        if self.system_events_detector:
-            detectors.append(self.system_events_detector)
-        self.events_detectors_controller = EventsDetectorsController(detectors)
-        self.events_detectors_controller.set_params(**params)
-        self.events_detectors_controller.init()
-
-    def _init_events_processor(self, params):
-        # Backward-compatible: delegate to unified initializer
-        self._init_events_processor_unified(params)
-
-    def _init_events_processor_without_db(self, params):
-        """Initialize events processor without database connection."""
-        # Backward-compatible: delegate to unified initializer
-        self._init_events_processor_unified(params)
-
-    def _get_event_adapters(self):
-        """Build list of event adapters depending on database mode."""
-        adapters = []
-        
-        # DB adapters if database enabled AND connected
-        if self.use_database and self.db_controller and self.db_controller.is_connected():
-            adapters.extend([self.db_adapter_fov_events, self.db_adapter_cam_events, self.db_adapter_zone_events])
-            if self.db_adapter_attr_events:
-                adapters.append(self.db_adapter_attr_events)
-            if self.db_adapter_system_events:
-                adapters.append(self.db_adapter_system_events)
-            try:
-                self.logger.info(f"DB adapters: {[a.get_event_name() for a in adapters if a]}")
-            except Exception:
-                pass
-        elif self.use_database and self.db_controller:
-            # БД была включена, но подключение не удалось - работаем только в JSON режиме
-            self.logger.info("Database was enabled but connection failed. Using JSON-only mode for events.")
-        
-        # JSON adapters - always add for JSON metadata backup (parallel to DB)
-        img_dir = self.params.get('database', {}).get('image_dir', 'EvilEyeData')
-        for adapter_cls in (JsonAdapterAttributeEvents, JsonAdapterFovEvents, JsonAdapterZoneEvents, JsonAdapterCamEvents, JsonAdapterSystemEvents):
-            try:
-                adapter = adapter_cls(None)
-                adapter.set_params(image_dir=img_dir)
-                adapter.init()
-                adapter.start()
-                adapters.append(adapter)
-                try:
-                    self.logger.info(f"JSON adapter started: {adapter.get_event_name()} -> image_dir={img_dir}")
-                except Exception:
-                    pass
-            except Exception as e:
-                try:
-                    self.logger.error(f"Failed to start JSON adapter {adapter_cls.__name__}: {e}")
-                except Exception:
-                    pass
-        
-        return adapters
-
-    def _init_events_processor_unified(self, params):
-        """Unified initializer for EventsProcessor for both DB and JSON modes."""
-        adapters = self._get_event_adapters()
-        db_ctrl = self.db_controller if (self.use_database and self.db_controller) else None
-        self.events_processor = EventsProcessor(adapters, db_ctrl)
-        self.events_processor.set_params(**params)
-        self.events_processor.init()
-        # Wire UI callback for online signalization
-        try:
-            self.events_processor.set_ui_callback(self._on_event_signalization)
-        except Exception:
-            pass
 
     def _on_event_signalization(self, source_id: int, object_id: int, event_name: str, is_on: bool, bbox_px: list | None = None):
         """Relay event signalization to main window (per source)."""

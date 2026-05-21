@@ -2,30 +2,25 @@
 
 from __future__ import annotations
 
-import threading
-import time
-import datetime
-from typing import Optional, List, Tuple, Any
-from queue import Queue, Empty, Full
-from collections import deque
+from .gstreamer_capture_common import (
+    CaptureConstants,
+    CaptureImage,
+    Empty,
+    Frame,
+    Full,
+    Gst,
+    List,
+    Optional,
+    Queue,
+    Tuple,
+    cv2,
+    datetime,
+    deque,
+    np,
+    threading,
+    time,
+)
 
-import cv2
-import numpy as np
-
-from .constants import CaptureConstants
-from .exceptions import CaptureInitializationError, CaptureConnectionError
-from ..core.frame import CaptureImage, Frame
-
-try:
-    import gi
-    gi.require_version('Gst', '1.0')
-    from gi.repository import Gst, GLib
-except ImportError:
-    Gst = None
-    GLib = None
-
-from evileye.video_recorder.recorder_base import SourceMeta
-from evileye.video_recorder.continuous_recorder_gst import GstContinuousRecorder
 
 class GStreamerCaptureFramesMixin:
     def _extract_frame_data(self, sample: Any) -> Tuple[np.ndarray, int, int, Optional[float]]:
