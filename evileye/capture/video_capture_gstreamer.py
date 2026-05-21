@@ -294,43 +294,14 @@ class VideoCaptureGStreamer(VideoCaptureBase):
 
     def _log_resource_stats(self, context: str) -> None:
         """Log lightweight RSS/threads/FD metrics to correlate with restarts."""
+        from evileye.utils.resource_stats import collect_process_resource_stats, format_resource_stats_line
+
+        stats = collect_process_resource_stats()
+        if stats is None:
+            return
         try:
-            import os
-            pid = os.getpid()
-        except Exception:
-            pid = None
-        rss_mb = None
-        num_threads = None
-        num_fds = None
-        open_files = None
-        try:
-            import psutil  # type: ignore
-            proc = psutil.Process(pid) if pid else psutil.Process()
-            mem = proc.memory_info()
-            rss_mb = mem.rss / (1024 * 1024)
-            try:
-                num_threads = proc.num_threads()
-            except Exception:
-                num_threads = None
-            try:
-                num_fds = proc.num_fds()
-            except Exception:
-                num_fds = None
-            try:
-                open_files = len(proc.open_files())
-            except Exception:
-                open_files = None
-        except Exception:
-            # psutil may be missing; keep silent to avoid log spam
-            pass
-        try:
-            self.logger.info(
-                f"ResourceStats[{context}] pid={pid} rss_mb={rss_mb if rss_mb is not None else 'n/a'} "
-                f"threads={num_threads if num_threads is not None else 'n/a'} "
-                f"fds={num_fds if num_fds is not None else 'n/a'} "
-                f"open_files={open_files if open_files is not None else 'n/a'} "
-                f"restart_counter={self._restart_counter}"
-            )
+            extra = f" restart_counter={self._restart_counter}"
+            self.logger.info(format_resource_stats_line(context, stats, extra_suffix=extra))
         except Exception:
             pass
 
