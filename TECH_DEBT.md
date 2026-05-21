@@ -1,12 +1,11 @@
 # Technical debt ledger
 
-Last reviewed: phase 1, 2026-05-21
+Last reviewed: phase 5, 2026-05-21
 
 ## Open
 
 | ID | Description | File / area | Introduced | Target phase | Priority |
 |----|-------------|-------------|------------|--------------|----------|
-| TD-007 | Controller hub imports + deprecated init vs services | `controller/controller.py` | audit | 2 | medium |
 | TD-008 | Duplicate journal/stream_player integration tests | `tests/integration/` | audit | 5 | low |
 | TD-009 | `api/core` vs `evileye/core` naming collision | `evileye/api/core/` | audit | 5 | low |
 | TD-010 | `video_capture_gstreamer.py` / `controller.py` very large | capture, controller | audit | 4 | medium |
@@ -27,6 +26,9 @@ Last reviewed: phase 1, 2026-05-21
 | TD-001 | phase 1 | Removed dead `_preload_models` from `object_detection_base.py` |
 | TD-003 | phase 1 | AttributeClassifier loads YOLO in `processing_thread` |
 | TD-004 | phase 1 | `stop()` releases model in detection threads (yolo, rtdetr, attribute_detection_thread) |
+| TD-007 | phase 2–4 | Events/config delegates; `ProcessingService` loop helpers; partial controller slimming |
+| TD-003-phase3 | phase 3 | JSON event adapters use `json_event_io` + `event_image_paths` (zone, fov) |
+| TD-008-partial | phase 5 | Removed `test_attributes_detection.py.unittest_backup` |
 
 ## Deferred (explicitly out of scope)
 
