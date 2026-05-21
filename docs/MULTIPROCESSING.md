@@ -1471,6 +1471,16 @@ runtime просто перестает публиковать новые JPEG �
 
 ## FAQ
 
+### Почему в `process` одна камера «отстаёт», а в `thread` — нет?
+
+Три отличия, не связанных с «камера без GPU»:
+
+1. **Capture (split):** в потоковом режиме GStreamer `get_frames_impl()` за один вызов отдаёт **все** регионы split из `frame_buffer`. В process-режиме родитель читает `frames_queue`: раньше брался только **один** кадр за тик pipeline, из‑за чего Cam1/Cam2 на `capture-1_2` чередовались. Сейчас `_get_frames_from_queue()` снимает очередь, но возвращает **не больше одного кадра на `source_id`**, остальные кадры того же источника возвращаются в очередь.
+
+2. **ProcessorStep:** стадии `detectors`/`trackers` в MP раньше вызывали блокирующий `_drain_step_mp_pending` (~сотни ms–4 s на тик). В `thread` только неблокирующий `get_nowait()` из `queue_out`. `mc_trackers` всегда работал синхронно через `ingest_tick_batch` без MP-wait.
+
+3. **ROI и дропы:** логика детектора одна (`create_roi`, `process_stride`). При редких кадрах с capture тяжёлый ROI (несколько пирамид) усиливает отставание; при переполнении `queue_out` детектор/трекер сбрасывает старые результаты (`detection_thread_base`, `object_tracking_base` dispatch).
+
 ### Куда именно в JSON-конфиге писать `execution_mode`?
 
 Параметр `"execution_mode"` пишется **внутрь секции конкретного компонента**,

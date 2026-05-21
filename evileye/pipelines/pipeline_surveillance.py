@@ -365,54 +365,38 @@ class PipelineSurveillance(PipelineProcessors):
             return self._normalize_results_section(latest.get(section, []))
         return self._sticky_non_empty_section(section)
 
+    def _resolve_section_chain(self, sections: tuple[str, ...], *, sticky: bool) -> list[Any]:
+        for section_name in sections:
+            if section_name == self.get_final_results_name():
+                data = self._resolve_final_section_results(sticky=sticky)
+            elif not sticky:
+                latest = self.peek_latest_result()
+                if not isinstance(latest, dict):
+                    data = []
+                else:
+                    data = self._normalize_results_section(latest.get(section_name, []))
+            else:
+                data = self._sticky_non_empty_section(section_name)
+            if data:
+                return data
+        return []
+
     def get_latest_visualization_frames(self) -> list[Any]:
         """
         Return frames for visualization/streaming.
 
-        Prefer the final pipeline stage (sticky non-empty), but fall back to
-        raw sources when the final section is empty so the GUI keeps showing
-        video while mc_trackers/trackers are warming up or backpressured.
+        Prefer mc_trackers (same frame_id as objects), then raw sources so video
+        keeps flowing under MP backpressure. No cross-stage fallback to trackers.
         """
-        section_name = self.get_final_results_name()
-        if not section_name:
-            return []
-
-        if self.results_selection_mode == "strict_latest":
-            latest = self.peek_latest_result()
-            if not isinstance(latest, dict):
-                return []
-            section = latest.get(section_name, [])
-            if isinstance(section, (list, tuple)):
-                frames = list(section)
-            else:
-                frames = [section] if section is not None else []
-            if frames:
-                return frames
-            source_section = latest.get("sources", [])
-            if isinstance(source_section, (list, tuple)):
-                return list(source_section)
-            return [source_section] if source_section is not None else []
-
-        last_non_empty = None
-        for result in self.get_results_iterator():
-            if not isinstance(result, dict):
-                continue
-            section = result.get(section_name, [])
-            if isinstance(section, (list, tuple)) and len(section) > 0:
-                last_non_empty = section
-        if last_non_empty is None:
-            for result in self.get_results_iterator():
-                if not isinstance(result, dict):
-                    continue
-                source_section = result.get("sources", [])
-                if isinstance(source_section, (list, tuple)) and len(source_section) > 0:
-                    last_non_empty = source_section
-            if last_non_empty is None:
-                return []
-        return self._normalize_results_section(last_non_empty)
+        sticky = self.results_selection_mode != "strict_latest"
+        sections: list[str] = []
+        if self._enabled_pipeline_section("mc_trackers"):
+            sections.append("mc_trackers")
+        sections.append("sources")
+        return self._resolve_section_chain(tuple(sections), sticky=sticky)
 
     def get_latest_objects_results(self) -> list[Any]:
-        """Return object results from the pipeline final stage only."""
+        """Return tracking results for GUI from final section only (usually mc_trackers)."""
         sticky = self.results_selection_mode != "strict_latest"
         return self._resolve_final_section_results(sticky=sticky)
 

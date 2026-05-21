@@ -55,6 +55,26 @@ def test_sticky_mc_only_not_trackers():
     assert pipeline.get_latest_objects_results() == [("mc", 1)]
 
 
+def test_objects_do_not_fall_back_to_trackers_when_mc_empty():
+    pipeline = _pipeline_with_mc_final()
+    pipeline.set_processor_params("trackers", [{"source_ids": [0]}])
+    pipeline.results_selection_mode = "sticky_non_empty"
+    pipeline.add_result({"mc_trackers": [], "trackers": [("tr", 1)]})
+
+    assert pipeline.get_latest_objects_results() == []
+
+
+def test_viz_falls_back_to_sources_not_trackers_when_mc_empty():
+    pipeline = _pipeline_with_mc_final()
+    pipeline.set_processor_params("trackers", [{"source_ids": [0]}])
+    pipeline.results_selection_mode = "sticky_non_empty"
+    pipeline.add_result(
+        {"mc_trackers": [], "trackers": [("tr_frame", 1)], "sources": [("src", 0)]}
+    )
+
+    assert pipeline.get_latest_visualization_frames() == [("src", 0)]
+
+
 def test_viz_falls_back_to_sources_when_final_empty():
     pipeline = _pipeline_with_mc_final()
     pipeline.results_selection_mode = "sticky_non_empty"

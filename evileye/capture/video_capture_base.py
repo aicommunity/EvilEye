@@ -133,14 +133,47 @@ class VideoCaptureBase(EvilEyeBase):
         return captured_images
 
     def _get_frames_from_queue(self) -> list[CaptureImage]:
-        """Read available frames from frames_queue (used in process mode)."""
+        """Read from frames_queue (process mode).
+
+        Drains all immediately available items but returns at most one frame per
+        ``source_id`` per pipeline tick. Extra frames for the same source are
+        re-queued so split capture (e.g. Cam1+Cam2 on one worker) matches
+        thread-mode GStreamer behaviour, which returns every split region per
+        ``get_frames_impl()`` call.
+        """
         frames: list[CaptureImage] = []
-        try:
-            frame = self.frames_queue.get_nowait()
-            if frame is not None:
-                frames.append(frame)
-        except Empty:
-            pass
+        seen_source_ids: set[int] = set()
+        deferred: list[CaptureImage] = []
+        max_drain = max(32, int(self.capture_config.queue_size or 2) * 4)
+
+        for _ in range(max_drain):
+            try:
+                frame = self.frames_queue.get_nowait()
+            except Empty:
+                break
+            if frame is None:
+                continue
+            sid = getattr(frame, "source_id", None)
+            if sid is not None:
+                try:
+                    sid = int(sid)
+                except (TypeError, ValueError):
+                    sid = None
+            if sid is not None and sid in seen_source_ids:
+                deferred.append(frame)
+                continue
+            if sid is not None:
+                seen_source_ids.add(sid)
+            frames.append(frame)
+
+        for frame in deferred:
+            try:
+                self.frames_queue.put_nowait(frame)
+            except Exception:
+                try:
+                    self.frames_queue.put(frame)
+                except Exception:
+                    pass
         return frames
 
     def _start_capture_threads(self) -> None:

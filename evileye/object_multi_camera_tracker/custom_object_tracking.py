@@ -2,6 +2,7 @@ from typing import Dict, List, Tuple
 import datetime
 from collections import deque
 import os
+import time
 from timeit import default_timer as timer
 import threading
 from queue import Empty
@@ -30,7 +31,10 @@ from ..core.frame import Frame
 from ..core.ipc_contracts import BatchMeta
 from ..core.tracking_dto import TrackingDTO, TrackingObjectDTO
 
-MC_MAX_FRAME_ID_SPREAD = 3
+MC_MAX_FRAME_ID_SPREAD = int(os.getenv("EVILEYE_MC_MAX_FRAME_ID_SPREAD", "30") or "30")
+MC_MAX_TIMESTAMP_SPREAD_SEC = float(
+    os.getenv("EVILEYE_MC_MAX_TIMESTAMP_SPREAD_SEC", "6.0") or "6.0"
+)
 
 
 def _sync_tracking_result_with_frame(
@@ -76,12 +80,20 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
         self._diag_frame_id_repeats_by_source: dict[int, int] = {}
         self._pipeline_tick_batch = True
         self._diag_tick_batch_skip = 0
+        self._diag_tick_batch_stale_evict = 0
+        self._accumulated_tick_batch: dict[int, tuple[TrackingResultList, Frame]] = {}
 
     def start(self):
         self.run_flag = True
         if self._pipeline_tick_batch:
             return
         super().start()
+
+    def stop(self):
+        self.run_flag = False
+        if self._pipeline_tick_batch:
+            return
+        super().stop()
 
     def init_impl(self, **kwargs) -> bool:
         sources_ids = self.params.get("source_ids", [])
@@ -100,6 +112,7 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
         self._diag_queue_in_gets_by_source = {}
         self._diag_frame_id_updates_by_source = {}
         self._diag_frame_id_repeats_by_source = {}
+        self._accumulated_tick_batch = {}
 
     def set_params_impl(self):
         super().set_params_impl()
@@ -110,6 +123,156 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
 
     def default(self):
         self.params.clear()
+
+    @staticmethod
+    def _timestamp_sec(frame: Frame) -> float | None:
+        ts = frame.time_stamp
+        if ts is None:
+            return None
+        if isinstance(ts, datetime.datetime):
+            return ts.timestamp()
+        try:
+            return float(ts)
+        except (TypeError, ValueError):
+            return None
+
+    def _frame_id_for_pair(
+        self, track_info: TrackingResultList, frame: Frame
+    ) -> int | None:
+        frame_id = track_info.frame_id
+        if frame_id is None:
+            frame_id = frame.frame_id
+        if frame_id is None:
+            return None
+        return int(frame_id)
+
+    def _merge_accumulator_item(
+        self,
+        source_id: int,
+        item: tuple[TrackingResultList, Frame],
+    ) -> None:
+        """Keep per-source newest frame_id only (MP cameras drift independently)."""
+        new_fid = self._frame_id_for_pair(item[0], item[1])
+        if new_fid is None:
+            self._accumulated_tick_batch[source_id] = item
+            return
+        old = self._accumulated_tick_batch.get(source_id)
+        if old is None:
+            self._accumulated_tick_batch[source_id] = item
+            return
+        old_fid = self._frame_id_for_pair(old[0], old[1])
+        if old_fid is not None:
+            if new_fid >= old_fid:
+                self._accumulated_tick_batch[source_id] = item
+            return
+        new_ts = self._timestamp_sec(item[1])
+        old_ts = self._timestamp_sec(old[1])
+        if new_ts is not None and old_ts is not None:
+            if new_ts >= old_ts:
+                self._accumulated_tick_batch[source_id] = item
+            return
+        self._accumulated_tick_batch[source_id] = item
+
+    def _batch_timestamp_spread_sec(
+        self, batch: dict[int, tuple[TrackingResultList, Frame]],
+    ) -> float | None:
+        ts_values: list[float] = []
+        for sid in self.source_ids:
+            if sid not in batch:
+                return None
+            ts = self._timestamp_sec(batch[sid][1])
+            if ts is None:
+                return None
+            ts_values.append(ts)
+        if not ts_values:
+            return None
+        return max(ts_values) - min(ts_values)
+
+    def _prune_accumulator_stale_frame_ids(self) -> None:
+        """Drop lagging cameras so spread gate can recover without blocking the batch."""
+        if len(self._accumulated_tick_batch) < len(self.source_ids):
+            return
+        ts_values: dict[int, float] = {}
+        for sid in self.source_ids:
+            if sid not in self._accumulated_tick_batch:
+                return
+            ts = self._timestamp_sec(self._accumulated_tick_batch[sid][1])
+            if ts is None:
+                break
+            ts_values[sid] = ts
+        if len(ts_values) == len(self.source_ids):
+            tmax = max(ts_values.values())
+            if tmax - min(ts_values.values()) <= MC_MAX_TIMESTAMP_SPREAD_SEC:
+                return
+            cutoff = tmax - MC_MAX_TIMESTAMP_SPREAD_SEC
+            for sid, ts in ts_values.items():
+                if ts < cutoff:
+                    del self._accumulated_tick_batch[sid]
+                    self._diag_tick_batch_stale_evict += 1
+            return
+        frame_ids: dict[int, int] = {}
+        for sid in self.source_ids:
+            if sid not in self._accumulated_tick_batch:
+                return
+            track_info, frame = self._accumulated_tick_batch[sid]
+            frame_id = self._frame_id_for_pair(track_info, frame)
+            if frame_id is None:
+                return
+            frame_ids[sid] = frame_id
+        fmax = max(frame_ids.values())
+        if fmax - min(frame_ids.values()) <= MC_MAX_FRAME_ID_SPREAD:
+            return
+        cutoff = fmax - MC_MAX_FRAME_ID_SPREAD
+        for sid, fid in frame_ids.items():
+            if fid < cutoff:
+                del self._accumulated_tick_batch[sid]
+                self._diag_tick_batch_stale_evict += 1
+
+    def ingest_tick_batch(
+        self,
+        batch: dict[int, tuple[TrackingResultList, Frame]],
+    ) -> list[tuple[TrackingResultList, Frame]]:
+        """Merge per-tick tracker outputs; emit when all cameras have fresh inputs."""
+        for source_id, item in batch.items():
+            self._merge_accumulator_item(source_id, item)
+        return self._try_emit_accumulated_batch()
+
+    def _evict_accumulator_by_age(self, max_age_sec: float | None = None) -> None:
+        """Drop accumulator entries too old to fuse (stale MP camera blocks emit)."""
+        if max_age_sec is None:
+            max_age_sec = MC_MAX_TIMESTAMP_SPREAD_SEC
+        now = time.time()
+        for sid in list(self._accumulated_tick_batch.keys()):
+            ts = self._timestamp_sec(self._accumulated_tick_batch[sid][1])
+            if ts is not None and (now - ts) > max_age_sec:
+                del self._accumulated_tick_batch[sid]
+                self._diag_tick_batch_stale_evict += 1
+
+    def _try_emit_accumulated_batch(self) -> list[tuple[TrackingResultList, Frame]]:
+        self._evict_accumulator_by_age()
+        if len(self._accumulated_tick_batch) < len(self.source_ids):
+            return []
+        ready = {
+            sid: self._accumulated_tick_batch[sid]
+            for sid in self.source_ids
+            if sid in self._accumulated_tick_batch
+        }
+        emitted = self.process_tick_batch(ready)
+        if emitted:
+            self._accumulated_tick_batch.clear()
+            return emitted
+        self._prune_accumulator_stale_frame_ids()
+        if len(self._accumulated_tick_batch) < len(self.source_ids):
+            return []
+        ready = {
+            sid: self._accumulated_tick_batch[sid]
+            for sid in self.source_ids
+            if sid in self._accumulated_tick_batch
+        }
+        emitted = self.process_tick_batch(ready)
+        if emitted:
+            self._accumulated_tick_batch.clear()
+        return emitted
 
     def process_tick_batch(
         self,
@@ -145,9 +308,31 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
                 return []
             frame_ids.append(int(frame_id))
 
-        if max(frame_ids) - min(frame_ids) > MC_MAX_FRAME_ID_SPREAD:
-            self._diag_tick_batch_skip += 1
-            return []
+        ts_spread = self._batch_timestamp_spread_sec(batch)
+        if ts_spread is not None:
+            if ts_spread > MC_MAX_TIMESTAMP_SPREAD_SEC:
+                self._diag_tick_batch_skip += 1
+                if self._perf_diag_env and self._diag_tick_batch_skip % 30 == 1:
+                    self.logger.info(
+                        "PerfDiag(MC): tick_batch ts_spread=%.3fs (limit=%.3fs) frame_ids=%s",
+                        ts_spread,
+                        MC_MAX_TIMESTAMP_SPREAD_SEC,
+                        frame_id_by_source,
+                    )
+                return []
+        else:
+            spread = max(frame_ids) - min(frame_ids)
+            if spread > MC_MAX_FRAME_ID_SPREAD:
+                self._diag_tick_batch_skip += 1
+                if self._perf_diag_env and self._diag_tick_batch_skip % 30 == 1:
+                    self.logger.info(
+                        "PerfDiag(MC): tick_batch frame_spread=%d max=%d (limit=%d) frame_ids=%s",
+                        spread,
+                        max(frame_ids),
+                        MC_MAX_FRAME_ID_SPREAD,
+                        frame_id_by_source,
+                    )
+                return []
 
         new_sources_count = 0
         for sid in self.source_ids:
@@ -180,7 +365,12 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
         for track_info, image in sc_track_results:
             images.append(image)
             track_infos.append(track_info)
-            tracks = [t.tracking_data["track_object"] for t in track_info.tracks]
+            tracks = []
+            for t in track_info.tracks:
+                td = t.tracking_data or {}
+                track_object = td.get("track_object")
+                if track_object is not None:
+                    tracks.append(track_object)
             sc_tracks.append(tracks)
 
         mc_tracks = self.tracker.update(sc_tracks)
