@@ -20,6 +20,20 @@ The following video files are downloaded to `videos/` directory:
 - **6p-c0.avi** - Multi-camera tracking video (camera 0)
 - **6p-c1.avi** - Multi-camera tracking video (camera 1)
 
+## Thread mode (no multiprocessing)
+
+For the main poly setups, thread-mode copies use suffix `-thread.json`
+(`execution_mode: thread` on sources, detectors, and trackers):
+
+| Multiprocess (default) | Thread mode |
+|------------------------|-------------|
+| `poly-videos-gst.json` | `poly-videos-gst-thread.json` |
+| `poly-videos.json` | `poly-videos-thread.json` |
+| `poly-cameras-gstreamer.json` | `poly-cameras-gstreamer-thread.json` |
+| `poly-cameras.json` | `poly-cameras-thread.json` |
+
+PyCharm run configs: `process-poly-*-thread` in `.idea/runConfigurations/`.
+
 ## Usage:
 
 ```bash
