@@ -255,8 +255,8 @@ EvilEye поддерживает два режима выполнения для
 
 | Режим | Параметр | Описание |
 |-------|----------|----------|
-| **Thread** | `"execution_mode": "thread"` | Потоки в одном процессе (по умолчанию) |
-| **Process** | `"execution_mode": "process"` | Отдельные OS-процессы через `multiprocessing` |
+| **Thread** | `"execution_mode": "thread"` | Потоки в одном процессе |
+| **Process** | `"execution_mode": "process"` | Отдельные OS-процессы через `multiprocessing` (по умолчанию) |
 
 Режим выбирается **для каждого компонента независимо** через JSON-конфигурацию.
 Можно комбинировать: например, детекцию запустить в отдельном процессе,
@@ -337,8 +337,8 @@ ProcessorStep не знает, работает ли компонент в по�
 Параметр `"execution_mode"` добавляется в секцию конкретного компонента.
 Допустимые значения:
 
-- `"thread"` - потоковый режим (по умолчанию, если параметр не указан)
-- `"process"` - мультипроцессный режим
+- `"process"` - мультипроцессный режим (по умолчанию, если параметр не указан)
+- `"thread"` - потоковый режим
 
 ### Примеры
 
@@ -363,7 +363,7 @@ ProcessorStep не знает, работает ли компонент в по�
 }
 ```
 
-> Трекинг остаётся в потоке (execution_mode не указан → "thread")
+> Трекинг в потоке только при явном `"execution_mode": "thread"`; иначе — `"process"`
 
 #### Детекция + трекинг в процессах
 
@@ -428,7 +428,7 @@ ProcessorStep не знает, работает ли компонент в по�
 }
 ```
 
-#### Всё в потоках (по умолчанию, обратная совместимость)
+#### Всё в потоках (явный `execution_mode: thread` в каждой секции)
 
 ```json
 {
@@ -447,6 +447,36 @@ ProcessorStep не знает, работает ли компонент в по�
     }
 }
 ```
+
+---
+
+## Контракт MP-пайплайна (результаты и синхронизация)
+
+### Результаты для GUI / ObjectsHandler
+
+- Контроллер читает объекты и кадры визуализации **только из финальной секции**
+  пайплайна (`get_final_results_name()`, обычно `mc_trackers` при `enable: true`).
+- Режим `sticky_non_empty` держит последний **непустой** snapshot **той же секции**
+  (без fallback `mc → trackers → detectors → sources`).
+
+### Трекер в `execution_mode: process`
+
+- На каждый принятый кадр dispatcher обязан положить результат в `queue_out`:
+  либо треки от worker, либо пустой `TrackingResultList` при timeout worker
+  (`MP_GET_MAX_ROUNDS` × 0.25 s).
+- При двойном сбое `put` в `MpControl` frame_id пишется в `queue_dropped_id`.
+
+### Multi-camera tracker (tick-batch)
+
+- `ProcessorStep` для `mc_trackers` собирает `Dict[source_id, (TrackingResultList, Frame)]`
+  за один `pipeline.process()` и вызывает `ObjectMultiCameraTracking.process_tick_batch`.
+- Emit требует **все** `source_ids`, согласованные `frame_id` (spread ≤ 3), и хотя бы
+  одну камеру с новым `frame_id` относительно прошлого emit.
+- Фоновый цикл `_process_impl` (150 ms) не запускается при `_pipeline_tick_batch=True`.
+
+### Диагностика
+
+`EVILEYE_PERF_DIAG=1` — счётчики `tick_skip`, `partial`, MP tracker timeout/drop в логах.
 
 ---
 
@@ -1299,11 +1329,12 @@ from .process_manager import ProcessManager, get_process_manager
 
 Система полностью обратно совместима:
 
-1. **Если `execution_mode` не указан** — используется `"thread"` (старое поведение)
-2. **Старые конфиги работают без изменений** — ни один существующий параметр не удалён
-3. **Интерфейс `put()`/`get()` не изменился** — `ProcessorStep`, `ProcessorFrame`
+1. **Если `execution_mode` не указан** — используется `"process"` (`DEFAULT_EXECUTION_MODE` в `processor_base`)
+2. **Конфиги из `evileye deploy-samples`** явно задают `"execution_mode": "thread"` для совместимости с лёгкими демо-сценариями
+3. **Старые конфиги с явным `"thread"`** продолжают работать без изменений
+4. **Интерфейс `put()`/`get()` не изменился** — `ProcessorStep`, `ProcessorFrame`
    и остальные оркестраторы не знают о режиме выполнения
-4. **`ObjectDetectorYoloMp`** — старый класс для явного мультипроцессного детектора
+5. **`ObjectDetectorYoloMp`** — старый класс для явного мультипроцессного детектора
    по-прежнему работает, но теперь рекомендуется использовать
    `ObjectDetectorYolo` + `"execution_mode": "process"`
 
