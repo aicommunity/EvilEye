@@ -23,7 +23,7 @@ def save_json_atomic(path: Union[str, Path], data: Dict[str, Any]) -> bool:
     dir_name = os.path.dirname(file_path) or "."
     try:
         with tempfile.NamedTemporaryFile(
-            "w", encoding="utf-8", delete=False, dir=dir_name, prefix=".tmp_"
+                "w", encoding="utf-8", delete=False, dir=dir_name, prefix=".tmp_"
         ) as tf:
             json.dump(data, tf, indent=4, ensure_ascii=False)
             temp_path = tf.name

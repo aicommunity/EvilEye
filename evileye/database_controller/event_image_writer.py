@@ -11,13 +11,13 @@ class EventImageWriter:
     """Delegate to db_controller._save_image when available, else ImageStorageService."""
 
     def __init__(
-        self,
-        image_dir: str,
-        preview_width: int = 150,
-        preview_height: int = 100,
-        db_controller: Any = None,
-        db_params: Optional[dict] = None,
-        logger=None,
+            self,
+            image_dir: str,
+            preview_width: int = 150,
+            preview_height: int = 100,
+            db_controller: Any = None,
+            db_params: Optional[dict] = None,
+            logger=None,
     ):
         params = db_params or {}
         image_dir = params.get("image_dir", image_dir)
@@ -30,13 +30,13 @@ class EventImageWriter:
         self.logger = logger or self._storage.logger
 
     def save(
-        self,
-        preview_path: str,
-        frame_path: str,
-        image,
-        box: Optional[list] = None,
-        zone_coords: Optional[list] = None,
-        draw_boxes: bool = True,
+            self,
+            preview_path: str,
+            frame_path: str,
+            image,
+            box: Optional[list] = None,
+            zone_coords: Optional[list] = None,
+            draw_boxes: bool = True,
     ) -> None:
         if self._db_controller is not None and hasattr(self._db_controller, "_save_image"):
             try:

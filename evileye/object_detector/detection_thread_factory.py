@@ -25,17 +25,17 @@ class DetectionThreadFactory:
 
     @classmethod
     def create_thread(
-        cls,
-        thread_type: str,
-        model_name: str,
-        stride: int,
-        classes: list,
-        source_ids: list,
-        roi: list,
-        inf_params: dict,
-        queue_out: Queue,
-        logger_name: Optional[str] = None,
-        parent_logger: Optional[logging.Logger] = None,
+            cls,
+            thread_type: str,
+            model_name: str,
+            stride: int,
+            classes: list,
+            source_ids: list,
+            roi: list,
+            inf_params: dict,
+            queue_out: Queue,
+            logger_name: Optional[str] = None,
+            parent_logger: Optional[logging.Logger] = None,
     ) -> DetectionThreadBase:
         """
         Create a detection thread instance.

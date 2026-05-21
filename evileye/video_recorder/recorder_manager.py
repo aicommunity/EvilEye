@@ -56,5 +56,3 @@ class RecorderManager:
         if self.recorder:
             self.recorder.stop()
             self.recorder = None
-
-

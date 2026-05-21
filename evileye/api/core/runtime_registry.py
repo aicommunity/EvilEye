@@ -13,7 +13,6 @@ try:
 except ImportError:  # pragma: no cover - non-POSIX fallback
     fcntl = None
 
-
 logger = get_module_logger("api.runtime_registry")
 
 RUNTIME_ROOT = Path(tempfile.gettempdir()) / "evileye_runtime"
@@ -235,16 +234,16 @@ def update_runtime_snapshot(rid: int, **updates) -> Dict:
 
 
 def register_runtime(
-    *,
-    rid: int,
-    pid: int,
-    config_path: Optional[str],
-    name: Optional[str],
-    frame_dir: Optional[str],
-    source: str,
-    managed: bool = False,
-    state: str = "running",
-    error: Optional[str] = None,
+        *,
+        rid: int,
+        pid: int,
+        config_path: Optional[str],
+        name: Optional[str],
+        frame_dir: Optional[str],
+        source: str,
+        managed: bool = False,
+        state: str = "running",
+        error: Optional[str] = None,
 ) -> Dict:
     now = time.time()
     existing = load_runtime_record(rid, refresh_state=False) or {}
@@ -266,8 +265,8 @@ def register_runtime(
 
 
 def update_runtime(
-    rid: int,
-    **updates,
+        rid: int,
+        **updates,
 ) -> Optional[Dict]:
     existing = load_runtime_record(rid, refresh_state=False)
     if existing is None:

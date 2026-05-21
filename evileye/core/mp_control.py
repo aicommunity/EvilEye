@@ -24,12 +24,12 @@ class MpControl:
     """
 
     def __init__(
-        self,
-        max_input_size=None,
-        max_output_size=None,
-        name="MpControl",
-        restart_on_exit=True,
-        no_restart_exit_codes=None,
+            self,
+            max_input_size=None,
+            max_output_size=None,
+            name="MpControl",
+            restart_on_exit=True,
+            no_restart_exit_codes=None,
     ):
         self.name = name
         self.logger = get_module_logger(f"mp_control.{name}")
@@ -311,10 +311,10 @@ class MpControl:
 
 
 def parse_mp_restart_policy(
-    params: dict | None,
-    *,
-    default_restart_on_exit: bool,
-    default_no_restart_exit_codes: Iterable[int] | None = None,
+        params: dict | None,
+        *,
+        default_restart_on_exit: bool,
+        default_no_restart_exit_codes: Iterable[int] | None = None,
 ) -> tuple[bool, set[int]]:
     """Parse restart policy from module params."""
     params = params or {}

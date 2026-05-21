@@ -11,8 +11,8 @@ class DatabaseJournalDataSource(EventJournalDataSource):
     Works with both objects and events journals.
     """
 
-    def __init__(self, db_controller, journal_type='objects', adapters=None, 
-                 database_params=None, params=None, image_dir=None, 
+    def __init__(self, db_controller, journal_type='objects', adapters=None,
+                 database_params=None, params=None, image_dir=None,
                  db_connection_name='unified_conn'):
         """
         Args:
@@ -32,18 +32,18 @@ class DatabaseJournalDataSource(EventJournalDataSource):
         self.params = params or {}
         self.image_dir = image_dir or 'EvilEyeData'
         self.db_connection_name = db_connection_name
-        
+
         self.date_filter: Optional[str] = None
         self._cache: List[Dict] = []  # Keep for compatibility, but won't be used for full load
         self._source_name_id_address = {}
-        
+
         # Default time range: last 7 days (for pagination after initial load)
         self.default_days_back = 7
-        
+
         # Initial load optimization: limit to last day, max 30 records
         self.initial_load_limit = 30
         self._is_initial_load = True
-        
+
         # Ensure image_dir is normalized (image_dir/images_dir compatibility is handled in config utils too)
         try:
             if not self.image_dir and isinstance(self.database_params, dict):
@@ -277,7 +277,8 @@ class DatabaseJournalDataSource(EventJournalDataSource):
             source_name_escaped = filters['source_name'].replace("'", "''")
             conditions.append(f"source_name = '{source_name_escaped}'")
 
-    def _build_objects_sql(self, filters: Dict, include_pagination: bool = False, page: int = 0, size: int = 50, initial_load: bool = False) -> str:
+    def _build_objects_sql(self, filters: Dict, include_pagination: bool = False, page: int = 0, size: int = 50,
+                           initial_load: bool = False) -> str:
         """Build SQL query for objects with filters and optional pagination"""
         # Base SELECT
         sql = ('SELECT time_stamp, CAST(\'ObjectEvent\' AS text) AS event_type, '
@@ -285,9 +286,9 @@ class DatabaseJournalDataSource(EventJournalDataSource):
                'source_name, time_lost, preview_path, lost_preview_path, object_id, class_id, confidence, '
                'bounding_box, lost_bounding_box, source_id, object_data '
                'FROM objects ')
-        
+
         conditions = []
-        
+
         # Date filter
         if self.date_filter:
             conditions.append(f"DATE(time_stamp) = '{self.date_filter}'")
@@ -299,28 +300,28 @@ class DatabaseJournalDataSource(EventJournalDataSource):
             # Default: last 7 days (for pagination)
             default_start = datetime.datetime.now() - datetime.timedelta(days=self.default_days_back)
             conditions.append(f"time_stamp >= '{default_start.strftime('%Y-%m-%d %H:%M:%S')}'")
-        
+
         # Source name filter
         self._append_source_filters(conditions, filters)
-        
+
         # Source ID filter
         if filters.get('source_id'):
             conditions.append(f"source_id = {filters['source_id']}")
-        
+
         # Object ID filter
         if filters.get('object_id'):
             conditions.append(f"object_id = {filters['object_id']}")
-        
+
         # Class name filter (need to check object_data JSON)
         if filters.get('class_name'):
             # This is complex - would need JSON query, skip for now or do in Python
             pass
-        
+
         if conditions:
             sql += 'WHERE ' + ' AND '.join(conditions)
-        
+
         sql += ' ORDER BY time_stamp DESC'
-        
+
         # Add pagination
         if include_pagination:
             if initial_load:
@@ -329,14 +330,15 @@ class DatabaseJournalDataSource(EventJournalDataSource):
             else:
                 offset = page * size
                 sql += f' LIMIT {size} OFFSET {offset}'
-        
+
         return sql
 
-    def _build_events_sql(self, filters: Dict, include_pagination: bool = False, page: int = 0, size: int = 50, initial_load: bool = False) -> str:
+    def _build_events_sql(self, filters: Dict, include_pagination: bool = False, page: int = 0, size: int = 50,
+                          initial_load: bool = False) -> str:
         """Build SQL query for events with filters and optional pagination"""
         if not self.adapters:
             return ''
-        
+
         # Build UNION query from all adapters
         query_string = 'SELECT * FROM ('
         for adapter in self.adapters:
@@ -344,9 +346,9 @@ class DatabaseJournalDataSource(EventJournalDataSource):
             query_string += adapter_query + ' UNION '
         query_string = query_string.removesuffix(' UNION ')
         query_string += ') AS temp '
-        
+
         conditions = []
-        
+
         # Date filter
         if self.date_filter:
             conditions.append(f"DATE(time_stamp) = '{self.date_filter}'")
@@ -358,15 +360,15 @@ class DatabaseJournalDataSource(EventJournalDataSource):
             # Default: last 7 days (for pagination)
             default_start = datetime.datetime.now() - datetime.timedelta(days=self.default_days_back)
             conditions.append(f"time_stamp >= '{default_start.strftime('%Y-%m-%d %H:%M:%S')}'")
-        
+
         # Source name filter
         self._append_source_filters(conditions, filters)
-        
+
         if conditions:
             query_string += 'WHERE ' + ' AND '.join(conditions) + ' '
-        
+
         query_string += 'ORDER BY time_stamp DESC'
-        
+
         # Add pagination
         if include_pagination:
             if initial_load:
@@ -375,16 +377,16 @@ class DatabaseJournalDataSource(EventJournalDataSource):
             else:
                 offset = page * size
                 query_string += f' LIMIT {size} OFFSET {offset}'
-        
+
         return query_string
 
     def _convert_row_to_event(self, row_dict: Dict, is_found: bool = True) -> Dict:
         """Convert database row to unified event format"""
         time_stamp = row_dict.get('time_stamp') if is_found else row_dict.get('time_lost')
-        
+
         if not time_stamp:
             return None
-        
+
         # Extract date folder
         if isinstance(time_stamp, datetime.datetime):
             try:
@@ -395,7 +397,7 @@ class DatabaseJournalDataSource(EventJournalDataSource):
             date_folder = time_stamp.split()[0] if ' ' in time_stamp else time_stamp[:10]
         else:
             date_folder = self.date_filter or ''
-        
+
         # Extract class_name from object_data
         class_name = ''
         object_data = row_dict.get('object_data')
@@ -411,10 +413,10 @@ class DatabaseJournalDataSource(EventJournalDataSource):
                 pass
         if not class_name:
             class_name = str(row_dict.get('class_id', ''))
-        
+
         event_type = 'found' if is_found else 'lost'
         event_id = f"db:{event_type}:{row_dict.get('object_id', '')}:{time_stamp}"
-        
+
         return {
             'event_id': event_id,
             'event_type': event_type,
@@ -494,10 +496,10 @@ class DatabaseJournalDataSource(EventJournalDataSource):
         """Convert events row to unified format"""
         event_type = row_dict.get('type', '')
         time_stamp = row_dict.get('time_stamp')
-        
+
         if not time_stamp:
             return None
-        
+
         # Extract date folder
         if isinstance(time_stamp, datetime.datetime):
             try:
@@ -508,7 +510,7 @@ class DatabaseJournalDataSource(EventJournalDataSource):
             date_folder = time_stamp.split()[0] if ' ' in time_stamp else time_stamp[:10]
         else:
             date_folder = self.date_filter or ''
-        
+
         # Extract numeric event_id from row_dict (if available)
         event_id_numeric = row_dict.get('event_id')
         if event_id_numeric is not None:
@@ -516,7 +518,7 @@ class DatabaseJournalDataSource(EventJournalDataSource):
                 event_id_numeric = int(event_id_numeric)
             except (ValueError, TypeError):
                 event_id_numeric = None
-        
+
         event_dict = {
             'event_id': f"db:{event_type}:{time_stamp}",  # String ID for backward compatibility
             'event_id_numeric': event_id_numeric,  # Numeric ID from DB for video fragment lookup
@@ -532,7 +534,7 @@ class DatabaseJournalDataSource(EventJournalDataSource):
             'video_path_lost': row_dict.get('video_path_lost'),  # Path to lost video fragment from DB
             'date_folder': date_folder,
         }
-        
+
         # Enrich with additional data based on event type (skip expensive enrichment during initial load)
         if event_type == 'ZoneEvent':
             # Extract object_id from row_dict (it's now in SQL SELECT)
@@ -569,7 +571,7 @@ class DatabaseJournalDataSource(EventJournalDataSource):
                 event_dict['system_event'] = 'SystemStart'
             else:
                 event_dict['system_event'] = 'SystemStop'
-        
+
         return event_dict
 
     def fetch(self, page: int, size: int, filters: Dict, sort: List[Tuple[str, str]]) -> List[Dict]:
@@ -577,43 +579,47 @@ class DatabaseJournalDataSource(EventJournalDataSource):
         try:
             # Check if this is initial load
             initial_load = self._is_initial_load and page == 0
-            
+
             # Build SQL with filters and pagination
             if self.journal_type == 'objects':
-                sql = self._build_objects_sql(filters, include_pagination=True, page=page, size=size, initial_load=initial_load)
+                sql = self._build_objects_sql(filters, include_pagination=True, page=page, size=size,
+                                              initial_load=initial_load)
             else:
-                sql = self._build_events_sql(filters, include_pagination=True, page=page, size=size, initial_load=initial_load)
-            
+                sql = self._build_events_sql(filters, include_pagination=True, page=page, size=size,
+                                             initial_load=initial_load)
+
             # Reset initial load flag after first fetch
             if initial_load:
                 self._is_initial_load = False
-            
+
             if not sql:
                 return []
-            
+
             # Execute query and convert results (skip enrichment during initial load for events)
             results = self._execute_query_and_convert(sql, skip_enrichment=initial_load)
-            
+
             # Apply remaining filters that can't be done in SQL (e.g., event_type for objects)
             if self.journal_type == 'objects' and filters.get('event_type'):
                 results = [e for e in results if e.get('event_type') == filters['event_type']]
-            
+
             # Apply sorting if needed (usually already sorted by SQL)
             if sort:
                 for key, direction in reversed(sort):
                     reverse = (direction.lower() == 'desc')
+
                     def sort_key(e):
                         value = e.get(key)
                         if value is None:
                             return '' if reverse else 'zzz'
                         return str(value)
+
                     results.sort(key=sort_key, reverse=reverse)
-            
+
             # For objects: limit results to requested page size
             # (since one DB row can produce 2 events, we might have more than size)
             if self.journal_type == 'objects' and len(results) > size:
                 results = results[:size]
-            
+
             return results
         except Exception as e:
             self.logger.error(f"Error fetching data: {e}", exc_info=True)
@@ -625,7 +631,7 @@ class DatabaseJournalDataSource(EventJournalDataSource):
             if self.journal_type == 'objects':
                 # Build COUNT query for objects
                 conditions = []
-                
+
                 # Date filter
                 if self.date_filter:
                     conditions.append(f"DATE(time_stamp) = '{self.date_filter}'")
@@ -633,29 +639,29 @@ class DatabaseJournalDataSource(EventJournalDataSource):
                     # Default: last 7 days
                     default_start = datetime.datetime.now() - datetime.timedelta(days=self.default_days_back)
                     conditions.append(f"time_stamp >= '{default_start.strftime('%Y-%m-%d %H:%M:%S')}'")
-                
+
                 # Source name filter
                 self._append_source_filters(conditions, filters)
-                
+
                 # Source ID filter
                 if filters.get('source_id'):
                     conditions.append(f"source_id = {filters['source_id']}")
-                
+
                 # Object ID filter
                 if filters.get('object_id'):
                     conditions.append(f"object_id = {filters['object_id']}")
-                
+
                 sql = 'SELECT COUNT(*) FROM objects'
                 if conditions:
                     sql += ' WHERE ' + ' AND '.join(conditions)
-                
+
                 records = self.db_controller.query(sql, None) or []
                 if records:
                     count = records[0][0]
                     # For objects: each row can produce 1-2 events (found and/or lost)
                     # But for simplicity, we count rows. If needed, can be adjusted
                     base_count = int(count) if count is not None else 0
-                    
+
                     # Apply event_type filter if set (this requires checking time_stamp/time_lost)
                     if filters.get('event_type'):
                         # Need to count separately for found/lost
@@ -670,12 +676,12 @@ class DatabaseJournalDataSource(EventJournalDataSource):
                 # Wrap in COUNT - remove ORDER BY and LIMIT
                 base_sql = sql.split('ORDER BY')[0]
                 sql = f'SELECT COUNT(*) FROM ({base_sql}) AS count_query'
-                
+
                 records = self.db_controller.query(sql, None) or []
                 if records:
                     count = records[0][0]
                     return int(count) if count is not None else 0
-            
+
             return 0
         except Exception as e:
             self.logger.error(f"Error getting total: {e}", exc_info=True)

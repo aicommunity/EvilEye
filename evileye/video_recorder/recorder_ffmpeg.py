@@ -28,16 +28,16 @@ class FfmpegRecorder(VideoRecorderBase):
             camera_folder = self.source.source_name
         else:
             camera_folder = "source"
-        
+
         # Create path: base/Streams/YYYY-MM-DD/CameraName/
         # params.out_dir should always be set to database.image_dir by Controller
         base_dir = Path(self.params.out_dir) if self.params.out_dir else Path("EvilEyeData")
         date_dir = start_dt.strftime("%Y-%m-%d")
         out_dir = base_dir / "Streams" / date_dir / camera_folder
         out_dir.mkdir(parents=True, exist_ok=True)
-        
+
         ts = start_dt.strftime("%Y%m%d_%H%M%S")
-        source_name = (self.source.source_names[0] if self.source and self.source.source_names else 
+        source_name = (self.source.source_names[0] if self.source and self.source.source_names else
                        (self.source.source_name if self.source else "source"))
         name_stem = self.params.filename_tmpl.format(
             source_name=source_name,
@@ -92,5 +92,3 @@ class FfmpegRecorder(VideoRecorderBase):
         finally:
             self._proc = None
             self.is_running = False
-
-

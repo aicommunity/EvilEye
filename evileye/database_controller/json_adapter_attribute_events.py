@@ -84,7 +84,7 @@ class JsonAdapterAttributeEvents(DatabaseAdapterBase):
                 ih, iw = img.image.shape[:2]
                 bx, by, bw, bh = box
                 if iw and ih:
-                    box = [bx/iw, by/ih, bw/iw, bh/ih]
+                    box = [bx / iw, by / ih, bw / iw, bh / ih]
 
             # Save preview and full frame images (pure, без оверлеев) в унифицированные папки
             preview_rel, frame_rel = self._save_images(day_dir, event, is_update)
@@ -147,5 +147,3 @@ class JsonAdapterAttributeEvents(DatabaseAdapterBase):
             return preview_rel, frame_rel
         except Exception:
             return '', ''
-
-

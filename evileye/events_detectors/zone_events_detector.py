@@ -123,7 +123,8 @@ class ZoneEventsDetector(EventsDetector):
                                 # Если объект вернулся, то изменяем кадр его попадания в зону на более поздний
                                 # для облегчения поиска дальнейшего выхода из зоны
                                 if return_idx != -1:
-                                    self.entered_frame_id[source_id][obj.object_id][zone_id] = obj.history[return_idx].frame_id
+                                    self.entered_frame_id[source_id][obj.object_id][zone_id] = obj.history[
+                                        return_idx].frame_id
                                 continue
                             # Передаём текущий объект (с актуальным изображением),
                             # а метку времени выхода берём из истории

@@ -16,7 +16,8 @@ from evileye.video_recorder.exceptions import RecorderInitializationError, Recor
 
 
 class OpenCVRecorder(VideoRecorderBase):
-    def __init__(self, path_generator: PathGenerator | None = None, writer_factory: VideoWriterFactory | None = None) -> None:
+    def __init__(self, path_generator: PathGenerator | None = None,
+                 writer_factory: VideoWriterFactory | None = None) -> None:
         super().__init__()
         self.logger = get_module_logger("recorder_cv")
         self._writer: Optional[cv2.VideoWriter] = None
@@ -41,7 +42,7 @@ class OpenCVRecorder(VideoRecorderBase):
     def _open_writer(self) -> None:
         """Open video writer using VideoWriterFactory."""
         path = self._next_path()
-        
+
         writer, codec, container = self.writer_factory.create_writer(
             path=path,
             fps=self._fps,
@@ -49,7 +50,7 @@ class OpenCVRecorder(VideoRecorderBase):
             container=self.params.container,
             fallback_container="mkv"
         )
-        
+
         if writer:
             self.params.container = container
             self._writer = writer
@@ -99,22 +100,22 @@ class OpenCVRecorder(VideoRecorderBase):
                 # Get path to current file before closing
                 current_path = self._current_file_path
                 old_writer = self._writer
-                
+
                 # Release writer safely
                 self._release_writer_safe(old_writer, self.logger)
-                
+
                 # Clear references
                 self._writer = None
                 old_writer = None
                 self._current_file_path = None
-                
+
                 # Check and delete if file is too small
                 self._validate_and_delete_small_file(
                     current_path,
                     self.params.min_file_size_kb,
                     self.logger
                 )
-                
+
             self._seq += 1
             self._segment_started_ts = time.time()
             # Will reopen on next frame
@@ -125,15 +126,15 @@ class OpenCVRecorder(VideoRecorderBase):
                 # Check and delete last file if too small
                 current_path = self._current_file_path
                 old_writer = self._writer
-                
+
                 # Release writer safely
                 self._release_writer_safe(old_writer, self.logger)
-                
+
                 # Clear references
                 self._writer = None
                 old_writer = None
                 self._current_file_path = None
-                
+
                 # Validate and delete if too small
                 self._validate_and_delete_small_file(
                     current_path,
@@ -142,5 +143,3 @@ class OpenCVRecorder(VideoRecorderBase):
                 )
             self.is_running = False
             self.logger.debug("OpenCV recorder stopped and resources released")
-
-

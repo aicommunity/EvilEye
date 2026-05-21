@@ -18,11 +18,11 @@ class VideoWriterFactory:
 
     @staticmethod
     def create_writer(
-        path: str | Path,
-        fps: float,
-        frame_size: Tuple[int, int],
-        container: str,
-        fallback_container: Optional[str] = None,
+            path: str | Path,
+            fps: float,
+            frame_size: Tuple[int, int],
+            container: str,
+            fallback_container: Optional[str] = None,
     ) -> Tuple[Optional[cv2.VideoWriter], str, str]:
         if fallback_container is None:
             fallback_container = "mkv"
@@ -47,4 +47,3 @@ class VideoWriterFactory:
                     continue
 
         return None, "", ""
-

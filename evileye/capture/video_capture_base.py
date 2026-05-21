@@ -8,6 +8,7 @@ from urllib.parse import urlparse, ParseResult
 from threading import Lock, RLock
 from collections import deque
 from typing import Optional, Any
+
 try:
     import numpy as np
 except ImportError:
@@ -30,6 +31,7 @@ class CaptureDeviceType(Enum):
     Device = "Device"
     ImageSequence = "ImageSequence"
     NotSet = "NotSet"
+
 
 class VideoCaptureBase(EvilEyeBase):
     def __init__(self):
@@ -145,16 +147,16 @@ class VideoCaptureBase(EvilEyeBase):
         """
         if not self.recording_params:
             return
-            
+
         try:
             # `enabled` is a master switch. Continuous recording must be explicitly enabled.
             continuous_enabled = bool(
                 self.recording_params.enabled and self.recording_params.continuous_recording_enabled
             )
-            
+
             if not continuous_enabled:
                 return
-            
+
             # Check if recording is integrated in pipeline (GStreamer) or separate (OpenCV)
             is_gstreamer = 'gstreamer' in self.__class__.__name__.lower()
             if is_gstreamer:
@@ -171,7 +173,7 @@ class VideoCaptureBase(EvilEyeBase):
         backend = "opencv"
         from ..video_recorder.recorder_base import SourceMeta
         from ..video_recorder.continuous_recorder_manager import ContinuousRecorderManager
-        
+
         meta = SourceMeta(
             source_name=(self.source_names[0] if self.source_names else "source"),
             source_address=self.source_address,
@@ -184,14 +186,15 @@ class VideoCaptureBase(EvilEyeBase):
             source_names=getattr(self, 'source_names', None),
             source_ids=getattr(self, 'source_ids', None),
         )
-        
+
         try:
             # Sanitize credentials in URL for logs
             url = self._sanitize_url_for_logging(str(meta.source_address))
-            self.logger.info(f"Starting recording: backend={backend} name={meta.source_name} url={url} out_dir={getattr(self.recording_params,'out_dir',None)}")
+            self.logger.info(
+                f"Starting recording: backend={backend} name={meta.source_name} url={url} out_dir={getattr(self.recording_params, 'out_dir', None)}")
         except Exception as e:
             self.logger.error(f"Error logging recording start: {e}")
-        
+
         try:
             # Prefer continuous recorder manager if capture already set it up.
             if self.recorder_manager is None:
@@ -478,7 +481,8 @@ class VideoCaptureBase(EvilEyeBase):
             reconstructed_url = url_parsed_info._replace(netloc=f"{processed_username}@{url_parsed_info.hostname}")
             return reconstructed_url.geturl()
 
-        reconstructed_url = url_parsed_info._replace(netloc=f"{processed_username}:{processed_password}@{url_parsed_info.hostname}")
+        reconstructed_url = url_parsed_info._replace(
+            netloc=f"{processed_username}:{processed_password}@{url_parsed_info.hostname}")
         return reconstructed_url.geturl()
 
     def get_ip_camera_init_hint(self) -> str:
@@ -538,13 +542,13 @@ class VideoCaptureBase(EvilEyeBase):
             self.last_frame_time = datetime.datetime.now()
 
     def _create_capture_image(
-        self,
-        image: np.ndarray,
-        frame_id: int,
-        timestamp: float,
-        source_id: int,
-        current_video_frame: int | None = None,
-        current_video_position: float | None = None
+            self,
+            image: np.ndarray,
+            frame_id: int,
+            timestamp: float,
+            source_id: int,
+            current_video_frame: int | None = None,
+            current_video_position: float | None = None
     ) -> CaptureImage:
         """Create a CaptureImage object with metadata.
         
@@ -570,12 +574,12 @@ class VideoCaptureBase(EvilEyeBase):
         return capture_image
 
     def _handle_split_stream(
-        self,
-        src_image: any,
-        frame_id: int,
-        timestamp: float,
-        current_video_frame: int | None = None,
-        current_video_position: float | None = None
+            self,
+            src_image: any,
+            frame_id: int,
+            timestamp: float,
+            current_video_frame: int | None = None,
+            current_video_position: float | None = None
     ) -> list[CaptureImage]:
         """Handle split stream processing - create multiple CaptureImage objects from single frame.
         
@@ -590,25 +594,26 @@ class VideoCaptureBase(EvilEyeBase):
             List of CaptureImage objects, one for each split region
         """
         captured_images: list[CaptureImage] = []
-        
+
         if not self.split_stream or not self.src_coords or not self.num_split:
             return captured_images
-        
+
         for stream_cnt in range(self.num_split):
             if stream_cnt >= len(self.src_coords):
                 continue
-                
+
             # Extract region coordinates
             x, y, w, h = self.src_coords[stream_cnt]
             x, y, w, h = int(x), int(y), int(w), int(h)
-            
+
             # Copy is necessary: extracted region must be independent from source image
             # Source image may be reused/modified, and split regions need to persist independently
-            region = src_image[y:y+h, x:x+w].copy()
-            
+            region = src_image[y:y + h, x:x + w].copy()
+
             # Get source ID for this split
-            source_id = self.source_ids[stream_cnt] if self.source_ids and stream_cnt < len(self.source_ids) else stream_cnt
-            
+            source_id = self.source_ids[stream_cnt] if self.source_ids and stream_cnt < len(
+                self.source_ids) else stream_cnt
+
             # Create CaptureImage for this split region
             capture_image = self._create_capture_image(
                 image=region,
@@ -619,7 +624,7 @@ class VideoCaptureBase(EvilEyeBase):
                 current_video_position=current_video_position
             )
             captured_images.append(capture_image)
-        
+
         return captured_images
 
     def _cleanup_queue(self) -> None:
@@ -632,10 +637,10 @@ class VideoCaptureBase(EvilEyeBase):
             self.frames_queue.clear()
 
     def _calculate_sleep_seconds(
-        self,
-        elapsed_seconds: float,
-        fps: float | None = None,
-        source_type: CaptureDeviceType | None = None
+            self,
+            elapsed_seconds: float,
+            fps: float | None = None,
+            source_type: CaptureDeviceType | None = None
     ) -> float:
         """Calculate sleep interval based on FPS and elapsed time.
         
@@ -651,7 +656,7 @@ class VideoCaptureBase(EvilEyeBase):
             fps = self.source_fps
         if source_type is None:
             source_type = self.source_type
-            
+
         if fps and fps > 0:
             fps_multiplier = CaptureConstants.FPS_MULTIPLIER_IP_CAMERA if source_type == CaptureDeviceType.IpCamera else CaptureConstants.FPS_MULTIPLIER_DEFAULT
             sleep_seconds = 1.0 / (fps_multiplier * fps) - elapsed_seconds
@@ -659,7 +664,7 @@ class VideoCaptureBase(EvilEyeBase):
                 sleep_seconds = self.capture_config.min_sleep_seconds
         else:
             sleep_seconds = self.capture_config.default_sleep_seconds
-        
+
         return sleep_seconds
 
     # @abstractmethod

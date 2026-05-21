@@ -12,7 +12,7 @@ class ProcessorFrame(ProcessorBase):
             if not isinstance(frames_list, (list, tuple)):
                 # Single Frame object
                 frames_list = [frames_list]
-            
+
             for item in frames_list:
                 # Handle both Frame objects and tuples [data, frame]
                 if isinstance(item, tuple) and len(item) == 2:
@@ -22,7 +22,7 @@ class ProcessorFrame(ProcessorBase):
                 else:
                     # Assume it's a Frame object
                     frame_to_process = item
-                
+
                 is_processor_found = False
                 for processor in self.processors:
                     source_ids = processor.get_source_ids()

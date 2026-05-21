@@ -3,12 +3,14 @@ try:
     from PyQt6 import QtGui
     from PyQt6.QtCore import Qt, QPointF, QRectF
     from PyQt6.QtGui import QPixmap, QPainter, QPen, QBrush, QColor, QPolygonF
+
     pyqt_version = 6
 except ImportError:
     from PyQt5.QtCore import QThread, QMutex, pyqtSignal, QEventLoop, QTimer, pyqtSlot
     from PyQt5 import QtGui
     from PyQt5.QtCore import Qt, QPointF, QRectF
     from PyQt5.QtGui import QPixmap, QPainter, QPen, QBrush, QColor, QPolygonF
+
     pyqt_version = 5
 
 from timeit import default_timer as timer
@@ -39,7 +41,8 @@ class VideoThread(QThread):
     add_zone_signal = pyqtSignal(int, QPixmap)
     add_roi_signal = pyqtSignal(int, QPixmap)
 
-    def __init__(self, source_id, fps, rows, cols, show_debug_info, font_params, text_config=None, class_mapping=None, logger_name: str | None = None, parent_logger: logging.Logger | None = None):
+    def __init__(self, source_id, fps, rows, cols, show_debug_info, font_params, text_config=None, class_mapping=None,
+                 logger_name: str | None = None, parent_logger: logging.Logger | None = None):
         super().__init__()
         base_name = "evileye.video_thread"
         full_name = f"{base_name}.{logger_name}" if logger_name else base_name
@@ -73,7 +76,7 @@ class VideoThread(QThread):
         # Persistent object boxes to bridge short tracker gaps: obj_id -> { 'box': [x1,y1,x2,y2] px, 'ttl': int }
         self.persist_obj_boxes: dict[int, dict] = {}
         self.signal_hold_frames = 10
-        
+
         # Thread-safe storage for clean images (before any drawing)
         self.last_clean_image = None
         self.clean_image_mutex = QMutex()
@@ -155,7 +158,7 @@ class VideoThread(QThread):
                                                       Qt.TransformationMode.FastTransformation)
             self.is_add_zone_clicked = False
             self.add_zone_signal.emit(self.thread_num, QPixmap.fromImage(zones_window_image))
-        
+
         if self.is_add_roi_clicked:
             roi_window_image = convert_to_qt.scaled(int(widget_width), int(widget_height),
                                                     Qt.AspectRatioMode.KeepAspectRatio,
@@ -183,7 +186,6 @@ class VideoThread(QThread):
         self._last_perf_stats["qt_scale_ms"] = scale_ms
         self._last_perf_stats["qpixmap_ms"] = pixmap_ms
         return pixmap
-    
 
     def _draw_signal_overlay(self, image: QPixmap):
         if not self.signal_enabled:
@@ -206,7 +208,7 @@ class VideoThread(QThread):
             pen.setWidth(4)
             painter.setPen(pen)
             # Draw border around full pixmap
-            painter.drawRect(0, 0, image.width()-1, image.height()-1)
+            painter.drawRect(0, 0, image.width() - 1, image.height() - 1)
             # Draw active events list (top-left)
             painter.setBrush(QBrush())
             # Background for list (semi-transparent) с адаптацией контрастности к цвету события
@@ -228,12 +230,13 @@ class VideoThread(QThread):
             if text_lines:
                 pad = 6
                 line_h = 18
-                box_w = max(120, max((painter.fontMetrics().horizontalAdvance(t) for t in text_lines), default=0) + 2*pad)
-                box_h = pad*2 + line_h*len(text_lines)
+                box_w = max(120,
+                            max((painter.fontMetrics().horizontalAdvance(t) for t in text_lines), default=0) + 2 * pad)
+                box_h = pad * 2 + line_h * len(text_lines)
                 painter.fillRect(0, 0, box_w, box_h, bg)
                 painter.setPen(QPen(qcolor))
                 for i, t in enumerate(text_lines):
-                    painter.drawText(pad, pad + (i+1)*line_h - 4, t)
+                    painter.drawText(pad, pad + (i + 1) * line_h - 4, t)
             # bbox событий теперь рисуются в utils.draw_boxes_tracking вместе с объектными
         finally:
             if painter.isActive():
@@ -289,7 +292,7 @@ class VideoThread(QThread):
                     pass
             except Exception:
                 return 0
-            
+
             # Create a shallow copy of frame and copy only the image array (numpy array)
             # This is much more memory-efficient than deepcopy
             from ..capture.video_capture_base import CaptureImage
@@ -302,7 +305,7 @@ class VideoThread(QThread):
             # IMPORTANT: frame.image is already an owning numpy array (copied in capture).
             # Avoid extra copies here to reduce RSS spikes when streams connect / restart.
             display_frame.image = frame.image
-            
+
             # Store clean image in thread-safe storage (before any drawing)
             # Avoid copying: keep a reference to the latest clean frame.
             self.clean_image_mutex.lock()
@@ -316,7 +319,7 @@ class VideoThread(QThread):
             except Exception:
                 self.last_frame_w = None
                 self.last_frame_h = None
-            
+
             # Update persistent boxes TTL and merge with latest boxes
             try:
                 # Decrease TTL
@@ -451,7 +454,7 @@ class VideoThread(QThread):
     def add_zone_clicked(self, thread_id):
         if self.thread_num == thread_id:
             self.is_add_zone_clicked = True
-    
+
     @pyqtSlot(int)
     def add_roi_clicked(self, thread_id):
         if self.thread_num == thread_id:
@@ -476,7 +479,7 @@ class VideoThread(QThread):
         else:
             if event_name in self.active_events:
                 del self.active_events[event_name]
-    
+
     def get_clean_image(self):
         """Получить чистое изображение (до любых отрисовок) thread-safe способом"""
         self.clean_image_mutex.lock()

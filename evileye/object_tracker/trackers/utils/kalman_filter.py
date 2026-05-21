@@ -174,12 +174,12 @@ class KalmanFilterXYAH:
         return new_mean, new_covariance
 
     def gating_distance(
-        self,
-        mean: np.ndarray,
-        covariance: np.ndarray,
-        measurements: np.ndarray,
-        only_position: bool = False,
-        metric: str = "maha",
+            self,
+            mean: np.ndarray,
+            covariance: np.ndarray,
+            measurements: np.ndarray,
+            only_position: bool = False,
+            metric: str = "maha",
     ) -> np.ndarray:
         """
         Compute gating distance between state distribution and measurements. A suitable distance threshold can be

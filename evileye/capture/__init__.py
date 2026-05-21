@@ -12,7 +12,7 @@ from .exceptions import (
 
 __all__ = [
     'VideoCaptureBase',
-    'VideoCaptureOpencv', 
+    'VideoCaptureOpencv',
     'VideoCaptureGStreamer',
     'CaptureDeviceType',
     'CaptureConstants',

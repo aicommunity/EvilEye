@@ -92,7 +92,8 @@ class DatabaseAdapterFieldOfViewEvents(DatabaseAdapterBase):
                 src_name = camera['source_names'][id_idx]
                 break
 
-        fields_for_updating['lost_preview_path'] = self._get_img_path('preview', 'lost', src_name, time_lost=event.time_lost)
+        fields_for_updating['lost_preview_path'] = self._get_img_path('preview', 'lost', src_name,
+                                                                      time_lost=event.time_lost)
 
         return (list(fields_for_updating.keys()), list(fields_for_updating.values()),
                 fields_for_updating['lost_preview_path'])
@@ -118,7 +119,8 @@ class DatabaseAdapterFieldOfViewEvents(DatabaseAdapterBase):
                 break
         fields_for_saving['preview_path'] = self._get_img_path('preview', 'detected', src_name, event.time_obj_detected)
         if event.time_lost is not None:
-            fields_for_saving['lost_preview_path'] = self._get_img_path('preview', 'lost', src_name, time_lost=event.time_lost)
+            fields_for_saving['lost_preview_path'] = self._get_img_path('preview', 'lost', src_name,
+                                                                        time_lost=event.time_lost)
         return (list(fields_for_saving.keys()), list(fields_for_saving.values()),
                 fields_for_saving['preview_path'])
 

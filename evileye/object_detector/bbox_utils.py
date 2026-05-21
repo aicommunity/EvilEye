@@ -25,10 +25,10 @@ def extract_xyxy_conf_cls_from_result(result: Any):
 
 
 def roi_boxes_to_image_coords(
-    result: Any,
-    roi_offset: Sequence[int],
-    *,
-    logger: Optional[Any] = None,
+        result: Any,
+        roi_offset: Sequence[int],
+        *,
+        logger: Optional[Any] = None,
 ) -> Tuple[List, List, List]:
     """
     Convert detection boxes for one ROI split to image coordinates.

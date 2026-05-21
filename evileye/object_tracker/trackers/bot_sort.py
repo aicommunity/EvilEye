@@ -1,4 +1,3 @@
-
 from collections import deque
 from typing import Any, List
 import onnxruntime as ort
@@ -67,7 +66,7 @@ class BOTSORT(BYTETracker):
         if args.with_reid:
             self.encoders = encoders
         self.gmc = GMC(method=args.gmc_method)
-    
+
     def update(self, results, img=None) -> List[SCTrack]:
         """Updates the tracker with new detections and returns the current list of tracked objects."""
         self.frame_id += 1
@@ -180,10 +179,9 @@ class BOTSORT(BYTETracker):
         self.removed_stracks.extend(removed_stracks)
         if len(self.removed_stracks) > 1000:
             self.removed_stracks = self.removed_stracks[-999:]  # clip remove stracks to 1000 maximum
-        
+
         return [x for x in self.tracked_stracks if x.is_activated]
         # return np.asarray([x.result for x in self.tracked_stracks if x.is_activated], dtype=np.float32)
-
 
     def get_kalmanfilter(self):
         """Returns an instance of KalmanFilterXYWH for predicting and updating object states in the tracking process."""
@@ -247,12 +245,12 @@ def embedding_distance(tracks: list[SCTrack], detections: list[SCTrack], metric:
     cost_matrix = np.zeros((len(tracks), len(detections)), dtype=np.float32)
     if cost_matrix.size == 0:
         return cost_matrix
-    
+
     if len(detections) > 0:
         num_of_encoders = len(detections[0].curr_feat)
     else:
         num_of_encoders = len(tracks[0].curr_feat)
-    
+
     cost_matrices = []
     for i in range(num_of_encoders):
         det_features = np.asarray([track.curr_feat[i] for track in detections], dtype=np.float32)
@@ -261,7 +259,6 @@ def embedding_distance(tracks: list[SCTrack], detections: list[SCTrack], metric:
         track_features = np.asarray([track.smooth_feat[i] for track in tracks], dtype=np.float32)
         cost_matrix = np.maximum(0.0, cdist(track_features, det_features, metric))  # Normalized features
         cost_matrices.append(cost_matrix)
-    
+
     final_cost_matrix = np.mean(cost_matrices, axis=0)
     return final_cost_matrix
-

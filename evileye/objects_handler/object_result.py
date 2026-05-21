@@ -18,6 +18,7 @@ class ObjectResultHistory:
         self.properties = dict()  # some object features in scene (i.e. is_moving, is_immovable, immovable_time, zone_visited, zone_time_spent etc)
         self.object_data = dict()  # internal object data
 
+
 class ObjectResult(ObjectResultHistory):
     def __init__(self):
         super().__init__()
@@ -47,7 +48,7 @@ class ObjectResult(ObjectResultHistory):
         result.time_stamp = self.time_stamp
         result.time_detected = self.time_detected
         result.last_update = self.last_update
-        #result.last_image = self.last_image
+        # result.last_image = self.last_image
         result.lost_frames = self.lost_frames
         result.track = self.track
         result.properties = self.properties

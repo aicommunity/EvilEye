@@ -52,15 +52,17 @@ from evileye.controller.services import (
 )
 import os
 
-
 try:
     from PyQt6.QtWidgets import QMainWindow
+
     pyqt_version = 6
 except ImportError:
     from PyQt5.QtWidgets import QMainWindow
+
     pyqt_version = 5
 
 from evileye.controller.controller_processing_mixin import ControllerProcessingMixin
+
 
 class Controller(ControllerProcessingMixin):
     @staticmethod
@@ -115,8 +117,8 @@ class Controller(ControllerProcessingMixin):
         self.show_journal = False
         self.enable_close_from_gui = True
         self.skip_objects_handler = False
-        self.memory_periodic_check_sec = 60*15*60
-        self.max_memory_usage_mb = 1024*16
+        self.memory_periodic_check_sec = 60 * 15 * 60
+        self.max_memory_usage_mb = 1024 * 16
         self.show_memory_usage = False
         self.auto_restart = True
         # DB access goes through native psycopg2 code, so configs must opt in
@@ -141,20 +143,20 @@ class Controller(ControllerProcessingMixin):
         self.db_adapter_zone_events = None
         self.db_adapter_attr_events = None
         self.db_adapter_system_events = None
-        
+
         self.storage_monitor = None
-        
+
         # System diagnostics and memory monitoring
         self.system_diagnostics = None
         self.memory_monitor = None
-        
+
         # Initialize centralized class manager
         self.class_manager = ClassManager()
-        
+
         # Initialize service locator and services
         self.service_locator = ServiceLocator()
         self.service_locator.create_all_services(class_manager=self.class_manager)
-        
+
         # Get service references for convenience
         self._pipeline_service = self.service_locator.get_pipeline_service()
         self._database_service = self.service_locator.get_database_service()
@@ -165,7 +167,7 @@ class Controller(ControllerProcessingMixin):
         self._streaming_service = self.service_locator.get_streaming_service()
         self._preview_render_service = self.service_locator.get_preview_render_service()
         self._event_recording_service = self.service_locator.get_event_recording_service()
-        
+
         # Default COCO class mapping: class_name -> class_id
         self.class_mapping = {
             "person": 0,
@@ -255,7 +257,7 @@ class Controller(ControllerProcessingMixin):
 
         self.gui_enabled = True
         self.autoclose = False
-        #self.multicam_reid_enabled = False
+        # self.multicam_reid_enabled = False
 
         self.current_main_widget_size = [1920, 1080]
 
@@ -295,7 +297,7 @@ class Controller(ControllerProcessingMixin):
         # Track per-source offset to keep a monotonic "video time" timeline across loops.
         # source_id -> {"offset": float, "last_pos": float | None}
         self._video_ts_state: dict[int, dict[str, float | None]] = {}
-    
+
     # ── Frame publishing ────────────────────────────────────────────
 
     # ── Getters ──────────────────────────────────────────────────────
@@ -352,11 +354,14 @@ class Controller(ControllerProcessingMixin):
                     "detector_count": len(getattr(self.pipeline, "detectors", []) or []),
                     "tracker_count": len(getattr(self.pipeline, "trackers", []) or []),
                     "database_enabled": bool(params.get("database")) if isinstance(params, dict) else False,
-                    "event_detector_names": sorted((params.get("events_detectors") or {}).keys()) if isinstance(params, dict) and isinstance(params.get("events_detectors"), dict) else [],
+                    "event_detector_names": sorted((params.get("events_detectors") or {}).keys()) if isinstance(params,
+                                                                                                                dict) and isinstance(
+                        params.get("events_detectors"), dict) else [],
                 },
                 server_identity={
                     "managed": os.environ.get("EVILEYE_MANAGED_RUN") == "1",
-                    "embedded_server_enabled": bool(server_cfg.get("enabled")) if isinstance(server_cfg, dict) else False,
+                    "embedded_server_enabled": bool(server_cfg.get("enabled")) if isinstance(server_cfg,
+                                                                                             dict) else False,
                     "host": server_cfg.get("host") if isinstance(server_cfg, dict) else None,
                     "port": server_cfg.get("port") if isinstance(server_cfg, dict) else None,
                 },
@@ -390,25 +395,6 @@ class Controller(ControllerProcessingMixin):
         """Check if restart is requested (e.g., due to memory leak)."""
         return self.restart_flag
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     def run(self):
         from evileye.controller.processing_service import ProcessingService
 
@@ -432,7 +418,7 @@ class Controller(ControllerProcessingMixin):
                     now_ts = time.time()
                     every = float(self._resource_stats_every_sec or 0.0)
                     if ProcessingService.should_log_resource_stats(
-                        self._resource_stats_last_ts, every, now_ts=now_ts
+                            self._resource_stats_last_ts, every, now_ts=now_ts
                     ):
                         self._resource_stats_last_ts = now_ts
                         self._log_resource_stats(context="periodic")
@@ -659,21 +645,21 @@ class Controller(ControllerProcessingMixin):
     def start(self):
         # Start pipeline через PipelineService
         self._pipeline_service.start_pipeline()
-        
+
         # Start ObjectsHandler через ObjectsHandlerService
         if self.obj_handler:
             self._objects_handler_service.start_objects_handler()
-        
+
         # Start visualizer через VisualizationService
         if self.visualizer:
             self._visualization_service.start_visualizer()
-        
+
         # Start system diagnostics and memory monitoring
         if self.memory_monitor:
             self.memory_monitor.start()
         if self.system_diagnostics:
             self.system_diagnostics.start()
-        
+
         # Start database adapters через DatabaseService
         if self.use_database and self._database_service.is_connected():
             self._database_service.start_adapters()
@@ -681,37 +667,37 @@ class Controller(ControllerProcessingMixin):
             try:
                 import platform
                 import sys
-                
+
                 # Логируем попытку подключения к БД
                 # DatabaseController инициализирует params через set_params, проверяем наличие
                 db_params = self.db_controller.params if hasattr(self.db_controller, 'params') else {}
                 self.logger.info(f"Attempting to connect to database at startup: "
-                               f"host={db_params.get('host_name', 'unknown')}, "
-                               f"port={db_params.get('port', 'unknown')}, "
-                               f"database={db_params.get('database_name', 'unknown')}, "
-                               f"platform={platform.system()} {platform.release()}")
-                
+                                 f"host={db_params.get('host_name', 'unknown')}, "
+                                 f"port={db_params.get('port', 'unknown')}, "
+                                 f"database={db_params.get('database_name', 'unknown')}, "
+                                 f"platform={platform.system()} {platform.release()}")
+
                 # Пытаемся подключиться к БД
                 self.db_controller.connect()
-                
+
                 # Проверяем, что подключение действительно установлено
                 if not self.db_controller.is_connected():
                     raise Exception("Database connection failed: connection pool is None")
-                
+
                 self.logger.info("Database connected successfully at startup")
-                
+
             except Exception as e:
                 # Детальное логирование ошибки подключения к БД
                 import platform
                 import sys
-                
+
                 error_context = {
                     'error_type': type(e).__name__,
                     'error_message': str(e),
                     'platform': f"{platform.system()} {platform.release()}",
                     'python_version': sys.version.split()[0]
                 }
-                
+
                 if self.db_controller:
                     # DatabaseController инициализирует params через set_params, проверяем наличие
                     db_params = (self.db_controller.params if hasattr(self.db_controller, 'params') else {}) or {}
@@ -721,12 +707,13 @@ class Controller(ControllerProcessingMixin):
                         'database': db_params.get('database_name', 'unknown'),
                         'user': db_params.get('user_name', 'unknown')
                     })
-                
-                self.logger.warning(f"Database connection error at startup. Disabling database functionality. Reason: {e}")
+
+                self.logger.warning(
+                    f"Database connection error at startup. Disabling database functionality. Reason: {e}")
                 self.logger.debug(f"Database connection context: {error_context}")
                 self.logger.info("System will continue operating in JSON-only mode. "
-                              "Events will be saved to JSON files.")
-                
+                                 "Events will be saved to JSON files.")
+
                 # Полностью отключаем функциональность БД
                 self.use_database = False
                 # Останавливаем адаптеры БД, если они были запущены
@@ -745,12 +732,12 @@ class Controller(ControllerProcessingMixin):
                         self.db_adapter_system_events.stop()
                 except Exception:
                     pass  # Игнорируем ошибки при остановке адаптеров
-                
+
                 # Убеждаемся, что контроллер БД в безопасном состоянии
                 if self.db_controller:
                     self.db_controller.conn_pool = None
                 self.db_controller = None
-        
+
         # Start events detectors и processor через EventsService
         if self._events_service:
             self._events_service.start_detectors()
@@ -758,7 +745,7 @@ class Controller(ControllerProcessingMixin):
                 self.events_detectors_controller.start()
             if self.events_processor:
                 self.events_processor.start()
-        
+
         # Start storage monitor
         if self.storage_monitor:
             try:
@@ -825,7 +812,7 @@ class Controller(ControllerProcessingMixin):
                 self.events_detectors_controller.stop()
             if self.events_processor:
                 self.events_processor.stop()
-        
+
         # Stop event recording
         self.logger.info("Controller shutdown: stopping event recorders")
         for source_id, event_recorder in self.event_recorders.items():
@@ -843,7 +830,7 @@ class Controller(ControllerProcessingMixin):
             self._database_service.stop_adapters()
             if self.db_controller:
                 self.db_controller.disconnect()
-        
+
         # Stop storage monitor
         if self.storage_monitor:
             self.logger.info("Controller shutdown: stopping storage monitor")
@@ -851,7 +838,7 @@ class Controller(ControllerProcessingMixin):
                 self.storage_monitor.stop()
             except Exception as e:
                 self.logger.warning(f"Error stopping storage monitor: {e}", exc_info=True)
-        
+
         # Stop system diagnostics and memory monitoring
         self.logger.info("Controller shutdown: stopping diagnostics")
         if self.system_diagnostics:
@@ -939,7 +926,8 @@ class Controller(ControllerProcessingMixin):
             )
 
             self.show_journal = self.params['controller'].get("show_journal", self.show_journal)
-            self.enable_close_from_gui = self.params['controller'].get("enable_close_from_gui", self.enable_close_from_gui)
+            self.enable_close_from_gui = self.params['controller'].get("enable_close_from_gui",
+                                                                       self.enable_close_from_gui)
             # Handle both old class_names format and new class_mapping format
             if "class_mapping" in self.params['controller']:
                 self.class_mapping = self.params['controller'].get("class_mapping", {})
@@ -951,8 +939,10 @@ class Controller(ControllerProcessingMixin):
                 # Keep default class_mapping if neither is specified
                 pass
             # Optional: override late model loading timeout
-            self.model_loading_timeout_sec = self.params['controller'].get("model_loading_timeout_sec", self.model_loading_timeout_sec)
-            self.memory_periodic_check_sec = self.params['controller'].get("memory_periodic_check_sec", self.memory_periodic_check_sec)
+            self.model_loading_timeout_sec = self.params['controller'].get("model_loading_timeout_sec",
+                                                                           self.model_loading_timeout_sec)
+            self.memory_periodic_check_sec = self.params['controller'].get("memory_periodic_check_sec",
+                                                                           self.memory_periodic_check_sec)
             self.show_memory_usage = self.params['controller'].get("show_memory_usage", self.show_memory_usage)
             self.max_memory_usage_mb = self.params['controller'].get("max_memory_usage_mb", self.max_memory_usage_mb)
             self.auto_restart = self.params['controller'].get("auto_restart", self.auto_restart)
@@ -978,14 +968,14 @@ class Controller(ControllerProcessingMixin):
         # Инициализация pipeline через PipelineService
         pipeline_class_name = pipeline_params.get("pipeline_class")
         self.logger.info(f"Using EVILEYE_PIPELINE_ID for streaming: {self.stream_pipeline_id}")
-        
+
         self.pipeline = self._pipeline_service.create_pipeline(pipeline_class_name)
         self.pipeline = self._pipeline_service.initialize_pipeline(
             pipeline=self.pipeline,
             pipeline_params=pipeline_params,
             credentials=self.credentials,
         )
-        
+
         # Preload controller's class mapping into centralized ClassManager
         try:
             if self.class_mapping:
@@ -1037,7 +1027,7 @@ class Controller(ControllerProcessingMixin):
                 self.use_database = False
                 self.db_controller = None
                 self.database_config = {"database": {}, "database_adapters": {}}
-        
+
         self._setup_objects_and_events(db_initialized, params)
 
         if self._event_recording_service is not None:
@@ -1152,7 +1142,8 @@ class Controller(ControllerProcessingMixin):
         # Сохраняем class_mapping только если он присутствовал в исходной конфигурации
         try:
             orig_ctrl = (self.loaded_config or {}).get('controller', {})
-            had_class_mapping = isinstance(orig_ctrl, dict) and (('class_mapping' in orig_ctrl) or ('class_names' in orig_ctrl))
+            had_class_mapping = isinstance(orig_ctrl, dict) and (
+                        ('class_mapping' in orig_ctrl) or ('class_names' in orig_ctrl))
         except Exception:
             had_class_mapping = True
         if had_class_mapping:
@@ -1163,7 +1154,7 @@ class Controller(ControllerProcessingMixin):
         self.params['controller']["max_memory_usage_mb"] = self.max_memory_usage_mb
         self.params['controller']["auto_restart"] = self.auto_restart
         self.params['controller']["use_database"] = self.use_database
-        
+
         # Сохраняем scheduled_restart: сначала из текущих params, затем из loaded_config
         try:
             scheduled_restart = None
@@ -1213,7 +1204,8 @@ class Controller(ControllerProcessingMixin):
         if not isinstance(oh_params, dict) or not oh_params:
             # Fallback to previously stored or originally loaded config
             oh_params = (self.params.get('objects_handler') if isinstance(self.params, dict) else None) or \
-                        ((self.loaded_config or {}).get('objects_handler') if isinstance(self.loaded_config, dict) else None) or {}
+                        ((self.loaded_config or {}).get('objects_handler') if isinstance(self.loaded_config,
+                                                                                         dict) else None) or {}
         self.params['objects_handler'] = oh_params
 
         self.params['events_detectors'] = dict()
@@ -1224,7 +1216,7 @@ class Controller(ControllerProcessingMixin):
             self.params['events_detectors']['AttributeEventsDetector'] = self.attr_events_detector.get_params()
 
         self.params['events_processor'] = self.events_processor.get_params()
-        
+
         # Only update database config if database is enabled
         if self.use_database and self.db_controller:
             self.database_config = self.db_controller.get_params()
@@ -1241,7 +1233,7 @@ class Controller(ControllerProcessingMixin):
         else:
             # Set empty database config when database is disabled
             self.params['database'] = {}
-        
+
         # Initialize storage monitor (enabled by default)
         try:
             from evileye.core.storage_monitor import StorageMonitor
@@ -1267,7 +1259,8 @@ class Controller(ControllerProcessingMixin):
             vis_params = None
         if not isinstance(vis_params, dict) or not vis_params:
             vis_params = (self.params.get('visualizer') if isinstance(self.params, dict) else None) or \
-                         ((self.loaded_config or {}).get('visualizer') if isinstance(self.loaded_config, dict) else None) or {}
+                         ((self.loaded_config or {}).get('visualizer') if isinstance(self.loaded_config,
+                                                                                     dict) else None) or {}
         self.params['visualizer'] = vis_params
 
         # Text configuration is now part of visualizer section
@@ -1333,7 +1326,8 @@ class Controller(ControllerProcessingMixin):
         self.current_main_widget_size = [width, height]
         self.visualizer.set_current_main_widget_size(width, height)
 
-    def _on_event_signalization(self, source_id: int, object_id: int, event_name: str, is_on: bool, bbox_px: list | None = None):
+    def _on_event_signalization(self, source_id: int, object_id: int, event_name: str, is_on: bool,
+                                bbox_px: list | None = None):
         """Relay event signalization to main window (per source)."""
         try:
             with self._preview_events_lock:
@@ -1356,7 +1350,7 @@ class Controller(ControllerProcessingMixin):
                 self.visualizer.set_event_state(source_id, object_id, event_name, is_on, bbox_px)
         except Exception:
             pass
-    
+
     def _init_system_diagnostics(self) -> None:
         """Initialize system diagnostics and memory monitoring."""
         try:
@@ -1369,7 +1363,7 @@ class Controller(ControllerProcessingMixin):
                 log_file = log_files[0] if log_files else None
             else:
                 log_file = None
-            
+
             # Create memory monitor
             self.memory_monitor = MemoryMonitor(
                 check_interval=30.0,
@@ -1377,19 +1371,19 @@ class Controller(ControllerProcessingMixin):
                 leak_window_samples=20,
                 auto_cleanup=True
             )
-            
+
             # Create system diagnostics
             self.system_diagnostics = SystemDiagnostics(
                 log_file=log_file,
                 check_interval=30.0,
                 auto_fix=True
             )
-            
+
             # Set callbacks
             self.system_diagnostics.set_pipeline_getter(lambda: self.pipeline)
             self.system_diagnostics.set_event_buffer_getter(lambda: self.event_buffers)
             self.system_diagnostics.set_memory_monitor(self.memory_monitor)
-            
+
             # Add cleanup callback to memory monitor
             def cleanup_callback():
                 """Cleanup callback for memory monitor."""
@@ -1400,18 +1394,19 @@ class Controller(ControllerProcessingMixin):
                     if buffer and buffer.size() > 500:
                         removed = buffer.clear_old_frames(older_than_seconds=buffer.max_duration_seconds / 2)
                         if removed > 0:
-                            self.logger.info(f"Memory cleanup: cleared {removed} frames from EventBuffer for source {source_id}")
-            
+                            self.logger.info(
+                                f"Memory cleanup: cleared {removed} frames from EventBuffer for source {source_id}")
+
             self.memory_monitor.add_cleanup_callback(cleanup_callback)
-            
+
             self.logger.info("System diagnostics and memory monitoring initialized")
         except Exception as e:
             self.logger.error(f"Failed to initialize system diagnostics: {e}", exc_info=True)
             self.system_diagnostics = None
             self.memory_monitor = None
-    
-    def _on_event_recording(self, event_id: int, event_name: str, event_timestamp: float, 
-                           source_id: int, is_on: bool, bbox: list | None = None):
+
+    def _on_event_recording(self, event_id: int, event_name: str, event_timestamp: float,
+                            source_id: int, is_on: bool, bbox: list | None = None):
         """Callback for event-based recording from EventsProcessor.
         
         Also stores video path in event object if available, and in event_video_paths dict.
@@ -1419,9 +1414,9 @@ class Controller(ControllerProcessingMixin):
         try:
             if source_id not in self.event_recorders:
                 return
-            
+
             event_recorder = self.event_recorders[source_id]
-            
+
             # Convert timestamp to float (seconds) if it's datetime.datetime
             if isinstance(event_timestamp, datetime.datetime):
                 event_timestamp = event_timestamp.timestamp()
@@ -1432,7 +1427,7 @@ class Controller(ControllerProcessingMixin):
                 except (ValueError, TypeError):
                     self.logger.warning(f"Invalid timestamp type for event {event_id}: {type(event_timestamp)}")
                     return
-            
+
             if is_on:
                 # Event started - start recording
                 if not event_recorder.is_recording():
@@ -1443,7 +1438,7 @@ class Controller(ControllerProcessingMixin):
                         # Store video path for this event_id
                         self.event_video_paths[event_id] = relative_video_path
                         self.logger.debug(f"Stored video path for event {event_id}: {relative_video_path}")
-                        
+
                         # Try to store video path in event object if available
                         if self.events_processor:
                             # Find event in long_term_events
@@ -1457,7 +1452,8 @@ class Controller(ControllerProcessingMixin):
                                             event.video_path_found = relative_video_path
                                         elif event_name == 'FOVEvent':
                                             event.video_path = relative_video_path
-                                        self.logger.debug(f"Stored video path in event object {event_id}: {relative_video_path}")
+                                        self.logger.debug(
+                                            f"Stored video path in event object {event_id}: {relative_video_path}")
                                         break
             else:
                 # Event ended - stop recording
@@ -1471,7 +1467,8 @@ class Controller(ControllerProcessingMixin):
                         # Update video path for finished events (e.g., video_path_left for ZoneEvent)
                         if self.events_processor:
                             # Find event in finished_events or long_term_events
-                            for event_type, events_list in list(self.events_processor.finished_events.items()) + list(self.events_processor.long_term_events.items()):
+                            for event_type, events_list in list(self.events_processor.finished_events.items()) + list(
+                                    self.events_processor.long_term_events.items()):
                                 for event in events_list:
                                     if event.event_id == event_id:
                                         # Store video path for finished event based on event type
@@ -1505,7 +1502,8 @@ class Controller(ControllerProcessingMixin):
             vis_wants_zones = False
         if vis_wants_zones:
             try:
-                zones_cfg = (((self.params or {}).get('events_detectors', {}) or {}).get('ZoneEventsDetector', {}) or {}).get('sources', {})
+                zones_cfg = (((self.params or {}).get('events_detectors', {}) or {}).get('ZoneEventsDetector',
+                                                                                         {}) or {}).get('sources', {})
                 sources_zones = {}
                 if isinstance(zones_cfg, dict):
                     for k, zone_list in zones_cfg.items():
@@ -1537,23 +1535,28 @@ class Controller(ControllerProcessingMixin):
         total_memory_usage += comp_debug_info["memory_measure_results"]
 
         self.events_processor.calc_memory_consumption()
-        comp_debug_info = self.events_processor.insert_debug_info_by_id(self.debug_info.setdefault("events_processor", {}))
+        comp_debug_info = self.events_processor.insert_debug_info_by_id(
+            self.debug_info.setdefault("events_processor", {}))
         total_memory_usage += comp_debug_info["memory_measure_results"]
 
         self.events_detectors_controller.calc_memory_consumption()
-        comp_debug_info = self.events_detectors_controller.insert_debug_info_by_id(self.debug_info.setdefault("events_detectors_controller", {}))
+        comp_debug_info = self.events_detectors_controller.insert_debug_info_by_id(
+            self.debug_info.setdefault("events_detectors_controller", {}))
         total_memory_usage += comp_debug_info["memory_measure_results"]
 
         self.cam_events_detector.calc_memory_consumption()
-        comp_debug_info = self.cam_events_detector.insert_debug_info_by_id(self.debug_info.setdefault("cam_events_detector", {}))
+        comp_debug_info = self.cam_events_detector.insert_debug_info_by_id(
+            self.debug_info.setdefault("cam_events_detector", {}))
         total_memory_usage += comp_debug_info["memory_measure_results"]
 
         self.fov_events_detector.calc_memory_consumption()
-        comp_debug_info = self.fov_events_detector.insert_debug_info_by_id(self.debug_info.setdefault("fov_events_detector", {}))
+        comp_debug_info = self.fov_events_detector.insert_debug_info_by_id(
+            self.debug_info.setdefault("fov_events_detector", {}))
         total_memory_usage += comp_debug_info["memory_measure_results"]
 
         self.zone_events_detector.calc_memory_consumption()
-        comp_debug_info = self.zone_events_detector.insert_debug_info_by_id(self.debug_info.setdefault("zone_events_detector", {}))
+        comp_debug_info = self.zone_events_detector.insert_debug_info_by_id(
+            self.debug_info.setdefault("zone_events_detector", {}))
         total_memory_usage += comp_debug_info["memory_measure_results"]
 
         if self.visualizer:
@@ -1564,28 +1567,33 @@ class Controller(ControllerProcessingMixin):
         # Only collect database memory if database is enabled
         if self.use_database and self.db_controller:
             self.db_controller.calc_memory_consumption()
-            comp_debug_info = self.db_controller.insert_debug_info_by_id(self.debug_info.setdefault("db_controller", {}))
+            comp_debug_info = self.db_controller.insert_debug_info_by_id(
+                self.debug_info.setdefault("db_controller", {}))
             total_memory_usage += comp_debug_info["memory_measure_results"]
 
             self.db_adapter_obj.calc_memory_consumption()
-            comp_debug_info = self.db_adapter_obj.insert_debug_info_by_id(self.debug_info.setdefault("db_adapter_obj", {}))
+            comp_debug_info = self.db_adapter_obj.insert_debug_info_by_id(
+                self.debug_info.setdefault("db_adapter_obj", {}))
             total_memory_usage += comp_debug_info["memory_measure_results"]
 
             self.db_adapter_cam_events.calc_memory_consumption()
-            comp_debug_info = self.db_adapter_cam_events.insert_debug_info_by_id(self.debug_info.setdefault("db_adapter_cam_events", {}))
+            comp_debug_info = self.db_adapter_cam_events.insert_debug_info_by_id(
+                self.debug_info.setdefault("db_adapter_cam_events", {}))
             total_memory_usage += comp_debug_info["memory_measure_results"]
 
             self.db_adapter_fov_events.calc_memory_consumption()
-            comp_debug_info = self.db_adapter_fov_events.insert_debug_info_by_id(self.debug_info.setdefault("db_adapter_fov_events", {}))
+            comp_debug_info = self.db_adapter_fov_events.insert_debug_info_by_id(
+                self.debug_info.setdefault("db_adapter_fov_events", {}))
             total_memory_usage += comp_debug_info["memory_measure_results"]
 
             self.db_adapter_zone_events.calc_memory_consumption()
-            comp_debug_info = self.db_adapter_zone_events.insert_debug_info_by_id(self.debug_info.setdefault("db_adapter_zone_events", {}))
+            comp_debug_info = self.db_adapter_zone_events.insert_debug_info_by_id(
+                self.debug_info.setdefault("db_adapter_zone_events", {}))
             total_memory_usage += comp_debug_info["memory_measure_results"]
 
         self.debug_info["controller"] = dict()
         self.debug_info["controller"]["timestamp"] = datetime.datetime.now()
-        self.debug_info["controller"]["total_memory_usage_mb"] = total_memory_usage/(1024.0*1024.0)
+        self.debug_info["controller"]["total_memory_usage_mb"] = total_memory_usage / (1024.0 * 1024.0)
         try:
             self.debug_info["controller"]["event_buffers"] = {
                 source_id: buffer.get_runtime_stats()
@@ -1600,7 +1608,8 @@ class Controller(ControllerProcessingMixin):
             pass
         try:
             if self._preview_render_service is not None and hasattr(self._preview_render_service, "get_runtime_stats"):
-                self.debug_info["controller"]["preview_render_runtime"] = self._preview_render_service.get_runtime_stats()
+                self.debug_info["controller"][
+                    "preview_render_runtime"] = self._preview_render_service.get_runtime_stats()
         except Exception:
             pass
         try:
@@ -1612,20 +1621,20 @@ class Controller(ControllerProcessingMixin):
     def _discover_pipeline_classes(self):
         """Discover all pipeline classes from packages and current directory"""
         pipeline_classes = {}
-        
+
         # Search in evileye.pipelines package
         try:
             pipelines_module = importlib.import_module('evileye.pipelines')
             for name, obj in inspect.getmembers(pipelines_module):
                 # __bases__ - встроенный атрибут всех классов Python, getattr безопаснее и быстрее inspect.getmro
                 bases = getattr(obj, '__bases__', None)
-                if (inspect.isclass(obj) and 
-                    bases and 
-                    any('Pipeline' in base.__name__ for base in bases)):
+                if (inspect.isclass(obj) and
+                        bases and
+                        any('Pipeline' in base.__name__ for base in bases)):
                     pipeline_classes[name] = obj
         except ImportError as e:
             self.logger.warning(f"Failed to import evileye.pipelines: {e}")
-        
+
         # Search in current working directory pipelines folder
         current_dir = Path.cwd()
         pipelines_dir = current_dir / "pipelines"
@@ -1634,60 +1643,61 @@ class Controller(ControllerProcessingMixin):
                 # Add current directory to Python path
                 import sys
                 sys.path.insert(0, str(current_dir))
-                
+
                 # Try to import pipelines module from current directory
                 pipelines_module = importlib.import_module('pipelines')
                 for name, obj in inspect.getmembers(pipelines_module):
                     # __bases__ - встроенный атрибут всех классов Python, getattr безопаснее и быстрее inspect.getmro
                     bases = getattr(obj, '__bases__', None)
-                    if (inspect.isclass(obj) and 
-                        bases and 
-                        any('Pipeline' in base.__name__ for base in bases)):
+                    if (inspect.isclass(obj) and
+                            bases and
+                            any('Pipeline' in base.__name__ for base in bases)):
                         pipeline_classes[name] = obj
-                
+
                 # Remove from path
                 sys.path.pop(0)
             except ImportError as e:
                 self.logger.warning(f"Failed to import local pipelines: {e}")
-        
+
         return pipeline_classes
-    
+
     def _create_pipeline_instance(self, pipeline_class_name: str):
         """Create pipeline instance by class name"""
         pipeline_classes = self._discover_pipeline_classes()
-        
+
         if pipeline_class_name not in pipeline_classes:
             available_classes = list(pipeline_classes.keys())
-            raise ValueError(f"Pipeline class '{pipeline_class_name}' not found. Available classes: {available_classes}")
-        
+            raise ValueError(
+                f"Pipeline class '{pipeline_class_name}' not found. Available classes: {available_classes}")
+
         pipeline_class = pipeline_classes[pipeline_class_name]
         return pipeline_class()
-    
+
     def get_available_pipeline_classes(self):
         """Get list of available pipeline classes"""
         return list(self._discover_pipeline_classes().keys())
-    
+
     def get_class_name(self, class_id: int) -> str:
         """Get class name from class ID using class_mapping"""
         for name, cid in self.class_mapping.items():
             if cid == class_id:
                 return name
         return f"class_{class_id}"
-    
+
     def get_class_id(self, class_name: str) -> int:
         """Get class ID from class name using class_mapping"""
         return self.class_mapping.get(class_name, -1)
-    
+
     def get_class_names_list(self) -> list:
         """Get list of class names in order of their IDs"""
         sorted_classes = sorted(self.class_mapping.items(), key=lambda x: x[1])
         return [name for name, _ in sorted_classes]
-    
+
     def update_class_mapping_from_detectors(self):
         """Update class_mapping from all detectors in the pipeline using ClassManager"""
         if not self.pipeline:
             return
-            
+
         # Get all detectors from pipeline
         detectors = []
         # PipelineProcessors инициализирует processors в __init__, поэтому прямой доступ безопасен
@@ -1699,7 +1709,7 @@ class Controller(ControllerProcessingMixin):
                         # ObjectDetectorBase имеет метод get_model_class_mapping, проверяем наличие метода
                         if hasattr(proc, 'get_model_class_mapping'):
                             detectors.append(proc)
-        
+
         # Collect class mappings from all detectors using ClassManager
         for detector in detectors:
             mapping = detector.get_model_class_mapping()
@@ -1708,7 +1718,7 @@ class Controller(ControllerProcessingMixin):
                 success = self.class_manager.add_class_mapping(mapping, detector_name)
                 if not success:
                     self.logger.warning(f"Conflicts detected when adding mapping from {detector_name}")
-                
+
                 # CRITICAL: Force update classes after getting model mapping
                 # Проверяем наличие метода, так как не все детекторы могут его иметь
                 if hasattr(detector, '_update_classes_after_model_loading'):
@@ -1716,23 +1726,24 @@ class Controller(ControllerProcessingMixin):
             else:
                 # Model not loaded yet, try to get mapping (this will trigger late update if model is loaded)
                 detector.get_model_class_mapping()
-        
+
         # Update controller's class_mapping from ClassManager
         if self.class_manager.class_mapping:
             self.class_mapping = self.class_manager.get_class_mapping()
-            self.logger.info(f"Updated controller class_mapping with {len(self.class_mapping)} classes from {len(detectors)} detectors")
-            
+            self.logger.info(
+                f"Updated controller class_mapping with {len(self.class_mapping)} classes from {len(detectors)} detectors")
+
             # Update visualizer if available
             if self.visualizer:
                 self.visualizer.class_mapping = self.class_mapping
                 self.logger.info("Updated visualizer class_mapping")
-            
+
             # Set class manager for all detectors
             for detector in detectors:
                 # Проверяем наличие метода, так как не все детекторы могут его иметь
                 if hasattr(detector, 'set_class_manager'):
                     detector.set_class_manager(self.class_manager)
-            
+
             # Report conflicts if any
             if self.class_manager.has_conflicts():
                 self.logger.warning("Class mapping conflicts detected:")
@@ -1741,29 +1752,29 @@ class Controller(ControllerProcessingMixin):
                 self.logger.info("Using first occurrence for each class name/ID pair.")
         else:
             self.logger.warning("Class mappings not found in detectors")
-            
+
         # Schedule periodic check for late model loading
         self._schedule_periodic_class_update()
-    
+
     def _schedule_periodic_class_update(self):
         """Schedule periodic check for classes update after model loading"""
         import threading
         import time
-        
+
         def periodic_check():
             """Periodically check and update classes"""
             # Check once per second up to configured timeout
             max_attempts = max(1, int(self.model_loading_timeout_sec))
             attempt = 0
-            
+
             while attempt < max_attempts:
                 time.sleep(1)  # Wait 1 second
                 attempt += 1
-                
+
                 # Check if we have detectors
                 if not self.pipeline:
                     continue
-                    
+
                 # Get all detectors from pipeline
                 detectors = []
                 # PipelineProcessors инициализирует processors в __init__, поэтому прямой доступ безопасен
@@ -1775,7 +1786,7 @@ class Controller(ControllerProcessingMixin):
                                 # ObjectDetectorBase имеет метод get_model_class_mapping, проверяем наличие метода
                                 if hasattr(proc, 'get_model_class_mapping'):
                                     detectors.append(proc)
-                
+
                 # Check each detector
                 updated = False
                 for detector in detectors:
@@ -1784,21 +1795,21 @@ class Controller(ControllerProcessingMixin):
                     if mapping and hasattr(detector, '_check_and_update_classes_if_needed'):
                         detector._check_and_update_classes_if_needed()
                         updated = True
-                
+
                 if updated:
                     self.logger.info("Late model loading detected, classes updated")
                     break
-                    
+
             if attempt >= max_attempts:
                 self.logger.warning("Model loading timeout, some classes may not update")
-        
+
         # Start periodic check in background thread
         check_thread = threading.Thread(target=periodic_check, daemon=True)
         check_thread.start()
-    
-    def create_config(self, num_sources: int, pipeline_class: str | None, 
-                     source_type: str = 'video_file', detector_params: dict | None = None,
-                     tracker_params: dict | None = None, database_params: dict | None = None):
+
+    def create_config(self, num_sources: int, pipeline_class: str | None,
+                      source_type: str = 'video_file', detector_params: dict | None = None,
+                      tracker_params: dict | None = None, database_params: dict | None = None):
         """Create configuration with specified pipeline class and optional parameters"""
         self.init({})
 
@@ -1826,7 +1837,7 @@ class Controller(ControllerProcessingMixin):
                 'ip_camera': {'source': 'ip_camera', 'camera': 'rtsp://user:password@ip:port/stream'},
                 'device': {'source': 'device', 'camera': 0}
             }
-            
+
             if source_type in source_type_mapping:
                 source_config = source_type_mapping[source_type]
                 for source in self.pipeline.sources:
@@ -1868,7 +1879,7 @@ class Controller(ControllerProcessingMixin):
 
         config_data = {}
         self.update_params()
-        
+
         # Get parameters safely, avoiding non-serializable objects
         config_data = self.get_params()
 
@@ -1880,7 +1891,7 @@ class Controller(ControllerProcessingMixin):
             for key in safe_keys:
                 if key in database_params:
                     safe_db_params[key] = database_params[key]
-            
+
             # Set default safe values if not provided
             if not safe_db_params:
                 safe_db_params = {
@@ -1888,7 +1899,7 @@ class Controller(ControllerProcessingMixin):
                     "preview_width": 300,
                     "preview_height": 150
                 }
-            
+
             # Replace entire database section with only safe parameters
             config_data['database'] = safe_db_params
             self.logger.info(f"Applied safe database parameters: {safe_db_params}")
@@ -1918,7 +1929,7 @@ class Controller(ControllerProcessingMixin):
         config_data['visualizer']['visual_buffer_num_frames'] = 10
         if num_sources and num_sources > 0:
             config_data['visualizer']['source_ids'] = list(range(num_sources))
-            config_data['visualizer']['fps'] = [5]*num_sources
+            config_data['visualizer']['fps'] = [5] * num_sources
         else:
             config_data['visualizer']['source_ids'] = []
             config_data['visualizer']['fps'] = []

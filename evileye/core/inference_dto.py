@@ -20,7 +20,7 @@ class InferenceDTO:
 
     @classmethod
     def from_detector_payload(
-        cls, payload: list[dict[str, Any]], source_id: int | None, frame_id: int | None
+            cls, payload: list[dict[str, Any]], source_id: int | None, frame_id: int | None
     ) -> "InferenceDTO":
         detections: list[InferenceObjectDTO] = []
         for item in payload or []:

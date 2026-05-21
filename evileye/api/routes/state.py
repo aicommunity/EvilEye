@@ -11,7 +11,6 @@ from evileye.api.core.server_state import (
     list_run_summaries,
 )
 
-
 router = APIRouter(prefix="/api/v1/state", tags=["state"])
 
 

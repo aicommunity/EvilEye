@@ -38,7 +38,8 @@ class GStreamerCaptureDiagnosticsMixin:
             except Exception:
                 recording_queue_buffers = None
 
-        source_label = ",".join(str(name) for name in self.source_names) if self.source_names else str(self.source_address)
+        source_label = ",".join(str(name) for name in self.source_names) if self.source_names else str(
+            self.source_address)
         msg_parts = [
             f"FPS={fps:.2f}",
             f"pull_wait={avg_pull_ms:.2f}ms",
@@ -64,6 +65,7 @@ class GStreamerCaptureDiagnosticsMixin:
         self._perf_pts_accum = 0.0
         self._perf_pts_count = 0
         self._perf_frame_buffer_full = 0
+
     def _log_resource_stats(self, context: str) -> None:
         """Log lightweight RSS/threads/FD metrics to correlate with restarts."""
         from evileye.utils.resource_stats import collect_process_resource_stats, format_resource_stats_line
@@ -89,6 +91,7 @@ class GStreamerCaptureDiagnosticsMixin:
                     self.logger.info(f"ResourceStats[{context}] record_queue_buf={lvl}")
         except Exception:
             pass
+
     def _maybe_schedule_malloc_trim(self, reason: str) -> None:
         """
         Best-effort memory trimming to return freed arenas to OS.
@@ -148,7 +151,8 @@ class GStreamerCaptureDiagnosticsMixin:
 
         if async_mode:
             try:
-                t = threading.Thread(target=_do_trim, name=f"evileye-malloc-trim-{getattr(self, 'source_id', 'n/a')}", daemon=True)
+                t = threading.Thread(target=_do_trim, name=f"evileye-malloc-trim-{getattr(self, 'source_id', 'n/a')}",
+                                     daemon=True)
                 t.start()
                 return
             except Exception:
@@ -156,6 +160,7 @@ class GStreamerCaptureDiagnosticsMixin:
                 pass
 
         _do_trim()
+
     def _record_perf_metrics(self, pull_time: float, process_time: float, buffer_pts: Optional[int]) -> None:
         try:
             self._perf_frame_count += 1
@@ -163,7 +168,8 @@ class GStreamerCaptureDiagnosticsMixin:
             self._perf_process_total += process_time
 
             clock_time_none = getattr(Gst, "CLOCK_TIME_NONE", None)
-            if buffer_pts is not None and (clock_time_none is None or buffer_pts != clock_time_none) and buffer_pts >= 0:
+            if buffer_pts is not None and (
+                    clock_time_none is None or buffer_pts != clock_time_none) and buffer_pts >= 0:
                 if self._perf_last_pts is not None and buffer_pts >= self._perf_last_pts:
                     delta = (buffer_pts - self._perf_last_pts) / 1_000_000_000.0
                     if delta > 0:
@@ -177,6 +183,7 @@ class GStreamerCaptureDiagnosticsMixin:
                 self._log_perf_stats(now)
         except Exception as e:
             self.logger.debug(f"Failed to record perf metrics: {e}")
+
     def _start_notify_worker(self) -> None:
         if self._notify_thread and self._notify_thread.is_alive():
             return
@@ -220,6 +227,7 @@ class GStreamerCaptureDiagnosticsMixin:
 
         self._notify_thread = threading.Thread(target=_worker, daemon=True, name="GstNotifyWorker")
         self._notify_thread.start()
+
     def _stop_notify_worker(self) -> None:
         try:
             self._notify_stop.set()

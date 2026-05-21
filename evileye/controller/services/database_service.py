@@ -26,9 +26,9 @@ class DatabaseService:
         self._adapters: Dict[str, IDatabaseAdapter] = {}
 
     def initialize_database(
-        self,
-        db_config: Dict[str, Any],
-        system_params: Optional[Dict[str, Any]] = None,
+            self,
+            db_config: Dict[str, Any],
+            system_params: Optional[Dict[str, Any]] = None,
     ) -> bool:
         """Инициализировать подключение к БД.
 

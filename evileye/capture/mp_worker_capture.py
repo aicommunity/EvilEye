@@ -72,8 +72,8 @@ class MpWorkerCapture(MpWorker):
         capture_type = params.get("type", "")
 
         use_gstreamer = (
-            "gstreamer" in capture_type.lower()
-            or params.get("backend") == "gstreamer"
+                "gstreamer" in capture_type.lower()
+                or params.get("backend") == "gstreamer"
         )
 
         child_params = dict(params)

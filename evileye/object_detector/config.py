@@ -65,6 +65,7 @@ class DetectorConfig:
             inference_params=InferenceParams.from_dict(params),
         )
 
+
 """
 Configuration classes for object detectors.
 """

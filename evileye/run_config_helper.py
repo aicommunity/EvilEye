@@ -9,10 +9,12 @@ from typing import Optional
 try:
     from PyQt6.QtWidgets import QApplication, QMessageBox
     from PyQt6.QtCore import QEventLoop, Qt, QTimer
+
     pyqt_version = 6
 except ImportError:
     from PyQt5.QtWidgets import QApplication, QMessageBox
     from PyQt5.QtCore import QEventLoop, Qt, QTimer
+
     pyqt_version = 5
 
 from evileye.controller import controller
@@ -88,10 +90,10 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
     # Scheduled restart defaults (used by CLI-level scheduler and potential future GUI integration)
     sched_cfg = controller_cfg.setdefault("scheduled_restart", {})
     sched_cfg.setdefault("enabled", False)
-    sched_cfg.setdefault("mode", "daily_time")          # daily_time | interval
-    sched_cfg.setdefault("time", "01:00")               # HH:MM, local time
-    sched_cfg.setdefault("interval_minutes", 0)         # used for interval mode
-    
+    sched_cfg.setdefault("mode", "daily_time")  # daily_time | interval
+    sched_cfg.setdefault("time", "01:00")  # HH:MM, local time
+    sched_cfg.setdefault("interval_minutes", 0)  # used for interval mode
+
     # Determine GUI mode from config and CLI arguments
     gui_mode = determine_gui_mode(config_data, cli_gui=gui if gui is not None else None)
     logger.info(f"GUI mode determined: {gui_mode.value}")
@@ -109,19 +111,19 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
 
     # Step 1: Initialize core (Controller) - always done first
     logger.info("Step 1: Initializing core system (Controller)")
-    
+
     initialization_result = {'controller': None, 'error': None, 'completed': False}
     startup_state = {"init_completed": False}
-    
+
     # Progress callback for initialization
     progress_callback = None
     progress_window = None
     qt_app = None
-    
+
     # Step 2: Initialize GUI based on mode
     gui_manager = None
     qt_app = None
-    
+
     if gui_mode == GUIMode.HEADLESS:
         logger.info("Headless mode: skipping GUI initialization")
         # IMPORTANT: still create a minimal QApplication early.
@@ -144,7 +146,7 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
         logger.info(f"Step 2: Initializing GUI (mode: {gui_mode.value})")
         gui_manager = GUIManager(gui_mode, config_data, logger=logger)
         qt_app = gui_manager.create_gui_application()
-        
+
         # Show progress window only in VISIBLE mode
         if gui_mode == GUIMode.VISIBLE:
             from evileye.visualization_modules.startup_progress_window import StartupProgressWindow
@@ -153,13 +155,14 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
             progress_window.raise_()
             qt_app.processEvents()
             logger.info("Progress window displayed")
-            
+
             def on_progress_updated(value, stage_text):
                 if progress_window:
                     progress_window.update_progress(value, stage_text)
                     qt_app.processEvents()
+
             progress_callback = on_progress_updated
-    
+
     main_window_created = {'done': False}
     previous_signal_handlers = {}
     shutdown_state = {
@@ -203,7 +206,7 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
             signal.signal(sig, _termination_signal_handler)
         except Exception:
             pass
-    
+
     def on_initialization_complete(controller_instance):
         try:
             controller_instance.config_path = str(Path(config_file_name).resolve())
@@ -213,13 +216,13 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
         initialization_result['completed'] = True
         startup_state["init_completed"] = True
         logger.info("Controller initialization completed")
-        
+
         # Step 3: Connect GUI to controller (if GUI mode)
         if gui_mode != GUIMode.HEADLESS and gui_manager:
             try:
                 logger.info("Step 3: Connecting GUI to controller")
                 _connect_gui_to_controller(
-                    controller_instance, config_file_name, config_data, 
+                    controller_instance, config_file_name, config_data,
                     gui_manager, logger, progress_window
                 )
                 logger.info("GUI connected to controller successfully")
@@ -233,7 +236,7 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
             logger.info("Starting controller (headless mode)")
             controller_instance.start()
             main_window_created['done'] = True
-    
+
     def on_initialization_failed(error_message):
         initialization_result['error'] = error_message
         initialization_result['completed'] = True
@@ -243,10 +246,10 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
             progress_window.close()
         logger.error(f"Controller initialization failed: {error_message}")
         if gui_mode != GUIMode.HEADLESS:
-            QMessageBox.critical(None, "Initialization Error", 
-                               f"Failed to initialize application:\n\n{error_message}")
+            QMessageBox.critical(None, "Initialization Error",
+                                 f"Failed to initialize application:\n\n{error_message}")
         sys.exit(1)
-    
+
     # Headless mode does not need asynchronous Qt-thread initialization.
     # Initializing synchronously avoids hangs in managed API runs where the
     # QThread signal delivery path can stall before controller.start().
@@ -281,12 +284,12 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
             while not initialization_result['completed'] or not main_window_created['done']:
                 _headless_app.processEvents()
                 time.sleep(0.01)
-    
+
     # Check result
     if initialization_result['error']:
         logger.error("Controller initialization failed")
         sys.exit(1)
-    
+
     controller_instance = initialization_result['controller']
     # Ensure we always stop the controller on app quit (GUI mode).
     # Without this, closing the window may exit Qt loop while leaving background threads running.
@@ -303,6 +306,7 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
             if shutdown_state["done"]:
                 return
             shutdown_state["done"] = True
+
             # IMPORTANT: aboutToQuit handlers must return quickly.
             # If we block here (e.g. ctrl.release() waiting on threads), Qt event loop may never finish,
             # leaving the process "hung" after GUI closes. Run controller shutdown in a daemon thread.
@@ -380,7 +384,7 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
                 qt_app.quit()
             except Exception:
                 pass
-    
+
     # Step 4: Start application event loop
     if gui_mode == GUIMode.HEADLESS:
         logger.info("Headless mode: no visible GUI, starting minimal event loop")
@@ -406,7 +410,7 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
                         # Check if restart is requested due to memory leak
                         restart_requested = controller_instance.get_restart_flag()
                         cli_launched = os.environ.get('EVILEYE_CLI_LAUNCHED') == '1'
-                        
+
                         if restart_requested:
                             if cli_launched:
                                 logger.info("Memory leak detected: restart requested, CLI will handle restart")
@@ -514,12 +518,12 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
                             pass
         except Exception:
             pass
-        
+
         # Check if restart is requested due to memory leak (GUI mode)
         if controller_instance is not None:
             restart_requested = controller_instance.get_restart_flag()
             cli_launched = os.environ.get('EVILEYE_CLI_LAUNCHED') == '1'
-            
+
             if restart_requested:
                 if cli_launched:
                     logger.info("Memory leak detected: restart requested, CLI will handle restart")
@@ -528,7 +532,7 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
                 else:
                     logger.warning("Memory leak detected but restart impossible: not launched via CLI")
                     sys.exit(1)
-    
+
     try:
         for sig, handler in previous_signal_handlers.items():
             try:
@@ -547,8 +551,8 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
     return ret
 
 
-def _connect_gui_to_controller(controller_instance, config_file_name, config_data, 
-                                gui_manager: GUIManager, logger, progress_window=None):
+def _connect_gui_to_controller(controller_instance, config_file_name, config_data,
+                               gui_manager: GUIManager, logger, progress_window=None):
     """
     Connect GUI components to controller.
     
@@ -561,40 +565,40 @@ def _connect_gui_to_controller(controller_instance, config_file_name, config_dat
         # Update progress if available
         if progress_window:
             progress_window.update_progress(90, "Creating GUI components...")
-        
+
         # Create MainWindow БЕЗ controller (все виджеты создаются пустыми)
         logger.info("Creating MainWindow without controller...")
         main_window = MainWindow(1600, 720)
         gui_manager.main_window = main_window
-        
+
         if progress_window:
             progress_window.update_progress(92, "Initializing GUI components...")
-        
+
         # Update controller's GUI flags
         controller_instance.show_main_gui = (gui_manager.mode == GUIMode.VISIBLE)
         controller_instance.show_journal = config_data.get('controller', {}).get('show_journal', False)
-        
+
         # Устанавливаем данные в MainWindow из controller ПЕРЕД созданием визуализатора
         # Это нужно для создания labels, которые визуализатор будет использовать
         logger.info("Setting controller data in MainWindow...")
         main_window.set_controller(controller_instance, config_file_name, config_data)
         logger.info("Controller data set in MainWindow")
-        
+
         # Initialize visualizer using legacy method (init_main_window)
         # Визуализатор создается ПОСЛЕ установки данных, чтобы labels уже существовали
         logger.info("Initializing visualizer through controller...")
         controller_instance.init_main_window(main_window, main_window.slots, main_window.signals)
         logger.info("Visualizer initialized through controller")
-        
+
         if progress_window:
             progress_window.update_progress(95, "Starting controller components...")
-        
+
         # Start controller
         controller_instance.start()
-        
+
         if progress_window:
             progress_window.update_progress(99, "Finalizing startup...")
-        
+
         # Show GUI based on mode
         if gui_manager.mode == GUIMode.VISIBLE:
             gui_manager.show_gui()
@@ -611,7 +615,7 @@ def _connect_gui_to_controller(controller_instance, config_file_name, config_dat
             # Hidden mode: start flag monitor
             gui_manager._start_flag_monitor()
             logger.info("Hidden GUI mode: GUI will be shown when flag file is detected")
-        
+
         if progress_window:
             progress_window.update_progress(100, "Ready!")
             progress_window.hide()
@@ -620,9 +624,9 @@ def _connect_gui_to_controller(controller_instance, config_file_name, config_dat
             qt_app = gui_manager.get_qt_application()
             if qt_app:
                 qt_app.processEvents()
-        
+
         logger.info("GUI connected to controller successfully")
-        
+
     except Exception as e:
         logger.error(f"Error connecting GUI to controller: {e}", exc_info=True)
         if progress_window:
@@ -633,14 +637,15 @@ def _connect_gui_to_controller(controller_instance, config_file_name, config_dat
         raise
 
 
-def _create_main_window_and_start(controller_instance, config_file_name, config_data, qt_app, gui, logger, progress_window=None):
+def _create_main_window_and_start(controller_instance, config_file_name, config_data, qt_app, gui, logger,
+                                  progress_window=None):
     """Создать главное окно и запустить контроллер"""
     try:
         # Обновляем прогресс при создании главного окна
         if progress_window:
             progress_window.update_progress(90, "Creating main window...")
             qt_app.processEvents()
-        
+
         logger.info("Creating main window (no-show in headless mode)")
         try:
             # Create MainWindow БЕЗ controller (все виджеты создаются пустыми)
@@ -649,7 +654,7 @@ def _create_main_window_and_start(controller_instance, config_file_name, config_
         except Exception as e:
             logger.error(f"Error creating MainWindow: {e}", exc_info=True)
             raise
-        
+
         logger.info("DEBUG: After MainWindow creation, before progress update")
         if progress_window:
             logger.info("DEBUG: Updating progress to 92%")
@@ -660,16 +665,16 @@ def _create_main_window_and_start(controller_instance, config_file_name, config_
                 logger.error(f"DEBUG: Error updating progress: {e}", exc_info=True)
         else:
             logger.info("DEBUG: progress_window is None")
-        
+
         logger.info("DEBUG: MainWindow instance created, calling init_main_window...")
         controller_instance.init_main_window(a, a.slots, a.signals)
         logger.info(f"init_main_window completed, show_main_gui={controller_instance.show_main_gui}, gui={gui}")
-        
+
         # Устанавливаем данные в MainWindow из controller
         logger.info("Setting controller data in MainWindow...")
         a.set_controller(controller_instance, config_file_name, config_data)
         logger.info("Controller data set in MainWindow")
-        
+
         # Устанавливаем callback для обновления прогресса при запуске модулей
         logger.info("Setting up progress callback...")
         if progress_window:
@@ -684,6 +689,7 @@ def _create_main_window_and_start(controller_instance, config_file_name, config_
                 except Exception:
                     # Игнорируем ошибки в callback, чтобы не блокировать выполнение
                     pass
+
             controller_instance.progress_callback = start_progress_callback
             logger.info("Progress callback set up")
         else:
@@ -710,11 +716,11 @@ def _create_main_window_and_start(controller_instance, config_file_name, config_
         except Exception as e:
             logger.error(f"Error starting controller: {e}", exc_info=True)
             raise
-        
+
         if progress_window:
             progress_window.update_progress(99, "Finalizing startup...")
             qt_app.processEvents()
-        
+
         # Закрываем прогресс-бар после завершения запуска всех модулей
         if progress_window:
             progress_window.update_progress(100, "Ready!")
@@ -730,7 +736,7 @@ def _create_main_window_and_start(controller_instance, config_file_name, config_
                 logger.info("Progress window closed")
             except Exception as e:
                 logger.warning(f"Error closing progress window: {e}")
-        
+
         # Показываем главное окно ПОСЛЕ завершения start() и закрытия прогресс-бара
         if gui and controller_instance.show_main_gui:
             logger.info("Showing main window")
@@ -752,5 +758,3 @@ def _create_main_window_and_start(controller_instance, config_file_name, config_
             except:
                 pass
         raise
-
-

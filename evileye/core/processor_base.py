@@ -61,7 +61,8 @@ class ProcessorBase(ABC):
     def set_params(self, params):
         self.params = params
         if len(params) != self.num_processors or type(params) != list:
-            self.logger.error(f"Failed to initialize processors {self.class_name}[{self.num_processors}]. Wrong params list.")
+            self.logger.error(
+                f"Failed to initialize processors {self.class_name}[{self.num_processors}]. Wrong params list.")
 
         # Detect execution_mode from the first param block (shared across all)
         if params and isinstance(params, list) and len(params) > 0:
@@ -108,7 +109,8 @@ class ProcessorBase(ABC):
                     self.logger.warning(f"Processor {i} ({self.class_name}) init failed; reconnect logic will retry")
             except Exception as e:
                 init_success = False
-                self.logger.warning(f"Processor {i} ({self.class_name}) init raised exception: {e}; reconnect logic will retry")
+                self.logger.warning(
+                    f"Processor {i} ({self.class_name}) init raised exception: {e}; reconnect logic will retry")
         return init_success
 
     def release(self):

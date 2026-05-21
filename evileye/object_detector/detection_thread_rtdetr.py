@@ -4,20 +4,22 @@ from typing import Optional
 from ultralytics import RTDETR
 from .detection_thread_base import DetectionThreadBase
 import logging
+
+
 class DetectionThreadRtdetr(DetectionThreadBase):
     """Detection thread for RT-DETR models."""
 
     def __init__(
-        self,
-        model_name: str,
-        stride: int,
-        classes: list,
-        source_ids: list,
-        roi: list,
-        inf_params: dict,
-        queue_out: Queue,
-        logger_name: Optional[str] = None,
-        parent_logger: Optional[logging.Logger] = None,
+            self,
+            model_name: str,
+            stride: int,
+            classes: list,
+            source_ids: list,
+            roi: list,
+            inf_params: dict,
+            queue_out: Queue,
+            logger_name: Optional[str] = None,
+            parent_logger: Optional[logging.Logger] = None,
     ):
         base_name = f"evileye.detection_thread_rtdetr"
         full_name = f"{base_name}.{logger_name}" if logger_name else base_name
@@ -40,7 +42,7 @@ class DetectionThreadRtdetr(DetectionThreadBase):
                 logger=self.logger,
             )
             self.logger.info(f"Model names: {self.model.names}")
-            
+
             # Update model_class_mapping from model
             self._update_model_class_mapping_from_model()
 
@@ -49,7 +51,7 @@ class DetectionThreadRtdetr(DetectionThreadBase):
         if not isinstance(images, list):
             self.logger.warning(f"Expected list of images, got {type(images)}")
             return None
-        
+
         # Track which images are None to map results back correctly
         valid_images = []
         image_indices = []  # Track original indices of valid images
@@ -57,30 +59,31 @@ class DetectionThreadRtdetr(DetectionThreadBase):
             if img is not None:
                 valid_images.append(img)
                 image_indices.append(i)
-        
+
         # If all images are None, return None results
         if len(valid_images) == 0:
             self.logger.warning("All images are None, cannot perform prediction")
             return [None] * len(images)
-        
+
         try:
             # Defer classes filtering to base; avoid passing names to model
-            results = self.model.predict(source=valid_images, classes=self._get_classes_arg_for_model(), verbose=False, **self.inf_params)
-            
+            results = self.model.predict(source=valid_images, classes=self._get_classes_arg_for_model(), verbose=False,
+                                         **self.inf_params)
+
             # Map results back to original positions (None for invalid images)
             if results is None:
                 return [None] * len(images)
-            
+
             # Convert results to list if needed
             if not isinstance(results, list):
                 results = [results]
-            
+
             # Create result list with None for invalid images
             full_results = [None] * len(images)
             for idx, result_idx in enumerate(image_indices):
                 if idx < len(results):
                     full_results[result_idx] = results[idx]
-            
+
             return full_results
         except Exception as e:
             self.logger.error(f"Error during RT-DETR model prediction: {e}")
@@ -95,11 +98,11 @@ class DetectionThreadRtdetr(DetectionThreadBase):
         coords = boxes.xyxy
         confs = boxes.conf
         class_ids = boxes.cls
-        
+
         # Get original image size from result
         img_width = result.orig_img.shape[1]
         img_height = result.orig_img.shape[0]
-        
+
         for coord, class_id, conf in zip(coords, class_ids, confs):
             # Convert coordinates to integers
             x1, y1, x2, y2 = coord
@@ -107,13 +110,13 @@ class DetectionThreadRtdetr(DetectionThreadBase):
             y1 = int(round(y1))
             x2 = int(round(x2))
             y2 = int(round(y2))
-            
+
             # Clip coordinates to original image boundaries
             x1 = max(0, min(x1, img_width - 1))
             y1 = max(0, min(y1, img_height - 1))
             x2 = max(0, min(x2, img_width - 1))
             y2 = max(0, min(y2, img_height - 1))
-            
+
             # Check if coordinates are valid after clipping
             if x1 < x2 and y1 < y2:
                 from ..utils import utils
@@ -127,7 +130,7 @@ class DetectionThreadRtdetr(DetectionThreadBase):
                 confidences.append(conf)
                 ids.append(class_id)
         return bboxes_coords, confidences, ids
-    
+
     def _release_model(self) -> None:
         self.model = None
 

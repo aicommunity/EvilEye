@@ -56,5 +56,3 @@ class JsonAdapterSystemEvents(DatabaseAdapterBase):
 
     def _update_impl(self, event):
         pass
-
-

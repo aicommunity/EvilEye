@@ -53,10 +53,11 @@ class AuthGuardMiddleware(BaseHTTPMiddleware):
             return Response('{"detail":"Insufficient permissions"}', status_code=403, media_type="application/json")
         return await call_next(request)
 
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     logger.info("FastAPI lifespan startup")
-    
+
     try:
         yield
     finally:
@@ -121,6 +122,7 @@ def create_app() -> FastAPI:
         app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="frontend")
         logger.info("Frontend static files mounted at /")
     else:
-        logger.warning("Frontend not built: static dir missing. Run: cd evileye/api/frontend && npm install && npm run build")
+        logger.warning(
+            "Frontend not built: static dir missing. Run: cd evileye/api/frontend && npm install && npm run build")
 
     return app

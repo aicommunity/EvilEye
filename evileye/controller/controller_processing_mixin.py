@@ -12,8 +12,10 @@ from evileye.core.tracking_dto import ensure_tracking_result_list
 from evileye.objects_handler.object_result import ObjectResult, ObjectResultList
 from evileye.visualization_modules.preview_render import PreviewRenderContext
 
+
 class ControllerProcessingMixin:
-    def _build_preview_render_context(self, frame, objects_by_source: dict[int, ObjectResultList]) -> PreviewRenderContext:
+    def _build_preview_render_context(self, frame,
+                                      objects_by_source: dict[int, ObjectResultList]) -> PreviewRenderContext:
         source_id = getattr(frame, "source_id", None)
         frame_id = getattr(frame, "frame_id", None)
         object_list = objects_by_source.get(source_id, ObjectResultList())
@@ -59,6 +61,7 @@ class ControllerProcessingMixin:
             ],
             zones=self._preview_zones_by_source.get(source_id, []),
         )
+
     def _check_memory_and_maybe_stop(self) -> bool:
         """Периодически проверять память; если лимит превышен — остановить цикл.
 
@@ -67,14 +70,14 @@ class ControllerProcessingMixin:
         """
         try:
             needs_check = (
-                not self.debug_info.get("controller")
-                or not self.debug_info["controller"].get("timestamp")
-                or (
-                    (
-                        datetime.datetime.now() - self.debug_info["controller"]["timestamp"]
-                    ).total_seconds()
-                    > self.memory_periodic_check_sec
-                )
+                    not self.debug_info.get("controller")
+                    or not self.debug_info["controller"].get("timestamp")
+                    or (
+                            (
+                                    datetime.datetime.now() - self.debug_info["controller"]["timestamp"]
+                            ).total_seconds()
+                            > self.memory_periodic_check_sec
+                    )
             )
             if not needs_check:
                 return False
@@ -99,6 +102,7 @@ class ControllerProcessingMixin:
             return False
         except Exception:
             return False
+
     def _collect_preview_objects_by_source(self, source_ids: set[int], objects_results) -> dict[int, ObjectResultList]:
         objects_by_source: dict[int, ObjectResultList] = {}
         if not source_ids:
@@ -118,6 +122,7 @@ class ControllerProcessingMixin:
             for source_id in source_ids:
                 objects_by_source.setdefault(source_id, ObjectResultList())
         return objects_by_source
+
     def _convert_results_for_visualization(self, mc_tracking_results) -> dict[int, ObjectResultList]:
         """
         Конвертировать результаты детекции/трекинга в ObjectResultList для визуализации.
@@ -129,22 +134,22 @@ class ControllerProcessingMixin:
             dict[source_id, ObjectResultList] - объекты по source_id
         """
         result_by_source = {}
-        
+
         for track_info in mc_tracking_results:
             if isinstance(track_info, (tuple, list)) and len(track_info) == 2:
                 tracking_result, image = track_info
             else:
                 continue
             tracking_result = ensure_tracking_result_list(tracking_result)
-                
+
             if image is None:
                 continue
-                
+
             source_id = image.source_id
-            
+
             if source_id not in result_by_source:
                 result_by_source[source_id] = ObjectResultList()
-            
+
             # Конвертировать в зависимости от типа
             if isinstance(tracking_result, DetectionResultList):
                 # Конвертировать DetectionResultList
@@ -156,8 +161,9 @@ class ControllerProcessingMixin:
                 for track in tracking_result.tracks:
                     obj = self._create_object_from_track(track, tracking_result, image)
                     result_by_source[source_id].objects.append(obj)
-        
+
         return result_by_source
+
     def _create_object_from_detection(self, detection, detection_list, image):
         """Создать ObjectResult из DetectionResult"""
         obj = ObjectResult()
@@ -175,7 +181,7 @@ class ControllerProcessingMixin:
         else:
             obj.time_stamp = datetime.datetime.now()
         obj.time_detected = obj.time_stamp
-        
+
         # Создать временный TrackingResult
         track = TrackingResult()
         track.track_id = detection_list.frame_id if detection_list.frame_id is not None else 0  # Временный ID
@@ -183,9 +189,10 @@ class ControllerProcessingMixin:
         track.confidence = detection.confidence
         track.class_id = detection.class_id
         track.tracking_data = {}
-        
+
         obj.track = track
         return obj
+
     def _create_object_from_track(self, track, tracking_list, image):
         """Создать ObjectResult из TrackingResult"""
         obj = ObjectResult()
@@ -206,8 +213,10 @@ class ControllerProcessingMixin:
         obj.track = track
         obj.global_id = track.tracking_data.get('global_id', None) if track.tracking_data else None
         return obj
+
     def _extract_preview_zones(self) -> dict[int, list]:
-        zones_cfg = (((self.params or {}).get('events_detectors', {}) or {}).get('ZoneEventsDetector', {}) or {}).get('sources', {})
+        zones_cfg = (((self.params or {}).get('events_detectors', {}) or {}).get('ZoneEventsDetector', {}) or {}).get(
+            'sources', {})
         sources_zones: dict[int, list] = {}
         if not isinstance(zones_cfg, dict):
             return sources_zones
@@ -223,6 +232,7 @@ class ControllerProcessingMixin:
             if prepared:
                 sources_zones[source_id] = prepared
         return sources_zones
+
     def _extract_track_ids(self, data) -> tuple[set[int], int]:
         track_ids: set[int] = set()
         missing_track_object = 0
@@ -251,6 +261,7 @@ class ControllerProcessingMixin:
             except Exception:
                 continue
         return track_ids, missing_track_object
+
     def _get_frame_timestamp_sec(self, image) -> float:
         """Получить timestamp кадра в секундах (для записи событий)."""
         try:
@@ -288,21 +299,25 @@ class ControllerProcessingMixin:
         except Exception:
             pass
         return time.time()
+
     def _get_preview_event_cfg(self) -> dict:
         vis_cfg = self._get_preview_visualizer_cfg()
         nested = vis_cfg.get("event_signalization", {})
         if isinstance(nested, dict) and nested:
             return nested
         return vis_cfg
+
     def _get_preview_event_entries(self, source_id: int) -> list[dict]:
         with self._preview_events_lock:
             return list((self._preview_active_events_by_source.get(source_id) or {}).values())
+
     def _get_preview_visualizer_cfg(self) -> dict:
         if isinstance(self.params, dict):
             cfg = self.params.get("visualizer", {})
             if isinstance(cfg, dict):
                 return cfg
         return {}
+
     def _has_non_empty_payload(self, data) -> bool:
         """Return True when tracking/detection payload contains objects."""
         if data is None:
@@ -341,6 +356,7 @@ class ControllerProcessingMixin:
             except Exception:
                 return False
         return False
+
     def _maybe_update_visualization(self, processing_frames: list, dropped_frames) -> None:
         """Обновить визуализацию (если GUI включен)."""
         if not (self.show_main_gui and self.gui_enabled and self.visualizer):
@@ -378,6 +394,7 @@ class ControllerProcessingMixin:
         except Exception:
             # Визуализация не должна падать весь цикл
             pass
+
     def _process_events_once(self) -> None:
         """Считать события из EventsDetectorsController и передать в EventsProcessor."""
         try:
@@ -389,6 +406,7 @@ class ControllerProcessingMixin:
         except Exception:
             # Не ломаем основной цикл контроллера из-за ошибок событий
             pass
+
     def _process_pipeline_results(self, pipeline_results) -> list:
         """Положить результаты пайплайна в ObjectsHandler и собрать кадры для визуализации/стриминга.
 
@@ -402,7 +420,7 @@ class ControllerProcessingMixin:
         except Exception:
             n = -1
         self.logger.debug(f"Processing {n} pipeline results")
-        
+
         for track_info in (pipeline_results or []):
             # Handle both tuples [tracking_result, image] and Frame objects
             if isinstance(track_info, (tuple, list)) and len(track_info) == 2:
@@ -440,14 +458,14 @@ class ControllerProcessingMixin:
                         self.obj_handler.put(track_info)
                     except Exception:
                         pass
-            
+
             processing_frames.append(image)
 
             try:
                 # Frame инициализирует source_id и frame_id в __init__, поэтому прямой доступ безопасен
                 source_id = image.source_id
                 frame_id = image.frame_id
-                
+
                 if source_id is not None and frame_id is not None:
                     self.source_last_processed_frame_id[source_id] = frame_id
 
@@ -496,9 +514,11 @@ class ControllerProcessingMixin:
 
         self.logger.debug(f"Collected {len(processing_frames)} frames for processing")
         return processing_frames
+
     def _process_tracking_results(self, mc_tracking_results) -> list:
         """Backward compatible wrapper."""
         return self._process_pipeline_results(mc_tracking_results)
+
     def _publish_latest_frame_to_broker(self, processing_frames: list, objects_results=None) -> None:
         """Опубликовать последние кадры всех sources в web broker/shared files."""
         try:
@@ -542,6 +562,7 @@ class ControllerProcessingMixin:
         except Exception as e:
             # Do not break controller loop if streaming is not initialized
             self.logger.debug(f"Frame publish failed: {e}")
+
     def _update_track_continuity_diag(self, source_id: int, data) -> None:
         try:
             track_ids, missing_track_object = self._extract_track_ids(data)

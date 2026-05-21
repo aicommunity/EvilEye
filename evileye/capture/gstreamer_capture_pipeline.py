@@ -33,17 +33,17 @@ class GStreamerCapturePipelineMixin:
             else:
                 # Try H264 first (more compatible)
                 pipeline = f"rtspsrc location={self.source_address} protocols={protocol} ! rtph264depay ! h264parse ! avdec_h264 ! videoconvert"
-            
+
         elif self.source_type == CaptureDeviceType.VideoFile:
             # Video file pipeline - optimized with hardware acceleration support
             # Step 1: Try hardware decoder (NVDEC for NVIDIA GPUs)
             # Step 2: Fallback to explicit software decoder (faster than decodebin)
             # Step 3: Last resort: decodebin (supports all formats)
-            
+
             file_ext = str(self.source_address).lower()
             is_mp4 = file_ext.endswith('.mp4')
             is_mkv = file_ext.endswith('.mkv')
-            
+
             # Check for NVIDIA hardware decoder (NVDEC)
             force_sw = False
             try:
@@ -55,19 +55,19 @@ class GStreamerCapturePipelineMixin:
             force_sw = bool(force_sw or self._force_sw_decoder)
 
             use_nvdec = (
-                (not force_sw) and
-                self._gst_has('nvh264dec') and
-                is_mp4  # NVDEC works best with MP4/H.264
+                    (not force_sw) and
+                    self._gst_has('nvh264dec') and
+                    is_mp4  # NVDEC works best with MP4/H.264
             )
-            
+
             # Check for Jetson hardware decoder (older API)
             use_nvv4l2 = (
-                (not force_sw) and
-                self._gst_has('nvv4l2decoder') and
-                self._gst_has('nvvidconv') and
-                is_mp4
+                    (not force_sw) and
+                    self._gst_has('nvv4l2decoder') and
+                    self._gst_has('nvvidconv') and
+                    is_mp4
             )
-            
+
             if use_nvdec:
                 # Use NVDEC hardware decoder (RTX/GTX series)
                 # This is the fastest path for H.264/MP4 files on NVIDIA GPUs
@@ -99,16 +99,17 @@ class GStreamerCapturePipelineMixin:
                 pipeline = f"filesrc location={self.source_address} ! decodebin name=dec ! videoconvert"
             if force_sw:
                 try:
-                    self.logger.info(f"Force software decoder enabled for {self.source_names} (EVILEYE_GST_FORCE_SW_DECODER/params)")
+                    self.logger.info(
+                        f"Force software decoder enabled for {self.source_names} (EVILEYE_GST_FORCE_SW_DECODER/params)")
                 except Exception:
                     pass
-                   
-            
+
+
         elif self.source_type == CaptureDeviceType.Device:
             # USB/Device camera pipeline
             device_id = self.source_address if self.source_address.isdigit() else "0"
             pipeline = f"v4l2src device=/dev/video{device_id} ! videoconvert"
-            
+
         elif self.source_type == CaptureDeviceType.ImageSequence:
             # Image sequence pipeline - prefer explicit caps/decoder to avoid typefind issues
             pattern = str(self.source_address)
@@ -151,10 +152,10 @@ class GStreamerCapturePipelineMixin:
                     f"multifilesrc location={pattern} loop=false do-timestamp=true "
                     f"! decodebin ! videoconvert"
                 )
-        
+
         else:
             raise ValueError(f"Unsupported source type: {self.source_type}")
-        
+
         # Add common pipeline end - simplified
         # Apply desired FPS if requested using videorate (before format caps/appsink)
         # NOTE: For VideoFile, videorate can slow down playback unnecessarily.
@@ -180,7 +181,7 @@ class GStreamerCapturePipelineMixin:
         # Determine sync mode: true for all sources to maintain correct playback speed
         # sync=true ensures video files play at their native FPS rate
         sync_mode = "true"
-        
+
         # If continuous recording is enabled, use tee to split stream: one to appsink, one to recording
         # `enabled` is a master switch. Continuous recording must be explicitly enabled.
         continuous_enabled = bool(
@@ -214,8 +215,9 @@ class GStreamerCapturePipelineMixin:
             else:
                 # For live sources, keep queue for isolation
                 pipeline += f" ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync={sync_mode} max-buffers=5 drop=true"
-        
+
         return pipeline
+
     def _build_pipeline_candidates(self) -> List[str]:
         """
         Build multiple pipeline candidates for IP cameras (H265, H264).
@@ -224,9 +226,9 @@ class GStreamerCapturePipelineMixin:
         """
         if self.source_type != CaptureDeviceType.IpCamera:
             return [self._build_pipeline()]
-        
+
         candidates = []
-        
+
         # Build base RTSP part - use UDP protocol by default, but allow TCP fallback
         # protocols=udp+tcp allows GStreamer to try UDP first, then fallback to TCP if UDP fails
         protocol = getattr(self, '_rtsp_protocol', 'udp+tcp')  # Try UDP first, then TCP if UDP fails
@@ -234,7 +236,7 @@ class GStreamerCapturePipelineMixin:
             base_rtsp = f"rtspsrc location={self.source_address} user-id={self.username} user-pw={self.password} protocols={protocol}"
         else:
             base_rtsp = f"rtspsrc location={self.source_address} protocols={protocol}"
-        
+
         # Build common tail (videoconvert + queue + appsink/tee)
         # For IP cameras, use sync=true to synchronize with real-time clock
         # (Note: _build_pipeline_candidates is only called for IpCamera, so sync is always true here)
@@ -252,25 +254,27 @@ class GStreamerCapturePipelineMixin:
             common_tail += " t. ! queue name=recording_queue max-size-buffers=5 max-size-bytes=0 max-size-time=500000000 leaky=downstream"
         else:
             common_tail += " ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync=true max-buffers=3 drop=true"
-        
+
         # Candidate 1: H265 (if username/password provided, try H265 first)
         if self.username and self.password:
             candidates.append(f"{base_rtsp} ! rtph265depay ! h265parse ! avdec_h265{common_tail}")
-        
+
         # Candidate 2: H264 (always try H264)
         candidates.append(f"{base_rtsp} ! rtph264depay ! h264parse ! avdec_h264{common_tail}")
-        
+
         # Candidate 3: H265 without auth (if no username/password, try H265)
         if not self.username or not self.password:
             candidates.insert(0, f"{base_rtsp} ! rtph265depay ! h265parse ! avdec_h265{common_tail}")
-        
+
         return candidates
+
     def _gst_has(self, element_name: str) -> bool:
         """Check if GStreamer element factory exists."""
         try:
             return self.gstreamer_available and Gst.ElementFactory.find(element_name) is not None
         except Exception:
             return False
+
     def _init_pipeline(self):
         """
         Initialize GStreamer pipeline.
@@ -291,21 +295,23 @@ class GStreamerCapturePipelineMixin:
                         except Exception:
                             pass
                         self.pipeline = None
-                
+
                 # For IP cameras, try multiple pipeline candidates
                 if self.source_type == CaptureDeviceType.IpCamera:
                     candidates = self._build_pipeline_candidates()
                     pipeline_str = None
                     last_error = None
-                    
+
                     for i, candidate_str in enumerate(candidates, 1):
                         try:
                             if i > 1:
                                 self.logger.info(f"Trying pipeline candidate {i}/{len(candidates)}")
-                                self.logger.debug(f"GStreamer pipeline (candidate): {self._mask_credentials_in_pipeline(candidate_str)}")
+                                self.logger.debug(
+                                    f"GStreamer pipeline (candidate): {self._mask_credentials_in_pipeline(candidate_str)}")
                             else:
-                                self.logger.info(f"GStreamer pipeline: {self._mask_credentials_in_pipeline(candidate_str)}")
-                            
+                                self.logger.info(
+                                    f"GStreamer pipeline: {self._mask_credentials_in_pipeline(candidate_str)}")
+
                             # Some failures (like unwritable recording dir) should disable recording
                             # and retry the SAME codec candidate without recording branch, without failing the whole init.
                             attempted_without_recording = False
@@ -368,7 +374,8 @@ class GStreamerCapturePipelineMixin:
                                             pass
                                         # Log once per source set
                                         try:
-                                            src_key = tuple(self.source_names) if self.source_names else str(self.source_address)
+                                            src_key = tuple(self.source_names) if self.source_names else str(
+                                                self.source_address)
                                         except Exception:
                                             src_key = str(self.source_address)
                                         if src_key not in self.__class__._recording_fs_error_logged:
@@ -409,7 +416,7 @@ class GStreamerCapturePipelineMixin:
                                 pass
                             if not self.pipeline:
                                 continue
-                            
+
                             # Set pipeline to playing state - simple approach from api-refactoring
                             # Recording branch must be fully set up before this point
                             ret = self.pipeline.set_state(Gst.State.PLAYING)
@@ -419,10 +426,12 @@ class GStreamerCapturePipelineMixin:
                                 if msg:
                                     if msg.type == Gst.MessageType.ERROR:
                                         err, debug = msg.parse_error()
-                                        self.logger.warning(f"GStreamer pipeline ERROR (candidate {i}): {err}, debug: {debug}")
+                                        self.logger.warning(
+                                            f"GStreamer pipeline ERROR (candidate {i}): {err}, debug: {debug}")
                                     elif msg.type == Gst.MessageType.WARNING:
                                         warn, debug = msg.parse_warning()
-                                        self.logger.warning(f"GStreamer pipeline WARNING (candidate {i}): {warn}, debug: {debug}")
+                                        self.logger.warning(
+                                            f"GStreamer pipeline WARNING (candidate {i}): {warn}, debug: {debug}")
                                 last_error = f"Failed to start pipeline candidate {i}"
                                 continue
                             elif ret == Gst.StateChangeReturn.ASYNC:
@@ -434,24 +443,26 @@ class GStreamerCapturePipelineMixin:
                                     if msg:
                                         if msg.type == Gst.MessageType.ERROR:
                                             err, debug = msg.parse_error()
-                                            self.logger.warning(f"GStreamer pipeline ERROR (candidate {i} async): {err}, debug: {debug}")
+                                            self.logger.warning(
+                                                f"GStreamer pipeline ERROR (candidate {i} async): {err}, debug: {debug}")
                                         elif msg.type == Gst.MessageType.WARNING:
                                             warn, debug = msg.parse_warning()
-                                            self.logger.warning(f"GStreamer pipeline WARNING (candidate {i} async): {warn}, debug: {debug}")
+                                            self.logger.warning(
+                                                f"GStreamer pipeline WARNING (candidate {i} async): {warn}, debug: {debug}")
                                     last_error = f"Failed to start pipeline candidate {i} (async)"
                                     continue
-                            
+
                             # Success! This candidate works
                             pipeline_str = candidate_str
                             if i > 1:
                                 self.logger.info(f"Pipeline candidate {i} succeeded!")
                             break
-                                
+
                         except Exception as e:
                             self.logger.warning(f"Error with pipeline candidate {i}: {e}")
                             last_error = str(e)
                             continue
-                    
+
                     if not pipeline_str:
                         # All candidates failed
                         raise RuntimeError(f"All pipeline candidates failed. Last error: {last_error}")
@@ -459,12 +470,12 @@ class GStreamerCapturePipelineMixin:
                     # For non-IP cameras, use single pipeline
                     pipeline_str = self._build_pipeline()
                     self.logger.info(f"GStreamer pipeline: {self._mask_credentials_in_pipeline(pipeline_str)}")
-                    
+
                     # Parse and create pipeline
                     self.pipeline = Gst.parse_launch(pipeline_str)
                     if not self.pipeline:
                         raise RuntimeError("Failed to create GStreamer pipeline")
-                    
+
                     # Setup bus to handle EOS/ERROR
                     self.bus = self.pipeline.get_bus()
                     if self.bus is not None:
@@ -478,13 +489,13 @@ class GStreamerCapturePipelineMixin:
                     self.appsink = self.pipeline.get_by_name("sink")
                     if not self.appsink:
                         raise RuntimeError("Failed to get appsink element")
-                    
+
                     # Connect callback
                     try:
                         self._appsink_handler_id = self.appsink.connect("new-sample", self._on_new_sample)
                     except Exception:
                         self._appsink_handler_id = None
-                    
+
                     # `enabled` is a master switch. Continuous recording must be explicitly enabled.
                     continuous_enabled = bool(
                         self.recording_params
@@ -502,7 +513,8 @@ class GStreamerCapturePipelineMixin:
                                     peer = src_pad.get_peer()
                                     if not peer:
                                         self.logger.error("recording_queue src pad is not linked after setup!")
-                                        raise RuntimeError("Recording branch setup incomplete: recording_queue not linked")
+                                        raise RuntimeError(
+                                            "Recording branch setup incomplete: recording_queue not linked")
                         except _RecordingFilesystemError as e:
                             # Disable recording and rebuild pipeline without tee/recording_queue
                             self._recording_disabled_due_to_fs = True
@@ -531,7 +543,8 @@ class GStreamerCapturePipelineMixin:
                             self.pipeline = None
 
                             pipeline_str = self._build_pipeline()
-                            self.logger.info(f"GStreamer pipeline (recording disabled): {self._mask_credentials_in_pipeline(pipeline_str)}")
+                            self.logger.info(
+                                f"GStreamer pipeline (recording disabled): {self._mask_credentials_in_pipeline(pipeline_str)}")
                             self.pipeline = Gst.parse_launch(pipeline_str)
                             if not self.pipeline:
                                 raise RuntimeError("Failed to create GStreamer pipeline after disabling recording")
@@ -553,7 +566,7 @@ class GStreamerCapturePipelineMixin:
                             self.logger.error(f"Failed to setup recording branch: {e}", exc_info=True)
                             # Don't continue - recording branch must be set up before pipeline goes to PLAYING
                             raise
-                    
+
                     # Set pipeline to playing state - simple approach from api-refactoring
                     # Recording branch must be fully set up before this point
                     ret = self.pipeline.set_state(Gst.State.PLAYING)
@@ -564,7 +577,7 @@ class GStreamerCapturePipelineMixin:
                         ret = self.pipeline.get_state(Gst.CLOCK_TIME_NONE)
                         if ret[0] == Gst.StateChangeReturn.FAILURE:
                             raise RuntimeError("Failed to start GStreamer pipeline")
-                
+
                 # Query duration for VideoFile
                 if self.source_type == CaptureDeviceType.VideoFile:
                     try:
@@ -593,6 +606,7 @@ class GStreamerCapturePipelineMixin:
             if pipeline_str:
                 self.logger.error(f"Pipeline string was: {self._mask_credentials_in_pipeline(pipeline_str)}")
             raise
+
     def _mask_credentials_in_pipeline(self, pipeline_str: str) -> str:
         """
         Mask credentials (username and password) in pipeline string for logging.
@@ -614,16 +628,18 @@ class GStreamerCapturePipelineMixin:
         except Exception:
             pass
         return pipeline_str
+
     def _on_bus_message(self, bus, message):
         try:
             msg_type = message.type
             if msg_type == Gst.MessageType.EOS:
-                self.logger.info(f"GStreamer EOS received for {self.source_names} (is_inited={self.is_inited}, is_working={self.is_working})")
+                self.logger.info(
+                    f"GStreamer EOS received for {self.source_names} (is_inited={self.is_inited}, is_working={self.is_working})")
                 if self.source_type == CaptureDeviceType.VideoFile and self.loop_play:
                     # Prevent multiple simultaneous reconnection attempts
                     if self._reconnecting:
                         return
-                    
+
                     self._reconnecting = True
                     try:
                         # NOTE: Seek-based looping is disabled by default because with some demux/decoder
@@ -639,7 +655,8 @@ class GStreamerCapturePipelineMixin:
                         allow_seek = False
                         try:
                             import os as _os
-                            allow_seek = _os.environ.get("EVILEYE_GST_LOOP_SEEK", "").strip().lower() in {"1", "true", "yes", "on"}
+                            allow_seek = _os.environ.get("EVILEYE_GST_LOOP_SEEK", "").strip().lower() in {"1", "true",
+                                                                                                          "yes", "on"}
                         except Exception:
                             allow_seek = False
 
@@ -707,10 +724,12 @@ class GStreamerCapturePipelineMixin:
                                     if ret == Gst.StateChangeReturn.SUCCESS and state == Gst.State.PLAYING:
                                         # is_working will be set in _on_new_sample when first frame is received
                                         self.is_inited = True
-                                        self.logger.info(f"Looping video: pipeline restarted successfully (is_inited={self.is_inited}, is_working={self.is_working}, state={state})")
+                                        self.logger.info(
+                                            f"Looping video: pipeline restarted successfully (is_inited={self.is_inited}, is_working={self.is_working}, state={state})")
                                         self._log_resource_stats("after_restart_eos")
                                     else:
-                                        self.logger.warning(f"Loop restart: pipeline created but not PLAYING (state={state}, ret={ret})")
+                                        self.logger.warning(
+                                            f"Loop restart: pipeline created but not PLAYING (state={state}, ret={ret})")
                                         self.is_inited = False
                                         self.is_working = False
                                 else:
@@ -718,7 +737,9 @@ class GStreamerCapturePipelineMixin:
                                     self.is_inited = False
                                     self.is_working = False
                     except Exception as e:
-                        self.logger.error(f"Loop restart failed: {e} (is_inited={self.is_inited}, is_working={self.is_working})", exc_info=True)
+                        self.logger.error(
+                            f"Loop restart failed: {e} (is_inited={self.is_inited}, is_working={self.is_working})",
+                            exc_info=True)
                         # Mark as not initialized on failure
                         self.is_inited = False
                         self.is_working = False
@@ -729,7 +750,8 @@ class GStreamerCapturePipelineMixin:
                     # This prevents false positives when pipeline is still initializing
                     now = time.time()
                     if self._init_time and (now - self._init_time) < CaptureConstants.INIT_GRACE_PERIOD_SECONDS:
-                        self.logger.debug(f"Ignoring early EOS ({(now - self._init_time):.1f}s after init) - pipeline may still be initializing")
+                        self.logger.debug(
+                            f"Ignoring early EOS ({(now - self._init_time):.1f}s after init) - pipeline may still be initializing")
                         return
                     # For IP cameras, EOS means disconnect - mark not working; monitor thread handles reconnect
                     self.logger.warning("GStreamer EOS for IP camera")
@@ -748,27 +770,27 @@ class GStreamerCapturePipelineMixin:
                 err, debug = message.parse_error()
                 err_str = str(err)
                 debug_str = str(debug)
-                
+
                 # Проверяем, является ли это "Internal data stream error" от udpsrc
                 is_udp_stream_error = (
-                    "Internal data stream error" in err_str and 
-                    "udpsrc" in debug_str.lower()
+                        "Internal data stream error" in err_str and
+                        "udpsrc" in debug_str.lower()
                 )
-                
+
                 # Получаем значение ignore_udp_stream_errors из конфига
                 ignore_udp_errors = getattr(self.capture_config, 'ignore_udp_stream_errors', True)
-                
+
                 if is_udp_stream_error and ignore_udp_errors:
                     # Это временная потеря UDP пакетов - не критично
                     now = time.time()
                     self._udp_error_count += 1
-                    
+
                     # Запоминаем время первой ошибки в серии
                     if self._last_udp_error_time is None:
                         self._last_udp_error_time = now
-                    
+
                     time_since_first_error = now - self._last_udp_error_time
-                    
+
                     # Логируем как DEBUG (не ERROR)
                     self.logger.debug(
                         f"UDP stream error (temporary packet loss) for {self.source_names}: "
@@ -776,15 +798,15 @@ class GStreamerCapturePipelineMixin:
                         f"time_since_first={time_since_first_error:.1f}s, "
                         f"debug={debug_str[:100]}"
                     )
-                    
+
                     # Реконнектим только если:
                     # 1. Ошибок подряд >= threshold
                     # 2. Прошло >= delay секунд с первой ошибки
                     should_reconnect = (
-                        self._udp_error_count >= self._udp_error_threshold and
-                        time_since_first_error >= self._udp_error_reconnect_delay
+                            self._udp_error_count >= self._udp_error_threshold and
+                            time_since_first_error >= self._udp_error_reconnect_delay
                     )
-                    
+
                     if should_reconnect:
                         self.logger.warning(
                             f"UDP stream errors threshold reached for {self.source_names} "
@@ -794,7 +816,7 @@ class GStreamerCapturePipelineMixin:
                         # Сбрасываем счетчик перед реконнектом
                         self._udp_error_count = 0
                         self._last_udp_error_time = None
-                        
+
                         if self.source_type == CaptureDeviceType.IpCamera and self.run_flag:
                             timestamp = datetime.datetime.now()
                             self.disconnects.append((self.source_address, timestamp, self.is_working))
@@ -816,7 +838,7 @@ class GStreamerCapturePipelineMixin:
                     # Сбрасываем счетчик UDP ошибок при других ошибках
                     self._udp_error_count = 0
                     self._last_udp_error_time = None
-                    
+
                     # For IP cameras, just mark not working; monitor thread handles reconnect
                     if self.source_type == CaptureDeviceType.IpCamera and self.run_flag:
                         timestamp = datetime.datetime.now()
@@ -831,7 +853,8 @@ class GStreamerCapturePipelineMixin:
             elif msg_type == Gst.MessageType.WARNING:
                 warn, debug = message.parse_warning()
                 # Check for UDP-related warnings - hide them from logs as they are common and not critical
-                if "UDP" in str(warn) or "udp" in str(warn).lower() or "Error sending" in str(warn) or "Error sending UDP packets" in str(warn):
+                if "UDP" in str(warn) or "udp" in str(warn).lower() or "Error sending" in str(
+                        warn) or "Error sending UDP packets" in str(warn):
                     # Don't log UDP errors - they are common when UDP is blocked or not supported
                     # Still store error for internal use if needed
                     if self.source_type == CaptureDeviceType.IpCamera:
@@ -841,6 +864,7 @@ class GStreamerCapturePipelineMixin:
                     self.logger.warning(f"GStreamer pipeline WARNING: {warn}, debug: {debug}")
         except Exception as e:
             self.logger.error(f"Error handling bus message: {e}")
+
     def _seek_to_start(self):
         try:
             with self.pipeline_lock:
@@ -863,16 +887,19 @@ class GStreamerCapturePipelineMixin:
                     self.pipeline.set_state(Gst.State.PLAYING)
         except Exception as e:
             self.logger.error(f"Looping video: exception during seek: {e}")
+
     def _start_main_loop(self):
         """
         Start GLib main loop in separate thread.
         """
+
         def run_loop():
             self.loop = GLib.MainLoop()
             self.loop.run()
-        
+
         self.main_loop_thread = threading.Thread(target=run_loop, daemon=True)
         self.main_loop_thread.start()
+
     def _stop_main_loop(self, *, join_thread: bool = True):
         """
         Stop GLib main loop.
@@ -887,6 +914,7 @@ class GStreamerCapturePipelineMixin:
             except Exception:
                 pass
             self.main_loop_thread.join(timeout=2.0)
+
     def _teardown_pipeline(self, reason: str, *, join_main_loop: bool) -> None:
         """
         Tear down pipeline resources safely.

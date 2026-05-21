@@ -55,9 +55,9 @@ def collect_process_resource_stats(pid: Optional[int] = None) -> Optional[Proces
 
 
 def format_resource_stats_line(
-    context: str,
-    stats: ProcessResourceStats,
-    extra_suffix: str = "",
+        context: str,
+        stats: ProcessResourceStats,
+        extra_suffix: str = "",
 ) -> str:
     """Format a single log line for resource stats."""
     rss = stats.rss_mb

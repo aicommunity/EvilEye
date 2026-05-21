@@ -14,8 +14,10 @@ from ..core.base_class import EvilEyeBase
 # Try to import GStreamer, fallback to OpenCV if not available
 try:
     import gi
+
     gi.require_version('Gst', '1.0')
     from gi.repository import Gst, GLib
+
     GSTREAMER_AVAILABLE = True
 except ImportError:
     GSTREAMER_AVAILABLE = False
@@ -32,6 +34,7 @@ from .gstreamer_capture_recording import (
 from .gstreamer_capture_diagnostics import GStreamerCaptureDiagnosticsMixin
 from .gstreamer_capture_pipeline import GStreamerCapturePipelineMixin
 from .gstreamer_capture_frames import GStreamerCaptureFramesMixin
+
 
 @EvilEyeBase.register("VideoCaptureGStreamer")
 class VideoCaptureGStreamer(
@@ -62,18 +65,18 @@ class VideoCaptureGStreamer(
         # Use RLock for pipeline_lock to allow potential nested operations
         self.pipeline_lock = threading.RLock()
         self.gstreamer_available = GSTREAMER_AVAILABLE
-        
+
         # Initialize GStreamer if available
         if self.gstreamer_available:
             if not Gst.is_initialized():
                 Gst.init(None)
         else:
             self.logger.warning("GStreamer not available, falling back to OpenCV")
-        
+
         self.bus = None
         self._bus_handler_id = None
         self._fps_times = []  # rolling timestamps to estimate FPS as fallback
-        
+
         # Recording-related attributes
         self._recording_elements = None
         self._recording_check_thread = None
@@ -101,13 +104,13 @@ class VideoCaptureGStreamer(
         # Track callback frequency for diagnostics
         self._callback_count = 0
         self._callback_last_log = now
-        
+
         # Error tracking for UDP stream errors
         self._udp_error_count = 0
         self._last_udp_error_time = None
         self._udp_error_reconnect_delay = 5.0  # Задержка перед реконнектом при UDP ошибках
         self._udp_error_threshold = 3  # Количество ошибок подряд перед реконнектом
-        
+
         # Диагностические счетчики (явная инициализация вместо hasattr)
         self._get_call_count = 0
         self._get_call_last_log = now
@@ -158,6 +161,7 @@ class VideoCaptureGStreamer(
         self._notify_queue: Queue | None = Queue(maxsize=3)
         self._notify_stop = threading.Event()
         self._notify_thread: threading.Thread | None = None
+
     def calc_memory_consumption(self):
         """
         Override memory calculation to avoid GStreamer object issues.
@@ -166,10 +170,10 @@ class VideoCaptureGStreamer(
             # Exclude GStreamer objects from memory measurement as they cause issues
             safe_objects = {}
             for key, value in self.__dict__.items():
-                if not (key.startswith('pipeline') or key.startswith('appsink') or 
-                       key.startswith('loop') or key.startswith('main_loop_thread')):
+                if not (key.startswith('pipeline') or key.startswith('appsink') or
+                        key.startswith('loop') or key.startswith('main_loop_thread')):
                     safe_objects[key] = value
-            
+
             from pympler import asizeof
             import datetime
             self.memory_measure_results = asizeof.asizeof(safe_objects)
@@ -178,11 +182,13 @@ class VideoCaptureGStreamer(
             self.logger.warning(f"Could not measure memory consumption: {e}")
             self.memory_measure_results = 0
             self.memory_measure_time = datetime.datetime.now()
+
     def default(self):
         """
         Default implementation for EvilEyeBase.
         """
         pass
+
     def get_params_impl(self):
         """Return capture parameters including GStreamer-specific fields.
 
@@ -199,6 +205,7 @@ class VideoCaptureGStreamer(
         except Exception:
             params['apiPreference'] = 'CAP_GSTREAMER'
         return params
+
     def get_source_info(self) -> dict:
         """
         Get information about the video source.
@@ -210,15 +217,16 @@ class VideoCaptureGStreamer(
             "is_opened": self.is_opened(),
             "desired_fps": self.desired_fps
         }
-        
+
         if self.source_type == CaptureDeviceType.IpCamera:
             info.update({
                 "username": self.username,
                 "has_password": bool(self.password),
                 "pure_url": self.pure_url
             })
-        
+
         return info
+
     def init(self):
         """
         Initialize the GStreamer capture.
@@ -233,7 +241,7 @@ class VideoCaptureGStreamer(
             self.is_inited = False
             self.is_working = False
             return False
-        
+
         # For IP cameras, use simple approach from api-refactoring without timeout
         # get_state(Gst.CLOCK_TIME_NONE) will block until state change completes
         if self.source_type == CaptureDeviceType.IpCamera:
@@ -245,11 +253,11 @@ class VideoCaptureGStreamer(
                 # We'll verify it's actually working by checking for frames in _grab_frames
                 self.is_working = True
                 self.logger.info("GStreamer video capture initialized successfully")
-                
+
                 # Start recording check thread after pipeline is PLAYING
                 if self._recording_check_thread and not self._recording_check_thread.is_alive():
                     self._recording_check_thread.start()
-                
+
                 return True
             except CaptureInitializationError:
                 # Re-raise initialization errors
@@ -271,7 +279,7 @@ class VideoCaptureGStreamer(
             init_done = _thr_init.Event()
             init_ok = False
             init_err = None
-            
+
             def _init_worker():
                 nonlocal init_ok, init_err
                 try:
@@ -283,10 +291,10 @@ class VideoCaptureGStreamer(
                     init_ok = False
                 finally:
                     init_done.set()
-            
+
             init_thread = _thr_init.Thread(target=_init_worker, daemon=True)
             init_thread.start()
-            
+
             # Wait up to 6 seconds for init
             if not init_done.wait(6.0):
                 self.logger.error(f"GStreamer init timeout after 6s for {self.source_names}; pipeline may be stuck")
@@ -306,13 +314,13 @@ class VideoCaptureGStreamer(
                 self.is_inited = False
                 self.is_working = False
                 return False
-            
+
             if init_err is not None:
                 self.logger.error(f"Failed to initialize GStreamer capture: {init_err}")
                 self.is_inited = False
                 self.is_working = False
                 return False
-            
+
             if init_ok:
                 self.is_inited = True
                 self.is_working = True
@@ -322,16 +330,19 @@ class VideoCaptureGStreamer(
                 self.is_inited = False
                 self.is_working = False
                 return False
+
     def init_impl(self, **kwargs):
         """
         Implementation of EvilEyeBase init_impl.
         """
         return self.init()
+
     def is_opened(self) -> bool:
         """
         Check if capture is opened and working.
         """
         return self.is_working and self.pipeline is not None
+
     def release(self) -> None:
         """
         Release resources and stop pipeline.
@@ -391,7 +402,7 @@ class VideoCaptureGStreamer(
                 self._cleanup_recording_branch(pipeline=pipeline)
             except Exception as e:
                 self.logger.debug(f"Error cleaning up recording branch in release: {e}")
-            
+
             # Clear frame_buffer and last_frame to free memory
             with self.frame_lock:
                 # Clear all frames from frame_buffer
@@ -410,7 +421,7 @@ class VideoCaptureGStreamer(
                     self.last_frame = None
                 # Clear FPS tracking list to free memory
                 self._fps_times.clear()
-            
+
             # Stop GLib main loop first to avoid deadlock on set_state
             self._stop_main_loop(join_thread=True)
 
@@ -448,11 +459,13 @@ class VideoCaptureGStreamer(
                     # Call NULL in background to avoid blocking
                     import threading as _thr
                     set_done = _thr.Event()
+
                     def _set_null():
                         try:
                             pipeline.set_state(Gst.State.NULL)
                         finally:
                             set_done.set()
+
                     t = _thr.Thread(target=_set_null, daemon=True)
                     t.start()
                     # Wait up to 1.5s
@@ -470,11 +483,13 @@ class VideoCaptureGStreamer(
 
         except Exception as e:
             self.logger.error(f"Error releasing GStreamer capture: {e}")
+
     def release_impl(self):
         """
         Implementation of EvilEyeBase release_impl.
         """
         self.release()
+
     def reset_impl(self):
         """
         Implementation of EvilEyeBase reset_impl.
@@ -482,11 +497,13 @@ class VideoCaptureGStreamer(
         self.release()
         self.is_inited = False
         self.is_working = False
+
     def set_params_impl(self):
         """
         Implementation of EvilEyeBase set_params_impl.
         """
         super().set_params_impl()
+
     def start(self):
         """
         Override start() to always launch grab/retrieve threads, even if init() failed.

@@ -8,7 +8,7 @@ class PipelineSimple(PipelineBase):
     Simple pipeline implementation with abstract logic method.
     Suitable for pipelines that don't need complex processor management.
     """
-    
+
     def __init__(self):
         super().__init__()
         self._is_running = False
@@ -33,10 +33,10 @@ class PipelineSimple(PipelineBase):
         """
         if not self._is_running:
             return {}
-        
+
         # Call abstract method for actual processing logic
         result = self.process_logic()
-        
+
         # Store result for external access
         if result:
             self.add_result(result)

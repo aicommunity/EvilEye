@@ -49,12 +49,12 @@ class DependencyDefinition:
     """Определение зависимости для DI контейнера."""
 
     def __init__(
-        self,
-        service_type: Type,
-        factory: Optional[Callable[[], Any]] = None,
-        instance: Optional[Any] = None,
-        singleton: bool = True,
-        capabilities: Optional[Dict[str, Any]] = None,
+            self,
+            service_type: Type,
+            factory: Optional[Callable[[], Any]] = None,
+            instance: Optional[Any] = None,
+            singleton: bool = True,
+            capabilities: Optional[Dict[str, Any]] = None,
     ):
         """Инициализация определения зависимости.
 
@@ -82,12 +82,12 @@ class DependencyRegistry:
         self._definitions: Dict[Type, DependencyDefinition] = {}
 
     def register(
-        self,
-        service_type: Type,
-        factory: Optional[Callable[[], Any]] = None,
-        instance: Optional[Any] = None,
-        singleton: bool = True,
-        capabilities: Optional[Dict[str, Any]] = None,
+            self,
+            service_type: Type,
+            factory: Optional[Callable[[], Any]] = None,
+            instance: Optional[Any] = None,
+            singleton: bool = True,
+            capabilities: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Зарегистрировать зависимость.
 
@@ -146,11 +146,11 @@ def get_registry() -> DependencyRegistry:
 
 
 def register_dependency(
-    service_type: Type,
-    factory: Optional[Callable[[], Any]] = None,
-    instance: Optional[Any] = None,
-    singleton: bool = True,
-    capabilities: Optional[Dict[str, Any]] = None,
+        service_type: Type,
+        factory: Optional[Callable[[], Any]] = None,
+        instance: Optional[Any] = None,
+        singleton: bool = True,
+        capabilities: Optional[Dict[str, Any]] = None,
 ) -> None:
     """Зарегистрировать зависимость в глобальном реестре.
 

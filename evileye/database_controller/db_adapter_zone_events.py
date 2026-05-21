@@ -159,8 +159,10 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
     def _prepare_for_updating(self, event):
         fields_for_updating = {'time_left': event.time_left,
                                'box_left': event.box_left,
-                               'frame_path_left': self._get_img_path('frame', 'zone_left', event, time_lost=event.time_left),
-                               'preview_path_left': self._get_img_path('preview', 'zone_left', event, time_lost=event.time_left),
+                               'frame_path_left': self._get_img_path('frame', 'zone_left', event,
+                                                                     time_lost=event.time_left),
+                               'preview_path_left': self._get_img_path('preview', 'zone_left', event,
+                                                                       time_lost=event.time_left),
                                'video_path_left': getattr(event, 'video_path_left', None)}
 
         if event.box_left is not None and event.img_left is not None and hasattr(event.img_left, 'image'):
@@ -183,9 +185,11 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
                              'box_entered': event.box_entered,
                              'box_left': None,
                              'zone_coords': None,
-                             'frame_path_entered': self._get_img_path('frame', 'zone_entered', event, event.time_entered),
+                             'frame_path_entered': self._get_img_path('frame', 'zone_entered', event,
+                                                                      event.time_entered),
                              'frame_path_left': None,
-                             'preview_path_entered': self._get_img_path('preview', 'zone_entered', event, event.time_entered),
+                             'preview_path_entered': self._get_img_path('preview', 'zone_entered', event,
+                                                                        event.time_entered),
                              'preview_path_left': None,
                              'video_path_entered': getattr(event, 'video_path_entered', None),
                              'video_path_left': None,

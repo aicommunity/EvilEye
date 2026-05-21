@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 
 try:
     from pydantic import BaseModel, Field, ValidationError, field_validator
+
     PYDANTIC_AVAILABLE = True
 except ImportError:
     PYDANTIC_AVAILABLE = False
@@ -13,7 +14,6 @@ except ImportError:
     Field = None
     ValidationError = Exception
     field_validator = None
-
 
 if PYDANTIC_AVAILABLE:
     class PipelineConfigModel(BaseModel):
@@ -24,6 +24,7 @@ if PYDANTIC_AVAILABLE:
         detectors: list = Field(default_factory=list, description="Детекторы объектов")
         trackers: list = Field(default_factory=list, description="Трекеры объектов")
 
+
     class DatabaseConfigModel(BaseModel):
         """Модель валидации конфигурации БД."""
 
@@ -31,6 +32,7 @@ if PYDANTIC_AVAILABLE:
         host_name: str = Field(default="localhost", description="Хост БД")
         port: int = Field(default=5432, ge=1, le=65535, description="Порт БД")
         image_dir: str = Field(default="EvilEyeData", description="Директория для изображений")
+
 
     class ControllerConfigModel(BaseModel):
         """Модель валидации конфигурации контроллера."""

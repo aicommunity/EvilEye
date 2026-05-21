@@ -12,8 +12,10 @@ from evileye.video_recorder.path_generator import PathGenerator
 
 try:
     import gi  # type: ignore
+
     gi.require_version('Gst', '1.0')
     from gi.repository import Gst, GLib  # type: ignore
+
     _GST_OK = True
 except Exception:  # pragma: no cover - environment dependent
     Gst = None
@@ -53,7 +55,7 @@ class GStreamerRecorder(VideoRecorderBase):
         # Then re-encode to H264 for MP4 compatibility
         mux_factory = "mp4mux" if self.params.container.lower() == "mp4" else "matroskamux"
         location = self._next_location(_dt.datetime.now(), 0)
-        
+
         # Build RTSP URI with authentication if provided
         rtsp_uri = self.source.source_address
         if self.source.username and self.source.password:
@@ -62,7 +64,7 @@ class GStreamerRecorder(VideoRecorderBase):
                 protocol = rtsp_uri.split("://")[0]
                 rest = rtsp_uri.split("://")[1]
                 rtsp_uri = f"{protocol}://{self.source.username}:{self.source.password}@{rest}"
-        
+
         # Use uridecodebin which handles RTSP authentication and decoding better
         # Note: uridecodebin automatically handles H264/H265 and connects pads correctly
         # uridecodebin doesn't support latency property, so we skip it
@@ -151,13 +153,13 @@ class GStreamerRecorder(VideoRecorderBase):
         self._pipeline = Gst.parse_launch(pipeline_desc)
         if not self._pipeline:
             raise RuntimeError("Failed to create GStreamer recording pipeline")
-        
+
         # Setup bus to handle errors
         self._bus = self._pipeline.get_bus()
         if self._bus:
             self._bus.add_signal_watch()
             self._bus.connect("message", self._on_bus_message)
-        
+
         # Set state to playing
         ret = self._pipeline.set_state(Gst.State.PLAYING)
         if ret == Gst.StateChangeReturn.FAILURE:
@@ -169,7 +171,7 @@ class GStreamerRecorder(VideoRecorderBase):
             if ret[0] == Gst.StateChangeReturn.FAILURE:
                 self.logger.error("Failed to start GStreamer recording pipeline (async)")
                 raise RuntimeError("Failed to start recording pipeline")
-        
+
         self.is_running = True
         self.logger.info(f"Recording pipeline started successfully for {source_meta.source_name}")
 
@@ -181,17 +183,17 @@ class GStreamerRecorder(VideoRecorderBase):
     def stop(self) -> None:
         if not self.is_running:
             return
-        
+
         pipeline = None
         bus = None
-        
+
         try:
             # Get references before cleanup (no need for lock here as stop() should be called from main thread)
             pipeline = self._pipeline
             bus = self._bus
             self._pipeline = None
             self._bus = None
-            
+
             if pipeline is not None:
                 # Stop pipeline and wait for state change with timeout
                 ret = pipeline.set_state(Gst.State.NULL)
@@ -210,7 +212,7 @@ class GStreamerRecorder(VideoRecorderBase):
                             time.sleep(0.1)
                         if state_ret[0] == Gst.StateChangeReturn.ASYNC:
                             self.logger.warning("Pipeline state change still async after timeout")
-                
+
                 # Explicitly flush and release bus resources
                 if bus is not None:
                     try:
@@ -222,14 +224,14 @@ class GStreamerRecorder(VideoRecorderBase):
                     except Exception as e:
                         self.logger.debug(f"Error flushing bus: {e}")
                     # Bus will be released when pipeline is released
-                
+
                 # Release pipeline resources
                 try:
                     # Send EOS event to unblock any waiting threads
                     pipeline.send_event(Gst.Event.new_eos())
                 except Exception as e:
                     self.logger.debug(f"Error sending EOS event: {e}")
-                
+
                 # Pipeline will be released by GStreamer when set to NULL state
                 # But we can explicitly unref it if needed
                 try:
@@ -251,5 +253,3 @@ class GStreamerRecorder(VideoRecorderBase):
     def on_frame(self, frame) -> None:
         """Frames are handled by the GStreamer pipeline; kept for interface compatibility."""
         return None
-
-

@@ -71,8 +71,9 @@ def validate_video_file(file_path: Path, timeout_seconds: float = 2.0) -> bool:
     return FileValidator.is_file_valid(file_path, timeout_seconds)
 
 
-def check_and_delete_small_files(file_path: Path, min_size_kb: int, min_age_seconds: int = RecorderConstants.MIN_FILE_AGE_SECONDS, 
-                                  validate_integrity: bool = True, validation_timeout: float = 2.0) -> bool:
+def check_and_delete_small_files(file_path: Path, min_size_kb: int,
+                                 min_age_seconds: int = RecorderConstants.MIN_FILE_AGE_SECONDS,
+                                 validate_integrity: bool = True, validation_timeout: float = 2.0) -> bool:
     """
     Check if file exists and should be deleted, delete if so.
     
@@ -100,14 +101,12 @@ def check_and_delete_small_files(file_path: Path, min_size_kb: int, min_age_seco
         validate_integrity,
         validation_timeout
     )
-    
+
     if should_delete:
         try:
             file_path.unlink(missing_ok=True)
             return True
         except Exception:
             return False
-    
+
     return False
-
-

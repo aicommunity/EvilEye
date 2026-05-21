@@ -60,4 +60,3 @@ class DropOldestQueue:
     def clear(self) -> None:
         with self._lock:
             self._deque.clear()
-

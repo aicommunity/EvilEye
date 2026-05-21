@@ -19,4 +19,3 @@ class RecorderConstants:
 
     # Thread timeout
     RECORDING_THREAD_JOIN_TIMEOUT: float = 5.0
-

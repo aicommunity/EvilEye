@@ -17,12 +17,12 @@ class SCTrack(STrack):
         self.smooth_feat = None
         self.curr_feat = None
         self.feat_history = feat_history
-        
+
         if feat is not None:
             self.update_features(feat)
         self.features = []
         self.alpha = 0.9
-    
+
     def update(self, new_track: 'SCTrack', frame_id: int):
         """Updates the YOLOv8 instance with new track information and the current frame ID."""
         if new_track.curr_feat is not None:
@@ -38,7 +38,7 @@ class SCTrack(STrack):
         # Normalize
         for f in feat:
             f /= np.linalg.norm(f)
-        
+
         # Update currect feature
         self.curr_feat = feat
         if len(self.curr_feat) == 2:
@@ -49,7 +49,7 @@ class SCTrack(STrack):
             self.smooth_feat = feat
         elif ov is False:
             self.smooth_feat = [
-                self.alpha * self.smooth_feat[i] + (1 - self.alpha) * feat[i] 
+                self.alpha * self.smooth_feat[i] + (1 - self.alpha) * feat[i]
                 for i in range(len(feat))
             ]
         for i in range(len(feat)):
@@ -61,7 +61,7 @@ class SCTrack(STrack):
                 self.features.append(deque([], maxlen=self.feat_history))
 
             self.features[i].append(feat[i])
-    
+
     def predict(self):
         """Predicts the object's future state using the Kalman filter to update its mean and covariance."""
         mean_state = self.mean.copy()

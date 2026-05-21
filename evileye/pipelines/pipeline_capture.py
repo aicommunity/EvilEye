@@ -12,7 +12,7 @@ class PipelineCapture(PipelineSimple):
     Simple pipeline for capturing video from a single file.
     Returns captured frames for processing.
     """
-    
+
     def __init__(self):
         super().__init__()
         self.source_config = {}
@@ -25,7 +25,7 @@ class PipelineCapture(PipelineSimple):
     def set_params_impl(self):
         """Set pipeline parameters from config"""
         super().set_params_impl()
-        
+
         # Get video file path from config
         sources_config = self.params.get('sources', [])
         if sources_config and len(sources_config) > 0:
@@ -40,27 +40,27 @@ class PipelineCapture(PipelineSimple):
         if not video_path or not os.path.exists(video_path):
             self.logger.error(f"Error: Video file not found: {video_path}")
             return False
-        
+
         # Create VideoCaptureOpencv and use source config directly
         self.video_capture = VideoCaptureOpencv()
-        #self.video_capture.params = self.source_config
-        
+        # self.video_capture.params = self.source_config
+
         # Set parameters and initialize video capture
         self.video_capture.set_params(**self.source_config)
         if not self.video_capture.init():
             self.logger.error(f"Error: Failed to initialize video capture: {video_path}")
             return False
-        
+
         # Get video properties
         self.frame_width = int(self.video_capture.capture.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.frame_height = int(self.video_capture.capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self.total_frames = int(self.video_capture.capture.get(cv2.CAP_PROP_FRAME_COUNT))
-        
+
         self.logger.info(f"Video initialized: {video_path}")
         self.logger.info(f"Resolution: {self.frame_width}x{self.frame_height}")
         self.logger.info(f"FPS: {self.video_capture.source_fps}")
         self.logger.info(f"Total frames: {self.total_frames}")
-        
+
         return True
 
     def release_impl(self):
@@ -94,10 +94,10 @@ class PipelineCapture(PipelineSimple):
 
         if not self.video_capture or not self.video_capture.is_opened():
             return results
-        
+
         # Get frames from VideoCaptureOpencv using the get() method
         captured_images = self.video_capture.get()
-        
+
         if not captured_images:
             # No frames available or end of video
             return results
@@ -147,15 +147,18 @@ class PipelineCapture(PipelineSimple):
                 'current_frame': 0,
                 'progress': 0
             }
-        
+
         return {
             'video_path': self.source_config.get('camera', ''),
             'frame_width': self.frame_width,
             'frame_height': self.frame_height,
             'fps': self.video_capture.source_fps,
             'total_frames': self.total_frames,
-            'current_frame': self.video_capture.video_current_frame if hasattr(self.video_capture, 'video_current_frame') else 0,
-            'progress': (self.video_capture.video_current_frame / self.total_frames) if self.total_frames > 0 and hasattr(self.video_capture, 'video_current_frame') else 0
+            'current_frame': self.video_capture.video_current_frame if hasattr(self.video_capture,
+                                                                               'video_current_frame') else 0,
+            'progress': (
+                        self.video_capture.video_current_frame / self.total_frames) if self.total_frames > 0 and hasattr(
+                self.video_capture, 'video_current_frame') else 0
         }
 
     def seek_frame(self, frame_number: int) -> bool:
@@ -170,7 +173,7 @@ class PipelineCapture(PipelineSimple):
         """
         if not self.video_capture or not self.video_capture.is_opened():
             return False
-        
+
         if 0 <= frame_number < self.total_frames:
             self.video_capture.capture.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
             return True
@@ -186,7 +189,7 @@ class PipelineCapture(PipelineSimple):
         if num_sources != 1:
             self.logger.warning("Warning: PipelineCapture supports only 1 source")
             num_sources = 1
-        
+
         default_config = {
             "pipeline": {
                 "pipeline_class": "PipelineCapture"
@@ -200,7 +203,7 @@ class PipelineCapture(PipelineSimple):
                 }
             ]
         }
-        
+
         return default_config
 
     def get_sources(self):

@@ -8,12 +8,16 @@ from pathlib import Path
 from typing import Optional
 
 try:
-    from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView, QComboBox, QPushButton, QDateEdit
+    from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView, \
+        QComboBox, QPushButton, QDateEdit
     from PyQt6.QtCore import Qt, QSize, QTimer, pyqtSlot, QDate
+
     pyqt_version = 6
 except ImportError:
-    from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView, QComboBox, QPushButton, QDateEdit
+    from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView, \
+        QComboBox, QPushButton, QDateEdit
     from PyQt5.QtCore import Qt, QSize, QTimer, pyqtSlot, QDate
+
     pyqt_version = 5
 
 # Add parent directory to path for imports
@@ -28,55 +32,55 @@ import logging
 
 class UnifiedObjectsJournal(UnifiedJournalBase):
     """Унифицированный журнал объектов, работающий с любым источником данных"""
-    
-    def __init__(self, data_source: EventJournalDataSource, base_dir: str = None, 
+
+    def __init__(self, data_source: EventJournalDataSource, base_dir: str = None,
                  parent=None, logger_name: str | None = None, parent_logger: logging.Logger | None = None):
         # Инициализировать базовый класс
         base_name = "evileye.unified_objects_journal"
         full_name = f"{base_name}.{logger_name}" if logger_name else base_name
         logger = parent_logger or logging.getLogger(full_name)
         super().__init__(data_source, base_dir, parent, full_name, logger)
-        
+
         self.setWindowTitle('Objects journal')
         self.resize(1600, 600)
-        
+
         self.page = 0
         self.page_size = 50
         self.filters: dict = {}
-        
+
         # Store last data hash for efficient updates
         self.last_data_hash = None
         self.is_visible = False
-        
+
         # Flag to track if data has been loaded (lazy loading)
         self._data_loaded = False
-        
+
         # Cache for loaded data and scroll loading
         self._loaded_data = []  # Cache of loaded data rows
         self._max_cache_size = 500  # Maximum cache size
         self._min_keep_size = 30  # Minimum records to keep (latest)
         self._is_loading = False  # Flag to prevent duplicate loading
-        
+
         # Closing / scroll / update flags
         self._is_closing = False
-        self._auto_scroll = True      # автопрокрутка, когда пользователь на новых событиях (вверху)
+        self._auto_scroll = True  # автопрокрутка, когда пользователь на новых событиях (вверху)
         self._updating_table = False  # защита от обработки скролла во время массовых обновлений
-        
+
         # Real-time update timer (will be started in showEvent)
         self.update_timer = QTimer()
         self.update_timer.timeout.connect(self._check_for_updates)
         # Don't start timer here - will start when widget is shown
-        
+
         # Image window reference
         self.image_win = None
-        
+
         # Initialize UI components (will be set in _build_ui)
         self.table = None
         self.date_edit = None
         self.btn_all_dates = None
         self.cmb_type = None
         self.cmb_source = None
-        
+
         self._build_ui()
         # Don't call _reload_table() here - will be called on first show
 
@@ -95,7 +99,7 @@ class UnifiedObjectsJournal(UnifiedJournalBase):
         self.date_edit.setDate(QDate.currentDate())
         self.date_edit.dateChanged.connect(self._on_date_changed)
         toolbar.addWidget(self.date_edit)
-        
+
         # Button to show all dates
         self.btn_all_dates = QPushButton("All")
         self.btn_all_dates.clicked.connect(self._on_all_dates_clicked)
@@ -144,7 +148,7 @@ class UnifiedObjectsJournal(UnifiedJournalBase):
 
         # Connect double click signal
         self.table.cellDoubleClicked.connect(self._display_image)
-        
+
         # Connect scroll handler for lazy loading
         self.table.verticalScrollBar().valueChanged.connect(self._on_scroll)
 
@@ -155,7 +159,7 @@ class UnifiedObjectsJournal(UnifiedJournalBase):
         date_str = date.toString('yyyy-MM-dd')
         self.data_source.set_date(date_str)
         self._reload_table()
-    
+
     def _on_all_dates_clicked(self):
         """Handle 'All' button click - disable date filter"""
         self.data_source.set_date(None)
@@ -187,7 +191,7 @@ class UnifiedObjectsJournal(UnifiedJournalBase):
             # Only update if widget is visible and data has been loaded
             if not self.is_visible or not self._data_loaded:
                 return
-            
+
             # Force refresh of cache to get latest data
             try:
                 self.data_source.force_refresh()
@@ -243,12 +247,12 @@ class UnifiedObjectsJournal(UnifiedJournalBase):
                 grouped_events[object_id]['found'] = ev
             elif et == 'lost':
                 grouped_events[object_id]['lost'] = ev
-        
+
         table_rows = []
         for object_id, events in grouped_events.items():
             found_event = events['found']
             lost_event = events['lost']
-            
+
             # Use found event as base, or lost event if no found event
             base_event = found_event or lost_event
             if not base_event:
@@ -256,7 +260,8 @@ class UnifiedObjectsJournal(UnifiedJournalBase):
 
             # Format information string
             object_id_val = base_event.get('object_id', '') or base_event.get('id', '') or ''
-            class_name = base_event.get('class_name') or base_event.get('class_id', '') or base_event.get('class', '') or ''
+            class_name = base_event.get('class_name') or base_event.get('class_id', '') or base_event.get('class',
+                                                                                                          '') or ''
             confidence = base_event.get('confidence') or base_event.get('conf', 0)
             if confidence is None:
                 confidence = 0
@@ -264,7 +269,7 @@ class UnifiedObjectsJournal(UnifiedJournalBase):
                 conf_str = f"{confidence:.2f}"
             else:
                 conf_str = str(confidence) if confidence else '0.00'
-            
+
             information = f"Object Id={object_id_val}; class: {class_name}; conf: {conf_str}"
 
             row_data = {
@@ -293,7 +298,7 @@ class UnifiedObjectsJournal(UnifiedJournalBase):
             scrollbar = self.table.verticalScrollBar() if self.table is not None else None
             anchor_key = None
             restore_position = False
-            
+
             # Если пользователь не в режиме авто-скролла, запомним «якорную» строку (верхнюю видимую)
             if scrollbar is not None and not self._auto_scroll and self.table.rowCount() > 0:
                 try:
@@ -320,24 +325,24 @@ class UnifiedObjectsJournal(UnifiedJournalBase):
             # Reset initial load flag in data source
             if hasattr(self.data_source, '_is_initial_load'):
                 self.data_source._is_initial_load = True
-            
+
             filters = {k: v for k, v in self.filters.items() if v}
             rows = self.data_source.fetch(self.page, self.page_size, filters, [])
-            
+
             # Build table rows
             table_rows = self._build_table_rows(rows)
-            
+
             # Update source filter (temporarily disconnect signal to avoid recursion)
             sources = set()
             for row in table_rows:
                 if row.get('source'):
                     sources.add(row['source'])
-            
+
             # Only update combobox if sources changed
             current_items = set()
             for i in range(1, self.cmb_source.count()):  # Skip 'All' at index 0
                 current_items.add(self.cmb_source.itemText(i))
-            
+
             if sources != current_items:
                 self.cmb_source.blockSignals(True)
                 try:
@@ -353,14 +358,14 @@ class UnifiedObjectsJournal(UnifiedJournalBase):
                         self.cmb_source.setCurrentText('All')
                 finally:
                     self.cmb_source.blockSignals(False)
-            
+
             # Populate table - disable updates for performance
             self.table.setUpdatesEnabled(False)
             self.table.setSortingEnabled(False)
             try:
                 # Set default row height once for all rows
                 self.table.verticalHeader().setDefaultSectionSize(150)
-                
+
                 # Prepare all items first
                 items_to_set = []
                 for r, row_data in enumerate(table_rows):
@@ -369,11 +374,11 @@ class UnifiedObjectsJournal(UnifiedJournalBase):
                     lost_path = row_data.get('lost_preview', '') or ''
                     found_event = row_data.get('found_event')
                     lost_event = row_data.get('lost_event')
-                    
+
                     # Determine default path (prefer found, fallback to lost)
                     default_path = found_path if found_path else lost_path
                     current_mode = 'found' if found_path else 'lost' if lost_path else 'found'
-                    
+
                     preview_item = QTableWidgetItem(default_path)
                     # Store both paths and events in UserRole for switching
                     preview_data = {
@@ -384,7 +389,7 @@ class UnifiedObjectsJournal(UnifiedJournalBase):
                         'current_mode': current_mode
                     }
                     preview_item.setData(Qt.ItemDataRole.UserRole, preview_data)
-                    
+
                     # Store all items for this row
                     row_items = [
                         QTableWidgetItem(str(row_data['time'])),  # Column 0
@@ -395,20 +400,20 @@ class UnifiedObjectsJournal(UnifiedJournalBase):
                         preview_item,  # Column 5 - combined preview with switching
                     ]
                     items_to_set.append(row_items)
-                
+
                 # Set row count and all items at once
                 self.table.setRowCount(len(items_to_set))
                 for r, row_items in enumerate(items_to_set):
                     for c, item in enumerate(row_items):
                         self.table.setItem(r, c, item)
-                
+
                 # Store loaded data in cache
                 self._loaded_data = table_rows
             finally:
                 # Re-enable updates and sorting
                 self.table.setSortingEnabled(True)
                 self.table.setUpdatesEnabled(True)
-                
+
                 # Восстановить положение скролла
                 if scrollbar is not None:
                     try:
@@ -441,16 +446,16 @@ class UnifiedObjectsJournal(UnifiedJournalBase):
             self.logger.error(f"Reload table error: {e}", exc_info=True)
         finally:
             self._updating_table = False
-    
+
     def _on_scroll(self, value):
         """Handle scroll event - load next page when near bottom и обновить флаг авто-прокрутки"""
         if self._is_loading or self._updating_table:
             return
-        
+
         scrollbar = self.table.verticalScrollBar()
         max_value = scrollbar.maximum()
         current_value = scrollbar.value()
-        
+
         # Обновляем флаг auto-scroll: если пользователь близко к верху (новые события) - включаем,
         # если промотал вниз (старые события) - отключаем.
         try:
@@ -462,28 +467,28 @@ class UnifiedObjectsJournal(UnifiedJournalBase):
                 self._auto_scroll = current_value <= threshold
         except Exception:
             pass
-        
+
         # Load when reaching 80% of scroll (пагинация вниз)
         if max_value > 0 and max_value > 100:  # Only if there's significant scrolling
             scroll_percent = current_value / max_value if max_value > 0 else 0
             if scroll_percent > 0.8:
                 self._load_next_page()
-    
+
     def _load_next_page(self):
         """Load next page of data and append to table"""
         if self._is_loading:
             return
-        
+
         self._is_loading = True
         try:
             self.page += 1
             filters = {k: v for k, v in self.filters.items() if v}
             rows = self.data_source.fetch(self.page, self.page_size, filters, [])
-            
+
             if not rows:
                 # No more data to load
                 return
-            
+
             # Filter and group events by object_id
             from collections import defaultdict
             grouped_events = defaultdict(lambda: {'found': None, 'lost': None})
@@ -496,20 +501,21 @@ class UnifiedObjectsJournal(UnifiedJournalBase):
                     grouped_events[object_id]['found'] = ev
                 elif et == 'lost':
                     grouped_events[object_id]['lost'] = ev
-            
+
             # Create table rows from grouped events
             new_table_rows = []
             for object_id, events in grouped_events.items():
                 found_event = events['found']
                 lost_event = events['lost']
-                
+
                 base_event = found_event or lost_event
                 if not base_event:
                     continue
-                
+
                 # Format information string
                 object_id_val = base_event.get('object_id', '') or base_event.get('id', '') or ''
-                class_name = base_event.get('class_name') or base_event.get('class_id', '') or base_event.get('class', '') or ''
+                class_name = base_event.get('class_name') or base_event.get('class_id', '') or base_event.get('class',
+                                                                                                              '') or ''
                 confidence = base_event.get('confidence') or base_event.get('conf', 0)
                 if confidence is None:
                     confidence = 0
@@ -517,9 +523,9 @@ class UnifiedObjectsJournal(UnifiedJournalBase):
                     conf_str = f"{confidence:.2f}"
                 else:
                     conf_str = str(confidence) if confidence else '0.00'
-                
+
                 information = f"Object Id={object_id_val}; class: {class_name}; conf: {conf_str}"
-                
+
                 row_data = {
                     'time': found_event.get('ts') if found_event else (lost_event.get('ts') if lost_event else ''),
                     'event': 'ObjectEvent',
@@ -532,12 +538,12 @@ class UnifiedObjectsJournal(UnifiedJournalBase):
                     'lost_event': lost_event
                 }
                 new_table_rows.append(row_data)
-            
+
             if new_table_rows:
                 # Add to cache
                 old_cache_size = len(self._loaded_data)
                 self._loaded_data.extend(new_table_rows)
-                
+
                 # Manage cache size - keep latest _min_keep_size + new data
                 if len(self._loaded_data) > self._max_cache_size:
                     keep_count = self._min_keep_size + len(new_table_rows)
@@ -550,19 +556,19 @@ class UnifiedObjectsJournal(UnifiedJournalBase):
                         for _ in range(rows_to_remove):
                             if self.table.rowCount() > 0:
                                 self.table.removeRow(0)
-                
+
                 # Append new rows to table
                 self._append_to_table(new_table_rows)
         except Exception as e:
             self.logger.error(f"Load next page error: {e}", exc_info=True)
         finally:
             self._is_loading = False
-    
+
     def _prepend_rows(self, table_rows):
         """Prepend new rows to the top of the table while preserving user scroll position when auto-scroll is off."""
         if not table_rows:
             return
-        
+
         scrollbar = self.table.verticalScrollBar()
         # Запоминаем ключ верхней видимой строки (time, event, information) для точного восстановления позиции
         anchor_key = None
@@ -592,14 +598,15 @@ class UnifiedObjectsJournal(UnifiedJournalBase):
             # table_rows assumed in time-desc order; we need to insert in reverse to keep final order
             for row_data in reversed(table_rows):
                 self.table.insertRow(0)
-                
+
                 found_path = row_data.get('preview', '') or ''
                 lost_path = row_data.get('lost_preview', '') or ''
                 found_event = row_data.get('found_event')
                 lost_event = row_data.get('lost_event')
                 current_mode = 'found' if found_path else 'lost' if lost_path else 'found'
-                default_path = lost_path if (current_mode == 'lost' and lost_path) else (found_path if found_path else lost_path)
-                
+                default_path = lost_path if (current_mode == 'lost' and lost_path) else (
+                    found_path if found_path else lost_path)
+
                 preview_item = QTableWidgetItem(default_path)
                 preview_data = {
                     'found_path': found_path,
@@ -609,24 +616,24 @@ class UnifiedObjectsJournal(UnifiedJournalBase):
                     'current_mode': current_mode
                 }
                 preview_item.setData(Qt.ItemDataRole.UserRole, preview_data)
-                
+
                 self.table.setItem(0, 0, QTableWidgetItem(str(row_data['time'])))
                 self.table.setItem(0, 1, QTableWidgetItem(row_data['event']))
                 self.table.setItem(0, 2, QTableWidgetItem(row_data['information']))
                 self.table.setItem(0, 3, QTableWidgetItem(str(row_data.get('source', ''))))
                 self.table.setItem(0, 4, QTableWidgetItem(str(row_data.get('time_lost', '') or '')))
                 self.table.setItem(0, 5, preview_item)
-            
+
             # Update cache
             self._loaded_data = table_rows + self._loaded_data
-            
+
             # Cache trimming if needed
             if len(self._loaded_data) > self._max_cache_size:
                 self._loaded_data = self._loaded_data[:self._max_cache_size]
                 # Remove extra rows from bottom
                 while self.table.rowCount() > self._max_cache_size:
                     self.table.removeRow(self.table.rowCount() - 1)
-            
+
             # Adjust scroll to preserve view if user is not on auto-scroll
             if scrollbar is not None:
                 if self._auto_scroll:
@@ -648,7 +655,7 @@ class UnifiedObjectsJournal(UnifiedJournalBase):
                             if key == anchor_key:
                                 target_row = r
                                 break
-                        
+
                         if target_row is not None:
                             item = self.table.item(target_row, 0)
                             if item is not None:
@@ -671,26 +678,26 @@ class UnifiedObjectsJournal(UnifiedJournalBase):
         """Append new rows to the end of the table"""
         if not table_rows:
             return
-        
+
         self.table.setUpdatesEnabled(False)
         self.table.setSortingEnabled(False)
         try:
             current_row_count = self.table.rowCount()
             self.table.setRowCount(current_row_count + len(table_rows))
-            
+
             for r, row_data in enumerate(table_rows):
                 row_idx = current_row_count + r
-                
+
                 # Preview column (5) - combined found/lost preview with switching
                 found_path = row_data.get('preview', '') or ''
                 lost_path = row_data.get('lost_preview', '') or ''
                 found_event = row_data.get('found_event')
                 lost_event = row_data.get('lost_event')
-                
+
                 # Determine default path (prefer found, fallback to lost)
                 default_path = found_path if found_path else lost_path
                 current_mode = 'found' if found_path else 'lost' if lost_path else 'found'
-                
+
                 preview_item = QTableWidgetItem(default_path)
                 # Store both paths and events in UserRole for switching
                 preview_data = {
@@ -701,7 +708,7 @@ class UnifiedObjectsJournal(UnifiedJournalBase):
                     'current_mode': current_mode
                 }
                 preview_item.setData(Qt.ItemDataRole.UserRole, preview_data)
-                
+
                 # Set all items for this row
                 self.table.setItem(row_idx, 0, QTableWidgetItem(str(row_data['time'])))
                 self.table.setItem(row_idx, 1, QTableWidgetItem(row_data['event']))
@@ -713,7 +720,6 @@ class UnifiedObjectsJournal(UnifiedJournalBase):
             self.table.setSortingEnabled(True)
             self.table.setUpdatesEnabled(True)
 
-
     @pyqtSlot(int, int)
     def _display_image(self, row, col):
         """Handle double click on image cell"""
@@ -724,25 +730,25 @@ class UnifiedObjectsJournal(UnifiedJournalBase):
             item = self.table.item(row, col)
             if not item:
                 return
-            
+
             # Get preview data from UserRole (contains both found and lost paths)
             preview_data = item.data(Qt.ItemDataRole.UserRole)
             if not preview_data or not isinstance(preview_data, dict):
                 return
-            
+
             # Get found and lost events and paths
             found_path = preview_data.get('found_path', '')
             lost_path = preview_data.get('lost_path', '')
             found_event = preview_data.get('found_event')
             lost_event = preview_data.get('lost_event')
-            
+
             if not found_path and not lost_path:
                 return
-            
+
             # Resolve full paths
             found_full_path = None
             lost_full_path = None
-            
+
             if found_path:
                 found_full_path = self._resolve_image_path(found_path, found_event)
                 if found_full_path and os.path.exists(found_full_path):
@@ -753,7 +759,7 @@ class UnifiedObjectsJournal(UnifiedJournalBase):
                 else:
                     self.logger.warning(f"Found image not found: {found_path}")
                     found_full_path = None
-            
+
             if lost_path:
                 lost_full_path = self._resolve_image_path(lost_path, lost_event)
                 if lost_full_path and os.path.exists(lost_full_path):
@@ -764,17 +770,17 @@ class UnifiedObjectsJournal(UnifiedJournalBase):
                 else:
                     self.logger.warning(f"Lost image not found: {lost_path}")
                     lost_full_path = None
-            
+
             if not found_full_path and not lost_full_path:
                 return
-            
+
             # Pause auto updates
             self.update_timer.stop()
-            
+
             # Close existing window
             if self.image_win:
                 self.image_win.close()
-            
+
             # Create and show image window with tabs
             self.image_win = UnifiedImageWindow(
                 found_image_path=found_full_path or '',
@@ -785,7 +791,7 @@ class UnifiedObjectsJournal(UnifiedJournalBase):
                 base_dir=self.base_dir,
                 data_source=self.data_source
             )
-            
+
             # Add info to title
             if found_event:
                 info_parts = []
@@ -803,11 +809,11 @@ class UnifiedObjectsJournal(UnifiedJournalBase):
                         info_parts.append(f"conf={conf}")
                 if info_parts:
                     self.image_win.setWindowTitle('Media Viewer - ' + ' '.join(info_parts))
-            
+
             self.image_win.show()
             self.image_win.raise_()
             self.image_win.activateWindow()
-            
+
             # Resume timer when window closed
             def _resume():
                 try:
@@ -817,29 +823,30 @@ class UnifiedObjectsJournal(UnifiedJournalBase):
                 except (RuntimeError, AttributeError):
                     # Таймер уже удалён Qt - игнорируем
                     pass
+
             try:
                 self.image_win.destroyed.connect(lambda *_: _resume())
             except Exception:
                 pass
-                
+
         except Exception as e:
             self.logger.error(f"Error displaying image: {e}", exc_info=True)
 
     def showEvent(self, event):
         """Handle show event - load data only on first show"""
         super().showEvent(event)
-        
+
         # Note: isVisible() check removed - it can be False when switching tabs
         # even though the widget should be visible. showEvent is called when widget
         # should be shown, so we proceed with loading data.
-        
+
         self.is_visible = True
-        
+
         # Load data only on first show (lazy loading)
         if not self._data_loaded:
             self._data_loaded = True
             self._reload_table()
-        
+
         # Start update timer if not already active
         if not self.update_timer.isActive():
             self.update_timer.start(500)

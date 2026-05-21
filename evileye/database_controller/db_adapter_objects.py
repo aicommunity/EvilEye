@@ -70,8 +70,8 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
             return
 
         if (
-            not hasattr(self.db_controller, "is_connected")
-            or not self.db_controller.is_connected()
+                not hasattr(self.db_controller, "is_connected")
+                or not self.db_controller.is_connected()
         ):
             self.logger.warning(
                 "Database is not connected in db_adapter_objects._process_queue_item; "

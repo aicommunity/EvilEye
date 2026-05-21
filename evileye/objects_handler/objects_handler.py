@@ -83,11 +83,11 @@ class ObjectsHandler(EvilEyeBase):
         self.snapshot = None
         self.subscribers = []
         # self.objects_file = open('roi_detector_exp_file3.txt', 'w')
-        
+
         # Initialize labeling manager
         base_dir = self.db_params.get('image_dir', 'EvilEyeData') if self.db_params else 'EvilEyeData'
         self.labeling_manager = LabelingManager(base_dir=base_dir, cameras_params=self.cameras_params)
-        
+
         # Initialize object_id counter from existing data
         self._init_object_id_counter()
 
@@ -100,7 +100,7 @@ class ObjectsHandler(EvilEyeBase):
         # Инъекции/настройки от Controller (явная инициализация вместо hasattr)
         self.class_manager = None
         self.class_mapping: dict = {}
-        
+
         # Object pools для переиспользования объектов (оптимизация памяти)
         self._object_result_pool: Optional[ObjectPool[ObjectResult]] = None
         self._object_history_pool: Optional[ObjectPool[ObjectResultHistory]] = None
@@ -130,16 +130,17 @@ class ObjectsHandler(EvilEyeBase):
                 self.logger.debug("LabelingManager preload is unavailable; starting object_id from 1")
                 return
             max_existing_id = preload_fn()
-            
+
             if max_existing_id > 0:
                 # Set counter to next available ID
                 self.object_id_counter = max_existing_id + 1
-                self.logger.info(f"Object ID counter initialized to {self.object_id_counter} (maximum existing: {max_existing_id})")
+                self.logger.info(
+                    f"Object ID counter initialized to {self.object_id_counter} (maximum existing: {max_existing_id})")
             else:
                 # No existing objects, start from 1
                 self.object_id_counter = 1
                 self.logger.info(f"Starting with new counter object_id: {self.object_id_counter}")
-                
+
         except Exception as e:
             self.logger.warning(f"Warning: Object ID counter initialization error: {e}")
             self.logger.info(f"Starting with default counter value: {self.object_id_counter}")
@@ -151,6 +152,7 @@ class ObjectsHandler(EvilEyeBase):
         Args:
             pool_size: Размер пула для каждого типа объектов
         """
+
         def reset_object_result(obj: ObjectResult) -> None:
             """Сбросить состояние ObjectResult перед переиспользованием."""
             obj.object_id = 0
@@ -293,12 +295,13 @@ class ObjectsHandler(EvilEyeBase):
         self._attr_conf_thresholds = classifier.get('confidence_thresholds', {})
         self._attr_time_thresholds = classifier.get('time_thresholds', {})
         self._attr_ema_alpha = classifier.get('ema_alpha', 0.6)
-        
+
         # Always create AttributeManager and set params
-        self.attr_manager = AttributeManager(self._attr_conf_thresholds, self._attr_time_thresholds, self._attr_ema_alpha)
+        self.attr_manager = AttributeManager(self._attr_conf_thresholds, self._attr_time_thresholds,
+                                             self._attr_ema_alpha)
         if attrs:
             self.attr_manager.set_params(attrs)
-        
+
         # Инициализация пулов объектов для оптимизации памяти
         self._use_object_pool = self.params.get('use_object_pool', True)
         if self._use_object_pool:
@@ -319,11 +322,11 @@ class ObjectsHandler(EvilEyeBase):
         self.objs_queue.put(None)
         if self.handler.is_alive():
             self.handler.join()
-        
+
         # Stop labeling manager and save any remaining data
         if self.labeling_manager is not None:
             self.labeling_manager.stop()
-        
+
         self.logger.info('Handler stopped')
 
     def start(self):
@@ -342,7 +345,6 @@ class ObjectsHandler(EvilEyeBase):
         except Exception:
             # Если по каким-то причинам не получилось — не ломаем основной цикл
             pass
-
 
     def get(self, objs_type, cam_id):  # Получение списка объектов в зависимости от указанного типа
         # Блокируем остальные потоки на время получения объектов
@@ -406,7 +408,7 @@ class ObjectsHandler(EvilEyeBase):
             tracking_results = self.objs_queue.get()
             if tracking_results is None:
                 continue
-            
+
             # Handle both tuples [tracks, image] and Frame objects
             if isinstance(tracking_results, (tuple, list)) and len(tracking_results) == 2:
                 tracks, image = tracking_results
@@ -454,7 +456,7 @@ class ObjectsHandler(EvilEyeBase):
 
         for subscriber in self.subscribers:
             subscriber.update()
-    
+
     def _timestamp_to_datetime(self, timestamp: Union[float, datetime.datetime, None]) -> Optional[datetime.datetime]:
         """
         Convert timestamp (float or datetime) to datetime object.
@@ -472,22 +474,22 @@ class ObjectsHandler(EvilEyeBase):
         if isinstance(timestamp, (int, float)):
             return datetime.datetime.fromtimestamp(timestamp)
         return None
-    
+
     def _is_primary_object(self, obj):
         """Check if object is primary based on class name or ID"""
         if not self.attr_manager:
             return False
-            
+
         # Get primary classes from attr_manager config
         primary_by_name = getattr(self.attr_manager, '_primary_by_name', [])
         primary_by_id = getattr(self.attr_manager, '_primary_by_id', [])
-        
+
         # Use ClassManager if available
         if self.class_manager:
             # Convert primary class names to IDs using ClassManager
             primary_ids_from_names = self.class_manager.get_primary_classes_by_name(primary_by_name)
             primary_ids_from_ids = self.class_manager.get_primary_classes_by_id(primary_by_id)
-            
+
             # Check if object's class_id is in any primary list
             all_primary_ids = primary_ids_from_names + primary_ids_from_ids
             return obj.class_id in all_primary_ids
@@ -505,20 +507,20 @@ class ObjectsHandler(EvilEyeBase):
                     class_name = class_names[obj.class_id]
                     if class_name in primary_by_name:
                         return True
-            
+
             # Check by class ID
             if obj.class_id in primary_by_id:
                 return True
         return False
-    
+
     def _create_default_attributes(self, obj):
         """Create default attributes for primary objects"""
         if not self.attr_manager:
             return
-            
+
         # Get configured attributes from attr_manager
         attrs = getattr(self.attr_manager, '_configured_attrs', ['hard_hat', 'no_hard_hat'])
-        
+
         # Create default attributes with 'none' state
         default_attributes = {}
         for attr_name in attrs:
@@ -534,23 +536,23 @@ class ObjectsHandler(EvilEyeBase):
                 'last_seen_ts': None,
                 'ema_alpha': 0.7
             }
-        
+
         obj.attributes = default_attributes
 
     def _ensure_all_attributes_present(self, obj):
         """Ensure all configured attributes are present in the object"""
         if not self.attr_manager:
             return
-            
+
         # Get configured attributes from attr_manager
         attrs = getattr(self.attr_manager, '_configured_attrs', [])
         if not attrs:
             return
-        
+
         # Initialize obj.attributes if it doesn't exist
         if not hasattr(obj, 'attributes') or obj.attributes is None:
             obj.attributes = {}
-        
+
         # Add missing attributes with 'none' state
         for attr_name in attrs:
             if attr_name not in obj.attributes:
@@ -585,7 +587,7 @@ class ObjectsHandler(EvilEyeBase):
                 attr_results_source = image.attr_results
             elif hasattr(tracking_results, 'attr_results') and tracking_results.attr_results:
                 attr_results_source = tracking_results.attr_results
-                
+
             if attr_results_source:
                 for track_id, attr_results in attr_results_source.items():
                     if self.attr_manager:
@@ -599,7 +601,7 @@ class ObjectsHandler(EvilEyeBase):
                 if self.attr_manager:
                     attr_states = self.attr_manager.get_states(active_obj.track.track_id)
                     active_obj.attributes = {name: state.__dict__ for name, state in attr_states.items()}
-                    
+
                 # Ensure all attributes are present for primary objects
                 if self._is_primary_object(active_obj):
                     self._ensure_all_attributes_present(active_obj)
@@ -621,7 +623,8 @@ class ObjectsHandler(EvilEyeBase):
 
         # Ensure tracking_results has tracks attribute
         if not hasattr(tracking_results, 'tracks') or tracking_results.tracks is None:
-            self.logger.warning(f"tracking_results has no tracks attribute, skipping frame {image.frame_id if image else 'unknown'}")
+            self.logger.warning(
+                f"tracking_results has no tracks attribute, skipping frame {image.frame_id if image else 'unknown'}")
             return
         try:
             source_id = getattr(tracking_results, "source_id", None)
@@ -670,7 +673,8 @@ class ObjectsHandler(EvilEyeBase):
                     old_hist = track_object.history[0]
                     del track_object.history[0]
                     # Возвращаем старый элемент истории в пул
-                    if self._use_object_pool and self._object_history_pool and isinstance(old_hist, ObjectResultHistory):
+                    if self._use_object_pool and self._object_history_pool and isinstance(old_hist,
+                                                                                          ObjectResultHistory):
                         self._object_history_pool.release(old_hist)
                 track_object.last_update = True
                 track_object.lost_frames = 0
@@ -702,7 +706,7 @@ class ObjectsHandler(EvilEyeBase):
                 if self.db_adapter is not None:
                     self.db_adapter.insert(obj)
                 end_insert_it = timer()
-                
+
                 # Save images/labeling for found object (throttled to avoid IO-induced backlog)
                 allow_save = True
                 try:
@@ -719,28 +723,28 @@ class ObjectsHandler(EvilEyeBase):
 
                 if allow_save and self.save_object_images:
                     self._save_object_images(obj, 'detected')
-                
+
                 if allow_save and self.save_labeling_data:
                     try:
                         # Get full image path and extract filename with camera name
                         full_img_path = self._get_img_path('frame', 'detected', obj)
                         image_filename = os.path.basename(full_img_path)
                         preview_filename = os.path.basename(self._get_img_path('preview', 'detected', obj))
-                        
+
                         # Get image dimensions from the image object
                         image_width = obj.last_image.width if hasattr(obj.last_image, 'width') else 1920
                         image_height = obj.last_image.height if hasattr(obj.last_image, 'height') else 1080
-                        
+
                         object_data = self.labeling_manager.create_found_object_data(
                             obj, image_width, image_height, image_filename, preview_filename
                         )
                         self.labeling_manager.add_object_found(object_data)
                     except Exception as e:
                         self.logger.error(f"Labeling data saving error for found object: {e}")
-                
+
                 self.active_objs.objects.append(obj)
-               # print(f"active_objs len={len(self.active_objs.objects)} size={asizeof.asizeof(self.active_objs.objects)/(1024.0*1024.0)}")
-               # print(f"lost_objs len={len(self.lost_objs.objects)} size={asizeof.asizeof(self.lost_objs.objects)/(1024.0*1024.0)}")
+            # print(f"active_objs len={len(self.active_objs.objects)} size={asizeof.asizeof(self.active_objs.objects)/(1024.0*1024.0)}")
+            # print(f"lost_objs len={len(self.lost_objs.objects)} size={asizeof.asizeof(self.lost_objs.objects)/(1024.0*1024.0)}")
 
         # Обновление атрибутов для активных объектов (если включено)
         if self.attr_manager is not None and tracking_results is not None:
@@ -751,7 +755,7 @@ class ObjectsHandler(EvilEyeBase):
             except Exception:
                 dt_ms = 33
             now_ts = time.time()
-            
+
             # Process attribute results from AttributeClassifier
             if hasattr(tracking_results, 'attr_results') and tracking_results.attr_results:
                 for track_id, attr_results in tracking_results.attr_results.items():
@@ -759,16 +763,16 @@ class ObjectsHandler(EvilEyeBase):
                         detected_now = attr_info.get('detected_now', False)
                         confidence = attr_info.get('confidence', 0.0)
                         self.attr_manager.update(track_id, attr_name, detected_now, confidence, now_ts, dt_ms)
-            
+
             # Сохранить снимок состояний атрибутов в объекты
             for obj in self.active_objs.objects:
                 if obj.source_id != tracking_results.source_id:
                     continue
-                    
+
                 # Сохранить снимок состояний в объект
                 attr_states = self.attr_manager.get_states(obj.track.track_id)
                 obj.attributes = {k: vars(v) for k, v in attr_states.items()}
-                
+
                 # Убедиться, что все настроенные атрибуты присутствуют в объекте
                 if self._is_primary_object(obj):
                     self._ensure_all_attributes_present(obj)
@@ -783,7 +787,7 @@ class ObjectsHandler(EvilEyeBase):
                     if self.db_adapter is not None:
                         self.db_adapter.update(active_obj)
                     end_update_it = timer()
-                    
+
                     # Save images/labeling for lost object (throttled to avoid IO-induced backlog)
                     allow_save = True
                     try:
@@ -800,25 +804,27 @@ class ObjectsHandler(EvilEyeBase):
 
                     if allow_save and self.save_object_images:
                         self._save_object_images(active_obj, 'lost')
-                    
+
                     if allow_save and self.save_labeling_data:
                         try:
                             # Get full image path and extract filename with camera name
                             full_img_path = self._get_img_path('frame', 'lost', active_obj)
                             image_filename = os.path.basename(full_img_path)
                             preview_filename = os.path.basename(self._get_img_path('preview', 'lost', active_obj))
-                            
+
                             # Get image dimensions from the image object
-                            image_width = active_obj.last_image.width if hasattr(active_obj.last_image, 'width') else 1920
-                            image_height = active_obj.last_image.height if hasattr(active_obj.last_image, 'height') else 1080
-                            
+                            image_width = active_obj.last_image.width if hasattr(active_obj.last_image,
+                                                                                 'width') else 1920
+                            image_height = active_obj.last_image.height if hasattr(active_obj.last_image,
+                                                                                   'height') else 1080
+
                             object_data = self.labeling_manager.create_lost_object_data(
                                 active_obj, image_width, image_height, image_filename, preview_filename
                             )
                             self.labeling_manager.add_object_lost(object_data)
                         except Exception as e:
                             self.logger.error(f"Labeling data saving error for lost object: {e}")
-                    
+
                     # Clear last_image to free memory when object is moved to lost
                     # The image has already been saved, so we don't need to keep it in memory
                     active_obj.last_image = None
@@ -831,7 +837,8 @@ class ObjectsHandler(EvilEyeBase):
 
         start_index_for_remove = None
         for i in reversed(range(len(self.lost_objs.objects))):
-            if (datetime.datetime.now() - self.lost_objs.objects[i].time_lost).total_seconds() > self.lost_store_time_secs:
+            if (datetime.datetime.now() - self.lost_objs.objects[
+                i].time_lost).total_seconds() > self.lost_store_time_secs:
                 start_index_for_remove = i
                 break
         if start_index_for_remove is not None:
@@ -925,13 +932,13 @@ class ObjectsHandler(EvilEyeBase):
         try:
             if obj.last_image is None:
                 return
-                
+
             # Save preview image
             self._save_image(obj.last_image, obj.track.bounding_box, 'preview', event_type, obj)
-            
+
             # Save frame image
             self._save_image(obj.last_image, obj.track.bounding_box, 'frame', event_type, obj)
-            
+
         except Exception as e:
             self.logger.error(f"Object images saving error: {e}")
 
@@ -951,21 +958,21 @@ class ObjectsHandler(EvilEyeBase):
 
             # Get image path
             img_path = self._get_img_path(image_type, obj_event_type, obj)
-            
+
             # Resolve full path
             if 'image_dir' in self.db_params and self.db_params['image_dir']:
                 save_dir = self.db_params['image_dir']
             else:
                 save_dir = 'EvilEyeData'  # Default directory
-                
+
             if not os.path.isabs(save_dir):
                 save_dir = os.path.join(os.getcwd(), save_dir)
-            
+
             full_img_path = os.path.join(save_dir, img_path)
-            
+
             # Create directory if it doesn't exist
             os.makedirs(os.path.dirname(full_img_path), exist_ok=True)
-            
+
             # Save clean images without any debug overlays
             if image_type == 'preview':
                 # Create clean preview without bounding box
@@ -979,7 +986,7 @@ class ObjectsHandler(EvilEyeBase):
             else:
                 # Save original frame without any graphical info
                 saved = cv2.imwrite(full_img_path, image.image)
-            
+
             if not saved:
                 self.logger.error(f'ERROR: Failed to save image file {full_img_path}')
 
@@ -1034,7 +1041,7 @@ class ObjectsHandler(EvilEyeBase):
                 id_idx = camera['source_ids'].index(obj.source_id)
                 source_name = camera['source_names'][id_idx]
                 break
-        
+
         if obj_event_type == 'detected':
             dt = self._timestamp_to_datetime(obj.time_stamp)
             if dt is None:

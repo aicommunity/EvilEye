@@ -1,5 +1,6 @@
 import time
 from ....core.logger import get_module_logger
+
 try:
     from PyQt6 import QtGui
     from PyQt6.QtWidgets import (
@@ -11,6 +12,7 @@ try:
     from PyQt6.QtGui import QPixmap
     from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QThread
     from PyQt6.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
+
     pyqt_version = 6
 except ImportError:
     from PyQt5 import QtGui
@@ -23,6 +25,7 @@ except ImportError:
     from PyQt5.QtGui import QPixmap
     from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt, QThread
     from PyQt5.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
+
     pyqt_version = 5
 
 from ....utils import utils

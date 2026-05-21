@@ -7,10 +7,10 @@ from typing import Any, Dict, Optional
 
 
 def apply_ultralytics_optimizations(
-    model: Any,
-    *,
-    half: bool = True,
-    logger: Optional[logging.Logger] = None,
+        model: Any,
+        *,
+        half: bool = True,
+        logger: Optional[logging.Logger] = None,
 ) -> None:
     """
     Apply fuse() and optional half() to a model already constructed via YOLO()/RTDETR().

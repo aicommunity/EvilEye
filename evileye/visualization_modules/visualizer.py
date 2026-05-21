@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 else:
     # Для runtime используем строковую аннотацию или Any
     from typing import Any
+
     ObjectResultList = Any  # Fallback для runtime
 
 
@@ -38,7 +39,8 @@ class Visualizer(EvilEyeBase):
         self.num_width = 1
         self.show_debug_info = False
         self.processing_frames: dict[int, list[CaptureImage]] = {}
-        self.objects: list["ObjectResultList"] = []  # Используем строковую аннотацию для избежания циклических зависимостей
+        self.objects: list[
+            "ObjectResultList"] = []  # Используем строковую аннотацию для избежания циклических зависимостей
         self.last_displayed_frame = dict()
         self.visual_buffer_num_frames = 50
         self.text_config = {}  # Text configuration for rendering
@@ -63,7 +65,6 @@ class Visualizer(EvilEyeBase):
         self._diag_skip_invalid_source = 0
         self._diag_sent_to_thread = 0
 
-
     def default(self):
         pass
 
@@ -83,15 +84,15 @@ class Visualizer(EvilEyeBase):
             self.visual_threads = []
             self.visual_threads_by_source = {}
             self.source_index_map = {}
-        
+
         # Check if source_ids are set
         if not self.source_ids:
             self.logger.warning("Cannot initialize visualizer: source_ids is empty")
             return False
-        
+
         self.logger.info(f"Initializing visualizer with {len(self.source_ids)} source(s): {self.source_ids}")
         self.source_index_map = {source_id: idx for idx, source_id in enumerate(self.source_ids)}
-        
+
         for i in range(len(self.source_ids)):
             logger_name = f"src{self.source_ids[i]}"
             try:
@@ -99,17 +100,17 @@ class Visualizer(EvilEyeBase):
                 fps_value = self.fps[i] if self.fps and i < len(self.fps) else 30
                 # Get font_params for this source (with fallback)
                 font_params_value = self.font_params[i] if self.font_params and i < len(self.font_params) else None
-                
+
                 self.visual_threads.append(VideoThread(
-                    self.source_ids[i], 
+                    self.source_ids[i],
                     fps_value,
-                    self.num_height, 
-                    self.num_width, 
+                    self.num_height,
+                    self.num_width,
                     self.show_debug_info,
                     font_params_value,
-                    text_config=self.text_config, 
+                    text_config=self.text_config,
                     class_mapping=self.class_mapping,
-                    logger_name=logger_name, 
+                    logger_name=logger_name,
                     parent_logger=self.logger
                 ))
                 # give thread access to visualizer for active events
@@ -120,7 +121,8 @@ class Visualizer(EvilEyeBase):
                 self.visual_threads[-1].update_image_signal.connect(
                     self.pyqt_slots['update_image'])  # Сигнал из потока для обновления label на новое изображение
                 self.visual_threads[-1].update_original_cv_image_signal.connect(
-                    self.pyqt_slots['update_original_cv_image'])  # Сигнал с оригинальным OpenCV изображением для ROI Editor
+                    self.pyqt_slots[
+                        'update_original_cv_image'])  # Сигнал с оригинальным OpenCV изображением для ROI Editor
                 self.visual_threads[-1].clean_image_available_signal.connect(
                     self.pyqt_slots['clean_image_available'])  # Сигнал с чистым OpenCV изображением для ROI Editor
                 self.visual_threads[-1].add_zone_signal.connect(self.pyqt_slots['open_zone_win'])
@@ -132,7 +134,7 @@ class Visualizer(EvilEyeBase):
             except Exception as e:
                 self.logger.error(f"Error creating video thread for source {self.source_ids[i]}: {e}", exc_info=True)
                 return False
-        
+
         self.logger.info(f"Visualizer initialized with {len(self.visual_threads)} video thread(s)")
         return True
 
@@ -207,10 +209,10 @@ class Visualizer(EvilEyeBase):
         self._source_id_name_table = dict(value or {})
 
     def set_source_metadata(
-        self,
-        id_name_table: dict[int, str] | None = None,
-        video_duration: dict[int, float] | None = None,
-        class_mapping: dict[str, int] | None = None,
+            self,
+            id_name_table: dict[int, str] | None = None,
+            video_duration: dict[int, float] | None = None,
+            class_mapping: dict[str, int] | None = None,
     ) -> None:
         """Обновить метаданные источников и маппинг классов.
 
@@ -250,7 +252,8 @@ class Visualizer(EvilEyeBase):
         for thr in self.visual_threads:
             thr.set_signal_params(enabled, color_rgb)
 
-    def set_event_state(self, source_id: int, object_id: int, event_name: str, is_on: bool, bbox_px: list | None = None):
+    def set_event_state(self, source_id: int, object_id: int, event_name: str, is_on: bool,
+                        bbox_px: list | None = None):
         if source_id not in self.active_events:
             self.active_events[source_id] = set()
         key = (source_id, object_id, event_name)
@@ -259,7 +262,7 @@ class Visualizer(EvilEyeBase):
         else:
             if key in self.active_events[source_id]:
                 self.active_events[source_id].remove(key)
-        
+
         # Do not directly touch threads here; they will read on next frame
 
     def get_active_events(self, source_id: int) -> set[tuple[int, int, str]]:
@@ -315,7 +318,7 @@ class Visualizer(EvilEyeBase):
         debug_info['memory_consumption_detail'] = self.memory_consumption_detail
 
     def update(self, processing_frames: list[CaptureImage], source_last_processed_frame_id: dict,
-               objects: list["ObjectResultList"], dropped_frames: list,  debug_info: dict):
+               objects: list["ObjectResultList"], dropped_frames: list, debug_info: dict):
         start_update = timer()
         perf_diag_enabled = self._perf_diag_env
         remove_processed_idx = dict()
@@ -345,7 +348,7 @@ class Visualizer(EvilEyeBase):
             if source_id not in remove_processed_idx.keys():
                 remove_processed_idx[source_id] = []
 
-            #for i in range(len(proc_frames)):
+            # for i in range(len(proc_frames)):
             for i in reversed(range(len(proc_frames))):
                 start_proc_frame = timer()
                 frame = proc_frames[i]
@@ -359,13 +362,13 @@ class Visualizer(EvilEyeBase):
                 if source_id in processed_sources:
                     continue
 
-    #            for data in dropped_frames:
-    #                if source_id == data[0] and frame.frame_id == data[1]:
-    #                    remove_processed_idx[source_id].append(i)
-    #                    break
+                #            for data in dropped_frames:
+                #                if source_id == data[0] and frame.frame_id == data[1]:
+                #                    remove_processed_idx[source_id].append(i)
+                #                    break
 
-    #            if frame.frame_id > source_last_processed_frame_id[source_id]:
-    #                continue
+                #            if frame.frame_id > source_last_processed_frame_id[source_id]:
+                #                continue
 
                 start_find_objects = timer()
                 if source_id is None or source_id not in self.source_ids:
@@ -377,7 +380,7 @@ class Visualizer(EvilEyeBase):
                     if perf_diag_enabled:
                         self._diag_skip_invalid_source += 1
                     continue
-                #objs = objects[source_index].objects
+                # objs = objects[source_index].objects
                 objs = objects[source_index].find_objects_by_frame_id(frame.frame_id, use_history=False)
                 if len(objs) == 0 and self.track_frame_match_window > 0:
                     try:
@@ -389,7 +392,7 @@ class Visualizer(EvilEyeBase):
                     except Exception:
                         objs = []
 
-                #self.logger.debug(f"source={source_id} num_objs={len(objs)}")
+                # self.logger.debug(f"source={source_id} num_objs={len(objs)}")
                 # self.logger.debug(f"Found {len(objs)} objects for visualization for source_id={frame.source_id} frame_id={frame.frame_id}")
 
                 if len(objs) == 0 and objects[source_index].get_num_objects() > 0:
@@ -428,8 +431,8 @@ class Visualizer(EvilEyeBase):
             end_update = timer()
             # self.logger.debug(f"Time: update=[{end_update-start_update}] secs")
 
-            #self.logger.debug(f"{datetime.now()}: Visual Queue size: {len(self.processing_frames)}. Processed sources: {processed_sources}")
-        
+            # self.logger.debug(f"{datetime.now()}: Visual Queue size: {len(self.processing_frames)}. Processed sources: {processed_sources}")
+
         # Cleanup: remove frames for sources that are no longer active
         active_source_ids = set(self.source_ids)
         sources_to_remove = []

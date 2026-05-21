@@ -17,13 +17,13 @@ class EventRecordingService:
         self.logger = get_module_logger("event_recording_service")
 
     def initialize_event_recording(
-        self,
-        host: Any,
-        params: Dict[str, Any],
-        pipeline: IPipeline,
-        *,
-        events_processor: Optional[Any] = None,
-        on_event_recording: Optional[Callable] = None,
+            self,
+            host: Any,
+            params: Dict[str, Any],
+            pipeline: IPipeline,
+            *,
+            events_processor: Optional[Any] = None,
+            on_event_recording: Optional[Callable] = None,
     ) -> None:
         """Populate host.event_buffers, host.event_recorders, host.recording_params."""
         try:
@@ -60,8 +60,8 @@ class EventRecordingService:
                 pass
 
             if not (
-                host.recording_params.enabled
-                and host.recording_params.event_recording_enabled
+                    host.recording_params.enabled
+                    and host.recording_params.event_recording_enabled
             ):
                 self.logger.info("Event-based recording is disabled")
                 return
@@ -72,9 +72,9 @@ class EventRecordingService:
                 return
 
             max_buffer_duration = (
-                host.recording_params.event_pre_seconds
-                + host.recording_params.event_post_seconds
-                + 5.0
+                    host.recording_params.event_pre_seconds
+                    + host.recording_params.event_post_seconds
+                    + 5.0
             )
 
             for source in sources:

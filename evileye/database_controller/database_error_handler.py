@@ -21,11 +21,11 @@ class DatabaseErrorHandler:
         self.logger = logger or get_module_logger("database_error_handler")
 
     def handle_query_error(
-        self,
-        error: Exception,
-        query_string: Optional[str] = None,
-        retry_callback: Optional[Callable[[], Any]] = None,
-        max_retries: int = 1,
+            self,
+            error: Exception,
+            query_string: Optional[str] = None,
+            retry_callback: Optional[Callable[[], Any]] = None,
+            max_retries: int = 1,
     ) -> tuple[bool, Optional[Exception]]:
         """Обработать ошибку запроса к БД.
 
@@ -108,13 +108,13 @@ class DatabaseErrorHandler:
         return any(indicator.lower() in error_lower for indicator in missing_column_indicators)
 
     def execute_with_retry(
-        self,
-        func: Callable[[], Any],
-        max_retries: int = 3,
-        initial_delay: float = 0.1,
-        max_delay: float = 2.0,
-        exponential_base: float = 2.0,
-        retryable_errors: Optional[tuple[type[Exception], ...]] = None,
+            self,
+            func: Callable[[], Any],
+            max_retries: int = 3,
+            initial_delay: float = 0.1,
+            max_delay: float = 2.0,
+            exponential_base: float = 2.0,
+            retryable_errors: Optional[tuple[type[Exception], ...]] = None,
     ) -> tuple[Optional[Any], Optional[Exception]]:
         """Выполнить функцию с повторными попытками при ошибках."""
         if retryable_errors is None:

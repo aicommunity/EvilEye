@@ -23,9 +23,9 @@ class ObjectsHandlerService:
         self._objects_handler: Optional[IObjectHandler] = None
 
     def create_objects_handler(
-        self,
-        db_controller: Optional[Any] = None,
-        db_adapter: Optional[Any] = None,
+            self,
+            db_controller: Optional[Any] = None,
+            db_adapter: Optional[Any] = None,
     ) -> IObjectHandler:
         """Создать экземпляр ObjectsHandler.
 
@@ -44,10 +44,10 @@ class ObjectsHandlerService:
         return self._objects_handler
 
     def initialize_objects_handler(
-        self,
-        objects_handler: IObjectHandler,
-        params: Dict[str, Any],
-        pipeline: Optional[IPipeline] = None,
+            self,
+            objects_handler: IObjectHandler,
+            params: Dict[str, Any],
+            pipeline: Optional[IPipeline] = None,
     ) -> IObjectHandler:
         """Инициализировать ObjectsHandler с параметрами.
 

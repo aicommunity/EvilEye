@@ -44,5 +44,3 @@ class DatabaseAdapterSystemEvents(DatabaseAdapterBase):
             'job_id': self.db_controller.get_job_id()
         }
         return list(fields_for_saving.keys()), list(fields_for_saving.values())
-
-

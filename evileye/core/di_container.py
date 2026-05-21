@@ -141,9 +141,9 @@ class DIContainer:
             True если зарегистрирован
         """
         return (
-            service_type in self._services or
-            service_type in self._factories or
-            service_type in self._singletons
+                service_type in self._services or
+                service_type in self._factories or
+                service_type in self._singletons
         )
 
     def clear(self) -> None:

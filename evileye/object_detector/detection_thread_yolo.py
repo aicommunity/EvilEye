@@ -11,16 +11,16 @@ class DetectionThreadYolo(DetectionThreadBase):
     """Detection thread for YOLO models."""
 
     def __init__(
-        self,
-        model_name: str,
-        stride: int,
-        classes: list,
-        source_ids: list,
-        roi: list,
-        inf_params: dict,
-        queue_out: Queue,
-        logger_name: Optional[str] = None,
-        parent_logger: Optional[logging.Logger] = None,
+            self,
+            model_name: str,
+            stride: int,
+            classes: list,
+            source_ids: list,
+            roi: list,
+            inf_params: dict,
+            queue_out: Queue,
+            logger_name: Optional[str] = None,
+            parent_logger: Optional[logging.Logger] = None,
     ):
         base_name = "evileye.detection_thread_yolo"
         full_name = f"{base_name}.{logger_name}" if logger_name else base_name
@@ -43,12 +43,12 @@ class DetectionThreadYolo(DetectionThreadBase):
                 model_path = self.model_name
                 model_exists = os.path.exists(model_path) if model_path else False
                 model_size = os.path.getsize(model_path) if model_exists else 0
-                
+
                 # This can run in multiple threads; keep it out of INFO logs by default.
                 self.logger.debug(f"Loading YOLO model: {model_path}")
                 self.logger.debug(f"Model file exists: {model_exists}, size: {model_size} bytes, "
-                                f"platform: {platform.system()} {platform.release()}")
-                
+                                  f"platform: {platform.system()} {platform.release()}")
+
                 # Attempt to load model
                 self.model = YOLO(self.model_name)
                 from .ultralytics_postprocess import apply_ultralytics_optimizations
@@ -58,13 +58,13 @@ class DetectionThreadYolo(DetectionThreadBase):
                     half=bool(self.inf_params.get("half", True)),
                     logger=self.logger,
                 )
-                
+
                 # Keep model load details out of INFO logs by default.
                 self.logger.debug(f"Model loaded successfully. Model names: {self.model.names}")
-                
+
                 # Update model_class_mapping from model
                 self._update_model_class_mapping_from_model()
-                
+
             except RuntimeError as e:
                 # Handle model loading errors (corrupted file, ZIP archive issues, etc.)
                 error_msg = str(e)
@@ -76,21 +76,21 @@ class DetectionThreadYolo(DetectionThreadBase):
                     'platform': f"{platform.system()} {platform.release()}",
                     'python_version': sys.version.split()[0]
                 }
-                
+
                 if 'zip archive' in error_msg.lower() or 'central directory' in error_msg.lower():
                     self.logger.error(f"Model file appears to be corrupted (ZIP archive error): {self.model_name}")
                     self.logger.error(f"Error details: {error_msg}")
                     self.logger.debug(f"Model loading context: {error_context}")
                     self.logger.warning("Model will not be loaded. Detection will be disabled for this thread. "
-                                      "Please check the model file or re-download it.")
+                                        "Please check the model file or re-download it.")
                 else:
                     self.logger.error(f"Failed to load YOLO model: {error_msg}")
                     self.logger.debug(f"Model loading context: {error_context}")
-                
+
                 # Set model to None so thread can continue without model
                 self.model = None
                 # Don't re-raise exception - thread will continue
-                
+
             except FileNotFoundError as e:
                 # Handle missing model file error
                 self.logger.error(f"Model file not found: {self.model_name}")
@@ -98,7 +98,7 @@ class DetectionThreadYolo(DetectionThreadBase):
                 self.logger.warning("Model will not be loaded. Detection will be disabled for this thread.")
                 self.model = None
                 # Don't re-raise exception
-                
+
             except Exception as e:
                 # Handle any other model loading errors
                 error_context = {
@@ -109,7 +109,7 @@ class DetectionThreadYolo(DetectionThreadBase):
                     'platform': f"{platform.system()} {platform.release()}",
                     'python_version': sys.version.split()[0]
                 }
-                
+
                 self.logger.error(f"Unexpected error loading YOLO model: {e}")
                 self.logger.debug(f"Model loading context: {error_context}", exc_info=True)
                 self.logger.warning("Model will not be loaded. Detection will be disabled for this thread.")
@@ -121,12 +121,12 @@ class DetectionThreadYolo(DetectionThreadBase):
         if self.model is None:
             self.logger.warning("Model is not loaded, cannot perform prediction. Returning empty results.")
             return [None] * len(images) if isinstance(images, list) else None
-        
+
         # Filter out None images before passing to model
         if not isinstance(images, list):
             self.logger.warning(f"Expected list of images, got {type(images)}")
             return None
-        
+
         # Track which images are None to map results back correctly
         valid_images = []
         image_indices = []  # Track original indices of valid images
@@ -134,30 +134,31 @@ class DetectionThreadYolo(DetectionThreadBase):
             if img is not None:
                 valid_images.append(img)
                 image_indices.append(i)
-        
+
         # If all images are None, return None results
         if len(valid_images) == 0:
             self.logger.warning("All images are None, cannot perform prediction")
             return [None] * len(images)
-        
+
         try:
             # Defer classes filtering to base; avoid passing names to model
-            results = self.model.predict(source=valid_images, classes=self._get_classes_arg_for_model(), verbose=False, **self.inf_params)
-            
+            results = self.model.predict(source=valid_images, classes=self._get_classes_arg_for_model(), verbose=False,
+                                         **self.inf_params)
+
             # Map results back to original positions (None for invalid images)
             if results is None:
                 return [None] * len(images)
-            
+
             # Convert results to list if needed
             if not isinstance(results, list):
                 results = [results]
-            
+
             # Create result list with None for invalid images
             full_results = [None] * len(images)
             for idx, result_idx in enumerate(image_indices):
                 if idx < len(results):
                     full_results[result_idx] = results[idx]
-            
+
             return full_results
         except Exception as e:
             self.logger.error(f"Error during model prediction: {e}")
@@ -190,7 +191,7 @@ class DetectionThreadYolo(DetectionThreadBase):
     def stop(self) -> None:
         super().stop()
         self._release_model()
-    
+
     def _update_model_class_mapping_from_model(self):
         """Update model_class_mapping from YOLO model names"""
         if self.model and hasattr(self.model, 'names') and self.model.names:

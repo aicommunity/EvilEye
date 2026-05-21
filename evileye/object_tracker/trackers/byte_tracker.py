@@ -252,10 +252,10 @@ class BYTETracker:
         self.reset_id()
 
     def update(
-            self, 
-            cls: np.ndarray, 
-            bboxes_xywh: np.ndarray, 
-            scores: np.ndarray, 
+            self,
+            cls: np.ndarray,
+            bboxes_xywh: np.ndarray,
+            scores: np.ndarray,
             img=None) -> list[STrack]:
         """Updates object tracker with new detections and returns tracked object bounding boxes.
 
@@ -276,7 +276,7 @@ class BYTETracker:
         removed_stracks = []
 
         # scores = conf
-        bboxes = bboxes_xywh    # results.xywhr if hasattr(results, "xywhr") else results.xywh
+        bboxes = bboxes_xywh  # results.xywhr if hasattr(results, "xywhr") else results.xywh
         # Add index
         bboxes = np.concatenate([bboxes, np.arange(len(bboxes)).reshape(-1, 1)], axis=-1)
         # cls = results.cls

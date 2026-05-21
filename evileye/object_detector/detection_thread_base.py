@@ -24,15 +24,15 @@ class DetectionThreadBase:
     _instances: "weakref.WeakSet[DetectionThreadBase]" = weakref.WeakSet()
 
     def __init__(
-        self,
-        stride: int,
-        classes: list,
-        source_ids: list,
-        roi: list,
-        inf_params: dict,
-        queue_out: Queue,
-        logger_name: Optional[str] = None,
-        parent_logger: Optional[logging.Logger] = None,
+            self,
+            stride: int,
+            classes: list,
+            source_ids: list,
+            roi: list,
+            inf_params: dict,
+            queue_out: Queue,
+            logger_name: Optional[str] = None,
+            parent_logger: Optional[logging.Logger] = None,
     ):
         super().__init__()
         base_name = "evileye.detection_thread"
@@ -71,6 +71,7 @@ class DetectionThreadBase:
                 t.stop()
             except Exception:
                 pass
+
     def start(self) -> None:
         """Start the detection thread."""
         self.run_flag = True
@@ -226,7 +227,7 @@ class DetectionThreadBase:
         return predict_results
 
     def _extract_bboxes_from_results(
-        self, predict_results: list, split_image: list
+            self, predict_results: list, split_image: list
     ) -> tuple[list, list, list]:
         """Extract bounding boxes from prediction results."""
         bboxes_coords = []
@@ -247,7 +248,7 @@ class DetectionThreadBase:
         return bboxes_coords, confidences, class_ids
 
     def _post_process_detections(
-        self, bboxes_coords: list, confidences: list, class_ids: list
+            self, bboxes_coords: list, confidences: list, class_ids: list
     ) -> tuple[list, list, list]:
         """Post-process detections: merge ROI boxes, apply NMS, filter by classes."""
         from ..utils import utils
@@ -264,7 +265,7 @@ class DetectionThreadBase:
         return bboxes_coords, confidences, class_ids
 
     def _create_detection_result_list(
-        self, split_image: list, bboxes_coords: list, confidences: list, class_ids: list
+            self, split_image: list, bboxes_coords: list, confidences: list, class_ids: list
     ) -> DetectionResultList:
         """Create DetectionResultList from processed detections."""
         detection_result_list = DetectionResultList()
@@ -288,7 +289,7 @@ class DetectionThreadBase:
         """
         try:
             if isinstance(self.classes, list) and self.classes and all(
-                isinstance(c, int) for c in self.classes
+                    isinstance(c, int) for c in self.classes
             ):
                 return self.classes
             return None
@@ -296,7 +297,7 @@ class DetectionThreadBase:
             return None
 
     def _filter_detections(
-        self, bboxes_coords: list, confidences: list, class_ids: list
+            self, bboxes_coords: list, confidences: list, class_ids: list
     ) -> tuple[list, list, list]:
         """
         Apply class filtering by IDs or names using model_class_mapping.
@@ -308,9 +309,9 @@ class DetectionThreadBase:
             if all(isinstance(c, int) for c in self.classes):
                 desired_ids = set(self.classes)
             elif (
-                all(isinstance(c, str) for c in self.classes)
-                and isinstance(self.model_class_mapping, dict)
-                and self.model_class_mapping
+                    all(isinstance(c, str) for c in self.classes)
+                    and isinstance(self.model_class_mapping, dict)
+                    and self.model_class_mapping
             ):
                 desired_ids = {
                     cid for name, cid in self.model_class_mapping.items() if name in self.classes

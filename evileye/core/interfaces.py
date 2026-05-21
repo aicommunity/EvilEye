@@ -208,13 +208,12 @@ class IVisualizer(Protocol):
 
     # Основное API
     def update(
-        self,
-        processing_frames: List[Any],
-        source_last_processed_frame_id: Dict[int, int],
-        objects: List[Any],
-        dropped_frames: List[Any],
-        debug_info: Dict[str, Any],
+            self,
+            processing_frames: List[Any],
+            source_last_processed_frame_id: Dict[int, int],
+            objects: List[Any],
+            dropped_frames: List[Any],
+            debug_info: Dict[str, Any],
     ) -> None: ...
 
     def set_signal_params(self, enabled: bool, color_rgb: tuple[int, int, int]) -> None: ...
-

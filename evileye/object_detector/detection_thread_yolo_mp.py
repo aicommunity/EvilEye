@@ -8,6 +8,7 @@ from ..core.frame_transport import FrameHandle, SharedFrameTransport
 
 utils = None
 
+
 def get_utils():
     global utils
     if utils is None:

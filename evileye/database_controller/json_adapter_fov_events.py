@@ -100,5 +100,3 @@ class JsonAdapterFovEvents(DatabaseAdapterBase):
             cv2.imwrite(preview_abs, preview)
             cv2.imwrite(frame_abs, image.image)
         return preview_rel, frame_rel
-
-

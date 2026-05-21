@@ -18,7 +18,7 @@ from .botsort_config import BostSortCfg
 
 @EvilEyeBase.register("ObjectTrackingBotsort")
 class ObjectTrackingBotsort(ObjectTrackingBase):
-    #tracker: BOTSORT
+    # tracker: BOTSORT
 
     def __init__(self):
         super().__init__()
@@ -42,14 +42,14 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
             else:
                 self.encoders = None
                 self.logger.debug("No encoders provided, ReID disabled")
-            
+
             super().init_impl(**kwargs)
             # Ensure botsort_cfg is set (should be set by set_params_impl, but check anyway)
             if not self.botsort_cfg:
                 # Try to set default config if not set
                 self.logger.warning("botsort_cfg not set, using default configuration")
                 self.botsort_cfg = BostSortCfg()
-            
+
             self.logger.debug(f"Initializing BOTSORT with fps={self.fps}, with_reid={self.botsort_cfg.with_reid}")
             self.tracker = BOTSORT(self.botsort_cfg, self.encoders, frame_rate=self.fps)
             self.logger.debug("BOTSORT tracker initialized successfully")
@@ -125,7 +125,7 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
             if isinstance(detection_result, dict):
                 source_id = detection_result.get("source_id", source_id)
                 frame_id = detection_result.get("frame_id", frame_id)
-            
+
             # Check if image is valid
             if image is None or image.image is None:
                 self.logger.warning(
@@ -153,7 +153,7 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
             except Exception:
                 # If something is malformed, fall through to normal processing attempt.
                 pass
-            
+
             try:
                 cam_id, boxes = self._parse_det_info(detection_result, image.image)
                 tracks = self.tracker.update(boxes, image.image)
@@ -172,7 +172,7 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
     def _parse_det_info(self, det_info: DetectionResultList, image: np.ndarray) -> tuple:
         if image is None:
             raise ValueError("image cannot be None")
-        
+
         cam_id = getattr(det_info, "source_id", None)
         objects = getattr(det_info, "detections", None)
         if objects is None and isinstance(det_info, dict):
@@ -203,24 +203,24 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
             bboxes_xyxy[i] = bbox
             confidences[i] = conf
             class_ids[i] = cls_id
-        
+
         boxes_array = np.concatenate([bboxes_xyxy, confidences, class_ids], axis=1)
-        
+
         # Validate image shape
         if not hasattr(image, 'shape') or len(image.shape) < 2:
             raise ValueError(f"Invalid image shape: {image.shape if hasattr(image, 'shape') else 'no shape attribute'}")
-        
+
         orig_shape = (image.shape[1], image.shape[0])
         boxes = Boxes(boxes_array, orig_shape)
         return cam_id, boxes
 
     def _create_tracks_info(
-            self, 
-            cam_id: int, 
-            frame_id: int, 
-            detection: DetectionResult, 
+            self,
+            cam_id: int,
+            frame_id: int,
+            detection: DetectionResult,
             tracks: list[BOTrack]):
-        
+
         tracks_info = TrackingResultList()
         tracks_info.source_id = cam_id
         tracks_info.frame_id = frame_id
@@ -240,7 +240,7 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
             object_info.track_id = track_id
             if detection:
                 object_info.detection_history.append(detection)
-            
+
             # Add BOTrack object to tracking data
             # in order to use it in multi-camera tracking during reidentification
             object_info.tracking_data = {
@@ -250,4 +250,3 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
             tracks_info.tracks.append(object_info)
 
         return tracks_info
-

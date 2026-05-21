@@ -7,7 +7,8 @@ from typing import List
 
 from evileye.core.logger import get_module_logger
 from evileye.video_recorder.recording_params import RecordingParams
-from evileye.video_recorder.utils import get_disk_free_percent, iter_segments, delete_files, check_and_delete_small_files
+from evileye.video_recorder.utils import get_disk_free_percent, iter_segments, delete_files, \
+    check_and_delete_small_files
 from evileye.video_recorder.constants import RecorderConstants
 
 
@@ -28,7 +29,7 @@ class RetentionEnforcer:
         now = datetime.now()
         cutoff = now - timedelta(days=max(0, int(params.retention_days)))
         to_delete: List[Path] = []
-        
+
         # Scan all subdirectories
         for date_dir in base.iterdir():
             if not date_dir.is_dir():
@@ -47,7 +48,7 @@ class RetentionEnforcer:
         for p, mtime in iter_segments(base, [params.container, 'mp4', 'mkv']):
             if '%' not in p.name and datetime.fromtimestamp(mtime) < cutoff:
                 to_delete.append(p)
-        
+
         return to_delete
 
     def _delete_small_files(self, params: RecordingParams, base: Path) -> tuple[int, int]:
@@ -64,10 +65,10 @@ class RetentionEnforcer:
         """
         small_files_deleted = 0
         corrupted_files_deleted = 0
-        
+
         validate_integrity = getattr(params, 'validate_video_integrity', True)
         validation_timeout = getattr(params, 'video_validation_timeout', 2.0)
-        
+
         # Scan all subdirectories
         for date_dir in base.iterdir():
             if not date_dir.is_dir():
@@ -78,13 +79,17 @@ class RetentionEnforcer:
                 for p, mtime in iter_segments(camera_dir, [params.container, 'mp4', 'mkv']):
                     if '%' in p.name:
                         # Delete invalid splitmuxsink pattern files
-                        if check_and_delete_small_files(p, params.min_file_size_kb, validate_integrity=validate_integrity, validation_timeout=validation_timeout):
+                        if check_and_delete_small_files(p, params.min_file_size_kb,
+                                                        validate_integrity=validate_integrity,
+                                                        validation_timeout=validation_timeout):
                             small_files_deleted += 1
                     else:
                         # Cache stat() result to avoid multiple calls in check_and_delete_small_files
                         # FileValidator.should_delete_file will call stat() again, but that's acceptable
                         # as it's a single call per file and the optimization is in batch operations
-                        if check_and_delete_small_files(p, params.min_file_size_kb, validate_integrity=validate_integrity, validation_timeout=validation_timeout):
+                        if check_and_delete_small_files(p, params.min_file_size_kb,
+                                                        validate_integrity=validate_integrity,
+                                                        validation_timeout=validation_timeout):
                             # Determine reason by checking file size (if file still exists)
                             try:
                                 if p.exists():
@@ -102,10 +107,12 @@ class RetentionEnforcer:
             # Also check files directly in date directory
             for p, mtime in iter_segments(date_dir, [params.container, 'mp4', 'mkv']):
                 if '%' in p.name:
-                    if check_and_delete_small_files(p, params.min_file_size_kb, validate_integrity=validate_integrity, validation_timeout=validation_timeout):
+                    if check_and_delete_small_files(p, params.min_file_size_kb, validate_integrity=validate_integrity,
+                                                    validation_timeout=validation_timeout):
                         small_files_deleted += 1
                 else:
-                    if check_and_delete_small_files(p, params.min_file_size_kb, validate_integrity=validate_integrity, validation_timeout=validation_timeout):
+                    if check_and_delete_small_files(p, params.min_file_size_kb, validate_integrity=validate_integrity,
+                                                    validation_timeout=validation_timeout):
                         try:
                             if p.exists():
                                 stat = p.stat()
@@ -121,10 +128,12 @@ class RetentionEnforcer:
         # Also check files directly in base directory
         for p, mtime in iter_segments(base, [params.container, 'mp4', 'mkv']):
             if '%' in p.name:
-                if check_and_delete_small_files(p, params.min_file_size_kb, validate_integrity=validate_integrity, validation_timeout=validation_timeout):
+                if check_and_delete_small_files(p, params.min_file_size_kb, validate_integrity=validate_integrity,
+                                                validation_timeout=validation_timeout):
                     small_files_deleted += 1
             else:
-                if check_and_delete_small_files(p, params.min_file_size_kb, validate_integrity=validate_integrity, validation_timeout=validation_timeout):
+                if check_and_delete_small_files(p, params.min_file_size_kb, validate_integrity=validate_integrity,
+                                                validation_timeout=validation_timeout):
                     try:
                         if p.exists():
                             stat = p.stat()
@@ -137,7 +146,7 @@ class RetentionEnforcer:
                             small_files_deleted += 1
                     except Exception:
                         small_files_deleted += 1
-        
+
         return small_files_deleted, corrupted_files_deleted
 
     def _enforce_free_space(self, params: RecordingParams, base: Path) -> None:
@@ -163,27 +172,29 @@ class RetentionEnforcer:
                 idx += 1
                 free_pct = get_disk_free_percent(base)
             if removed_total:
-                self.logger.info(f"Retention: freed space by removing {removed_total} oldest file(s); free={free_pct:.1f}%")
+                self.logger.info(
+                    f"Retention: freed space by removing {removed_total} oldest file(s); free={free_pct:.1f}%")
 
     def enforce(self, params: RecordingParams) -> None:
         """Enforce retention policies: delete old files, small files, and free space."""
         try:
             base = Path(params.out_dir)
             base.mkdir(parents=True, exist_ok=True)
-            
+
             # 1) Delete by retention days
             to_delete = self._delete_by_retention(params, base)
             if to_delete:
                 n = delete_files(to_delete)
                 self.logger.info(f"Retention: removed {n} files older than {params.retention_days} days")
-            
+
             # 2) Delete small and corrupted files
             small_files_deleted, corrupted_files_deleted = self._delete_small_files(params, base)
             if small_files_deleted:
-                self.logger.info(f"Retention: removed {small_files_deleted} files smaller than {params.min_file_size_kb} KB")
+                self.logger.info(
+                    f"Retention: removed {small_files_deleted} files smaller than {params.min_file_size_kb} KB")
             if corrupted_files_deleted:
                 self.logger.info(f"Retention: removed {corrupted_files_deleted} corrupted/invalid video files")
-            
+
             # 3) Enforce minimum free space percent
             self._enforce_free_space(params, base)
         except Exception as e:
@@ -191,5 +202,3 @@ class RetentionEnforcer:
                 self.logger.warning(f"Retention enforcement error: {e}")
             except Exception:
                 pass
-
-

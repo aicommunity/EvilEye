@@ -67,10 +67,10 @@ class ConfigurationService:
             return False
 
     def reconcile_credentials_fields(
-        self,
-        params: Dict[str, Any],
-        loaded_config: Optional[Dict[str, Any]] = None,
-        credentials_loaded: bool = False,
+            self,
+            params: Dict[str, Any],
+            loaded_config: Optional[Dict[str, Any]] = None,
+            credentials_loaded: bool = False,
     ) -> None:
         """Удалить поля учетных данных из params, если их не было в исходной конфигурации.
 
@@ -147,9 +147,9 @@ class ConfigurationService:
             self.logger.warning(f"Failed to reconcile credentials fields: {e}")
 
     def filter_model_class_mapping(
-        self,
-        params: Dict[str, Any],
-        loaded_config: Optional[Dict[str, Any]] = None,
+            self,
+            params: Dict[str, Any],
+            loaded_config: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Удалить model_class_mapping из params, если его не было в исходной конфигурации.
 
@@ -173,7 +173,8 @@ class ConfigurationService:
             for idx, det in enumerate(detectors):
                 if not isinstance(det, dict):
                     continue
-                orig_det = orig_detectors[idx] if idx < len(orig_detectors) and isinstance(orig_detectors[idx], dict) else {}
+                orig_det = orig_detectors[idx] if idx < len(orig_detectors) and isinstance(orig_detectors[idx],
+                                                                                           dict) else {}
                 if 'model_class_mapping' in det and ('model_class_mapping' not in orig_det):
                     try:
                         del det['model_class_mapping']
@@ -183,9 +184,9 @@ class ConfigurationService:
             self.logger.warning(f"Failed to filter model class mapping: {e}")
 
     def restrict_database_keys(
-        self,
-        params: Dict[str, Any],
-        loaded_config: Optional[Dict[str, Any]] = None,
+            self,
+            params: Dict[str, Any],
+            loaded_config: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Ограничить ключи секции database только теми, что были в исходной конфигурации.
 
@@ -224,9 +225,9 @@ class ConfigurationService:
         self._loaded_config = config
 
     def ensure_api_preference(
-        self,
-        params: Dict[str, Any],
-        loaded_config: Optional[Dict[str, Any]] = None,
+            self,
+            params: Dict[str, Any],
+            loaded_config: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Restore apiPreference on sources from loaded config when present."""
         try:
@@ -255,10 +256,10 @@ class ConfigurationService:
             self.logger.warning("Failed to ensure api preference: %s", e)
 
     def apply_save_sanitizers(
-        self,
-        params: Dict[str, Any],
-        loaded_config: Optional[Dict[str, Any]] = None,
-        credentials_loaded: bool = False,
+            self,
+            params: Dict[str, Any],
+            loaded_config: Optional[Dict[str, Any]] = None,
+            credentials_loaded: bool = False,
     ) -> None:
         """Credentials, model_class_mapping, and database key sanitization before save."""
         config = loaded_config if loaded_config is not None else self._loaded_config
@@ -286,9 +287,9 @@ class ConfigurationService:
                     pass
 
     def propagate_record_config_to_sources(
-        self,
-        pipeline_params: Dict[str, Any],
-        params: Dict[str, Any],
+            self,
+            pipeline_params: Dict[str, Any],
+            params: Dict[str, Any],
     ) -> None:
         """Merge global record config into each pipeline source."""
         try:
@@ -339,7 +340,7 @@ class ConfigurationService:
                     merged["enabled"] = enabled
                 else:
                     has_new_flags = ("continuous_recording_enabled" in merged) or (
-                        "event_recording_enabled" in merged
+                            "event_recording_enabled" in merged
                     )
                     if not has_new_flags:
                         if "enabled" in merged:

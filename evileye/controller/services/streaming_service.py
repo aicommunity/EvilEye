@@ -79,16 +79,16 @@ class StreamingService:
         return f"{job.pipeline_id}:{job.source_id}"
 
     def configure(
-        self,
-        *,
-        pipeline_id: str,
-        publish_fps: float,
-        server_process_manager=None,
-        relay_base_url: str | None = None,
-        relay_token: str | None = None,
-        encoder_backend: str = "auto",
-        jpeg_quality: int = 85,
-        num_workers: int = 1,
+            self,
+            *,
+            pipeline_id: str,
+            publish_fps: float,
+            server_process_manager=None,
+            relay_base_url: str | None = None,
+            relay_token: str | None = None,
+            encoder_backend: str = "auto",
+            jpeg_quality: int = 85,
+            num_workers: int = 1,
     ) -> None:
         with self._condition:
             self._stop_event.clear()
@@ -148,7 +148,8 @@ class StreamingService:
 
     def has_consumers(self, source_id: int | None = None) -> bool:
         throttle_key = f"{self._pipeline_id}:{source_id}" if source_id is not None else self._pipeline_id
-        has_local_stream, has_server_preview_demand, has_server_process, has_relay = self._get_consumer_state(throttle_key)
+        has_local_stream, has_server_preview_demand, has_server_process, has_relay = self._get_consumer_state(
+            throttle_key)
         return has_local_stream or has_server_preview_demand or has_relay
 
     def get_runtime_stats(self) -> dict:
@@ -208,7 +209,8 @@ class StreamingService:
             return job
 
     def _should_publish(self, throttle_key: str) -> bool:
-        has_local_stream, has_server_preview_demand, has_server_process, has_relay = self._get_consumer_state(throttle_key)
+        has_local_stream, has_server_preview_demand, has_server_process, has_relay = self._get_consumer_state(
+            throttle_key)
 
         if has_local_stream or has_server_preview_demand or has_relay:
             return self._throttle_ok(throttle_key)
@@ -234,9 +236,9 @@ class StreamingService:
         has_server_preview_demand = False
         try:
             has_server_preview_demand = (
-                self._server_process_manager is not None
-                and self._server_process_manager.is_alive()
-                and self._server_process_manager.has_preview_demand(throttle_key)
+                    self._server_process_manager is not None
+                    and self._server_process_manager.is_alive()
+                    and self._server_process_manager.has_preview_demand(throttle_key)
             )
         except Exception:
             has_server_preview_demand = False
@@ -244,8 +246,8 @@ class StreamingService:
         has_server_process = False
         try:
             has_server_process = (
-                self._server_process_manager is not None
-                and self._server_process_manager.is_alive()
+                    self._server_process_manager is not None
+                    and self._server_process_manager.is_alive()
             )
         except Exception:
             has_server_process = False

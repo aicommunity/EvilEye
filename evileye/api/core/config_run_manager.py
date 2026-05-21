@@ -133,9 +133,9 @@ class ConfigRunManager:
     def _refresh_item_state_locked(self, item: ConfigRunItem) -> None:
         pid = item.pid
         if not pid or item.state not in (
-            ConfigRunState.STARTING,
-            ConfigRunState.RUNNING,
-            ConfigRunState.STOPPING,
+                ConfigRunState.STARTING,
+                ConfigRunState.RUNNING,
+                ConfigRunState.STOPPING,
         ):
             return
         try:
@@ -183,7 +183,8 @@ class ConfigRunManager:
             json.dump(body, f, ensure_ascii=False, indent=2)
         return target
 
-    def create(self, rid: int, name: Optional[str], *, config_name: Optional[str] = None, config_body: Optional[dict] = None) -> Dict:
+    def create(self, rid: int, name: Optional[str], *, config_name: Optional[str] = None,
+               config_body: Optional[dict] = None) -> Dict:
         with self._lock:
             if rid in self._items:
                 raise ValueError("Config run already exists")
@@ -366,5 +367,3 @@ class ConfigRunManager:
             except Exception as e:
                 self.logger.error(f"Error stopping config run '{rid}': {e}")
         self.logger.info("ConfigRunManager shutdown completed")
-
-

@@ -1,4 +1,3 @@
-
 class Frame:
     def __init__(self):
         self.source_id = None
@@ -9,5 +8,6 @@ class Frame:
         self.time_stamp = None
         self.image = None
         self.subscribers = []
+
 
 CaptureImage = Frame

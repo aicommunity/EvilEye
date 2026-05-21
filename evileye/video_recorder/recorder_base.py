@@ -41,7 +41,7 @@ class VideoRecorderBase(ABC):
         """
         if writer is None:
             return
-        
+
         try:
             writer.release()
             # Verify writer is closed
@@ -55,12 +55,12 @@ class VideoRecorderBase(ABC):
             logger.error(f"Error releasing VideoWriter: {e}", exc_info=True)
 
     def _validate_and_delete_small_file(
-        self,
-        file_path: Optional[Path],
-        min_size_kb: int,
-        logger,
-        validate_integrity: bool = True,
-        validation_timeout: float = 2.0
+            self,
+            file_path: Optional[Path],
+            min_size_kb: int,
+            logger,
+            validate_integrity: bool = True,
+            validation_timeout: float = 2.0
     ) -> bool:
         """Validate and delete file if too small or corrupted.
         
@@ -76,7 +76,7 @@ class VideoRecorderBase(ABC):
         """
         if not file_path or not file_path.exists():
             return False
-        
+
         try:
             # Check file size before deletion to determine reason
             try:
@@ -85,7 +85,7 @@ class VideoRecorderBase(ABC):
                 was_large_enough = file_size_kb >= min_size_kb
             except Exception:
                 was_large_enough = False
-            
+
             deleted = check_and_delete_small_files(
                 file_path,
                 min_size_kb,
@@ -93,7 +93,7 @@ class VideoRecorderBase(ABC):
                 validate_integrity=validate_integrity,
                 validation_timeout=validation_timeout
             )
-            
+
             if deleted:
                 # Determine reason for deletion
                 if was_large_enough:
@@ -104,7 +104,7 @@ class VideoRecorderBase(ABC):
                 return True
         except Exception as e:
             logger.debug(f"Error checking file size/integrity: {e}")
-        
+
         return False
 
     def __enter__(self):
@@ -131,5 +131,3 @@ class VideoRecorderBase(ABC):
     @abstractmethod
     def stop(self) -> None:
         ...
-
-

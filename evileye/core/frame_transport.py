@@ -137,8 +137,8 @@ class SharedFrameTransport:
 
 
 def materialize_payload_item(
-    item: Any,
-    transport: Optional[SharedFrameTransport] = None,
+        item: Any,
+        transport: Optional[SharedFrameTransport] = None,
 ) -> Any:
     """Resolve FrameHandle to ndarray; pass through other items."""
     if not isinstance(item, FrameHandle):
@@ -151,8 +151,8 @@ def materialize_payload_item(
 
 
 def materialize_payload_list(
-    data: List[Any],
-    transport: Optional[SharedFrameTransport] = None,
+        data: List[Any],
+        transport: Optional[SharedFrameTransport] = None,
 ) -> List[Any]:
     """Materialize a list of queue payloads that may contain FrameHandle entries."""
     return [materialize_payload_item(x, transport) for x in data]

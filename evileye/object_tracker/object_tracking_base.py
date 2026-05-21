@@ -215,8 +215,8 @@ class ObjectTrackingBase(EvilEyeBase):
                     # New fast-path: worker returns only tracking payload,
                     # keep original frame in parent process.
                     if (
-                        isinstance(detections, (list, tuple))
-                        and len(detections) >= 2
+                            isinstance(detections, (list, tuple))
+                            and len(detections) >= 2
                     ):
                         self._put_out_drop_oldest((result, detections[1]))
                     else:

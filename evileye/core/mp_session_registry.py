@@ -7,7 +7,6 @@ import time
 from pathlib import Path
 from threading import Lock
 
-
 _LOCK = Lock()
 
 

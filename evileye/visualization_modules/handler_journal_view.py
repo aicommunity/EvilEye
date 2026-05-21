@@ -3,6 +3,7 @@ import os
 import time
 from psycopg2 import sql
 from ..utils import threading_events
+
 try:
     from PyQt6.QtCore import QDate, QDateTime
     from PyQt6.QtWidgets import (
@@ -13,6 +14,7 @@ try:
     from PyQt6.QtGui import QPixmap, QPainter, QPen
     from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QModelIndex
     from PyQt6.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
+
     pyqt_version = 6
 except ImportError:
     from PyQt5.QtCore import QDate, QDateTime
@@ -24,6 +26,7 @@ except ImportError:
     from PyQt5.QtGui import QPixmap, QPainter, QPen
     from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QModelIndex
     from PyQt5.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
+
     pyqt_version = 5
 
 from .table_updater_view import TableUpdater
@@ -152,6 +155,7 @@ class ImageWindow(QLabel):
         self.hide()
         event.accept()
 
+
 class HandlerJournal(QWidget):
     retrieve_data_signal = pyqtSignal()
 
@@ -188,51 +192,52 @@ class HandlerJournal(QWidget):
         self.data_for_update = []
         self.last_update_time = None
         self.update_rate = 10
-        self.current_start_time = datetime.datetime.combine(datetime.datetime.now()-datetime.timedelta(days=1), datetime.time.min)
+        self.current_start_time = datetime.datetime.combine(datetime.datetime.now() - datetime.timedelta(days=1),
+                                                            datetime.time.min)
         self.current_end_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.max)
         self.start_time_updated = False
         self.finish_time_updated = False
         self.block_updates = False
         self.image_win = None
         self.filter_displayed = False
-        
+
         # Initialize data loading state
         self._data_loaded = False
         self.source_name_id_address = {}
         self.table = None
         self.model = None
         self._data_loader = None
-        
+
         # Show placeholder state
         self._init_ui_empty()
-        
+
         self.retrieve_data_signal.connect(self._retrieve_data)
-    
+
     def _init_ui_empty(self):
         """Инициализация пустого UI с placeholder"""
         placeholder_label = QLabel("Objects journal\n\nData will be loaded when controller is initialized.")
         placeholder_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         placeholder_label.setStyleSheet("font-size: 14px; padding: 20px; color: gray;")
-        
+
         empty_layout = QVBoxLayout()
         empty_layout.addWidget(placeholder_label)
         self.setLayout(empty_layout)
-    
+
     def set_db_controller(self, db_controller, table_name, params, database_params, table_params):
         """Установить данные из controller (вызывается после controller.init())"""
         if not db_controller:
             return
-        
+
         # Используем утилиту для обеспечения полноты database_params
         from evileye.utils.database_config_utils import ensure_database_config_complete
-        
+
         self.db_controller = db_controller
         self.params = params
         # Убеждаемся, что database_params содержит все необходимые ключи
         self.database_params = ensure_database_config_complete(database_params)
         self.db_table_params = table_params
         self.table_name = table_name
-        
+
         # Получаем значения с fallback на значения по умолчанию
         db_section = self.database_params.get('database', {})
         self.db_params = (
@@ -244,10 +249,10 @@ class HandlerJournal(QWidget):
             db_section.get('image_dir', 'EvilEyeData')
         )
         self.username, self.password, self.db_name, self.host, self.port, self.image_dir = self.db_params
-        
+
         # Show loading state
         self._show_loading_state()
-        
+
         # Phase 2: Start data loading in background thread
         # Передаем уже дополненный database_params
         self._data_loader = HandlerJournalDataLoader(
@@ -264,7 +269,7 @@ class HandlerJournal(QWidget):
         # Получаем существующий layout или создаем новый
         current_layout = self.layout()
         self.logger.debug(f"Current layout from self.layout(): {current_layout}")
-        
+
         if not current_layout:
             # Если layout не существует, создаем новый
             self.logger.debug("No layout found, creating new QVBoxLayout")
@@ -292,25 +297,25 @@ class HandlerJournal(QWidget):
                             nested_widget.deleteLater()
                     nested_layout.setParent(None)
                     nested_layout.deleteLater()
-        
+
         # Сохраняем ссылку на layout для использования в _initialize_with_data
         self._current_layout = current_layout
         self.logger.debug(f"Saved _current_layout: {self._current_layout}, id: {id(self._current_layout)}")
-        
+
         self.loading_label = QLabel("Loading journal data...\nPlease wait...")
         self.loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.loading_label.setStyleSheet("font-size: 14px; padding: 20px;")
-        
+
         # Добавляем loading_label в существующий layout (не создаем новый)
         current_layout.addWidget(self.loading_label)
         self.logger.debug("_show_loading_state completed")
-    
+
     @pyqtSlot(str)
     def _update_loading_progress(self, message):
         """Update loading progress message"""
         if hasattr(self, 'loading_label'):
             self.loading_label.setText(f"Loading journal data...\n{message}")
-    
+
     @pyqtSlot(dict)
     def _on_data_loaded(self, data):
         """Handle data loaded signal from background thread"""
@@ -320,17 +325,17 @@ class HandlerJournal(QWidget):
             # Логируем ошибку вместо показа диалога
             # Keep loading state on error
             return
-        
+
         # Store loaded data
         self.source_name_id_address = data['source_name_id_address']
-        
+
         # Connect to database in main GUI thread (Qt requirement)
         self._db_connection_name = 'obj_conn'
         if not self._connect_to_db():
             # Логируем ошибку вместо показа диалога (уже залогировано в _connect_to_db)
             self.logger.error("Failed to connect to database for handler journal")
             return
-        
+
         # Initialize widget with loaded data
         # Use QTimer to defer initialization to next event loop iteration
         # This ensures widget is fully added to parent before we modify its layout
@@ -340,10 +345,10 @@ class HandlerJournal(QWidget):
             QTimer.singleShot(100, self._initialize_with_data)
         else:
             QTimer.singleShot(0, self._initialize_with_data)
-        
+
         self._data_loaded = True
         self.logger.info("Journal data loaded successfully")
-    
+
     def _connect_to_db(self):
         """Connect to database in main GUI thread"""
         db = QSqlDatabase.addDatabase("QPSQL", self._db_connection_name)
@@ -358,22 +363,22 @@ class HandlerJournal(QWidget):
             # Логируем ошибку вместо показа диалога
             return False
         return True
-    
+
     def _initialize_with_data(self):
         """Initialize widget with loaded data"""
         try:
             self.logger.info("_initialize_with_data started")
-            
+
             # Setup filter (requires source_name_id_address)
             self.logger.debug("Setting up filter...")
             self._setup_filter()
             self.logger.debug("Filter setup completed")
-            
+
             # Setup time layout (doesn't require data, but needs filter)
             self.logger.debug("Setting up time layout...")
             self._setup_time_layout()
             self.logger.debug("Time layout setup completed")
-            
+
             # Create empty table first (without model) to show UI immediately
             self.logger.debug("Creating table view...")
             self.table = QTableView()
@@ -386,27 +391,28 @@ class HandlerJournal(QWidget):
             h_header.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
             header.setDefaultSectionSize(HandlerJournal.preview_height)
             h_header.setDefaultSectionSize(HandlerJournal.preview_width)
-            
-            self.image_delegate = ImageDelegate(None, image_dir=self.image_dir, db_connection_name=self._db_connection_name)
+
+            self.image_delegate = ImageDelegate(None, image_dir=self.image_dir,
+                                                db_connection_name=self._db_connection_name)
             self.date_delegate = DateTimeDelegate(None)
             self.table.setItemDelegateForColumn(0, self.date_delegate)
             self.table.setItemDelegateForColumn(4, self.date_delegate)
             self.table.setItemDelegateForColumn(5, self.image_delegate)
             self.table.setItemDelegateForColumn(6, self.image_delegate)
             self.logger.debug("Table view created")
-            
+
             # Replace loading layout with actual content
             if hasattr(self, 'loading_label'):
                 self.loading_label.hide()
                 self.loading_label.setParent(None)
                 self.loading_label.deleteLater()
                 delattr(self, 'loading_label')
-            
+
             # Получаем layout - используем сохраненную ссылку
             self.logger.debug("Getting layout...")
             current_layout = getattr(self, '_current_layout', None)
             self.logger.debug(f"_current_layout from getattr: {current_layout}, type: {type(current_layout)}")
-            
+
             # Проверяем, что layout валиден (не None и не удален)
             if current_layout is None:
                 self.logger.warning("_current_layout is None, trying self.layout()")
@@ -417,7 +423,7 @@ class HandlerJournal(QWidget):
                 self.logger.warning("_current_layout is not a valid layout object, trying self.layout()")
                 current_layout = self.layout()
                 self.logger.debug(f"Got layout from self.layout(): {current_layout}")
-            
+
             # Если layout все еще не найден, создаем новый
             if current_layout is None:
                 self.logger.warning("No layout found after all checks, creating new layout as fallback")
@@ -427,7 +433,7 @@ class HandlerJournal(QWidget):
                 except ImportError:
                     from PyQt5.QtWidgets import QApplication
                 QApplication.processEvents()
-                
+
                 # Проверяем еще раз после processEvents
                 current_layout = self.layout()
                 if current_layout is None:
@@ -440,11 +446,11 @@ class HandlerJournal(QWidget):
                     else:
                         # Layout появился между проверками, используем его
                         current_layout = self.layout()
-            
+
             # Обновляем сохраненную ссылку
             self._current_layout = current_layout
             self.logger.debug("Layout obtained successfully")
-            
+
             # Remove all items from existing layout
             self.logger.debug("Clearing existing layout items...")
             while current_layout.count():
@@ -467,18 +473,18 @@ class HandlerJournal(QWidget):
                     nested_layout.setParent(None)
                     nested_layout.deleteLater()
             self.logger.debug("Layout cleared")
-            
+
             # Reuse existing layout (NEVER call setLayout() here - layout is already set)
             self.logger.debug("Adding time layout and table to layout...")
             current_layout.addLayout(self.time_layout)
             current_layout.addWidget(self.table)
             self.layout = current_layout
             self.logger.debug("Layout updated with new content")
-            
+
             # Connect table signals
             self.logger.debug("Connecting table signals...")
             self.table.doubleClicked.connect(self._display_image)
-            
+
             # Setup model synchronously (as in working commit dcc28d3c)
             self.logger.debug("Setting up model synchronously...")
             self._setup_model()
@@ -490,9 +496,9 @@ class HandlerJournal(QWidget):
                 self.logger.debug("Model set to table successfully")
             else:
                 self.logger.warning("Model is None, cannot set to table")
-            
+
             self.logger.info("_initialize_with_data completed successfully")
-            
+
         except Exception as e:
             self.logger.error(f"Error in _initialize_with_data: {e}", exc_info=True)
             # Try to show error state
@@ -507,7 +513,7 @@ class HandlerJournal(QWidget):
                     self._current_layout.addWidget(error_label)
             except Exception as e2:
                 self.logger.error(f"Failed to show error state: {e2}", exc_info=True)
-    
+
     def _setup_table(self):
         self._setup_model()
 
@@ -540,7 +546,8 @@ class HandlerJournal(QWidget):
                       'source_name, time_lost, preview_path, lost_preview_path FROM objects '
                       'WHERE time_stamp BETWEEN :start AND :finish '
                       'ORDER BY time_stamp DESC')
-        self.current_start_time = datetime.datetime.combine(datetime.datetime.now()-datetime.timedelta(days=1), datetime.time.min)
+        self.current_start_time = datetime.datetime.combine(datetime.datetime.now() - datetime.timedelta(days=1),
+                                                            datetime.time.min)
         self.current_end_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.max)
         query.bindValue(":start", self.current_start_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
         query.bindValue(":finish", self.current_end_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
@@ -572,7 +579,7 @@ class HandlerJournal(QWidget):
             self.camera_filter_layout.addWidget(self.filters)
             self.camera_filter_layout.addStretch(1)
             self.logger.debug("_setup_filter completed successfully")
-            
+
         except Exception as e:
             self.logger.error(f"Error in _setup_filter: {e}", exc_info=True)
             raise
@@ -632,7 +639,8 @@ class HandlerJournal(QWidget):
         if not path:
             return
 
-        query = QSqlQuery(QSqlDatabase.database(self._db_connection_name))  # Getting a bounding_box of the current image
+        query = QSqlQuery(
+            QSqlDatabase.database(self._db_connection_name))  # Getting a bounding_box of the current image
         if col == 5:
             query.prepare('SELECT bounding_box from objects WHERE preview_path = :path')
             query.bindValue(':path', path)
@@ -731,7 +739,8 @@ class HandlerJournal(QWidget):
         self.block_updates = True
 
         if camera_name == 'All':
-            if (self.current_start_time == datetime.datetime.combine(datetime.datetime.now()-datetime.timedelta(days=1), datetime.time.min) and
+            if (self.current_start_time == datetime.datetime.combine(
+                    datetime.datetime.now() - datetime.timedelta(days=1), datetime.time.min) and
                     self.current_end_time == datetime.datetime.combine(datetime.datetime.now(), datetime.time.max)):
                 self.block_updates = False
             self._filter_records(self.current_start_time, self.current_end_time)
@@ -778,14 +787,15 @@ class HandlerJournal(QWidget):
 
         if not hasattr(self, '_db_connection_name'):
             return
-            
+
         query = QSqlQuery(QSqlDatabase.database(self._db_connection_name))
         query.prepare('SELECT time_stamp, CAST(\'ObjectEvent\' AS text) AS event_type, '
                       '\'Object Id=\' || object_id || \'; class: \' || class_id || \'; conf: \' || ROUND(confidence::numeric, 2)'
                       ' AS information,'
                       'source_name, time_lost, preview_path, lost_preview_path FROM objects '
                       'WHERE time_stamp BETWEEN :start AND :finish ORDER BY time_stamp DESC')
-        self.current_start_time = datetime.datetime.combine(datetime.datetime.now()-datetime.timedelta(days=1), datetime.time.min)
+        self.current_start_time = datetime.datetime.combine(datetime.datetime.now() - datetime.timedelta(days=1),
+                                                            datetime.time.min)
         self.current_end_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.max)
         # Сбрасываем дату в фильтрах
         if hasattr(self, 'start_time') and hasattr(self, 'finish_time'):
@@ -817,7 +827,6 @@ class HandlerJournal(QWidget):
         if hasattr(self, '_db_connection_name') and self._db_connection_name:
             QSqlDatabase.removeDatabase(self._db_connection_name)
 
-
     def _update_job_first_last_records(self):
         if not self.db_controller:
             return
@@ -837,6 +846,7 @@ class HandlerJournal(QWidget):
                 update_query = sql.SQL('UPDATE jobs SET last_record = %s WHERE job_id = %s;')
                 data = (last_record, job_id)
         else:
-            self.logger.warning(f"HandlerJournal._update_job_first_last_records: Database controller not returning data. Database may be closed.")
+            self.logger.warning(
+                f"HandlerJournal._update_job_first_last_records: Database controller not returning data. Database may be closed.")
 
         self.db_controller.query(update_query, data)

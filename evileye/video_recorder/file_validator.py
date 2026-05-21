@@ -47,11 +47,11 @@ class FileValidator:
 
     @staticmethod
     def should_delete_file(
-        file_path: Path,
-        min_size_kb: int,
-        min_age_seconds: int = RecorderConstants.MIN_FILE_AGE_SECONDS,
-        validate_integrity: bool = True,
-        validation_timeout: float = 2.0,
+            file_path: Path,
+            min_size_kb: int,
+            min_age_seconds: int = RecorderConstants.MIN_FILE_AGE_SECONDS,
+            validate_integrity: bool = True,
+            validation_timeout: float = 2.0,
     ) -> tuple[bool, Optional[str]]:
         if not file_path.exists():
             return False, None
@@ -83,4 +83,3 @@ class FileValidator:
             pass
 
         return False, None
-

@@ -39,11 +39,11 @@ class EventsService:
         self._events_processor: Optional[EventsProcessor] = None
 
     def initialize_detectors(
-        self,
-        params: Dict[str, Any],
-        pipeline: IPipeline,
-        objects_handler: IObjectHandler,
-        use_database: bool = True,
+            self,
+            params: Dict[str, Any],
+            pipeline: IPipeline,
+            objects_handler: IObjectHandler,
+            use_database: bool = True,
     ) -> None:
         """Инициализировать детекторы событий."""
         sources = pipeline.get_sources()
@@ -88,10 +88,10 @@ class EventsService:
         )
 
     def initialize_attribute_processors(
-        self,
-        pipeline: IPipeline,
-        objects_handler: IObjectHandler,
-        params: Dict[str, Any],
+            self,
+            pipeline: IPipeline,
+            objects_handler: IObjectHandler,
+            params: Dict[str, Any],
     ) -> None:
         """Инициализировать атрибутные процессоры и связать с ObjectsHandler."""
         if not hasattr(pipeline, "processors"):
@@ -128,16 +128,16 @@ class EventsService:
         self.logger.info("Events detectors controller initialized")
 
     def build_event_adapters(
-        self,
-        *,
-        params: Dict[str, Any],
-        use_database: bool,
-        db_controller: Optional[Any],
-        db_adapter_fov_events: Optional[Any] = None,
-        db_adapter_cam_events: Optional[Any] = None,
-        db_adapter_zone_events: Optional[Any] = None,
-        db_adapter_attr_events: Optional[Any] = None,
-        db_adapter_system_events: Optional[Any] = None,
+            self,
+            *,
+            params: Dict[str, Any],
+            use_database: bool,
+            db_controller: Optional[Any],
+            db_adapter_fov_events: Optional[Any] = None,
+            db_adapter_cam_events: Optional[Any] = None,
+            db_adapter_zone_events: Optional[Any] = None,
+            db_adapter_attr_events: Optional[Any] = None,
+            db_adapter_system_events: Optional[Any] = None,
     ) -> List[Any]:
         """Собрать DB и JSON адаптеры для EventsProcessor."""
         adapters: List[Any] = []
@@ -199,20 +199,20 @@ class EventsService:
         host.system_events_detector = self.get_detector("SystemEventsDetector")
 
     def initialize_events_stack(
-        self,
-        *,
-        pipeline: IPipeline,
-        objects_handler: IObjectHandler,
-        params: Dict[str, Any],
-        use_database: bool,
-        db_controller: Optional[Any],
-        legacy_host: Any,
-        ui_callback: Optional[callable] = None,
-        db_adapter_fov_events: Optional[Any] = None,
-        db_adapter_cam_events: Optional[Any] = None,
-        db_adapter_zone_events: Optional[Any] = None,
-        db_adapter_attr_events: Optional[Any] = None,
-        db_adapter_system_events: Optional[Any] = None,
+            self,
+            *,
+            pipeline: IPipeline,
+            objects_handler: IObjectHandler,
+            params: Dict[str, Any],
+            use_database: bool,
+            db_controller: Optional[Any],
+            legacy_host: Any,
+            ui_callback: Optional[callable] = None,
+            db_adapter_fov_events: Optional[Any] = None,
+            db_adapter_cam_events: Optional[Any] = None,
+            db_adapter_zone_events: Optional[Any] = None,
+            db_adapter_attr_events: Optional[Any] = None,
+            db_adapter_system_events: Optional[Any] = None,
     ) -> None:
         """Полная инициализация детекторов, контроллера и процессора событий."""
         detectors_params = params.get("events_detectors", {}) or {}
@@ -252,11 +252,11 @@ class EventsService:
         legacy_host.events_processor = self.get_events_processor()
 
     def initialize_processor(
-        self,
-        params: Dict[str, Any],
-        adapters: List[Any],
-        db_controller: Optional[Any] = None,
-        ui_callback: Optional[callable] = None,
+            self,
+            params: Dict[str, Any],
+            adapters: List[Any],
+            db_controller: Optional[Any] = None,
+            ui_callback: Optional[callable] = None,
     ) -> None:
         """Инициализировать процессор событий."""
         self._events_processor = EventsProcessor(adapters, db_controller)

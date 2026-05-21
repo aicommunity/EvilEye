@@ -73,6 +73,7 @@ class GstContinuousRecorder(VideoRecorderBase):
                         pass
             except Exception:
                 pass
+
     def start(self, source_meta: SourceMeta, params: RecordingParams) -> None:
         # This start() is for API compatibility; actual wiring requires pipeline.
         self.source = source_meta
@@ -299,4 +300,3 @@ try:
     atexit.register(GstContinuousRecorder.shutdown_all)
 except Exception:
     pass
-

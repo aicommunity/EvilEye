@@ -1,6 +1,7 @@
 import copy
 import json
 import os.path
+
 try:
     from PyQt6 import QtGui
     from PyQt6.QtWidgets import (
@@ -11,6 +12,7 @@ try:
     from PyQt6.QtGui import QIcon
     from PyQt6.QtGui import QAction
     from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
+
     pyqt_version = 6
 except ImportError:
     from PyQt5 import QtGui
@@ -22,6 +24,7 @@ except ImportError:
     from PyQt5.QtGui import QIcon
     from PyQt5.QtWidgets import QAction
     from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt
+
     pyqt_version = 5
 from evileye.utils import utils
 import sys

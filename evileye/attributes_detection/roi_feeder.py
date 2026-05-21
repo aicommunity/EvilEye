@@ -221,13 +221,13 @@ class RoiFeeder(EvilEyeBase):
                 tracking_data.roi_data = roi_data
         except Exception:
             pass
-    
+
     def _is_primary_object(self, track) -> bool:
         """Check if track represents a primary object"""
         # Check by class ID
         if track.class_id in self.primary_by_id:
             return True
-        
+
         # Check by class name using class_mapping if available
         if self.class_mapping:
             for name, cid in self.class_mapping.items():
@@ -240,9 +240,9 @@ class RoiFeeder(EvilEyeBase):
                 class_name = class_names[track.class_id]
                 if class_name in self.primary_by_name:
                     return True
-        
+
         return False
-    
+
     def _extract_roi_bbox(self, image, bbox):
         """Extract padded ROI bbox [x1, y1, x2, y2]."""
         try:

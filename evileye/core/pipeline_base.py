@@ -27,15 +27,15 @@ class PipelineBase(EvilEyeBase):
     - Используйте `IPipeline` в type hints: `def process(pipeline: IPipeline)`
     - Type checker автоматически проверит соответствие контракту
     """
-    
+
     def __init__(self):
         super().__init__()
         self._credentials = None
-        
+
         # Results storage for external access
         self._results_queue: Queue = Queue(maxsize=2)
         self._current_results: Dict[str, Any] = {}
-        self._final_results_name: str|None = None
+        self._final_results_name: str | None = None
 
     def default(self):
         """Reset pipeline to default state"""
@@ -113,11 +113,11 @@ class PipelineBase(EvilEyeBase):
         # Return empty list if queue is empty
         if self._results_queue.empty():
             return []
-        
+
         # Convert queue to list efficiently
         results = []
         temp_queue = Queue()
-        
+
         # Copy all items from the original queue
         while not self._results_queue.empty():
             try:
@@ -126,14 +126,14 @@ class PipelineBase(EvilEyeBase):
                 temp_queue.put(item)
             except:
                 break
-        
+
         # Restore the original queue
         while not temp_queue.empty():
             try:
                 self._results_queue.put(temp_queue.get_nowait())
             except:
                 break
-        
+
         return results
 
     def get_current_results(self) -> Dict[str, Any]:
@@ -159,7 +159,7 @@ class PipelineBase(EvilEyeBase):
                 self._results_queue.get_nowait()  # Remove oldest result
             except:
                 pass
-        
+
         # Add new result
         self._results_queue.put(result)
         self._current_results = result
@@ -192,11 +192,11 @@ class PipelineBase(EvilEyeBase):
         """
         if self._results_queue.empty():
             return None
-        
+
         # Get the latest result without removing it from queue
         latest_result = None
         temp_queue = Queue()
-        
+
         # Copy all items to find the latest
         while not self._results_queue.empty():
             try:
@@ -205,16 +205,16 @@ class PipelineBase(EvilEyeBase):
                 temp_queue.put(item)
             except:
                 break
-        
+
         # Restore the original queue
         while not temp_queue.empty():
             try:
                 self._results_queue.put(temp_queue.get_nowait())
             except:
                 break
-        
+
         return latest_result
-    
+
     def get_results_queue(self) -> Queue:
         """
         Get the results queue directly.
@@ -223,7 +223,7 @@ class PipelineBase(EvilEyeBase):
             Queue containing results
         """
         return self._results_queue
-    
+
     def is_results_queue_full(self) -> bool:
         """
         Check if results queue is full.
@@ -232,7 +232,7 @@ class PipelineBase(EvilEyeBase):
             True if queue is full, False otherwise
         """
         return self._results_queue.full()
-    
+
     def get_results_queue_size(self) -> int:
         """
         Get the current size of the results queue.
@@ -241,7 +241,7 @@ class PipelineBase(EvilEyeBase):
             Current number of items in the queue
         """
         return self._results_queue.qsize()
-    
+
     def peek_latest_result(self) -> Optional[Dict[str, Any]]:
         """
         Peek at the latest result without removing it from queue.
@@ -252,23 +252,23 @@ class PipelineBase(EvilEyeBase):
         """
         if self._results_queue.empty():
             return None
-        
+
         # Use a more efficient approach for single item access
         try:
             # Get all items temporarily
             items = []
             while not self._results_queue.empty():
                 items.append(self._results_queue.get_nowait())
-            
+
             # Restore all items
             for item in items:
                 self._results_queue.put(item)
-            
+
             # Return the last item if any
             return items[-1] if items else None
         except:
             return None
-    
+
     def get_results_iterator(self):
         """
         Get an iterator over all results in the queue.
@@ -279,11 +279,11 @@ class PipelineBase(EvilEyeBase):
         """
         if self._results_queue.empty():
             return iter([])
-        
+
         # Create a temporary queue to preserve original
         temp_queue = Queue()
         results = []
-        
+
         # Copy all items
         while not self._results_queue.empty():
             try:
@@ -292,14 +292,14 @@ class PipelineBase(EvilEyeBase):
                 temp_queue.put(item)
             except:
                 break
-        
+
         # Restore the original queue
         while not temp_queue.empty():
             try:
                 self._results_queue.put(temp_queue.get_nowait())
             except:
                 break
-        
+
         return iter(results)
 
     # === High-level results helpers ===

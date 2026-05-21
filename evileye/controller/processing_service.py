@@ -12,9 +12,9 @@ class ProcessingService:
 
     @staticmethod
     def should_log_resource_stats(
-        last_ts: float,
-        interval_sec: float,
-        now_ts: Optional[float] = None,
+            last_ts: float,
+            interval_sec: float,
+            now_ts: Optional[float] = None,
     ) -> bool:
         now = now_ts if now_ts is not None else time.time()
         every = float(interval_sec or 0.0)
@@ -33,8 +33,8 @@ class ProcessingService:
 
     @staticmethod
     def collect_processing_frames(
-        vis_frames: Optional[Sequence],
-        fallback_frames: Optional[Sequence],
+            vis_frames: Optional[Sequence],
+            fallback_frames: Optional[Sequence],
     ) -> List[Any]:
         processing_frames: List[Any] = []
         try:

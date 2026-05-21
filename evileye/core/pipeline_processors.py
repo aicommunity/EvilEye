@@ -14,16 +14,16 @@ class PipelineProcessors(PipelineBase):
     Processor-based pipeline implementation.
     Manages multiple processors in a processing chain.
     """
-    
+
     def __init__(self):
         super().__init__()
-        
+
         # List of processor components in execution order
         self.processors: List[ProcessorBase] = []
-        
+
         # Unified processor parameters storage: {processor_name: params_list}
         self._processor_params: Dict[str, List[Dict]] = {}
-        
+
         # Encoders for tracking (can be overridden by derived classes)
         self.encoders: Dict[str, Any] = {}
 
@@ -78,13 +78,13 @@ class PipelineProcessors(PipelineBase):
     def get_params_impl(self):
         """Get parameters from all processors"""
         params = super().get_params_impl()
-        
+
         # Get parameters from each processor type
         for processor in self.processors:
             if processor is not None:
                 section_name = processor.get_name()
                 params[section_name] = processor.get_params()
-        
+
         return params
 
     def start(self):
@@ -92,7 +92,7 @@ class PipelineProcessors(PipelineBase):
         import time
         from ..object_detector.object_detection_base import ObjectDetectorBase
         from .processor_frame import ProcessorFrame
-        
+
         # First, start all processors except sources (detectors, trackers, etc.)
         # This ensures they are ready to receive data before sources begin capturing
         detectors = []
@@ -106,7 +106,7 @@ class PipelineProcessors(PipelineBase):
                         for p in processor.processors:
                             if isinstance(p, ObjectDetectorBase):
                                 detectors.append(p)
-        
+
         # Do not block pipeline startup for a long time on detector readiness.
         # In headless/API runs this delays controller.start(), which in turn
         # prevents preview publication and may look like a hung runtime.
@@ -121,7 +121,7 @@ class PipelineProcessors(PipelineBase):
                 import concurrent.futures
                 timeout_per_detector = 2.0
                 with concurrent.futures.ThreadPoolExecutor(
-                    max_workers=min(len(detectors_with_ready), 8)
+                        max_workers=min(len(detectors_with_ready), 8)
                 ) as executor:
                     future_to_det = {
                         executor.submit(d.is_ready, timeout_per_detector): d
@@ -129,7 +129,7 @@ class PipelineProcessors(PipelineBase):
                     }
                     try:
                         for fut in concurrent.futures.as_completed(
-                            future_to_det, timeout=timeout_per_detector + 1.0
+                                future_to_det, timeout=timeout_per_detector + 1.0
                         ):
                             det = future_to_det[fut]
                             try:
@@ -159,7 +159,7 @@ class PipelineProcessors(PipelineBase):
             time.sleep(0.1)
         else:
             time.sleep(0.1)
-        
+
         # Finally, start sources last so they don't send frames before processors are ready
         for processor in self.processors:
             if processor is not None and isinstance(processor, ProcessorSource):
@@ -171,7 +171,8 @@ class PipelineProcessors(PipelineBase):
             os.getenv("EVILEYE_PROCESSOR_STOP_TIMEOUT_SEC", "8.0") or "8.0"
         )
         source_processors = [p for p in self.processors if p is not None and isinstance(p, ProcessorSource)]
-        other_processors = [p for p in reversed(self.processors) if p is not None and not isinstance(p, ProcessorSource)]
+        other_processors = [p for p in reversed(self.processors) if
+                            p is not None and not isinstance(p, ProcessorSource)]
         for processor in [*source_processors, *other_processors]:
             if processor is not None:
                 stop_done = threading.Event()
@@ -214,10 +215,10 @@ class PipelineProcessors(PipelineBase):
         for processor in self.processors:
             if processor is None:
                 continue
-                
+
             if isinstance(processor, ProcessorSource):
                 self.run_sources()
-            
+
             if perf_diag_enabled:
                 t0 = _t()
             step_result = processor.process(step_result)
@@ -228,9 +229,9 @@ class PipelineProcessors(PipelineBase):
                 except Exception:
                     out_len = -1
                 stage_timings.append((processor.get_name(), (t1 - t0) * 1000.0, out_len))
-            
+
             pipeline_results[processor.get_name()] = step_result
-            
+
             # Store tracking results for attributes processors
             # Always use mc_trackers results for attributes, regardless of mc_trackers status
             if processor.get_name() == 'mc_trackers' and step_result is not None:
@@ -316,4 +317,3 @@ class PipelineProcessors(PipelineBase):
         """Generate default structure for pipeline"""
         # Default implementation for processor-based pipelines
         pass
-

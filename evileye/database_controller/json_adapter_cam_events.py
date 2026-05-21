@@ -57,7 +57,3 @@ class JsonAdapterCamEvents(DatabaseAdapterBase):
 
     def _update_impl(self, event):
         pass
-
-
-
-

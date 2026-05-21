@@ -71,7 +71,7 @@ class JsonAdapterZoneEvents(DatabaseAdapterBase):
             ih, iw = img.image.shape[:2]
             bx, by, bw, bh = box
             if iw and ih:
-                box = [bx/iw, by/ih, bw/iw, bh/ih]
+                box = [bx / iw, by / ih, bw / iw, bh / ih]
 
         rec = {
             'event_id': event.event_id,
@@ -111,5 +111,3 @@ class JsonAdapterZoneEvents(DatabaseAdapterBase):
             cv2.imwrite(preview_abs, preview)
             cv2.imwrite(frame_abs, image.image)
         return preview_rel, frame_rel
-
-

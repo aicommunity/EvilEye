@@ -11,12 +11,12 @@ from .resource_tracker_patch import apply_resource_tracker_patch
 
 
 def run_mp_worker_entry(
-    worker_class: Type["MpWorker"],
-    input_queue,
-    output_queue,
-    log_queue,
-    stop_event,
-    spawn_state: Optional[Dict[str, Any]] = None,
+        worker_class: Type["MpWorker"],
+        input_queue,
+        output_queue,
+        log_queue,
+        stop_event,
+        spawn_state: Optional[Dict[str, Any]] = None,
 ) -> None:
     """
     Spawn-safe process entry: instantiate worker in the child instead of pickling it.
