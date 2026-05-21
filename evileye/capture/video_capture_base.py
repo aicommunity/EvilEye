@@ -287,13 +287,7 @@ class VideoCaptureBase(EvilEyeBase):
                 frame.current_video_position = meta.get("current_video_position")
                 frame.source_video_duration = meta.get("source_video_duration")
                 frame.time_stamp = meta.get("time_stamp")
-                # Materialize immediately in parent process. This avoids keeping
-                # shm handles alive after capture worker shutdown (SIGBUS risk).
-                frame.image = self._frame_transport.get_frame_view(handle)
-                try:
-                    self._frame_transport.release_frame(handle)
-                except Exception:
-                    pass
+                frame.image = self._frame_transport.consume_frame(handle)
                 return frame
             except Exception:
                 return None

@@ -53,11 +53,7 @@ class ProcessorStep(ProcessorBase):
                 return input_item
             from .frame_transport import SharedFrameTransport
             transport = SharedFrameTransport()
-            frame.image = transport.get_frame_view(frame_handle)
-            try:
-                transport.release_frame(frame_handle)
-            except Exception:
-                pass
+            frame.image = transport.consume_frame(frame_handle)
             try:
                 setattr(frame, "frame_handle", None)
                 setattr(frame, "frame_ref", None)

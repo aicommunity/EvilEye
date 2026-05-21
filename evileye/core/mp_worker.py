@@ -1,11 +1,39 @@
 from abc import ABC, abstractmethod
-import multiprocessing as mp
 import logging
 import logging.handlers
-from queue import Full
+import multiprocessing as mp
+from queue import Empty, Full
 from timeit import default_timer as timer
+from typing import Any, Dict, Optional, Type
 
 from .logger import get_module_logger
+from .resource_tracker_patch import apply_resource_tracker_patch
+
+
+def run_mp_worker_entry(
+    worker_class: Type["MpWorker"],
+    input_queue,
+    output_queue,
+    log_queue,
+    stop_event,
+    spawn_state: Optional[Dict[str, Any]] = None,
+) -> None:
+    """
+    Spawn-safe process entry: instantiate worker in the child instead of pickling it.
+
+    Fork mode passed ``target=worker`` (bound instance); spawn must not pickle locks,
+    threading primitives, or GPU handles held by a parent-side worker object.
+    """
+    apply_resource_tracker_patch()
+    worker = worker_class(
+        input_queue,
+        output_queue,
+        log_queue=log_queue,
+        stop_event=stop_event,
+    )
+    if spawn_state:
+        worker.apply_spawn_state(spawn_state)
+    worker()
 
 
 def _setup_child_process_logging(log_queue):
@@ -27,7 +55,7 @@ class MpWorker(ABC):
     poison-pill signal that terminates the worker loop gracefully
     """
 
-    def __init__(self, input_queue, output_queue, log_queue=None):
+    def __init__(self, input_queue, output_queue, log_queue=None, stop_event=None):
         self.input_queue = input_queue
         self.output_queue = output_queue
         self.log_queue = log_queue
@@ -35,8 +63,9 @@ class MpWorker(ABC):
         self.output_timeout = 1.0
         # Родительский логгер нужен до инициализации child-process logging.
         self.logger = get_module_logger("mp_worker")
-        # Shared flag so the parent can request a stop without poison pill
-        self._stop_event = mp.Event()
+        if stop_event is None:
+            raise ValueError("stop_event is required (use MpControl spawn context Event)")
+        self._stop_event = stop_event
         self.stats = {
             "processed_total": 0,
             "drops_total": 0,
@@ -59,6 +88,14 @@ class MpWorker(ABC):
     def cleanup(self):
         """Called before the worker loop exits -- override for resource cleanup"""
         pass
+
+    def get_spawn_state(self) -> Dict[str, Any]:
+        """Serializable params to recreate worker state in a spawn child."""
+        return {}
+
+    def apply_spawn_state(self, state: Dict[str, Any]) -> None:
+        """Restore params produced by get_spawn_state() in the child process."""
+        return
 
     def __call__(self):
         self._init_logger()
@@ -98,7 +135,7 @@ class MpWorker(ABC):
                                 "Worker output queue is full, dropping result"
                             )
                 self.stats["processed_total"] += 1
-            except mp.queues.Empty:
+            except Empty:
                 continue
             except Exception as e:
                 if self.logger:

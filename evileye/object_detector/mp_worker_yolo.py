@@ -5,8 +5,8 @@ from .ultralytics_postprocess import apply_ultralytics_optimizations
 
 
 class MpWorkerYolo(MpWorker):
-    def __init__(self, input_queue, output_queue, log_queue=None):
-        super().__init__(input_queue, output_queue, log_queue=log_queue)
+    def __init__(self, input_queue, output_queue, log_queue=None, stop_event=None):
+        super().__init__(input_queue, output_queue, log_queue=log_queue, stop_event=stop_event)
         self.model_name = ""
         self.model = None
         self.classes = []
@@ -20,6 +20,20 @@ class MpWorkerYolo(MpWorker):
         self.classes = classes
         self.inf_params = inf_params
         self.is_init = True
+
+    def get_spawn_state(self):
+        return {
+            "model_name": self.model_name,
+            "classes": self.classes,
+            "inf_params": self.inf_params,
+        }
+
+    def apply_spawn_state(self, state):
+        self.set_params(
+            state.get("model_name", ""),
+            state.get("classes", []),
+            state.get("inf_params", {}),
+        )
 
     def init_worker(self):
         self.model = YOLO(self.model_name)

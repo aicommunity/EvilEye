@@ -247,4 +247,23 @@ def log_system_info(logger: logging.Logger):
     logger.info(f"CPU count: {psutil.cpu_count()}")
     logger.info(f"Memory: {psutil.virtual_memory().total / (1024**3):.1f} GB")
     logger.info(f"Working directory: {os.getcwd()}")
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            logger.info(
+                "CUDA: available (%s, %d device(s), torch.cuda %s)",
+                torch.cuda.get_device_name(0),
+                torch.cuda.device_count(),
+                torch.version.cuda,
+            )
+        else:
+            logger.warning(
+                "CUDA: not available to PyTorch in this process "
+                "(detectors/trackers in process mode need spawn + GPU driver)"
+            )
+    except ImportError:
+        logger.info("CUDA: PyTorch not installed")
+    except Exception as exc:
+        logger.warning("CUDA: status check failed: %s", exc)
     logger.info("=" * 40)

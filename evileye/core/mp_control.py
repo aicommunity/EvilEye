@@ -6,6 +6,8 @@ import time
 from typing import Iterable
 from timeit import default_timer as timer
 from .logger import get_module_logger
+from .mp_context import get_spawn_context
+from .mp_worker import run_mp_worker_entry
 from .mp_session_registry import (
     cleanup_current_session_workers,
     register_worker_pid,
@@ -34,24 +36,25 @@ class MpControl:
         self.workers_list = []
         self.restart_on_exit = bool(restart_on_exit)
         self.no_restart_exit_codes = set(no_restart_exit_codes or {-15})
+        self._mp_ctx = get_spawn_context()
 
         if max_input_size is None:
             max_input_size = 8
         if max_input_size:
-            self.input_queue = mp.Queue(maxsize=max_input_size)
+            self.input_queue = self._mp_ctx.Queue(maxsize=max_input_size)
         else:
-            self.input_queue = mp.Queue()
+            self.input_queue = self._mp_ctx.Queue()
 
         if max_output_size is None:
             max_output_size = 8
         if max_output_size:
-            self.output_queue = mp.Queue(maxsize=max_output_size)
+            self.output_queue = self._mp_ctx.Queue(maxsize=max_output_size)
         else:
-            self.output_queue = mp.Queue()
+            self.output_queue = self._mp_ctx.Queue()
         self.processes: list[mp.Process] = []
 
         # Cross-process logging
-        self._log_queue = mp.Queue()
+        self._log_queue = self._mp_ctx.Queue()
         self._log_listener = None
 
         # Health monitoring
@@ -102,9 +105,14 @@ class MpControl:
         The worker receives shared input/output queues and the log queue
         so that logging from child processes is forwarded to the parent
         """
+        stop_event = self._mp_ctx.Event()
         worker = worker_class(
-            self.input_queue, self.output_queue, log_queue=self._log_queue,
-            *args, **kwargs,
+            self.input_queue,
+            self.output_queue,
+            log_queue=self._log_queue,
+            stop_event=stop_event,
+            *args,
+            **kwargs,
         )
         self.workers_list.append(worker)
         return worker
@@ -141,7 +149,19 @@ class MpControl:
         self._suppressed_restart_pids.clear()
         self._start_log_listener()
         for worker in self.workers_list:
-            p = mp.Process(target=worker, daemon=True, name=f"{self.name}-worker")
+            p = self._mp_ctx.Process(
+                target=run_mp_worker_entry,
+                args=(
+                    type(worker),
+                    self.input_queue,
+                    self.output_queue,
+                    self._log_queue,
+                    worker._stop_event,
+                    worker.get_spawn_state(),
+                ),
+                daemon=True,
+                name=f"{self.name}-worker",
+            )
             p.start()
             self.processes.append(p)
             try:
@@ -239,8 +259,17 @@ class MpControl:
                         f"restarting"
                     )
                     try:
-                        new_p = mp.Process(
-                            target=self.workers_list[i],
+                        w = self.workers_list[i]
+                        new_p = self._mp_ctx.Process(
+                            target=run_mp_worker_entry,
+                            args=(
+                                type(w),
+                                self.input_queue,
+                                self.output_queue,
+                                self._log_queue,
+                                w._stop_event,
+                                w.get_spawn_state(),
+                            ),
                             daemon=True,
                             name=f"{self.name}-worker",
                         )

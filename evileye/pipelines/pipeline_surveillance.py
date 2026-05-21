@@ -240,6 +240,12 @@ class PipelineSurveillance(PipelineProcessors):
     def _init_encoders(self, tracker_params_list: List[Dict]):
         """Initialize encoders for tracking in surveillance pipeline"""
         self.encoders = {}
+        if self._trackers_use_process_mode(tracker_params_list):
+            self.logger.info(
+                "Skipping parent-process OnnxEncoder init "
+                "(trackers use process mode; encoder loads in worker)"
+            )
+            return
         for tracker_params in tracker_params_list:
             path = tracker_params.get("tracker_onnx", "models/osnet_ain_x1_0_M.onnx")
             if path not in self.encoders:
@@ -259,6 +265,15 @@ class PipelineSurveillance(PipelineProcessors):
                         path,
                         e,
                     )
+
+    @staticmethod
+    def _trackers_use_process_mode(tracker_params_list: List[Dict]) -> bool:
+        for tracker_params in tracker_params_list or []:
+            if not isinstance(tracker_params, dict):
+                continue
+            if str(tracker_params.get("execution_mode", "thread")).lower() == "process":
+                return True
+        return False
 
     def generate_default_structure(self, num_sources: int):
         """Generate default structure for pipeline"""

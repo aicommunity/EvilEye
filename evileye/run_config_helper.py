@@ -22,12 +22,18 @@ from evileye.core.logger import get_module_logger
 from evileye.core.config_validator import ConfigValidator
 from evileye.gui import GUIManager, GUIMode, determine_gui_mode
 from evileye.core.mp_session_registry import cleanup_current_session_workers
+from evileye.core.mp_context import ensure_spawn_start_method
 
 # Shared-memory descriptor path can trigger noisy shutdown warnings from
 # multiprocessing resource_tracker when segments are already cleaned up.
 warnings.filterwarnings(
     "ignore",
     message=r"resource_tracker: '.*': \[Errno 2\] No such file or directory: '.*'",
+    category=UserWarning,
+)
+warnings.filterwarnings(
+    "ignore",
+    message=r"resource_tracker:.*KeyError",
     category=UserWarning,
 )
 # Ensure child/resource-tracker processes inherit suppression as well.
@@ -48,6 +54,7 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
     Returns:
         Qt application exit code (0 for success)
     """
+    ensure_spawn_start_method()
     logger = get_module_logger("run_config")
 
     config_file_name = normalize_config_path(config_path)

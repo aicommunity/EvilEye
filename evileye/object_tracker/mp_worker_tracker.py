@@ -15,8 +15,8 @@ class MpWorkerTracker(MpWorker):
     boundaries
     """
 
-    def __init__(self, input_queue, output_queue, log_queue=None):
-        super().__init__(input_queue, output_queue, log_queue=log_queue)
+    def __init__(self, input_queue, output_queue, log_queue=None, stop_event=None):
+        super().__init__(input_queue, output_queue, log_queue=log_queue, stop_event=stop_event)
         self.tracker_params = {}
         self.tracker = None
         self.encoders = None
@@ -25,6 +25,12 @@ class MpWorkerTracker(MpWorker):
     def set_params(self, tracker_params: dict):
         """Store params to be used during init_worker inside child process"""
         self.tracker_params = tracker_params
+
+    def get_spawn_state(self):
+        return {"tracker_params": dict(self.tracker_params or {})}
+
+    def apply_spawn_state(self, state):
+        self.set_params(state.get("tracker_params", {}))
 
     def init_worker(self):
         """Initialize BOTSORT tracker inside the child process"""

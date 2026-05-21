@@ -26,14 +26,20 @@ class MpWorkerCapture(MpWorker):
     4. ``cleanup()`` tears down capture resources.
     """
 
-    def __init__(self, input_queue, output_queue, log_queue=None):
-        super().__init__(input_queue, output_queue, log_queue=log_queue)
+    def __init__(self, input_queue, output_queue, log_queue=None, stop_event=None):
+        super().__init__(input_queue, output_queue, log_queue=log_queue, stop_event=stop_event)
         self._capture_params: dict = {}
         self._capture = None
         self._frame_transport = SharedFrameTransport()
 
     def set_params(self, params: dict) -> None:
         self._capture_params = dict(params) if params else {}
+
+    def get_spawn_state(self):
+        return {"capture_params": dict(self._capture_params)}
+
+    def apply_spawn_state(self, state):
+        self.set_params(state.get("capture_params", {}))
 
     def _create_capture(self, use_gstreamer: bool):
         if use_gstreamer:
@@ -133,8 +139,15 @@ class MpWorkerCapture(MpWorker):
 
             for frame in frames:
                 packed = self._pack_frame_for_ipc(frame)
+                handle = (
+                    packed.get("frame_handle")
+                    if isinstance(packed, dict)
+                    else None
+                )
                 try:
                     self.output_queue.put(packed, timeout=0.5)
+                    if handle is not None:
+                        self._frame_transport.relinquish_frame(handle)
                 except Full:
                     try:
                         dropped = self.output_queue.get_nowait()
@@ -143,6 +156,8 @@ class MpWorkerCapture(MpWorker):
                         pass
                     try:
                         self.output_queue.put_nowait(packed)
+                        if handle is not None:
+                            self._frame_transport.relinquish_frame(handle)
                     except Full:
                         self._release_packed_frame(packed)
                         pass
@@ -159,7 +174,9 @@ class MpWorkerCapture(MpWorker):
             return frame
         frame_id = int(getattr(frame, "frame_id", 0) or 0)
         timestamp = float(getattr(frame, "time_stamp", time.time()) or time.time())
-        handle = self._frame_transport.alloc_frame(image, frame_id=frame_id, timestamp=timestamp)
+        handle = self._frame_transport.alloc_frame(
+            image, frame_id=frame_id, timestamp=timestamp
+        )
         return {
             "frame_handle": handle,
             "frame_meta": {
@@ -184,6 +201,10 @@ class MpWorkerCapture(MpWorker):
             pass
 
     def cleanup(self) -> None:
+        try:
+            self._frame_transport.release_all_owned()
+        except Exception:
+            pass
         if self._capture is not None:
             try:
                 self._capture.stop()

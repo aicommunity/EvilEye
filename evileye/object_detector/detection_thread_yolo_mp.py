@@ -68,8 +68,7 @@ class DetectionThreadYoloMp(DetectionThreadBase):
             payload.append(handle)
         try:
             self.mp_control.put(payload)
-            res = self.mp_control.get()
-            return res
+            return self.mp_control.get()
         finally:
             for handle in frame_handles:
                 try:

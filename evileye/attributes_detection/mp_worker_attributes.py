@@ -10,8 +10,8 @@ class MpWorkerRoiFeeder(MpWorker):
     tracking_data before forwarding
     """
 
-    def __init__(self, input_queue, output_queue, log_queue=None):
-        super().__init__(input_queue, output_queue, log_queue=log_queue)
+    def __init__(self, input_queue, output_queue, log_queue=None, stop_event=None):
+        super().__init__(input_queue, output_queue, log_queue=log_queue, stop_event=stop_event)
         self.padding = 0.0
         self.every_n_frames = 1
         self._frame_counters = {}
@@ -19,6 +19,12 @@ class MpWorkerRoiFeeder(MpWorker):
     def set_params(self, params: dict):
         self.padding = float(params.get('padding', 0.0))
         self.every_n_frames = int(params.get('every_n_frames', 1))
+
+    def get_spawn_state(self):
+        return {"padding": self.padding, "every_n_frames": self.every_n_frames}
+
+    def apply_spawn_state(self, state):
+        self.set_params(state)
 
     def init_worker(self):
         pass
@@ -71,16 +77,18 @@ class MpWorkerAttributeClassifier(MpWorker):
     on ROI crops attached by the RoiFeeder stage
     """
 
-    def __init__(self, input_queue, output_queue, log_queue=None):
-        super().__init__(input_queue, output_queue, log_queue=log_queue)
+    def __init__(self, input_queue, output_queue, log_queue=None, stop_event=None):
+        super().__init__(input_queue, output_queue, log_queue=log_queue, stop_event=stop_event)
         self.model_path = "models/yolo11n.pt"
         self.attrs = []
         self.conf_threshold = 0.5
         self.inference_size = 224
         self.attr_class_mapping = {}
         self.yolo_model = None
+        self._params_snapshot: dict = {}
 
     def set_params(self, params: dict):
+        self._params_snapshot = dict(params or {})
         self.model_path = params.get('model', self.model_path)
         self.attrs = params.get('attrs', [])
         self.conf_threshold = params.get('conf_threshold', 0.5)
@@ -93,6 +101,12 @@ class MpWorkerAttributeClassifier(MpWorker):
             for attr_name, class_id in class_mapping.items():
                 if attr_name in self.attrs:
                     self.attr_class_mapping[class_id] = attr_name
+
+    def get_spawn_state(self):
+        return {"params": dict(self._params_snapshot)}
+
+    def apply_spawn_state(self, state):
+        self.set_params(state.get("params", {}))
 
     def init_worker(self):
         from ultralytics import YOLO

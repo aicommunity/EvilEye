@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from evileye.core.logging_config import setup_evileye_logging, log_system_info
 from evileye.api.core.runtime_registry import allocate_pipeline_id, mark_runtime_stopped, register_runtime, update_runtime_snapshot
 from evileye.core.mp_session_registry import cleanup_stale_sessions
+from evileye.core.mp_context import ensure_spawn_start_method
 
 def create_args_parser():
     pars = argparse.ArgumentParser()
@@ -80,6 +81,7 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
 
 def main():
     """Main entry point for the EvilEye process application"""
+    ensure_spawn_start_method()
     args = create_args_parser()
     # Инициализация логирования после парсинга аргументов
     logger = setup_evileye_logging(log_level=args.log_level.upper(), log_to_console=True, log_to_file=True)
