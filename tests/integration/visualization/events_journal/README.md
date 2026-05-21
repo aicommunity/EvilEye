@@ -2,8 +2,12 @@
 
 GUI and JSON journal checks for `EventsJournalJson`, data sources, and related widgets.
 
-- Use `conftest.py` (`journal_test_logger`) instead of per-file `setup_evileye_logging` blocks.
-- Use `helpers.py` for shared date folders and JSON fixtures.
-- Prefer real assertions over log-only "documentation" tests.
+## Conventions
 
-Legacy duplicates were removed; former `tests/integration/journal/` tests live here.
+- **`journal_test_logger`** (`conftest.py`) — use instead of per-file `setup_evileye_logging`.
+- **`journal_base_dir`** — session `EvilEyeData` path from project root.
+- **`helpers.py`** — `journal_today_folder`, `write_json`, `EXPECTED_JOURNAL_HEADERS`, `table_horizontal_headers`, `load_db_config`.
+- Prefer **`qapp`** pytest-qt fixture; do not create `QApplication(sys.argv)` in tests.
+- Column layout tests should use `EXPECTED_JOURNAL_HEADERS` and real `assert` checks.
+
+Log-only exploratory tests remain for manual debugging; new tests should assert behavior.

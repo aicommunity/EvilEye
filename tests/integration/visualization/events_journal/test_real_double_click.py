@@ -2,17 +2,10 @@
 
 import sys
 import os
-from evileye.core.logging_config import setup_evileye_logging
-from evileye.core.logger import get_module_logger
-
-# Инициализация логирования для тестов
-logger = setup_evileye_logging(log_level="INFO", log_to_console=True, log_to_file=True)
-test_logger = get_module_logger("test")
-
-def test_real_double_click():
+def test_real_double_click(journal_test_logger):
     """Test real double click functionality in GUI"""
     
-    test_logger.info("=== Test Real Double Click ===")
+    journal_test_logger.info("=== Test Real Double Click ===")
     
     try:
         from PyQt6.QtWidgets import QApplication
@@ -46,7 +39,7 @@ def test_real_double_click():
         os.makedirs(os.path.dirname(frame_path), exist_ok=True)
         cv2.imwrite(frame_path, test_image)
         
-        test_logger.info(f"✅ Created test images: {preview_path}, {frame_path}")
+        journal_test_logger.info(f"✅ Created test images: {preview_path}, {frame_path}")
         
         # Create test JSON data with current timestamp
         test_json_path = os.path.join(test_images_dir, 'objects_found.json')
@@ -84,26 +77,26 @@ def test_real_double_click():
         with open(test_json_path, 'w') as f:
             json.dump(test_data, f, indent=2)
         
-        test_logger.info(f"✅ Created test JSON data: {test_json_path}")
+        journal_test_logger.info(f"✅ Created test JSON data: {test_json_path}")
         
         # Create EventsJournalJson widget
         journal = EventsJournalJson(base_dir)
         journal.show()
         
-        test_logger.info("\n🧪 Testing Real Double Click:")
-        test_logger.info("   - Journal window should be visible")
-        test_logger.info("   - Double click on any preview image in the table")
-        test_logger.info("   - A new window should open with the full image")
-        test_logger.info("   - Double click on the image window to close it")
-        test_logger.info("   - Press Ctrl+C to exit this test")
+        journal_test_logger.info("\n🧪 Testing Real Double Click:")
+        journal_test_logger.info("   - Journal window should be visible")
+        journal_test_logger.info("   - Double click on any preview image in the table")
+        journal_test_logger.info("   - A new window should open with the full image")
+        journal_test_logger.info("   - Double click on the image window to close it")
+        journal_test_logger.info("   - Press Ctrl+C to exit this test")
         
         # Set up a timer to check if image window was created
         def check_image_window():
             if hasattr(journal, 'image_win') and journal.image_win and journal.image_win.isVisible():
-                test_logger.info("✅ Image window was created and is visible!")
-                test_logger.info("✅ Double click functionality is working!")
+                journal_test_logger.info("✅ Image window was created and is visible!")
+                journal_test_logger.info("✅ Double click functionality is working!")
             else:
-                test_logger.info("⏳ Waiting for double click on preview image...")
+                journal_test_logger.info("⏳ Waiting for double click on preview image...")
         
         timer = QTimer()
         timer.timeout.connect(check_image_window)
@@ -150,8 +143,8 @@ def test_real_double_click():
             pass
         
     except KeyboardInterrupt:
-        test_logger.info("\n✅ Test interrupted by user")
+        journal_test_logger.info("\n✅ Test interrupted by user")
     except Exception as e:
-        test_logger.error(f"❌ Error: {e}")
+        journal_test_logger.error(f"❌ Error: {e}")
         import traceback
         traceback.print_exc()
