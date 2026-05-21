@@ -12,6 +12,7 @@ import time
 from queue import Empty, Full
 
 from ..core.mp_worker import MpWorker
+from ..core.processor_base import EXEC_MODE_THREAD
 from ..core.frame_transport import SharedFrameTransport
 
 
@@ -77,7 +78,8 @@ class MpWorkerCapture(MpWorker):
         )
 
         child_params = dict(params)
-        child_params.pop("execution_mode", None)
+        # Capture already runs in a child process; backend must use in-process threads.
+        child_params["execution_mode"] = EXEC_MODE_THREAD
         capture = self._create_capture(use_gstreamer=use_gstreamer)
 
         if self._init_capture_instance(capture, child_params):

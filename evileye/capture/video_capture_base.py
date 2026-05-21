@@ -21,8 +21,11 @@ from ..core.frame_transport import FrameHandle, SharedFrameTransport
 from .constants import CaptureConstants, CaptureConfig
 from .queue_utils import DropOldestQueue
 
-EXEC_MODE_THREAD = "thread"
-EXEC_MODE_PROCESS = "process"
+from ..core.processor_base import (
+    DEFAULT_EXECUTION_MODE,
+    EXEC_MODE_PROCESS,
+    EXEC_MODE_THREAD,
+)
 
 
 class CaptureDeviceType(Enum):
@@ -82,7 +85,7 @@ class VideoCaptureBase(EvilEyeBase):
         self.retrieve_thread = None
 
         # Multiprocessing support (execution_mode == "process")
-        self.execution_mode = EXEC_MODE_THREAD
+        self.execution_mode = DEFAULT_EXECUTION_MODE
         self._mp_control = None
         self._capture_dispatch_thread: threading.Thread | None = None
         self._frame_transport = SharedFrameTransport()
@@ -101,10 +104,24 @@ class VideoCaptureBase(EvilEyeBase):
 
     def init(self, **kwargs):
         """Override to handle process-mode capture before subclass init."""
-        if self.execution_mode == EXEC_MODE_PROCESS and not self.get_init_flag():
+        if (
+            self.execution_mode == EXEC_MODE_PROCESS
+            and not self.get_init_flag()
+            and not self._running_inside_mp_worker()
+        ):
             self.is_inited = self._init_process_mode()
             return self.is_inited
         return super().init(**kwargs)
+
+    @staticmethod
+    def _running_inside_mp_worker() -> bool:
+        """True when already inside an MpControl worker (no nested spawn)."""
+        try:
+            import multiprocessing as mp
+
+            return mp.current_process().name != "MainProcess"
+        except Exception:
+            return False
 
     def get(self) -> list[CaptureImage]:
         captured_images: list[CaptureImage] = []
@@ -395,7 +412,7 @@ class VideoCaptureBase(EvilEyeBase):
 
     def set_params_impl(self) -> None:
         self.release()
-        self.execution_mode = self.params.get('execution_mode', EXEC_MODE_THREAD)
+        self.execution_mode = self.params.get('execution_mode', DEFAULT_EXECUTION_MODE)
         self.capture_config = CaptureConfig.from_dict(self.params.get('capture'))
         self.split_stream = self.params.get('split', False)
         self.num_split = self.params.get('num_split', None)
