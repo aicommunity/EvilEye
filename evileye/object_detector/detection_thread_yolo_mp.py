@@ -4,6 +4,7 @@ import time
 from typing import Optional
 
 from .detection_thread_base import DetectionThreadBase
+from ..core.frame import Frame
 from ..core.frame_transport import FrameHandle, SharedFrameTransport
 
 utils = None
@@ -78,29 +79,33 @@ class DetectionThreadYoloMp(DetectionThreadBase):
                     pass
 
     def get_bboxes(self, result, roi: list) -> tuple[list, list, list]:
-        bboxes_coords = []
-        confidences = []
-        ids = []
         if result is None:
-            return bboxes_coords, confidences, ids
+            return [], [], []
+        from .bbox_utils import (
+            clip_xyxy_list,
+            mp_dict_list_to_image_coords,
+            roi_boxes_to_image_coords,
+        )
+
+        # roi == split_image[i]: [Frame, [x_off, y_off]]
+        frame_entry = roi[0]
+        x_off, y_off = roi[1][0], roi[1][1]
         try:
             if isinstance(result, list):
-                coords = [x.get("bbox_xyxy", []) for x in result if isinstance(x, dict)]
-                confs = [x.get("confidence", 0.0) for x in result if isinstance(x, dict)]
-                class_ids = [x.get("class_id", -1) for x in result if isinstance(x, dict)]
+                bboxes_coords, confidences, ids = mp_dict_list_to_image_coords(
+                    result, (x_off, y_off), logger=self.logger
+                )
             else:
-                boxes = result.boxes.numpy()
-                coords = boxes.xyxy
-                confs = boxes.conf
-                class_ids = boxes.cls
-            for coord, class_id, conf in zip(coords, class_ids, confs):
-                utils_module = get_utils()
-                abs_coords = utils_module.roi_to_image(coord, roi[1][0], roi[1][1])
-                bboxes_coords.append(abs_coords)
-                confidences.append(conf)
-                ids.append(class_id)
+                bboxes_coords, confidences, ids = roi_boxes_to_image_coords(
+                    result, (x_off, y_off), logger=self.logger
+                )
         except Exception:
-            pass
+            return [], [], []
+
+        img = frame_entry.image if isinstance(frame_entry, Frame) else None
+        if img is not None and len(img.shape) >= 2:
+            h, w = img.shape[:2]
+            bboxes_coords = clip_xyxy_list(bboxes_coords, w, h)
         return bboxes_coords, confidences, ids
 
     def stop(self):
