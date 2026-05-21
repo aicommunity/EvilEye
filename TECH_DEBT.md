@@ -1,12 +1,8 @@
 # Technical debt ledger
 
-Last reviewed: TD-008/TD-009, 2026-05-21
+Last reviewed: TD-010, 2026-05-21
 
 ## Open
-
-| ID | Description | File / area | Introduced | Target phase | Priority |
-|----|-------------|-------------|------------|--------------|----------|
-| TD-010 | `video_capture_gstreamer.py` / `controller.py` very large | capture, controller | audit | 4 | medium |
 
 ## In progress
 
@@ -31,6 +27,7 @@ Last reviewed: TD-008/TD-009, 2026-05-21
 | TD-008-partial | phase 5 | Removed `test_attributes_detection.py.unittest_backup` |
 | TD-008 | TD-008/TD-009 | Events journal: `conftest`/`helpers`, removed log-only dupes, moved legacy `journal/` tests |
 | TD-009 | TD-008/TD-009 | `broker_access`/`manager_access` thin shims → `runtime_services`; tests use canonical accessors |
+| TD-010 | TD-010 | GStreamer split into mixins; `ControllerProcessingMixin` for loop helpers (~540/2488 lines) |
 
 ## Deferred (explicitly out of scope)
 
