@@ -1119,7 +1119,7 @@ ProcessorStep                    Dispatcher Thread              Child Process
 **Что изменилось**:
 - Добавлен `execution_mode` в `__init__`, `set_params_impl`, `get_params_impl`
 - `init_impl()` ветвится на `_init_thread_mode()` и `_init_process_mode()`
-- В потоковом режиме: `YOLO()` вызывается в `init_impl` (поток инициализации pipeline); инференс — в отдельном `processing_thread` (см. [Контексты загрузки моделей](#контексты-загрузки-ultralytics-моделей))
+- В потоковом режиме: `YOLO()` загружается в `processing_thread` (`_ensure_yolo_model_in_worker_thread`); `init_impl` только поднимает поток (см. [Контексты загрузки моделей](#контексты-загрузки-ultralytics-моделей))
 - В процессном режиме: `MpControl` + `MpWorkerAttributeClassifier`; `YOLO()` только в `init_worker()` дочернего процесса
 - `model_path` и `attrs` инициализированы в `__init__` (ранее определялись только в `set_params_impl`)
 
@@ -1131,7 +1131,7 @@ ProcessorStep                    Dispatcher Thread              Child Process
 |----------|--------------------------------------|-----------------|
 | Детекция, `execution_mode=thread` | `DetectionThreadYolo.init_detection_implementation` в `processing_thread` | тот же поток |
 | Детекция, `execution_mode=process` | `MpWorkerYolo.init_worker` в дочернем процессе | child `worker_impl`; родитель только SHM + queues |
-| Атрибуты, `thread` | `AttributeClassifier._init_thread_mode` в `init_impl` | `processing_thread` |
+| Атрибуты, `thread` | `AttributeClassifier._ensure_yolo_model_in_worker_thread` в `processing_thread` | `processing_thread` |
 | Атрибуты, `process` | `MpWorkerAttributeClassifier.init_worker` | child process |
 
 **Запрещено:** singleton-кэш модели между потоками/процессами; передача загруженной модели через `mp.Queue`/pickle.

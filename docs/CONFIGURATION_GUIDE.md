@@ -725,6 +725,8 @@ USB камера с GStreamer бэкендом.
 | `vid_stride` | int | Шаг обработки кадров | `1` |
 | `num_detection_threads` | int | Количество потоков для детекции | `1` |
 
+При `execution_mode=thread` каждый поток детекции загружает **отдельную** копию весов в RAM/VRAM; при `process` — отдельный дочерний процесс на воркер. Увеличение `num_detection_threads` умножает потребление памяти.
+
 **Примеры конфигураций детекторов**:
 
 - **YOLO**: [single_video.json](../evileye/samples_configs/single_video.json)
