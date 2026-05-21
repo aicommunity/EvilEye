@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 from typing import Any, Dict, Optional
 
 from evileye.core.logger import get_module_logger
+from evileye.utils.json_io import load_json, save_json_atomic
 
 
 class ConfigurationService:
@@ -33,8 +32,7 @@ class ConfigurationService:
             json.JSONDecodeError: Если файл содержит невалидный JSON
         """
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                config = json.load(f)
+            config = load_json(file_path)
             self._loaded_config = config
             self.logger.info(f"Configuration loaded from: {file_path}")
             return config
@@ -59,17 +57,10 @@ class ConfigurationService:
             if not file_path:
                 self.logger.error("No config file path specified for saving")
                 return False
-
-            dir_name = os.path.dirname(file_path) or "."
-            with tempfile.NamedTemporaryFile(
-                "w", encoding="utf-8", delete=False, dir=dir_name, prefix=".tmp_"
-            ) as tf:
-                json.dump(config, tf, indent=4, ensure_ascii=False)
-                temp_path = tf.name
-
-            os.replace(temp_path, file_path)
-            self.logger.info(f"Configuration saved to: {file_path}")
-            return True
+            ok = save_json_atomic(file_path, config)
+            if ok:
+                self.logger.info(f"Configuration saved to: {file_path}")
+            return ok
         except Exception as e:
             self.logger.error(f"Failed to save configuration: {e}")
             return False

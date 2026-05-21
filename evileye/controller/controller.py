@@ -1108,34 +1108,14 @@ class Controller:
 
     def _log_resource_stats(self, context: str) -> None:
         """Log lightweight RSS/threads/FD metrics for the current process."""
-        pid = None
+        from evileye.utils.resource_stats import collect_process_resource_stats, format_resource_stats_line
+
         try:
             pid = os.getpid()
         except Exception:
             pid = None
-
-        rss_mb = None
-        num_threads = None
-        num_fds = None
-        open_files = None
-        try:
-            import psutil  # type: ignore
-            proc = psutil.Process(pid) if pid else psutil.Process()
-            mem = proc.memory_info()
-            rss_mb = mem.rss / (1024 * 1024)
-            try:
-                num_threads = proc.num_threads()
-            except Exception:
-                num_threads = None
-            try:
-                num_fds = proc.num_fds()
-            except Exception:
-                num_fds = None
-            try:
-                open_files = len(proc.open_files())
-            except Exception:
-                open_files = None
-        except Exception:
+        stats = collect_process_resource_stats(pid)
+        if stats is None:
             return
 
         try:
@@ -1180,13 +1160,8 @@ class Controller:
                     pass
             log_method = self.logger.debug if context == "periodic" else self.logger.info
             log_method(
-                "ResourceStats[%s] pid=%s rss_mb=%s threads=%s fds=%s open_files=%s%s%s",
-                context,
-                pid,
-                (f"{rss_mb:.3f}" if isinstance(rss_mb, (int, float)) else "n/a"),
-                (str(num_threads) if num_threads is not None else "n/a"),
-                (str(num_fds) if num_fds is not None else "n/a"),
-                (str(open_files) if open_files is not None else "n/a"),
+                "%s%s%s",
+                format_resource_stats_line(context, stats),
                 self._format_source_restart_counters(),
                 "".join(extra_parts),
             )
@@ -2004,23 +1979,15 @@ class Controller:
             pass
 
     def _atomic_json_dump(self, path: str, data: dict) -> bool:
-        try:
-            if not path:
-                self.logger.error("No config file path specified for saving")
-                return False
-            import tempfile
-            dir_name = os.path.dirname(path) or "."
-            with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False, dir=dir_name, prefix=".tmp_") as tf:
-                json.dump(data, tf, indent=4, ensure_ascii=False)
-                temp_path = tf.name
-            os.replace(temp_path, path)
-            return True
-        except Exception as e:
-            try:
-                self.logger.error(f"Failed to save configuration atomically: {e}")
-            except Exception:
-                pass
+        from evileye.utils.json_io import save_json_atomic
+
+        if not path:
+            self.logger.error("No config file path specified for saving")
             return False
+        ok = save_json_atomic(path, data)
+        if not ok:
+            self.logger.error("Failed to save configuration atomically: %s", path)
+        return ok
 
     def _restrict_database_keys(self, params: dict, loaded_config: dict) -> None:
         try:

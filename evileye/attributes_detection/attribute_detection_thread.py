@@ -22,7 +22,9 @@ class AttributeDetectionThread(DetectionThreadBase):
         """Initialize YOLO model for attribute classification"""
         if self.model is None:
             self.model = YOLO(self.model_name)
-            self.model.fuse()  # Fuse Conv+BN layers for faster inference
+            from evileye.object_detector.ultralytics_postprocess import apply_ultralytics_optimizations
+
+            apply_ultralytics_optimizations(self.model, half=False, logger=self.logger)
             
             # Create class mapping for COCO classes
             # For yolo11n.pt: person=0, bottle=39
@@ -110,3 +112,12 @@ class AttributeDetectionThread(DetectionThreadBase):
     def set_confidence_thresholds(self, thresholds: Dict[str, float]):
         """Set confidence thresholds for each attribute"""
         self.conf_thresholds = thresholds
+
+    def _release_model(self) -> None:
+        if self.model is not None:
+            del self.model
+            self.model = None
+
+    def stop(self) -> None:
+        self._release_model()
+        super().stop()

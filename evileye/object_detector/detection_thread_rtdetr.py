@@ -30,14 +30,13 @@ class DetectionThreadRtdetr(DetectionThreadBase):
     def init_detection_implementation(self) -> None:
         if self.model is None:
             self.model = RTDETR(self.model_name)
-            # Try to fuse Conv+BN layers (optimization, not required)
-            try:
-                self.model.fuse()  # Fuse Conv+BN layers
-            except Exception as e:
-                # Fuse may fail with mixed precision models, continue without it
-                self.logger.debug(f"Model fuse() failed (non-critical): {e}")
-            if self.inf_params.get('half', True):
-                self.model.half()
+            from .ultralytics_postprocess import apply_ultralytics_optimizations
+
+            apply_ultralytics_optimizations(
+                self.model,
+                half=bool(self.inf_params.get("half", True)),
+                logger=self.logger,
+            )
             self.logger.info(f"Model names: {self.model.names}")
             
             # Update model_class_mapping from model
@@ -127,6 +126,15 @@ class DetectionThreadRtdetr(DetectionThreadBase):
                 ids.append(class_id)
         return bboxes_coords, confidences, ids
     
+    def _release_model(self) -> None:
+        if self.model is not None:
+            del self.model
+            self.model = None
+
+    def stop(self) -> None:
+        self._release_model()
+        super().stop()
+
     def _update_model_class_mapping_from_model(self):
         """Update model_class_mapping from RTDETR model names"""
         if self.model and hasattr(self.model, 'names') and self.model.names:

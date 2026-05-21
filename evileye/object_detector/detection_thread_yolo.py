@@ -48,20 +48,13 @@ class DetectionThreadYolo(DetectionThreadBase):
                 
                 # Attempt to load model
                 self.model = YOLO(self.model_name)
-                
-                # Try to fuse Conv+BN layers (optimization, not required)
-                try:
-                    self.model.fuse()  # Fuse Conv+BN layers
-                except Exception as e:
-                    # Fuse may fail with mixed precision models, continue without it
-                    self.logger.debug(f"Model fuse() failed (non-critical): {e}")
-                
-                # Apply half precision if required
-                try:
-                    if self.inf_params.get('half', True):
-                        self.model.half()
-                except Exception as e:
-                    self.logger.warning(f"Failed to apply half precision to model (non-critical): {e}")
+                from .ultralytics_postprocess import apply_ultralytics_optimizations
+
+                apply_ultralytics_optimizations(
+                    self.model,
+                    half=bool(self.inf_params.get("half", True)),
+                    logger=self.logger,
+                )
                 
                 # Keep model load details out of INFO logs by default.
                 self.logger.debug(f"Model loaded successfully. Model names: {self.model.names}")
@@ -169,41 +162,33 @@ class DetectionThreadYolo(DetectionThreadBase):
             return [None] * len(images) if isinstance(images, list) else None
 
     def get_bboxes(self, result, roi: list) -> tuple[list, list, list]:
-        bboxes_coords = []
-        confidences = []
-        ids = []
-        
-        # Handle case when result is None (model not loaded or prediction error)
         if result is None:
             self.logger.debug("Prediction result is None, returning empty bboxes")
-            return bboxes_coords, confidences, ids
-        
+            return [], [], []
+        from .bbox_utils import roi_boxes_to_image_coords
+
         try:
-            boxes = result.boxes.cpu().numpy()
-            coords = boxes.xyxy
-            confs = boxes.conf
-            class_ids = boxes.cls
-            
-            for coord, class_id, conf in zip(coords, class_ids, confs):
-                # Защита от NaN/Inf в координатах (ultralytics может вернуть такие боксы для
-                # вырожденных областей). Такие боксы пропускаем без лог-флуда.
-                if not np.all(np.isfinite(coord)):
-                    self.logger.debug(f"Skipping bbox with non-finite coords: {coord}")
-                    continue
-                from ..utils import utils
-                abs_coords = utils.roi_to_image(coord, roi[1][0], roi[1][1])
-                bboxes_coords.append(abs_coords)
-                confidences.append(conf)
-                ids.append(class_id)
+            return roi_boxes_to_image_coords(
+                result, (roi[1][0], roi[1][1]), logger=self.logger
+            )
         except AttributeError as e:
-            # Handle case when result doesn't have 'boxes' attribute
-            self.logger.warning(f"Result does not have 'boxes' attribute: {e}. Returning empty bboxes.")
+            self.logger.warning(
+                "Result does not have 'boxes' attribute: %s. Returning empty bboxes.", e
+            )
+            return [], [], []
         except Exception as e:
-            # Handle any other errors when extracting bboxes
-            self.logger.error(f"Error extracting bboxes from result: {e}")
+            self.logger.error("Error extracting bboxes from result: %s", e)
             self.logger.debug("Bbox extraction error details", exc_info=True)
-        
-        return bboxes_coords, confidences, ids
+            return [], [], []
+
+    def _release_model(self) -> None:
+        if self.model is not None:
+            del self.model
+            self.model = None
+
+    def stop(self) -> None:
+        self._release_model()
+        super().stop()
     
     def _update_model_class_mapping_from_model(self):
         """Update model_class_mapping from YOLO model names"""

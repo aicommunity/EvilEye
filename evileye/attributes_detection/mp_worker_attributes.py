@@ -96,11 +96,10 @@ class MpWorkerAttributeClassifier(MpWorker):
 
     def init_worker(self):
         from ultralytics import YOLO
+        from evileye.object_detector.ultralytics_postprocess import apply_ultralytics_optimizations
+
         self.yolo_model = YOLO(self.model_path)
-        try:
-            self.yolo_model.fuse()
-        except Exception:
-            pass
+        apply_ultralytics_optimizations(self.yolo_model, half=False, logger=self.logger)
 
     def worker_impl(self, data):
         tracking_data, frame = data

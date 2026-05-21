@@ -78,15 +78,29 @@ class AttributeClassifier(EvilEyeBase):
         return self._init_thread_mode()
 
     def _init_thread_mode(self):
+        self.yolo_model = None
+        self.processing_thread = threading.Thread(target=self._process_impl, daemon=True)
+        self.logger.info(
+            "AttributeClassifier thread mode ready (model loads in processing thread): %s",
+            self.model_path,
+        )
+        return True
+
+    def _ensure_yolo_model_in_worker_thread(self) -> bool:
+        if self.yolo_model is not None:
+            return True
         try:
             from ultralytics import YOLO
+            from evileye.object_detector.ultralytics_postprocess import apply_ultralytics_optimizations
+
             self.yolo_model = YOLO(self.model_path)
-            self.yolo_model.fuse()
-            self.logger.info(f"AttributeClassifier initialized with YOLO model: {self.model_path}")
-            self.processing_thread = threading.Thread(target=self._process_impl)
+            apply_ultralytics_optimizations(self.yolo_model, half=False, logger=self.logger)
+            self.logger.info(
+                "AttributeClassifier YOLO loaded in processing thread: %s", self.model_path
+            )
             return True
         except Exception as e:
-            self.logger.info(f"Failed to initialize AttributeClassifier: {e}")
+            self.logger.error("Failed to load AttributeClassifier YOLO: %s", e)
             return False
 
     def _init_process_mode(self):
@@ -160,6 +174,9 @@ class AttributeClassifier(EvilEyeBase):
                 continue
             if detections is None:
                 continue
+
+            if self.enabled and self.yolo_model is None:
+                self._ensure_yolo_model_in_worker_thread()
 
             if not self.enabled or self.yolo_model is None:
                 self._put_out_drop_oldest(detections)

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from multiprocessing import shared_memory
 from multiprocessing import resource_tracker
 from threading import Lock
-from typing import Dict, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -80,3 +80,25 @@ class SharedFrameTransport:
             shm.close()
         except FileNotFoundError:
             pass
+
+
+def materialize_payload_item(
+    item: Any,
+    transport: Optional[SharedFrameTransport] = None,
+) -> Any:
+    """Resolve FrameHandle to ndarray; pass through other items."""
+    if not isinstance(item, FrameHandle):
+        return item
+    tr = transport or SharedFrameTransport()
+    try:
+        return tr.get_frame_view(item)
+    except Exception:
+        return None
+
+
+def materialize_payload_list(
+    data: List[Any],
+    transport: Optional[SharedFrameTransport] = None,
+) -> List[Any]:
+    """Materialize a list of queue payloads that may contain FrameHandle entries."""
+    return [materialize_payload_item(x, transport) for x in data]

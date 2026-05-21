@@ -1,6 +1,7 @@
 from ..core.mp_worker import MpWorker
 from ultralytics import YOLO
-from ..core.frame_transport import FrameHandle, SharedFrameTransport
+from ..core.frame_transport import SharedFrameTransport, materialize_payload_list
+from .ultralytics_postprocess import apply_ultralytics_optimizations
 
 
 class MpWorkerYolo(MpWorker):
@@ -22,13 +23,11 @@ class MpWorkerYolo(MpWorker):
 
     def init_worker(self):
         self.model = YOLO(self.model_name)
-        # Try to fuse Conv+BN layers (optimization, not required)
-        try:
-            self.model.fuse()
-        except Exception:
-            pass
-        if self.inf_params.get('half', True):
-            self.model.half()
+        apply_ultralytics_optimizations(
+            self.model,
+            half=bool(self.inf_params.get("half", True)),
+            logger=self.logger if hasattr(self, "logger") else None,
+        )
 
     def worker_impl(self, data: list):
         model_input = self._materialize_input_data(data)
@@ -59,17 +58,7 @@ class MpWorkerYolo(MpWorker):
         return dto_results
 
     def _materialize_input_data(self, data: list):
-        materialized = []
-        for item in data:
-            if isinstance(item, FrameHandle):
-                try:
-                    materialized.append(self._frame_transport.get_frame_view(item))
-                    continue
-                except Exception:
-                    materialized.append(None)
-                    continue
-            materialized.append(item)
-        return materialized
+        return materialize_payload_list(data, self._frame_transport)
 
     def _extract_box_arrays(self, boxes):
         """Extract xyxy/conf/cls arrays with minimal conversions."""
