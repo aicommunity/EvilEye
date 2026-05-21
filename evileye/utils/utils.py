@@ -410,11 +410,7 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
                           background_enabled=config.get('background_enabled', True))
 
     # Для трекинга отображаем только последние данные об объекте из истории
-    # utils_logger.error(cameras_objs)
     for obj in cameras_objs:
-        # if obj.frame_id < image.frame_id:
-        #     continue
-
         last_hist_index = len(obj.history) - 1
         last_info = obj.track
         match_mode = "fallback_current"
@@ -479,7 +475,6 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
                 max_attrs=attr_max_drawn,
             )
 
-        # utils_logger.error(len(obj['obj_info']))
         if draw_history_lines and len(obj.history) > 1:
             hist_start_index = max(0, last_hist_index - max_history_segments)
             line_segments_drawn = 0

@@ -403,8 +403,9 @@ class PipelineSurveillance(PipelineProcessors):
         """
         Return frames for visualization/streaming.
 
-        Prefer mc_trackers (same frame_id as objects), then raw sources so video
-        keeps flowing under MP backpressure. No cross-stage fallback to trackers.
+        Prefer mc_trackers (same frame_id as objects when both are sticky), then raw
+        sources so video keeps flowing under MP backpressure. No cross-stage fallback
+        to trackers.
         """
         sticky = self.results_selection_mode != "strict_latest"
         sections: list[str] = []

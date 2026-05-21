@@ -93,3 +93,17 @@ def test_viz_falls_back_to_sources_when_final_empty():
 
     assert pipeline.get_latest_objects_results() == []
     assert pipeline.get_latest_visualization_frames() == [("src", 2)]
+
+
+def test_viz_uses_mc_frames_when_sticky_mc_has_tracks():
+    pipeline = _pipeline_with_mc_final()
+    pipeline.results_selection_mode = "sticky_non_empty"
+    pipeline.add_result(
+        {"mc_trackers": [_mc_tuple_with_tracks(10)], "sources": [("src", 0)]}
+    )
+    pipeline.add_result(
+        {"mc_trackers": [], "sources": [("src", 99)]}
+    )
+
+    assert pipeline.get_latest_objects_results()[0][1] == 10
+    assert pipeline.get_latest_visualization_frames()[0][1] == 10

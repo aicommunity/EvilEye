@@ -649,7 +649,12 @@ class ObjectsHandler(EvilEyeBase):
         for track in tracking_results.tracks:
             track_object = None
             for active_obj in self.active_objs.objects:
-                if active_obj.track.track_id == track.track_id:
+                # track_id is per-camera in BoT-SORT; must not match across source_id.
+                if (
+                    active_obj.source_id == tracking_results.source_id
+                    and active_obj.track is not None
+                    and active_obj.track.track_id == track.track_id
+                ):
                     track_object = active_obj
                     break
 
@@ -664,17 +669,15 @@ class ObjectsHandler(EvilEyeBase):
                 # The image will be used for saving, then cleared when object is lost
                 track_object.last_image = image
                 track_object.cur_video_pos = image.current_video_position
-                # Используем пул для элементов истории
                 hist_elem = track_object.get_current_history_element(
                     history_pool=self._object_history_pool if self._use_object_pool else None
                 )
                 track_object.history.append(hist_elem)
-                if len(track_object.history) > self.history_len:  # Если количество данных превышает размер истории, удаляем самые старые данные об объекте
+                if len(track_object.history) > self.history_len:
                     old_hist = track_object.history[0]
                     del track_object.history[0]
-                    # Возвращаем старый элемент истории в пул
-                    if self._use_object_pool and self._object_history_pool and isinstance(old_hist,
-                                                                                          ObjectResultHistory):
+                    if self._use_object_pool and self._object_history_pool and isinstance(
+                            old_hist, ObjectResultHistory):
                         self._object_history_pool.release(old_hist)
                 track_object.last_update = True
                 track_object.lost_frames = 0
