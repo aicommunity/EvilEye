@@ -1,28 +1,8 @@
-from __future__ import annotations
+"""Compatibility shim for frame broker access.
 
-import warnings
-from typing import Optional
-from .frame_broker import FrameBroker
-from evileye.core.runtime_services import get_frame_broker
-
-"""Compatibility facade for frame broker access.
-
-Deprecated: use ``evileye.core.runtime_services.get_frame_broker``.
+Prefer ``evileye.core.runtime_services.get_frame_broker``.
 """
 
-_DEPRECATION_WARNED = False
+from evileye.core.runtime_services import get_frame_broker as get_broker
 
-def get_broker() -> FrameBroker:
-    global _DEPRECATION_WARNED
-    if not _DEPRECATION_WARNED:
-        warnings.warn(
-            "evileye.api.core.broker_access.get_broker() is deprecated; "
-            "use evileye.core.runtime_services.get_frame_broker()",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        _DEPRECATION_WARNED = True
-    broker: Optional[FrameBroker] = get_frame_broker()
-    return broker
-
-
+__all__ = ["get_broker"]

@@ -1,13 +1,11 @@
 # Technical debt ledger
 
-Last reviewed: phase 5 follow-up, 2026-05-21
+Last reviewed: TD-008/TD-009, 2026-05-21
 
 ## Open
 
 | ID | Description | File / area | Introduced | Target phase | Priority |
 |----|-------------|-------------|------------|--------------|----------|
-| TD-008 | Duplicate journal/stream_player integration tests | `tests/integration/` | audit | 5 | low |
-| TD-009 | `api/core` vs `evileye/core` naming collision | `evileye/api/core/` | audit | 5 | low |
 | TD-010 | `video_capture_gstreamer.py` / `controller.py` very large | capture, controller | audit | 4 | medium |
 
 ## In progress
@@ -31,6 +29,8 @@ Last reviewed: phase 5 follow-up, 2026-05-21
 | TD-005b | phase 5 follow-up | README D9/D10, server options, CLI_DEPLOY credentials |
 | TD-006b | phase 5 follow-up | GStreamer `_log_resource_stats` uses `resource_stats` helper |
 | TD-008-partial | phase 5 | Removed `test_attributes_detection.py.unittest_backup` |
+| TD-008 | TD-008/TD-009 | Events journal: `conftest`/`helpers`, removed log-only dupes, moved legacy `journal/` tests |
+| TD-009 | TD-008/TD-009 | `broker_access`/`manager_access` thin shims → `runtime_services`; tests use canonical accessors |
 
 ## Deferred (explicitly out of scope)
 
