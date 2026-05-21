@@ -376,7 +376,40 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
         mc_tracks = self.tracker.update(sc_tracks)
         if self._perf_diag_env and not mc_tracks:
             self._diag_empty_mc_tracks += 1
+
+        per_cam_tracks = sum(len(ti.tracks or []) for ti in track_infos)
+        if not mc_tracks:
+            # Clustering produced no global tracks (often missing ReID features).
+            # Still emit per-camera SC tracks from mc_trackers so GUI/obj_handler get boxes.
+            if per_cam_tracks == 0:
+                self._diag_tick_batch_skip += 1
+                return []
+            for track_info, image in sc_track_results:
+                item = (track_info, image)
+                self._attach_batch_meta(item, frame_id_by_source, is_partial=is_partial)
+                outputs.append(item)
+            for sid in self.source_ids:
+                self._last_emitted_frame_id_by_source[sid] = frame_id_by_source[sid]
+            if self._perf_diag_env:
+                self._diag_batches += 1
+                self._diag_emitted += len(outputs)
+            return outputs
+
         tracks_infos = self._create_tracks_info(track_infos, mc_tracks)
+        if not any(ti.tracks for ti in tracks_infos):
+            if per_cam_tracks == 0:
+                self._diag_tick_batch_skip += 1
+                return []
+            for track_info, image in sc_track_results:
+                item = (track_info, image)
+                self._attach_batch_meta(item, frame_id_by_source, is_partial=is_partial)
+                outputs.append(item)
+            for sid in self.source_ids:
+                self._last_emitted_frame_id_by_source[sid] = frame_id_by_source[sid]
+            if self._perf_diag_env:
+                self._diag_batches += 1
+                self._diag_emitted += len(outputs)
+            return outputs
         for track_info, image in zip(tracks_infos, images):
             item = (track_info, image)
             self._attach_batch_meta(item, frame_id_by_source, is_partial=is_partial)

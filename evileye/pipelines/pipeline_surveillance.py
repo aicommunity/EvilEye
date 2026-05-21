@@ -344,13 +344,31 @@ class PipelineSurveillance(PipelineProcessors):
             return [section_data]
         return []
 
+    @staticmethod
+    def _section_items_have_tracks(section_data: Any) -> bool:
+        if not isinstance(section_data, (list, tuple)):
+            return False
+        for item in section_data:
+            if not (isinstance(item, (list, tuple)) and len(item) >= 2):
+                continue
+            data = item[0]
+            tracks = getattr(data, "tracks", None)
+            if tracks:
+                return True
+        return False
+
     def _sticky_non_empty_section(self, section_name: str) -> list[Any]:
         last_non_empty = None
         for result in self.get_results_iterator():
             if not isinstance(result, dict):
                 continue
             section = result.get(section_name, [])
-            if isinstance(section, (list, tuple)) and len(section) > 0:
+            if not isinstance(section, (list, tuple)) or not section:
+                continue
+            if section_name == "mc_trackers":
+                if self._section_items_have_tracks(section):
+                    last_non_empty = section
+            else:
                 last_non_empty = section
         return self._normalize_results_section(last_non_empty)
 

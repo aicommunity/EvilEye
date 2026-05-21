@@ -236,9 +236,8 @@ class ProcessorStep(ProcessorBase):
         put_count = 0
         stage_had_input = bool(input_list)
         t_stage = time.monotonic()
-        pre_drain_count = 0
-        if self.processor_name in {"detectors", "trackers"}:
-            pre_drain_count = self._drain_processor_outputs(processing_results)
+        # Do not drain before put: stale MP results would be forwarded downstream in the
+        # same pipeline.process() pass (e.g. empty tracker rows into mc_trackers).
         if input_list is not None:
             for input in input_list:
                 is_processor_found = False
@@ -311,7 +310,6 @@ class ProcessorStep(ProcessorBase):
                 "in_count": len(input_list) if input_list is not None else 0,
                 "put_count": put_count,
                 "out_count": len(processing_results),
-                "pre_drain": pre_drain_count,
                 "post_drain": post_drain_added,
                 "drain_imm_count": drain_imm_count,
                 "put_ms": (t_after_put - t_stage) * 1000.0,
@@ -321,13 +319,12 @@ class ProcessorStep(ProcessorBase):
             try:
                 self.logger.info(
                     "PipelineTimeline(%s): in=%d put=%d out=%d "
-                    "pre_drain=%d post_drain=%d "
+                    "post_drain=%d "
                     "put_ms=%.1f drain_imm_ms=%.1f(out_imm=%d) total_ms=%.1f",
                     self.processor_name,
                     self._last_stage_timeline["in_count"],
                     put_count,
                     self._last_stage_timeline["out_count"],
-                    pre_drain_count,
                     post_drain_added,
                     self._last_stage_timeline["put_ms"],
                     self._last_stage_timeline["drain_imm_ms"],

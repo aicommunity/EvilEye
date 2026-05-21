@@ -1,6 +1,13 @@
 from evileye.pipelines.pipeline_surveillance import PipelineSurveillance
 
 
+def _mc_tuple_with_tracks(tag):
+    class _TL:
+        tracks = [object()]
+
+    return (_TL(), tag)
+
+
 def _pipeline_with_mc_final() -> PipelineSurveillance:
     pipeline = PipelineSurveillance()
     pipeline.set_processor_params(
@@ -46,13 +53,16 @@ def test_sticky_mc_only_not_trackers():
     pipeline.results_selection_mode = "sticky_non_empty"
     # Results queue maxsize=2; keep both snapshots in one dict per tick.
     pipeline.add_result(
-        {"mc_trackers": [("mc", 1)], "trackers": [("track", 0)]}
+        {"mc_trackers": [_mc_tuple_with_tracks(1)], "trackers": [("track", 0)]}
     )
     pipeline.add_result(
         {"mc_trackers": [], "trackers": [("track", 1)]}
     )
 
-    assert pipeline.get_latest_objects_results() == [("mc", 1)]
+    results = pipeline.get_latest_objects_results()
+    assert len(results) == 1
+    assert results[0][1] == 1
+    assert len(results[0][0].tracks) == 1
 
 
 def test_objects_do_not_fall_back_to_trackers_when_mc_empty():
