@@ -1,13 +1,39 @@
 from abc import abstractmethod
+import datetime
 from ..core.base_class import EvilEyeBase
 from queue import Full, Queue, Empty
 import threading
 import time
 from .tracking_results import TrackingResultList
 from ..core.frame_transport import SharedFrameTransport
+from ..core.frame import Frame
+from ..object_detector.object_detection_base import DetectionResultList
 
-EXEC_MODE_THREAD = "thread"
-EXEC_MODE_PROCESS = "process"
+from ..core.processor_base import (
+    DEFAULT_EXECUTION_MODE,
+    EXEC_MODE_PROCESS,
+    EXEC_MODE_THREAD,
+)
+
+_MP_GET_TIMEOUT_SEC = 0.25
+_MP_GET_MAX_ROUNDS = 4
+
+
+def _empty_tracking_output_for_input(
+    det_result: DetectionResultList,
+    frame: Frame,
+) -> tuple[TrackingResultList, Frame]:
+    tracks_info = TrackingResultList()
+    tracks_info.source_id = (
+        det_result.source_id if det_result.source_id is not None else frame.source_id
+    )
+    tracks_info.frame_id = (
+        det_result.frame_id if det_result.frame_id is not None else frame.frame_id
+    )
+    tracks_info.time_stamp = (
+        frame.time_stamp if frame.time_stamp is not None else datetime.datetime.now()
+    )
+    return tracks_info, frame
 
 
 class ObjectTrackingBase(EvilEyeBase):
@@ -17,7 +43,7 @@ class ObjectTrackingBase(EvilEyeBase):
         super().__init__()
 
         self.run_flag = False
-        self.execution_mode = EXEC_MODE_THREAD
+        self.execution_mode = DEFAULT_EXECUTION_MODE
 
         self.queue_in = None
         self.queue_out = None
@@ -31,6 +57,8 @@ class ObjectTrackingBase(EvilEyeBase):
         self._mp_control = None
         self._stopping = threading.Event()
         self._frame_transport = SharedFrameTransport()
+        self._diag_mp_get_timeout = 0
+        self._diag_mp_put_dropped = 0
 
     def _init_queues(self):
         # Tracker dispatcher and pipeline live in the same process.
@@ -128,7 +156,11 @@ class ObjectTrackingBase(EvilEyeBase):
         self.logger.info('Tracker stopped')
 
     def init_impl(self, **kwargs):
-        new_mode = self.params.get('execution_mode', EXEC_MODE_THREAD) if self.params else EXEC_MODE_THREAD
+        new_mode = (
+            self.params.get('execution_mode', DEFAULT_EXECUTION_MODE)
+            if self.params
+            else DEFAULT_EXECUTION_MODE
+        )
         if new_mode != self.execution_mode:
             self.execution_mode = new_mode
             self._init_queues()
@@ -192,17 +224,46 @@ class ObjectTrackingBase(EvilEyeBase):
                                 self._frame_transport.release_frame(frame_handle)
                             except Exception:
                                 pass
+                        if len(detections) >= 2:
+                            frame = detections[1]
+                            try:
+                                self.queue_dropped_id.put_nowait(
+                                    [frame.source_id, frame.frame_id]
+                                )
+                            except Exception:
+                                pass
+                            self._diag_mp_put_dropped += 1
                         continue
                 result = None
-                while self.run_flag and not self._stopping.is_set():
+                for _round in range(_MP_GET_MAX_ROUNDS):
+                    if not self.run_flag or self._stopping.is_set():
+                        break
                     try:
-                        result = self._mp_control.get(timeout=0.25)
+                        result = self._mp_control.get(timeout=_MP_GET_TIMEOUT_SEC)
                         break
                     except Empty:
                         continue
                     except Exception:
                         break
                 if result is None:
+                    if (
+                        isinstance(detections, (list, tuple))
+                        and len(detections) >= 2
+                    ):
+                        det_result, frame = detections[0], detections[1]
+                        if isinstance(det_result, DetectionResultList) and isinstance(
+                            frame, Frame
+                        ):
+                            self._put_out_drop_oldest(
+                                _empty_tracking_output_for_input(det_result, frame)
+                            )
+                            self._diag_mp_get_timeout += 1
+                            if self._diag_mp_get_timeout % 30 == 1:
+                                self.logger.warning(
+                                    "MP tracker get timeout source_id=%s frame_id=%s",
+                                    frame.source_id,
+                                    frame.frame_id,
+                                )
                     if frame_handle is not None:
                         try:
                             self._frame_transport.release_frame(frame_handle)
