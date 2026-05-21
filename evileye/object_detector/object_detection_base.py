@@ -22,8 +22,11 @@ from .constants import (
 )
 
 # Execution mode constants
-EXEC_MODE_THREAD = "thread"
-EXEC_MODE_PROCESS = "process"
+from ..core.processor_base import (
+    DEFAULT_EXECUTION_MODE,
+    EXEC_MODE_PROCESS,
+    EXEC_MODE_THREAD,
+)
 
 
 class DetectionResult:
@@ -50,7 +53,7 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
 
         self.run_flag = False
         # Increased queue size to prevent overflow during startup when models are loading
-        self.execution_mode = EXEC_MODE_THREAD
+        self.execution_mode = DEFAULT_EXECUTION_MODE
         self.queue_in = None
         # IMPORTANT: output queue must stay bounded, otherwise if downstream is slower
         # (e.g. controller/visualizer lag), results accumulate and memory grows unbounded.
@@ -289,8 +292,7 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         self.model_class_mapping = self.params.get('model_class_mapping', None)
         self._model_class_mapping_cache = None
 
-        # Read execution mode from config (default: thread for backward compat)
-        new_mode = self.params.get('execution_mode', EXEC_MODE_THREAD)
+        new_mode = self.params.get('execution_mode', DEFAULT_EXECUTION_MODE)
         if new_mode != self.execution_mode:
             self.execution_mode = new_mode
             self._init_queues()
@@ -421,10 +423,15 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
             if not self.detection_threads:
                 time.sleep(THREAD_START_DELAY)
                 continue
-            # Check if all detection threads have loaded models
             all_ready = True
             for thread in self.detection_threads:
-                if not hasattr(thread, 'model') or thread.model is None:
+                mp_control = getattr(thread, "mp_control", None)
+                if mp_control is not None:
+                    if mp_control.is_alive():
+                        continue
+                    all_ready = False
+                    break
+                if not hasattr(thread, "model") or thread.model is None:
                     all_ready = False
                     break
             if all_ready:

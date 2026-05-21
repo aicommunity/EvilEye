@@ -6,6 +6,7 @@ import os
 
 EXEC_MODE_THREAD = "thread"
 EXEC_MODE_PROCESS = "process"
+DEFAULT_EXECUTION_MODE = EXEC_MODE_PROCESS
 
 
 class ProcessorBase(ABC):
@@ -20,7 +21,7 @@ class ProcessorBase(ABC):
         self.order = order
         # Создание процессоров вынесено в отдельный метод для снижения связности
         self.dummy_processor = self._create_processor_instance(class_name)
-        self.execution_mode = EXEC_MODE_THREAD
+        self.execution_mode = DEFAULT_EXECUTION_MODE
         self.ipc_mode = "standard"
         self.dummy_processor = self._create_processor_instance(class_name)
         self.processors = []
@@ -66,7 +67,7 @@ class ProcessorBase(ABC):
 
         # Detect execution_mode from the first param block (shared across all)
         if params and isinstance(params, list) and len(params) > 0:
-            self.execution_mode = params[0].get('execution_mode', EXEC_MODE_THREAD)
+            self.execution_mode = params[0].get('execution_mode', DEFAULT_EXECUTION_MODE)
             self.ipc_mode = params[0].get("ipc_mode", "standard")
 
         for i in range(0, self.num_processors):

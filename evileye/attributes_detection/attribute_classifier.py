@@ -8,8 +8,11 @@ import numpy as np
 from ..core.base_class import EvilEyeBase
 from ..core.tracking_dto import ensure_tracking_result_list
 
-EXEC_MODE_THREAD = "thread"
-EXEC_MODE_PROCESS = "process"
+from ..core.processor_base import (
+    DEFAULT_EXECUTION_MODE,
+    EXEC_MODE_PROCESS,
+    EXEC_MODE_THREAD,
+)
 
 
 @EvilEyeBase.register("AttributeClassifier")
@@ -23,7 +26,7 @@ class AttributeClassifier(EvilEyeBase):
     def __init__(self):
         super().__init__()
         self.enabled = True
-        self.execution_mode = EXEC_MODE_THREAD
+        self.execution_mode = DEFAULT_EXECUTION_MODE
 
         self.yolo_model = None
         self.model_path = 'models/yolo11n.pt'
@@ -42,7 +45,7 @@ class AttributeClassifier(EvilEyeBase):
 
     def set_params_impl(self):
         self.enabled = self.params.get('enabled', True)
-        self.execution_mode = self.params.get('execution_mode', EXEC_MODE_THREAD)
+        self.execution_mode = self.params.get('execution_mode', DEFAULT_EXECUTION_MODE)
 
         if self.enabled:
             self.model_path = self.params.get('model', 'models/yolo11n.pt')

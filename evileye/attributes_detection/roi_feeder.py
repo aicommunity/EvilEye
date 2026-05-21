@@ -9,8 +9,11 @@ from ..core.base_class import EvilEyeBase
 from ..core.frame import Frame
 from ..core.tracking_dto import ensure_tracking_result_list
 
-EXEC_MODE_THREAD = "thread"
-EXEC_MODE_PROCESS = "process"
+from ..core.processor_base import (
+    DEFAULT_EXECUTION_MODE,
+    EXEC_MODE_PROCESS,
+    EXEC_MODE_THREAD,
+)
 
 
 @EvilEyeBase.register("RoiFeeder")
@@ -27,7 +30,7 @@ class RoiFeeder(EvilEyeBase):
         super().__init__()
 
         self.run_flag = False
-        self.execution_mode = EXEC_MODE_THREAD
+        self.execution_mode = DEFAULT_EXECUTION_MODE
 
         self.queue_in = Queue(maxsize=2)
         self.queue_out = Queue(maxsize=4)
@@ -53,7 +56,7 @@ class RoiFeeder(EvilEyeBase):
         if isinstance(size, (list, tuple)) and len(size) == 2:
             self.roi_size = (int(size[0]), int(size[1]))
         self.every_n_frames = int(self.params.get('every_n_frames', 1))
-        self.execution_mode = self.params.get('execution_mode', EXEC_MODE_THREAD)
+        self.execution_mode = self.params.get('execution_mode', DEFAULT_EXECUTION_MODE)
 
     def get_params_impl(self):
         params: Dict[str, Any] = dict()
