@@ -5,9 +5,9 @@ A comprehensive video surveillance system with object detection, tracking,
 and multi-camera support.
 """
 
-__version__ = "5.0.0"
-__author__ = "EvilEye Team"
-__email__ = "team@evileye.com"
+__version__ = "0.0.9"
+__author__ = "AI Community"
+__email__ = "palexab@gmail.com"
 
 # Лёгкий __init__: без настройки логирования, без тяжёлых импортов, без subprocess при импорте
 # Тяжёлые компоненты инициализируются по месту использования
