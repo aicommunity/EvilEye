@@ -17,6 +17,16 @@ os.environ.setdefault("EVILEYE_PIPELINE_TIMELINE", "0")
 
 from poly_mode_compare_lib import REPO_ROOT, write_bench_config
 
+STALENESS_REF = 6.2
+STALENESS_MIN = 5.9
+STALENESS_MAX = 6.5
+
+
+def staleness_in_band(mean_staleness: float | None) -> bool:
+    if mean_staleness is None:
+        return False
+    return STALENESS_MIN <= mean_staleness <= STALENESS_MAX
+
 
 def _frame_key(item) -> tuple[int, int] | None:
     frame = item
@@ -73,6 +83,8 @@ def measure(
         source_keys: set[tuple[int, int]] = set()
         last_source_fid: dict[int, int] = {}
         staleness_samples: list[int] = []
+        staleness_matched: list[int] = []
+        matched_tracker_keys: set[tuple[int, int]] = set()
 
         time.sleep(warmup_sec)
         t_start = time.monotonic()
@@ -101,6 +113,12 @@ def measure(
                     if key and key in pending:
                         latencies_ms.append((time.monotonic() - pending.pop(key)) * 1000.0)
                         tracker_keys.add(key)
+                        matched_tracker_keys.add(key)
+                        sid, fid = key
+                        latest = last_source_fid.get(sid, fid)
+                        s = latest - fid
+                        if s >= 0:
+                            staleness_matched.append(s)
         finally:
             try:
                 pipeline.stop()
@@ -118,6 +136,12 @@ def measure(
             if staleness_samples
             else None
         )
+        mean_staleness_matched = (
+            round(sum(staleness_matched) / len(staleness_matched), 4)
+            if staleness_matched
+            else None
+        )
+        in_band = staleness_in_band(mean_staleness)
         return {
             "config": str(config_path.relative_to(REPO_ROOT)),
             "warmup_sec": warmup_sec,
@@ -129,6 +153,14 @@ def measure(
             "e2e_p50_ms": round(p50, 2) if p50 is not None else None,
             "e2e_p95_ms": round(p95, 2) if p95 is not None else None,
             "mean_staleness_frames": mean_staleness,
+            "mean_staleness_matched_only": mean_staleness_matched,
+            "staleness_in_band": in_band,
+            "staleness_ref": STALENESS_REF,
+            "staleness_min": STALENESS_MIN,
+            "staleness_max": STALENESS_MAX,
+            "e2e_tracker_fps_matched": round(
+                len(matched_tracker_keys) / active_elapsed, 4
+            ),
             "p95_staleness_frames": _percentile_int(staleness_samples, 95.0),
             "max_staleness_frames": max(staleness_samples) if staleness_samples else None,
             "staleness_samples": len(staleness_samples),
