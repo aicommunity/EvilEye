@@ -1,5 +1,7 @@
 # MP FPS post-fix summary
 
+> Фаза 2 (backlog, SCALE=1 + backpressure + pending cap): см. [`mp_fps_phase2_summary.md`](mp_fps_phase2_summary.md).
+
 Коммиты: `e671955` (скрипты), `c8d6c8c` (очереди/drain/модель), `d82b1bc` (MpBarrier, sync/backpressure).
 
 ## Bench post-fix

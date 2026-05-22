@@ -102,9 +102,26 @@ python scripts/render_poly_videos_mode_report.py
 | `EVILEYE_PIPELINE_SYNC_MP` | `0` | Post-put sync drain в `processor_step` (bench/отладка) |
 | `EVILEYE_PIPELINE_SYNC_MP_MS` | `8` | Макс. ожидание drain за тик (мс) |
 | `EVILEYE_CONTROLLER_BACKPRESSURE` | `0` | Доп. sleep в controller при росте MP pending |
+| `EVILEYE_BACKPRESSURE_PENDING_THRESHOLD` | `5 × cameras` | Порог pending для доп. sleep |
+| `EVILEYE_BACKPRESSURE_SLEEP_MS_PER_PENDING` | `2` | мс sleep на единицу pending выше порога |
+| `EVILEYE_BACKPRESSURE_SLEEP_MAX_MS` | `80` | Потолок доп. sleep |
+| `EVILEYE_MP_PENDING_CAP` | (auto) | Cap FIFO `_mp_pending` detector (drop oldest) |
+| `EVILEYE_MP_PENDING_CAP_TRACKER` | `4` | Cap FIFO tracker pending |
+| `EVILEYE_SKIP_PIPELINE_TICK_ON_BACKLOG` | `0` | Пропуск `pipeline.process()` при hard backlog (bench) |
+| `EVILEYE_SKIP_PIPELINE_HARD_LIMIT` | `15 × cameras` | Порог pending для skip tick |
 | `EVILEYE_PIPELINE_TIMELINE` | `0` | Детальный `PipelineTimeline(...)` в лог |
 
-Рекомендуемый bench после тюнинга: `EVILEYE_MP_QUEUE_SCALE=2`, `EVILEYE_MP_DRAIN_POLL_SEC=0.01`.
+**Фаза 2 (backlog):** primary KPI — `mean_staleness_frames` (E2E), `mp_pending_max` (MpBarrier), `lag_ratio`; `pipeline_hz_est` — вторичный.  
+`EVILEYE_MP_QUEUE_SCALE=1` по умолчанию; `SCALE=2` только если матрица показывает улучшение свежести без роста pending.
+
+Матрица экспериментов:
+
+```bash
+./scripts/run_backlog_matrix.sh B1   # или all
+python scripts/compare_poly_backlog_matrix.py --matrix-dir reports/poly_videos_mode_compare/experiments/backlog_matrix --write-winner
+```
+
+См. [`docs/mp_fps_phase2_summary.md`](mp_fps_phase2_summary.md) и [`docs/mp_fps_post_fix_summary.md`](mp_fps_post_fix_summary.md) (фаза 1, SCALE=2).
 
 ## Интерпретация результата
 
