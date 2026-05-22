@@ -1,11 +1,14 @@
 # Technical debt ledger
 
-Last reviewed: plan completion sweep, 2026-05-21
+Last reviewed: MP refactor execution, 2026-05-21
 
 ## Open
 
 | ID | Description | File / area | Introduced | Target phase | Priority |
 |----|-------------|-------------|------------|--------------|----------|
+| TD-MP-102 | AttributeClassifier MP duplication (DUP-016) | attributes_detection | R2+ | post-R2 | P2 |
+| TD-MP-401 | Capture triple-buffer reduction spike | capture | R4 | Deferred | P2 |
+| TD-MP-501 | module_capabilities JSON S4 | configs | — | Deferred | P3 |
 
 ## In progress
 
@@ -38,6 +41,11 @@ Last reviewed: plan completion sweep, 2026-05-21
 | TD-015 | completion | `stream_player` `conftest.py` + README |
 | TD-016 | completion | unit pytest + integration subset + KPI gate PASS `20260521_145543` |
 | TD-017 | completion | MULTIPROCESSING/CONFIGURATION_GUIDE YOLO thread + memory notes |
+| TD-MP-001 | R0 | Legacy ObjectDetectorYoloMp documented in MULTIPROCESSING |
+| TD-MP-101 | R1 | Tracker/detector wired to MpAsyncBridge |
+| TD-MP-201 | R3 | MpPendingReporter replaces isinstance backlog probe |
+| TD-MP-110 | R2 | frame_to_worker_meta replaces getattr in _pack_for_worker |
+| TD-MP-301 | MEM-4 | soak_mp_memory.sh added (manual gate) |
 
 ## Deferred (explicitly out of scope)
 

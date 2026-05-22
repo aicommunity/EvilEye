@@ -146,23 +146,17 @@ class MpWorkerCapture(MpWorker):
                     if isinstance(packed, dict)
                     else None
                 )
-                try:
-                    self.output_queue.put(packed, timeout=0.5)
-                    if handle is not None:
-                        self._frame_transport.relinquish_frame(handle)
-                except Full:
-                    try:
-                        dropped = self.output_queue.get_nowait()
-                        self._release_packed_frame(dropped)
-                    except Empty:
-                        pass
-                    try:
-                        self.output_queue.put_nowait(packed)
-                        if handle is not None:
-                            self._frame_transport.relinquish_frame(handle)
-                    except Full:
-                        self._release_packed_frame(packed)
-                        pass
+                from .queue_policy import put_drop_oldest
+
+                ok = put_drop_oldest(
+                    self.output_queue,
+                    packed,
+                    on_drop=self._release_packed_frame,
+                )
+                if ok and handle is not None:
+                    self._frame_transport.relinquish_frame(handle)
+                elif not ok:
+                    self._release_packed_frame(packed)
 
         try:
             self.cleanup()

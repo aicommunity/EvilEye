@@ -174,7 +174,7 @@ class PipelineSurveillance(PipelineProcessors):
         self._add_processor(detectors_proc)
         # Сохраняем прямые ссылки на инициализированные детекторы для внешнего доступа
         try:
-            self.detectors = list(getattr(detectors_proc, 'processors', []))
+            self.detectors = list(detectors_proc.processors)
             self.logger.info(f"PipelineSurveillance: initialized {len(self.detectors)} detectors")
         except Exception:
             self.detectors = []
@@ -448,33 +448,29 @@ class PipelineSurveillance(PipelineProcessors):
 
     def estimate_mp_backlog_stats(self) -> dict[str, int]:
         """Sum MP pending depth, put drops, and pending FIFO evictions."""
+        from ..core.mp_stage import MpPendingReporter
+
         pending = 0
         put_dropped = 0
         pending_evict = 0
         try:
-            from ..object_detector.detection_thread_yolo_mp import DetectionThreadYoloMp
-
             for det in self.get_detectors() or []:
-                for th in getattr(det, "detection_threads", []) or []:
-                    if isinstance(th, DetectionThreadYoloMp):
-                        with th._mp_pending_lock:
-                            pending += len(th._mp_pending)
-                        put_dropped += int(getattr(th, "_diag_mp_put_dropped", 0))
-                        pending_evict += int(getattr(th, "_diag_mp_pending_evict", 0))
+                for th in det.detection_threads:
+                    if isinstance(th, MpPendingReporter):
+                        pending += th.mp_pending_depth()
+                        put_dropped += th.mp_diag_put_dropped()
+                        pending_evict += th.mp_diag_pending_evict()
         except Exception:
             pass
         try:
             for proc in self.processors or []:
-                if getattr(proc, "processor_name", "") != "trackers":
+                if proc.processor_name != "trackers":
                     continue
-                from contextlib import nullcontext
-
-                for trk in getattr(proc, "processors", []) or []:
-                    lock = getattr(trk, "_mp_pending_lock", None)
-                    with lock if lock is not None else nullcontext():
-                        pending += len(getattr(trk, "_mp_pending", []) or [])
-                    put_dropped += int(getattr(trk, "_diag_mp_put_dropped", 0))
-                    pending_evict += int(getattr(trk, "_diag_mp_pending_evict", 0))
+                for trk in proc.processors:
+                    if isinstance(trk, MpPendingReporter):
+                        pending += trk.mp_pending_depth()
+                        put_dropped += trk.mp_diag_put_dropped()
+                        pending_evict += trk.mp_diag_pending_evict()
         except Exception:
             pass
         return {

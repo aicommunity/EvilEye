@@ -18,3 +18,17 @@ def test_relinquish_then_consume_unlinks_segment():
 
     # Second unlink must be a no-op.
     consumer.release_frame(handle)
+
+
+def test_alloc_relinquish_consume_cycle_releases_all():
+    """MEM-2: repeated SHM handoff does not accumulate producer segments."""
+    producer = SharedFrameTransport()
+    consumer = SharedFrameTransport()
+    image = np.zeros((4, 4, 3), dtype=np.uint8)
+    for i in range(5):
+        handle = producer.alloc_frame(image, frame_id=i, timestamp=float(i))
+        producer.relinquish_frame(handle)
+        consumer.consume_frame(handle)
+        consumer.release_frame(handle)
+    assert len(producer._segments) == 0
+    assert len(consumer._segments) == 0

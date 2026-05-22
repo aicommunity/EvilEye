@@ -1,7 +1,5 @@
-from collections import deque
 from queue import Empty, Queue
 import logging
-import os
 import threading
 import time
 from typing import Optional
@@ -9,6 +7,8 @@ from typing import Optional
 from .detection_thread_base import DetectionThreadBase
 from ..core.frame import Frame
 from ..core.frame_transport import FrameHandle, SharedFrameTransport
+from ..core.mp_async_bridge import MpAsyncBridge
+from ..core.mp_pending_jobs import DetectorPendingJob
 from ..core.mp_queue_config import (
     mp_control_queue_size,
     mp_drain_poll_sec,
@@ -69,11 +69,17 @@ class DetectionThreadYoloMp(DetectionThreadBase):
         self._mp_drain_thread = threading.Thread(
             target=self._mp_det_drain_loop, daemon=True,
         )
-        self._mp_pending: deque = deque()
-        self._mp_pending_lock = threading.Lock()
-        self._diag_mp_put_dropped = 0
-        self._diag_mp_pending_evict = 0
         self._mp_pending_cap = mp_pending_cap_detector(max(len(roi), 1))
+        self._bridge: MpAsyncBridge[DetectorPendingJob] | None = None
+        self._init_bridge()
+
+    def _init_bridge(self) -> None:
+        self._bridge = MpAsyncBridge(
+            pending_cap=self._mp_pending_cap,
+            mp_control=self.mp_control,
+            release_on_drop=self._release_detector_job,
+            logger=self.logger,
+        )
 
     def start(self) -> None:
         """Start feed/drain threads (not the base processing_thread)."""
@@ -92,7 +98,9 @@ class DetectionThreadYoloMp(DetectionThreadBase):
         if self.mp_control is not None:
             self.mp_control.stop()
             self.mp_control = None
-        self._clear_mp_pending()
+        if self._bridge is not None:
+            self._bridge.clear()
+            self._bridge = None
         self.logger.info("Detection thread stopped")
 
     def init_detection_implementation(self) -> None:
@@ -106,11 +114,23 @@ class DetectionThreadYoloMp(DetectionThreadBase):
             except Exception:
                 pass
 
-    def _clear_mp_pending(self) -> None:
-        with self._mp_pending_lock:
-            while self._mp_pending:
-                _, _, handles = self._mp_pending.popleft()
-                self._release_handles(handles)
+    def _release_detector_job(self, job: DetectorPendingJob) -> None:
+        self._release_handles(job.handles)
+
+    def mp_pending_depth(self) -> int:
+        if self._bridge is None:
+            return 0
+        return self._bridge.depth()
+
+    def mp_diag_put_dropped(self) -> int:
+        if self._bridge is None:
+            return 0
+        return self._bridge.diag_put_dropped()
+
+    def mp_diag_pending_evict(self) -> int:
+        if self._bridge is None:
+            return 0
+        return self._bridge.diag_pending_evict()
 
     def _build_mp_payload(self, split_image: list) -> tuple[list, list[FrameHandle]]:
         handles: list[FrameHandle] = []
@@ -127,43 +147,13 @@ class DetectionThreadYoloMp(DetectionThreadBase):
             payload.append(handle)
         return payload, handles
 
-    def _enforce_pending_cap(self) -> None:
-        while len(self._mp_pending) >= self._mp_pending_cap:
-            _, _, handles = self._mp_pending.popleft()
-            self._release_handles(handles)
-            self._diag_mp_pending_evict += 1
-
     def _enqueue_mp_det_job(
         self, split_image: list, capture_image, payload: list, handles: list[FrameHandle]
     ) -> bool:
-        with self._mp_pending_lock:
-            self._enforce_pending_cap()
-            self._mp_pending.append((split_image, capture_image, handles))
-        try:
-            self.mp_control.put_nowait(payload)
-            return True
-        except Exception:
-            pass
-        try:
-            _ = self.mp_control.input_queue.get_nowait()
-        except Exception:
-            pass
-        with self._mp_pending_lock:
-            if self._mp_pending:
-                _, _, dropped_handles = self._mp_pending.popleft()
-                self._release_handles(dropped_handles)
-        try:
-            self.mp_control.put_nowait(payload)
-            return True
-        except Exception:
-            with self._mp_pending_lock:
-                if self._mp_pending:
-                    tail = self._mp_pending[-1]
-                    if tail[1] is capture_image:
-                        self._mp_pending.pop()
-            self._release_handles(handles)
-            self._diag_mp_put_dropped += 1
+        if self._bridge is None:
             return False
+        job = DetectorPendingJob(split_image, capture_image, handles)
+        return self._bridge.enqueue(payload, job)
 
     def _put_detection_output(self, detection_result_list, capture_image) -> None:
         if detection_result_list is None:
@@ -193,11 +183,11 @@ class DetectionThreadYoloMp(DetectionThreadBase):
                 continue
             if not self.run_flag or image is None:
                 continue
-            if not self.roi[0]:
-                split_image = [[image, [0, 0]]]
-            else:
-                coords = self.roi_coords_per_camera[image.source_id]
-                split_image = get_utils().create_roi(image, coords)
+            from .detection_preprocess import split_capture_for_detection
+
+            split_image = split_capture_for_detection(
+                image, self.roi, self.roi_coords_per_camera
+            )
             if not split_image:
                 continue
             try:
@@ -210,7 +200,7 @@ class DetectionThreadYoloMp(DetectionThreadBase):
     def _mp_det_drain_loop(self) -> None:
         """mp_control output -> queue_out when YOLO worker finishes."""
         while self.run_flag:
-            if self.mp_control is None:
+            if self.mp_control is None or self._bridge is None:
                 break
             try:
                 predict_results = self.mp_control.get(timeout=mp_drain_poll_sec())
@@ -218,24 +208,23 @@ class DetectionThreadYoloMp(DetectionThreadBase):
                 continue
             except Exception:
                 continue
-            with self._mp_pending_lock:
-                if not self._mp_pending:
-                    continue
-                split_image, capture_image, handles = self._mp_pending.popleft()
+            job = self._bridge.pop_head()
+            if job is None:
+                continue
             try:
                 if predict_results is None:
-                    predict_results = [None] * len(split_image)
+                    predict_results = [None] * len(job.split_image)
                 elif not isinstance(predict_results, list):
                     predict_results = [predict_results]
                 detection_result_list = self._detection_result_from_predict(
-                    split_image, predict_results
+                    job.split_image, predict_results
                 )
-                self._put_detection_output(detection_result_list, capture_image)
+                self._put_detection_output(detection_result_list, job.capture_image)
             except Exception as e:
                 if self.run_flag:
                     self.logger.error("Error in MP detection drain loop: %s", e)
             finally:
-                self._release_handles(handles)
+                self._release_handles(job.handles)
 
     def predict(self, images: list) -> list:
         """Synchronous RPC fallback (tests); production path uses feed/drain."""

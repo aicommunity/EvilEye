@@ -6,6 +6,7 @@ from typing import Type, Optional
 from queue import Queue
 import logging
 
+from ..core.logger import get_module_logger
 from .detection_thread_base import DetectionThreadBase
 from .detection_thread_yolo import DetectionThreadYolo
 from .detection_thread_rtdetr import DetectionThreadRtdetr
@@ -15,6 +16,8 @@ from .detection_thread_yolo_mp import DetectionThreadYoloMp
 
 class DetectionThreadFactory:
     """Factory for creating detection thread instances."""
+
+    _logger = get_module_logger("detection_thread_factory")
 
     _thread_classes = {
         "yolo": DetectionThreadYolo,
@@ -46,8 +49,11 @@ class DetectionThreadFactory:
                 f"Unsupported thread type: {thread_type}. Supported types: {list(cls._thread_classes.keys())}"
             )
 
-        # YoloMp doesn't support logger_name and parent_logger
         if thread_type.lower() == "yolo_mp":
+            cls._logger.warning(
+                "Detection thread type 'yolo_mp' is legacy; use ObjectDetectorYolo with "
+                "execution_mode='process' instead (see docs/MULTIPROCESSING.md)."
+            )
             return thread_class(model_name, stride, classes, source_ids, roi, inf_params, queue_out)
 
         return thread_class(

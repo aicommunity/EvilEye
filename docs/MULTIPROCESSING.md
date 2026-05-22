@@ -1340,6 +1340,15 @@ from .process_manager import ProcessManager, get_process_manager
    по-прежнему работает, но теперь рекомендуется использовать
    `ObjectDetectorYolo` + `"execution_mode": "process"`
 
+### Primary vs legacy (детектор)
+
+| Путь | Конфиг / API | Поведение |
+|------|----------------|-----------|
+| **Primary** | `"type": "ObjectDetectorYolo"`, `"execution_mode": "process"` | `DetectionThreadYoloMp` + restart policy из JSON |
+| **Legacy** | `"type": "ObjectDetectorYoloMp"` или factory `yolo_mp` | Тот же MP feed/drain; без единого `execution_mode` в секции |
+
+Новые конфиги и бенчмарки должны использовать **primary**. Factory `yolo_mp` логирует предупреждение при создании потока.
+
 ### Миграция
 
 Для перехода на мультипроцессность достаточно добавить одну строку

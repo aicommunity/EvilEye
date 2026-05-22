@@ -140,13 +140,11 @@ class DetectionThreadBase:
                 sleep(PROCESSING_SLEEP_INTERVAL)
                 continue
 
-            if not self.roi[0]:
-                split_image = [[image, [0, 0]]]
-            else:
-                coords = self.roi_coords_per_camera[image.source_id]
-                from ..utils import utils
+            from .detection_preprocess import split_capture_for_detection
 
-                split_image = utils.create_roi(image, coords)
+            split_image = split_capture_for_detection(
+                image, self.roi, self.roi_coords_per_camera
+            )
 
             detection_result_list = self.process_stride(split_image)
             if detection_result_list is not None:

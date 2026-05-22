@@ -36,27 +36,7 @@ class ProcessorFrame(ProcessorBase):
                 if not is_processor_found:
                     processing_results.append(item)
 
-        def _normalize_result_meta(result):
-            """
-            Ensure result metadata matches the paired frame when processor returns (data, Frame).
-            This keeps downstream frame/object matching deterministic without any fallbacks.
-            """
-            try:
-                if not (isinstance(result, (list, tuple)) and len(result) >= 2):
-                    return result
-                data = result[0]
-                frame = result[1]
-                if data is None or frame is None:
-                    return result
-                if hasattr(data, "source_id") and hasattr(frame, "source_id"):
-                    data.source_id = frame.source_id
-                if hasattr(data, "frame_id") and hasattr(frame, "frame_id"):
-                    data.frame_id = frame.frame_id
-                if hasattr(data, "time_stamp") and hasattr(frame, "time_stamp"):
-                    data.time_stamp = frame.time_stamp
-            except Exception:
-                pass
-            return result
+        from .stage_result_normalizer import normalize_result_meta
 
         # Drain outputs from all processors.
         # With bounded queues downstream must consume faster than 1 item/tick.
@@ -67,7 +47,7 @@ class ProcessorFrame(ProcessorBase):
                 result = processor.get()
                 if not result:
                     break
-                processing_results.append(_normalize_result_meta(result))
+                processing_results.append(normalize_result_meta(result))
                 drained += 1
 
         # Always return original data if no results from processors

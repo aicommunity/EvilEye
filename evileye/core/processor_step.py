@@ -80,10 +80,15 @@ class ProcessorStep(ProcessorBase):
                 return 0
         if self.processor_name not in {"detectors", "trackers"}:
             return 0
+        from .mp_stage import MpStageProcessor
+        from .processor_base import EXEC_MODE_PROCESS
+
         has_mp = False
         for processor in self.processors:
-            mode = getattr(processor, "execution_mode", "thread")
-            if mode == "process":
+            if (
+                isinstance(processor, MpStageProcessor)
+                and processor.execution_mode == EXEC_MODE_PROCESS
+            ):
                 has_mp = True
                 break
         if not has_mp:
@@ -278,22 +283,9 @@ class ProcessorStep(ProcessorBase):
 
     @staticmethod
     def _normalize_result_meta(result):
-        try:
-            if not (isinstance(result, (list, tuple)) and len(result) >= 2):
-                return result
-            data = result[0]
-            frame = result[1]
-            if data is None or frame is None:
-                return result
-            if hasattr(data, "source_id") and hasattr(frame, "source_id"):
-                data.source_id = frame.source_id
-            if hasattr(data, "frame_id") and hasattr(frame, "frame_id"):
-                data.frame_id = frame.frame_id
-            if hasattr(data, "time_stamp") and hasattr(frame, "time_stamp"):
-                data.time_stamp = frame.time_stamp
-        except Exception:
-            pass
-        return result
+        from .stage_result_normalizer import normalize_result_meta
+
+        return normalize_result_meta(result)
 
     def process(self, input_list=None):
         if self.processor_name == "mc_trackers" and input_list is not None:

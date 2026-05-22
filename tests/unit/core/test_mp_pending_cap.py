@@ -54,6 +54,7 @@ def test_enforce_pending_cap_evicts_oldest():
 
 
 @pytest.mark.unit
-def test_detection_thread_yolo_mp_has_cap_fields():
-    """Smoke: class defines cap-related attributes after init pattern."""
-    assert hasattr(DetectionThreadYoloMp, "_enforce_pending_cap")
+def test_detection_thread_yolo_mp_has_bridge_and_reporter():
+    """Smoke: MP thread uses MpAsyncBridge and MpPendingReporter API."""
+    assert hasattr(DetectionThreadYoloMp, "mp_pending_depth")
+    assert hasattr(DetectionThreadYoloMp, "_bridge")

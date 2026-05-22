@@ -13,7 +13,9 @@ from ..object_detector.object_detection_base import DetectionResultList
 from .tracking_results import TrackingResult
 from .tracking_results import TrackingResultList
 from ..core.base_class import EvilEyeBase
+from ..core.processor_base import EXEC_MODE_PROCESS
 from .botsort_config import BostSortCfg
+from .track_update_core import parse_detections_to_boxes, run_tracker_update
 
 
 @EvilEyeBase.register("ObjectTrackingBotsort")
@@ -44,15 +46,17 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
                 self.logger.debug("No encoders provided, ReID disabled")
 
             super().init_impl(**kwargs)
-            # Ensure botsort_cfg is set (should be set by set_params_impl, but check anyway)
             if not self.botsort_cfg:
-                # Try to set default config if not set
                 self.logger.warning("botsort_cfg not set, using default configuration")
                 self.botsort_cfg = BostSortCfg()
 
-            self.logger.debug(f"Initializing BOTSORT with fps={self.fps}, with_reid={self.botsort_cfg.with_reid}")
-            self.tracker = BOTSORT(self.botsort_cfg, self.encoders, frame_rate=self.fps)
-            self.logger.debug("BOTSORT tracker initialized successfully")
+            self.tracker = None
+            if self.execution_mode != EXEC_MODE_PROCESS:
+                self.logger.debug(
+                    f"Initializing BOTSORT with fps={self.fps}, with_reid={self.botsort_cfg.with_reid}"
+                )
+                self.tracker = BOTSORT(self.botsort_cfg, self.encoders, frame_rate=self.fps)
+                self.logger.debug("BOTSORT tracker initialized successfully")
             return True
         except Exception as e:
             self.logger.error(f"Failed to initialize ObjectTrackingBotsort: {e}", exc_info=True)
@@ -64,7 +68,8 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
         self.tracker = None
 
     def reset_impl(self):
-        self.tracker.reset()
+        if self.tracker is not None:
+            self.tracker.reset()
 
     def set_params_impl(self):
         self.source_ids = self.params.get('source_ids', [])
@@ -155,12 +160,9 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
                 pass
 
             try:
-                cam_id, boxes = self._parse_det_info(detection_result, image.image)
-                tracks = self.tracker.update(boxes, image.image)
-                if len(tracks) > 0:
-                    pass
-                tracks_info = self._create_tracks_info(cam_id, frame_id, None, tracks)
-                # Keep only the freshest tracking results to avoid unbounded memory growth
+                tracks_info = run_tracker_update(
+                    self.tracker, detection_result, image.image
+                )
                 self._put_out_drop_oldest((tracks_info, image))
             except Exception as e:
                 self.logger.error(

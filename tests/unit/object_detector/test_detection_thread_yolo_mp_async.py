@@ -49,8 +49,9 @@ def test_enqueue_mp_det_job_fifo_pending():
     split = [[img, [0, 0]]]
     thread._enqueue_mp_det_job(split, img, ["h1"], [])
     thread.mp_control.put_nowait.assert_called_once_with(["h1"])
-    assert len(thread._mp_pending) == 1
-    thread._clear_mp_pending()
+    assert thread.mp_pending_depth() == 1
+    if thread._bridge is not None:
+        thread._bridge.clear()
     thread.mp_control = None
     thread.stop()
 
