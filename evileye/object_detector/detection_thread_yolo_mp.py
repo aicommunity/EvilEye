@@ -1,6 +1,7 @@
 from collections import deque
 from queue import Empty, Queue
 import logging
+import os
 import threading
 import time
 from typing import Optional
@@ -8,10 +9,9 @@ from typing import Optional
 from .detection_thread_base import DetectionThreadBase
 from ..core.frame import Frame
 from ..core.frame_transport import FrameHandle, SharedFrameTransport
+from ..core.mp_queue_config import mp_control_queue_size, mp_drain_poll_sec
 
 utils = None
-
-_MP_DRAIN_POLL_SEC = 0.05
 
 
 def get_utils():
@@ -39,8 +39,10 @@ class DetectionThreadYoloMp(DetectionThreadBase):
         from evileye.core.mp_control import MpControl
         from .mp_worker_yolo import MpWorkerYolo
 
+        qsize = mp_control_queue_size(max(len(roi), 1), role="detector")
         self.mp_control = MpControl(
-            max_input_size=max(len(roi), 2),
+            max_input_size=qsize,
+            max_output_size=qsize,
             name=f"det-mp-{DetectionThreadYoloMp.id_cnt}",
             restart_on_exit=restart_on_exit,
             no_restart_exit_codes=no_restart_exit_codes,
@@ -146,6 +148,7 @@ class DetectionThreadYoloMp(DetectionThreadBase):
                     if tail[1] is capture_image:
                         self._mp_pending.pop()
             self._release_handles(handles)
+            self._diag_mp_put_dropped += 1
             return False
 
     def _put_detection_output(self, detection_result_list, capture_image) -> None:
@@ -196,7 +199,7 @@ class DetectionThreadYoloMp(DetectionThreadBase):
             if self.mp_control is None:
                 break
             try:
-                predict_results = self.mp_control.get(timeout=_MP_DRAIN_POLL_SEC)
+                predict_results = self.mp_control.get(timeout=mp_drain_poll_sec())
             except Empty:
                 continue
             except Exception:

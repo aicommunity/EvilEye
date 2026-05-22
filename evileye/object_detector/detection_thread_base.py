@@ -12,7 +12,8 @@ import atexit
 
 from ..capture.video_capture_base import CaptureImage
 from .object_detection_base import DetectionResult, DetectionResultList
-from .constants import DEFAULT_THREAD_QUEUE_SIZE, PROCESSING_SLEEP_INTERVAL
+from ..core.mp_queue_config import detector_thread_queue_size
+from .constants import PROCESSING_SLEEP_INTERVAL
 
 
 class DetectionThreadBase:
@@ -46,7 +47,7 @@ class DetectionThreadBase:
         self.roi = roi  # [[]]
         self.inf_params = inf_params
         self.run_flag = False
-        self.queue_in = Queue(maxsize=DEFAULT_THREAD_QUEUE_SIZE)
+        self.queue_in = Queue(maxsize=detector_thread_queue_size())
         self.queue_out = queue_out
         self.source_ids = source_ids
         self.processing_thread = threading.Thread(target=self._process_impl, daemon=True)

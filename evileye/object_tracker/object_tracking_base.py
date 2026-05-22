@@ -16,7 +16,12 @@ from ..core.processor_base import (
     EXEC_MODE_THREAD,
 )
 
-_MP_DRAIN_POLL_SEC = 0.05
+from ..core.mp_queue_config import (
+    mp_control_queue_size,
+    mp_drain_poll_sec,
+    tracker_input_queue_size,
+    tracker_output_queue_size,
+)
 
 
 def _empty_tracking_output_for_input(
@@ -68,8 +73,8 @@ class ObjectTrackingBase(EvilEyeBase):
         # Tracker dispatcher and pipeline live in the same process.
         # Keep local queues thread-based even in process execution mode;
         # true IPC boundary is _mp_control worker queues.
-        self.queue_in = Queue(maxsize=2)
-        self.queue_out = Queue(maxsize=4)
+        self.queue_in = Queue(maxsize=tracker_input_queue_size())
+        self.queue_out = Queue(maxsize=tracker_output_queue_size())
         self.queue_dropped_id = Queue()
 
     def put(self, det_info, force=False):
@@ -189,8 +194,10 @@ class ObjectTrackingBase(EvilEyeBase):
             default_restart_on_exit=True,
         )
 
+        tq = mp_control_queue_size(1, role="tracker")
         self._mp_control = MpControl(
-            max_input_size=4,
+            max_input_size=tq,
+            max_output_size=tq,
             name=f"tracker-{id(self)}",
             restart_on_exit=restart_on_exit,
             no_restart_exit_codes=no_restart_exit_codes,
@@ -302,7 +309,7 @@ class ObjectTrackingBase(EvilEyeBase):
             if self._mp_control is None:
                 break
             try:
-                result = self._mp_control.get(timeout=_MP_DRAIN_POLL_SEC)
+                result = self._mp_control.get(timeout=mp_drain_poll_sec())
             except Empty:
                 continue
             except Exception:

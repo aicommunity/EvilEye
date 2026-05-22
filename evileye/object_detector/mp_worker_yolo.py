@@ -1,3 +1,6 @@
+import os
+from pathlib import Path
+
 from ..core.mp_worker import MpWorker
 from ultralytics import YOLO
 from ..core.frame_transport import SharedFrameTransport, materialize_payload_list
@@ -36,7 +39,10 @@ class MpWorkerYolo(MpWorker):
         )
 
     def init_worker(self):
-        self.model = YOLO(self.model_name)
+        model_path = self.model_name
+        if model_path and not Path(str(model_path)).is_absolute():
+            model_path = str((Path.cwd() / model_path).resolve())
+        self.model = YOLO(model_path)
         apply_ultralytics_optimizations(
             self.model,
             half=bool(self.inf_params.get("half", True)),

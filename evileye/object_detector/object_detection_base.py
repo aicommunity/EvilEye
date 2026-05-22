@@ -10,10 +10,12 @@ from ..core.base_class import EvilEyeBase
 from ..core.class_manager import ClassManager
 from ..core.frame import CaptureImage
 
+from ..core.mp_queue_config import (
+    detector_input_queue_size,
+    detector_output_queue_size,
+)
 from .constants import (
-    DEFAULT_INPUT_QUEUE_SIZE,
     DEFAULT_NUM_DETECTION_THREADS,
-    DEFAULT_OUTPUT_QUEUE_SIZE,
     DEFAULT_STRIDE,
     MODEL_PRELOAD_TIMEOUT,
     MODEL_READY_TIMEOUT,
@@ -86,8 +88,8 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         # Keep these queues thread-local even in process execution_mode;
         # true multiprocessing boundary is inside DetectionThreadYoloMp/MpControl.
         # This avoids unnecessary pickle/IPC overhead on hot path.
-        self.queue_in = Queue(maxsize=DEFAULT_INPUT_QUEUE_SIZE)
-        self.queue_out = Queue(maxsize=DEFAULT_OUTPUT_QUEUE_SIZE)
+        self.queue_in = Queue(maxsize=detector_input_queue_size())
+        self.queue_out = Queue(maxsize=detector_output_queue_size())
         self.queue_dropped_id = Queue()
 
     def put(self, image: CaptureImage) -> bool:
