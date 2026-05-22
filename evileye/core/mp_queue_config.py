@@ -50,3 +50,28 @@ def mp_drain_poll_sec() -> float:
         return float(os.getenv("EVILEYE_MP_DRAIN_POLL_SEC", "0.05") or "0.05")
     except (TypeError, ValueError):
         return 0.05
+
+
+def mp_pending_cap_detector(roi_count: int) -> int:
+    """FIFO depth cap for DetectionThreadYoloMp._mp_pending (not scaled by QUEUE_SCALE)."""
+    override = os.getenv("EVILEYE_MP_PENDING_CAP", "").strip()
+    if override:
+        try:
+            return max(1, int(override))
+        except (TypeError, ValueError):
+            pass
+    return max(max(int(roi_count), 1), 2)
+
+
+def mp_pending_cap_tracker() -> int:
+    override = os.getenv("EVILEYE_MP_PENDING_CAP_TRACKER", "").strip()
+    if override:
+        try:
+            return max(1, int(override))
+        except (TypeError, ValueError):
+            pass
+    default = os.getenv("EVILEYE_MP_PENDING_CAP_TRACKER_DEFAULT", "4") or "4"
+    try:
+        return max(1, int(default))
+    except (TypeError, ValueError):
+        return 4

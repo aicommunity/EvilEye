@@ -19,6 +19,7 @@ from ..core.processor_base import (
 from ..core.mp_queue_config import (
     mp_control_queue_size,
     mp_drain_poll_sec,
+    mp_pending_cap_tracker,
     tracker_input_queue_size,
     tracker_output_queue_size,
 )
@@ -215,6 +216,8 @@ class ObjectTrackingBase(EvilEyeBase):
         self._mp_drain_thread = threading.Thread(
             target=self._mp_tracker_drain_loop, daemon=True,
         )
+        self._diag_mp_pending_evict = 0
+        self._mp_pending_cap = mp_pending_cap_tracker()
 
     def _release_frame_handle(self, frame_handle) -> None:
         if frame_handle is None:
@@ -230,9 +233,16 @@ class ObjectTrackingBase(EvilEyeBase):
                 _, frame_handle = self._mp_pending.popleft()
                 self._release_frame_handle(frame_handle)
 
+    def _enforce_pending_cap(self) -> None:
+        while len(self._mp_pending) >= self._mp_pending_cap:
+            _, frame_handle = self._mp_pending.popleft()
+            self._release_frame_handle(frame_handle)
+            self._diag_mp_pending_evict += 1
+
     def _enqueue_mp_tracker_job(self, detections, packed, frame_handle) -> bool:
         """Queue job for FIFO worker and submit packed payload to MpControl."""
         with self._mp_pending_lock:
+            self._enforce_pending_cap()
             self._mp_pending.append((detections, frame_handle))
         try:
             self._mp_control.put_nowait(packed)

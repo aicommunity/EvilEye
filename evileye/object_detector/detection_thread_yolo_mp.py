@@ -9,7 +9,11 @@ from typing import Optional
 from .detection_thread_base import DetectionThreadBase
 from ..core.frame import Frame
 from ..core.frame_transport import FrameHandle, SharedFrameTransport
-from ..core.mp_queue_config import mp_control_queue_size, mp_drain_poll_sec
+from ..core.mp_queue_config import (
+    mp_control_queue_size,
+    mp_drain_poll_sec,
+    mp_pending_cap_detector,
+)
 
 utils = None
 
@@ -67,6 +71,9 @@ class DetectionThreadYoloMp(DetectionThreadBase):
         )
         self._mp_pending: deque = deque()
         self._mp_pending_lock = threading.Lock()
+        self._diag_mp_put_dropped = 0
+        self._diag_mp_pending_evict = 0
+        self._mp_pending_cap = mp_pending_cap_detector(max(len(roi), 1))
 
     def start(self) -> None:
         """Start feed/drain threads (not the base processing_thread)."""
@@ -120,10 +127,17 @@ class DetectionThreadYoloMp(DetectionThreadBase):
             payload.append(handle)
         return payload, handles
 
+    def _enforce_pending_cap(self) -> None:
+        while len(self._mp_pending) >= self._mp_pending_cap:
+            _, _, handles = self._mp_pending.popleft()
+            self._release_handles(handles)
+            self._diag_mp_pending_evict += 1
+
     def _enqueue_mp_det_job(
         self, split_image: list, capture_image, payload: list, handles: list[FrameHandle]
     ) -> bool:
         with self._mp_pending_lock:
+            self._enforce_pending_cap()
             self._mp_pending.append((split_image, capture_image, handles))
         try:
             self.mp_control.put_nowait(payload)
