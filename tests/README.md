@@ -2,6 +2,20 @@
 
 Структурированная система тестов для проекта EvilEye.
 
+## MP refactor tests (thread vs process)
+
+| Test file | Covers |
+|-----------|--------|
+| `tests/unit/core/test_mp_async_bridge.py` | FIFO, cap evict, put failure |
+| `tests/unit/object_detector/test_detection_thread_yolo_mp_async.py` | Det feed/drain order |
+| `tests/unit/object_tracker/test_botsort_parent_init.py` | R6: no BOTSORT in parent (process) |
+| `tests/unit/capture/test_queue_policy.py` | drop-oldest / queue policy |
+
+**Gate scripts (manual):**
+
+- `scripts/soak_mp_memory.sh` — MEM-4 RSS soak
+- Artifacts: `reports/mp_refactor_gate/e2e_gate_summary.md`
+
 ## Структура
 
 Тесты разделены на два основных типа:

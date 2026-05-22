@@ -16,7 +16,7 @@
 |--------|-------------------------|
 | Сравнить FPS process vs thread | §1.3 bench-конфиги, §10 матрица прозрачности |
 | Добавить новый детектор с MP | §5 + [developing_dual_mode_modules.md](developing_dual_mode_modules.md) шаблон A |
-| Понять, почему растёт `pending` | §5.3 `_mp_pending`, §8.1 snapshot, §8.3 backpressure |
+| Понять, почему растёт `pending` | §5.3 `MpAsyncBridge.depth`, §8.1 snapshot, §8.5 backpressure |
 | Почему MC «видит» старые треки | §8.2 post-drain policy |
 | Рефакторинг без поломки E2E | §12 DUP + [thread_vs_mp_refactoring_plan.md](thread_vs_mp_refactoring_plan.md) |
 
@@ -35,7 +35,7 @@
 
 - **`server.execution_mode`** — отдельный процесс FastAPI/uvicorn, не путать с pipeline MP.
 - **Database / events / GUI** — потребляют результаты pipeline, но не реализуют dual-mode.
-- **Attributes** — кратко §9; полный audit отложен (**DUP-016**).
+- **Attributes** — кратко §9; `AttributeClassifier` + `YoloRuntime` (**DUP-016 Closed**).
 
 ### 1.4. Bench-конфиги (конкретика)
 
@@ -66,7 +66,8 @@
 | `MpControl` | Обёртка: `input_queue`, `output_queue`, spawn, restart | `mp_control.py` | Создавать второй `MpControl` на одном компоненте без need |
 | `MpWorker` | Код в child; loop через `run_mp_worker_entry` | `mp_worker.py`, `mp_worker_yolo.py`, … | Вызвать `execution_mode=process` внутри capture child |
 | `FrameHandle` | Ссылка на numpy в shared memory | `frame_transport.py` | Забыть `relinquish_frame` / `consume_frame` → утечка SHM |
-| `_mp_pending` | Очередь заданий **до** успешного `put_nowait` в `MpControl.input_queue` | `deque` + lock в yolo_mp / tracking_base | Считать `len(input_queue)` = backlog (это не то же самое) |
+| `MpAsyncBridge` | FIFO pending jobs **до** сопоставления с `mp_control.get()` | [`mp_async_bridge.py`](../evileye/core/mp_async_bridge.py) в yolo_mp / tracking_base | Считать `len(input_queue)` MP = backlog (это не то же самое) |
+| `DetectorPendingJob` / `TrackerPendingJob` | DTO в bridge pending | [`mp_pending_jobs.py`](../evileye/core/mp_pending_jobs.py) | Путать с payload в MP queue |
 | **post-drain** | `get()` только **после** всех `put` в одном `ProcessorStep.process` | `processor_step.py` L307–308, L369–374 | Pre-drain → stale detections в mc_trackers |
 | **continuous producer** | Child сам крутит `capture.get()` в цикле | `MpWorkerCapture.__call__` | Ждать request/response на capture как на YOLO |
 | **request/response** | Feed кладёт job → drain ждёт ответ с тем же FIFO pending | det/track MP loops | Нарушить FIFO pending ↔ результат |
@@ -163,7 +164,7 @@ item = tracker.get()  # None или (TrackingResultList, Frame)
 | 2 | Child `MpControl.output_queue` | `dict{frame_handle, frame_meta}` | IPC без копии полного numpy в parent до unpack |
 | 3 | Parent `frames_queue` | `CaptureImage` | Единый API `get()` для `ProcessorSource` |
 
-**Симптом переполнения:** рост задержки кадра, dropped frames в логах capture; это **не** попадает в `estimate_mp_backlog_stats` (там только det/track `_mp_pending`).
+**Симптом переполнения:** рост задержки кадра, dropped frames в логах capture; это **не** попадает в `estimate_mp_backlog_stats` (там только det/track `MpAsyncBridge.depth`).
 
 ### 4.4. Прозрачность и coupling (capture)
 
@@ -227,32 +228,32 @@ queue_in.get (timeout 0.5)
 
 **Модель:** загружается в `init_detection_implementation` / `predict` в **том же процессе**, что controller.
 
-### 5.3. Process: `DetectionThreadYoloMp` — feed, pending, drain
+### 5.3. Process: `DetectionThreadYoloMp` — feed, bridge, drain
 
-**Feed loop** (`_mp_det_feed_loop`, L184+):
+**Компоненты:** `MpAsyncBridge[DetectorPendingJob]` ([`mp_async_bridge.py`](../evileye/core/mp_async_bridge.py)), [`DetectorPendingJob`](../evileye/core/mp_pending_jobs.py). Cap: `mp_pending_cap_detector()` ([`mp_queue_config.py`](../evileye/core/mp_queue_config.py)).
+
+**Feed loop** (`_mp_det_feed_loop`):
 
 1. `queue_in.get(timeout=0.5)` — `CaptureImage`.
-2. Split ROI (та же логика, что в `_process_impl` — **DUP-003**).
-3. `_build_mp_payload` — для каждого ROI `SharedFrameTransport.alloc_frame` → `list[FrameHandle]`.
-4. `_enqueue_mp_det_job(split_image, capture_image, payload, handles)`.
+2. Split ROI — [`detection_preprocess`](../evileye/object_detector/detection_preprocess.py) (**DUP-003 Closed**).
+3. `_build_mp_payload` → `list[FrameHandle]` per ROI.
+4. `DetectorPendingJob(...)` + `bridge.enqueue(payload, job)`.
 
-**`_enqueue_mp_det_job` (L136–166) — критичный контракт FIFO:**
+**`MpAsyncBridge.enqueue` (контракт FIFO):**
 
-1. Под lock: `_enforce_pending_cap()` — если `len(_mp_pending) >= cap`, popleft + `_release_handles` (**evict**).
-2. `append (split_image, capture_image, handles)` в `_mp_pending`.
-3. `mp_control.put_nowait(payload)`.
-4. При failure: drop oldest из **input_queue** MP, popleft pending + release handles, retry put.
-5. При повторном failure: снять tail pending если тот же `capture_image`, release handles, `_diag_mp_put_dropped++`.
+1. Под lock: evict head при `depth >= pending_cap` → `release_on_drop(job)`.
+2. Append job в FIFO pending.
+3. `mp_control.put_nowait(payload)`; при failure — drop oldest из MP `input_queue`, popleft pending + release, retry.
+4. При повторном failure — снять tail job, `release_on_drop`, `diag_put_dropped++`.
 
-**Drain loop** (`_mp_det_drain_loop`, L210+):
+**Drain loop** (`_mp_det_drain_loop`):
 
-1. `predict_results = mp_control.get(timeout=mp_drain_poll_sec())` — default **0.01 s** ([`mp_queue_config.py`](../evileye/core/mp_queue_config.py)).
-2. Под lock: `popleft` **первый** pending → `(split_image, capture_image, handles)`.
+1. `predict_results = mp_control.get(timeout=mp_drain_poll_sec())` — default **0.01 s**.
+2. `job = bridge.pop_head()` — MUST match порядок успешных put.
 3. `_detection_result_from_predict(split_image, predict_results)`.
-4. `_put_detection_output` → facade `queue_out`.
-5. `finally`: `_release_handles(handles)`.
+4. `_put_detection_output` → facade `queue_out`; `finally`: release handles.
 
-**Инвариант:** порядок результатов = порядок успешных `put_nowait` в MP = порядок FIFO `_mp_pending`. Тест: `tests/unit/object_detector/test_detection_thread_yolo_mp_async.py`.
+**Инвариант:** порядок = FIFO bridge. Тесты: `tests/unit/object_detector/test_detection_thread_yolo_mp_async.py`, `tests/unit/core/test_mp_async_bridge.py`.
 
 ### 5.4. IPC child `MpWorkerYolo`
 
@@ -262,7 +263,9 @@ queue_in.get (timeout 0.5)
 | ← child | `list[list[dict]]` | `bbox_xyxy`, `confidence`, `class_id` |
 | worker error | `[[]] * n_rois` | пустые детекции, pipeline не падает |
 
-**Парсинг:** thread — `roi_boxes_to_image_coords(Ultralytics Result)`; MP — `mp_dict_list_to_image_coords` (**DUP-005**).
+**Инференс:** child [`MpWorkerYolo`](../evileye/object_detector/mp_worker_yolo.py) вызывает [`YoloRuntime.predict`](../evileye/object_detector/yolo_runtime.py) (модель **только** в worker). Thread path: `DetectionThreadYolo` + тот же `YoloRuntime`.
+
+**Парсинг:** thread — Ultralytics `Result`; MP — `mp_dict_list_to_image_coords` (**DUP-005 Closed**).
 
 ### 5.5. Legacy `ObjectDetectorYoloMp`
 
@@ -272,7 +275,7 @@ queue_in.get (timeout 0.5)
 | Factory | `"yolo_mp"` | `"yolo"` + `execution_mode: process` |
 | Restart policy | Может отличаться в factory | Единый путь через `ObjectDetectorYolo.init_impl` |
 
-См. **DUP-018**, фаза **R0**.
+См. **DUP-018 Closed** (R0).
 
 ### 5.6. `is_ready()` — COUP-003
 
@@ -302,9 +305,9 @@ out = tracker.get()  # (TrackingResultList, Frame) or None
 
 ### 6.3. Process path
 
-- `_init_process_mode` → `MpWorkerTracker`, feed/drain как у detector.
-- `_pack_for_worker` — descriptor с detections + SHM frame.
-- **COUP-004:** `ObjectTrackingBotsort.init_impl` может всё равно создать `BOTSORT` в parent — память и время без пользы (**R6**).
+- `_init_process_mode` → `MpWorkerTracker`, `MpAsyncBridge[TrackerPendingJob]`, feed/drain как у detector.
+- `_pack_for_worker` — descriptor с detections + SHM frame; update в child через [`track_update_core`](../evileye/object_tracker/track_update_core.py).
+- **COUP-004 (Closed, R6):** в `execution_mode=process` parent **не** создаёт `BOTSORT`; см. §11b.
 
 ### 6.4. Encoder coupling (COUP-007) — таблица «где живёт ReID»
 
@@ -401,25 +404,26 @@ Preprocessing с `accepts_frame_handle=True` может пропустить mat
 
 **В thread bench** `pending` ≈ 0 → backpressure не работает. Сравнение pipeline_hz process vs thread **не** сопоставимо 1:1 без учёта этого.
 
-### 8.6. `estimate_mp_backlog_stats` (COUP-002)
+### 8.6. `estimate_mp_backlog_stats` (COUP-002 Closed)
 
-`pipeline_surveillance.py` L449–484:
+`pipeline_surveillance.py` L449–480:
 
-- Суммирует `len(_mp_pending)` для каждого `DetectionThreadYoloMp` (**isinstance**).
-- Плюс trackers с `_mp_pending` под lock.
+- Для каждого detection thread / tracker с `isinstance(..., MpPendingReporter)` ([`mp_stage.py`](../evileye/core/mp_stage.py)):
+  - `mp_pending_depth()`, `mp_diag_put_dropped()`, `mp_diag_pending_evict()`.
 - Возвращает `{pending, put_dropped, pending_evict}`.
 
 **Не включает:** capture queues, facade `queue_in` depth.
 
 ---
 
-## §9. Attributes (кратко, DUP-016)
+## §9. Attributes (кратко, DUP-016 Closed)
 
-`AttributeClassifier` (`attribute_classifier.py`):
+`AttributeClassifier` ([`attribute_classifier.py`](../evileye/attributes_detection/attribute_classifier.py)):
 
 - `queue_in` maxsize=2, `queue_out` maxsize=4.
-- `init_impl`: branch process → `_init_process_mode` / thread → `_process_impl`.
-- Для нового модуля с YOLO на ROI — копировать шаблон A; после **R2** — `yolo_runtime`.
+- Process: [`MpWorkerAttributeClassifier`](../evileye/attributes_detection/mp_worker_attribute_classifier.py) + [`YoloRuntime`](../evileye/object_detector/yolo_runtime.py) (отдельный RPC path, не feed/drain det/track).
+- Thread: `_process_impl` в parent.
+- Подробнее: [ATTRIBUTES_DETECTION_README.md](ATTRIBUTES_DETECTION_README.md).
 
 ---
 
@@ -432,7 +436,7 @@ Preprocessing с `accepts_frame_handle=True` может пропустить mat
 | Tracker | 5 | 5 | 2 | 3 | BoT-SORT ×2 |
 | MC | — | 4 | 5 | 4 | Всегда sync |
 | ProcessorStep | 5 | 5 | — | 3 | post-drain, adapt |
-| Pipeline | 4 | 4 | — | 2 | isinstance backlog |
+| Pipeline | 4 | 4 | — | 3 | `MpPendingReporter` backlog |
 
 **Практический вывод:** меняя только JSON `execution_mode`, вы **не** меняете код алгоритма в parent — меняете **где** он выполняется (thread vs child) и **сколько** async слоёв между put и get.
 
@@ -440,20 +444,20 @@ Preprocessing с `accepts_frame_handle=True` может пропустить mat
 
 ## §11. Реестр связанности (COUP) — развёрнутый
 
-| ID | Симптом | Где | Severity | Снятие |
-|----|---------|-----|----------|--------|
-| COUP-001 | GStreamer ведёт себя иначе в process | `video_capture_gstreamer.py` | med | R4 |
-| COUP-002 | Pipeline импортирует `DetectionThreadYoloMp` | `pipeline_surveillance.py` ~455 | high | R3 Protocol |
-| COUP-003 | `is_ready` false positive/negative | `object_detection_base.py` | low | doc + R2 |
-| COUP-004 | RAM spike при process trackers | `object_tracking_botsort.py` init | med | R6 |
-| COUP-005 | Нельзя подменить MC без правки step | `processor_step.py` ~197 | med | S6 |
+| ID | Симптом | Где | Status | Снятие / evidence |
+|----|---------|-----|--------|-------------------|
+| COUP-001 | GStreamer ведёт себя иначе в process | `video_capture_gstreamer.py` | Open | R4 / queue_policy |
+| COUP-002 | Pipeline coupling к MP pending | `pipeline_surveillance.py` | **Closed** | `MpPendingReporter` (R3) |
+| COUP-003 | `is_ready` false positive/negative | `object_detection_base.py` | **Closed** | doc + R2 |
+| COUP-004 | RAM spike при process trackers | `object_tracking_botsort.py` | **Closed** | R6, §11b |
+| COUP-005 | Нельзя подменить MC без правки step | `processor_step.py` | Open | S6 validator |
 | COUP-006 | Забыли `execution_mode` в JSON → process | poly-videos | doc | явный thread config |
-| COUP-007 | ReID не там где ожидали | `_init_encoders` | high | R6 table |
-| COUP-008 | Лишний SHM copy | `_adapt_input_for_processor` | med | S4 / flags |
-| COUP-009 | Thread bench без backpressure | controller + env | med | документировать |
-| COUP-010 | Step.execution_mode ≠ instance | `processor_base.py` ~69 | low | doc |
-| COUP-011 | Nested MP в capture | `mp_worker_capture.py` L82 | design | не менять |
-| COUP-012 | Два init path YOLO | `object_detection_yolo.py` | med | R0/R2 |
+| COUP-007 | ReID не там где ожидали | `_init_encoders` | **Closed** | R6, §6.4 |
+| COUP-008 | Лишний SHM copy | `_adapt_input_for_processor` | Open | S4 / TD-MP-401 |
+| COUP-009 | Thread bench без backpressure | controller + env | doc | §8.5 |
+| COUP-010 | Step.execution_mode ≠ instance | `processor_base.py` | doc | — |
+| COUP-011 | Nested MP в capture | `mp_worker_capture.py` | design | не менять |
+| COUP-012 | Два init path YOLO | `object_detection_yolo.py` | **Closed** | R0/R2 `YoloRuntime` |
 
 ---
 
@@ -471,26 +475,26 @@ This avoids double memory for weights/encoder in parent + worker (COUP-004).
 
 ## §12. Реестр дублей (DUP) — развёрнутый
 
-| ID | Что дублируется | Файлы | ~LOC | Симптом без рефакторинга | Фаза |
-|----|-----------------|-------|------|--------------------------|------|
-| DUP-001 | drop-oldest | `queue_utils.py`, `mp_worker_capture.py` | 40 | Разная семантика overflow | R4 |
-| DUP-002 | create capture | `mp_worker_capture`, `video_capture_base` | 60 | Расхождение fallback GST | R4 |
-| DUP-003 | ROI split | `detection_thread_base`, `yolo_mp feed` | 80 | Фикс ROI в двух местах | R2 |
-| DUP-004 | YOLO load/predict | `detection_thread_yolo`, `mp_worker_yolo` | 150+ | Дрейф оптимизаций | R2 |
-| DUP-005 | bbox parse | `bbox_utils`, drain | 50 | Разные баги coords | R2 |
-| DUP-006 | MP async bridge | `yolo_mp`, `tracking_base` | 200+ | Фикс pending ×2 | R1 |
-| DUP-007 | BoT-SORT | `botsort`, `mp_worker_tracker` | 120+ | Дрейф track logic | R2 |
-| DUP-008 | output drop | tracking bases | 30 | — | R1/R5 |
-| DUP-009 | empty track | several | 40 | — | R2 |
-| DUP-010 | normalize meta | `processor_step`, `processor_frame` | 50 | Расхождение meta | R5 |
-| DUP-011 | detector init fork | detection_base/yolo | 30 | — | R0 |
-| DUP-012 | pending cap | mp_queue_config ×2 | 20 | — | R1 |
-| DUP-013 | `_diag_mp_*` | yolo_mp, tracking | 30 | — | R1 |
-| DUP-014 | SHM release | yolo_mp, tracking | 40 | leak если один путь забыт | R1 |
-| DUP-015 | put detection out | base, yolo_mp | 25 | — | R1 |
-| DUP-016 | AttributeClassifier | `attribute_classifier.py` | 100 | — | post-R2 |
-| DUP-017 | drain poll | env + loops | 10 | doc | doc |
-| DUP-018 | legacy YoloMp class | whole file | — | Два способа включить MP | R0 |
+| ID | Что дублируется | Status | Evidence |
+|----|-----------------|--------|----------|
+| DUP-001 | drop-oldest | Partial | `queue_policy.py`; capture paths R4 |
+| DUP-002 | create capture | Open | R4 |
+| DUP-003 | ROI split | **Closed** | `detection_preprocess.py` |
+| DUP-004 | YOLO load/predict | **Closed** | `yolo_runtime.py` |
+| DUP-005 | bbox parse | **Closed** | shared coords helpers |
+| DUP-006 | MP async bridge | **Closed** | `mp_async_bridge.py` (R1) |
+| DUP-007 | BoT-SORT | **Closed** | `track_update_core.py` (R2) |
+| DUP-008 | output drop | **Closed** | R1/R5 |
+| DUP-009 | empty track | **Closed** | R2 |
+| DUP-010 | normalize meta | **Closed** | `stage_result_normalizer.py` (R5) |
+| DUP-011 | detector init fork | **Closed** | R0 |
+| DUP-012 | pending cap | **Closed** | `mp_queue_config.py` (R1) |
+| DUP-013 | diag counters | **Closed** | bridge diag_* (R1) |
+| DUP-014 | SHM release | **Closed** | `release_on_drop` (R1) |
+| DUP-015 | put detection out | **Closed** | R1 |
+| DUP-016 | AttributeClassifier | **Closed** | `YoloRuntime` + mp worker |
+| DUP-017 | drain poll | doc | `mp_drain_poll_sec()` |
+| DUP-018 | legacy YoloMp class | **Closed** | R0 deprecate in config doc |
 
 ---
 
@@ -511,9 +515,32 @@ This avoids double memory for weights/encoder in parent + worker (COUP-004).
 
 ---
 
+## §15. Модульный индекс MP (post-refactor)
+
+| Модуль | Ответственность |
+|--------|-----------------|
+| [`mp_async_bridge.py`](../evileye/core/mp_async_bridge.py) | FIFO pending + put policy |
+| [`mp_pending_jobs.py`](../evileye/core/mp_pending_jobs.py) | Job DTOs |
+| [`mp_stage.py`](../evileye/core/mp_stage.py) | `MpPendingReporter` protocol |
+| [`yolo_runtime.py`](../evileye/object_detector/yolo_runtime.py) | YOLO inference (thread + MP child) |
+| [`detection_preprocess.py`](../evileye/object_detector/detection_preprocess.py) | ROI split shared |
+| [`track_update_core.py`](../evileye/object_tracker/track_update_core.py) | BoT-SORT update shared |
+| [`stage_result_normalizer.py`](../evileye/core/stage_result_normalizer.py) | ProcessorStep `(data, frame)` |
+| [`frame_worker_meta.py`](../evileye/core/frame_worker_meta.py) | Pack frame for MP worker |
+| [`queue_policy.py`](../evileye/capture/queue_policy.py) | drop-oldest deque + MP queues |
+| [`execution_backend.py`](../evileye/core/execution_backend.py) | Factory S5 |
+| [`dual_mode_processor.py`](../evileye/core/dual_mode_processor.py) | Skeleton S1 (not adopted) |
+
+Полный индекс пакетов: [CODE_MODULE_INDEX.md](CODE_MODULE_INDEX.md).
+
+---
+
 ## §14. Связанные документы
 
 - [План рефакторинга](thread_vs_mp_refactoring_plan.md)
 - [Разработка dual-mode модулей](developing_dual_mode_modules.md)
 - [Упрощение интеграции](module_integration_simplification.md)
+- [Уровни буферов capture](capture_buffer_levels.md)
+- [Матрица аудита документации](DOC_AUDIT_MATRIX.md)
 - [mp_fps_phase3_summary.md](mp_fps_phase3_summary.md)
+- [Post-refactor gate](../reports/mp_refactor_gate/e2e_gate_summary.md)

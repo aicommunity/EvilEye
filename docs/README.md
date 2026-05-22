@@ -18,10 +18,17 @@
 
 ### Thread vs multiprocess (разработка)
 
-- **[Контракты и аудит](thread_vs_mp_contracts.md)** - сравнение thread/process по capture, detector, tracker, MC, pipeline; реестры COUP/DUP
-- **[План рефакторинга](thread_vs_mp_refactoring_plan.md)** - фазы R0–R6, дедупликация, критерии приёмки
+Рекомендуемый порядок чтения: **контракты → dual-mode гайд → MULTIPROCESSING**.
+
+- **[Контракты и аудит](thread_vs_mp_contracts.md)** - сравнение thread/process; реестры COUP/DUP; §15 модульный индекс MP
 - **[Разработка dual-mode модулей](developing_dual_mode_modules.md)** - decision tree, шаблоны, чеклист PR
-- **[Упрощение интеграции](module_integration_simplification.md)** - предложения S1–S7, roadmap
+- **[Мультипроцессность](MULTIPROCESSING.md)** - ops, env, FAQ
+- **[Уровни буферов capture](capture_buffer_levels.md)** - triple-buffer / drop policy
+- **[План рефакторинга](thread_vs_mp_refactoring_plan.md)** - Implemented vs backlog (R0–R6)
+- **[Упрощение интеграции](module_integration_simplification.md)** - S1–S7 статусы
+- **[Индекс модулей кода](CODE_MODULE_INDEX.md)** - карта `evileye/*`
+- **[Матрица аудита документации](DOC_AUDIT_MATRIX.md)** - статус актуальности docs
+- **[Post-refactor gate](../reports/mp_refactor_gate/e2e_gate_summary.md)** - E2E/soak после R0–R6
 - **[Руководство по рефакторингу GUI](GUI_REFACTORING_GUIDE.md)** - Архитектура GUI системы, компоненты и лучшие практики
 - **[Руководство по Dependency Injection](DEPENDENCY_INJECTION_GUIDE.md)** - Подробное описание механизма Dependency Injection, DIContainer и DependencyRegistry с примерами использования
 

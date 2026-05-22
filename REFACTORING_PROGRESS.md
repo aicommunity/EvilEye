@@ -1,3 +1,9 @@
+## Обновление: documentation audit (2026-05-22)
+
+- Синхронизированы docs с MP refactor R0–R6: [DOC_AUDIT_MATRIX.md](docs/DOC_AUDIT_MATRIX.md), [CODE_MODULE_INDEX.md](docs/CODE_MODULE_INDEX.md), [thread_vs_mp_contracts.md](docs/thread_vs_mp_contracts.md) §15.
+- Дозакрытие пробелов: [MULTIPROCESSING.md](docs/MULTIPROCESSING.md) (MP env, bridge, capture_buffer), [VideoCaptureGStreamer_Usage.md](docs/VideoCaptureGStreamer_Usage.md) (`execution_mode`), [developing_dual_mode_modules.md](docs/developing_dual_mode_modules.md) (`frame_worker_meta`), R1 в [thread_vs_mp_refactoring_plan.md](docs/thread_vs_mp_refactoring_plan.md).
+- Gate: [reports/mp_refactor_gate/e2e_gate_summary.md](reports/mp_refactor_gate/e2e_gate_summary.md).
+
 ## Обновление: plan completion sweep (2026-05-21)
 
 - `EventImageWriter` + PG adapters; `botsort_config.py`; subprocess YOLO test; stream_player conftest.

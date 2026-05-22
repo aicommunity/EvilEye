@@ -53,3 +53,5 @@ EVILEYE_PIPELINE_SYNC_MP_MS=8
 - `run_backlog_matrix.sh`, `compare_poly_backlog_matrix.py`, `run_winner_bench.sh`
 
 Коммиты фазы 2: `96d067c`, `6ec8aca`, `c51112c`, `f63dc30` (+ docs).
+
+Post-refactor gate (2026-05-22, после R0–R6): см. [`reports/mp_refactor_gate/e2e_gate_summary.md`](../reports/mp_refactor_gate/e2e_gate_summary.md) и [`mp_fps_phase3_summary.md`](mp_fps_phase3_summary.md#post-refactor-regression-2026-05-22).

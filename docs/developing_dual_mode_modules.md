@@ -17,9 +17,11 @@ flowchart TD
   q3 -->|нет| q1{Тяжёлый CPU / GIL?}
   q1 -->|нет| thread[thread достаточно]
   q1 -->|да| q2{Отдельный OS process?}
-  q2 -->|да| proc[Шаблон A: process + MpWorker]
+  q2 -->|да| proc[Шаблон A: MpControl + MpAsyncBridge + MpWorker]
   q2 -->|нет| thread
 ```
+
+Process path: parent **feed/drain** + [`MpAsyncBridge`](../evileye/core/mp_async_bridge.py); inference only in child ([`YoloRuntime`](../evileye/object_detector/yolo_runtime.py) for YOLO). Do not copy-paste `_enqueue_mp_*`.
 
 ### C1.1. Таблица решений (примеры из EvilEye)
 
@@ -50,7 +52,7 @@ evileye/my_detector/
   __init__.py
   my_detector_base.py      # @register("MyDetector") — put/get, dispatcher
   my_detection_thread.py   # thread: DetectionThreadBase subclass
-  my_detection_thread_mp.py # process: feed/drain (позже MpAsyncBridge)
+  my_detection_thread_mp.py # process: feed/drain + MpAsyncBridge
   mp_worker_my.py          # class MpWorkerMy(MpWorker): worker_impl only
 ```
 
@@ -121,13 +123,17 @@ def _init_queues(self):
 | 3 | `mp_control.start()` | spawn child |
 | 4 | Создать `MyDetectionThreadMp` в `detection_threads[]` | по числу threads в config |
 | 5 | `thread.start()` → feed + drain **daemon threads** | не `processing_thread` base |
-| 6 | Feed: read `queue_in`, build IPC payload | SHM или DTO |
-| 7 | `enqueue` с cap `mp_pending_cap_detector(roi_count)` | см. yolo_mp L130–166 |
-| 8 | Drain: `get(timeout=mp_drain_poll_sec())`, match pending FIFO | |
-| 9 | `stop`: poison `None`, join, `_clear_mp_pending`, release SHM | leak test |
+| 6 | Feed: read `queue_in`, build IPC payload | SHM; pack frame — [`frame_worker_meta`](../evileye/core/frame_worker_meta.py) |
+| 7 | `bridge.enqueue(payload, job)` с cap `mp_pending_cap_*()` | [`MpAsyncBridge`](../evileye/core/mp_async_bridge.py), [`mp_pending_jobs`](../evileye/core/mp_pending_jobs.py) |
+| 8 | Drain: `get(timeout=mp_drain_poll_sec())`, `bridge.pop_head()` | FIFO MUST match put order |
+| 9 | `stop`: poison `None`, join, `bridge.clear()`, release SHM | leak test |
 | 10 | **Не** вызывать `load_model()` в parent | только в child/worker |
 
-**Эталон feed/drain:** `evileye/object_detector/detection_thread_yolo_mp.py` L184–238.
+**Эталон feed/drain:** `evileye/object_detector/detection_thread_yolo_mp.py`.
+
+### C2.5b. Pack кадра для worker (`frame_worker_meta`)
+
+Трекер и детектор в process mode передают в child не сырой `numpy` в очереди MP, а `FrameHandle` / descriptor. Используйте [`frame_worker_meta.py`](../evileye/core/frame_worker_meta.py) (и зеркало в `object_tracking_base._pack_for_worker`) — не `getattr(frame, ...)` разбросанно по модулю.
 
 ### C2.6. Thread mode — отличия
 
@@ -317,7 +323,7 @@ self.requires_materialized_frame = True  # default
 - [ ] **12.** Нет `load_model` в parent при process.
 - [ ] **13.** JSON example в PR body.
 - [ ] **14.** CONFIGURATION_GUIDE если новые keys.
-- [ ] **15.** ROI split в одном модуле (post-R2 `detection_preprocess`).
+- [ ] **15.** ROI split — [`detection_preprocess`](../evileye/object_detector/detection_preprocess.py) (обязательно, не дублировать).
 - [ ] **16.** `get_module_logger(__name__)`.
 - [ ] **17.** `_diag_mp_put_dropped` / `_diag_mp_pending_evict` если MP.
 - [ ] **18.** Docstring: supported modes thread/process.
@@ -336,7 +342,7 @@ self.requires_materialized_frame = True  # default
 | `if isinstance(th, MyMp):` in pipeline | Protocol `mp_pending_depth` |
 | `self.model = YOLO()` в `MyDetector.__init__` при process | model in `MpWorker` only |
 | `"execution_mode":"process"` на mc_trackers | sync-only, no key |
-| Copy-paste `_enqueue_mp_*` | `MpAsyncBridge` (post-R1) |
+| Copy-paste `_enqueue_mp_*` | [`MpAsyncBridge`](../evileye/core/mp_async_bridge.py) + [`mp_pending_jobs`](../evileye/core/mp_pending_jobs.py) |
 
 ---
 

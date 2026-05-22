@@ -2,7 +2,20 @@
 
 Предложения по снижению порога входа. Это **design options** — не всё нужно реализовывать сразу. Каждый пункт: проблема → как сейчас → целевое API → файлы → оценка → рекомендация.
 
-**Контекст:** новый MP-модуль сегодня ≈ **200+ LOC** boilerplate (pending deque, feed/drain threads, cap, diag, SHM) + отдельный `mp_worker_*.py` + знание post-drain policy.
+**Контекст (2026-05-22):** R1–R6 merged; boilerplate вынесен в `MpAsyncBridge` / `YoloRuntime` / `track_update_core`. Новый MP-модуль по-прежнему требует feed/drain + worker, но **не** копирует `_enqueue_mp_*`.
+
+### Статусы (после merge)
+
+| ID | Status | Evidence |
+|----|--------|----------|
+| S1 | **Partial** | [`dual_mode_processor.py`](../evileye/core/dual_mode_processor.py) — skeleton; det/track не наследуют |
+| S2 | **Done** | [`mp_stage.py`](../evileye/core/mp_stage.py) `MpPendingReporter`; pipeline protocol |
+| S3 | **Done** | `detection_preprocess`, `yolo_runtime`, `track_update_core` |
+| S4 | Open | TD-MP-501 `module_capabilities` |
+| S5 | **Done** | [`execution_backend.py`](../evileye/core/execution_backend.py) |
+| S6 | **Partial** | [`scripts/validate_config.py`](../scripts/validate_config.py) — нет `stage_kind` в JSON |
+| S7 | **Done** | bench overlays unchanged |
+| DUP-016 | **Done** | `AttributeClassifier` + `YoloRuntime` |
 
 ---
 
@@ -10,12 +23,12 @@
 
 | ID | Название | SP | Зависит от | v1 рекомендация |
 |----|----------|-----|------------|-----------------|
-| S1 | `DualModeProcessor` base | 8 | R1 | После R1 |
-| S2 | `MpPendingReporter` | 5 | R3 | **Вместе с R3** |
-| S3 | `AlgorithmCore` | 13 | R2 | **Det+track** |
+| S1 | `DualModeProcessor` base | 8 | R1 | Adoption roadmap (Partial) |
+| S2 | `MpPendingReporter` | 5 | R3 | **Done** |
+| S3 | `AlgorithmCore` | 13 | R2 | **Done** (det+track) |
 | S4 | `module_capabilities` JSON | 8 | R5 | Отложить |
-| S5 | `create_execution_backend()` | 5 | S1 | Опционально |
-| S6 | `stage_kind: sync_batch` | 5 | doc | Doc + validator |
+| S5 | `create_execution_backend()` | 5 | S1 | **Done** |
+| S6 | `stage_kind: sync_batch` | 5 | doc | Partial validator |
 | S7 | Config overlay profiles | 3 | — | Bench only |
 
 ---
@@ -86,19 +99,18 @@ class DualModeProcessor(EvilEyeBase):
 
 ---
 
-## §D3. S2 — `MpPendingReporter`
+## §D3. S2 — `MpPendingReporter` (Done)
 
-### Проблема
+### Было
 
-`PipelineSurveillance.estimate_mp_backlog_stats` импортирует `DetectionThreadYoloMp` и лезет в `_mp_pending` (**COUP-002**). Новый MP-модуль без этого класса **невидим** для backpressure.
+`PipelineSurveillance` использовал `isinstance(DetectionThreadYoloMp)` и `len(_mp_pending)` (**COUP-002**).
 
 ### Как сейчас
 
 ```python
-# pipeline_surveillance.py ~455
-if isinstance(th, DetectionThreadYoloMp):
-    with th._mp_pending_lock:
-        pending += len(th._mp_pending)
+# pipeline_surveillance.py L449+
+if isinstance(th, MpPendingReporter):
+    pending += th.mp_pending_depth()
 ```
 
 ### API sketch
@@ -421,7 +433,7 @@ def load_config(name, profile=None):
 - **Решение:** no MpControl for mc_trackers.
 - **Последствия:** MC lag follows per-source trackers only.
 
-### ADR-004: Mandatory MpAsyncBridge for new MP modules (post-R1)
+### ADR-004: Mandatory MpAsyncBridge for new MP modules (since R1, 2026-05)
 
 - **Контекст:** DUP-006.
 - **Решение:** новые модули не копируют `_enqueue_mp_*`.

@@ -59,3 +59,17 @@ EVILEYE_CONTROLLER_BACKPRESSURE=soft
 - Скрипты: `run_e2e_fps_matrix.sh`, `compare_poly_e2e_fps_matrix.py`, `run_phase3_winner_bench.sh`
 
 Коммиты: `a53629c`, `413f62e`, `4165742`.
+
+## Post-refactor regression (2026-05-22)
+
+После R0–R6 (ветка `mt_refactoring2`), env F2 (`EVILEYE_MP_DRAIN_POLL_SEC=0.01`, `EVILEYE_CONTROLLER_BACKPRESSURE=soft`):
+
+| Check | Result |
+|-------|--------|
+| E2E 90s + 25s warmup | process fps **28.38**, `staleness_in_band=true` (6.23) |
+| e2e_ratio process/thread | **3.10** (≥ 3.0) |
+| Soak 30 min (`scripts/soak_mp_memory.sh`) | RSS ~748 MB flat after warmup |
+
+Артефакты: [`reports/mp_refactor_gate/`](../reports/mp_refactor_gate/) (`e2e_gate_summary.md`, `e2e_process.json`, `soak_mp_rss.log`).
+
+Исторические цифры F0–F7 выше **не переписываются** — это bench до полного merge bridge.

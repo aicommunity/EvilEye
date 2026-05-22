@@ -624,9 +624,28 @@ pytest tests/unit/scripts/test_benchmark_ipc_kpi_gate.py -q
 
 ---
 
+## MP refactor R0–R6 (thread vs process, 2026-05)
+
+Выполненный контур дедупликации feed/drain и runtime:
+
+| Phase | Deliverable |
+|-------|-------------|
+| R0 | `ObjectDetectorYolo` + `execution_mode`; legacy `ObjectDetectorYoloMp` deprecated |
+| R1 | `MpAsyncBridge`, `mp_pending_jobs` |
+| R2 | `detection_preprocess`, `yolo_runtime`, `track_update_core`, `frame_worker_meta` |
+| R3 | `MpPendingReporter` protocol; pipeline без `isinstance(DetectionThreadYoloMp)` |
+| R4–R5 | `queue_policy`, `stage_result_normalizer` |
+| R6 | Parent skip BOTSORT in process mode |
+
+Детали и контракты: [thread_vs_mp_contracts.md](thread_vs_mp_contracts.md). Gate: [e2e_gate_summary.md](../reports/mp_refactor_gate/e2e_gate_summary.md) (e2e_ratio 3.10, soak RSS stable).
+
+---
+
 ## Связанные документы
 
 - [ARCHITECTURE.md](ARCHITECTURE.md)
 - [PIPELINE_ARCHITECTURE.md](PIPELINE_ARCHITECTURE.md)
 - [MULTIPROCESSING.md](MULTIPROCESSING.md)
 - [CONFIGURATION_GUIDE.md](CONFIGURATION_GUIDE.md)
+- [thread_vs_mp_contracts.md](thread_vs_mp_contracts.md)
+- [thread_vs_mp_refactoring_plan.md](thread_vs_mp_refactoring_plan.md)

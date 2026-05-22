@@ -105,7 +105,7 @@ python scripts/render_poly_videos_mode_report.py
 | `EVILEYE_BACKPRESSURE_PENDING_THRESHOLD` | `8 × cameras` (soft) / `5 × cameras` (`1`) | Порог pending для доп. sleep |
 | `EVILEYE_BACKPRESSURE_SLEEP_MS_PER_PENDING` | `1.5` (soft) / `2` (`1`) | мс sleep на единицу pending выше порога |
 | `EVILEYE_BACKPRESSURE_SLEEP_MAX_MS` | `40` (soft) / `80` (`1`) | Потолок доп. sleep |
-| `EVILEYE_MP_PENDING_CAP` | (auto) | Cap FIFO `_mp_pending` detector (drop oldest) |
+| `EVILEYE_MP_PENDING_CAP` | (auto) | Cap FIFO `MpAsyncBridge` pending (detector, drop oldest) |
 | `EVILEYE_MP_PENDING_CAP_TRACKER` | `4` | Cap FIFO tracker pending |
 | `EVILEYE_SKIP_PIPELINE_TICK_ON_BACKLOG` | `0` | Пропуск `pipeline.process()` при hard backlog (bench) |
 | `EVILEYE_SKIP_PIPELINE_HARD_LIMIT` | `15 × cameras` | Порог pending для skip tick |
@@ -141,7 +141,7 @@ python scripts/compare_poly_e2e_fps_matrix.py --matrix-dir reports/poly_videos_m
 ./scripts/run_phase3_winner_bench.sh
 ```
 
-См. [`docs/mp_fps_phase3_summary.md`](mp_fps_phase3_summary.md).
+См. [`docs/mp_fps_phase3_summary.md`](mp_fps_phase3_summary.md) (выводы) и сырые артефакты в `reports/poly_videos_mode_compare/` (JSON/CSV). **Не дублируйте** полные таблицы матрицы в docs — только ссылка + интерпретация. Post-refactor gate: [`reports/mp_refactor_gate/`](../reports/mp_refactor_gate/).
 
 ## Интерпретация результата
 

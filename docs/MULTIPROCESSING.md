@@ -13,6 +13,7 @@
 - [Жизненный цикл процессов](#жизненный-цикл-процессов)
 - [Кросс-процессное логирование](#кросс-процессное-логирование)
 - [Обратная совместимость](#обратная-совместимость)
+- [Переменные окружения pipeline (MP tuning)](#переменные-окружения-pipeline-mp-tuning)
 - [Переменные окружения и единый стриминг (Config Run)](#переменные-окружения-и-единый-стриминг-config-run)
 - [Каталог диаграмм](#каталог-диаграмм)
 - [FAQ](#faq)
@@ -322,8 +323,9 @@ ProcessorStep не знает, работает ли компонент в по�
 
 | Компонент | Класс | Файл воркера | Что выносится в процесс |
 |-----------|-------|-------------|------------------------|
-| **Детекция** | `ObjectDetectorYolo` | `mp_worker_yolo.py` | YOLO/RT-DETR инференс (GPU); `DetectionThreadYoloMp` — feed/drain |
-| **Трекинг** | `ObjectTrackingBotsort` | `mp_worker_tracker.py` | BOTSORT + ONNX-энкодер (CPU) |
+| **Захват (GStreamer)** | `VideoCaptureGStreamer` | `mp_worker_capture.py` | Decode в child; parent — feed/drain + [`queue_policy`](../evileye/capture/queue_policy.py) |
+| **Детекция** | `ObjectDetectorYolo` | `mp_worker_yolo.py` | YOLO в child (`YoloRuntime`); parent — `DetectionThreadYoloMp` + [`MpAsyncBridge`](../evileye/core/mp_async_bridge.py) |
+| **Трекинг** | `ObjectTrackingBotsort` | `mp_worker_tracker.py` | BoT-SORT + ReID в child; parent — bridge + [`track_update_core`](../evileye/object_tracker/track_update_core.py) |
 | **ROI Feeder** | `RoiFeeder` | `mp_worker_attributes.py` | ROI |
 | **Атрибуты** | `AttributeClassifier` | `mp_worker_attributes.py` | YOLO |
 | **Веб-сервер** | `ServerProcessManager` | `server.py` | FastAPI + Uvicorn |
@@ -644,10 +646,22 @@ ProcessorStep не знает, работает ли компонент в по�
 |------|-------------|
 | `evileye/core/mp_worker.py` | Абстрактный базовый класс `MpWorker` |
 | `evileye/core/mp_control.py` | Контроллер пула процессов `MpControl` |
-| `evileye/core/process_manager.py` | Синглтон-реестр `ProcessManager` |
+| `evileye/core/mp_async_bridge.py` | FIFO pending + put policy (det/track feed/drain) |
+| `evileye/core/mp_pending_jobs.py` | `DetectorPendingJob`, `TrackerPendingJob` |
+| `evileye/core/mp_stage.py` | Протокол `MpPendingReporter` (backlog в pipeline) |
+| `evileye/core/mp_queue_config.py` | Размеры очередей и env (`EVILEYE_MP_*`) |
+| `evileye/core/stage_result_normalizer.py` | Нормализация `(data, frame)` в `ProcessorStep` |
+| `evileye/core/frame_worker_meta.py` | Pack/unpack кадра для MP worker |
+| `evileye/core/execution_backend.py` | Factory det/track backend (S5) |
+| `evileye/object_detector/yolo_runtime.py` | Общий YOLO inference (thread + MP child) |
+| `evileye/object_detector/detection_preprocess.py` | Общий ROI split |
+| `evileye/capture/queue_policy.py` | drop-oldest для capture/deque |
 | `evileye/object_tracker/mp_worker_tracker.py` | Воркер трекинга `MpWorkerTracker` |
+| `evileye/capture/mp_worker_capture.py` | Continuous capture child |
 | `evileye/attributes_detection/mp_worker_attributes.py` | Воркеры атрибутов `MpWorkerRoiFeeder`, `MpWorkerAttributeClassifier` |
 | `configs/single_video_multiprocess.json` | Пример конфига с `execution_mode: "process"` |
+
+Подробный индекс: [thread_vs_mp_contracts.md §15](thread_vs_mp_contracts.md), [CODE_MODULE_INDEX.md](CODE_MODULE_INDEX.md). Уровни буферов capture: [capture_buffer_levels.md](capture_buffer_levels.md).
 
 
 
@@ -1366,6 +1380,35 @@ from .process_manager import ProcessManager, get_process_manager
 
 ---
 
+## Переменные окружения pipeline (MP tuning)
+
+Значения по умолчанию заданы в коде ([`mp_queue_config.py`](../evileye/core/mp_queue_config.py), [`controller.py`](../evileye/controller/controller.py)). Для production bench **F2** (см. [mp_fps_phase3_summary.md](mp_fps_phase3_summary.md)) явный export обычно **не нужен** — совпадают с дефолтами.
+
+| Переменная | Default (код) | Назначение |
+|------------|-----------------|------------|
+| `EVILEYE_MP_QUEUE_SCALE` | `1` | Множитель размеров facade/control очередей |
+| `EVILEYE_MP_DRAIN_POLL_SEC` | `0.01` | Timeout drain loop det/track (`mp_control.get`) |
+| `EVILEYE_MP_PENDING_CAP` | `max(roi, 2)` | Cap FIFO [`MpAsyncBridge`](../evileye/core/mp_async_bridge.py) (detector) |
+| `EVILEYE_MP_PENDING_CAP_TRACKER` | — | Override cap tracker |
+| `EVILEYE_MP_PENDING_CAP_TRACKER_DEFAULT` | `4` | Default cap tracker, если override пуст |
+| `EVILEYE_CONTROLLER_BACKPRESSURE` | `soft` | Extra sleep в controller при росте `pending`; `0` / `off` — выкл |
+| `EVILEYE_BACKPRESSURE_PENDING_THRESHOLD` | `8 × num_sources` (soft) | Порог pending для sleep |
+| `EVILEYE_BACKPRESSURE_SLEEP_MS_PER_PENDING` | `1.5` (soft) | ms sleep на pending выше порога |
+| `EVILEYE_BACKPRESSURE_SLEEP_MAX_MS` | `40` (soft) | Потолок extra sleep |
+| `EVILEYE_PIPELINE_SYNC_MP` | пусто (выкл) | `adaptive` — sync drain после put (bench); не prod F2 |
+| `EVILEYE_MP_DRAIN_MAX_ITEMS` | `64` | Лимит post-drain items за тик (`processor_step`) |
+
+**Проверка конфига и памяти:**
+
+```bash
+python scripts/validate_config.py configs/poly-videos.json
+./scripts/soak_mp_memory.sh configs/poly-videos.json
+```
+
+Gate-артефакты: [reports/mp_refactor_gate/e2e_gate_summary.md](../reports/mp_refactor_gate/e2e_gate_summary.md).
+
+---
+
 ## Переменные окружения и единый стриминг (Config Run)
 
 Когда пайплайн запускается как Config Run (отдельный OS-процесс), для стриминга
@@ -1439,6 +1482,8 @@ runtime просто перестает публиковать новые JPEG �
 
 | Сценарий | Рекомендация |
 |----------|-------------|
+| Диагностика capture overflow | [capture_buffer_levels.md](capture_buffer_levels.md) — три уровня буферов |
+| Контракты det/track MP | [thread_vs_mp_contracts.md](thread_vs_mp_contracts.md) |
 | Одна камера, лёгкая модель | `"thread"` — overhead от IPC не оправдан |
 | Несколько камер, тяжёлая модель (YOLOv8x) | `"process"` для детекции |
 | GPU-детекция + CPU-трекинг с ReID | `"process"` для обоих |

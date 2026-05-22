@@ -891,6 +891,10 @@ Detailed documentation is located in the [docs/](docs/) folder:
 - **[System Architecture](docs/ARCHITECTURE.md)** - Updated architecture for `mt_refactoring2`
 - **[Pipeline Architecture](docs/PIPELINE_ARCHITECTURE.md)** - End-to-end contracts and processing stages
 - **[Multiprocessing](docs/MULTIPROCESSING.md)** - `MpControl`/`MpWorker` lifecycle and restart policies
+- **[Thread vs MP contracts](docs/thread_vs_mp_contracts.md)** - `execution_mode`, `MpAsyncBridge`, COUP/DUP registry
+- **[Dual-mode developer guide](docs/developing_dual_mode_modules.md)** - Adding new thread/process modules
+- **[Doc audit matrix](docs/DOC_AUDIT_MATRIX.md)** - Documentation freshness tracker
+- **[Post-refactor gate](reports/mp_refactor_gate/e2e_gate_summary.md)** - E2E/soak after R0–R6
 - **[Configuration Guide](docs/CONFIGURATION_GUIDE.md)** - Current config map and migration notes
 - **[Branch Change Report](docs/MT_REFACTORING2_CHANGES.md)** - Detailed changes in `mt_refactoring2` vs `mt_refactoring`
 

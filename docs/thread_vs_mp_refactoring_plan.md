@@ -2,20 +2,38 @@
 
 Дорожная карта по [аудиту контрактов](thread_vs_mp_contracts.md). Здесь — **что делать в коде**, в каком порядке, как проверить, что не сломать.
 
-## Status (implementation, 2026-05-21)
+## Status (implementation, 2026-05-22)
+
+### Implemented (R0–R6, merged)
+
+| Phase | Evidence |
+|-------|----------|
+| R0 | `ObjectDetectorYolo` + `execution_mode`; legacy `ObjectDetectorYoloMp` deprecated |
+| R1 | [`mp_async_bridge.py`](../evileye/core/mp_async_bridge.py), [`mp_pending_jobs.py`](../evileye/core/mp_pending_jobs.py) |
+| R2 | `detection_preprocess`, `yolo_runtime`, `track_update_core`, `frame_worker_meta` |
+| R3 | `MpPendingReporter` in [`mp_stage.py`](../evileye/core/mp_stage.py); pipeline uses protocol |
+| R4 | [`queue_policy.py`](../evileye/capture/queue_policy.py), [capture_buffer_levels.md](capture_buffer_levels.md) |
+| R5 | [`stage_result_normalizer.py`](../evileye/core/stage_result_normalizer.py) |
+| R6 | Parent skip BOTSORT; [contracts §11b](thread_vs_mp_contracts.md#11b-tracker-process-mode-parent-vs-child) |
+| DUP-016 | `AttributeClassifier` + MP worker → `YoloRuntime` |
+
+**Post-refactor gate (2026-05-22):** [e2e_gate_summary.md](../reports/mp_refactor_gate/e2e_gate_summary.md) — process e2e_fps **28.38**, `e2e_ratio` **3.10** (≥3.0), soak RSS stable ~748 MB.
+
+Модульный индекс: [contracts §15](thread_vs_mp_contracts.md#15-модульный-индекс-mp-post-refactor), [CODE_MODULE_INDEX.md](CODE_MODULE_INDEX.md).
+
+### Historical / open backlog
+
+| Item | Notes |
+|------|-------|
+| S1 | `DualModeProcessor` skeleton — modules do not inherit yet |
+| S6 | `validate_config.py` — no `stage_kind` in JSON schema |
+| TD-MP-401 | Triple-buffer capture spike |
+| E2E matrix F0–F7 | Optional full re-run: `scripts/run_e2e_fps_matrix.sh` |
 
 | Phase | Code | Notes |
 |-------|------|-------|
-| R0 | Done | Deprecation + MULTIPROCESSING table |
-| R1 | Done | `MpAsyncBridge`, typed jobs, det/track wire |
-| R3 | Done | `MpPendingReporter`, pipeline/processor_step |
-| R2 | Done | preprocess, `YoloRuntime` (thread+MP), `track_update_core`, `frame_worker_meta` |
-| R6 | Done | Parent skip BOTSORT; contracts §11b |
-| R5 | Done | `stage_result_normalizer` + post-drain doc link |
-| R4 | Done | `queue_policy`, `queue_utils`, capture worker, [capture_buffer_levels.md](capture_buffer_levels.md) |
-| S1/S5/S6 | Partial | `DualModeProcessor`, `create_execution_backend`, `validate_config.py` |
-| DUP-016 | Done | AttributeClassifier + worker → `YoloRuntime` |
-| MEM | Partial | Unit MEM-1/2/3; soak script manual (MEM-4); E2E gate manual |
+| S1/S5/S6 | Partial | `DualModeProcessor`, `execution_backend`, `validate_config.py` |
+| MEM | Done (gate) | Soak 30 min flat RSS; E2E 90s+25s warmup passed |
 
 ---
 
@@ -72,21 +90,18 @@ results = runtime.predict_rois(roi_images)
 results = runtime.predict_rois(materialized_rois)
 ```
 
-### P3. Protocol over isinstance
+### P3. Protocol over isinstance (Closed, R3)
 
-**Сейчас** (`pipeline_surveillance.py`):
-
-```python
-if isinstance(th, DetectionThreadYoloMp):
-    pending += len(th._mp_pending)
-```
-
-**Цель:**
+**Сейчас** (`pipeline_surveillance.py` L449+):
 
 ```python
-if hasattr(th, "mp_pending_depth"):
+if isinstance(th, MpPendingReporter):
     pending += th.mp_pending_depth()
+    put_dropped += th.mp_diag_put_dropped()
+    pending_evict += th.mp_diag_pending_evict()
 ```
+
+Bridge: [`mp_async_bridge.py`](../evileye/core/mp_async_bridge.py) — `enqueue`, `pop_head`, `clear`, `depth`.
 
 ### P4. Incremental PR
 
@@ -122,67 +137,26 @@ pytest tests/unit/object_detector/ -q
 
 ---
 
-### R1 — `MpAsyncBridge` (~8 SP, 2 PR)
+### R1 — `MpAsyncBridge` (Done)
 
-**Проблема:** `_enqueue_mp_*`, `_enforce_pending_cap`, `_clear_mp_pending`, diag counters — почти копипаста в `detection_thread_yolo_mp.py` и `object_tracking_base.py` (~200 LOC, **DUP-006**).
+**Было (до R1):** дублирование `_enqueue_mp_*`, `_enforce_pending_cap`, `_clear_mp_pending` в `detection_thread_yolo_mp.py` и `object_tracking_base.py` (**DUP-006**).
 
-**PR1 (R1-T1):** новый модуль без подключения к production path.
+**Сейчас:** единый модуль [`evileye/core/mp_async_bridge.py`](../evileye/core/mp_async_bridge.py):
 
-**Файл:** `evileye/core/mp_async_bridge.py`
+| Метод | Назначение |
+|-------|------------|
+| `enqueue(payload, job)` | put в `MpControl` + FIFO pending; evict/drop при cap/overflow |
+| `pop_head()` | Сопоставление с `mp_control.get()` в drain |
+| `clear()` | stop / shutdown |
+| `depth()`, `diag_put_dropped()`, `diag_pending_evict()` | `MpPendingReporter` / backlog |
 
-**API (целевой контракт):**
+Job DTO: [`mp_pending_jobs.py`](../evileye/core/mp_pending_jobs.py). Контракт: [thread_vs_mp_contracts §5.3](thread_vs_mp_contracts.md).
 
-```python
-class MpAsyncBridge(Generic[JobT, ResultT]):
-    """Owns: pending deque, cap evict, put_nowait drop, diag counters."""
-
-    def __init__(
-        self,
-        *,
-        mp_control: MpControl,
-        pending_cap: int,
-        name: str,
-    ): ...
-
-    def enqueue(
-        self,
-        job_payload: Any,
-        *,
-        meta: JobT,
-        release_on_drop: Callable[[JobT], None],
-    ) -> bool:
-        """False if put_dropped after retries."""
-
-    def pop_job_for_result(self) -> JobT:
-        """Called from drain when mp_control.get returns."""
-
-    def pending_depth(self) -> int: ...
-    def diag_put_dropped(self) -> int: ...
-    def diag_pending_evict(self) -> int: ...
-    def clear(self) -> None: ...
-```
-
-**Поведение `enqueue` (должно совпасть с текущим L136–166 yolo_mp):**
-
-1. Lock → evict head if `len >= cap` → append meta.
-2. `put_nowait(payload)`.
-3. On fail: drop oldest from `input_queue`, pop head pending, release SHM, retry.
-4. On fail again: drop tail if same meta key, release, increment `put_dropped`.
-
-**PR2 (R1-T2, R1-T3):** wire detector then tracker.
-
-| Task | Действие | Риск |
-|------|----------|------|
-| R1-T2 | `DetectionThreadYoloMp` держит `self._bridge: MpAsyncBridge` | Регрессия FIFO order |
-| R1-T3 | `ObjectTrackingBase` process path | tracker pending cap 4 default |
-| R1-T4 | Tests: cap evict, put drop, FIFO | — |
-
-**Verify:**
+**Verify (актуально):**
 
 ```bash
+pytest tests/unit/core/test_mp_async_bridge.py -q
 pytest tests/unit/object_detector/test_detection_thread_yolo_mp_async.py -q
-pytest tests/unit/core/test_mp_pending_cap.py -q
-# Новый: tests/unit/core/test_mp_async_bridge.py
 ```
 
 **Закрывает:** DUP-006, 012, 013, 014, 015 (частично), 008 (частично).

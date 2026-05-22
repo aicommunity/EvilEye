@@ -1,6 +1,6 @@
 # Technical debt ledger
 
-Last reviewed: MP refactor execution, 2026-05-21
+Last reviewed: doc audit + MP refactor, 2026-05-22
 
 ## Open
 
@@ -8,6 +8,8 @@ Last reviewed: MP refactor execution, 2026-05-21
 |----|-------------|-------------|------------|--------------|----------|
 | TD-MP-401 | Capture triple-buffer reduction spike | capture | R4 | Deferred | P2 |
 | TD-MP-501 | module_capabilities JSON S4 | configs | — | Deferred | P3 |
+| TD-DOC-001 | `DualModeProcessor` adoption by all modules (S1) | core/dual_mode_processor.py | doc audit | Backlog | P3 |
+| TD-DOC-002 | `validate_config` JSON `stage_kind` (S6) | scripts/validate_config.py | doc audit | Backlog | P3 |
 
 ## In progress
 
@@ -48,6 +50,7 @@ Last reviewed: MP refactor execution, 2026-05-21
 | TD-MP-102 | R2/DUP-016 | AttributeClassifier uses YoloRuntime (thread + mp worker) |
 | TD-MP-601 | S6 | validate_config warns legacy YoloMp + mc_trackers process |
 | TD-MP-401-doc | R4 | capture_buffer_levels.md spike — keep 3 levels |
+| TD-DOC-003 | doc audit 2026-05-22 | Full docs sync R0–R6 + DOC_AUDIT_MATRIX |
 
 ## Deferred (explicitly out of scope)
 
