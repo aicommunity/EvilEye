@@ -1,6 +1,8 @@
 # Разработка модулей с поддержкой thread и process
 
-Руководство для добавления новых стадий pipeline в EvilEye с опциональным `execution_mode`. Опирается на [аудит контрактов](thread_vs_mp_contracts.md) и [план рефакторинга](thread_vs_mp_refactoring_plan.md).
+Пошаговое руководство для добавления стадий pipeline в EvilEye с `execution_mode`. Каждый раздел заканчивается **конкретными** файлами, фрагментами конфига и типичными ошибками.
+
+**Перед началом прочитайте:** [thread_vs_mp_contracts.md](thread_vs_mp_contracts.md) §3 (общая схема) и §8 (post-drain).
 
 ---
 
@@ -8,272 +10,387 @@
 
 ```mermaid
 flowchart TD
-  start[Новый модуль] --> q4{Стадия batch на тике controller?}
-  q4 -->|да, как mc_trackers| syncOnly[Sync-only: без execution_mode]
-  q4 -->|нет| q1{CPU-bound / GIL?}
-  q1 -->|нет, в основном I/O| thread[Достаточно thread]
-  q1 -->|да| q2{Нужен отдельный OS-процесс?}
-  q2 -->|да| process[process + MpWorker]
+  start[Новый модуль] --> q4{Нужен batch всех камер за 1 тик?}
+  q4 -->|да| syncOnly[Шаблон C: sync-only без execution_mode]
+  q4 -->|нет| q3{Непрерывно производит кадры?}
+  q3 -->|да| capPat[Шаблон B: capture]
+  q3 -->|нет| q1{Тяжёлый CPU / GIL?}
+  q1 -->|нет| thread[thread достаточно]
+  q1 -->|да| q2{Отдельный OS process?}
+  q2 -->|да| proc[Шаблон A: process + MpWorker]
   q2 -->|нет| thread
-  start --> q3{Continuous producer кадров?}
-  q3 -->|да| capturePat[Паттерн capture: child thread внутри]
-  q3 -->|нет| q1
 ```
 
-### Правила выбора
+### C1.1. Таблица решений (примеры из EvilEye)
 
-| Ситуация | Режим |
-|----------|--------|
-| Декодирование RTSP, тяжёлый CV в GIL | `process` для capture |
-| YOLO / ONNX inference | `process` (отдельный worker на thread/ROI) |
-| Лёгкая постобработка, агрегация | `thread` |
-| Сборка multi-camera batch на тике | **sync-only** (без `execution_mode`) |
-| Child worker | **всегда** `execution_mode=thread` внутри (no nested MP) |
+| Модуль | Режим в production | Шаблон | Почему |
+|--------|-------------------|--------|--------|
+| `VideoCaptureOpencv` | process (poly-videos) | B | decode + GIL |
+| `ObjectDetectorYolo` | process | A | Ultralytics inference |
+| `ObjectTrackingBotsort` | process | A | BoT-SORT + ONNX ReID |
+| `ObjectMultiCameraTracking` | — (нет mode) | C | batch по всем sid |
+| `AttributeClassifier` | thread/process | A | малый YOLO на ROI |
+| Preprocessing | часто thread | A или thread-only | лёгкий CPU |
+
+### C1.2. Жёсткие правила
+
+1. **Один `class_name` в config** + `"execution_mode": "thread"|"process"`. Не плодить `FooMp` классы (**DUP-018**).
+2. **Child worker всегда `thread` внутри** если это capture child (`mp_worker_capture.py` L82).
+3. **Не nested `process`:** daemon/spawn ограничения multiprocessing.
+4. **Facade queues = `threading.Queue`** в parent всегда (см. `object_detection_base.py` L86–89).
 
 ---
 
-## §C2. Шаблон A — compute-bound (detector / tracker-like)
+## §C2. Шаблон A — compute-bound (detector / tracker)
 
-### Структура пакета
+### C2.1. Структура репозитория
 
 ```text
-evileye/my_module/
-  my_processor_base.py    # EvilEyeBase: put/get, queues, dispatcher
-  my_worker_thread.py     # thread: processing_thread + _process_impl
-  my_worker_mp.py         # process: feed/drain (или MpAsyncBridge после R1)
-  mp_worker_my.py         # только algorithm + IPC deserialize
+evileye/my_detector/
+  __init__.py
+  my_detector_base.py      # @register("MyDetector") — put/get, dispatcher
+  my_detection_thread.py   # thread: DetectionThreadBase subclass
+  my_detection_thread_mp.py # process: feed/drain (позже MpAsyncBridge)
+  mp_worker_my.py          # class MpWorkerMy(MpWorker): worker_impl only
 ```
 
-### Обязательные методы facade
-
-| Метод | Контракт |
-|-------|----------|
-| `set_params_impl` | Читать `execution_mode`, `source_ids`, ROI и т.д. |
-| `init_impl` | `if process: _init_process_mode()` else thread worker |
-| `put` | Non-blocking; при full — drop oldest, вернуть dropped id |
-| `get` | `queue_out.get_nowait()` → пара `[Result, Frame]` или None |
-| `start` / `stop` | Thread: `processing_thread`; Process: feed + drain threads + `MpControl.stop` |
-| `is_ready` | Thread: model loaded; Process: `mp_control.is_alive()` |
-| `get_source_ids` | Для маршрутизации в `ProcessorStep` |
-
-### Parent queues (обязательно)
+Регистрация:
 
 ```python
-# Всегда threading.Queue в parent — даже при execution_mode == "process"
-self.queue_in = Queue(maxsize=...)
-self.queue_out = Queue(maxsize=...)
+from evileye.core.base_class import EvilEyeBase
+
+@EvilEyeBase.register("MyDetector")
+class MyDetector(ObjectDetectorBase):  # или свой base по аналогии
+    ...
 ```
 
-MP boundary — **внутри** worker thread класса, не на facade.
+### C2.2. Контракт facade (обязательные методы)
 
-### Пример блока конфига
+| Метод | Семантика | Ошибка если пропустить |
+|-------|-----------|------------------------|
+| `set_params_impl` | Читать `execution_mode`, `source_ids`, ROI | Default process неожиданно |
+| `init_impl` | Branch: `_init_process_mode` vs thread workers | MP не стартует |
+| `put` | Non-blocking; drop oldest; return success | Pipeline hang |
+| `get` | `get_nowait` → None или `[Result, Frame/Image]` | Blocking pipeline |
+| `start`/`stop` | Поднять/остановить threads + MpControl | Zombie processes |
+| `is_ready` | thread: model ok; process: mp alive | Controller стартует рано |
+| `get_source_ids` | list[int] для ProcessorStep routing | Кадры в wrong detector |
+
+### C2.3. Parent queues — пример кода
+
+```python
+from queue import Queue
+from evileye.core.mp_queue_config import (
+    detector_input_queue_size,
+    detector_output_queue_size,
+)
+
+def _init_queues(self):
+    # ВАЖНО: threading.Queue, НЕ multiprocessing.Queue
+    self.queue_in = Queue(maxsize=detector_input_queue_size())
+    self.queue_out = Queue(maxsize=detector_output_queue_size())
+```
+
+**Почему:** `ProcessorStep` и dispatcher в **том же PID**, что controller. MP pickle на hot path не нужен — MP только внутри `MyDetectionThreadMp` → `MpControl`.
+
+### C2.4. Пример конфига (poly-videos style)
 
 ```json
 {
   "class_name": "ObjectDetectorYolo",
+  "enable": true,
   "execution_mode": "process",
-  "source_ids": [0],
+  "source_ids": [2],
   "model": "models/yolo11n.pt",
   "roi": [[0, 0, 1920, 1080]],
-  "stride": 1
+  "stride": 1,
+  "confidence": 0.25
 }
 ```
 
-### Process init checklist
+**Omit `execution_mode`** → будет **`process`** (`DEFAULT_EXECUTION_MODE`).
 
-1. Создать `MpControl` с размерами из `mp_queue_config` (или своими константами).
-2. Зарегистрировать `MpWorkerMy` через `add_worker`.
-3. `start()` на control → feed thread + drain thread.
-4. Feed: читать `queue_in`, pack IPC (`FrameHandle` или DTO).
-5. `_mp_pending` + cap + drop policy (после R1 — через `MpAsyncBridge`).
-6. Drain: `get(timeout=mp_drain_poll_sec())`, unpack, `_put_out_drop_oldest`.
-7. `stop()`: poison, join threads, `_clear_mp_pending`, release SHM.
-8. Не грузить тяжёлую модель в parent при process.
-9. Реализовать `MpPendingReporter` (после R3) для backlog stats.
-10. Unit-тест FIFO pending (см. `test_detection_thread_yolo_mp_async.py`).
+**Thread bench** — как в `configs/poly-videos-thread.json`: явный `"execution_mode": "thread"` в каждом блоке det/track/source.
 
-### Эталоны
+### C2.5. Process mode — пошаговый init (10 шагов)
 
-| Роль | Файл |
-|------|------|
-| Facade | `evileye/object_detector/object_detection_base.py` |
-| Thread | `evileye/object_detector/detection_thread_yolo.py` |
-| MP wrapper | `evileye/object_detector/detection_thread_yolo_mp.py` |
-| Worker | `evileye/object_detector/mp_worker_yolo.py` |
+| # | Шаг | Код / файл |
+|---|-----|------------|
+| 1 | Создать `MpControl(max_input, max_output)` | размеры из `mp_control_queue_size(roi_count, role="detector")` |
+| 2 | `MpWorkerMy(params)` + `mp_control.add_worker` | `mp_worker_my.py` |
+| 3 | `mp_control.start()` | spawn child |
+| 4 | Создать `MyDetectionThreadMp` в `detection_threads[]` | по числу threads в config |
+| 5 | `thread.start()` → feed + drain **daemon threads** | не `processing_thread` base |
+| 6 | Feed: read `queue_in`, build IPC payload | SHM или DTO |
+| 7 | `enqueue` с cap `mp_pending_cap_detector(roi_count)` | см. yolo_mp L130–166 |
+| 8 | Drain: `get(timeout=mp_drain_poll_sec())`, match pending FIFO | |
+| 9 | `stop`: poison `None`, join, `_clear_mp_pending`, release SHM | leak test |
+| 10 | **Не** вызывать `load_model()` в parent | только в child/worker |
 
----
+**Эталон feed/drain:** `evileye/object_detector/detection_thread_yolo_mp.py` L184–238.
 
-## §C3. Шаблон B — continuous producer (capture-like)
+### C2.6. Thread mode — отличия
 
-### Отличия от шаблона A
+| Аспект | Thread | Process |
+|--------|--------|---------|
+| Worker class | `MyDetectionThread` | `MyDetectionThreadMp` |
+| Infer | `_process_impl` in parent thread | `MpWorkerMy.worker_impl` |
+| MP queues | нет | `MpControl` |
+| `is_ready` | model loaded | processes alive |
 
-| Аспект | Capture pattern |
-|--------|-----------------|
-| Worker loop | Непрерывный `get()` из backend, не job queue |
-| Child mode | **Принудительно** `execution_mode=thread` в `MpWorkerCapture` |
-| Parent `get()` | `_get_frames_from_queue`, не `get_frames_impl` |
-| Recording | Часто в child `start()` |
-| IPC | `dict{frame_handle, frame_meta}` |
+### C2.7. Интеграция с `ProcessorStep`
 
-### Checklist
+Вход одного тика detectors:
 
-1. `VideoCaptureBase._init_process_mode` + dispatch thread.
-2. Не вызывать `get_frames_impl` в parent при process.
-3. Dedup по `source_id` при drain parent queue (split stream).
-4. Три уровня буферизации — документировать в PR.
-5. Тест: `test_mp_worker_capture_execution_mode.py` — no nested process.
+```python
+# step_result от sources — list of [CaptureImage] or wrapped
+for inp in input_list:
+    processor.put(_adapt_input_for_processor(inp, processor))
+# затем только post-drain:
+processor.get()  # в _drain_processor_outputs
+```
 
-### Эталоны
+**Ваш модуль должен:**
 
-- `evileye/capture/video_capture_base.py`
-- `evileye/capture/mp_worker_capture.py`
+- Принимать `CaptureImage` (det) или `(DetectionResultList, Frame)` (track).
+- Возвращать пару с тем же `CaptureImage` / `Frame` reference где возможно (для latency metrics).
 
----
+### C2.8. Типичные баги (шаблон A)
 
-## §C4. Шаблон C — sync-only (mc_trackers-like)
-
-### Когда применять
-
-- Стадия должна видеть **все** source_id за один тик.
-- Нет смысла в async MP queue между тиками.
-
-### Реализация
-
-1. `@EvilEyeBase.register("MyMultiCameraStage")`
-2. Метод `ingest_tick_batch(batch: dict[int, tuple[...]]) -> list`.
-3. Флаг `_pipeline_tick_batch = True` — не поднимать `processing_thread` из base (см. `ObjectMultiCameraTracking`).
-4. В `ProcessorStep`: ветка `processor_name == "my_stage"` → `_process_my_stage_sync` (как `_process_mc_trackers_sync`).
-5. **Не** добавлять `execution_mode` в JSON без необходимости.
-
-### Эталоны
-
-- `evileye/object_multi_camera_tracker/custom_object_tracking.py`
-- `evileye/core/processor_step.py` — `_process_mc_trackers_sync`
+| Симптом | Причина | Fix |
+|---------|---------|-----|
+| MC пустые треки | pre-drain в custom step | только post-drain |
+| SHM leak | нет release on drop | `_release_handles` в finally |
+| Out-of-order detections | drain без pending FIFO | pop pending в drain |
+| `pending` всегда 0 в thread bench | нормально | не использовать для thread tuning |
+| Double model RAM | init YOLO в parent+child | model only in worker |
 
 ---
 
-## §C5. Интеграция в pipeline
+## §C3. Шаблон B — continuous producer (capture)
 
-| Шаг | Действие |
-|-----|----------|
-| 1 | `@EvilEyeBase.register("ClassName")` |
-| 2 | Секция в JSON: `pipeline.detectors[]` / `trackers[]` / новая секция |
-| 3 | `PipelineSurveillance._add_*` — только если новый **тип** секции |
-| 4 | `ProcessorStep(processor_name=..., class_name=..., num_processors=N)` |
-| 5 | `set_params` / `init` в pipeline init order |
+### C3.1. Когда использовать
 
-### Ожидания `ProcessorStep` к вашему процессору
+- Источник **сам** генерирует поток кадров (камера, файл).
+- Нет смысла в «один job — один ответ» как у YOLO.
 
-- Вход: `list[[data, Frame], ...]` за тик.
-- `source_id` на `Frame` для маршрутизации.
-- Явно задать на классе:
-  - `requires_materialized_frame = True` (default) или `False`
-  - `accepts_frame_handle = True` если работаете с SHM до worker
-- **Не** полагаться на pre-drain.
-- После put другие стадии могут вызвать ваш `get()` в том же тике.
+### C3.2. Отличия от шаблона A
 
-### Регистрация в config
+| Аспект | Capture (B) | Detector (A) |
+|--------|-------------|--------------|
+| Worker API | `__call__` loop | `worker_impl(job)` |
+| Parent `get` | `_get_frames_from_queue` | facade `get` из algo queue |
+| Child mode | **forced thread** | thread inside child |
+| IPC payload | `{frame_handle, frame_meta}` | list handles / DTO |
+
+### C3.3. Checklist (5 пунктов + тест)
+
+1. `VideoCaptureBase._init_process_mode` — dispatch thread стартует при `start()`.
+2. Parent **никогда** не вызывает `get_frames_impl` при `execution_mode==process`.
+3. При split stream — dedup по `source_id` в `_get_frames_from_queue`.
+4. Документировать 3 уровня буферов в PR (см. contracts §4.3).
+5. Тест: `tests/unit/capture/test_mp_worker_capture_execution_mode.py` — child params thread.
+
+### C3.4. Пример params block
 
 ```json
-"pipeline": {
-  "detectors": [
-    {
-      "class_name": "MyDetector",
-      "execution_mode": "process",
-      "enable": true,
-      "source_ids": [0]
-    }
-  ]
+{
+  "type": "VideoCaptureOpencv",
+  "source": "VideoFile",
+  "camera": "/path/to/video.mp4",
+  "source_ids": [0],
+  "source_names": ["Cam1"],
+  "execution_mode": "process",
+  "desired_fps": 30
 }
 ```
 
-Omit `execution_mode` → **`process`** (см. `DEFAULT_EXECUTION_MODE`).
+---
+
+## §C4. Шаблон C — sync-only (mc_trackers)
+
+### C4.1. Когда использовать
+
+- Нужны данные **от всех** `source_id` **одновременно** на этом тике.
+- Логика — корреляция ID между камерами, не per-frame inference.
+
+### C4.2. Реализация (пошагово)
+
+1. `@EvilEyeBase.register("MyMultiCameraStage")`.
+2. Реализовать `ingest_tick_batch(self, batch: dict[int, tuple[...]]) -> list`.
+3. Установить `_pipeline_tick_batch = True` (см. `ObjectMultiCameraTracking`) чтобы base не стартовал `processing_thread`.
+4. В `PipelineSurveillance` добавить `_add_my_stage` если новая секция.
+5. В `ProcessorStep.process`:
+
+```python
+if self.processor_name == "my_stage":
+    return self._process_my_stage_sync(input_list)
+```
+
+6. **Не** добавлять `"execution_mode"` в JSON — это вводит в заблуждение (COUP-005, S6).
+
+### C4.3. Контракт batch
+
+```python
+batch: dict[int, tuple[TrackingResultList, Frame]] = {}
+# key = source_id from frame
+emitted: list = mc.ingest_tick_batch(batch)
+# emitted — list of pairs для downstream (attributes)
+```
+
+### C4.4. Эталоны
+
+- `evileye/object_multi_camera_tracker/custom_object_tracking.py`
+- `processor_step.py` — `_process_mc_trackers_sync` L187+
 
 ---
 
-## §C6. Frame transport flags
+## §C5. Интеграция в pipeline (полная цепочка)
 
-| Flag | Default | `True` когда | `False` когда |
-|------|---------|--------------|---------------|
-| `requires_materialized_frame` | `True` | Алгоритм читает `frame.image` в parent | Только handle до worker |
-| `accepts_frame_handle` | `False` | Preprocess принимает descriptor | Нужен numpy в step |
+### C5.1. От JSON до runtime
 
-`ProcessorStep._adapt_input_for_processor` materialize через `SharedFrameTransport.consume_frame` если `requires_materialized_frame` и есть `frame_handle`.
+```text
+configs/*.json
+  → Controller loads pipeline section
+  → PipelineSurveillance.__init__ / _add_detectors
+  → ProcessorStep(class_name, num_processors, order)
+  → ProcessorBase.set_params(list of dicts per instance)
+  → EvilEyeBase.create_instance(class_name) per processor
+  → processor.set_params(**dict)  # execution_mode here
+  → processor.init()
+```
 
----
+### C5.2. Добавление новой секции (редко)
 
-## §C7. PR checklist (20 пунктов)
+Если нужна секция `my_stage` кроме detectors/trackers:
 
-Скопируйте в описание PR:
+1. Поле в `PipelineSurveillance` + `_add_my_stage`.
+2. `ProcessorStep(processor_name="my_stage", ...)`.
+3. Порядок `order` в цепочке `processors` (между trackers и mc_trackers?).
+4. Обновить `CONFIGURATION_GUIDE.md`.
 
-- [ ] 1. Один `class_name` + `execution_mode`, не отдельный `*Mp` в production config
-- [ ] 2. Parent `queue_in` / `queue_out` = `threading.Queue`
-- [ ] 3. Child worker через `get_spawn_context()` / `MpControl`
-- [ ] 4. Child не использует `execution_mode=process`
-- [ ] 5. Contract test: формат `put`/`get`
-- [ ] 6. Unit test thread `_process_impl` (mock model)
-- [ ] 7. Unit test MP ordering / pending (mock `MpControl`)
-- [ ] 8. `is_ready()` для thread и process
-- [ ] 9. `stop()` освобождает SHM и очищает `_mp_pending`
-- [ ] 10. `mp_pending_depth()` или Protocol (post-R3)
-- [ ] 11. Нет нового `isinstance(MyMp)` в `pipeline_surveillance`
-- [ ] 12. Тяжёлая модель не в parent при process
-- [ ] 13. Пример JSON в PR description
-- [ ] 14. CONFIGURATION_GUIDE обновлён при новых keys
-- [ ] 15. Нет дублирования preprocess в feed и `_process_impl` (использовать shared module post-R2)
-- [ ] 16. Логирование через `get_module_logger`
-- [ ] 17. Diag counters `_diag_mp_*` если async MP
-- [ ] 18. Docstring документирует `execution_mode`
-- [ ] 19. Smoke: poly-videos или targeted bench если hot path
-- [ ] 20. Thread-only config не сломан
+### C5.3. Что видит ваш модуль на каждом тике
+
+| Стадия | Тип `step_result` на вход |
+|--------|---------------------------|
+| detectors | list от sources (кадры) |
+| trackers | list от detectors `[DetectionResultList, CaptureImage]` |
+| mc_trackers | list от trackers |
+| attributes | sticky от mc |
 
 ---
 
-## §C8. Анти-паттерны
+## §C6. Frame transport flags (детально)
 
-| Анти-паттерн | Почему плохо | Вместо |
-|--------------|--------------|--------|
-| Отдельный `FooMp` в config | Два init path, legacy | `Foo` + `execution_mode` |
-| `multiprocessing.Queue` на facade | Ломает `ProcessorStep`, pickle | `MpControl` внутри |
-| Pre-drain в custom step | Stale results, ломает MC batch | Post-drain only |
-| `isinstance` в pipeline | Coupling | `MpPendingReporter` |
-| YOLO/ONNX init в parent при process | Память × N, GIL | Только в worker |
-| `execution_mode` на sync batch stage | Путаница | `stage_kind: sync_batch` (S6) |
-| Дублировать ROI split | DUP-003 | `detection_preprocess` |
-| Nested process в capture worker | Daemon spawn error | forced thread в child |
+Определены на `EvilEyeBase` (`base_class.py`):
+
+```python
+self.accepts_frame_handle = False       # default
+self.requires_materialized_frame = True  # default
+```
+
+| Комбинация | Поведение ProcessorStep |
+|------------|-------------------------|
+| default (True, False) | Если только `frame_handle` — `consume_frame` → numpy |
+| (False, True) | Передать handle в processor как есть |
+| preprocessing | часто `accepts_frame_handle=True` |
+
+**Пример:** трекер в process mode получает materialized frame в parent queue, но внутри feed упаковывает снова в SHM для child — это нормально (два hop).
+
+---
+
+## §C7. PR checklist (20 пунктов, с пояснениями)
+
+Скопируйте в PR и отмечайте:
+
+- [ ] **1.** Один `class_name` + `execution_mode`; не `FooMp` в production config.
+- [ ] **2.** Parent `queue_in`/`queue_out` = `threading.Queue`.
+- [ ] **3.** Child через `MpControl` / `get_spawn_context()`.
+- [ ] **4.** Child params не содержат `execution_mode=process`.
+- [ ] **5.** Contract test: формат `get()` documented in test.
+- [ ] **6.** Thread unit test `_process_impl` with mock model.
+- [ ] **7.** MP test: pending FIFO order (regression async).
+- [ ] **8.** `is_ready()` оба режима.
+- [ ] **9.** `stop()` без SHM leak (valgrind optional / repeat start-stop).
+- [ ] **10.** `mp_pending_depth()` после R3 или bridge delegate.
+- [ ] **11.** Нет `isinstance(MyMp)` в `pipeline_surveillance`.
+- [ ] **12.** Нет `load_model` в parent при process.
+- [ ] **13.** JSON example в PR body.
+- [ ] **14.** CONFIGURATION_GUIDE если новые keys.
+- [ ] **15.** ROI split в одном модуле (post-R2 `detection_preprocess`).
+- [ ] **16.** `get_module_logger(__name__)`.
+- [ ] **17.** `_diag_mp_put_dropped` / `_diag_mp_pending_evict` если MP.
+- [ ] **18.** Docstring: supported modes thread/process.
+- [ ] **19.** Smoke poly-videos или targeted script.
+- [ ] **20.** `poly-videos-thread` smoke если трогали det/track/capture.
+
+---
+
+## §C8. Анти-паттерны (с примерами)
+
+| Плохо | Хорошо |
+|-------|--------|
+| `class ObjectDetectorYoloMp` в config | `ObjectDetectorYolo` + `"execution_mode":"process"` |
+| `self.mp_queue = multiprocessing.Queue()` на facade | `MpControl` внутри `*ThreadMp` |
+| `get()` перед `put()` в custom ProcessorStep | post-drain only |
+| `if isinstance(th, MyMp):` in pipeline | Protocol `mp_pending_depth` |
+| `self.model = YOLO()` в `MyDetector.__init__` при process | model in `MpWorker` only |
+| `"execution_mode":"process"` на mc_trackers | sync-only, no key |
+| Copy-paste `_enqueue_mp_*` | `MpAsyncBridge` (post-R1) |
 
 ---
 
 ## §C9. Тестирование
 
-| Тип | Паттерн имени | Пример |
-|-----|---------------|--------|
-| Contract put/get | `test_*_put_get_contract.py` | формат пар, dropped id |
-| MP FIFO | `test_*_mp_async.py` | порядок pending |
-| Config policy | `test_*_execution_mode_policy.py` | defaults в real configs |
-| Worker IPC | `test_mp_worker_*.py` | serialize roundtrip |
+### C9.1. Минимальный набор файлов
 
-Минимум перед merge:
+```text
+tests/unit/my_module/
+  test_put_get_contract.py
+  test_thread_process_impl.py
+  test_mp_async_ordering.py   # if process mode
+```
+
+### C9.2. Команды
 
 ```bash
-pytest tests/unit/<your_module>/ -q
-pytest tests/unit/core/test_sync_mp_adaptive.py -q  # если затронут processor_step
+# Модуль
+pytest tests/unit/my_module/ -q
+
+# Регрессия pipeline MP
+pytest tests/unit/core/test_sync_mp_adaptive.py -q
+pytest tests/unit/object_detector/test_detection_thread_yolo_mp_async.py -q
+
+# Config policy (паттерн)
+pytest tests/unit/ -k execution_mode_policy -q
+```
+
+### C9.3. Что assert в contract test
+
+```python
+def test_detector_get_format(detector):
+    detector.put(mock_capture_image)
+    # ... pump or wait ...
+    item = detector.get()
+    assert item is None or (
+        isinstance(item, list) and len(item) == 2
+    )
 ```
 
 ---
 
 ## §C10. ENV и production tuning
 
-MP-specific (не влияют на pure thread bench):
+| Переменная | Default (2026) | Влияет на |
+|------------|----------------|-----------|
+| `EVILEYE_MP_QUEUE_SCALE` | 1 | размеры facade queues |
+| `EVILEYE_MP_DRAIN_POLL_SEC` | 0.01 | частота drain `mp_control.get` |
+| `EVILEYE_CONTROLLER_BACKPRESSURE` | soft | controller sleep |
+| `EVILEYE_PIPELINE_SYNC_MP` | off | timed extra drain |
+| `EVILEYE_MP_PENDING_CAP` | auto ROI | detector pending |
+| `EVILEYE_MP_PENDING_CAP_TRACKER` | 4 | tracker pending |
 
-| Переменная | Назначение |
-|------------|------------|
-| `EVILEYE_MP_QUEUE_SCALE` | Размеры очередей |
-| `EVILEYE_MP_DRAIN_POLL_SEC` | Timeout drain/get в MP loops |
-| `EVILEYE_CONTROLLER_BACKPRESSURE` | `soft` / `0` |
-| `EVILEYE_PIPELINE_SYNC_MP` | Bench: adaptive sync drain |
-
-См. [multiprocessing_benchmark.md](multiprocessing_benchmark.md).
+**Thread-only bench:** env backpressure почти не работает (`pending≈0`). См. [multiprocessing_benchmark.md](multiprocessing_benchmark.md).
 
 ---
 

@@ -1,66 +1,88 @@
 # Упрощение интеграции новых модулей (thread / MP)
 
-Предложения по снижению порога входа при добавлении стадий pipeline. Это **design options**, не обязательства репозитория. Зависимости от [плана рефакторинга](thread_vs_mp_refactoring_plan.md).
+Предложения по снижению порога входа. Это **design options** — не всё нужно реализовывать сразу. Каждый пункт: проблема → как сейчас → целевое API → файлы → оценка → рекомендация.
 
-**Контекст проблемы:** сегодня новый MP-модуль требует ~200 LOC boilerplate (feed/drain, pending, cap, diag), знание SHM, отдельные worker-файлы и согласование с `ProcessorStep` без pre-drain.
+**Контекст:** новый MP-модуль сегодня ≈ **200+ LOC** boilerplate (pending deque, feed/drain threads, cap, diag, SHM) + отдельный `mp_worker_*.py` + знание post-drain policy.
 
 ---
 
-## §D1. Сводная таблица предложений
+## §D1. Сводная таблица
 
-| ID | Название | SP | Зависит от | Рекомендация v1 |
+| ID | Название | SP | Зависит от | v1 рекомендация |
 |----|----------|-----|------------|-----------------|
 | S1 | `DualModeProcessor` base | 8 | R1 | После R1 |
-| S2 | `MpPendingReporter` Protocol | 5 | R3 | Вместе с R3 |
-| S3 | `AlgorithmCore` callable | 13 | R2 | Core det+track |
-| S4 | `module_capabilities` в JSON | 8 | R5 | Отложить |
+| S2 | `MpPendingReporter` | 5 | R3 | **Вместе с R3** |
+| S3 | `AlgorithmCore` | 13 | R2 | **Det+track** |
+| S4 | `module_capabilities` JSON | 8 | R5 | Отложить |
 | S5 | `create_execution_backend()` | 5 | S1 | Опционально |
-| S6 | `stage_kind: sync_batch` | 5 | doc | Документ + validator |
-| S7 | Config overlay profiles | 3 | — | Bench scripts |
+| S6 | `stage_kind: sync_batch` | 5 | doc | Doc + validator |
+| S7 | Config overlay profiles | 3 | — | Bench only |
 
 ---
 
-## §D2. S1 — `DualModeProcessor`
+## §D2. S1 — базовый класс `DualModeProcessor`
 
 ### Проблема
 
-Дублируется инициализация queues, `start`/`stop`, выбор thread vs process, подъём feed/drain threads (**DUP-006**).
+Каждый новый detector-like модуль копирует:
 
-### API sketch
+- `_init_queues()` с `threading.Queue`
+- `init_impl` branch thread/process
+- `start`/`stop` join order
+- подъём feed/drain daemon threads
+
+→ **DUP-006**, ошибки в stop/join, расхождение diag counters.
+
+### Как сейчас (фрагмент)
+
+Два больших класса: `DetectionThreadYoloMp` (~280 LOC) и process block в `ObjectTrackingBase` (~150 LOC MP-specific).
+
+### API sketch (целевой)
 
 ```python
-# evileye/core/dual_mode_processor.py (целевой)
+# evileye/core/dual_mode_processor.py
 class DualModeProcessor(EvilEyeBase):
-    execution_mode: str
-    queue_in: Queue
-    queue_out: Queue
+    """Facade for ProcessorStep; MP hidden behind hooks."""
 
-    def init_impl(self, **kwargs):
+    execution_mode: str = DEFAULT_EXECUTION_MODE
+
+    def init_impl(self, **kwargs) -> bool:
+        self._init_facade_queues()
         if self.execution_mode == EXEC_MODE_PROCESS:
-            return self._init_mp(self._worker_class, self._bridge_factory)
-        return self._init_thread(self._thread_target)
+            return self._init_mp_backend()
+        return self._init_thread_backend()
 
-    # hooks:
-    def process_frame_thread(self, item): ...
-    def pack_job_for_worker(self, item): ...
-    def unpack_worker_result(self, raw): ...
+    # --- hooks implemented by subclass ---
+    def create_mp_worker(self) -> MpWorker: ...
+    def pack_job(self, item) -> Any: ...
+    def apply_result(self, meta, raw_result) -> None: ...
+    def process_item_thread(self, item) -> None: ...
 ```
+
+`DualModeProcessor` владеет `MpAsyncBridge` (S1 после R1).
 
 ### Затрагиваемые файлы
 
-- Новый: `evileye/core/dual_mode_processor.py`
-- Миграция: `detection_thread_yolo_mp.py`, `object_tracking_base.py` (постепенно)
+| Действие | Файл |
+|----------|------|
+| Create | `evileye/core/dual_mode_processor.py` |
+| Migrate later | `detection_thread_yolo_mp.py` |
+| Migrate later | `object_tracking_base.py` (process) |
+| **Не** migrate | `video_capture_base.py` (шаблон B) |
 
 ### Плюсы / минусы
 
 | + | − |
 |---|---|
-| Меньше copy-paste | Наследование может скрыть edge cases capture |
-| Единый stop/join | Рефакторинг больших классов |
+| Новый модуль: override 4 methods вместо 200 LOC | Наследование скрывает edge cases |
+| Единый stop/shutdown | Большой refactor существующих классов |
+| Тесты bridge один раз | Capture не вписывается |
+
+### Оценка: **8 SP** | Зависит: **R1**
 
 ### Рекомендация
 
-**Делать после R1** — когда `MpAsyncBridge` стабилизирован. **Не** использовать для capture (отдельный continuous producer pattern).
+**Делать после R1.** Для **новых** модулей — optional base class; старые мигрировать постепенно.
 
 ---
 
@@ -68,24 +90,48 @@ class DualModeProcessor(EvilEyeBase):
 
 ### Проблема
 
-**COUP-002:** pipeline знает `DetectionThreadYoloMp` для backlog.
+`PipelineSurveillance.estimate_mp_backlog_stats` импортирует `DetectionThreadYoloMp` и лезет в `_mp_pending` (**COUP-002**). Новый MP-модуль без этого класса **невидим** для backpressure.
+
+### Как сейчас
+
+```python
+# pipeline_surveillance.py ~455
+if isinstance(th, DetectionThreadYoloMp):
+    with th._mp_pending_lock:
+        pending += len(th._mp_pending)
+```
 
 ### API sketch
 
 ```python
+# mp_pending_protocol.py
 class MpPendingReporter(Protocol):
     def mp_pending_depth(self) -> int: ...
     def mp_diag_put_dropped(self) -> int: ...
     def mp_diag_pending_evict(self) -> int: ...
 ```
 
-Регистрация: detector threads + trackers implement; `estimate_mp_backlog_stats` суммирует без `isinstance`.
+**Регистрация:** duck typing — любой detection thread / tracker с этими методами.
 
-### SP: 5 | Зависит: **R3**
+**Новый модуль:**
+
+```python
+class MyDetectionThreadMp(..., MpPendingReporter):
+    def mp_pending_depth(self) -> int:
+        return self._bridge.pending_depth()
+```
+
+### Затрагиваемые файлы
+
+- `evileye/core/mp_pending_protocol.py` (new)
+- `pipeline_surveillance.py` (replace isinstance)
+- `detection_thread_yolo_mp.py`, `object_tracking_base.py` (implement)
+
+### Оценка: **5 SP** | Зависит: **R3** (реализуется вместе)
 
 ### Рекомендация
 
-**Делать в v1 вместе с R3** — обязательный шаг для новых MP-модулей (см. [developing_dual_mode_modules.md](developing_dual_mode_modules.md) checklist §10).
+**v1 обязательно** с R3. В [developing_dual_mode_modules.md](developing_dual_mode_modules.md) checklist §10.
 
 ---
 
@@ -93,33 +139,81 @@ class MpPendingReporter(Protocol):
 
 ### Проблема
 
-**DUP-004, DUP-007:** один и тот же алгоритм в parent thread и в `MpWorker*`.
+**DUP-004:** YOLO в `DetectionThreadYolo.predict` и `MpWorkerYolo.worker_impl`.
+
+**DUP-007:** BoT-SORT update в `ObjectTrackingBotsort._process_impl` и `MpWorkerTracker`.
+
+Любой фикс багов (NMS, coords, track id) нужно дублировать.
 
 ### API sketch
 
-```python
-# detection
-def run_yolo_on_rois(runtime: YoloRuntime, rois: list[Frame]) -> DetectionResultList: ...
+**Detection:**
 
-# tracking
-def update_tracks(state: TrackerState, frame: Frame, dets: DetectionResultList) -> TrackingResultList: ...
+```python
+# detection_preprocess.py
+def split_rois(image, roi_cfg) -> list[RoiSlice]: ...
+
+# yolo_runtime.py
+@dataclass
+class YoloRuntime:
+    model: Any
+    def predict_slices(self, slices: list[RoiSlice]) -> list[RawPredict]: ...
+
+def build_detection_result_list(
+    capture_image, slices, raw_preds
+) -> DetectionResultList: ...
 ```
 
-Thread path: вызывает core в `_process_impl`. Process path: только `worker_impl` → core.
+**Tracking:**
 
-### SP: 13 | Зависит: **R2**
+```python
+# track_update_core.py
+def update_tracks(
+    tracker_state: TrackerState,
+    frame: Frame,
+    detections: DetectionResultList,
+) -> TrackingResultList: ...
+```
+
+### Потоки данных
+
+```mermaid
+flowchart LR
+  subgraph thread [Thread mode]
+    T1[_process_impl] --> CORE[AlgorithmCore]
+  end
+  subgraph process [Process mode]
+    W[worker_impl] --> CORE
+  end
+  CORE --> OUT[Result DTO / TrackingResultList]
+```
+
+### Затрагиваемые файлы
+
+- `detection_preprocess.py`, `yolo_runtime.py` (new)
+- `track_update_core.py` (new)
+- `mp_worker_yolo.py`, `detection_thread_yolo.py`
+- `mp_worker_tracker.py`, `object_tracking_botsort.py`
+
+### Оценка: **13 SP** | Зависит: **R2**
 
 ### Рекомендация
 
-**Делать в v1 для det+track** — highest ROI. Attributes (**DUP-016**) — второй эшелон.
+**Highest ROI v1** для det+track. Attributes (**DUP-016**) — второй эшелон после стабилизации.
 
 ---
 
-## §D5. S4 — Declarative `module_capabilities`
+## §D5. S4 — `module_capabilities` в JSON
 
 ### Проблема
 
-Разработчик должен помнить флаги `requires_materialized_frame` / `accepts_frame_handle` и поведение `_adapt_input_for_processor`.
+Разработчик должен знать про:
+
+- `requires_materialized_frame`
+- `accepts_frame_handle`
+- поведение `_adapt_input_for_processor`
+
+Ошибка → лишний SHM copy или `frame.image is None` в worker.
 
 ### API sketch
 
@@ -129,26 +223,59 @@ Thread path: вызывает core в `_process_impl`. Process path: тольк�
   "execution_mode": "thread",
   "capabilities": {
     "accepts_frame_handle": true,
+    "requires_materialized_frame": false,
     "heavy_compute": false
   }
 }
 ```
 
-`ProcessorStep` читает capabilities из params[0] и решает materialize.
+`ProcessorStep` при put:
 
-### SP: 8 | Зависит: R5
+```python
+caps = (processor.params or {}).get("capabilities", {})
+if caps.get("requires_materialized_frame", True):
+    inp = self._adapt_input_for_processor(inp, processor)
+```
+
+### Затрагиваемые файлы
+
+- `processor_step.py`
+- `CONFIGURATION_GUIDE.md`
+- Все примеры configs
+
+### Плюсы / минусы
+
+| + | − |
+|---|---|
+| Declarative, видно в JSON | Дублирует атрибуты класса |
+| Проще для codegen | Churn всех configs |
+
+### Оценка: **8 SP** | Зависит: R5
 
 ### Рекомендация
 
-**Отложить** — churn конфигов и CONFIGURATION_GUIDE; пока достаточно явных атрибутов класса.
+**Отложить.** Пока задавать на классе:
+
+```python
+class MyStage(EvilEyeBase):
+    accepts_frame_handle = True
+    requires_materialized_frame = False
+```
 
 ---
 
-## §D6. S5 — `create_execution_backend(mode, params)`
+## §D6. S5 — `create_execution_backend()`
 
 ### Проблема
 
-Разветвлённый `init_impl` в каждом модуле (**COUP-012**, **DUP-011**).
+**COUP-012 / DUP-011:** каждый модуль повторяет:
+
+```python
+def init_impl(self, **kwargs):
+    if self.execution_mode == EXEC_MODE_PROCESS:
+        return self._init_process_mode()
+    return self._init_thread_mode()
+```
 
 ### API sketch
 
@@ -156,16 +283,22 @@ Thread path: вызывает core в `_process_impl`. Process path: тольк�
 def create_execution_backend(
     mode: str,
     *,
-    thread_factory: Callable[[], ThreadBackend],
-    process_factory: Callable[[], ProcessBackend],
-) -> ExecutionBackend: ...
+    thread_setup: Callable[[], None],
+    process_setup: Callable[[], None],
+) -> None:
+    if mode == EXEC_MODE_PROCESS:
+        process_setup()
+    else:
+        thread_setup()
 ```
 
-### SP: 5 | Зависит: S1
+Тонкая обёртка; не заменяет S1 полностью.
+
+### Оценка: **5 SP** | Зависит: S1
 
 ### Рекомендация
 
-**Опционально** — тонкая обёртка после S1; не блокирует новые модули.
+**Опционально** после S1 — sugar для новых модулей.
 
 ---
 
@@ -173,24 +306,43 @@ def create_execution_backend(
 
 ### Проблема
 
-**COUP-005:** MC использует hardcoded `processor_name` и `isinstance`; новые batch-стадии копируют паттерн ad hoc.
+MC-tracker: hardcoded `processor_name == "mc_trackers"` + `isinstance(ObjectMultiCameraTracking)` (**COUP-005**). Новая batch-стадия → копипаста ветки в `ProcessorStep`.
 
 ### API sketch
+
+**Config:**
 
 ```json
 {
   "class_name": "ObjectMultiCameraTracking",
-  "stage_kind": "sync_batch"
+  "stage_kind": "sync_batch",
+  "enable": true
 }
 ```
 
-Pipeline: validator предупреждает, если задан `execution_mode` на sync stage. `ProcessorStep` dispatch по `stage_kind`.
+**Validator (evileye run load):**
 
-### SP: 5
+```text
+WARN: stage_kind=sync_batch must not set execution_mode (ignored)
+```
+
+**ProcessorStep (v2):**
+
+```python
+if getattr(step, "stage_kind", None) == "sync_batch":
+    return self._process_sync_batch(input_list)
+```
+
+### v1 без большого рефакторинга
+
+- Документировать в CONFIGURATION_GUIDE: MC = sync-only.
+- Lint script: grep `execution_mode` в `mc_trackers` section → warning.
+
+### Оценка: **5 SP** (validator 2 SP + doc 1 SP)
 
 ### Рекомендация
 
-**v1: документ + warning в config validator** (без большого рефакторинга step). Полный dispatch по kind — v2.
+**v1: doc + validator.** Полный dispatch по `stage_kind` — v2.
 
 ---
 
@@ -198,68 +350,115 @@ Pipeline: validator предупреждает, если задан `execution_m
 
 ### Проблема
 
-Два полных JSON (`poly-videos` / `poly-videos-thread`) — 13 отличий только в `execution_mode`.
+`poly-videos.json` vs `poly-videos-thread.json` — **идентичны**, кроме 13× `"execution_mode": "thread"`. Дублирование риска рассинхрона ROI/paths.
 
-### API sketch
+### API sketch (bench-only)
+
+**`configs/poly-videos.base.json`** — без execution_mode.
+
+**`configs/profiles/thread_overlay.json`:**
 
 ```json
 {
-  "pipeline": { "...": "base" },
-  "profiles": {
-    "process": {},
-    "thread": {
-      "pipeline.sources[*].execution_mode": "thread"
-    }
+  "overlay": {
+    "pipeline.sources[*].execution_mode": "thread",
+    "pipeline.detectors[*].execution_mode": "thread",
+    "pipeline.trackers[*].execution_mode": "thread"
   }
 }
 ```
 
-Bench loader merges profile (скрипт, не runtime).
+**`scripts/poly_mode_compare_lib.py`:**
 
-### SP: 3 | Независимо
+```python
+def load_config(name, profile=None):
+    base = load_json("poly-videos.base.json")
+    if profile == "thread":
+        deep_merge(base, overlay)
+    return base
+```
+
+**Не** менять `evileye run` без ADR-007.
+
+### Оценка: **3 SP**
 
 ### Рекомендация
 
-**Делать для bench/scripts** — не менять `evileye run` без ADR. Упрощает сравнение, не упрощает runtime integration.
+**Делать для bench/scripts only** — упрощает сравнение, не упрощает runtime integration нового модуля.
 
 ---
 
-## §D9. Roadmap упрощения
+## §D9. Roadmap
 
-| Этап | Deliverable | Упрощает |
-|------|-------------|----------|
-| Docs (текущий) | contracts + dev-guide | Понимание |
-| R0–R1 | MpAsyncBridge | S1 |
-| R2–R3 | Algorithm core + Reporter | S2, S3 |
-| R5–R6 | normalize + encoder | S4 prep |
-| v2 | DualModeProcessor + stage_kind | S1, S6 |
-| Bench | overlay profiles | S7 |
-
----
-
-## §D10. ADR-заготовки (только заголовки)
-
-| ADR | Тезис |
-|-----|-------|
-| ADR-001 | Default `execution_mode` остаётся `process` |
-| ADR-002 | Facade queues остаются `threading.Queue` в parent |
-| ADR-003 | MC и аналоги — sync-only, без MP |
-| ADR-004 | Новые MP-модули после R1 обязаны использовать shared async bridge |
-| ADR-005 | AlgorithmCore обязателен для новых heavy stages post-R2 |
-
-Полные ADR-файлы — по запросу команды, вне текущего scope.
+| Квартал | Deliverable | Что упрощается |
+|---------|-------------|----------------|
+| Q1 | contracts + dev-guide (готово) | Понимание |
+| Q2 | R0, R1, R3 | S2, начало S1 |
+| Q3 | R2, R6 | S3 |
+| Q4 | R5, optional R4 | S4 prep |
+| v2 | S1 base + S6 dispatch | Новый модуль 4 hooks |
+| bench | S7 overlay | Меньше дубль JSON |
 
 ---
 
-## §D11. Минимальный путь для нового модуля «сегодня»
+## §D10. ADR-заготовки (полные тезисы)
 
-Без ожидания S1–S7:
+### ADR-001: Default execution_mode = process
 
-1. Скопировать структуру **шаблона A** из [developing_dual_mode_modules.md](developing_dual_mode_modules.md).
-2. Зарегистрировать `@EvilEyeBase.register`.
-3. Пройти **чеклист 20 пунктов**.
-4. Не добавлять `isinstance` в `pipeline_surveillance`.
-5. После merge R3 — реализовать `MpPendingReporter`.
+- **Контекст:** GIL, production poly-videos omit key.
+- **Решение:** `DEFAULT_EXECUTION_MODE = "process"`.
+- **Последствия:** thread bench требует явного JSON.
+
+### ADR-002: Facade queues stay threading.Queue
+
+- **Контекст:** pickle overhead, ProcessorStep same PID.
+- **Решение:** MP only inside `*Mp` + MpControl.
+- **Последствия:** Нельзя `multiprocessing.Queue` на facade.
+
+### ADR-003: MC sync-only
+
+- **Контекст:** batch correlation across cameras.
+- **Решение:** no MpControl for mc_trackers.
+- **Последствия:** MC lag follows per-source trackers only.
+
+### ADR-004: Mandatory MpAsyncBridge for new MP modules (post-R1)
+
+- **Контекст:** DUP-006.
+- **Решение:** новые модули не копируют `_enqueue_mp_*`.
+- **Последствия:** bridge API stable contract.
+
+### ADR-005: AlgorithmCore for heavy stages (post-R2)
+
+- **Контекст:** DUP-004/007.
+- **Решение:** worker_impl и _process_impl вызывают один core.
+- **Последствия:** single place for model opts.
+
+---
+
+## §D11. Минимальный путь «сегодня» (без S1–S7)
+
+| Шаг | Действие | Время |
+|-----|----------|-------|
+| 1 | Выбрать шаблон A/B/C (§C1 tree) | 30 min |
+| 2 | Скопировать эталонные файлы (§C2.5 таблица) | 2 h |
+| 3 | `@EvilEyeBase.register` + JSON block | 30 min |
+| 4 | Пройти [checklist 20](developing_dual_mode_modules.md#c7-pr-checklist-20-пунктов-с-пояснениями) | 1 h |
+| 5 | Unit tests contract + mp async | 2–4 h |
+| 6 | Не добавлять isinstance в pipeline | — |
+| 7 | Smoke `measure_poly_e2e_fps` если hot path | 30 min |
+
+**После merge R1/R3:** заменить copied pending code на bridge + reporter.
+
+---
+
+## §D12. Сравнение «сложность интеграции»
+
+| Подход | LOC нового MP модуля | Риск бага | Когда |
+|--------|---------------------|-----------|-------|
+| Copy yolo_mp | ~250 | высокий | сейчас |
+| S1 + S2 + S3 | ~80 hooks + core | средний | post R1–R3 |
+| Thread only | ~80 | низкий | если CPU ok |
+| Sync-only C | ~50 batch API | низкий | aggregation |
 
 ---
 
