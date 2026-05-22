@@ -79,6 +79,33 @@ python scripts/render_multiprocessing_benchmark_report.py
 
 GPU-RAM заполняется только при наличии `nvidia-smi`. Если GPU недоступен, поле останется пустым.
 
+### Poly-videos (4 конфига) и MP barrier tuning
+
+Сравнение `process` vs `thread` для [`configs/poly-videos.json`](../configs/poly-videos.json) и GST-аналогов:
+
+```bash
+python scripts/run_poly_videos_mode_compare.py --timeout-sec 180 --runs-per-config 5
+python scripts/analyze_poly_mp_barriers.py
+python scripts/measure_poly_e2e_fps.py --config configs/poly-videos.json --active-sec 120
+python scripts/render_poly_videos_mode_report.py
+```
+
+**Сквозная метрика (primary):** `e2e_tracker_fps` из `measure_poly_e2e_fps.py` — уникальные пары `(source_id, frame_id)` на выходе `trackers` за активную фазу.  
+**Controller loop Hz** (`pipeline_hz_est` в CSV) — частота вызова `pipeline.process()`, не равна E2E FPS в MP-режиме.
+
+Переменные окружения (отдельные YOLO-процессы сохраняются):
+
+| Переменная | По умолчанию | Назначение |
+|------------|--------------|------------|
+| `EVILEYE_MP_QUEUE_SCALE` | `1` | Множитель размеров очередей detector/tracker/MpControl |
+| `EVILEYE_MP_DRAIN_POLL_SEC` | `0.05` | Таймаут poll в feed/drain MP (сек) |
+| `EVILEYE_PIPELINE_SYNC_MP` | `0` | Post-put sync drain в `processor_step` (bench/отладка) |
+| `EVILEYE_PIPELINE_SYNC_MP_MS` | `8` | Макс. ожидание drain за тик (мс) |
+| `EVILEYE_CONTROLLER_BACKPRESSURE` | `0` | Доп. sleep в controller при росте MP pending |
+| `EVILEYE_PIPELINE_TIMELINE` | `0` | Детальный `PipelineTimeline(...)` в лог |
+
+Рекомендуемый bench после тюнинга: `EVILEYE_MP_QUEUE_SCALE=2`, `EVILEYE_MP_DRAIN_POLL_SEC=0.01`.
+
 ## Интерпретация результата
 
 Эффективность мультипроцессности считается по парным запускам с одинаковым числом камер:

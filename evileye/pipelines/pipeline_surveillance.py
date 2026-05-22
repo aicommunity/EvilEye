@@ -445,3 +445,33 @@ class PipelineSurveillance(PipelineProcessors):
         except Exception:
             pass
         return None
+
+    def estimate_mp_pending_depth(self) -> tuple[int, int]:
+        """Sum MP pending queue depth and drop counters (detectors + trackers)."""
+        pending = 0
+        dropped = 0
+        try:
+            from ..object_detector.detection_thread_yolo_mp import DetectionThreadYoloMp
+
+            for det in self.get_detectors() or []:
+                for th in getattr(det, "detection_threads", []) or []:
+                    if isinstance(th, DetectionThreadYoloMp):
+                        with th._mp_pending_lock:
+                            pending += len(th._mp_pending)
+                        dropped += int(getattr(th, "_diag_mp_put_dropped", 0))
+        except Exception:
+            pass
+        try:
+            for proc in self.processors or []:
+                if getattr(proc, "processor_name", "") != "trackers":
+                    continue
+                from contextlib import nullcontext
+
+                for trk in getattr(proc, "processors", []) or []:
+                    lock = getattr(trk, "_mp_pending_lock", None)
+                    with lock if lock is not None else nullcontext():
+                        pending += len(getattr(trk, "_mp_pending", []) or [])
+                    dropped += int(getattr(trk, "_diag_mp_put_dropped", 0))
+        except Exception:
+            pass
+        return pending, dropped

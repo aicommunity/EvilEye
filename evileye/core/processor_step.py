@@ -37,6 +37,41 @@ class ProcessorStep(ProcessorBase):
             return
         processing_results.append(normalized)
 
+    def _sync_mp_enabled(self) -> bool:
+        return os.getenv("EVILEYE_PIPELINE_SYNC_MP", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
+    def _sync_mp_drain_after_put(self, processing_results: list) -> int:
+        if not self._sync_mp_enabled():
+            return 0
+        if self.processor_name not in {"detectors", "trackers"}:
+            return 0
+        has_mp = False
+        for processor in self.processors:
+            mode = getattr(processor, "execution_mode", "thread")
+            if mode == "process":
+                has_mp = True
+                break
+        if not has_mp:
+            return 0
+        try:
+            sync_ms = float(os.getenv("EVILEYE_PIPELINE_SYNC_MP_MS", "8") or "8")
+        except (TypeError, ValueError):
+            sync_ms = 8.0
+        deadline = time.monotonic() + max(0.001, sync_ms / 1000.0)
+        added = 0
+        while time.monotonic() < deadline:
+            n = self._drain_processor_outputs(processing_results)
+            added += n
+            if n > 0:
+                break
+            time.sleep(0.001)
+        return added
+
     def _drain_processor_outputs(
         self, processing_results: list, *, max_items_per_processor: int = 64
     ) -> int:
@@ -300,6 +335,7 @@ class ProcessorStep(ProcessorBase):
 
         t_after_put = time.monotonic()
         post_drain_added = self._drain_processor_outputs(processing_results)
+        post_drain_added += self._sync_mp_drain_after_put(processing_results)
         t_after_drain = time.monotonic()
         drain_imm_count = len(processing_results)
         t_stage_end = time.monotonic()

@@ -482,6 +482,22 @@ class Controller(ControllerProcessingMixin):
                 sleep_seconds = ProcessingService.compute_loop_sleep_seconds(
                     self.fps, elapsed_seconds
                 )
+                if os.getenv("EVILEYE_CONTROLLER_BACKPRESSURE", "").strip().lower() in {
+                    "1",
+                    "true",
+                    "yes",
+                    "on",
+                }:
+                    try:
+                        estimate = getattr(self.pipeline, "estimate_mp_pending_depth", None)
+                        if callable(estimate):
+                            pending, _ = estimate()
+                            num_sources = len(getattr(self.pipeline, "sources_proc", None) or []) or 5
+                            threshold = max(5, 5 * num_sources)
+                            if pending > threshold:
+                                sleep_seconds += min(0.05, 0.005 * pending)
+                    except Exception:
+                        pass
                 time.sleep(sleep_seconds)
 
                 if perf_diag_enabled:

@@ -264,8 +264,28 @@ class PipelineProcessors(PipelineBase):
                     )
                 except Exception:
                     pass
+                self._log_mp_barrier_diag()
 
         return pipeline_results
+
+    def _log_mp_barrier_diag(self) -> None:
+        if not self._perf_diag_env:
+            return
+        every = max(1, int(self._perf_diag_every or 60))
+        if (self._perf_diag_loop % every) != 0:
+            return
+        estimate = getattr(self, "estimate_mp_pending_depth", None)
+        if not callable(estimate):
+            return
+        try:
+            pending, dropped = estimate()
+            self.logger.info(
+                "PerfDiag(MpBarrier): pending=%d dropped=%d",
+                pending,
+                dropped,
+            )
+        except Exception:
+            pass
 
     def calc_memory_consumption(self):
         """Calculate memory consumption for all processors"""
