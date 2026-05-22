@@ -274,15 +274,24 @@ class PipelineProcessors(PipelineBase):
         every = max(1, int(self._perf_diag_every or 60))
         if (self._perf_diag_loop % every) != 0:
             return
-        estimate = getattr(self, "estimate_mp_pending_depth", None)
-        if not callable(estimate):
+        estimate_stats = getattr(self, "estimate_mp_backlog_stats", None)
+        estimate_legacy = getattr(self, "estimate_mp_pending_depth", None)
+        if not callable(estimate_stats) and not callable(estimate_legacy):
             return
         try:
-            pending, dropped = estimate()
+            if callable(estimate_stats):
+                stats = estimate_stats()
+                pending = int(stats.get("pending", 0))
+                put_dropped = int(stats.get("put_dropped", 0))
+                pending_evict = int(stats.get("pending_evict", 0))
+            else:
+                pending, put_dropped = estimate_legacy()
+                pending_evict = 0
             self.logger.info(
-                "PerfDiag(MpBarrier): pending=%d dropped=%d",
+                "PerfDiag(MpBarrier): pending=%d put_dropped=%d pending_evict=%d",
                 pending,
-                dropped,
+                put_dropped,
+                pending_evict,
             )
         except Exception:
             pass

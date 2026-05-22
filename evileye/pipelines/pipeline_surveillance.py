@@ -446,10 +446,11 @@ class PipelineSurveillance(PipelineProcessors):
             pass
         return None
 
-    def estimate_mp_pending_depth(self) -> tuple[int, int]:
-        """Sum MP pending queue depth and drop counters (detectors + trackers)."""
+    def estimate_mp_backlog_stats(self) -> dict[str, int]:
+        """Sum MP pending depth, put drops, and pending FIFO evictions."""
         pending = 0
-        dropped = 0
+        put_dropped = 0
+        pending_evict = 0
         try:
             from ..object_detector.detection_thread_yolo_mp import DetectionThreadYoloMp
 
@@ -458,7 +459,8 @@ class PipelineSurveillance(PipelineProcessors):
                     if isinstance(th, DetectionThreadYoloMp):
                         with th._mp_pending_lock:
                             pending += len(th._mp_pending)
-                        dropped += int(getattr(th, "_diag_mp_put_dropped", 0))
+                        put_dropped += int(getattr(th, "_diag_mp_put_dropped", 0))
+                        pending_evict += int(getattr(th, "_diag_mp_pending_evict", 0))
         except Exception:
             pass
         try:
@@ -471,7 +473,17 @@ class PipelineSurveillance(PipelineProcessors):
                     lock = getattr(trk, "_mp_pending_lock", None)
                     with lock if lock is not None else nullcontext():
                         pending += len(getattr(trk, "_mp_pending", []) or [])
-                    dropped += int(getattr(trk, "_diag_mp_put_dropped", 0))
+                    put_dropped += int(getattr(trk, "_diag_mp_put_dropped", 0))
+                    pending_evict += int(getattr(trk, "_diag_mp_pending_evict", 0))
         except Exception:
             pass
-        return pending, dropped
+        return {
+            "pending": pending,
+            "put_dropped": put_dropped,
+            "pending_evict": pending_evict,
+        }
+
+    def estimate_mp_pending_depth(self) -> tuple[int, int]:
+        """Backward-compatible (pending, put_dropped)."""
+        stats = self.estimate_mp_backlog_stats()
+        return stats["pending"], stats["put_dropped"]

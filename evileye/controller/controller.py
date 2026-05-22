@@ -436,9 +436,50 @@ class Controller(ControllerProcessingMixin):
                 except Exception:
                     pass
 
+                skipped_tick = False
+                backlog_stats = {"pending": 0, "put_dropped": 0, "pending_evict": 0}
+                if os.getenv("EVILEYE_SKIP_PIPELINE_TICK_ON_BACKLOG", "").strip().lower() in {
+                    "1",
+                    "true",
+                    "yes",
+                    "on",
+                }:
+                    try:
+                        estimate_stats = getattr(
+                            self.pipeline, "estimate_mp_backlog_stats", None
+                        )
+                        if callable(estimate_stats):
+                            backlog_stats = estimate_stats()
+                        else:
+                            estimate = getattr(
+                                self.pipeline, "estimate_mp_pending_depth", None
+                            )
+                            if callable(estimate):
+                                pending, dropped = estimate()
+                                backlog_stats = {
+                                    "pending": pending,
+                                    "put_dropped": dropped,
+                                    "pending_evict": 0,
+                                }
+                        num_sources = (
+                            len(getattr(self.pipeline, "sources_proc", None) or []) or 5
+                        )
+                        hard_limit = int(
+                            os.getenv(
+                                "EVILEYE_SKIP_PIPELINE_HARD_LIMIT",
+                                str(15 * num_sources),
+                            )
+                            or str(15 * num_sources)
+                        )
+                        if int(backlog_stats.get("pending", 0)) > hard_limit:
+                            skipped_tick = True
+                    except Exception:
+                        pass
+
                 begin_it = timer()
                 t0 = timer() if perf_diag_enabled else None
-                self.pipeline.process()
+                if not skipped_tick:
+                    self.pipeline.process()
                 t1 = timer() if perf_diag_enabled else None
                 all_sources_finished = self.pipeline.check_all_sources_finished()
 
@@ -482,6 +523,7 @@ class Controller(ControllerProcessingMixin):
                 sleep_seconds = ProcessingService.compute_loop_sleep_seconds(
                     self.fps, elapsed_seconds
                 )
+                backpressure_extra_ms = 0.0
                 if os.getenv("EVILEYE_CONTROLLER_BACKPRESSURE", "").strip().lower() in {
                     "1",
                     "true",
@@ -489,13 +531,46 @@ class Controller(ControllerProcessingMixin):
                     "on",
                 }:
                     try:
-                        estimate = getattr(self.pipeline, "estimate_mp_pending_depth", None)
-                        if callable(estimate):
-                            pending, _ = estimate()
-                            num_sources = len(getattr(self.pipeline, "sources_proc", None) or []) or 5
-                            threshold = max(5, 5 * num_sources)
-                            if pending > threshold:
-                                sleep_seconds += min(0.05, 0.005 * pending)
+                        if not backlog_stats or backlog_stats.get("pending", 0) == 0:
+                            estimate_stats = getattr(
+                                self.pipeline, "estimate_mp_backlog_stats", None
+                            )
+                            if callable(estimate_stats):
+                                backlog_stats = estimate_stats()
+                            else:
+                                estimate = getattr(
+                                    self.pipeline, "estimate_mp_pending_depth", None
+                                )
+                                if callable(estimate):
+                                    pending, dropped = estimate()
+                                    backlog_stats = {
+                                        "pending": pending,
+                                        "put_dropped": dropped,
+                                        "pending_evict": 0,
+                                    }
+                        pending = int(backlog_stats.get("pending", 0))
+                        num_sources = (
+                            len(getattr(self.pipeline, "sources_proc", None) or []) or 5
+                        )
+                        threshold = int(
+                            os.getenv(
+                                "EVILEYE_BACKPRESSURE_PENDING_THRESHOLD",
+                                str(5 * num_sources),
+                            )
+                            or str(5 * num_sources)
+                        )
+                        per_pending_ms = float(
+                            os.getenv("EVILEYE_BACKPRESSURE_SLEEP_MS_PER_PENDING", "2")
+                            or "2"
+                        )
+                        sleep_max_ms = float(
+                            os.getenv("EVILEYE_BACKPRESSURE_SLEEP_MAX_MS", "80") or "80"
+                        )
+                        if pending > threshold:
+                            backpressure_extra_ms = min(
+                                sleep_max_ms, (pending - threshold) * per_pending_ms
+                            )
+                            sleep_seconds += backpressure_extra_ms / 1000.0
                     except Exception:
                         pass
                 time.sleep(sleep_seconds)
@@ -504,6 +579,16 @@ class Controller(ControllerProcessingMixin):
                     self._perf_diag_loop += 1
                     every = max(1, int(self._perf_diag_every or 60))
                     if (self._perf_diag_loop % every) == 0:
+                        if backpressure_extra_ms > 0.0 or skipped_tick:
+                            try:
+                                self.logger.info(
+                                    "PerfDiag(Backpressure): pending=%d extra_sleep_ms=%.1f skipped=%d",
+                                    int(backlog_stats.get("pending", 0)),
+                                    backpressure_extra_ms,
+                                    1 if skipped_tick else 0,
+                                )
+                            except Exception:
+                                pass
                         lag_ms = None
                         try:
                             if processing_frames:
