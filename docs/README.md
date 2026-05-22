@@ -15,6 +15,13 @@
 - **[Архитектура системы](ARCHITECTURE.md)** - Полное описание архитектуры на 7 уровнях абстракции (CLI, Controller, Pipeline, Video, Objects, Events, Database) с интерактивными Mermaid диаграммами и статическими UML диаграммами
 - **[Архитектура Pipeline](PIPELINE_ARCHITECTURE.md)** - Описание архитектуры pipeline, базовых классов и способов создания собственных pipeline
 - **[Мультипроцессность](MULTIPROCESSING.md)** - Запуск компонентов в отдельных OS-процессах, конфигурация `execution_mode`, диаграммы, FAQ
+
+### Thread vs multiprocess (разработка)
+
+- **[Контракты и аудит](thread_vs_mp_contracts.md)** - сравнение thread/process по capture, detector, tracker, MC, pipeline; реестры COUP/DUP
+- **[План рефакторинга](thread_vs_mp_refactoring_plan.md)** - фазы R0–R6, дедупликация, критерии приёмки
+- **[Разработка dual-mode модулей](developing_dual_mode_modules.md)** - decision tree, шаблоны, чеклист PR
+- **[Упрощение интеграции](module_integration_simplification.md)** - предложения S1–S7, roadmap
 - **[Руководство по рефакторингу GUI](GUI_REFACTORING_GUIDE.md)** - Архитектура GUI системы, компоненты и лучшие практики
 - **[Руководство по Dependency Injection](DEPENDENCY_INJECTION_GUIDE.md)** - Подробное описание механизма Dependency Injection, DIContainer и DependencyRegistry с примерами использования
 
