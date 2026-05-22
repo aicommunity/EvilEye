@@ -123,6 +123,26 @@ python scripts/compare_poly_backlog_matrix.py --matrix-dir reports/poly_videos_m
 
 См. [`docs/mp_fps_phase2_summary.md`](mp_fps_phase2_summary.md) и [`docs/mp_fps_post_fix_summary.md`](mp_fps_post_fix_summary.md) (фаза 1, SCALE=2).
 
+### Фаза 3 (E2E FPS, staleness band)
+
+**Primary KPI:** `e2e_tracker_fps` (process) и `e2e_ratio` vs thread.  
+**Ограничение:** `mean_staleness_frames ∈ [5.9, 6.5]` — не оптимизировать «свежесть» ниже 5.9.
+
+| Переменная | Рекомендация |
+|------------|--------------|
+| `EVILEYE_PIPELINE_SYNC_MP` | `adaptive` (не постоянный `1`) |
+| `EVILEYE_SYNC_MP_PENDING_MAX` | `10` (2× число камер) |
+| `EVILEYE_CONTROLLER_BACKPRESSURE` | `soft` |
+| `EVILEYE_MP_DRAIN_POLL_SEC` | `0.01` |
+
+```bash
+./scripts/run_e2e_fps_matrix.sh all
+python scripts/compare_poly_e2e_fps_matrix.py --matrix-dir reports/poly_videos_mode_compare/experiments/e2e_fps_matrix --write-winner
+./scripts/run_phase3_winner_bench.sh
+```
+
+См. [`docs/mp_fps_phase3_summary.md`](mp_fps_phase3_summary.md).
+
 ## Интерпретация результата
 
 Эффективность мультипроцессности считается по парным запускам с одинаковым числом камер:

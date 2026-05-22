@@ -1,5 +1,7 @@
 # MP FPS phase 2 summary
 
+> Production env по E2E FPS: см. [`mp_fps_phase3_summary.md`](mp_fps_phase3_summary.md) (фаза 3 supersede B3 default).
+
 Фаза 2: снижение MP backlog без слияния YOLO-процессов. Primary KPI: `mean_staleness_frames`, `mp_pending_max`, `lag_ratio`; `pipeline_hz_est` — вторичный.
 
 ## Матрица backlog (3×120 s, opencv process)

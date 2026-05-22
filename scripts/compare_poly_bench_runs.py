@@ -74,11 +74,14 @@ def main() -> int:
         ("pipeline_hz_est", "opencv", "thread"),
         ("p95_pipeline_ms", "opencv", "process"),
     ]
-    title = (
-        "# MP FPS phase 2 summary"
-        if "phase2" in out_path.name
-        else "# MP FPS post-fix comparison"
-    )
+    is_phase3 = "phase3" in out_path.name
+    is_phase2 = "phase2" in out_path.name
+    if is_phase3:
+        title = "# MP FPS phase 3 summary"
+    elif is_phase2:
+        title = "# MP FPS phase 2 summary"
+    else:
+        title = "# MP FPS post-fix comparison"
     lines = [
         title,
         "",
@@ -91,21 +94,45 @@ def main() -> int:
         lines.append(
             f"| {col} ({cap}/{mode}) | {b or '-'} | {c or '-'} | {_delta_pct(b, c)} |"
         )
-    lines.extend(
-        [
-            "",
-            "## Backlog / freshness (phase 2)",
-            "",
-            "| Metric | Baseline | Current | Target |",
-            "| --- | ---: | ---: | ---: |",
-            f"| mp_pending_max (process) | — | {mp_pending_max or '-'} | ≤ 25 |",
-            f"| lag_ratio mean (process) | {_mean(_load_csv(baseline_csv), 'lag_ratio', mode='process') or '-'} | {lag_ratio or '-'} | < 1.5 |",
-            f"| mean_staleness_frames (process) | — | {e2e_p.get('mean_staleness_frames', '-')} | ≤ 2 |",
-            f"| E2E process/thread ratio | — | {e2e_ratio or 'n/a'} | ≥ 0.70 |",
-            "",
-            f"**E2E env:** {e2e_p.get('env_note', '')}",
-        ]
-    )
+    if is_phase3:
+        ms = e2e_p.get("mean_staleness_frames")
+        in_band = e2e_p.get("staleness_in_band")
+        e2e_p_fps = e2e_p.get("e2e_tracker_fps")
+        lines.extend(
+            [
+                "",
+                "## E2E KPI (phase 3 — primary)",
+                "",
+                "| ID | Metric | Current | Target |",
+                "| --- | --- | ---: | ---: |",
+                f"| K1 | e2e_tracker_fps (process) | {e2e_p_fps or '-'} | ≥ 31 |",
+                f"| K2 | e2e_ratio process/thread | {e2e_ratio or 'n/a'} | ≥ 3.0 |",
+                f"| K3 | mean_staleness_frames | {ms or '-'} | [5.9, 6.5] |",
+                f"| K4 | staleness_in_band | {in_band} | true |",
+                f"| K5 | mp_pending_max | {mp_pending_max or '-'} | ≤ 45 |",
+                f"| K6 | drop_events (barrier) | {sum(int(r.get('drop_events') or 0) for r in barrier_rows)} | 0 |",
+                "",
+                f"**E2E env:** {e2e_p.get('env_note', '')}",
+                "",
+                "См. матрицу F*: `experiments/e2e_fps_matrix/matrix_results.md`.",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "",
+                "## Backlog / freshness (phase 2)",
+                "",
+                "| Metric | Baseline | Current | Target |",
+                "| --- | ---: | ---: | ---: |",
+                f"| mp_pending_max (process) | — | {mp_pending_max or '-'} | ≤ 25 |",
+                f"| lag_ratio mean (process) | {_mean(_load_csv(baseline_csv), 'lag_ratio', mode='process') or '-'} | {lag_ratio or '-'} | < 1.5 |",
+                f"| mean_staleness_frames (process) | — | {e2e_p.get('mean_staleness_frames', '-')} | ≤ 2 |",
+                f"| E2E process/thread ratio | — | {e2e_ratio or 'n/a'} | ≥ 0.70 |",
+                "",
+                f"**E2E env:** {e2e_p.get('env_note', '')}",
+            ]
+        )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text("\n".join(lines), encoding="utf-8")
     print(f"Wrote {out_path.relative_to(REPO_ROOT)}")
