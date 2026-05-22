@@ -74,8 +74,9 @@ def measure(
                 for item in res.get("sources") or []:
                     key = _frame_key(item)
                     if key:
+                        if key not in pending:
+                            source_keys.add(key)
                         pending[key] = t_tick
-                        source_keys.add(key)
                 for item in res.get("trackers") or []:
                     key = _frame_key(item)
                     if key and key in pending:
