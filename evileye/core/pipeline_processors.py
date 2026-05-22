@@ -215,12 +215,29 @@ class PipelineProcessors(PipelineBase):
             t_begin = _t()
             stage_timings = []
 
+        mp_pending_snapshot = 0
+        try:
+            estimate_stats = getattr(self, "estimate_mp_backlog_stats", None)
+            if callable(estimate_stats):
+                stats = estimate_stats()
+                mp_pending_snapshot = int(stats.get("pending", 0))
+            else:
+                estimate_legacy = getattr(self, "estimate_mp_pending_depth", None)
+                if callable(estimate_legacy):
+                    pending, _ = estimate_legacy()
+                    mp_pending_snapshot = int(pending)
+        except Exception:
+            pass
+
         for processor in self.processors:
             if processor is None:
                 continue
 
             if isinstance(processor, ProcessorSource):
                 self.run_sources()
+
+            if isinstance(processor, ProcessorStep):
+                processor._mp_pending_snapshot = mp_pending_snapshot
 
             if perf_diag_enabled or timeline_enabled:
                 t0 = _t()

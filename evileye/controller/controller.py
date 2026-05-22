@@ -524,12 +524,9 @@ class Controller(ControllerProcessingMixin):
                     self.fps, elapsed_seconds
                 )
                 backpressure_extra_ms = 0.0
-                if os.getenv("EVILEYE_CONTROLLER_BACKPRESSURE", "").strip().lower() in {
-                    "1",
-                    "true",
-                    "yes",
-                    "on",
-                }:
+                bp_mode = os.getenv("EVILEYE_CONTROLLER_BACKPRESSURE", "").strip().lower()
+                bp_on = bp_mode in {"1", "true", "yes", "on", "soft"}
+                if bp_on:
                     try:
                         if not backlog_stats or backlog_stats.get("pending", 0) == 0:
                             estimate_stats = getattr(
@@ -552,19 +549,34 @@ class Controller(ControllerProcessingMixin):
                         num_sources = (
                             len(getattr(self.pipeline, "sources_proc", None) or []) or 5
                         )
+                        if bp_mode == "soft":
+                            default_threshold = 8 * num_sources
+                            default_per_ms = 1.5
+                            default_max_ms = 40.0
+                        else:
+                            default_threshold = 5 * num_sources
+                            default_per_ms = 2.0
+                            default_max_ms = 80.0
                         threshold = int(
                             os.getenv(
                                 "EVILEYE_BACKPRESSURE_PENDING_THRESHOLD",
-                                str(5 * num_sources),
+                                str(default_threshold),
                             )
-                            or str(5 * num_sources)
+                            or str(default_threshold)
                         )
                         per_pending_ms = float(
-                            os.getenv("EVILEYE_BACKPRESSURE_SLEEP_MS_PER_PENDING", "2")
-                            or "2"
+                            os.getenv(
+                                "EVILEYE_BACKPRESSURE_SLEEP_MS_PER_PENDING",
+                                str(default_per_ms),
+                            )
+                            or str(default_per_ms)
                         )
                         sleep_max_ms = float(
-                            os.getenv("EVILEYE_BACKPRESSURE_SLEEP_MAX_MS", "80") or "80"
+                            os.getenv(
+                                "EVILEYE_BACKPRESSURE_SLEEP_MAX_MS",
+                                str(default_max_ms),
+                            )
+                            or str(default_max_ms)
                         )
                         if pending > threshold:
                             backpressure_extra_ms = min(

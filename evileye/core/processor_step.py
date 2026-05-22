@@ -31,23 +31,53 @@ class ProcessorStep(ProcessorBase):
         self._trackers_updates_by_source: dict[int, int] = defaultdict(int)
         self._trackers_repeats_by_source: dict[int, int] = defaultdict(int)
         self._mc_tick_diag_counter = 0
+        self._mp_pending_snapshot = 0
 
     def _append_processing_result(self, processing_results: list, normalized: Any) -> None:
         if normalized is None:
             return
         processing_results.append(normalized)
 
+    def _sync_mp_mode(self) -> str:
+        return os.getenv("EVILEYE_PIPELINE_SYNC_MP", "").strip().lower()
+
     def _sync_mp_enabled(self) -> bool:
-        return os.getenv("EVILEYE_PIPELINE_SYNC_MP", "").strip().lower() in {
+        return self._sync_mp_mode() in {
             "1",
             "true",
             "yes",
             "on",
+            "adaptive",
+            "conditional",
         }
+
+    def _sync_mp_adaptive(self) -> bool:
+        return self._sync_mp_mode() in {"adaptive", "conditional"}
+
+    def _drain_max_items(self) -> int:
+        try:
+            return max(1, int(os.getenv("EVILEYE_MP_DRAIN_MAX_ITEMS", "64") or "64"))
+        except (TypeError, ValueError):
+            return 64
 
     def _sync_mp_drain_after_put(self, processing_results: list) -> int:
         if not self._sync_mp_enabled():
             return 0
+        if self._sync_mp_adaptive():
+            pending = int(getattr(self, "_mp_pending_snapshot", 0) or 0)
+            try:
+                num_sources = int(os.getenv("EVILEYE_SYNC_MP_NUM_SOURCES", "5") or "5")
+            except (TypeError, ValueError):
+                num_sources = 5
+            default_cap = 2 * num_sources
+            try:
+                cap = int(
+                    os.getenv("EVILEYE_SYNC_MP_PENDING_MAX", str(default_cap)) or str(default_cap)
+                )
+            except (TypeError, ValueError):
+                cap = default_cap
+            if pending >= cap:
+                return 0
         if self.processor_name not in {"detectors", "trackers"}:
             return 0
         has_mp = False
@@ -65,7 +95,10 @@ class ProcessorStep(ProcessorBase):
         deadline = time.monotonic() + max(0.001, sync_ms / 1000.0)
         added = 0
         while time.monotonic() < deadline:
-            n = self._drain_processor_outputs(processing_results)
+            n = self._drain_processor_outputs(
+                processing_results,
+                max_items_per_processor=self._drain_max_items(),
+            )
             added += n
             if n > 0:
                 break
@@ -334,7 +367,10 @@ class ProcessorStep(ProcessorBase):
                         self._input_last_frame_id_by_source[sid] = fid
 
         t_after_put = time.monotonic()
-        post_drain_added = self._drain_processor_outputs(processing_results)
+        post_drain_added = self._drain_processor_outputs(
+            processing_results,
+            max_items_per_processor=self._drain_max_items(),
+        )
         post_drain_added += self._sync_mp_drain_after_put(processing_results)
         t_after_drain = time.monotonic()
         drain_imm_count = len(processing_results)
