@@ -53,21 +53,34 @@ def main() -> int:
     e2e_proc = REPO_ROOT / args.current_dir / "e2e_opencv_process.json"
     e2e_thr = REPO_ROOT / args.current_dir / "e2e_opencv_thread.json"
     e2e_ratio = None
+    e2e_p = {}
+    e2e_t = {}
     if e2e_proc.is_file() and e2e_thr.is_file():
-        p = json.loads(e2e_proc.read_text(encoding="utf-8"))
-        t = json.loads(e2e_thr.read_text(encoding="utf-8"))
-        pf = p.get("e2e_tracker_fps")
-        tf = t.get("e2e_tracker_fps")
+        e2e_p = json.loads(e2e_proc.read_text(encoding="utf-8"))
+        e2e_t = json.loads(e2e_thr.read_text(encoding="utf-8"))
+        pf = e2e_p.get("e2e_tracker_fps")
+        tf = e2e_t.get("e2e_tracker_fps")
         if pf and tf:
             e2e_ratio = pf / tf
+
+    out_path = (REPO_ROOT / args.out).resolve()
+    barrier_csv = (REPO_ROOT / args.current_dir / "barrier_metrics.csv").resolve()
+    barrier_rows = _load_csv(barrier_csv)
+    mp_pending_max = _mean(barrier_rows, "mp_pending_max", mode="process", capture="opencv")
+    lag_ratio = _mean(barrier_rows, "lag_ratio", mode="process", capture="opencv")
 
     metrics = [
         ("pipeline_hz_est", "opencv", "process"),
         ("pipeline_hz_est", "opencv", "thread"),
         ("p95_pipeline_ms", "opencv", "process"),
     ]
+    title = (
+        "# MP FPS phase 2 summary"
+        if "phase2" in out_path.name
+        else "# MP FPS post-fix comparison"
+    )
     lines = [
-        "# MP FPS post-fix comparison",
+        title,
         "",
         "| Metric | Baseline | Current | Δ% |",
         "| --- | ---: | ---: | ---: |",
@@ -78,8 +91,21 @@ def main() -> int:
         lines.append(
             f"| {col} ({cap}/{mode}) | {b or '-'} | {c or '-'} | {_delta_pct(b, c)} |"
         )
-    lines.extend(["", f"**E2E process/thread ratio:** {e2e_ratio or 'n/a'} (target ≥ 0.70)", ""])
-    out_path = (REPO_ROOT / args.out).resolve()
+    lines.extend(
+        [
+            "",
+            "## Backlog / freshness (phase 2)",
+            "",
+            "| Metric | Baseline | Current | Target |",
+            "| --- | ---: | ---: | ---: |",
+            f"| mp_pending_max (process) | — | {mp_pending_max or '-'} | ≤ 25 |",
+            f"| lag_ratio mean (process) | {_mean(_load_csv(baseline_csv), 'lag_ratio', mode='process') or '-'} | {lag_ratio or '-'} | < 1.5 |",
+            f"| mean_staleness_frames (process) | — | {e2e_p.get('mean_staleness_frames', '-')} | ≤ 2 |",
+            f"| E2E process/thread ratio | — | {e2e_ratio or 'n/a'} | ≥ 0.70 |",
+            "",
+            f"**E2E env:** {e2e_p.get('env_note', '')}",
+        ]
+    )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text("\n".join(lines), encoding="utf-8")
     print(f"Wrote {out_path.relative_to(REPO_ROOT)}")

@@ -35,11 +35,20 @@ def _frame_key(item) -> tuple[int, int] | None:
         return None
 
 
+def _percentile_int(values: list[int], pct: float) -> int | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    idx = int(round((pct / 100.0) * (len(ordered) - 1)))
+    return ordered[max(0, min(idx, len(ordered) - 1))]
+
+
 def measure(
     config_path: Path,
     *,
     warmup_sec: float,
     active_sec: float,
+    env_note: str = "",
 ) -> dict[str, Any]:
     from evileye.core.logging_config import setup_evileye_logging
     from evileye.core.mp_context import ensure_spawn_start_method
@@ -62,6 +71,8 @@ def measure(
         latencies_ms: list[float] = []
         tracker_keys: set[tuple[int, int]] = set()
         source_keys: set[tuple[int, int]] = set()
+        last_source_fid: dict[int, int] = {}
+        staleness_samples: list[int] = []
 
         time.sleep(warmup_sec)
         t_start = time.monotonic()
@@ -74,11 +85,19 @@ def measure(
                 for item in res.get("sources") or []:
                     key = _frame_key(item)
                     if key:
+                        sid, fid = key
+                        last_source_fid[sid] = max(last_source_fid.get(sid, 0), fid)
                         if key not in pending:
                             source_keys.add(key)
                         pending[key] = t_tick
                 for item in res.get("trackers") or []:
                     key = _frame_key(item)
+                    if key:
+                        sid, fid = key
+                        latest = last_source_fid.get(sid, fid)
+                        staleness = latest - fid
+                        if staleness >= 0:
+                            staleness_samples.append(staleness)
                     if key and key in pending:
                         latencies_ms.append((time.monotonic() - pending.pop(key)) * 1000.0)
                         tracker_keys.add(key)
@@ -94,6 +113,11 @@ def measure(
         p95_idx = int(round(0.95 * (len(sorted_lat) - 1))) if sorted_lat else 0
         p95 = sorted_lat[p95_idx] if sorted_lat else None
         unmatched = len(pending)
+        mean_staleness = (
+            round(sum(staleness_samples) / len(staleness_samples), 4)
+            if staleness_samples
+            else None
+        )
         return {
             "config": str(config_path.relative_to(REPO_ROOT)),
             "warmup_sec": warmup_sec,
@@ -104,10 +128,15 @@ def measure(
             "e2e_tracker_fps": round(len(tracker_keys) / active_elapsed, 4),
             "e2e_p50_ms": round(p50, 2) if p50 is not None else None,
             "e2e_p95_ms": round(p95, 2) if p95 is not None else None,
+            "mean_staleness_frames": mean_staleness,
+            "p95_staleness_frames": _percentile_int(staleness_samples, 95.0),
+            "max_staleness_frames": max(staleness_samples) if staleness_samples else None,
+            "staleness_samples": len(staleness_samples),
             "pending_unmatched": unmatched,
             "pending_unmatched_pct": round(
                 100.0 * unmatched / max(1, len(source_keys)), 2
             ),
+            "env_note": env_note,
         }
     finally:
         try:
@@ -125,6 +154,7 @@ def main() -> int:
         "--out",
         default="reports/poly_videos_mode_compare/e2e_measure.json",
     )
+    parser.add_argument("--env-note", default="", help="Experiment label stored in JSON")
     args = parser.parse_args()
 
     config_path = (REPO_ROOT / args.config).resolve()
@@ -132,6 +162,7 @@ def main() -> int:
         config_path,
         warmup_sec=args.warmup_sec,
         active_sec=args.active_sec,
+        env_note=args.env_note,
     )
     out_path = (REPO_ROOT / args.out).resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)

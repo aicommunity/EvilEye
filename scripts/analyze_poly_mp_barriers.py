@@ -32,6 +32,23 @@ RE_DROP = re.compile(
 )
 RE_TRACEBACK = re.compile(r"Traceback \(most recent call last\):")
 RE_ERROR = re.compile(r"\bERROR\b")
+RE_MP_BARRIER = re.compile(
+    r"PerfDiag\(MpBarrier\): pending=(\d+) (?:dropped|put_dropped)=(\d+)"
+)
+RE_MP_BARRIER_LEGACY = re.compile(
+    r"PerfDiag\(MpBarrier\): pending=(\d+) dropped=(\d+)"
+)
+RE_MP_PENDING_EVICT = re.compile(r"pending_evict=(\d+)", re.I)
+
+
+def _percentile(values: list[float], pct: float) -> float | None:
+    if not values:
+        return None
+    if len(values) == 1:
+        return values[0]
+    ordered = sorted(values)
+    idx = int(round((pct / 100.0) * (len(ordered) - 1)))
+    return ordered[max(0, min(idx, len(ordered) - 1))]
 
 
 def _sum_updates(match_iter) -> int:
@@ -72,6 +89,24 @@ def parse_log_file(path: Path) -> dict[str, Any]:
     m_run = re.search(r"_run(\d+)\.log$", path.name)
     if m_run:
         run_index = int(m_run.group(1))
+    pending_vals: list[int] = []
+    dropped_vals: list[int] = []
+    for m in RE_MP_BARRIER.finditer(text):
+        pending_vals.append(int(m.group(1)))
+        dropped_vals.append(int(m.group(2)))
+    for m in RE_MP_BARRIER_LEGACY.finditer(text):
+        pending_vals.append(int(m.group(1)))
+        dropped_vals.append(int(m.group(2)))
+    evict_vals = [int(m.group(1)) for m in RE_MP_PENDING_EVICT.finditer(text)]
+    mp_pending_mean = round(statistics.mean(pending_vals), 2) if pending_vals else None
+    mp_pending_max = max(pending_vals) if pending_vals else None
+    mp_pending_p95 = (
+        round(_percentile([float(v) for v in pending_vals], 95.0), 2)
+        if pending_vals
+        else None
+    )
+    mp_dropped_sum = max(dropped_vals) if dropped_vals else 0
+    mp_pending_evict_max = max(evict_vals) if evict_vals else 0
     return {
         "log_file": str(path.relative_to(REPO_ROOT)),
         "slug": slug,
@@ -89,6 +124,11 @@ def parse_log_file(path: Path) -> dict[str, Any]:
         "drop_events": len(RE_DROP.findall(text)),
         "errors": len(RE_ERROR.findall(text)),
         "tracebacks": len(RE_TRACEBACK.findall(text)),
+        "mp_pending_mean": mp_pending_mean,
+        "mp_pending_max": mp_pending_max,
+        "mp_pending_p95": mp_pending_p95,
+        "mp_dropped_sum": mp_dropped_sum,
+        "mp_pending_evict_max": mp_pending_evict_max,
     }
 
 
@@ -106,6 +146,8 @@ def _aggregate(rows: list[dict[str, Any]], key_fields: tuple[str, ...]) -> list[
             "lag_ratio",
             "drop_events",
             "pipeline_ticks",
+            "mp_pending_max",
+            "mp_pending_mean",
         ):
             vals = [float(g[metric]) for g in group if g.get(metric) is not None]
             if vals:
@@ -124,17 +166,20 @@ def render_md(rows: list[dict[str, Any]], agg: list[dict[str, Any]]) -> str:
         "",
         "## Per-log metrics",
         "",
-        "| log | mode | pct_trk_len0 | lag_ratio | drops | tracebacks |",
-        "| --- | --- | ---: | ---: | ---: | ---: |",
+        "| log | mode | pct_trk_len0 | lag_ratio | pending_max | drops | tracebacks |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
     ]
     for r in sorted(rows, key=lambda x: (x.get("capture", ""), x.get("mode", ""), x.get("run_index", 0))):
         lines.append(
             f"| `{r['log_file']}` | {r.get('mode', '-')} | {r.get('pct_trk_len0', '-')} | "
-            f"{r.get('lag_ratio', '-')} | {r.get('drop_events', 0)} | {r.get('tracebacks', 0)} |"
+            f"{r.get('lag_ratio', '-')} | {r.get('mp_pending_max', '-')} | "
+            f"{r.get('drop_events', 0)} | {r.get('tracebacks', 0)} |"
         )
     lines.extend(["", "## Aggregated by capture + mode", ""])
-    lines.append("| capture | mode | n | pct_trk_len0 mean | lag_ratio mean | drops sum |")
-    lines.append("| --- | --- | ---: | ---: | ---: | ---: |")
+    lines.append(
+        "| capture | mode | n | pct_trk_len0 mean | lag_ratio mean | pending_max mean | drops sum |"
+    )
+    lines.append("| --- | --- | ---: | ---: | ---: | ---: | ---: |")
     for a in agg:
         drop_sum = sum(
             r["drop_events"]
@@ -143,7 +188,18 @@ def render_md(rows: list[dict[str, Any]], agg: list[dict[str, Any]]) -> str:
         )
         lines.append(
             f"| {a.get('capture')} | {a.get('mode')} | {a.get('n')} | "
-            f"{a.get('pct_trk_len0_mean', '-')} | {a.get('lag_ratio_mean', '-')} | {drop_sum} |"
+            f"{a.get('pct_trk_len0_mean', '-')} | {a.get('lag_ratio_mean', '-')} | "
+            f"{a.get('mp_pending_max_mean', '-')} | {drop_sum} |"
+        )
+    lines.extend(["", "## Backlog (MpBarrier)", ""])
+    lines.append("| capture | mode | pending_max mean | pending_mean mean |")
+    lines.append("| --- | --- | ---: | ---: |")
+    for a in agg:
+        if a.get("mode") != "process":
+            continue
+        lines.append(
+            f"| {a.get('capture')} | {a.get('mode')} | "
+            f"{a.get('mp_pending_max_mean', '-')} | {a.get('mp_pending_mean_mean', '-')} |"
         )
     lines.extend(
         [
