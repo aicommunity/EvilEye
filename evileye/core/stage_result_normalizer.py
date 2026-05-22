@@ -1,4 +1,8 @@
-"""Normalize (data, frame) pipeline tuples for downstream stages."""
+"""Normalize (data, frame) pipeline tuples for downstream stages.
+
+See also: [thread_vs_mp_contracts.md](../docs/thread_vs_mp_contracts.md) §8.2 (post-drain only).
+ProcessorStep must not drain MP outputs before all ``put`` calls in one ``process()`` pass.
+"""
 
 
 def normalize_result_meta(result):

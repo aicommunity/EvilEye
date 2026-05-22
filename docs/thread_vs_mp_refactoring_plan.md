@@ -1,6 +1,21 @@
 # План рефакторинга: thread vs MP
 
-Дорожная карта по [аудиту контрактов](thread_vs_mp_contracts.md). Здесь — **что делать в коде**, в каком порядке, как проверить, что не сломать. Сам код в этом документе не меняется.
+Дорожная карта по [аудиту контрактов](thread_vs_mp_contracts.md). Здесь — **что делать в коде**, в каком порядке, как проверить, что не сломать.
+
+## Status (implementation, 2026-05-21)
+
+| Phase | Code | Notes |
+|-------|------|-------|
+| R0 | Done | Deprecation + MULTIPROCESSING table |
+| R1 | Done | `MpAsyncBridge`, typed jobs, det/track wire |
+| R3 | Done | `MpPendingReporter`, pipeline/processor_step |
+| R2 | Done | preprocess, `YoloRuntime` (thread+MP), `track_update_core`, `frame_worker_meta` |
+| R6 | Done | Parent skip BOTSORT; contracts §11b |
+| R5 | Done | `stage_result_normalizer` + post-drain doc link |
+| R4 | Done | `queue_policy`, `queue_utils`, capture worker, [capture_buffer_levels.md](capture_buffer_levels.md) |
+| S1/S5/S6 | Partial | `DualModeProcessor`, `create_execution_backend`, `validate_config.py` |
+| DUP-016 | Done | AttributeClassifier + worker → `YoloRuntime` |
+| MEM | Partial | Unit MEM-1/2/3; soak script manual (MEM-4); E2E gate manual |
 
 ---
 

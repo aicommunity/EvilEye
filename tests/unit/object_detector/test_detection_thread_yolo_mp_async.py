@@ -41,14 +41,19 @@ def test_enqueue_mp_det_job_fifo_pending():
         set(),
         Queue(),
     )
-    thread.mp_control = MagicMock()
-    thread.mp_control.put_nowait = MagicMock()
+    mock_control = MagicMock()
+    mock_control.put_nowait = MagicMock()
+    mock_control.input_queue = __import__("queue").Queue()
+    thread.mp_control = mock_control
+    if thread._bridge is not None:
+        thread._bridge._mp_control = mock_control
+        thread._bridge._input_queue = mock_control.input_queue
     img = CaptureImage()
     img.source_id = 0
     img.frame_id = 1
     split = [[img, [0, 0]]]
     thread._enqueue_mp_det_job(split, img, ["h1"], [])
-    thread.mp_control.put_nowait.assert_called_once_with(["h1"])
+    mock_control.put_nowait.assert_called_once_with(["h1"])
     assert thread.mp_pending_depth() == 1
     if thread._bridge is not None:
         thread._bridge.clear()

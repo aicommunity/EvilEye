@@ -2,6 +2,7 @@
 
 import multiprocessing as mp
 import os
+import threading
 from queue import Queue
 from unittest.mock import MagicMock, patch
 
@@ -23,8 +24,8 @@ def _child_init_and_report(result_queue, model_name: str):
         def half(self):
             pass
 
-    with patch("evileye.object_detector.mp_worker_yolo.YOLO", _FakeYOLO):
-        worker = MpWorkerYolo(Queue(), Queue())
+    with patch("evileye.object_detector.yolo_runtime.YOLO", _FakeYOLO):
+        worker = MpWorkerYolo(Queue(), Queue(), stop_event=threading.Event())
         worker.set_params(model_name, [0], {"half": False})
         worker.init_worker()
         result_queue.put((_os.getpid(), worker.model is not None, getattr(worker.model, "path", None)))
@@ -47,4 +48,4 @@ def test_mp_worker_yolo_init_runs_in_child_process_only():
     child_pid, loaded, model_path = result_queue.get(timeout=5)
     assert child_pid != parent_pid
     assert loaded is True
-    assert model_path == "model.pt"
+    assert model_path is not None and str(model_path).endswith("model.pt")

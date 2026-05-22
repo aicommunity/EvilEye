@@ -457,6 +457,18 @@ Preprocessing с `accepts_frame_handle=True` может пропустить mat
 
 ---
 
+## §11b. Tracker process mode: parent vs child
+
+When `ObjectTrackingBotsort` runs with `"execution_mode": "process"`:
+
+- The **parent** does not construct `BOTSORT` or ONNX ReID encoders (`init_impl` skips heavy init).
+- Feed/drain in the parent only queues IPC jobs via `MpAsyncBridge` and `SharedFrameTransport`.
+- The **child** (`MpWorkerTracker`) owns `BOTSORT`, optional `OnnxEncoder`, and runs `track_update_core.run_tracker_update`.
+
+This avoids double memory for weights/encoder in parent + worker (COUP-004).
+
+---
+
 ## §12. Реестр дублей (DUP) — развёрнутый
 
 | ID | Что дублируется | Файлы | ~LOC | Симптом без рефакторинга | Фаза |

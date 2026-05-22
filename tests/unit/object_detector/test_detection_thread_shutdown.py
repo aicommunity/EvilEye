@@ -12,12 +12,11 @@ def test_yolo_init_safe_when_model_attr_removed_on_shutdown():
         "models/yolov8n.pt", 1, [0], [0], [[]], {}, q, logger_name="test"
     )
     thread.run_flag = False
-    if hasattr(thread, "model"):
-        del thread.model
+    thread._yolo_runtime.release()
     thread.init_detection_implementation()
 
 
-@patch("evileye.object_detector.detection_thread_yolo.YOLO")
+@patch("evileye.object_detector.yolo_runtime.YOLO")
 def test_yolo_init_uses_getattr_when_model_attr_missing(mock_yolo):
     mock_yolo.return_value = MagicMock(names={0: "person"})
     q = Queue()
@@ -25,8 +24,7 @@ def test_yolo_init_uses_getattr_when_model_attr_missing(mock_yolo):
         "models/yolov8n.pt", 1, [0], [0], [[]], {}, q, logger_name="test2"
     )
     thread.run_flag = True
-    if hasattr(thread, "model"):
-        del thread.model
+    thread._yolo_runtime.release()
     thread.init_detection_implementation()
     assert thread.model is mock_yolo.return_value
 

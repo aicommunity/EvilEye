@@ -52,7 +52,7 @@ def test_detection_thread_yolo_loads_in_processing_thread():
     thread = DetectionThreadYolo(
         "model.pt", 1, [], [0], [[]], {"half": False}, queue_out
     )
-    with patch("evileye.object_detector.detection_thread_yolo.YOLO", _FakeYOLO):
+    with patch("evileye.object_detector.yolo_runtime.YOLO", _FakeYOLO):
         thread.start()
         time.sleep(0.5)
         thread.stop()
@@ -67,7 +67,7 @@ def test_detection_thread_yolo_stop_clears_model():
     thread = DetectionThreadYolo(
         "missing-model.pt", 1, [], [0], [[]], {"half": False}, queue_out
     )
-    with patch("evileye.object_detector.detection_thread_yolo.YOLO", side_effect=RuntimeError("no model")):
+    with patch("evileye.object_detector.yolo_runtime.YOLO", side_effect=RuntimeError("no model")):
         thread.init_detection_implementation()
     assert thread.model is None
     thread.model = MagicMock()

@@ -2,7 +2,6 @@ import numpy as np
 import datetime
 from typing import List
 from queue import Empty
-from ultralytics.engine.results import Boxes
 from ultralytics.trackers.bot_sort import BOTrack
 from .object_tracking_base import ObjectTrackingBase
 from .trackers.bot_sort import BOTSORT
@@ -172,49 +171,8 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
                 continue
 
     def _parse_det_info(self, det_info: DetectionResultList, image: np.ndarray) -> tuple:
-        if image is None:
-            raise ValueError("image cannot be None")
-
-        cam_id = getattr(det_info, "source_id", None)
-        objects = getattr(det_info, "detections", None)
-        if objects is None and isinstance(det_info, dict):
-            cam_id = det_info.get("source_id", cam_id)
-            objects = det_info.get("detections", [])
-        if objects is None:
-            objects = []
-
-        if len(objects) == 0:
-            boxes_array = np.empty((0, 6), dtype=np.float32)
-            orig_shape = (image.shape[1], image.shape[0])
-            return cam_id, Boxes(boxes_array, orig_shape)
-
-        num_objects = len(objects)
-        bboxes_xyxy = np.empty((num_objects, 4), dtype=np.float32)
-        confidences = np.empty((num_objects, 1), dtype=np.float32)
-        class_ids = np.empty((num_objects, 1), dtype=np.float32)
-
-        for i, obj in enumerate(objects):
-            if isinstance(obj, dict):
-                bbox = obj.get("bounding_box", obj.get("bbox_xyxy", [0, 0, 0, 0]))
-                conf = obj.get("confidence", 0.0)
-                cls_id = obj.get("class_id", -1)
-            else:
-                bbox = obj.bounding_box
-                conf = obj.confidence
-                cls_id = obj.class_id
-            bboxes_xyxy[i] = bbox
-            confidences[i] = conf
-            class_ids[i] = cls_id
-
-        boxes_array = np.concatenate([bboxes_xyxy, confidences, class_ids], axis=1)
-
-        # Validate image shape
-        if not hasattr(image, 'shape') or len(image.shape) < 2:
-            raise ValueError(f"Invalid image shape: {image.shape if hasattr(image, 'shape') else 'no shape attribute'}")
-
-        orig_shape = (image.shape[1], image.shape[0])
-        boxes = Boxes(boxes_array, orig_shape)
-        return cam_id, boxes
+        """Delegate to shared track_update_core (tests / legacy callers)."""
+        return parse_detections_to_boxes(det_info, image)
 
     def _create_tracks_info(
             self,

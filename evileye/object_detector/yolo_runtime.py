@@ -40,14 +40,35 @@ class YoloRuntime:
         )
 
     def predict(self, images: list) -> list:
+        """MP worker path: Ultralytics predict → DTO dict lists per image."""
+        results = self.predict_raw(images, classes=self.classes)
+        if results is None:
+            return [[] for _ in images]
+        if not isinstance(results, list):
+            results = [results]
+        return yolo_results_to_dto_list(results)
+
+    def predict_raw(
+        self,
+        images: list,
+        *,
+        classes: list | None = None,
+        **predict_kwargs: Any,
+    ) -> list | Any | None:
+        """Thread path: return native Ultralytics Results (for get_bboxes)."""
         if self.model is None:
             self.load()
         if self.model is None:
-            return [[] for _ in images]
-        results = self.model.predict(
-            images, classes=self.classes, verbose=False, **self.inf_params
+            return None
+        params = dict(self.inf_params)
+        params.update(predict_kwargs)
+        cls = self.classes if classes is None else classes
+        return self.model.predict(
+            images,
+            classes=cls,
+            verbose=False,
+            **params,
         )
-        return yolo_results_to_dto_list(results)
 
     def release(self) -> None:
         self.model = None

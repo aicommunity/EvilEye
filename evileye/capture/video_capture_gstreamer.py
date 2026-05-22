@@ -510,6 +510,7 @@ class VideoCaptureGStreamer(
         This allows reconnect logic to work from the start.
         """
         if self.execution_mode == EXEC_MODE_PROCESS:
+            # Process mode: frames leave via mp_worker_capture + queue_policy.put_drop_oldest.
             super().start()
             return
 

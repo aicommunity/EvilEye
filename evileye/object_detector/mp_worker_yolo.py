@@ -18,6 +18,14 @@ class MpWorkerYolo(MpWorker):
             logger=self.logger if hasattr(self, "logger") else None,
         )
 
+    @property
+    def model(self):
+        return self._yolo.model
+
+    @model.setter
+    def model(self, value) -> None:
+        self._yolo.model = value
+
     def set_params(self, model_name, classes, inf_params):
         self.model_name = model_name
         self.classes = classes
@@ -43,6 +51,8 @@ class MpWorkerYolo(MpWorker):
         self._yolo.load()
 
     def worker_impl(self, data: list):
+        self._yolo.classes = self.classes
+        self._yolo.inf_params = self.inf_params
         model_input = self._materialize_input_data(data)
         if any(item is None for item in model_input):
             return [[] for _ in data]

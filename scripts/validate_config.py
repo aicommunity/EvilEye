@@ -20,6 +20,20 @@ def validate(data: dict) -> list[str]:
                 f"detectors[{i}]: ObjectDetectorYoloMp is legacy; "
                 "use ObjectDetectorYolo with execution_mode=process"
             )
+
+    mc = data.get("mc_trackers") or []
+    for i, block in enumerate(mc):
+        if not isinstance(block, dict):
+            continue
+        if block.get("execution_mode") == "process":
+            warnings.append(
+                f"mc_trackers[{i}]: execution_mode=process is ignored; "
+                "mc_trackers is sync_batch in parent only (see thread_vs_mp_contracts §7)"
+            )
+        if block.get("stage_kind") == "sync_batch":
+            continue
+        if block.get("enable", True) is False:
+            continue
     return warnings
 
 

@@ -6,7 +6,6 @@ Last reviewed: MP refactor execution, 2026-05-21
 
 | ID | Description | File / area | Introduced | Target phase | Priority |
 |----|-------------|-------------|------------|--------------|----------|
-| TD-MP-102 | AttributeClassifier MP duplication (DUP-016) | attributes_detection | R2+ | post-R2 | P2 |
 | TD-MP-401 | Capture triple-buffer reduction spike | capture | R4 | Deferred | P2 |
 | TD-MP-501 | module_capabilities JSON S4 | configs | — | Deferred | P3 |
 
@@ -46,6 +45,9 @@ Last reviewed: MP refactor execution, 2026-05-21
 | TD-MP-201 | R3 | MpPendingReporter replaces isinstance backlog probe |
 | TD-MP-110 | R2 | frame_to_worker_meta replaces getattr in _pack_for_worker |
 | TD-MP-301 | MEM-4 | soak_mp_memory.sh added (manual gate) |
+| TD-MP-102 | R2/DUP-016 | AttributeClassifier uses YoloRuntime (thread + mp worker) |
+| TD-MP-601 | S6 | validate_config warns legacy YoloMp + mc_trackers process |
+| TD-MP-401-doc | R4 | capture_buffer_levels.md spike — keep 3 levels |
 
 ## Deferred (explicitly out of scope)
 

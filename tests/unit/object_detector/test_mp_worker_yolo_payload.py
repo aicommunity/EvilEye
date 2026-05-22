@@ -1,3 +1,5 @@
+import threading
+
 import numpy as np
 
 from evileye.core.frame_transport import SharedFrameTransport
@@ -30,7 +32,7 @@ class _Model:
 
 
 def test_mp_worker_yolo_returns_lightweight_payload():
-    worker = MpWorkerYolo(input_queue=None, output_queue=None)
+    worker = MpWorkerYolo(input_queue=None, output_queue=None, stop_event=threading.Event())
     worker.model = _Model()
     worker.classes = [0, 1, 2]
     worker.inf_params = {}
@@ -68,7 +70,7 @@ class _CudaLikeModel:
 
 
 def test_mp_worker_yolo_handles_cuda_like_boxes_conversion():
-    worker = MpWorkerYolo(input_queue=None, output_queue=None)
+    worker = MpWorkerYolo(input_queue=None, output_queue=None, stop_event=threading.Event())
     worker.model = _CudaLikeModel()
     worker.classes = [0, 1, 2]
     worker.inf_params = {}
@@ -80,7 +82,7 @@ def test_mp_worker_yolo_handles_cuda_like_boxes_conversion():
 
 
 def test_mp_worker_yolo_materializes_frame_handle_input():
-    worker = MpWorkerYolo(input_queue=None, output_queue=None)
+    worker = MpWorkerYolo(input_queue=None, output_queue=None, stop_event=threading.Event())
     worker.model = _Model()
     worker.classes = [0, 1, 2]
     worker.inf_params = {}
