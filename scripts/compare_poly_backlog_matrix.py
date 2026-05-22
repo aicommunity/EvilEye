@@ -208,7 +208,11 @@ def main() -> int:
             winner = min(pool, key=lambda x: x["score"])
             note = "eligible" if eligible else "best_score_all_disqualified"
             (matrix_dir / "WINNER.txt").write_text(
-                f"{winner['exp']}\n# {note}\n",
+                f"{winner['exp']}\n",
+                encoding="utf-8",
+            )
+            (matrix_dir / "WINNER_meta.txt").write_text(
+                f"exp={winner['exp']}\nnote={note}\nscore={winner.get('score')}\n",
                 encoding="utf-8",
             )
             print(f"Wrote WINNER.txt -> {winner['exp']} ({note})")

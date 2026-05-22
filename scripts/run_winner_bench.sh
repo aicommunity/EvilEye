@@ -15,7 +15,7 @@ if [[ ! -f "$WINNER_FILE" ]]; then
   exit 1
 fi
 
-EXP="$(tr -d '[:space:]' < "$WINNER_FILE")"
+EXP="$(head -n1 "$WINNER_FILE" | tr -d '[:space:]')"
 ENV_JSON="$MATRIX_ROOT/$EXP/env.json"
 if [[ ! -f "$ENV_JSON" ]]; then
   echo "Missing $ENV_JSON for winner $EXP" >&2
