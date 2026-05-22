@@ -98,13 +98,13 @@ python scripts/render_poly_videos_mode_report.py
 | Переменная | По умолчанию | Назначение |
 |------------|--------------|------------|
 | `EVILEYE_MP_QUEUE_SCALE` | `1` | Множитель размеров очередей detector/tracker/MpControl |
-| `EVILEYE_MP_DRAIN_POLL_SEC` | `0.05` | Таймаут poll в feed/drain MP (сек) |
+| `EVILEYE_MP_DRAIN_POLL_SEC` | `0.01` | Таймаут poll в feed/drain MP (сек) |
 | `EVILEYE_PIPELINE_SYNC_MP` | `0` | Post-put sync drain в `processor_step` (bench/отладка) |
 | `EVILEYE_PIPELINE_SYNC_MP_MS` | `8` | Макс. ожидание drain за тик (мс) |
-| `EVILEYE_CONTROLLER_BACKPRESSURE` | `0` | Доп. sleep в controller при росте MP pending |
-| `EVILEYE_BACKPRESSURE_PENDING_THRESHOLD` | `5 × cameras` | Порог pending для доп. sleep |
-| `EVILEYE_BACKPRESSURE_SLEEP_MS_PER_PENDING` | `2` | мс sleep на единицу pending выше порога |
-| `EVILEYE_BACKPRESSURE_SLEEP_MAX_MS` | `80` | Потолок доп. sleep |
+| `EVILEYE_CONTROLLER_BACKPRESSURE` | `soft` | Доп. sleep в controller при росте MP pending (`0`/`off` — выкл.) |
+| `EVILEYE_BACKPRESSURE_PENDING_THRESHOLD` | `8 × cameras` (soft) / `5 × cameras` (`1`) | Порог pending для доп. sleep |
+| `EVILEYE_BACKPRESSURE_SLEEP_MS_PER_PENDING` | `1.5` (soft) / `2` (`1`) | мс sleep на единицу pending выше порога |
+| `EVILEYE_BACKPRESSURE_SLEEP_MAX_MS` | `40` (soft) / `80` (`1`) | Потолок доп. sleep |
 | `EVILEYE_MP_PENDING_CAP` | (auto) | Cap FIFO `_mp_pending` detector (drop oldest) |
 | `EVILEYE_MP_PENDING_CAP_TRACKER` | `4` | Cap FIFO tracker pending |
 | `EVILEYE_SKIP_PIPELINE_TICK_ON_BACKLOG` | `0` | Пропуск `pipeline.process()` при hard backlog (bench) |
@@ -128,12 +128,12 @@ python scripts/compare_poly_backlog_matrix.py --matrix-dir reports/poly_videos_m
 **Primary KPI:** `e2e_tracker_fps` (process) и `e2e_ratio` vs thread.  
 **Ограничение:** `mean_staleness_frames ∈ [5.9, 6.5]` — не оптимизировать «свежесть» ниже 5.9.
 
-| Переменная | Рекомендация |
-|------------|--------------|
-| `EVILEYE_PIPELINE_SYNC_MP` | `adaptive` (не постоянный `1`) |
-| `EVILEYE_SYNC_MP_PENDING_MAX` | `10` (2× число камер) |
-| `EVILEYE_CONTROLLER_BACKPRESSURE` | `soft` |
-| `EVILEYE_MP_DRAIN_POLL_SEC` | `0.01` |
+| Переменная | По умолчанию / bench |
+|------------|---------------------|
+| `EVILEYE_PIPELINE_SYNC_MP` | `0` (bench: `adaptive`, не постоянный `1`) |
+| `EVILEYE_SYNC_MP_PENDING_MAX` | `2 × cameras` (bench: `10`) |
+| `EVILEYE_CONTROLLER_BACKPRESSURE` | **`soft`** (в коде) |
+| `EVILEYE_MP_DRAIN_POLL_SEC` | **`0.01`** (в коде) |
 
 ```bash
 ./scripts/run_e2e_fps_matrix.sh all

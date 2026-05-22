@@ -47,9 +47,9 @@ def tracker_output_queue_size() -> int:
 
 def mp_drain_poll_sec() -> float:
     try:
-        return float(os.getenv("EVILEYE_MP_DRAIN_POLL_SEC", "0.05") or "0.05")
+        return float(os.getenv("EVILEYE_MP_DRAIN_POLL_SEC", "0.01") or "0.01")
     except (TypeError, ValueError):
-        return 0.05
+        return 0.01
 
 
 def mp_pending_cap_detector(roi_count: int) -> int:

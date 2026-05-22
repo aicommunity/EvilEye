@@ -524,7 +524,7 @@ class Controller(ControllerProcessingMixin):
                     self.fps, elapsed_seconds
                 )
                 backpressure_extra_ms = 0.0
-                bp_mode = os.getenv("EVILEYE_CONTROLLER_BACKPRESSURE", "").strip().lower()
+                bp_mode = os.getenv("EVILEYE_CONTROLLER_BACKPRESSURE", "soft").strip().lower()
                 bp_on = bp_mode in {"1", "true", "yes", "on", "soft"}
                 if bp_on:
                     try:

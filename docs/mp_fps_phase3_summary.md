@@ -18,11 +18,15 @@
 
 ## Production env (WINNER F2)
 
+Значения по умолчанию в коде (`mp_queue_config`, `controller`); явный export не обязателен:
+
 ```text
 EVILEYE_MP_QUEUE_SCALE=1
 EVILEYE_MP_DRAIN_POLL_SEC=0.01
 EVILEYE_CONTROLLER_BACKPRESSURE=soft
 ```
+
+Отключить backpressure: `EVILEYE_CONTROLLER_BACKPRESSURE=0`.
 
 ## Финальный bench (5×180, F2 env)
 
