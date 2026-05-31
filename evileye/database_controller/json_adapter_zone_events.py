@@ -1,6 +1,7 @@
 import os
-import json
 import datetime
+from .json_event_io import append_json_record
+from .event_image_paths import ensure_event_image_dirs
 import copy
 import cv2
 from .db_adapter import DatabaseAdapterBase
@@ -60,14 +61,6 @@ class JsonAdapterZoneEvents(DatabaseAdapterBase):
         file_name = 'zone_events_left.json' if is_update else 'zone_events_entered.json'
         file_path = os.path.join(metadata_dir, file_name)
 
-        records = []
-        if os.path.isfile(file_path):
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    records = json.load(f) or []
-            except Exception:
-                records = []
-
         ts = (event.time_left or event.time_entered)
         preview_rel, frame_rel = self._save_images(day_dir, event, is_update)
 
@@ -78,7 +71,7 @@ class JsonAdapterZoneEvents(DatabaseAdapterBase):
             ih, iw = img.image.shape[:2]
             bx, by, bw, bh = box
             if iw and ih:
-                box = [bx/iw, by/ih, bw/iw, bh/ih]
+                box = [bx / iw, by / ih, bw / iw, bh / ih]
 
         rec = {
             'event_id': event.event_id,
@@ -91,25 +84,13 @@ class JsonAdapterZoneEvents(DatabaseAdapterBase):
             'preview_path': preview_rel,
             'frame_path': frame_rel,
         }
-        records.append(rec)
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(records, f, ensure_ascii=False, indent=2)
+        append_json_record(file_path, rec)
 
     def _save_images(self, day_dir: str, event, is_update: bool):
         # Новые каталоги: Events/.../Images/FoundFrames/FoundPreviews/LostFrames/LostPreviews
         ts = (event.time_left if is_update else event.time_entered)
         ts_str = ts.strftime('%Y-%m-%d_%H-%M-%S-%f') if is_update else ts.strftime('%Y-%m-%d_%H-%M-%S.%f')
-        images_dir = os.path.join(day_dir, 'Images')
-        if is_update:
-            # Lost event (zone_left)
-            previews_dir = os.path.join(images_dir, 'LostPreviews')
-            frames_dir = os.path.join(images_dir, 'LostFrames')
-        else:
-            # Found event (zone_entered)
-            previews_dir = os.path.join(images_dir, 'FoundPreviews')
-            frames_dir = os.path.join(images_dir, 'FoundFrames')
-        os.makedirs(previews_dir, exist_ok=True)
-        os.makedirs(frames_dir, exist_ok=True)
+        previews_dir, frames_dir = ensure_event_image_dirs(day_dir, is_lost=is_update)
 
         image = event.img_left if is_update else event.img_entered
         if image is None or not hasattr(image, 'image'):
@@ -130,5 +111,3 @@ class JsonAdapterZoneEvents(DatabaseAdapterBase):
             cv2.imwrite(preview_abs, preview)
             cv2.imwrite(frame_abs, image.image)
         return preview_rel, frame_rel
-
-

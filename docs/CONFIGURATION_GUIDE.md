@@ -715,7 +715,7 @@ USB камера с GStreamer бэкендом.
 
 | Параметр | Тип | Описание | По умолчанию |
 |----------|-----|----------|--------------|
-| `type` | string | Тип детектора: `ObjectDetectorRtdetr`, `ObjectDetectorRfdetr` (для YOLO не требуется) | - |
+| `type` | string | `ObjectDetectorYolo` (YOLO, рекомендуется), `ObjectDetectorRtdetr`, `ObjectDetectorRfdetr`; **deprecated:** `ObjectDetectorYoloMp` | YOLO: often omitted (default factory) |
 | `model` | string | Путь к модели детектора | `models/yolo11n.pt` |
 | `source_ids` | array | Идентификаторы источников для обработки | - |
 | `classes` | array | Классы объектов COCO для детекции | `[0, 1, 24, 25, 63, 66, 67]` |
@@ -724,6 +724,14 @@ USB камера с GStreamer бэкендом.
 | `roi` | array | Области интереса (Regions of Interest) | `[[]]` |
 | `vid_stride` | int | Шаг обработки кадров | `1` |
 | `num_detection_threads` | int | Количество потоков для детекции | `1` |
+| `execution_mode` | string | `"thread"` — inference в процессе controller; `"process"` — child worker + feed/drain (`MpAsyncBridge`) | `"process"` (если ключ опущен, см. `DEFAULT_EXECUTION_MODE`) |
+
+**Primary path (YOLO MP):** `"type": "ObjectDetectorYolo"`, `"execution_mode": "process"`.  
+**Deprecated:** `"type": "ObjectDetectorYoloMp"` — legacy class; используйте `ObjectDetectorYolo` + `execution_mode`. Проверка: `python scripts/validate_config.py <config.json>`.
+
+При `execution_mode=thread` каждый поток детекции загружает **отдельную** копию весов в RAM/VRAM; при `process` — отдельный дочерний процесс на воркер (`YoloRuntime` только в child). Увеличение `num_detection_threads` умножает потребление памяти.
+
+См. [thread_vs_mp_contracts.md](thread_vs_mp_contracts.md), [MULTIPROCESSING.md](MULTIPROCESSING.md).
 
 **Примеры конфигураций детекторов**:
 
@@ -776,10 +784,13 @@ USB камера с GStreamer бэкендом.
 | `appearance_thresh` | float | Порог внешнего вида для re-identification | `0.25` |
 | `gmc_method` | string | Метод глобального движения камеры | `sparseOptFlow` |
 | `with_reid` | boolean | Использовать re-identification | `false` |
+| `execution_mode` | string | `"thread"` / `"process"` (BoT-SORT в child при process, см. contracts §11b) | `"process"` default |
 
 #### `mc_trackers`
 
 Конфигурация межкамерного трекинга для связывания объектов между разными камерами.
+
+**Важно:** `mc_trackers` **не** поддерживает `execution_mode: process` — только синхронный `sync_batch` в parent ([contracts §7](thread_vs_mp_contracts.md)). `validate_config.py` выдаёт предупреждение при попытке указать process.
 
 **Пример**:
 ```json
@@ -1185,6 +1196,24 @@ Error: Database config error: Input should be a valid integer [type=int_parsing,
 
 При наличии библиотеки `pydantic` система использует расширенную валидацию с проверкой типов и диапазонов значений. Если `pydantic` недоступен, выполняется базовая проверка структуры конфигурации.
 
+Дополнительно для MP-рефакторинга: `python scripts/validate_config.py <path.json>` — legacy `ObjectDetectorYoloMp`, `mc_trackers` + process (см. [developing_dual_mode_modules.md](developing_dual_mode_modules.md)).
+
+### Зарегистрированные `type` (`@EvilEyeBase.register`)
+
+| type | Назначение |
+|------|------------|
+| ObjectDetectorYolo | YOLO детектор (primary) |
+| ObjectDetectorRtdetr | RT-DETR |
+| ObjectDetectorRfdetr | RF-DETR |
+| ObjectDetectorYoloMp | Legacy (deprecated) |
+| ObjectTrackingBotsort | Per-source tracker |
+| ObjectMultiCameraTracking | MC tracker (sync only) |
+| VideoCaptureGStreamer / VideoCaptureOpencv | Capture backends |
+| AttributeClassifier / AttributeDetector / RoiFeeder | Attributes pipeline |
+| PreprocessingPipeline | Preprocessing stage |
+
+Полный индекс кода: [CODE_MODULE_INDEX.md](CODE_MODULE_INDEX.md).
+
 ## Связанные документы
 
 - [Pipeline Architecture](PIPELINE_ARCHITECTURE.md) - Архитектура pipeline классов
@@ -1193,3 +1222,5 @@ Error: Database config error: Input should be a valid integer [type=int_parsing,
 - [Text Rendering System](TEXT_RENDERING_SYSTEM.md) - Система рендеринга текста
 - [GStreamer Usage](VideoCaptureGStreamer_Usage.md) - Использование GStreamer
 - [System Architecture](ARCHITECTURE.md) - Полная архитектура системы
+- [Thread vs MP contracts](thread_vs_mp_contracts.md) - `execution_mode`, MP modules
+- [MULTIPROCESSING.md](MULTIPROCESSING.md) - env и ops

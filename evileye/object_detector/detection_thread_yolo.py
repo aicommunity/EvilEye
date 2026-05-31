@@ -1,214 +1,181 @@
 from queue import Queue
-import threading
 from typing import Optional
-from ultralytics import YOLO
-from .detection_thread_base import DetectionThreadBase
 import logging
-import numpy as np
+import os
+import platform
+import sys
+
+from .detection_thread_base import DetectionThreadBase
+from .yolo_runtime import YoloRuntime
 
 
 class DetectionThreadYolo(DetectionThreadBase):
     """Detection thread for YOLO models."""
 
     def __init__(
-        self,
-        model_name: str,
-        stride: int,
-        classes: list,
-        source_ids: list,
-        roi: list,
-        inf_params: dict,
-        queue_out: Queue,
-        logger_name: Optional[str] = None,
-        parent_logger: Optional[logging.Logger] = None,
+            self,
+            model_name: str,
+            stride: int,
+            classes: list,
+            source_ids: list,
+            roi: list,
+            inf_params: dict,
+            queue_out: Queue,
+            logger_name: Optional[str] = None,
+            parent_logger: Optional[logging.Logger] = None,
     ):
         base_name = "evileye.detection_thread_yolo"
         full_name = f"{base_name}.{logger_name}" if logger_name else base_name
         self.logger = parent_logger or logging.getLogger(full_name)
         self.model_name = model_name
-        self.model = None
+        self._yolo_runtime: YoloRuntime = YoloRuntime(logger=self.logger)
+        self._yolo_runtime.configure(model_name, classes, inf_params)
         super().__init__(stride, classes, source_ids, roi, inf_params, queue_out)
 
+    @property
+    def model(self):
+        """Ultralytics model handle (thread path class mapping)."""
+        return self._yolo_runtime.model
+
+    @model.setter
+    def model(self, value) -> None:
+        self._yolo_runtime.model = value
+
     def init_detection_implementation(self) -> None:
-        import os
-        import platform
-        import sys
-        
-        if self.model is None:
-            try:
-                # Log model loading context
-                model_path = self.model_name
-                model_exists = os.path.exists(model_path) if model_path else False
-                model_size = os.path.getsize(model_path) if model_exists else 0
-                
-                # This can run in multiple threads; keep it out of INFO logs by default.
-                self.logger.debug(f"Loading YOLO model: {model_path}")
-                self.logger.debug(f"Model file exists: {model_exists}, size: {model_size} bytes, "
-                                f"platform: {platform.system()} {platform.release()}")
-                
-                # Attempt to load model
-                self.model = YOLO(self.model_name)
-                
-                # Try to fuse Conv+BN layers (optimization, not required)
-                try:
-                    self.model.fuse()  # Fuse Conv+BN layers
-                except Exception as e:
-                    # Fuse may fail with mixed precision models, continue without it
-                    self.logger.debug(f"Model fuse() failed (non-critical): {e}")
-                
-                # Apply half precision if required
-                try:
-                    if self.inf_params.get('half', True):
-                        self.model.half()
-                except Exception as e:
-                    self.logger.warning(f"Failed to apply half precision to model (non-critical): {e}")
-                
-                # Keep model load details out of INFO logs by default.
-                self.logger.debug(f"Model loaded successfully. Model names: {self.model.names}")
-                
-                # Update model_class_mapping from model
+        if not self.run_flag:
+            return
+        if self._yolo_runtime.model is not None:
+            return
+        try:
+            model_path = self.model_name
+            model_exists = os.path.exists(model_path) if model_path else False
+            model_size = os.path.getsize(model_path) if model_exists else 0
+            self.logger.debug(f"Loading YOLO model: {model_path}")
+            self.logger.debug(
+                f"Model file exists: {model_exists}, size: {model_size} bytes, "
+                f"platform: {platform.system()} {platform.release()}"
+            )
+            self._yolo_runtime.configure(
+                self.model_name, self.classes, self.inf_params
+            )
+            self._yolo_runtime.load()
+            if self._yolo_runtime.model is not None:
+                self.logger.debug(
+                    "Model loaded successfully. Model names: %s",
+                    self._yolo_runtime.model.names,
+                )
                 self._update_model_class_mapping_from_model()
-                
-            except RuntimeError as e:
-                # Handle model loading errors (corrupted file, ZIP archive issues, etc.)
-                error_msg = str(e)
-                error_context = {
-                    'error_type': 'RuntimeError',
-                    'error_message': error_msg,
-                    'model_path': self.model_name,
-                    'model_exists': os.path.exists(self.model_name) if self.model_name else False,
-                    'platform': f"{platform.system()} {platform.release()}",
-                    'python_version': sys.version.split()[0]
-                }
-                
-                if 'zip archive' in error_msg.lower() or 'central directory' in error_msg.lower():
-                    self.logger.error(f"Model file appears to be corrupted (ZIP archive error): {self.model_name}")
-                    self.logger.error(f"Error details: {error_msg}")
-                    self.logger.debug(f"Model loading context: {error_context}")
-                    self.logger.warning("Model will not be loaded. Detection will be disabled for this thread. "
-                                      "Please check the model file or re-download it.")
-                else:
-                    self.logger.error(f"Failed to load YOLO model: {error_msg}")
-                    self.logger.debug(f"Model loading context: {error_context}")
-                
-                # Set model to None so thread can continue without model
-                self.model = None
-                # Don't re-raise exception - thread will continue
-                
-            except FileNotFoundError as e:
-                # Handle missing model file error
-                self.logger.error(f"Model file not found: {self.model_name}")
-                self.logger.error(f"Error: {e}")
-                self.logger.warning("Model will not be loaded. Detection will be disabled for this thread.")
-                self.model = None
-                # Don't re-raise exception
-                
-            except Exception as e:
-                # Handle any other model loading errors
-                error_context = {
-                    'error_type': type(e).__name__,
-                    'error_message': str(e),
-                    'model_path': self.model_name,
-                    'model_exists': os.path.exists(self.model_name) if self.model_name else False,
-                    'platform': f"{platform.system()} {platform.release()}",
-                    'python_version': sys.version.split()[0]
-                }
-                
-                self.logger.error(f"Unexpected error loading YOLO model: {e}")
-                self.logger.debug(f"Model loading context: {error_context}", exc_info=True)
-                self.logger.warning("Model will not be loaded. Detection will be disabled for this thread.")
-                self.model = None
-                # Don't re-raise exception
+        except RuntimeError as e:
+            error_msg = str(e)
+            error_context = {
+                "error_type": "RuntimeError",
+                "error_message": error_msg,
+                "model_path": self.model_name,
+                "model_exists": os.path.exists(self.model_name) if self.model_name else False,
+                "platform": f"{platform.system()} {platform.release()}",
+                "python_version": sys.version.split()[0],
+            }
+            if "zip archive" in error_msg.lower() or "central directory" in error_msg.lower():
+                self.logger.error(
+                    "Model file appears to be corrupted (ZIP archive error): %s",
+                    self.model_name,
+                )
+            else:
+                self.logger.error("Failed to load YOLO model: %s", error_msg)
+            self.logger.debug("Model loading context: %s", error_context)
+            self.logger.warning(
+                "Model will not be loaded. Detection will be disabled for this thread."
+            )
+            self._yolo_runtime.release()
+        except FileNotFoundError as e:
+            self.logger.error("Model file not found: %s", self.model_name)
+            self.logger.error("Error: %s", e)
+            self.logger.warning(
+                "Model will not be loaded. Detection will be disabled for this thread."
+            )
+            self._yolo_runtime.release()
+        except Exception as e:
+            self.logger.error("Unexpected error loading YOLO model: %s", e)
+            self.logger.debug("Model loading context", exc_info=True)
+            self.logger.warning(
+                "Model will not be loaded. Detection will be disabled for this thread."
+            )
+            self._yolo_runtime.release()
 
     def predict(self, images: list) -> list:
-        # Check if model is loaded
-        if self.model is None:
-            self.logger.warning("Model is not loaded, cannot perform prediction. Returning empty results.")
+        if self._yolo_runtime.model is None:
+            self.logger.warning(
+                "Model is not loaded, cannot perform prediction. Returning empty results."
+            )
             return [None] * len(images) if isinstance(images, list) else None
-        
-        # Filter out None images before passing to model
+
         if not isinstance(images, list):
-            self.logger.warning(f"Expected list of images, got {type(images)}")
+            self.logger.warning("Expected list of images, got %s", type(images))
             return None
-        
-        # Track which images are None to map results back correctly
+
         valid_images = []
-        image_indices = []  # Track original indices of valid images
+        image_indices = []
         for i, img in enumerate(images):
             if img is not None:
                 valid_images.append(img)
                 image_indices.append(i)
-        
-        # If all images are None, return None results
+
         if len(valid_images) == 0:
             self.logger.warning("All images are None, cannot perform prediction")
             return [None] * len(images)
-        
+
         try:
-            # Defer classes filtering to base; avoid passing names to model
-            results = self.model.predict(source=valid_images, classes=self._get_classes_arg_for_model(), verbose=False, **self.inf_params)
-            
-            # Map results back to original positions (None for invalid images)
+            results = self._yolo_runtime.predict_raw(
+                valid_images,
+                classes=self._get_classes_arg_for_model(),
+            )
             if results is None:
                 return [None] * len(images)
-            
-            # Convert results to list if needed
             if not isinstance(results, list):
                 results = [results]
-            
-            # Create result list with None for invalid images
             full_results = [None] * len(images)
             for idx, result_idx in enumerate(image_indices):
                 if idx < len(results):
                     full_results[result_idx] = results[idx]
-            
             return full_results
         except Exception as e:
-            self.logger.error(f"Error during model prediction: {e}")
+            self.logger.error("Error during model prediction: %s", e)
             self.logger.debug("Prediction error details", exc_info=True)
-            return [None] * len(images) if isinstance(images, list) else None
+            return [None] * len(images)
 
     def get_bboxes(self, result, roi: list) -> tuple[list, list, list]:
-        bboxes_coords = []
-        confidences = []
-        ids = []
-        
-        # Handle case when result is None (model not loaded or prediction error)
         if result is None:
             self.logger.debug("Prediction result is None, returning empty bboxes")
-            return bboxes_coords, confidences, ids
-        
+            return [], [], []
+        from .bbox_utils import roi_boxes_to_image_coords
+
         try:
-            boxes = result.boxes.cpu().numpy()
-            coords = boxes.xyxy
-            confs = boxes.conf
-            class_ids = boxes.cls
-            
-            for coord, class_id, conf in zip(coords, class_ids, confs):
-                # Защита от NaN/Inf в координатах (ultralytics может вернуть такие боксы для
-                # вырожденных областей). Такие боксы пропускаем без лог-флуда.
-                if not np.all(np.isfinite(coord)):
-                    self.logger.debug(f"Skipping bbox with non-finite coords: {coord}")
-                    continue
-                from ..utils import utils
-                abs_coords = utils.roi_to_image(coord, roi[1][0], roi[1][1])
-                bboxes_coords.append(abs_coords)
-                confidences.append(conf)
-                ids.append(class_id)
+            return roi_boxes_to_image_coords(
+                result, (roi[1][0], roi[1][1]), logger=self.logger
+            )
         except AttributeError as e:
-            # Handle case when result doesn't have 'boxes' attribute
-            self.logger.warning(f"Result does not have 'boxes' attribute: {e}. Returning empty bboxes.")
+            self.logger.warning(
+                "Result does not have 'boxes' attribute: %s. Returning empty bboxes.", e
+            )
+            return [], [], []
         except Exception as e:
-            # Handle any other errors when extracting bboxes
-            self.logger.error(f"Error extracting bboxes from result: {e}")
+            self.logger.error("Error extracting bboxes from result: %s", e)
             self.logger.debug("Bbox extraction error details", exc_info=True)
-        
-        return bboxes_coords, confidences, ids
-    
+            return [], [], []
+
+    def _release_model(self) -> None:
+        self._yolo_runtime.release()
+
+    def stop(self) -> None:
+        super().stop()
+        self._release_model()
+
     def _update_model_class_mapping_from_model(self):
-        """Update model_class_mapping from YOLO model names"""
-        if self.model and hasattr(self.model, 'names') and self.model.names:
-            # Create mapping from model names: {class_name: class_id}
-            self.model_class_mapping = {name: idx for idx, name in self.model.names.items()}
-            # Mapping update can be called multiple times across threads.
-            self.logger.debug(f"Updated model_class_mapping from YOLO model: {self.model_class_mapping}")
+        """Update model_class_mapping from YOLO model names."""
+        model = self._yolo_runtime.model
+        if model and hasattr(model, "names") and model.names:
+            self.model_class_mapping = {name: idx for idx, name in model.names.items()}
+            self.logger.debug(
+                "Updated model_class_mapping from YOLO model: %s",
+                self.model_class_mapping,
+            )

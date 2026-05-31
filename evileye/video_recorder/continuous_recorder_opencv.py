@@ -227,4 +227,3 @@ class OpenCVContinuousRecorder(VideoRecorderBase):
             self._frames_written,
             self._dropped_frames,
         )
-

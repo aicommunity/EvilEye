@@ -10,10 +10,12 @@ from ..core.base_class import EvilEyeBase
 from ..core.class_manager import ClassManager
 from ..core.frame import CaptureImage
 
+from ..core.mp_queue_config import (
+    detector_input_queue_size,
+    detector_output_queue_size,
+)
 from .constants import (
-    DEFAULT_INPUT_QUEUE_SIZE,
     DEFAULT_NUM_DETECTION_THREADS,
-    DEFAULT_OUTPUT_QUEUE_SIZE,
     DEFAULT_STRIDE,
     MODEL_PRELOAD_TIMEOUT,
     MODEL_READY_TIMEOUT,
@@ -22,8 +24,11 @@ from .constants import (
 )
 
 # Execution mode constants
-EXEC_MODE_THREAD = "thread"
-EXEC_MODE_PROCESS = "process"
+from ..core.processor_base import (
+    DEFAULT_EXECUTION_MODE,
+    EXEC_MODE_PROCESS,
+    EXEC_MODE_THREAD,
+)
 
 
 class DetectionResult:
@@ -50,7 +55,7 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
 
         self.run_flag = False
         # Increased queue size to prevent overflow during startup when models are loading
-        self.execution_mode = EXEC_MODE_THREAD
+        self.execution_mode = DEFAULT_EXECUTION_MODE
         self.queue_in = None
         # IMPORTANT: output queue must stay bounded, otherwise if downstream is slower
         # (e.g. controller/visualizer lag), results accumulate and memory grows unbounded.
@@ -83,8 +88,8 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         # Keep these queues thread-local even in process execution_mode;
         # true multiprocessing boundary is inside DetectionThreadYoloMp/MpControl.
         # This avoids unnecessary pickle/IPC overhead on hot path.
-        self.queue_in = Queue(maxsize=DEFAULT_INPUT_QUEUE_SIZE)
-        self.queue_out = Queue(maxsize=DEFAULT_OUTPUT_QUEUE_SIZE)
+        self.queue_in = Queue(maxsize=detector_input_queue_size())
+        self.queue_out = Queue(maxsize=detector_output_queue_size())
         self.queue_dropped_id = Queue()
 
     def put(self, image: CaptureImage) -> bool:
@@ -135,7 +140,7 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
                 # Auto-update from thread if not set manually
                 self.model_class_mapping = model_class_mapping
                 self.logger.debug(f"Auto-updated model_class_mapping from detection thread: {model_class_mapping}")
-                
+
                 # CRITICAL: Update classes after getting model_class_mapping
                 self._update_classes_after_model_loading()
             elif model_class_mapping is not None and self.model_class_mapping is not None:
@@ -147,15 +152,15 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         if self.model_class_mapping is not None:
             self._model_class_mapping_cache = self.model_class_mapping.copy()
         return self.model_class_mapping
-    
+
     def _process_classes_parameter(self):
         """Process classes parameter to support both class IDs and class names"""
         if not self.classes:
             return
-            
+
         # Store original classes for reference
         original_classes = self.classes.copy()
-        
+
         # Use ClassManager if available, otherwise fallback to old logic
         if self.class_manager:
             self.classes = self.class_manager.convert_classes_to_ids(self.classes)
@@ -174,7 +179,8 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
                 else:
                     # Keep names temporarily; they will be converted later when mapping arrives
                     # This prevents dropping all detections before mapping becomes available
-                    self.logger.warning(f"Warning: Class names provided but model_class_mapping unavailable yet: {self.classes}")
+                    self.logger.warning(
+                        f"Warning: Class names provided but model_class_mapping unavailable yet: {self.classes}")
             elif all(isinstance(cls, int) for cls in self.classes):
                 # Classes are IDs - keep as is
                 pass
@@ -185,7 +191,7 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
                 if self.model_class_mapping:
                     self.classes = [self.model_class_mapping.get(name, -1) for name in self.classes]
                     self.classes = [cls_id for cls_id in self.classes if cls_id != -1]
-    
+
     def update_classes_from_model_mapping(self):
         """Update classes parameter after model_class_mapping is available"""
         if self.model_class_mapping and self.classes:
@@ -194,71 +200,71 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
             self._process_classes_parameter()
             if original_classes != self.classes:
                 self.logger.debug(f"Classes updated from {original_classes} to {self.classes} using model mapping")
-    
+
     def set_class_manager(self, class_manager: ClassManager):
         """Set the class manager for this detector"""
         self.class_manager = class_manager
         # Re-process classes with new class manager
         if self.classes:
             self._process_classes_parameter()
-    
+
     def _update_classes_after_model_loading(self):
         """Update classes after model is loaded and model_class_mapping is available"""
         if not self.model_class_mapping:
             return
-            
+
         # Store original classes from params for reference
         original_classes = self.params.get('classes', [])
         if not original_classes:
             return
-            
+
         self.logger.debug(f"Updating classes after model loading. Original: {original_classes}")
-        
+
         # Re-process classes with now-available model_class_mapping
         if all(isinstance(cls, str) for cls in original_classes):
             # Classes are names - convert to IDs using model_class_mapping
             new_classes = [self.model_class_mapping.get(name, -1) for name in original_classes]
             new_classes = [cls_id for cls_id in new_classes if cls_id != -1]
-            
+
             if new_classes != self.classes:
                 self.logger.debug(f"Classes updated from {self.classes} to {new_classes} using model mapping")
                 self.classes = new_classes
-                
+
                 # Update classes in all detection threads
                 self._update_threads_classes()
             else:
                 self.logger.debug(f"Classes already correct: {self.classes}")
         else:
             self.logger.debug(f"Classes are IDs, conversion not needed: {self.classes}")
-    
+
     def _update_threads_classes(self):
         """Update classes in all detection threads"""
         for thread in self.detection_threads:
             if hasattr(thread, 'classes'):
                 thread.classes = self.classes.copy()
                 self.logger.info(f"Thread classes updated to: {thread.classes}")
-    
+
     def _check_and_update_classes_if_needed(self):
         """Check if classes need to be updated and update them if necessary"""
         if not self.model_class_mapping:
             return
-            
+
         # Store original classes from params for reference
         original_classes = self.params.get('classes', [])
         if not original_classes:
             return
-            
+
         # Check if we have string classes that need conversion
         if all(isinstance(cls, str) for cls in original_classes):
             # Convert to IDs using current model_class_mapping
             new_classes = [self.model_class_mapping.get(name, -1) for name in original_classes]
             new_classes = [cls_id for cls_id in new_classes if cls_id != -1]
-            
+
             # Check if classes are different from current
             if new_classes != self.classes:
                 self.logger.debug(f"Late update: classes from {self.classes} to {new_classes} using model mapping")
                 self.classes = new_classes
-                
+
                 # Update classes in all detection threads
                 self._update_threads_classes()
 
@@ -288,8 +294,7 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         self.model_class_mapping = self.params.get('model_class_mapping', None)
         self._model_class_mapping_cache = None
 
-        # Read execution mode from config (default: thread for backward compat)
-        new_mode = self.params.get('execution_mode', EXEC_MODE_THREAD)
+        new_mode = self.params.get('execution_mode', DEFAULT_EXECUTION_MODE)
         if new_mode != self.execution_mode:
             self.execution_mode = new_mode
             self._init_queues()
@@ -405,89 +410,7 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         # перед первым predict, что важно для корректной работы ultralytics.
         import time
         time.sleep(MODEL_PRELOAD_TIMEOUT)
-    
-    def _preload_models(self):
-        """Pre-load models in all detection threads to ensure they're ready"""
-        import platform
-        import sys
-        
-        if not self.detection_threads:
-            self.logger.debug("No detection threads available for pre-loading")
-            return
-        
-        self.logger.info(f"Pre-loading models in {len(self.detection_threads)} detection thread(s)...")
-        
-        successful_loads = 0
-        failed_loads = 0
-        
-        for i, thread in enumerate(self.detection_threads):
-            if hasattr(thread, 'init_detection_implementation'):
-                try:
-                    # Log model loading attempt for this thread
-                    thread_name = thread.__class__.__name__
-                    model_name = getattr(thread, 'model_name', 'unknown')
-                    self.logger.debug(f"Pre-loading model in detection thread {i} ({thread_name}): {model_name}")
-                    
-                    # Call init_detection_implementation to load model
-                    thread.init_detection_implementation()
-                    
-                    # Check that model is actually loaded
-                    if hasattr(thread, 'model') and thread.model is not None:
-                        self.logger.info(f"Pre-loaded model in detection thread {i} ({thread_name})")
-                        successful_loads += 1
-                    else:
-                        # Model not loaded, but thread can load it later
-                        self.logger.warning(f"Model pre-load called but model is still None in thread {i} ({thread_name}). "
-                                         f"Model will be loaded on first use.")
-                        failed_loads += 1
-                        
-                except RuntimeError as e:
-                    # Handle model loading errors
-                    error_msg = str(e)
-                    thread_name = thread.__class__.__name__
-                    model_name = getattr(thread, 'model_name', 'unknown')
-                    
-                    if 'zip archive' in error_msg.lower() or 'central directory' in error_msg.lower():
-                        self.logger.warning(f"Failed to pre-load model in detection thread {i} ({thread_name}): "
-                                          f"Model file appears corrupted (ZIP archive error). "
-                                          f"Thread will continue without model. Error: {e}")
-                    else:
-                        self.logger.warning(f"Failed to pre-load model in detection thread {i} ({thread_name}): {e}")
-                    
-                    self.logger.debug(f"Pre-load error context: thread={thread_name}, model={model_name}, "
-                                    f"platform={platform.system()} {platform.release()}", exc_info=True)
-                    failed_loads += 1
-                    # Thread will continue, model can be loaded later
-                    
-                except Exception as e:
-                    # Handle any other pre-loading errors
-                    thread_name = thread.__class__.__name__
-                    model_name = getattr(thread, 'model_name', 'unknown')
-                    
-                    error_context = {
-                        'error_type': type(e).__name__,
-                        'error_message': str(e),
-                        'thread_index': i,
-                        'thread_name': thread_name,
-                        'model_name': model_name,
-                        'platform': f"{platform.system()} {platform.release()}",
-                        'python_version': sys.version.split()[0]
-                    }
-                    
-                    self.logger.warning(f"Failed to pre-load model in detection thread {i} ({thread_name}): {e}")
-                    self.logger.debug(f"Pre-load error context: {error_context}", exc_info=True)
-                    failed_loads += 1
-                    # Thread will continue, model can be loaded later
-        
-        # Final pre-loading statistics
-        if successful_loads > 0:
-            self.logger.info(f"Model pre-loading completed: {successful_loads} successful, {failed_loads} failed")
-        elif failed_loads > 0:
-            self.logger.warning(f"Model pre-loading completed with errors: {failed_loads} threads failed to load models. "
-                              f"Models will be loaded on first use if possible.")
-        else:
-            self.logger.info("Model pre-loading completed: no models to pre-load")
-    
+
     def is_ready(self, timeout: float = MODEL_READY_TIMEOUT) -> bool:
         """
         Check if detector is ready to process frames (models loaded).
@@ -502,10 +425,15 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
             if not self.detection_threads:
                 time.sleep(THREAD_START_DELAY)
                 continue
-            # Check if all detection threads have loaded models
             all_ready = True
             for thread in self.detection_threads:
-                if not hasattr(thread, 'model') or thread.model is None:
+                mp_control = getattr(thread, "mp_control", None)
+                if mp_control is not None:
+                    if mp_control.is_alive():
+                        continue
+                    all_ready = False
+                    break
+                if not hasattr(thread, "model") or thread.model is None:
                     all_ready = False
                     break
             if all_ready:

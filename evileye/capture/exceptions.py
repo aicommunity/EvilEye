@@ -21,4 +21,3 @@ class CaptureFrameError(CaptureError):
 
 class CaptureConfigurationError(CaptureError):
     """Raised when capture configuration is invalid."""
-

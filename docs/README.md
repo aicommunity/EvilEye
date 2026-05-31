@@ -15,6 +15,20 @@
 - **[Архитектура системы](ARCHITECTURE.md)** - Полное описание архитектуры на 7 уровнях абстракции (CLI, Controller, Pipeline, Video, Objects, Events, Database) с интерактивными Mermaid диаграммами и статическими UML диаграммами
 - **[Архитектура Pipeline](PIPELINE_ARCHITECTURE.md)** - Описание архитектуры pipeline, базовых классов и способов создания собственных pipeline
 - **[Мультипроцессность](MULTIPROCESSING.md)** - Запуск компонентов в отдельных OS-процессах, конфигурация `execution_mode`, диаграммы, FAQ
+
+### Thread vs multiprocess (разработка)
+
+Рекомендуемый порядок чтения: **контракты → dual-mode гайд → MULTIPROCESSING**.
+
+- **[Контракты и аудит](thread_vs_mp_contracts.md)** - сравнение thread/process; реестры COUP/DUP; §15 модульный индекс MP
+- **[Разработка dual-mode модулей](developing_dual_mode_modules.md)** - decision tree, шаблоны, чеклист PR
+- **[Мультипроцессность](MULTIPROCESSING.md)** - ops, env, FAQ
+- **[Уровни буферов capture](capture_buffer_levels.md)** - triple-buffer / drop policy
+- **[План рефакторинга](thread_vs_mp_refactoring_plan.md)** - Implemented vs backlog (R0–R6)
+- **[Упрощение интеграции](module_integration_simplification.md)** - S1–S7 статусы
+- **[Индекс модулей кода](CODE_MODULE_INDEX.md)** - карта `evileye/*`
+- **[Матрица аудита документации](DOC_AUDIT_MATRIX.md)** - статус актуальности docs
+- **[Post-refactor gate](../reports/mp_refactor_gate/e2e_gate_summary.md)** - E2E/soak после R0–R6
 - **[Руководство по рефакторингу GUI](GUI_REFACTORING_GUIDE.md)** - Архитектура GUI системы, компоненты и лучшие практики
 - **[Руководство по Dependency Injection](DEPENDENCY_INJECTION_GUIDE.md)** - Подробное описание механизма Dependency Injection, DIContainer и DependencyRegistry с примерами использования
 

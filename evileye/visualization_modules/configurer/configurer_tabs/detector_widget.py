@@ -1,6 +1,7 @@
 import copy
 import json
 import os.path
+
 try:
     from PyQt6 import QtGui
     from PyQt6.QtWidgets import (
@@ -11,6 +12,7 @@ try:
     from PyQt6.QtGui import QIcon
     from PyQt6.QtGui import QAction
     from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
+
     pyqt_version = 6
 except ImportError:
     from PyQt5 import QtGui
@@ -22,6 +24,7 @@ except ImportError:
     from PyQt5.QtGui import QIcon
     from PyQt5.QtWidgets import QAction
     from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt
+
     pyqt_version = 5
 
 from evileye.utils import utils
@@ -39,8 +42,8 @@ class DetectorWidget(QWidget):
         self.proj_root = utils.get_project_root()
         self.hor_layouts = []
         self.split_check_boxes = []
-        #self.botsort_check_boxes = []
-        #self.coords_edits = []
+        # self.botsort_check_boxes = []
+        # self.coords_edits = []
         self.buttons_layouts_number = {}
         self.widgets_counter = 0
         self.layouts_counter = 0

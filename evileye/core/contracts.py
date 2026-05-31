@@ -79,4 +79,3 @@ class VisualizationDependencies:
     config: VisualizationConfig
     pipeline: IPipeline
     objects_handler: IObjectHandler
-

@@ -12,6 +12,7 @@ import time
 from queue import Empty, Full
 
 from ..core.mp_worker import MpWorker
+from ..core.processor_base import EXEC_MODE_THREAD
 from ..core.frame_transport import SharedFrameTransport
 
 
@@ -26,14 +27,20 @@ class MpWorkerCapture(MpWorker):
     4. ``cleanup()`` tears down capture resources.
     """
 
-    def __init__(self, input_queue, output_queue, log_queue=None):
-        super().__init__(input_queue, output_queue, log_queue=log_queue)
+    def __init__(self, input_queue, output_queue, log_queue=None, stop_event=None):
+        super().__init__(input_queue, output_queue, log_queue=log_queue, stop_event=stop_event)
         self._capture_params: dict = {}
         self._capture = None
         self._frame_transport = SharedFrameTransport()
 
     def set_params(self, params: dict) -> None:
         self._capture_params = dict(params) if params else {}
+
+    def get_spawn_state(self):
+        return {"capture_params": dict(self._capture_params)}
+
+    def apply_spawn_state(self, state):
+        self.set_params(state.get("capture_params", {}))
 
     def _create_capture(self, use_gstreamer: bool):
         if use_gstreamer:
@@ -66,12 +73,13 @@ class MpWorkerCapture(MpWorker):
         capture_type = params.get("type", "")
 
         use_gstreamer = (
-            "gstreamer" in capture_type.lower()
-            or params.get("backend") == "gstreamer"
+                "gstreamer" in capture_type.lower()
+                or params.get("backend") == "gstreamer"
         )
 
         child_params = dict(params)
-        child_params.pop("execution_mode", None)
+        # Capture already runs in a child process; backend must use in-process threads.
+        child_params["execution_mode"] = EXEC_MODE_THREAD
         capture = self._create_capture(use_gstreamer=use_gstreamer)
 
         if self._init_capture_instance(capture, child_params):
@@ -133,19 +141,22 @@ class MpWorkerCapture(MpWorker):
 
             for frame in frames:
                 packed = self._pack_frame_for_ipc(frame)
-                try:
-                    self.output_queue.put(packed, timeout=0.5)
-                except Full:
-                    try:
-                        dropped = self.output_queue.get_nowait()
-                        self._release_packed_frame(dropped)
-                    except Empty:
-                        pass
-                    try:
-                        self.output_queue.put_nowait(packed)
-                    except Full:
-                        self._release_packed_frame(packed)
-                        pass
+                handle = (
+                    packed.get("frame_handle")
+                    if isinstance(packed, dict)
+                    else None
+                )
+                from .queue_policy import put_drop_oldest
+
+                ok = put_drop_oldest(
+                    self.output_queue,
+                    packed,
+                    on_drop=self._release_packed_frame,
+                )
+                if ok and handle is not None:
+                    self._frame_transport.relinquish_frame(handle)
+                elif not ok:
+                    self._release_packed_frame(packed)
 
         try:
             self.cleanup()
@@ -159,7 +170,9 @@ class MpWorkerCapture(MpWorker):
             return frame
         frame_id = int(getattr(frame, "frame_id", 0) or 0)
         timestamp = float(getattr(frame, "time_stamp", time.time()) or time.time())
-        handle = self._frame_transport.alloc_frame(image, frame_id=frame_id, timestamp=timestamp)
+        handle = self._frame_transport.alloc_frame(
+            image, frame_id=frame_id, timestamp=timestamp
+        )
         return {
             "frame_handle": handle,
             "frame_meta": {
@@ -184,6 +197,10 @@ class MpWorkerCapture(MpWorker):
             pass
 
     def cleanup(self) -> None:
+        try:
+            self._frame_transport.release_all_owned()
+        except Exception:
+            pass
         if self._capture is not None:
             try:
                 self._capture.stop()

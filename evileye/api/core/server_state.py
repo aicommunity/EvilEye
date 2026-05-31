@@ -44,7 +44,8 @@ def load_config_summary(config_path: Optional[str]) -> ConfigSummary:
     sources = pipeline.get("sources") if isinstance(pipeline, dict) else None
     detectors = pipeline.get("detectors") if isinstance(pipeline, dict) else None
     trackers = pipeline.get("trackers") if isinstance(pipeline, dict) else None
-    event_detectors = config.get("events_detectors") or pipeline.get("events_detectors") if isinstance(pipeline, dict) else {}
+    event_detectors = config.get("events_detectors") or pipeline.get("events_detectors") if isinstance(pipeline,
+                                                                                                       dict) else {}
     database = config.get("database") or pipeline.get("database") if isinstance(pipeline, dict) else {}
 
     source_items: list[dict[str, Any]] = []

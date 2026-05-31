@@ -19,12 +19,7 @@
                 "source": "IpCamera",
                 "camera": "rtsp://10.245.1.200",
                 "type": "VideoCaptureOpencv",
-                "apiPreference": "CAP_FFMPEG",
-                "mp_restart_on_exit": false,
-                "mp_no_restart_exit_codes": [
-                    -15,
-                    0
-                ]
+                "apiPreference": "CAP_FFMPEG"
             },
             {
                 "split": true,
@@ -56,12 +51,7 @@
                 "source": "IpCamera",
                 "camera": "rtsp://10.245.1.199",
                 "type": "VideoCaptureOpencv",
-                "apiPreference": "CAP_FFMPEG",
-                "mp_restart_on_exit": false,
-                "mp_no_restart_exit_codes": [
-                    -15,
-                    0
-                ]
+                "apiPreference": "CAP_FFMPEG"
             },
             {
                 "split": true,
@@ -93,12 +83,7 @@
                 "source": "IpCamera",
                 "camera": "rtsp://10.245.1.202",
                 "type": "VideoCaptureOpencv",
-                "apiPreference": "CAP_FFMPEG",
-                "mp_restart_on_exit": false,
-                "mp_no_restart_exit_codes": [
-                    -15,
-                    0
-                ]
+                "apiPreference": "CAP_FFMPEG"
             }
         ],
         "detectors": [
@@ -139,12 +124,7 @@
                     0
                 ],
                 "num_detection_threads": 3,
-                "execution_mode": "thread",
-                "model": "models/yolov8n.pt",
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
-                ]
+                "model": "models/yolov8n.pt"
             },
             {
                 "roi": [
@@ -164,12 +144,7 @@
                     1
                 ],
                 "num_detection_threads": 3,
-                "execution_mode": "thread",
-                "model": "models/yolov8n.pt",
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
-                ]
+                "model": "models/yolov8n.pt"
             },
             {
                 "roi": [
@@ -214,12 +189,7 @@
                     2
                 ],
                 "num_detection_threads": 3,
-                "execution_mode": "thread",
-                "model": "models/yolov8n.pt",
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
-                ]
+                "model": "models/yolov8n.pt"
             },
             {
                 "roi": [
@@ -258,12 +228,7 @@
                     3
                 ],
                 "num_detection_threads": 3,
-                "execution_mode": "thread",
-                "model": "models/yolov8n.pt",
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
-                ]
+                "model": "models/yolov8n.pt"
             },
             {
                 "roi": [
@@ -283,12 +248,7 @@
                     4
                 ],
                 "num_detection_threads": 3,
-                "execution_mode": "thread",
-                "model": "models/yolov8n.pt",
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
-                ]
+                "model": "models/yolov8n.pt"
             }
         ],
         "trackers": [
@@ -309,11 +269,7 @@
                     "tracker_type": "botsort",
                     "fuse_score": true,
                     "with_reid": true
-                },
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
-                ]
+                }
             },
             {
                 "source_ids": [
@@ -332,11 +288,7 @@
                     "tracker_type": "botsort",
                     "fuse_score": true,
                     "with_reid": true
-                },
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
-                ]
+                }
             },
             {
                 "source_ids": [
@@ -355,11 +307,7 @@
                     "tracker_type": "botsort",
                     "fuse_score": true,
                     "with_reid": true
-                },
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
-                ]
+                }
             },
             {
                 "source_ids": [
@@ -378,11 +326,7 @@
                     "tracker_type": "botsort",
                     "fuse_score": true,
                     "with_reid": true
-                },
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
-                ]
+                }
             },
             {
                 "source_ids": [
@@ -401,11 +345,7 @@
                     "tracker_type": "botsort",
                     "fuse_score": true,
                     "with_reid": true
-                },
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
-                ]
+                }
             }
         ],
         "mc_trackers": [
@@ -417,10 +357,6 @@
                     2,
                     3,
                     4
-                ],
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
                 ]
             }
         ]
@@ -555,6 +491,7 @@
         "gui_enabled": true,
         "show_journal": false,
         "enable_close_from_gui": true,
+        "obj_handler_empty_heartbeat_every": 3,
         "class_mapping": {
             "person": 0,
             "bicycle": 1,

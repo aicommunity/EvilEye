@@ -7,6 +7,7 @@ from evileye.core.di_container import DIContainer
 
 from evileye.controller.services.config_service import ConfigurationService
 from evileye.controller.services.database_service import DatabaseService
+from evileye.controller.services.event_recording_service import EventRecordingService
 from evileye.controller.services.events_service import EventsService
 from evileye.controller.services.objects_handler_service import ObjectsHandlerService
 from evileye.controller.services.pipeline_service import PipelineService
@@ -29,6 +30,7 @@ class ServiceLocator:
         self._objects_handler_service: Optional[ObjectsHandlerService] = None
         self._streaming_service: Optional[StreamingService] = None
         self._preview_render_service: Optional[PreviewRenderService] = None
+        self._event_recording_service: Optional[EventRecordingService] = None
 
     def register_pipeline_service(self, service: PipelineService) -> None:
         """Зарегистрировать сервис pipeline.
@@ -146,6 +148,9 @@ class ServiceLocator:
         """
         return self._objects_handler_service
 
+    def get_event_recording_service(self) -> Optional[EventRecordingService]:
+        return self._event_recording_service
+
     def create_all_services(self, class_manager=None) -> None:
         """Создать все сервисы с дефолтными настройками.
 
@@ -172,6 +177,8 @@ class ServiceLocator:
             self._container.register_singleton(StreamingService, StreamingService)
         if not self._container.has(PreviewRenderService):
             self._container.register_singleton(PreviewRenderService, PreviewRenderService)
+        if not self._container.has(EventRecordingService):
+            self._container.register_singleton(EventRecordingService, EventRecordingService)
 
         self._pipeline_service = self._container.get(PipelineService)
         self._database_service = self._container.get(DatabaseService)
@@ -181,6 +188,7 @@ class ServiceLocator:
         self._objects_handler_service = self._container.get(ObjectsHandlerService)
         self._streaming_service = self._container.get(StreamingService)
         self._preview_render_service = self._container.get(PreviewRenderService)
+        self._event_recording_service = self._container.get(EventRecordingService)
 
     def release_all(self) -> None:
         """Освободить все сервисы."""

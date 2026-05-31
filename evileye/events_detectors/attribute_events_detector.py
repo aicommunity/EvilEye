@@ -35,17 +35,20 @@ class AttributeEventsDetector(EventsDetector):
                     for obj in active_objects.objects:
                         if not hasattr(obj, 'attributes') or not obj.attributes:
                             continue
-                        current_attrs = {name for name, st in obj.attributes.items() if isinstance(st, dict) and st.get('state') == 'exists'}
+                        current_attrs = {name for name, st in obj.attributes.items() if
+                                         isinstance(st, dict) and st.get('state') == 'exists'}
                         expected_map = self.sources_expected.get(source_id, {})
                         for event_name, expected_set in expected_map.items():
                             key = (source_id, obj.object_id, event_name)
                             if current_attrs == expected_set and key not in self.active_events:
                                 ts = datetime.now()
-                                event = AttributeEvent(ts, 'AttributeEvent', source_id, obj.object_id, event_name, sorted(list(expected_set)), is_finished=False, obj=obj)
+                                event = AttributeEvent(ts, 'AttributeEvent', source_id, obj.object_id, event_name,
+                                                       sorted(list(expected_set)), is_finished=False, obj=obj)
                                 events.append(event)
                                 self.active_events.add(key)
                                 # Log start of attribute event
-                                self.logger.info(f"AttributeEventsDetector: START event='{event_name}' src={source_id} obj={obj.object_id} attrs={sorted(list(expected_set))}")
+                                self.logger.info(
+                                    f"AttributeEventsDetector: START event='{event_name}' src={source_id} obj={obj.object_id} attrs={sorted(list(expected_set))}")
 
                 # Check lost objects to finish events
                 if lost_objects and lost_objects.objects:
@@ -55,11 +58,14 @@ class AttributeEventsDetector(EventsDetector):
                             key = (source_id, obj.object_id, event_name)
                             if key in self.active_events:
                                 ts = datetime.now()
-                                event = AttributeEvent(ts, 'AttributeEvent', source_id, obj.object_id, event_name, sorted(list(expected_map[event_name])), is_finished=True, obj=obj)
+                                event = AttributeEvent(ts, 'AttributeEvent', source_id, obj.object_id, event_name,
+                                                       sorted(list(expected_map[event_name])), is_finished=True,
+                                                       obj=obj)
                                 events.append(event)
                                 self.active_events.remove(key)
                                 # Log finish of attribute event
-                                self.logger.info(f"AttributeEventsDetector: FINISH event='{event_name}' src={source_id} obj={obj.object_id} attrs={sorted(list(expected_map[event_name]))}")
+                                self.logger.info(
+                                    f"AttributeEventsDetector: FINISH event='{event_name}' src={source_id} obj={obj.object_id} attrs={sorted(list(expected_map[event_name]))}")
 
             if events:
                 self.queue_out.put(events)
@@ -89,7 +95,8 @@ class AttributeEventsDetector(EventsDetector):
             self.sources_expected[src_id] = {evt_name: set(attr_list) for evt_name, attr_list in events_map.items()}
 
     def get_params_impl(self):
-        out = {'sources': {str(src): {evt: sorted(list(attrs)) for evt, attrs in events.items()} for src, events in self.sources_expected.items()}}
+        out = {'sources': {str(src): {evt: sorted(list(attrs)) for evt, attrs in events.items()} for src, events in
+                           self.sources_expected.items()}}
         return out
 
     def init_impl(self):
@@ -115,5 +122,3 @@ class AttributeEventsDetector(EventsDetector):
         # Provide empty defaults
         self.sources_expected = {}
         self.sources = set()
-
-

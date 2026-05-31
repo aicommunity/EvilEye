@@ -112,11 +112,11 @@ class FrameBroker:
                     removed_count += 1
 
     def publish_payload(
-        self,
-        pipeline_id: str,
-        payload: bytes,
-        *,
-        metadata: Optional[dict[str, Any]] = None,
+            self,
+            pipeline_id: str,
+            payload: bytes,
+            *,
+            metadata: Optional[dict[str, Any]] = None,
     ) -> None:
         with self._lock:
             self._frames[pipeline_id] = FramePayload(
@@ -138,10 +138,10 @@ class FrameBroker:
             return stats
 
     def publish_jpeg(
-        self,
-        pipeline_id: str,
-        jpeg_bytes: bytes,
-        metadata: Optional[dict[str, Any]] = None,
+            self,
+            pipeline_id: str,
+            jpeg_bytes: bytes,
+            metadata: Optional[dict[str, Any]] = None,
     ) -> None:
         meta = dict(metadata or {})
         meta.setdefault("content_type", "image/jpeg")

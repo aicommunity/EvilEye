@@ -14,6 +14,7 @@ from ...core.logger import get_module_logger
 
 url = "https://github.com/aicommunity/EvilEye/releases/download/dev/osnet_ain_x1_0_M.onnx"
 
+
 class OnnxEncoder(TrackEncoder):
     def __init__(self, model_path: str, batch_size: int = 1):
         self.logger = get_module_logger("onnx_encoder")
@@ -118,20 +119,20 @@ class OnnxEncoder(TrackEncoder):
         :return: features (NxF)
         """
         features = []
-        
+
         for i in range(0, len(dets), self.batch_size):
             batch_dets = dets[i: i + self.batch_size]
             batch_crops = self._dets2crops(img, batch_dets)
             batch = self._crop2batch(batch_crops)
             output_array = self.session.run(
-                [self.output_name], 
+                [self.output_name],
                 {self.input_name: batch}
             )
             features += [f for f in output_array[0]]
 
         features = np.array(features)
         return features
-    
+
     def _dets2crops(self, img, dets) -> List[np.ndarray]:
         crops = []
 
@@ -143,9 +144,9 @@ class OnnxEncoder(TrackEncoder):
 
             crop = img[y: y + h, x: x + w]
             crops.append(crop)
-        
+
         return crops
-    
+
     def _crop2batch(self, crops: List[np.ndarray]) -> np.ndarray:
         preprocessed_crops = [self._preprocess(c) for c in crops]
         batch = np.concatenate(preprocessed_crops, axis=0)
@@ -157,4 +158,3 @@ class OnnxEncoder(TrackEncoder):
         image = self.image_augmentation(image=np.array(image))["image"]
         image = np.expand_dims(image, axis=0)
         return image
-    

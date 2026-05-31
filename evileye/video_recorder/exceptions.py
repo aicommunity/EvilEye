@@ -21,4 +21,3 @@ class RecorderValidationError(RecorderError):
 
 class RecorderConfigurationError(RecorderError):
     """Raised when recorder configuration is invalid."""
-

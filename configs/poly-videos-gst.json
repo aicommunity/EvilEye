@@ -3,7 +3,7 @@
         "pipeline_class": "PipelineSurveillance",
         "sources": [
             {
-                "execution_mode": "thread",
+                "execution_mode": "process",
                 "split": false,
                 "num_split": 0,
                 "src_coords": [
@@ -16,7 +16,7 @@
                 "source_names": [
                     "Cam1"
                 ],
-                "loop_play": false,
+                "loop_play": true,
                 "source": "VideoFile",
                 "camera": "/home/user/Videos/Test3Cam/1/139932-video_trim.mp4",
                 "type": "VideoCaptureGStreamer",
@@ -24,7 +24,7 @@
                 "gstreamer_available": true
             },
             {
-                "execution_mode": "thread",
+                "execution_mode": "process",
                 "split": true,
                 "num_split": 2,
                 "src_coords": [
@@ -50,7 +50,7 @@
                     "Cam2",
                     "Cam3"
                 ],
-                "loop_play": false,
+                "loop_play": true,
                 "source": "VideoFile",
                 "camera": "/home/user/Videos/Test3Cam/2/139931-video_trim.mp4",
                 "type": "VideoCaptureGStreamer",
@@ -58,7 +58,7 @@
                 "gstreamer_available": true
             },
             {
-                "execution_mode": "thread",
+                "execution_mode": "process",
                 "split": true,
                 "num_split": 2,
                 "src_coords": [
@@ -84,7 +84,7 @@
                     "Cam4",
                     "Cam5"
                 ],
-                "loop_play": false,
+                "loop_play": true,
                 "source": "VideoFile",
                 "camera": "/home/user/Videos/Test3Cam/3/139930-video_trim.mp4",
                 "type": "VideoCaptureGStreamer",
@@ -130,7 +130,7 @@
                     0
                 ],
                 "num_detection_threads": 3,
-                "execution_mode": "thread",
+                "execution_mode": "process",
                 "model": "models/yolov8n.pt"
             },
             {
@@ -151,7 +151,7 @@
                     1
                 ],
                 "num_detection_threads": 3,
-                "execution_mode": "thread",
+                "execution_mode": "process",
                 "model": "models/yolov8n.pt"
             },
             {
@@ -197,7 +197,7 @@
                     2
                 ],
                 "num_detection_threads": 3,
-                "execution_mode": "thread",
+                "execution_mode": "process",
                 "model": "models/yolov8n.pt"
             },
             {
@@ -237,7 +237,7 @@
                     3
                 ],
                 "num_detection_threads": 3,
-                "execution_mode": "thread",
+                "execution_mode": "process",
                 "model": "models/yolov8n.pt"
             },
             {
@@ -258,7 +258,7 @@
                     4
                 ],
                 "num_detection_threads": 3,
-                "execution_mode": "thread",
+                "execution_mode": "process",
                 "model": "models/yolov8n.pt"
             }
         ],
@@ -507,7 +507,6 @@
     },
     "server": {
         "enabled": true,
-        "execution_mode": "process",
         "host": "127.0.0.1",
         "port": 8080,
         "log_level": "info",
@@ -515,7 +514,7 @@
         "preview_encode_workers": 2
     },
     "controller": {
-        "autoclose": true,
+        "autoclose": false,
         "fps": 30,
         "show_main_gui": true,
         "gui_enabled": true,

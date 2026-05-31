@@ -41,6 +41,7 @@ class DatabaseControllerBase(EvilEyeBase):
                 db.stop()
             except Exception:
                 pass
+
     def connect(self):
         if self.get_init_flag():
             return self.connect_impl()

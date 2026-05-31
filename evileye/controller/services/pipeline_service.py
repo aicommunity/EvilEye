@@ -52,10 +52,10 @@ class PipelineService:
         return self._pipeline
 
     def initialize_pipeline(
-        self,
-        pipeline: IPipeline,
-        pipeline_params: Dict[str, Any],
-        credentials: Optional[Dict[str, Any]] = None,
+            self,
+            pipeline: IPipeline,
+            pipeline_params: Dict[str, Any],
+            credentials: Optional[Dict[str, Any]] = None,
     ) -> IPipeline:
         """Инициализировать pipeline с параметрами и учетными данными.
 
@@ -155,8 +155,8 @@ class PipelineService:
             pipelines_module = importlib.import_module('evileye.pipelines')
             for name, obj in inspect.getmembers(pipelines_module):
                 if (inspect.isclass(obj) and
-                    hasattr(obj, '__bases__') and
-                    any('Pipeline' in base.__name__ for base in obj.__bases__)):
+                        hasattr(obj, '__bases__') and
+                        any('Pipeline' in base.__name__ for base in obj.__bases__)):
                     pipeline_classes[name] = obj
         except ImportError as e:
             self.logger.warning(f"Failed to import evileye.pipelines: {e}")
@@ -172,8 +172,8 @@ class PipelineService:
                 pipelines_module = importlib.import_module('pipelines')
                 for name, obj in inspect.getmembers(pipelines_module):
                     if (inspect.isclass(obj) and
-                        hasattr(obj, '__bases__') and
-                        any('Pipeline' in base.__name__ for base in obj.__bases__)):
+                            hasattr(obj, '__bases__') and
+                            any('Pipeline' in base.__name__ for base in obj.__bases__)):
                         pipeline_classes[name] = obj
 
                 sys.path.pop(0)

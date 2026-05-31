@@ -2,6 +2,17 @@
 
 Краткий индекс всех тестов по модулям.
 
+## MP refactor (unit)
+
+| File | Module |
+|------|--------|
+| `unit/core/test_mp_async_bridge.py` | MpAsyncBridge FIFO |
+| `unit/object_detector/test_detection_thread_yolo_mp_async.py` | Detection MP order |
+| `unit/object_tracker/test_botsort_parent_init.py` | R6 parent init |
+| `unit/capture/test_queue_policy.py` | queue_policy |
+
+Gate: `scripts/soak_mp_memory.sh`, `reports/mp_refactor_gate/`.
+
 ## INTEGRATION тесты
 
 ### attributes

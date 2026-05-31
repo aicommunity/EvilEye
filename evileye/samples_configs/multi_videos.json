@@ -3,6 +3,7 @@
         "pipeline_class": "PipelineSurveillance",
         "sources": [
             {
+                "execution_mode": "thread",
                 "camera": "videos/6p-c0.avi",
                 "source": "VideoFile",
                 "source_names": [
@@ -18,6 +19,7 @@
                 "src_coords": null
             },
             {
+                "execution_mode": "thread",
                 "camera": "videos/6p-c1.avi",
                 "source": "VideoFile",
                 "source_names": [
@@ -35,6 +37,7 @@
         ],
         "detectors": [
             {
+                "execution_mode": "thread",
                 "model": "models/yolo11n.pt",
                 "classes": [
                     0,
@@ -55,6 +58,7 @@
                 "num_detection_threads": 3
             },
             {
+                "execution_mode": "thread",
                 "model": "models/yolo11n.pt",
                 "classes": [
                     0,
@@ -77,6 +81,7 @@
         ],
         "trackers": [
             {
+                "execution_mode": "thread",
                 "source_ids": [
                     0
                 ],
@@ -95,6 +100,7 @@
                 }
             },
             {
+                "execution_mode": "thread",
                 "source_ids": [
                     1
                 ],

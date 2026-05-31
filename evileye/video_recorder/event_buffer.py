@@ -16,7 +16,7 @@ class EventBuffer:
     Stores frames in memory-efficient way using numpy arrays. Automatically cleans up
     old frames that exceed the required buffer duration.
     """
-    
+
     def __init__(self, max_duration_seconds: float, fps: Optional[float] = None):
         """
         Initialize event buffer.
@@ -35,21 +35,22 @@ class EventBuffer:
                 self._min_frame_interval_s = 1.0 / float(fps)
         except Exception:
             self._min_frame_interval_s = None
-        
+
         # Circular buffer: deque of (frame: np.ndarray, timestamp: float)
         self.buffer: deque[Tuple[np.ndarray, float]] = deque(maxlen=None)  # Will set maxlen dynamically
         self.lock = threading.Lock()
-        
+
         # Estimate capacity based on FPS and duration
         if fps and fps > 0:
             estimated_capacity = int(fps * max_duration_seconds * 1.2)  # 20% margin
             self.buffer = deque(maxlen=estimated_capacity)
-            self.logger.debug(f"EventBuffer initialized with capacity ~{estimated_capacity} frames (fps={fps}, duration={max_duration_seconds}s)")
+            self.logger.debug(
+                f"EventBuffer initialized with capacity ~{estimated_capacity} frames (fps={fps}, duration={max_duration_seconds}s)")
         else:
             # No FPS info, use dynamic sizing with cleanup
             self.buffer = deque(maxlen=None)
             self.logger.debug(f"EventBuffer initialized with dynamic capacity (duration={max_duration_seconds}s)")
-    
+
     def add_frame(self, frame: np.ndarray, timestamp: Optional[float] = None) -> None:
         """
         Add a frame to the buffer.
@@ -79,12 +80,12 @@ class EventBuffer:
         # Copy is necessary: frames may be modified after being added to buffer
         # Buffer needs to maintain independent copies for pre-event frame retrieval
         frame_copy = frame.copy()
-        
+
         with self.lock:
             self.buffer.append((frame_copy, timestamp))
             self._last_added_ts = timestamp
             self._cleanup_old_frames()
-    
+
     def get_frames_before(self, timestamp: float, seconds: float) -> List[Tuple[np.ndarray, float]]:
         """
         Get frames from buffer that are before the given timestamp, within the specified duration.
@@ -98,7 +99,7 @@ class EventBuffer:
         """
         cutoff_time = timestamp - seconds
         result = []
-        
+
         with self.lock:
             # Iterate from oldest to newest
             # NOTE: We return the stored numpy arrays directly to avoid extra copies.
@@ -106,11 +107,11 @@ class EventBuffer:
             for frame, frame_ts in self.buffer:
                 if cutoff_time <= frame_ts < timestamp:
                     result.append((frame, frame_ts))
-        
+
         # Sort by timestamp (should already be sorted, but ensure it)
         result.sort(key=lambda x: x[1])
         return result
-    
+
     def get_frames_after(self, timestamp: float, seconds: float) -> List[Tuple[np.ndarray, float]]:
         """
         Get frames from buffer that are after the given timestamp, within the specified duration.
@@ -124,7 +125,7 @@ class EventBuffer:
         """
         cutoff_time = timestamp + seconds
         result = []
-        
+
         with self.lock:
             # Iterate from oldest to newest
             # NOTE: We return the stored numpy arrays directly to avoid extra copies.
@@ -132,11 +133,11 @@ class EventBuffer:
             for frame, frame_ts in self.buffer:
                 if timestamp <= frame_ts <= cutoff_time:
                     result.append((frame, frame_ts))
-        
+
         # Sort by timestamp (should already be sorted, but ensure it)
         result.sort(key=lambda x: x[1])
         return result
-    
+
     def get_frames_range(self, start_timestamp: float, end_timestamp: float) -> List[Tuple[np.ndarray, float]]:
         """
         Get frames from buffer within a time range.
@@ -149,29 +150,29 @@ class EventBuffer:
             List of (frame, timestamp) tuples, ordered by timestamp (oldest first)
         """
         result = []
-        
+
         with self.lock:
             # NOTE: We return the stored numpy arrays directly to avoid extra copies.
             # Callers that mutate frames must copy on their side.
             for frame, frame_ts in self.buffer:
                 if start_timestamp <= frame_ts <= end_timestamp:
                     result.append((frame, frame_ts))
-        
+
         result.sort(key=lambda x: x[1])
         return result
-    
+
     def _cleanup_old_frames(self) -> None:
         """Remove frames older than max_duration_seconds from the buffer."""
         if not self.buffer:
             return
-        
+
         # Determine cutoff time based on buffer type
         # For absolute timestamps (live sources), use current time
         # For relative timestamps (video files), use newest timestamp
         newest_ts = self.buffer[-1][1] if self.buffer else None
         if newest_ts is None:
             return
-        
+
         # If newest timestamp is large (> threshold), it's absolute time (live source)
         # Otherwise it's relative time (video file)
         if newest_ts > RecorderConstants.TIMESTAMP_THRESHOLD_ABSOLUTE:  # Absolute timestamp (live source)
@@ -179,7 +180,7 @@ class EventBuffer:
             cutoff_time = current_time - self.max_duration_seconds
         else:  # Relative timestamp (video file)
             cutoff_time = newest_ts - self.max_duration_seconds
-        
+
         # Remove old frames from the left (oldest)
         # For buffers with maxlen, deque auto-removes, but we still clean up by timestamp
         # to ensure we don't keep frames beyond max_duration_seconds
@@ -190,10 +191,10 @@ class EventBuffer:
             if old_frame is not None:
                 del old_frame
             removed_count += 1
-        
+
         if removed_count > 0:
             self.logger.debug(f"Cleaned up {removed_count} old frames from buffer (cutoff_time={cutoff_time:.3f})")
-    
+
     def clear(self) -> None:
         """Clear all frames from the buffer."""
         with self.lock:
@@ -202,7 +203,7 @@ class EventBuffer:
                 if frame is not None:
                     del frame
             self.buffer.clear()
-    
+
     def size(self) -> int:
         """Get current number of frames in buffer."""
         with self.lock:
@@ -218,21 +219,21 @@ class EventBuffer:
                 except Exception:
                     pass
         return total
-    
+
     def get_oldest_timestamp(self) -> Optional[float]:
         """Get timestamp of oldest frame in buffer, or None if empty."""
         with self.lock:
             if not self.buffer:
                 return None
             return self.buffer[0][1]
-    
+
     def get_newest_timestamp(self) -> Optional[float]:
         """Get timestamp of newest frame in buffer, or None if empty."""
         with self.lock:
             if not self.buffer:
                 return None
             return self.buffer[-1][1]
-    
+
     def get_duration(self) -> float:
         """Get time span covered by buffer in seconds."""
         oldest = self.get_oldest_timestamp()
@@ -240,7 +241,7 @@ class EventBuffer:
         if oldest is None or newest is None:
             return 0.0
         return newest - oldest
-    
+
     def clear_old_frames(self, older_than_seconds: Optional[float] = None) -> int:
         """
         Explicitly clear old frames from buffer.
@@ -254,21 +255,21 @@ class EventBuffer:
         """
         if not self.buffer:
             return 0
-        
+
         if older_than_seconds is None:
             older_than_seconds = self.max_duration_seconds
-        
+
         newest_ts = self.buffer[-1][1] if self.buffer else None
         if newest_ts is None:
             return 0
-        
+
         # Determine cutoff time
         if newest_ts > RecorderConstants.TIMESTAMP_THRESHOLD_ABSOLUTE:  # Absolute timestamp
             current_time = time.time()
             cutoff_time = current_time - older_than_seconds
         else:  # Relative timestamp
             cutoff_time = newest_ts - older_than_seconds
-        
+
         removed_count = 0
         with self.lock:
             while self.buffer and self.buffer[0][1] < cutoff_time:
@@ -277,10 +278,10 @@ class EventBuffer:
                 if old_frame is not None:
                     del old_frame
                 removed_count += 1
-        
+
         if removed_count > 0:
             self.logger.debug(f"Explicitly cleared {removed_count} old frames (older than {older_than_seconds}s)")
-        
+
         return removed_count
 
     def get_runtime_stats(self) -> dict:

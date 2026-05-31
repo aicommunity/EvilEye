@@ -1,7 +1,8 @@
 import os
-import json
 import datetime
 from .db_adapter import DatabaseAdapterBase
+from .json_event_io import append_json_record
+from .event_image_paths import ensure_event_image_dirs
 import copy
 import cv2
 
@@ -76,14 +77,6 @@ class JsonAdapterAttributeEvents(DatabaseAdapterBase):
             file_name = 'attribute_events_finished.json' if is_update else 'attribute_events_found.json'
             file_path = os.path.join(metadata_dir, file_name)
 
-            data = []
-            if os.path.isfile(file_path):
-                try:
-                    with open(file_path, 'r', encoding='utf-8') as f:
-                        data = json.load(f) or []
-                except Exception:
-                    data = []
-
             # Normalize box relative to source image size if available
             box = event.box_finished if is_update else event.box_found
             img = getattr(event, 'img_finished', None) if is_update else getattr(event, 'img_found', None)
@@ -91,7 +84,7 @@ class JsonAdapterAttributeEvents(DatabaseAdapterBase):
                 ih, iw = img.image.shape[:2]
                 bx, by, bw, bh = box
                 if iw and ih:
-                    box = [bx/iw, by/ih, bw/iw, bh/ih]
+                    box = [bx / iw, by / ih, bw / iw, bh / ih]
 
             # Save preview and full frame images (pure, без оверлеев) в унифицированные папки
             preview_rel, frame_rel = self._save_images(day_dir, event, is_update)
@@ -109,9 +102,7 @@ class JsonAdapterAttributeEvents(DatabaseAdapterBase):
                 'frame_path': frame_rel or '',
             }
 
-            data.append(rec)
-            with open(file_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            append_json_record(file_path, rec)
             # Простая диагностика на запись события
             try:
                 from evileye.core.logger import get_module_logger
@@ -131,17 +122,7 @@ class JsonAdapterAttributeEvents(DatabaseAdapterBase):
                 ts = datetime.datetime.now()
             # Имя с новым форматом без подчеркиваний в дате
             ts_str = ts.strftime('%Y-%m-%d_%H-%M-%S-%f') if is_update else ts.strftime('%Y-%m-%d_%H-%M-%S.%f')
-            images_dir = os.path.join(day_dir, 'Images')
-            if is_update:
-                # Lost event (finished)
-                previews_dir = os.path.join(images_dir, 'LostPreviews')
-                frames_dir = os.path.join(images_dir, 'LostFrames')
-            else:
-                # Found event
-                previews_dir = os.path.join(images_dir, 'FoundPreviews')
-                frames_dir = os.path.join(images_dir, 'FoundFrames')
-            os.makedirs(previews_dir, exist_ok=True)
-            os.makedirs(frames_dir, exist_ok=True)
+            previews_dir, frames_dir = ensure_event_image_dirs(day_dir, is_lost=is_update)
 
             image_wrap = getattr(event, 'img_finished', None) if is_update else getattr(event, 'img_found', None)
             if image_wrap is None or not hasattr(image_wrap, 'image'):
@@ -166,5 +147,3 @@ class JsonAdapterAttributeEvents(DatabaseAdapterBase):
             return preview_rel, frame_rel
         except Exception:
             return '', ''
-
-

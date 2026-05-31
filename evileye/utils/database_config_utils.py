@@ -64,9 +64,9 @@ def load_database_config_from_file() -> Optional[Dict[str, Any]]:
 
 
 def compute_database_config(
-    use_database: bool = True,
-    credentials: Optional[Dict[str, Any]] = None,
-    params: Optional[Dict[str, Any]] = None
+        use_database: bool = True,
+        credentials: Optional[Dict[str, Any]] = None,
+        params: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     Вычислить полную конфигурацию БД с учетом всех источников.
@@ -91,24 +91,24 @@ def compute_database_config(
     if not use_database:
         logger.debug("Database disabled, returning empty config")
         return {"database": {}, "database_adapters": {}}
-    
+
     # Загружаем базовую конфигурацию из файла
     database_config = load_database_config_from_file()
     if database_config is None:
         # Если файл не найден, создаем минимальную структуру
         database_config = {"database": {}, "database_adapters": {}}
-    
+
     # Убеждаемся, что есть ключи database и database_adapters
     if "database" not in database_config:
         database_config["database"] = {}
     if "database_adapters" not in database_config:
         database_config["database_adapters"] = {}
-    
+
     # Получаем credentials с значениями по умолчанию
     database_creds = {}
     if credentials:
         database_creds = credentials.get("database", {}) or {}
-    
+
     # Устанавливаем значения по умолчанию для credentials
     database_creds.setdefault("user_name", "postgres")
     database_creds.setdefault("password", "")
@@ -117,7 +117,7 @@ def compute_database_config(
     database_creds.setdefault("port", 5432)
     database_creds.setdefault("admin_user_name", "postgres")
     database_creds.setdefault("admin_password", "")
-    
+
     # Объединяем значения: сначала из файла, потом из credentials
     db_section = database_config["database"]
     db_section.setdefault("user_name", database_creds["user_name"])
@@ -133,7 +133,7 @@ def compute_database_config(
         db_section.setdefault("image_dir", "EvilEyeData")
         db_section.setdefault("images_dir", "EvilEyeData")
     _normalize_image_dir_keys(db_section)
-    
+
     # Переопределяем значения из params['database'], если есть
     if params and "database" in params:
         params_db = params["database"]
@@ -156,7 +156,7 @@ def compute_database_config(
                 db_section["preview_height"] = params_db["preview_height"]
 
     _normalize_image_dir_keys(db_section)
-    
+
     logger.debug(f"Computed database_config with database keys: {list(db_section.keys())}")
     return database_config
 
@@ -174,10 +174,10 @@ def ensure_database_config_complete(database_config: Optional[Dict[str, Any]]) -
     """
     if not database_config:
         database_config = {}
-    
+
     # Загружаем базовую конфигурацию из файла для ДОПОЛНЕНИЯ
     file_config = load_database_config_from_file()
-    
+
     # Набор ключей, по которым можно распознать "плоскую" секцию database
     db_flat_keys = {
         "user_name",
@@ -193,7 +193,7 @@ def ensure_database_config_complete(database_config: Optional[Dict[str, Any]]) -
         "preview_height",
         "tables",
     }
-    
+
     # 1. Обеспечиваем наличие секции 'database'
     if "database" not in database_config:
         # Возможен сценарий, когда нам передали уже «плоскую» секцию database
@@ -217,7 +217,7 @@ def ensure_database_config_complete(database_config: Optional[Dict[str, Any]]) -
         else:
             database_config["database"] = {}
             logger.warning("'database' section not found, using empty dict")
-    
+
     # 2. Обеспечиваем наличие секции 'database_adapters'
     if "database_adapters" not in database_config:
         if file_config and "database_adapters" in file_config:
@@ -226,7 +226,7 @@ def ensure_database_config_complete(database_config: Optional[Dict[str, Any]]) -
         else:
             database_config["database_adapters"] = {}
             logger.warning("'database_adapters' section not found, using empty dict")
-    
+
     # 3. Дополняем недостающие ключи внутри 'database' из файла,
     # НЕ перезаписывая уже заданные значения (host, port и т.п.)
     if file_config and "database" in file_config:
@@ -238,5 +238,5 @@ def ensure_database_config_complete(database_config: Optional[Dict[str, Any]]) -
 
     # Final normalization for image_dir/images_dir compatibility
     database_config["database"] = _normalize_image_dir_keys(database_config.get("database") or {})
-    
+
     return database_config

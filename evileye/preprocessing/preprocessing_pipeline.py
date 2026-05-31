@@ -5,6 +5,8 @@ import numpy as np
 from ..utils import utils
 from . import PreprocessingBase, PreprocessingFactory
 from ..core.base_class import EvilEyeBase
+
+
 # from preprocessing.steps import Input, Normalize, Output, Inpaint, Clahe
 
 
@@ -58,4 +60,3 @@ class PreprocessingPipeline(PreprocessingBase):
         prev_version = int(getattr(image, "frame_version", 0) or 0)
         setattr(processed_image, "frame_version", prev_version + 1)
         return processed_image
-

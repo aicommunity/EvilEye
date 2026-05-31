@@ -12,7 +12,8 @@ class AttributeManager:
     Порогирование по confidence и суммарному времени (min/confirm).
     """
 
-    def __init__(self, thresholds_conf: Dict[str, float] = None, thresholds_time: Dict[str, Dict[str, int]] = None, ema_alpha: float = 0.6):
+    def __init__(self, thresholds_conf: Dict[str, float] = None, thresholds_time: Dict[str, Dict[str, int]] = None,
+                 ema_alpha: float = 0.6):
         self._attr_by_track: Dict[int, Dict[str, AttributeState]] = {}
         self._thr_conf = thresholds_conf or {}
         self._thr_time = thresholds_time or {}  # {attr: {min_time_ms, confirm_time_ms}}
@@ -49,22 +50,22 @@ class AttributeManager:
         else:
             state.no_detect_time_ms += dt_ms
             state.total_lost_time_ms += dt_ms
-        
+
         # Обновляем found_ratio для принятия решений
         total_time = state.total_found_time_ms + state.total_lost_time_ms
         if total_time > 0:
             state.found_ratio = state.total_found_time_ms / total_time
         else:
             state.found_ratio = 0.0
-        
+
         # Принимаем решение о состоянии на основе улучшенной логики
         decision_state = self._calculate_decision_state(state, min_time_ms, confirm_time_ms)
-        
+
         # Обновляем состояние только если оно изменилось
         if state.state != decision_state:
             old_state = state.state
             state.state = decision_state
-            
+
             # Логируем переходы состояний
             if decision_state == 'exists' and old_state != 'exists':
                 state.enter_count += 1
@@ -78,7 +79,7 @@ class AttributeManager:
 
     def _ema(self, new_value: float, prev_value: float) -> float:
         return self._ema_alpha * new_value + (1.0 - self._ema_alpha) * prev_value
-    
+
     def _calculate_decision_state(self, state: 'AttributeState', min_time_ms: int, confirm_time_ms: int) -> str:
         """
         Рассчитывает решение о состоянии атрибута на основе суммарного времени.
@@ -94,15 +95,15 @@ class AttributeManager:
         # Если нет данных - none
         if state.total_found_time_ms + state.total_lost_time_ms == 0:
             return 'none'
-        
+
         # Если недавно обнаружен - exists
         if state.no_detect_time_ms == 0 and state.total_time_ms >= confirm_time_ms:
             return 'exists'
-        
+
         # Если недавно потерян - lost
         if state.no_detect_time_ms > 0 and state.no_detect_time_ms < confirm_time_ms:
             return 'lost'
-        
+
         # Принимаем решение на основе found_ratio
         if state.found_ratio >= 0.7:  # 70% времени обнаружен
             return 'exists'
@@ -110,21 +111,19 @@ class AttributeManager:
             return 'lost'
         else:  # < 30% времени обнаружен
             return 'none'
-    
+
     def set_params(self, attributes_detection: Dict):
         """Set parameters from attributes_detection config"""
         if not attributes_detection:
             return
-            
+
         self._primary_by_name = attributes_detection.get('primary_by_name', [])
         self._primary_by_id = attributes_detection.get('primary_by_id', [])
-        
+
         classifier_config = attributes_detection.get('classifier', {})
         self._thr_conf = classifier_config.get('confidence_thresholds', {})
         self._thr_time = classifier_config.get('time_thresholds', {})
         self._ema_alpha = classifier_config.get('ema_alpha', 0.7)
-        
+
         # Store configured attributes for default creation
         self._configured_attrs = classifier_config.get('attrs', [])
-
-

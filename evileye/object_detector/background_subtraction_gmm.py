@@ -39,7 +39,8 @@ class BackgroundSubtractorMOG2(BackgroundSubtractorBase):
             x, y, width, height = cv2.boundingRect(contour)
             x0 = x - min(x, width)
             y0 = y - min(y, height)
-            roi = image[y0:y + min(2 * height, image.shape[0]), x0:x + min(2 * width, image.shape[1])]  # Extract ROI from frame
+            roi = image[
+                y0:y + min(2 * height, image.shape[0]), x0:x + min(2 * width, image.shape[1])]  # Extract ROI from frame
             roi = roi.astype(np.uint8)
             roi = cv2.cvtColor(roi, cv2.COLOR_GRAY2BGR)
             all_roi.append([roi, [x0, y0]])

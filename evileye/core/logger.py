@@ -60,10 +60,10 @@ def get_module_logger(module_name: str) -> logging.Logger:
     return logging.getLogger(f"evileye.{module_name.split('.')[-1]}")
 
 
-def log_function_call(logger: Optional[logging.Logger] = None, 
-                     level: int = logging.DEBUG,
-                     log_args: bool = True,
-                     log_result: bool = True):
+def log_function_call(logger: Optional[logging.Logger] = None,
+                      level: int = logging.DEBUG,
+                      log_args: bool = True,
+                      log_result: bool = True):
     """
     Декоратор для логирования вызовов функций
     
@@ -73,6 +73,7 @@ def log_function_call(logger: Optional[logging.Logger] = None,
         log_args: Логировать аргументы функции
         log_result: Логировать результат функции
     """
+
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
@@ -80,33 +81,34 @@ def log_function_call(logger: Optional[logging.Logger] = None,
                 func_logger = get_module_logger(func.__module__)
             else:
                 func_logger = logger
-            
+
             # Логируем начало выполнения
             if log_args:
                 func_logger.log(level, f"Вызов {func.__name__} с аргументами: args={args}, kwargs={kwargs}")
             else:
                 func_logger.log(level, f"Вызов {func.__name__}")
-            
+
             try:
                 result = func(*args, **kwargs)
-                
+
                 if log_result:
                     func_logger.log(level, f"Функция {func.__name__} завершена успешно, результат: {result}")
                 else:
                     func_logger.log(level, f"Функция {func.__name__} завершена успешно")
-                
+
                 return result
             except Exception as e:
                 func_logger.error(f"Error in function {func.__name__}: {e}")
                 raise
-        
+
         return wrapper
+
     return decorator
 
 
 def log_execution_time(logger: Optional[logging.Logger] = None,
-                      level: int = logging.INFO,
-                      log_args: bool = False):
+                       level: int = logging.INFO,
+                       log_args: bool = False):
     """
     Декоратор для логирования времени выполнения функций
     
@@ -115,6 +117,7 @@ def log_execution_time(logger: Optional[logging.Logger] = None,
         level: Уровень логирования
         log_args: Логировать аргументы функции
     """
+
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
@@ -122,14 +125,14 @@ def log_execution_time(logger: Optional[logging.Logger] = None,
                 func_logger = get_module_logger(func.__module__)
             else:
                 func_logger = logger
-            
+
             start_time = time.time()
-            
+
             if log_args:
                 func_logger.log(level, f"Начало выполнения {func.__name__} с аргументами: args={args}, kwargs={kwargs}")
             else:
                 func_logger.log(level, f"Начало выполнения {func.__name__}")
-            
+
             try:
                 result = func(*args, **kwargs)
                 execution_time = time.time() - start_time
@@ -139,17 +142,18 @@ def log_execution_time(logger: Optional[logging.Logger] = None,
                 execution_time = time.time() - start_time
                 func_logger.error(f"Error in function {func.__name__} after {execution_time:.4f} seconds: {e}")
                 raise
-        
+
         return wrapper
+
     return decorator
 
 
 @contextmanager
-def log_context(logger: logging.Logger, 
-               message: str, 
-               level: int = logging.INFO,
-               log_start: bool = True,
-               log_end: bool = True):
+def log_context(logger: logging.Logger,
+                message: str,
+                level: int = logging.INFO,
+                log_start: bool = True,
+                log_end: bool = True):
     """
     Контекстный менеджер для логирования блоков кода
     
@@ -162,9 +166,9 @@ def log_context(logger: logging.Logger,
     """
     if log_start:
         logger.log(level, f"Начало: {message}")
-    
+
     start_time = time.time()
-    
+
     try:
         yield
     except Exception as e:
@@ -178,10 +182,10 @@ def log_context(logger: logging.Logger,
 
 
 def log_performance_metric(logger: logging.Logger,
-                          metric_name: str,
-                          value: float,
-                          unit: str = "",
-                          level: int = logging.INFO):
+                           metric_name: str,
+                           value: float,
+                           unit: str = "",
+                           level: int = logging.INFO):
     """
     Логирует метрику производительности
     
@@ -197,10 +201,10 @@ def log_performance_metric(logger: logging.Logger,
 
 
 def log_detection_result(logger: logging.Logger,
-                        frame_id: int,
-                        source_id: str,
-                        detections_count: int,
-                        processing_time: float):
+                         frame_id: int,
+                         source_id: str,
+                         detections_count: int,
+                         processing_time: float):
     """
     Логирует результат детекции объектов
     
@@ -216,11 +220,11 @@ def log_detection_result(logger: logging.Logger,
 
 
 def log_tracking_result(logger: logging.Logger,
-                       frame_id: int,
-                       source_id: str,
-                       active_tracks: int,
-                       lost_tracks: int,
-                       processing_time: float):
+                        frame_id: int,
+                        source_id: str,
+                        active_tracks: int,
+                        lost_tracks: int,
+                        processing_time: float):
     """
     Логирует результат трекинга объектов
     
@@ -256,14 +260,14 @@ def log_pipeline_step(logger: logging.Logger,
     """
     dropped_info = f", Dropped: {dropped_count}" if dropped_count > 0 else ""
     logger.debug(f"Pipeline step '{step_name}': "
-                f"Input: {input_count}, Output: {output_count}{dropped_info}, "
-                f"Time: {processing_time:.4f}s")
+                 f"Input: {input_count}, Output: {output_count}{dropped_info}, "
+                 f"Time: {processing_time:.4f}s")
 
 
 def log_error_with_context(logger: logging.Logger,
-                          error: Exception,
-                          context: str = "",
-                          level: int = logging.ERROR):
+                           error: Exception,
+                           context: str = "",
+                           level: int = logging.ERROR):
     """
     Логирует ошибку с контекстом
     

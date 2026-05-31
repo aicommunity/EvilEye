@@ -120,6 +120,69 @@ venv/bin/python scripts/render_multiprocessing_benchmark_report.py \
 GPU-RAM заполняется только при наличии `nvidia-smi`. Если GPU недоступен, поле останется пустым.
 
 По умолчанию генератор отчёта отбрасывает первое диагностическое окно как прогрев. Значение можно изменить параметром `--warmup-windows`.
+### Poly-videos (4 конфига) и MP barrier tuning
+
+Сравнение `process` vs `thread` для [`configs/poly-videos.json`](../configs/poly-videos.json) и GST-аналогов:
+
+```bash
+python scripts/run_poly_videos_mode_compare.py --timeout-sec 180 --runs-per-config 5
+python scripts/analyze_poly_mp_barriers.py
+python scripts/measure_poly_e2e_fps.py --config configs/poly-videos.json --active-sec 120
+python scripts/render_poly_videos_mode_report.py
+```
+
+**Сквозная метрика (primary):** `e2e_tracker_fps` из `measure_poly_e2e_fps.py` — уникальные пары `(source_id, frame_id)` на выходе `trackers` за активную фазу.  
+**Controller loop Hz** (`pipeline_hz_est` в CSV) — частота вызова `pipeline.process()`, не равна E2E FPS в MP-режиме.
+
+Переменные окружения (отдельные YOLO-процессы сохраняются):
+
+| Переменная | По умолчанию | Назначение |
+|------------|--------------|------------|
+| `EVILEYE_MP_QUEUE_SCALE` | `1` | Множитель размеров очередей detector/tracker/MpControl |
+| `EVILEYE_MP_DRAIN_POLL_SEC` | `0.01` | Таймаут poll в feed/drain MP (сек) |
+| `EVILEYE_PIPELINE_SYNC_MP` | `0` | Post-put sync drain в `processor_step` (bench/отладка) |
+| `EVILEYE_PIPELINE_SYNC_MP_MS` | `8` | Макс. ожидание drain за тик (мс) |
+| `EVILEYE_CONTROLLER_BACKPRESSURE` | `soft` | Доп. sleep в controller при росте MP pending (`0`/`off` — выкл.) |
+| `EVILEYE_BACKPRESSURE_PENDING_THRESHOLD` | `8 × cameras` (soft) / `5 × cameras` (`1`) | Порог pending для доп. sleep |
+| `EVILEYE_BACKPRESSURE_SLEEP_MS_PER_PENDING` | `1.5` (soft) / `2` (`1`) | мс sleep на единицу pending выше порога |
+| `EVILEYE_BACKPRESSURE_SLEEP_MAX_MS` | `40` (soft) / `80` (`1`) | Потолок доп. sleep |
+| `EVILEYE_MP_PENDING_CAP` | (auto) | Cap FIFO `MpAsyncBridge` pending (detector, drop oldest) |
+| `EVILEYE_MP_PENDING_CAP_TRACKER` | `4` | Cap FIFO tracker pending |
+| `EVILEYE_SKIP_PIPELINE_TICK_ON_BACKLOG` | `0` | Пропуск `pipeline.process()` при hard backlog (bench) |
+| `EVILEYE_SKIP_PIPELINE_HARD_LIMIT` | `15 × cameras` | Порог pending для skip tick |
+| `EVILEYE_PIPELINE_TIMELINE` | `0` | Детальный `PipelineTimeline(...)` в лог |
+
+**Фаза 2 (backlog):** primary KPI — `mean_staleness_frames` (E2E), `mp_pending_max` (MpBarrier), `lag_ratio`; `pipeline_hz_est` — вторичный.  
+`EVILEYE_MP_QUEUE_SCALE=1` по умолчанию; `SCALE=2` только если матрица показывает улучшение свежести без роста pending.
+
+Матрица экспериментов:
+
+```bash
+./scripts/run_backlog_matrix.sh B1   # или all
+python scripts/compare_poly_backlog_matrix.py --matrix-dir reports/poly_videos_mode_compare/experiments/backlog_matrix --write-winner
+```
+
+См. [`docs/mp_fps_phase2_summary.md`](mp_fps_phase2_summary.md) и [`docs/mp_fps_post_fix_summary.md`](mp_fps_post_fix_summary.md) (фаза 1, SCALE=2).
+
+### Фаза 3 (E2E FPS, staleness band)
+
+**Primary KPI:** `e2e_tracker_fps` (process) и `e2e_ratio` vs thread.  
+**Ограничение:** `mean_staleness_frames ∈ [5.9, 6.5]` — не оптимизировать «свежесть» ниже 5.9.
+
+| Переменная | По умолчанию / bench |
+|------------|---------------------|
+| `EVILEYE_PIPELINE_SYNC_MP` | `0` (bench: `adaptive`, не постоянный `1`) |
+| `EVILEYE_SYNC_MP_PENDING_MAX` | `2 × cameras` (bench: `10`) |
+| `EVILEYE_CONTROLLER_BACKPRESSURE` | **`soft`** (в коде) |
+| `EVILEYE_MP_DRAIN_POLL_SEC` | **`0.01`** (в коде) |
+
+```bash
+./scripts/run_e2e_fps_matrix.sh all
+python scripts/compare_poly_e2e_fps_matrix.py --matrix-dir reports/poly_videos_mode_compare/experiments/e2e_fps_matrix --write-winner
+./scripts/run_phase3_winner_bench.sh
+```
+
+См. [`docs/mp_fps_phase3_summary.md`](mp_fps_phase3_summary.md) (выводы) и сырые артефакты в `reports/poly_videos_mode_compare/` (JSON/CSV). **Не дублируйте** полные таблицы матрицы в docs — только ссылка + интерпретация. Post-refactor gate: [`reports/mp_refactor_gate/`](../reports/mp_refactor_gate/).
 
 ## Интерпретация результата
 

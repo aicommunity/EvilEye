@@ -29,13 +29,13 @@ class ImageStorageService:
         self.logger = logger or get_module_logger("image_storage_service")
 
     def save_image(
-        self,
-        preview_path: str,
-        frame_path: str,
-        image,
-        box: Optional[list] = None,
-        zone_coords: Optional[list] = None,
-        draw_boxes: bool = True,
+            self,
+            preview_path: str,
+            frame_path: str,
+            image,
+            box: Optional[list] = None,
+            zone_coords: Optional[list] = None,
+            draw_boxes: bool = True,
     ) -> Tuple[bool, bool]:
         """Сохранить превью и полный кадр.
 
@@ -102,10 +102,10 @@ class ImageStorageService:
         return preview_saved, frame_saved
 
     def save_image_simple(
-        self,
-        preview_path: str,
-        frame_path: str,
-        image,
+            self,
+            preview_path: str,
+            frame_path: str,
+            image,
     ) -> Tuple[bool, bool]:
         """Сохранить превью и полный кадр без отрисовки bounding box."""
         return self.save_image(preview_path, frame_path, image, draw_boxes=False)

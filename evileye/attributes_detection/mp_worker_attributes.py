@@ -1,5 +1,6 @@
 from ..core.mp_worker import MpWorker
 from ..core.tracking_dto import ensure_tracking_result_list
+from ..object_detector.yolo_runtime import YoloRuntime
 
 
 class MpWorkerRoiFeeder(MpWorker):
@@ -10,8 +11,8 @@ class MpWorkerRoiFeeder(MpWorker):
     tracking_data before forwarding
     """
 
-    def __init__(self, input_queue, output_queue, log_queue=None):
-        super().__init__(input_queue, output_queue, log_queue=log_queue)
+    def __init__(self, input_queue, output_queue, log_queue=None, stop_event=None):
+        super().__init__(input_queue, output_queue, log_queue=log_queue, stop_event=stop_event)
         self.padding = 0.0
         self.every_n_frames = 1
         self._frame_counters = {}
@@ -19,6 +20,12 @@ class MpWorkerRoiFeeder(MpWorker):
     def set_params(self, params: dict):
         self.padding = float(params.get('padding', 0.0))
         self.every_n_frames = int(params.get('every_n_frames', 1))
+
+    def get_spawn_state(self):
+        return {"padding": self.padding, "every_n_frames": self.every_n_frames}
+
+    def apply_spawn_state(self, state):
+        self.set_params(state)
 
     def init_worker(self):
         pass
@@ -71,16 +78,28 @@ class MpWorkerAttributeClassifier(MpWorker):
     on ROI crops attached by the RoiFeeder stage
     """
 
-    def __init__(self, input_queue, output_queue, log_queue=None):
-        super().__init__(input_queue, output_queue, log_queue=log_queue)
+    def __init__(self, input_queue, output_queue, log_queue=None, stop_event=None):
+        super().__init__(input_queue, output_queue, log_queue=log_queue, stop_event=stop_event)
         self.model_path = "models/yolo11n.pt"
         self.attrs = []
         self.conf_threshold = 0.5
         self.inference_size = 224
         self.attr_class_mapping = {}
-        self.yolo_model = None
+        self._yolo_runtime: YoloRuntime = YoloRuntime(
+            logger=self.logger if hasattr(self, "logger") else None,
+        )
+        self._params_snapshot: dict = {}
+
+    @property
+    def yolo_model(self):
+        return self._yolo_runtime.model
+
+    @yolo_model.setter
+    def yolo_model(self, value) -> None:
+        self._yolo_runtime.model = value
 
     def set_params(self, params: dict):
+        self._params_snapshot = dict(params or {})
         self.model_path = params.get('model', self.model_path)
         self.attrs = params.get('attrs', [])
         self.conf_threshold = params.get('conf_threshold', 0.5)
@@ -94,18 +113,24 @@ class MpWorkerAttributeClassifier(MpWorker):
                 if attr_name in self.attrs:
                     self.attr_class_mapping[class_id] = attr_name
 
+    def get_spawn_state(self):
+        return {"params": dict(self._params_snapshot)}
+
+    def apply_spawn_state(self, state):
+        self.set_params(state.get("params", {}))
+
     def init_worker(self):
-        from ultralytics import YOLO
-        self.yolo_model = YOLO(self.model_path)
-        try:
-            self.yolo_model.fuse()
-        except Exception:
-            pass
+        self._yolo_runtime.configure(
+            self.model_path,
+            list(self.attr_class_mapping.keys()),
+            {"conf": self.conf_threshold, "imgsz": self.inference_size, "half": False},
+        )
+        self._yolo_runtime.load()
 
     def worker_impl(self, data):
         tracking_data, frame = data
         tracking_data = ensure_tracking_result_list(tracking_data)
-        if self.yolo_model is None:
+        if self._yolo_runtime.model is None:
             return data
 
         if hasattr(tracking_data, 'roi_data') and tracking_data.roi_data:
@@ -123,14 +148,17 @@ class MpWorkerAttributeClassifier(MpWorker):
 
     def _classify_roi(self, roi_image):
         try:
-            results = self.yolo_model.predict(
-                source=roi_image,
+            results = self._yolo_runtime.predict_raw(
+                [roi_image],
                 classes=list(self.attr_class_mapping.keys()),
-                verbose=False,
                 conf=self.conf_threshold,
                 imgsz=self.inference_size,
             )
-            if not results or len(results) == 0:
+            if results is None:
+                return {}
+            if not isinstance(results, list):
+                results = [results]
+            if not results:
                 return {}
             result = results[0]
             if result.boxes is None or len(result.boxes) == 0:

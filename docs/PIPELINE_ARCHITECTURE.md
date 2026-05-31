@@ -53,6 +53,15 @@ PipelineBase (abstract)
 - `get_sources()` - возвращает процессоры из `sources_proc`
 - `generate_default_structure()` - базовая реализация
 
+### ProcessorStep и MP drain
+
+`ProcessorStep` (`evileye/core/processor_step.py`) обрабатывает стадии `detectors`, `trackers`, `mc_trackers`:
+
+- **Post-drain policy:** для det/track сначала все `put`, затем drain `queue_out` (не pre-drain) — см. [thread_vs_mp_contracts §8.2](thread_vs_mp_contracts.md).
+- **Нормализация выхода:** [`stage_result_normalizer`](../../evileye/core/stage_result_normalizer.py) приводит результат к `(data, frame)` для downstream.
+- **Backlog snapshot:** перед `process()` вызывается `estimate_mp_backlog_stats()` → `_mp_pending_snapshot` для adaptive sync (`EVILEYE_PIPELINE_SYNC_MP`).
+- **mc_trackers:** только `_process_mc_trackers_sync` — без MP wait; `execution_mode: process` на MC не поддерживается.
+
 ### PipelineCapture
 
 Простая реализация для захвата видео файла, наследуется от PipelineSimple.

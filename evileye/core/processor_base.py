@@ -6,6 +6,7 @@ import os
 
 EXEC_MODE_THREAD = "thread"
 EXEC_MODE_PROCESS = "process"
+DEFAULT_EXECUTION_MODE = EXEC_MODE_PROCESS
 
 
 class ProcessorBase(ABC):
@@ -20,7 +21,7 @@ class ProcessorBase(ABC):
         self.order = order
         # Создание процессоров вынесено в отдельный метод для снижения связности
         self.dummy_processor = self._create_processor_instance(class_name)
-        self.execution_mode = EXEC_MODE_THREAD
+        self.execution_mode = DEFAULT_EXECUTION_MODE
         self.ipc_mode = "standard"
         self.dummy_processor = self._create_processor_instance(class_name)
         self.processors = []
@@ -61,11 +62,12 @@ class ProcessorBase(ABC):
     def set_params(self, params):
         self.params = params
         if len(params) != self.num_processors or type(params) != list:
-            self.logger.error(f"Failed to initialize processors {self.class_name}[{self.num_processors}]. Wrong params list.")
+            self.logger.error(
+                f"Failed to initialize processors {self.class_name}[{self.num_processors}]. Wrong params list.")
 
         # Detect execution_mode from the first param block (shared across all)
         if params and isinstance(params, list) and len(params) > 0:
-            self.execution_mode = params[0].get('execution_mode', EXEC_MODE_THREAD)
+            self.execution_mode = params[0].get('execution_mode', DEFAULT_EXECUTION_MODE)
             self.ipc_mode = params[0].get("ipc_mode", "standard")
 
         for i in range(0, self.num_processors):
@@ -108,7 +110,8 @@ class ProcessorBase(ABC):
                     self.logger.warning(f"Processor {i} ({self.class_name}) init failed; reconnect logic will retry")
             except Exception as e:
                 init_success = False
-                self.logger.warning(f"Processor {i} ({self.class_name}) init raised exception: {e}; reconnect logic will retry")
+                self.logger.warning(
+                    f"Processor {i} ({self.class_name}) init raised exception: {e}; reconnect logic will retry")
         return init_success
 
     def release(self):

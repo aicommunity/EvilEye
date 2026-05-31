@@ -1,13 +1,46 @@
 from abc import abstractmethod
+import datetime
 from ..core.base_class import EvilEyeBase
 from queue import Full, Queue, Empty
 import threading
 import time
 from .tracking_results import TrackingResultList
 from ..core.frame_transport import SharedFrameTransport
+from ..core.frame import Frame
+from ..object_detector.object_detection_base import DetectionResultList
 
-EXEC_MODE_THREAD = "thread"
-EXEC_MODE_PROCESS = "process"
+from ..core.processor_base import (
+    DEFAULT_EXECUTION_MODE,
+    EXEC_MODE_PROCESS,
+    EXEC_MODE_THREAD,
+)
+
+from ..core.mp_async_bridge import MpAsyncBridge
+from ..core.mp_pending_jobs import TrackerPendingJob
+from ..core.mp_queue_config import (
+    mp_control_queue_size,
+    mp_drain_poll_sec,
+    mp_pending_cap_tracker,
+    tracker_input_queue_size,
+    tracker_output_queue_size,
+)
+
+
+def _empty_tracking_output_for_input(
+    det_result: DetectionResultList,
+    frame: Frame,
+) -> tuple[TrackingResultList, Frame]:
+    tracks_info = TrackingResultList()
+    tracks_info.source_id = (
+        det_result.source_id if det_result.source_id is not None else frame.source_id
+    )
+    tracks_info.frame_id = (
+        det_result.frame_id if det_result.frame_id is not None else frame.frame_id
+    )
+    tracks_info.time_stamp = (
+        frame.time_stamp if frame.time_stamp is not None else datetime.datetime.now()
+    )
+    return tracks_info, frame
 
 
 class ObjectTrackingBase(EvilEyeBase):
@@ -17,7 +50,7 @@ class ObjectTrackingBase(EvilEyeBase):
         super().__init__()
 
         self.run_flag = False
-        self.execution_mode = EXEC_MODE_THREAD
+        self.execution_mode = DEFAULT_EXECUTION_MODE
 
         self.queue_in = None
         self.queue_out = None
@@ -31,13 +64,20 @@ class ObjectTrackingBase(EvilEyeBase):
         self._mp_control = None
         self._stopping = threading.Event()
         self._frame_transport = SharedFrameTransport()
+        self._diag_mp_get_timeout = 0
+        self._diag_mp_put_dropped = 0
+        self._mp_feed_thread: threading.Thread | None = None
+        self._mp_drain_thread: threading.Thread | None = None
+        self._mp_pending_cap: int = 0
+        self._diag_mp_pending_evict: int = 0
+        self._bridge: MpAsyncBridge[TrackerPendingJob] | None = None
 
     def _init_queues(self):
         # Tracker dispatcher and pipeline live in the same process.
         # Keep local queues thread-based even in process execution mode;
         # true IPC boundary is _mp_control worker queues.
-        self.queue_in = Queue(maxsize=2)
-        self.queue_out = Queue(maxsize=4)
+        self.queue_in = Queue(maxsize=tracker_input_queue_size())
+        self.queue_out = Queue(maxsize=tracker_output_queue_size())
         self.queue_dropped_id = Queue()
 
     def put(self, det_info, force=False):
@@ -97,10 +137,10 @@ class ObjectTrackingBase(EvilEyeBase):
         self.run_flag = True
         self._stopping.clear()
         if self.execution_mode == EXEC_MODE_PROCESS and self._mp_control is not None:
-            # Child process is already started during init
-            # Start the dispatcher thread that feeds queue_in -> mp_control
-            if self.processing_thread is not None:
-                self.processing_thread.start()
+            if self._mp_feed_thread is not None:
+                self._mp_feed_thread.start()
+            if self._mp_drain_thread is not None:
+                self._mp_drain_thread.start()
         elif self.processing_thread is not None:
             self.processing_thread.start()
 
@@ -121,14 +161,26 @@ class ObjectTrackingBase(EvilEyeBase):
         if self._mp_control is not None:
             self._mp_control.stop()
             self._mp_control = None
-        if self.processing_thread and self.processing_thread.is_alive():
-            self.processing_thread.join(timeout=1.5)
-            if self.processing_thread.is_alive():
-                self.logger.warning("Tracker processing_thread did not stop within 1.5s")
+        for name, thread in (
+            ("mp_feed", self._mp_feed_thread),
+            ("mp_drain", self._mp_drain_thread),
+            ("processing", self.processing_thread),
+        ):
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=1.5)
+                if thread.is_alive():
+                    self.logger.warning("Tracker %s thread did not stop within 1.5s", name)
+        if self._bridge is not None:
+            self._bridge.clear()
+            self._bridge = None
         self.logger.info('Tracker stopped')
 
     def init_impl(self, **kwargs):
-        new_mode = self.params.get('execution_mode', EXEC_MODE_THREAD) if self.params else EXEC_MODE_THREAD
+        new_mode = (
+            self.params.get('execution_mode', DEFAULT_EXECUTION_MODE)
+            if self.params
+            else DEFAULT_EXECUTION_MODE
+        )
         if new_mode != self.execution_mode:
             self.execution_mode = new_mode
             self._init_queues()
@@ -147,8 +199,10 @@ class ObjectTrackingBase(EvilEyeBase):
             default_restart_on_exit=True,
         )
 
+        tq = mp_control_queue_size(1, role="tracker")
         self._mp_control = MpControl(
-            max_input_size=4,
+            max_input_size=tq,
+            max_output_size=tq,
             name=f"tracker-{id(self)}",
             restart_on_exit=restart_on_exit,
             no_restart_exit_codes=no_restart_exit_codes,
@@ -157,14 +211,86 @@ class ObjectTrackingBase(EvilEyeBase):
         worker.set_params(self.params if self.params else {})
         self._mp_control.start()
 
-        # Dispatcher thread: reads from queue_in, sends to mp_control,
-        # reads results and puts them into queue_out
-        self.processing_thread = threading.Thread(
-            target=self._process_dispatch_loop, daemon=True,
+        # Thread mode: BoT-SORT runs in _process_impl. Process mode: feed + drain
+        # (same async contract as thread — queue_in/queue_out, no per-frame RPC wait).
+        self.processing_thread = None
+        self._mp_feed_thread = threading.Thread(
+            target=self._mp_tracker_feed_loop, daemon=True,
+        )
+        self._mp_drain_thread = threading.Thread(
+            target=self._mp_tracker_drain_loop, daemon=True,
+        )
+        self._diag_mp_pending_evict = 0
+        self._mp_pending_cap = mp_pending_cap_tracker()
+        self._bridge = MpAsyncBridge(
+            pending_cap=self._mp_pending_cap,
+            mp_control=self._mp_control,
+            release_on_drop=self._release_tracker_job,
+            logger=self.logger,
         )
 
-    def _process_dispatch_loop(self):
-        """Dispatcher loop for process mode"""
+    def mp_pending_depth(self) -> int:
+        if self._bridge is None:
+            return 0
+        return self._bridge.depth()
+
+    def mp_diag_put_dropped(self) -> int:
+        if self._bridge is None:
+            return 0
+        return self._bridge.diag_put_dropped()
+
+    def mp_diag_pending_evict(self) -> int:
+        if self._bridge is None:
+            return 0
+        return self._bridge.diag_pending_evict()
+
+    def _release_frame_handle(self, frame_handle) -> None:
+        if frame_handle is None:
+            return
+        try:
+            self._frame_transport.release_frame(frame_handle)
+        except Exception:
+            pass
+
+    def _release_tracker_job(self, job: TrackerPendingJob) -> None:
+        self._release_frame_handle(job.frame_handle)
+
+    def _enqueue_mp_tracker_job(self, detections, packed, frame_handle) -> bool:
+        """Queue job for FIFO worker and submit packed payload to MpControl."""
+        if self._bridge is None or self._mp_control is None:
+            return False
+        job = TrackerPendingJob(detections=detections, frame_handle=frame_handle)
+        ok = self._bridge.enqueue(packed, job)
+        if not ok:
+            if isinstance(detections, (list, tuple)) and len(detections) >= 2:
+                frame = detections[1]
+                try:
+                    self.queue_dropped_id.put_nowait(
+                        [frame.source_id, frame.frame_id]
+                    )
+                except Exception:
+                    pass
+        return ok
+
+    def _emit_mp_tracker_result(self, detections, result) -> None:
+        if result is None:
+            if isinstance(detections, (list, tuple)) and len(detections) >= 2:
+                det_result, frame = detections[0], detections[1]
+                if isinstance(det_result, DetectionResultList) and isinstance(frame, Frame):
+                    self._put_out_drop_oldest(
+                        _empty_tracking_output_for_input(det_result, frame)
+                    )
+            return
+        if isinstance(result, (list, tuple)) and len(result) == 2:
+            self._put_out_drop_oldest(result)
+            return
+        if isinstance(detections, (list, tuple)) and len(detections) >= 2:
+            self._put_out_drop_oldest((result, detections[1]))
+            return
+        self._put_out_drop_oldest(result)
+
+    def _mp_tracker_feed_loop(self):
+        """Process mode: queue_in -> mp_control input (non-blocking)."""
         while self.run_flag:
             if self._mp_control is None:
                 break
@@ -176,100 +302,61 @@ class ObjectTrackingBase(EvilEyeBase):
                 continue
             try:
                 packed, frame_handle = self._pack_for_worker(detections)
-                try:
-                    self._mp_control.put_nowait(packed)
-                except Exception:
-                    # Drop oldest pending input and retry non-blocking put.
-                    try:
-                        _ = self._mp_control.input_queue.get_nowait()
-                    except Exception:
-                        pass
-                    try:
-                        self._mp_control.put_nowait(packed)
-                    except Exception:
-                        if frame_handle is not None:
-                            try:
-                                self._frame_transport.release_frame(frame_handle)
-                            except Exception:
-                                pass
-                        continue
-                result = None
-                while self.run_flag and not self._stopping.is_set():
-                    try:
-                        result = self._mp_control.get(timeout=0.25)
-                        break
-                    except Empty:
-                        continue
-                    except Exception:
-                        break
-                if result is None:
-                    if frame_handle is not None:
-                        try:
-                            self._frame_transport.release_frame(frame_handle)
-                        except Exception:
-                            pass
-                    continue
-                if isinstance(result, (list, tuple)) and len(result) == 2:
-                    self._put_out_drop_oldest(result)
-                else:
-                    # New fast-path: worker returns only tracking payload,
-                    # keep original frame in parent process.
-                    if (
-                        isinstance(detections, (list, tuple))
-                        and len(detections) >= 2
-                    ):
-                        self._put_out_drop_oldest((result, detections[1]))
-                    else:
-                        self._put_out_drop_oldest(result)
-                if frame_handle is not None:
-                    try:
-                        self._frame_transport.release_frame(frame_handle)
-                    except Exception:
-                        pass
-            except Full:
-                # Backpressure: keep tracker loop responsive during shutdown/load spikes.
-                continue
-            except Empty:
-                continue
+                self._enqueue_mp_tracker_job(detections, packed, frame_handle)
             except Exception as e:
                 if self.run_flag:
-                    self.logger.error(f"Error in tracking dispatch loop: {e}")
+                    self.logger.error("Error in MP tracker feed loop: %s", e)
+
+    def _mp_tracker_drain_loop(self):
+        """Process mode: mp_control output -> queue_out (poll, no per-job blocking)."""
+        while self.run_flag:
+            if self._mp_control is None:
+                break
+            try:
+                result = self._mp_control.get(timeout=mp_drain_poll_sec())
+            except Empty:
+                continue
+            except Exception:
+                continue
+            if self._bridge is None:
+                continue
+            job = self._bridge.pop_head()
+            if job is None:
+                continue
+            try:
+                self._emit_mp_tracker_result(job.detections, result)
+            except Exception as e:
+                if self.run_flag:
+                    self.logger.error("Error in MP tracker drain loop: %s", e)
+            finally:
+                self._release_frame_handle(job.frame_handle)
 
     def _pack_for_worker(self, detections):
         """Pack tracking input for child process using frame descriptor."""
         if not (isinstance(detections, (list, tuple)) and len(detections) >= 2):
             return detections, None
         det_result, frame = detections[0], detections[1]
-        image = getattr(frame, "image", None)
-        if image is None:
+        if not isinstance(frame, Frame):
             return detections, None
-        frame_handle = self._frame_transport.alloc_frame(
-            image=image,
-            frame_id=int(getattr(frame, "frame_id", 0) or 0),
-            timestamp=float(getattr(frame, "time_stamp", time.time()) or time.time()),
+        from ..core.frame_worker_meta import pack_frame_for_worker
+
+        packed, frame_handle = pack_frame_for_worker(
+            frame,
+            frame_transport=self._frame_transport,
+            detection_result=det_result,
         )
-        frame_meta = {
-            "source_id": getattr(frame, "source_id", None),
-            "frame_id": getattr(frame, "frame_id", None),
-            "time_stamp": getattr(frame, "time_stamp", None),
-            "current_video_frame": getattr(frame, "current_video_frame", None),
-            "current_video_position": getattr(frame, "current_video_position", None),
-            "source_video_duration": getattr(frame, "source_video_duration", None),
-        }
-        packed = {
-            "detection_result": det_result,
-            "frame_handle": frame_handle,
-            "frame_meta": frame_meta,
-        }
         return packed, frame_handle
 
     def release_impl(self):
         if self._mp_control is not None:
             self._mp_control.stop()
             self._mp_control = None
-        if self.processing_thread is not None:
-            del self.processing_thread
-            self.processing_thread = None
+        if self._bridge is not None:
+            self._bridge.clear()
+            self._bridge = None
+        self.processing_thread = None
+        self._mp_feed_thread = None
+        self._mp_drain_thread = None
 
     @abstractmethod
     def _process_impl(self):

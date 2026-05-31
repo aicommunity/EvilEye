@@ -1023,6 +1023,21 @@ graph TB
 
 ## Уровень 5: Обработка объектов
 
+### Детекция и трекинг (thread vs `execution_mode`)
+
+До `ObjectsHandler` кадры проходят стадии pipeline:
+
+| Режим | Детектор | Трекер |
+|-------|----------|--------|
+| `thread` | `DetectionThreadYolo` + `YoloRuntime` в parent | `BOTSORT` в parent |
+| `process` | Parent: feed/drain + `MpAsyncBridge`; child: `MpWorkerYolo` | Parent: bridge; child: `MpWorkerTracker` + `track_update_core` |
+
+Ключевые модули MP: `mp_async_bridge`, `yolo_runtime`, `stage_result_normalizer`, `MpPendingReporter` (см. [thread_vs_mp_contracts.md §15](thread_vs_mp_contracts.md), [CODE_MODULE_INDEX.md](CODE_MODULE_INDEX.md)).
+
+`mc_trackers` всегда синхронны в parent (без `execution_mode: process`).
+
+---
+
 Система обработки объектов управляет детектированными и отслеживаемыми объектами на протяжении их жизненного цикла.
 
 ### Поток обработки объектов

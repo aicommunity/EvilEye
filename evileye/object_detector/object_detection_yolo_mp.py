@@ -4,7 +4,13 @@ from ..core.base_class import EvilEyeBase
 
 @EvilEyeBase.register("ObjectDetectorYoloMp")
 class ObjectDetectorYoloMp(ModelBasedDetectorBase):
-    """YOLO multiprocessing-based object detector."""
+    """Legacy YOLO detector that always uses MP detection threads.
+
+    .. deprecated::
+        Prefer :class:`ObjectDetectorYolo` with ``"execution_mode": "process"``
+        in config. That path uses ``DetectionThreadYoloMp`` with restart policy
+        and the same feed/drain contract without a separate registered type.
+    """
 
     def __init__(self):
         super().__init__()

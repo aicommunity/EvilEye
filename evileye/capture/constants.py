@@ -49,7 +49,7 @@ class CaptureConstants:
 
     # Default FPS fallback
     DEFAULT_FPS_FALLBACK: float = 15.0
-    
+
     # UDP stream error handling
     IGNORE_UDP_STREAM_ERRORS: bool = True  # Игнорировать временные UDP ошибки для стабильных камер
 
@@ -77,9 +77,10 @@ class CaptureConfig:
             min_sleep_seconds=config.get("min_sleep_seconds", CaptureConstants.MIN_SLEEP_SECONDS),
             default_sleep_seconds=config.get("default_sleep_seconds", CaptureConstants.DEFAULT_SLEEP_SECONDS),
             frame_timeout_seconds=config.get("frame_timeout_seconds", CaptureConstants.FRAME_TIMEOUT_SECONDS),
-            reconnect_monitor_interval=config.get("reconnect_monitor_interval", CaptureConstants.RECONNECT_MONITOR_INTERVAL),
-            init_grace_period_seconds=config.get("init_grace_period_seconds", CaptureConstants.INIT_GRACE_PERIOD_SECONDS),
+            reconnect_monitor_interval=config.get("reconnect_monitor_interval",
+                                                  CaptureConstants.RECONNECT_MONITOR_INTERVAL),
+            init_grace_period_seconds=config.get("init_grace_period_seconds",
+                                                 CaptureConstants.INIT_GRACE_PERIOD_SECONDS),
             default_fps_fallback=config.get("default_fps_fallback", CaptureConstants.DEFAULT_FPS_FALLBACK),
             ignore_udp_stream_errors=config.get("ignore_udp_stream_errors", CaptureConstants.IGNORE_UDP_STREAM_ERRORS),
         )
-

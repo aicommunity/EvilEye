@@ -2,9 +2,6 @@
 
 import sys
 import os
-from evileye.core.logging_config import setup_evileye_logging
-from evileye.core.logger import get_module_logger
-
 try:
     from PyQt6.QtWidgets import QApplication, QMainWindow, QPushButton, QVBoxLayout, QWidget
     from PyQt6.QtCore import Qt
@@ -16,11 +13,7 @@ except ImportError:
 
 from evileye.visualization_modules.main_window import MainWindow
 
-# Инициализация логирования для тестов
-logger = setup_evileye_logging(log_level="INFO", log_to_console=True, log_to_file=True)
-test_logger = get_module_logger("test")
-
-def test_journal_button_behavior(qapp):
+def test_journal_button_behavior(journal_test_logger, qapp):
     try:
         from PyQt6.QtCore import QTimer
     except ImportError:
@@ -30,7 +23,7 @@ def test_journal_button_behavior(qapp):
     app = qapp
     
     # Test 1: use_database = True
-    test_logger.info("=== Test 1: use_database = True ===")
+    journal_test_logger.info("=== Test 1: use_database = True ===")
     class MockControllerDB:
         def __init__(self):
             self.use_database = True
@@ -87,14 +80,14 @@ def test_journal_button_behavior(qapp):
     main_window_db = MainWindow(800, 600)
     main_window_db.set_controller(controller_db, 'test_config.json', config)
     # In DB mode journal initialization happens asynchronously; actions can be disabled until ready.
-    test_logger.info(f"DB mode - Objects journal enabled: {main_window_db.objects_journal.isEnabled()}")
-    test_logger.info(f"DB mode - Events journal enabled: {main_window_db.events_journal.isEnabled()}")
-    test_logger.info(f"DB mode - Objects journal tooltip: {main_window_db.objects_journal.toolTip()}")
-    test_logger.info(f"DB mode - Events journal tooltip: {main_window_db.events_journal.toolTip()}")
+    journal_test_logger.info(f"DB mode - Objects journal enabled: {main_window_db.objects_journal.isEnabled()}")
+    journal_test_logger.info(f"DB mode - Events journal enabled: {main_window_db.events_journal.isEnabled()}")
+    journal_test_logger.info(f"DB mode - Objects journal tooltip: {main_window_db.objects_journal.toolTip()}")
+    journal_test_logger.info(f"DB mode - Events journal tooltip: {main_window_db.events_journal.toolTip()}")
     main_window_db.close()
     
     # Test 2: use_database = False, journal created successfully
-    test_logger.info("\n=== Test 2: use_database = False, journal created ===")
+    journal_test_logger.info("\n=== Test 2: use_database = False, journal created ===")
     class MockControllerJSON:
         def __init__(self):
             self.use_database = False
@@ -120,14 +113,14 @@ def test_journal_button_behavior(qapp):
 
     main_window_json = MainWindow(800, 600)
     main_window_json.set_controller(controller_json, 'test_config.json', config)
-    test_logger.info(f"JSON mode - Objects journal enabled: {main_window_json.objects_journal.isEnabled()}")
-    test_logger.info(f"JSON mode - Events journal enabled: {main_window_json.events_journal.isEnabled()}")
-    test_logger.info(f"JSON mode - Objects journal tooltip: {main_window_json.objects_journal.toolTip()}")
-    test_logger.info(f"JSON mode - Events journal tooltip: {main_window_json.events_journal.toolTip()}")
+    journal_test_logger.info(f"JSON mode - Objects journal enabled: {main_window_json.objects_journal.isEnabled()}")
+    journal_test_logger.info(f"JSON mode - Events journal enabled: {main_window_json.events_journal.isEnabled()}")
+    journal_test_logger.info(f"JSON mode - Objects journal tooltip: {main_window_json.objects_journal.toolTip()}")
+    journal_test_logger.info(f"JSON mode - Events journal tooltip: {main_window_json.events_journal.toolTip()}")
     main_window_json.close()
     
     # Test 3: use_database = False, journal creation failed
-    test_logger.info("\n=== Test 3: use_database = False, journal creation failed ===")
+    journal_test_logger.info("\n=== Test 3: use_database = False, journal creation failed ===")
     class MockControllerFailed:
         def __init__(self):
             self.use_database = False
@@ -150,8 +143,8 @@ def test_journal_button_behavior(qapp):
     
     main_window_failed = MainWindow(800, 600)
     main_window_failed.set_controller(controller_failed, 'test_config.json', config)
-    test_logger.info(f"Failed mode - Objects journal enabled: {main_window_failed.objects_journal.isEnabled()}")
-    test_logger.info(f"Failed mode - Events journal enabled: {main_window_failed.events_journal.isEnabled()}")
+    journal_test_logger.info(f"Failed mode - Objects journal enabled: {main_window_failed.objects_journal.isEnabled()}")
+    journal_test_logger.info(f"Failed mode - Events journal enabled: {main_window_failed.events_journal.isEnabled()}")
     main_window_failed.close()
     
     # Закрываем все окна и корректно выходим (без принудительного app.quit()).
@@ -167,4 +160,4 @@ def test_journal_button_behavior(qapp):
     except Exception:
         pass
     
-    test_logger.info("\n=== Test completed ===")
+    journal_test_logger.info("\n=== Test completed ===")

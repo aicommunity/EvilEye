@@ -9,7 +9,7 @@ import numpy as np
 @EvilEyeBase.register("AttributeDetector")
 class AttributeDetector(ObjectDetectorBase):
     """Attribute detector for ROI images using YOLO model"""
-    
+
     def __init__(self):
         super().__init__()
         self.model_name = "models/y8mhardhats.pt"
@@ -21,9 +21,9 @@ class AttributeDetector(ObjectDetectorBase):
         super().init_impl()
         self.detection_threads = []
         inf_params = {
-            "show": self.params.get('show', False), 
+            "show": self.params.get('show', False),
             'conf': self.params.get('conf', 0.1),
-            'save': self.params.get('save', False), 
+            'save': self.params.get('save', False),
             "imgsz": self.params.get('inference_size', 224),
             "device": self.params.get('device', None)
         }
@@ -33,7 +33,7 @@ class AttributeDetector(ObjectDetectorBase):
             model_path = self.model_name
             if not os.path.isabs(model_path):
                 model_path = os.path.join(os.getcwd(), model_path)
-            
+
             try:
                 thread = AttributeDetectionThread(
                     model_path, self.stride, self.attrs, self.source_ids, self.roi, inf_params, self.queue_out

@@ -112,5 +112,3 @@ class DatabaseAdapterBase(EvilEyeBase, ABC):
     @abstractmethod
     def _update_impl(self, data: Any) -> None:
         pass
-
-

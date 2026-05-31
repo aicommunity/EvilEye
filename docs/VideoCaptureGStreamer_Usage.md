@@ -4,6 +4,31 @@
 
 `VideoCaptureGStreamer` is a GStreamer-based video capture class that provides enhanced performance and flexibility for various video sources compared to the OpenCV-based `VideoCaptureOpencv` class.
 
+## Multiprocessing (`execution_mode`)
+
+В секции `pipeline.sources` можно задать `"execution_mode": "process"` (по умолчанию, если ключ опущен — см. `DEFAULT_EXECUTION_MODE` в `processor_base.py`) или `"thread"`.
+
+| Режим | Где выполняется decode | Очереди |
+|-------|------------------------|---------|
+| `thread` | Parent, GStreamer pipeline в том же процессе, что controller | `threading.Queue` на facade |
+| `process` | Child [`MpWorkerCapture`](../evileye/capture/mp_worker_capture.py) (continuous loop) | Parent: feed/drain; overflow — [`queue_policy`](../evileye/capture/queue_policy.py) (drop-oldest) |
+
+**Пример (process, как в `configs/poly-videos.json`):**
+
+```json
+{
+  "camera": "videos/sample.mp4",
+  "source": "VideoFile",
+  "type": "VideoCaptureGStreamer",
+  "execution_mode": "process",
+  "desired_fps": 30
+}
+```
+
+Для thread-bench явно укажите `"execution_mode": "thread"` (см. `configs/poly-videos-thread.json`).
+
+См. [MULTIPROCESSING.md](MULTIPROCESSING.md), [capture_buffer_levels.md](capture_buffer_levels.md), [thread_vs_mp_contracts.md §4](thread_vs_mp_contracts.md).
+
 ## GStreamer requirements (Ubuntu)
 
 For correct work with H.264/H.265 and most common formats on Ubuntu, you must install GStreamer with the full set of plugins, including `h264parse`, decoders and container support:

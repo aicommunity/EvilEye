@@ -119,7 +119,8 @@ class ServerProcessManager:
         self._frame_queue = mp.Queue(maxsize=max(2, frame_queue_size))
         self._demand_queue = mp.Queue(maxsize=200)
         self._demand_stop.clear()
-        self._demand_thread = threading.Thread(target=self._demand_listener_loop, daemon=True, name="server-preview-demand")
+        self._demand_thread = threading.Thread(target=self._demand_listener_loop, daemon=True,
+                                               name="server-preview-demand")
         self._demand_thread.start()
         self._process = mp.Process(
             target=_run_server_in_process,
@@ -335,11 +336,14 @@ def _create_args_parser() -> argparse.ArgumentParser:
     pars = argparse.ArgumentParser(description="EvilEye API server wrapper")
     pars.add_argument("--host", type=str, default="127.0.0.1", help="Bind host")
     pars.add_argument("--port", type=int, default=8080, help="Bind port")
-    pars.add_argument("--reload", action=argparse.BooleanOptionalAction, default=True, help="Enable auto-reload (note: not supported with app instance)")
+    pars.add_argument("--reload", action=argparse.BooleanOptionalAction, default=True,
+                      help="Enable auto-reload (note: not supported with app instance)")
     pars.add_argument("--workers", type=int, default=1, help="Number of worker processes")
     pars.add_argument("--verbose", action="store_true", help="Enable verbose logging")
-    pars.add_argument("--log-level", type=str, default="info", choices=["critical", "error", "warning", "info", "debug", "trace"], help="Logging level")
-    pars.add_argument("--config", type=str, default=None, help="Autorun selected config (file path or name from configs/)")
+    pars.add_argument("--log-level", type=str, default="info",
+                      choices=["critical", "error", "warning", "info", "debug", "trace"], help="Logging level")
+    pars.add_argument("--config", type=str, default=None,
+                      help="Autorun selected config (file path or name from configs/)")
     pars.add_argument("--ssl-certfile", type=str, default=None, help="Path to TLS certificate file (PEM)")
     pars.add_argument("--ssl-keyfile", type=str, default=None, help="Path to TLS private key file (PEM)")
     return pars

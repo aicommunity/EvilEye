@@ -18,10 +18,10 @@ class DatabaseValidator:
         self.logger = logger or get_module_logger("database_validator")
 
     def validate_insert_params(
-        self,
-        table_name: Optional[str],
-        fields: Optional[List[str]],
-        data: Optional[Any],
+            self,
+            table_name: Optional[str],
+            fields: Optional[List[str]],
+            data: Optional[Any],
     ) -> tuple[bool, Optional[str]]:
         """Валидировать параметры для операции INSERT.
 
@@ -61,11 +61,11 @@ class DatabaseValidator:
         return True, None
 
     def validate_update_params(
-        self,
-        table_name: Optional[str],
-        fields: Optional[List[str]],
-        data: Optional[Any],
-        obj_id: Optional[Any],
+            self,
+            table_name: Optional[str],
+            fields: Optional[List[str]],
+            data: Optional[Any],
+            obj_id: Optional[Any],
     ) -> tuple[bool, Optional[str]]:
         """Валидировать параметры для операции UPDATE.
 

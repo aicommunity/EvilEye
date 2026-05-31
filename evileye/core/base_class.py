@@ -16,6 +16,7 @@ class EvilEyeBase(ABC):
             cls._registry[class_name] = wrapped_class
 
             return wrapped_class
+
         return inner_wrapper
 
     @classmethod

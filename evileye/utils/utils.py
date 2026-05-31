@@ -94,7 +94,7 @@ def create_roi(capture_image: CaptureImage, coords):
         # Return empty list if image is None to avoid TypeError
         return rois
     for x, y, w, h in coords:
-        roi_img = img[y:y+h, x:x+w]
+        roi_img = img[y:y + h, x:x + w]
         roi_capture = CaptureImage()
         roi_capture.source_id = capture_image.source_id
         roi_capture.frame_id = capture_image.frame_id
@@ -217,31 +217,31 @@ def draw_boxes(image, objects, cam_id, class_mapping, text_config=None):
     """
     # Apply text configuration
     config = apply_text_config(text_config)
-    
+
     for cam_objs in objects:
         if cam_objs['cam_id'] == cam_id:
             for obj in cam_objs['objects']:
                 # Draw bounding box
                 cv2.rectangle(image, (int(obj['bbox'][0]), int(obj['bbox'][1])),
                               (int(obj['bbox'][2]), int(obj['bbox'][3])), (0, 255, 0), thickness=8)
-                
+
                 # Get class name from class_mapping
                 class_name = get_class_name_from_mapping(obj['class'], class_mapping)
-                
+
                 # Create text label
                 text = str(class_name) + " " + "{:.2f}".format(obj['conf'])
-                
+
                 # Draw text with adaptive positioning
-                put_text_with_bbox(image, text, obj['bbox'], 
-                                 font_size_pt=config['font_size_pt'],
-                                 font_face=config['font_face'],
-                                 color=config['color'],
-                                 thickness=config['thickness'],
-                                 background_color=config['background_color'],
-                                 position_offset_percent=config['position_offset_percent'],
-                                 font_scale_method=config.get('font_scale_method', 'resolution_based'),
-                                 base_resolution=config.get('base_resolution', (1920, 1080)),
-                                 background_enabled=config.get('background_enabled', True))
+                put_text_with_bbox(image, text, obj['bbox'],
+                                   font_size_pt=config['font_size_pt'],
+                                   font_face=config['font_face'],
+                                   color=config['color'],
+                                   thickness=config['thickness'],
+                                   background_color=config['background_color'],
+                                   position_offset_percent=config['position_offset_percent'],
+                                   font_scale_method=config.get('font_scale_method', 'resolution_based'),
+                                   base_resolution=config.get('base_resolution', (1920, 1080)),
+                                   background_enabled=config.get('background_enabled', True))
 
 
 def draw_preview_boxes(image, width, height, box):
@@ -318,9 +318,11 @@ def draw_boxes_from_db(db_controller, table_name, load_folder, save_folder):
             utils_logger.error('Error saving image with boxes')
 
 
-def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_duration_msecs, font_scale, font_thickness, font_color, text_config=None, class_mapping=None, event_active_obj_ids=None, event_color=(0, 0, 255)):
+def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_duration_msecs, font_scale,
+                        font_thickness, font_color, text_config=None, class_mapping=None, event_active_obj_ids=None,
+                        event_color=(0, 0, 255)):
     height, width, channels = image.image.shape
-    
+
     # Apply text configuration
     config = apply_text_config(text_config)
     font_scale_method = config.get('font_scale_method', 'resolution_based')
@@ -349,7 +351,7 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
         max_history_segments = int(config.get('max_history_segments', 8) or 8)
     except Exception:
         max_history_segments = 8
-    
+
     # Draw source name
     if source_name is int:
         source_text = "Source Id: " + str(source_name)
@@ -371,48 +373,44 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
     except Exception:
         history_frame_id_int = None
     draw_history_lines = (
-        history_line_every <= 1
-        or (history_frame_id_int is not None and history_frame_id_int % history_line_every == 0)
+            history_line_every <= 1
+            or (history_frame_id_int is not None and history_frame_id_int % history_line_every == 0)
     )
     perf_diag_enabled = os.getenv("EVILEYE_PERF_DIAG", "").strip().lower() in {"1", "true", "yes", "on"}
     perf_diag_every = int(os.getenv("EVILEYE_PERF_DIAG_EVERY", "60") or "60")
 
     # Draw more attribute telemetry (fewer artificial simplifications).
     attr_max_drawn = 4
-    
+
     # Position source name at bottom-left (10% from left, 10% from bottom)
-    put_text_adaptive(image.image, source_text, (10, 90), 
-                     font_size_pt=config['font_size_pt'],
-                     font_face=config['font_face'],
-                     color=config['color'],
-                     thickness=config['thickness'],
-                     background_color=config['background_color'],
-                     font_scale_method=config.get('font_scale_method', 'resolution_based'),
-                     base_resolution=config.get('base_resolution', (1920, 1080)),
-                     background_enabled=config.get('background_enabled', True))
+    put_text_adaptive(image.image, source_text, (10, 90),
+                      font_size_pt=config['font_size_pt'],
+                      font_face=config['font_face'],
+                      color=config['color'],
+                      thickness=config['thickness'],
+                      background_color=config['background_color'],
+                      font_scale_method=config.get('font_scale_method', 'resolution_based'),
+                      base_resolution=config.get('base_resolution', (1920, 1080)),
+                      background_enabled=config.get('background_enabled', True))
 
     # Draw time position
     if image.current_video_position is not None and source_duration_msecs is not None:
         time_position_secs = image.current_video_position / 1000.0
         pos_string = "{:.1f}".format(time_position_secs) + " [" + "{:.1f}".format(source_duration_msecs / 1000.0) + "]"
-        
+
         # Position time at bottom-right (10% from right, 10% from bottom)
-        put_text_adaptive(image.image, pos_string, (90, 90), 
-                         font_size_pt=config['font_size_pt'],
-                         font_face=config['font_face'],
-                         color=config['color'],
-                         thickness=config['thickness'],
-                         background_color=config['background_color'],
-                         font_scale_method=config.get('font_scale_method', 'resolution_based'),
-                         base_resolution=config.get('base_resolution', (1920, 1080)),
-                         background_enabled=config.get('background_enabled', True))
+        put_text_adaptive(image.image, pos_string, (90, 90),
+                          font_size_pt=config['font_size_pt'],
+                          font_face=config['font_face'],
+                          color=config['color'],
+                          thickness=config['thickness'],
+                          background_color=config['background_color'],
+                          font_scale_method=config.get('font_scale_method', 'resolution_based'),
+                          base_resolution=config.get('base_resolution', (1920, 1080)),
+                          background_enabled=config.get('background_enabled', True))
 
     # Для трекинга отображаем только последние данные об объекте из истории
-    # utils_logger.error(cameras_objs)
     for obj in cameras_objs:
-        # if obj.frame_id < image.frame_id:
-        #     continue
-
         last_hist_index = len(obj.history) - 1
         last_info = obj.track
         match_mode = "fallback_current"
@@ -429,7 +427,8 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
             match_mode = "exact_match"
 
         cv2.rectangle(image.image, (int(last_info.bounding_box[0]), int(last_info.bounding_box[1])),
-                      (int(last_info.bounding_box[2]), int(last_info.bounding_box[3])), (0, 255, 0), thickness=font_thickness)
+                      (int(last_info.bounding_box[2]), int(last_info.bounding_box[3])), (0, 255, 0),
+                      thickness=font_thickness)
 
         # Если объект активен по событию — поверх рисуем такой же bbox цветом события
         try:
@@ -442,13 +441,13 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
                                   event_color, thickness=max(2, int(font_thickness * 1.5)))
         except Exception:
             pass
-        
+
         # Create tracking text with class name instead of class_id
         if reverse_class_mapping is not None:
             class_name = reverse_class_mapping.get(last_info.class_id, f"class_{last_info.class_id}")
         else:
             class_name = f"class_{last_info.class_id}"
-            
+
         if obj.global_id is not None:
             tracking_text = f'G{obj.global_id} {class_name} [{last_info.track_id}:{"{:.2f}".format(last_info.confidence)}]'
         else:
@@ -456,14 +455,14 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
 
         # Draw tracking text with adaptive positioning
         put_text_with_bbox(image.image, tracking_text, last_info.bounding_box,
-                          font_face=font_face,
-                          font_scale=resolved_font_scale,
-                          color=config['color'],
-                          thickness=resolved_thickness,
-                          background_color=config['background_color'],
-                          position_offset_percent=position_offset_percent,
-                          background_enabled=background_enabled)
-        
+                           font_face=font_face,
+                           font_scale=resolved_font_scale,
+                           color=config['color'],
+                           thickness=resolved_thickness,
+                           background_color=config['background_color'],
+                           position_offset_percent=position_offset_percent,
+                           background_enabled=background_enabled)
+
         # Draw attributes if available
         if hasattr(obj, 'attributes') and obj.attributes:
             draw_object_attributes(
@@ -476,7 +475,6 @@ def draw_boxes_tracking(image: CaptureImage, cameras_objs, source_name, source_d
                 max_attrs=attr_max_drawn,
             )
 
-        # utils_logger.error(len(obj['obj_info']))
         if draw_history_lines and len(obj.history) > 1:
             hist_start_index = max(0, last_hist_index - max_history_segments)
             line_segments_drawn = 0
@@ -602,13 +600,13 @@ def normalize_config_path(config_path):
     """
     import os
     from pathlib import Path
-    
+
     config_path_str = str(config_path)
-    
+
     # If it's already an absolute path or already has configs/ prefix, return as is
     if os.path.isabs(config_path_str) or config_path_str.startswith("configs"):
         return config_path_str
-    
+
     # Add configs/ prefix
     return os.path.join("configs", config_path_str)
 
@@ -649,25 +647,25 @@ def calculate_font_scale_for_resolution(font_size_pt, image_width, image_height,
     """
     # Convert points to pixels at 96 DPI
     font_size_px = pt_to_pixels(font_size_pt, dpi=96)
-    
+
     # Calculate resolution factor based on image size
     # Use the smaller dimension to avoid oversized text on very wide/tall images
     image_min_dimension = min(image_width, image_height)
     base_min_dimension = min(base_resolution[0], base_resolution[1])
-    
+
     # Calculate scaling factor
     resolution_factor = image_min_dimension / base_min_dimension
-    
+
     # Apply resolution scaling to font size
     scaled_font_size_px = font_size_px * resolution_factor
-    
+
     # Convert to OpenCV font scale (approximate conversion)
     # OpenCV font scale is roughly pixels / 30 for FONT_HERSHEY_SIMPLEX
     font_scale = scaled_font_size_px / 30.0
-    
+
     # Ensure minimum and maximum reasonable values
     font_scale = max(0.1, min(font_scale, 10.0))
-    
+
     return font_scale
 
 
@@ -685,23 +683,23 @@ def calculate_font_scale_simple(font_size_pt, image_width, image_height):
     """
     # Convert points to pixels
     font_size_px = pt_to_pixels(font_size_pt, dpi=96)
-    
+
     # Calculate image diagonal
     image_diagonal = (image_width ** 2 + image_height ** 2) ** 0.5
-    
+
     # Base diagonal for 1920x1080
     base_diagonal = (1920 ** 2 + 1080 ** 2) ** 0.5
-    
+
     # Calculate scaling factor
     scale_factor = image_diagonal / base_diagonal
-    
+
     # Apply scaling and convert to OpenCV scale
     scaled_font_size_px = font_size_px * scale_factor
     font_scale = scaled_font_size_px / 30.0
-    
+
     # Ensure reasonable bounds
     font_scale = max(0.1, min(font_scale, 10.0))
-    
+
     return font_scale
 
 
@@ -759,9 +757,9 @@ def get_adaptive_font_scale(text, target_width_px, font_face=cv2.FONT_HERSHEY_SI
     return 0.1
 
 
-def put_text_adaptive(image, text, position_percent, font_size_pt=12, font_face=cv2.FONT_HERSHEY_SIMPLEX, 
-                     color=(255, 255, 255), thickness=None, background_color=None, padding_percent=2.0,
-                     font_scale_method="resolution_based", base_resolution=(1920, 1080), background_enabled=True):
+def put_text_adaptive(image, text, position_percent, font_size_pt=12, font_face=cv2.FONT_HERSHEY_SIMPLEX,
+                      color=(255, 255, 255), thickness=None, background_color=None, padding_percent=2.0,
+                      font_scale_method="resolution_based", base_resolution=(1920, 1080), background_enabled=True):
     """
     Draw text with adaptive positioning and sizing.
     
@@ -783,47 +781,47 @@ def put_text_adaptive(image, text, position_percent, font_size_pt=12, font_face=
         Modified image
     """
     height, width = image.shape[:2]
-    
+
     # Calculate font scale based on image resolution
     if font_scale_method == "simple":
         font_scale = calculate_font_scale_simple(font_size_pt, width, height)
     else:  # resolution_based
         font_scale = calculate_font_scale_for_resolution(font_size_pt, width, height, base_resolution)
-    
+
     # Auto-calculate thickness if not provided
     if thickness is None:
         thickness = max(1, int(font_scale * 2))
-    
+
     # Calculate position in pixels
     x_px = percent_to_pixels(position_percent[0], width)
     y_px = percent_to_pixels(position_percent[1], height)
-    
+
     # Calculate text size
     text_width, text_height = calculate_text_size(text, font_face, font_scale, thickness)
-    
+
     # Adjust position to ensure text fits within image bounds
     if x_px + text_width > width:
         x_px = width - text_width - 10
     if y_px - text_height < 0:
         y_px = text_height + 10
-    
+
     # Draw background if specified and enabled
     if background_color and background_enabled:
         padding_px = percent_to_pixels(padding_percent, width)
-        cv2.rectangle(image, 
-                     (x_px - padding_px, y_px - text_height - padding_px),
-                     (x_px + text_width + padding_px, y_px + padding_px),
-                     background_color, -1)
-    
+        cv2.rectangle(image,
+                      (x_px - padding_px, y_px - text_height - padding_px),
+                      (x_px + text_width + padding_px, y_px + padding_px),
+                      background_color, -1)
+
     # Draw text
     cv2.putText(image, text, (x_px, y_px), font_face, font_scale, color, thickness)
-    
+
     return image
 
 
 def put_text_with_bbox(image, text, bbox, font_face, font_scale, thickness,
-                      color=(255, 255, 255), background_color=None,
-                      position_offset_percent=(0, -10), background_enabled=True):
+                       color=(255, 255, 255), background_color=None,
+                       position_offset_percent=(0, -10), background_enabled=True):
     """
     Draw text near a bounding box with adaptive positioning.
     
@@ -845,40 +843,40 @@ def put_text_with_bbox(image, text, bbox, font_face, font_scale, thickness,
         Modified image
     """
     height, width = image.shape[:2]
-    
+
     # Calculate position relative to bbox
     x_offset = percent_to_pixels(position_offset_percent[0], width)
     y_offset = percent_to_pixels(position_offset_percent[1], height)
-    
+
     x_px = int(bbox[0]) + x_offset
     y_px = int(bbox[1]) + y_offset
-    
+
     # Ensure text doesn't go outside image bounds
     if x_px < 0:
         x_px = 10
     if y_px < 0:
         y_px = 10
-    
+
     # Calculate text size
     text_width, text_height = calculate_text_size(text, font_face, font_scale, thickness)
-    
+
     # Adjust if text would go outside image
     if x_px + text_width > width:
         x_px = width - text_width - 10
     if y_px - text_height < 0:
         y_px = text_height + 10
-    
+
     # Draw background if specified and enabled
     if background_color and background_enabled:
         padding_px = 5
-        cv2.rectangle(image, 
-                     (x_px - padding_px, y_px - text_height - padding_px),
-                     (x_px + text_width + padding_px, y_px + padding_px),
-                     background_color, -1)
-    
+        cv2.rectangle(image,
+                      (x_px - padding_px, y_px - text_height - padding_px),
+                      (x_px + text_width + padding_px, y_px + padding_px),
+                      background_color, -1)
+
     # Draw text
     cv2.putText(image, text, (x_px, y_px), font_face, font_scale, color, thickness)
-    
+
     return image
 
 
@@ -895,18 +893,18 @@ def draw_object_attributes(image, obj, bbox, font_face, font_scale, thickness, m
     """
     if not hasattr(obj, 'attributes') or not obj.attributes:
         return
-    
+
     # Position attributes below the main label
     x1, y1, x2, y2 = bbox
     attr_y = y2 + 5  # Start below the bounding box
-    
+
     # Color mapping for attribute states
     state_colors = {
-        'none': (128, 128, 128),    # Gray
-        'exists': (0, 255, 0),      # Green  
-        'lost': (0, 255, 255)       # Yellow
+        'none': (128, 128, 128),  # Gray
+        'exists': (0, 255, 0),  # Green
+        'lost': (0, 255, 255)  # Yellow
     }
-    
+
     # Calculate font scale for attributes (0.5x of object class font scale)
     attr_font_scale = font_scale
     attr_thickness = thickness
@@ -931,35 +929,35 @@ def draw_object_attributes(image, obj, bbox, font_face, font_scale, thickness, m
                 f"f={frames_present} t={total_time_ms}ms fr={found_ratio:.2f}"
             )
             attr_texts.append((attr_text, color))
-    
+
     # Calculate text height for proper spacing
     if attr_texts:
         # Use first attribute text to calculate height
         sample_text = attr_texts[0][0]
         (_, text_height), baseline = cv2.getTextSize(sample_text, attr_font_face,
-                                                    attr_font_scale, attr_thickness)
+                                                     attr_font_scale, attr_thickness)
         line_spacing = text_height + 4  # Add 4 pixels padding between lines
     else:
         line_spacing = 20  # Fallback spacing
-    
+
     # Draw attribute texts
     for i, (attr_text, color) in enumerate(attr_texts):
         text_y = attr_y + i * line_spacing
-        
+
         # Draw background rectangle for better visibility
         (text_width, text_height), baseline = cv2.getTextSize(attr_text, attr_font_face,
-                                                             attr_font_scale, attr_thickness)
+                                                              attr_font_scale, attr_thickness)
         # Ensure coordinates are integers
         rect_x1 = int(x1)
         rect_y1 = int(text_y - text_height - 2)
         rect_x2 = int(x1 + text_width + 4)
         rect_y2 = int(text_y + 2)
         cv2.rectangle(image, (rect_x1, rect_y1), (rect_x2, rect_y2), (0, 0, 0), -1)
-        
+
         # Draw attribute text
-        cv2.putText(image, attr_text, (int(x1 + 2), int(text_y)), 
-                   attr_font_face, attr_font_scale,
-                   color, attr_thickness)
+        cv2.putText(image, attr_text, (int(x1 + 2), int(text_y)),
+                    attr_font_face, attr_font_scale,
+                    color, attr_thickness)
 
 
 def get_default_text_config():
@@ -997,9 +995,9 @@ def apply_text_config(text_config, default_config=None):
     """
     if default_config is None:
         default_config = get_default_text_config()
-    
+
     merged_config = default_config.copy()
     if text_config:
         merged_config.update(text_config)
-    
+
     return merged_config

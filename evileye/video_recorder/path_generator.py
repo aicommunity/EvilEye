@@ -24,11 +24,11 @@ class PathGenerator:
 
     @staticmethod
     def generate_stream_path(
-        source: Optional[SourceMeta],
-        params: RecordingParams,
-        segment_started_ts: float,
-        seq: int,
-        use_pattern: bool = False,
+            source: Optional[SourceMeta],
+            params: RecordingParams,
+            segment_started_ts: float,
+            seq: int,
+            use_pattern: bool = False,
     ) -> str:
         date_dir = time.strftime("%Y-%m-%d", time.localtime(segment_started_ts))
         camera_folder = PathGenerator.get_camera_folder(source)
@@ -55,11 +55,11 @@ class PathGenerator:
 
     @staticmethod
     def generate_event_path(
-        source: Optional[SourceMeta],
-        params: RecordingParams,
-        event_id: int,
-        event_name: str,
-        event_timestamp: float,
+            source: Optional[SourceMeta],
+            params: RecordingParams,
+            event_id: int,
+            event_name: str,
+            event_timestamp: float,
     ) -> Path:
         event_date = datetime.fromtimestamp(event_timestamp).strftime("%Y-%m-%d")
         event_time = datetime.fromtimestamp(event_timestamp).strftime("%Y%m%d_%H%M%S")
@@ -74,4 +74,3 @@ class PathGenerator:
         )
         filename = f"{source_name}_{event_name}_{event_id}_{event_time}.{params.container}"
         return out_dir / filename
-

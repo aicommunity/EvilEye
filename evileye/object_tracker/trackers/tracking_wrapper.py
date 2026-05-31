@@ -10,6 +10,7 @@ from ...core.logger import get_module_logger
 # A mapping of tracker types to corresponding tracker classes
 TRACKER_MAP = {"bytetrack": BYTETracker, "botsort": BOTSORT}
 
+
 class TrackingWrapper:
     def __init__(self, detector: YOLO, tracker: BYTETracker):
         self.logger = get_module_logger("tracking_wrapper")
@@ -27,7 +28,7 @@ class TrackingWrapper:
                 tracks = self.update(boxes)
                 break
             self.logger.info(tracks)
-            
+
             # Display the annotated frame
             cv2.imshow("YOLOv8 Tracking", cv2.resize(img, (600, 600)))
 
@@ -39,9 +40,6 @@ class TrackingWrapper:
         det = boxes.cpu().numpy()
         if len(det) == 0:
             return None
-        
+
         tracks = self.tracker.update(det.cls, det.xywh, det.conf, None)
         return tracks
-
-        
-

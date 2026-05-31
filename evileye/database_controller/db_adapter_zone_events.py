@@ -11,6 +11,7 @@ import numpy as np
 from ..utils import threading_events
 from ..utils import utils
 from psycopg2 import sql
+from .event_image_writer import EventImageWriter
 
 
 class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
@@ -20,6 +21,13 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
         self.preview_width = self.db_params['preview_width']
         self.preview_height = self.db_params['preview_height']
         self.preview_size = (self.preview_width, self.preview_height)
+        self._event_image_writer = EventImageWriter(
+            self.image_dir,
+            self.preview_width,
+            self.preview_height,
+            db_controller=self.db_controller,
+            logger=self.logger,
+        )
 
     def set_params_impl(self):
         super().set_params_impl()
@@ -144,29 +152,17 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
             threading_events.notify(EventType.UPDATE_EVENT)
 
     def _save_image(self, preview_path, frame_path, image, box, zone_coords):
-        # Centralized storage (preferred)
-        try:
-            if hasattr(self.db_controller, "_save_image"):
-                self.db_controller._save_image(preview_path, frame_path, image, box, zone_coords=zone_coords)
-                return
-        except Exception:
-            pass
-
-        # Fallback to legacy direct save (should be removable after migration)
-        preview_save_dir = os.path.join(self.image_dir, preview_path)
-        frame_save_dir = os.path.join(self.image_dir, frame_path)
-        preview = cv2.resize(image.image.copy(), self.preview_size, cv2.INTER_NEAREST)
-        preview_boxes = utils.draw_preview_boxes_zones(preview, self.preview_width, self.preview_height, box, zone_coords)
-        preview_saved = cv2.imwrite(preview_save_dir, preview_boxes)
-        frame_saved = cv2.imwrite(frame_save_dir, image.image)
-        if not preview_saved or not frame_saved:
-            self.logger.error(f"ERROR: can't save image file {frame_save_dir}")
+        self._event_image_writer.save(
+            preview_path, frame_path, image, box=box, zone_coords=zone_coords
+        )
 
     def _prepare_for_updating(self, event):
         fields_for_updating = {'time_left': event.time_left,
                                'box_left': event.box_left,
-                               'frame_path_left': self._get_img_path('frame', 'zone_left', event, time_lost=event.time_left),
-                               'preview_path_left': self._get_img_path('preview', 'zone_left', event, time_lost=event.time_left),
+                               'frame_path_left': self._get_img_path('frame', 'zone_left', event,
+                                                                     time_lost=event.time_left),
+                               'preview_path_left': self._get_img_path('preview', 'zone_left', event,
+                                                                       time_lost=event.time_left),
                                'video_path_left': getattr(event, 'video_path_left', None)}
 
         if event.box_left is not None and event.img_left is not None and hasattr(event.img_left, 'image'):
@@ -189,9 +185,11 @@ class DatabaseAdapterZoneEvents(DatabaseAdapterBase):
                              'box_entered': event.box_entered,
                              'box_left': None,
                              'zone_coords': None,
-                             'frame_path_entered': self._get_img_path('frame', 'zone_entered', event, event.time_entered),
+                             'frame_path_entered': self._get_img_path('frame', 'zone_entered', event,
+                                                                      event.time_entered),
                              'frame_path_left': None,
-                             'preview_path_entered': self._get_img_path('preview', 'zone_entered', event, event.time_entered),
+                             'preview_path_entered': self._get_img_path('preview', 'zone_entered', event,
+                                                                        event.time_entered),
                              'preview_path_left': None,
                              'video_path_entered': getattr(event, 'video_path_entered', None),
                              'video_path_left': None,

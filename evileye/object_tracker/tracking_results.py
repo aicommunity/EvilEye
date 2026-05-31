@@ -3,6 +3,7 @@ import copy
 from ..object_detector.object_detection_base import DetectionResultList
 from ..object_detector.object_detection_base import DetectionResult
 
+
 class TrackingResult:
     def __init__(self):
         self.track_id = 0
@@ -17,6 +18,7 @@ class TrackingResult:
 
 class TrackingResultList:
     generator_counter = 0
+
     def __init__(self):
         self.source_id = None
         self.frame_id = None

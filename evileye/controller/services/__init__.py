@@ -2,6 +2,7 @@
 
 from .pipeline_service import PipelineService
 from .database_service import DatabaseService
+from .event_recording_service import EventRecordingService
 from .events_service import EventsService
 from .visualization_service import VisualizationService
 from .config_service import ConfigurationService
@@ -12,6 +13,7 @@ from .service_locator import ServiceLocator
 __all__ = [
     'PipelineService',
     'DatabaseService',
+    'EventRecordingService',
     'EventsService',
     'VisualizationService',
     'ConfigurationService',

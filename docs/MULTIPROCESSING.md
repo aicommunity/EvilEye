@@ -13,6 +13,7 @@
 - [Жизненный цикл процессов](#жизненный-цикл-процессов)
 - [Кросс-процессное логирование](#кросс-процессное-логирование)
 - [Обратная совместимость](#обратная-совместимость)
+- [Переменные окружения pipeline (MP tuning)](#переменные-окружения-pipeline-mp-tuning)
 - [Переменные окружения и единый стриминг (Config Run)](#переменные-окружения-и-единый-стриминг-config-run)
 - [Каталог диаграмм](#каталог-диаграмм)
 - [FAQ](#faq)
@@ -114,6 +115,7 @@ evileye-process --config configs/single_video_multiprocess.json --no-gui
 ```bash
 evileye-launch
 evileye-launch configs/single_video_multiprocess.json
+# или: evileye-launch -u   (GUI без позиционного конфига)
 ```
 
 ### Веб-сервер: актуальные схемы запуска
@@ -254,8 +256,8 @@ EvilEye поддерживает два режима выполнения для
 
 | Режим | Параметр | Описание |
 |-------|----------|----------|
-| **Thread** | `"execution_mode": "thread"` | Потоки в одном процессе (по умолчанию) |
-| **Process** | `"execution_mode": "process"` | Отдельные OS-процессы через `multiprocessing` |
+| **Thread** | `"execution_mode": "thread"` | Потоки в одном процессе |
+| **Process** | `"execution_mode": "process"` | Отдельные OS-процессы через `multiprocessing` (по умолчанию) |
 
 Режим выбирается **для каждого компонента независимо** через JSON-конфигурацию.
 Можно комбинировать: например, детекцию запустить в отдельном процессе,
@@ -321,8 +323,9 @@ ProcessorStep не знает, работает ли компонент в по�
 
 | Компонент | Класс | Файл воркера | Что выносится в процесс |
 |-----------|-------|-------------|------------------------|
-| **Детекция** | `ObjectDetectorYolo` | `mp_worker_yolo.py` | YOLO/RT-DETR инференс (GPU) |
-| **Трекинг** | `ObjectTrackingBotsort` | `mp_worker_tracker.py` | BOTSORT + ONNX-энкодер (CPU) |
+| **Захват (GStreamer)** | `VideoCaptureGStreamer` | `mp_worker_capture.py` | Decode в child; parent — feed/drain + [`queue_policy`](../evileye/capture/queue_policy.py) |
+| **Детекция** | `ObjectDetectorYolo` | `mp_worker_yolo.py` | YOLO в child (`YoloRuntime`); parent — `DetectionThreadYoloMp` + [`MpAsyncBridge`](../evileye/core/mp_async_bridge.py) |
+| **Трекинг** | `ObjectTrackingBotsort` | `mp_worker_tracker.py` | BoT-SORT + ReID в child; parent — bridge + [`track_update_core`](../evileye/object_tracker/track_update_core.py) |
 | **ROI Feeder** | `RoiFeeder` | `mp_worker_attributes.py` | ROI |
 | **Атрибуты** | `AttributeClassifier` | `mp_worker_attributes.py` | YOLO |
 | **Веб-сервер** | `ServerProcessManager` | `server.py` | FastAPI + Uvicorn |
@@ -336,8 +339,8 @@ ProcessorStep не знает, работает ли компонент в по�
 Параметр `"execution_mode"` добавляется в секцию конкретного компонента.
 Допустимые значения:
 
-- `"thread"` - потоковый режим (по умолчанию, если параметр не указан)
-- `"process"` - мультипроцессный режим
+- `"process"` - мультипроцессный режим (по умолчанию, если параметр не указан)
+- `"thread"` - потоковый режим
 
 ### Примеры
 
@@ -362,7 +365,7 @@ ProcessorStep не знает, работает ли компонент в по�
 }
 ```
 
-> Трекинг остаётся в потоке (execution_mode не указан → "thread")
+> Трекинг в потоке только при явном `"execution_mode": "thread"`; иначе — `"process"`
 
 #### Детекция + трекинг в процессах
 
@@ -427,7 +430,7 @@ ProcessorStep не знает, работает ли компонент в по�
 }
 ```
 
-#### Всё в потоках (по умолчанию, обратная совместимость)
+#### Всё в потоках (явный `execution_mode: thread` в каждой секции)
 
 ```json
 {
@@ -446,6 +449,38 @@ ProcessorStep не знает, работает ли компонент в по�
     }
 }
 ```
+
+---
+
+## Контракт MP-пайплайна (результаты и синхронизация)
+
+### Результаты для GUI / ObjectsHandler
+
+- Контроллер читает объекты и кадры визуализации **только из финальной секции**
+  пайплайна (`get_final_results_name()`, обычно `mc_trackers` при `enable: true`).
+- Режим `sticky_non_empty` держит последний **непустой** snapshot **той же секции**
+  (без fallback `mc → trackers → detectors → sources`).
+
+### Трекер в `execution_mode: process`
+
+- Два потока в родителе (как у thread-режима с одной очередью, но граница IPC):
+  **feed** (`queue_in` → `mp_control.put_nowait`) и **drain** (`mp_control.get` poll → `queue_out`).
+  Один worker обрабатывает FIFO; `pending` связывает ответ с кадром и освобождает `frame_handle`.
+- Нет синхронного `put`+`get` на каждый кадр в одном потоке — результаты догоняют pipeline
+  на следующих тиках, как в thread-режиме.
+- При двойном сбое `put` в `MpControl` frame_id пишется в `queue_dropped_id`.
+
+### Multi-camera tracker (tick-batch)
+
+- `ProcessorStep` для `mc_trackers` собирает `Dict[source_id, (TrackingResultList, Frame)]`
+  за один `pipeline.process()` и вызывает `ObjectMultiCameraTracking.process_tick_batch`.
+- Emit требует **все** `source_ids`, согласованные `frame_id` (spread ≤ 3), и хотя бы
+  одну камеру с новым `frame_id` относительно прошлого emit.
+- Фоновый цикл `_process_impl` (150 ms) не запускается при `_pipeline_tick_batch=True`.
+
+### Диагностика
+
+`EVILEYE_PERF_DIAG=1` — счётчики `tick_skip`, `partial`, MP tracker timeout/drop в логах.
 
 ---
 
@@ -611,10 +646,22 @@ ProcessorStep не знает, работает ли компонент в по�
 |------|-------------|
 | `evileye/core/mp_worker.py` | Абстрактный базовый класс `MpWorker` |
 | `evileye/core/mp_control.py` | Контроллер пула процессов `MpControl` |
-| `evileye/core/process_manager.py` | Синглтон-реестр `ProcessManager` |
+| `evileye/core/mp_async_bridge.py` | FIFO pending + put policy (det/track feed/drain) |
+| `evileye/core/mp_pending_jobs.py` | `DetectorPendingJob`, `TrackerPendingJob` |
+| `evileye/core/mp_stage.py` | Протокол `MpPendingReporter` (backlog в pipeline) |
+| `evileye/core/mp_queue_config.py` | Размеры очередей и env (`EVILEYE_MP_*`) |
+| `evileye/core/stage_result_normalizer.py` | Нормализация `(data, frame)` в `ProcessorStep` |
+| `evileye/core/frame_worker_meta.py` | Pack/unpack кадра для MP worker |
+| `evileye/core/execution_backend.py` | Factory det/track backend (S5) |
+| `evileye/object_detector/yolo_runtime.py` | Общий YOLO inference (thread + MP child) |
+| `evileye/object_detector/detection_preprocess.py` | Общий ROI split |
+| `evileye/capture/queue_policy.py` | drop-oldest для capture/deque |
 | `evileye/object_tracker/mp_worker_tracker.py` | Воркер трекинга `MpWorkerTracker` |
+| `evileye/capture/mp_worker_capture.py` | Continuous capture child |
 | `evileye/attributes_detection/mp_worker_attributes.py` | Воркеры атрибутов `MpWorkerRoiFeeder`, `MpWorkerAttributeClassifier` |
 | `configs/single_video_multiprocess.json` | Пример конфига с `execution_mode: "process"` |
+
+Подробный индекс: [thread_vs_mp_contracts.md §15](thread_vs_mp_contracts.md), [CODE_MODULE_INDEX.md](CODE_MODULE_INDEX.md). Уровни буферов capture: [capture_buffer_levels.md](capture_buffer_levels.md).
 
 
 
@@ -1044,10 +1091,10 @@ API и используется как стандартный механизм �
 
 **Что изменилось**:
 - `__init__` создаёт `MpControl` с уникальным именем (`det-mp-0`, `det-mp-1`, ...)
-- `MpWorkerYolo` получает `log_queue` через `MpControl.add_worker()`
-- Добавлен `stop()` для остановки `MpControl`
-- Интерфейс `predict()` / `get_bboxes()` не изменился — остальной пайплайн
-  не знает, что внутри работает отдельный процесс
+- Вместо блокирующего `predict()` → `get()` в `_process_impl`: потоки **feed** и **drain**
+  (как у thread-режима: `queue_in` / `queue_out`, результаты догоняют pipeline на следующих тиках)
+- `_detection_result_from_predict()` в `DetectionThreadBase` — общая сборка bbox после worker
+- `predict()` оставлен для синхронных тестов; production — feed/drain
 
 ---
 
@@ -1067,7 +1114,7 @@ API и используется как стандартный механизм �
 | `execution_mode` | `str` | `"thread"` или `"process"` |
 | `_mp_control` | `MpControl \| None` | Пул процессов |
 | `_init_process_mode()` | Метод | Создаёт `MpControl` + `MpWorkerTracker` + dispatcher thread |
-| `_process_dispatch_loop()` | Метод | Dispatcher: `queue_in` → `mp_control.put()` → `mp_control.get()` → `queue_out` |
+| `_mp_tracker_feed_loop()` / `_mp_tracker_drain_loop()` | Метод | Async: feed → `put_nowait`, drain → poll `get` → `queue_out` |
 
 **Паттерн Dispatcher Thread**:
 
@@ -1118,9 +1165,24 @@ ProcessorStep                    Dispatcher Thread              Child Process
 **Что изменилось**:
 - Добавлен `execution_mode` в `__init__`, `set_params_impl`, `get_params_impl`
 - `init_impl()` ветвится на `_init_thread_mode()` и `_init_process_mode()`
-- В потоковом режиме: YOLO-модель загружается в основном процессе
-- В процессном режиме: `MpControl` + `MpWorkerAttributeClassifier` + dispatcher thread
+- В потоковом режиме: `YOLO()` загружается в `processing_thread` (`_ensure_yolo_model_in_worker_thread`); `init_impl` только поднимает поток (см. [Контексты загрузки моделей](#контексты-загрузки-ultralytics-моделей))
+- В процессном режиме: `MpControl` + `MpWorkerAttributeClassifier`; `YOLO()` только в `init_worker()` дочернего процесса
 - `model_path` и `attrs` инициализированы в `__init__` (ранее определялись только в `set_params_impl`)
+
+---
+
+### Контексты загрузки Ultralytics-моделей
+
+| Контекст | Где вызывается `YOLO()` / `RTDETR()` | Где `predict` |
+|----------|--------------------------------------|-----------------|
+| Детекция, `execution_mode=thread` | `DetectionThreadYolo.init_detection_implementation` в `processing_thread` | тот же поток |
+| Детекция, `execution_mode=process` | `MpWorkerYolo.init_worker` в дочернем процессе | child `worker_impl`; родитель только SHM + queues |
+| Атрибуты, `thread` | `AttributeClassifier._ensure_yolo_model_in_worker_thread` в `processing_thread` | `processing_thread` |
+| Атрибуты, `process` | `MpWorkerAttributeClassifier.init_worker` | child process |
+
+**Запрещено:** singleton-кэш модели между потоками/процессами; передача загруженной модели через `mp.Queue`/pickle.
+
+**Общий код:** только пост-обработка (`fuse`, `half`) через `evileye.object_detector.ultralytics_postprocess` — после локального `YOLO()` в том же потоке/процессе.
 
 ---
 
@@ -1283,13 +1345,23 @@ from .process_manager import ProcessManager, get_process_manager
 
 Система полностью обратно совместима:
 
-1. **Если `execution_mode` не указан** — используется `"thread"` (старое поведение)
-2. **Старые конфиги работают без изменений** — ни один существующий параметр не удалён
-3. **Интерфейс `put()`/`get()` не изменился** — `ProcessorStep`, `ProcessorFrame`
+1. **Если `execution_mode` не указан** — используется `"process"` (`DEFAULT_EXECUTION_MODE` в `processor_base`)
+2. **Конфиги из `evileye deploy-samples`** явно задают `"execution_mode": "thread"` для совместимости с лёгкими демо-сценариями
+3. **Старые конфиги с явным `"thread"`** продолжают работать без изменений
+4. **Интерфейс `put()`/`get()` не изменился** — `ProcessorStep`, `ProcessorFrame`
    и остальные оркестраторы не знают о режиме выполнения
-4. **`ObjectDetectorYoloMp`** — старый класс для явного мультипроцессного детектора
+5. **`ObjectDetectorYoloMp`** — старый класс для явного мультипроцессного детектора
    по-прежнему работает, но теперь рекомендуется использовать
    `ObjectDetectorYolo` + `"execution_mode": "process"`
+
+### Primary vs legacy (детектор)
+
+| Путь | Конфиг / API | Поведение |
+|------|----------------|-----------|
+| **Primary** | `"type": "ObjectDetectorYolo"`, `"execution_mode": "process"` | `DetectionThreadYoloMp` + restart policy из JSON |
+| **Legacy** | `"type": "ObjectDetectorYoloMp"` или factory `yolo_mp` | Тот же MP feed/drain; без единого `execution_mode` в секции |
+
+Новые конфиги и бенчмарки должны использовать **primary**. Factory `yolo_mp` логирует предупреждение при создании потока.
 
 ### Миграция
 
@@ -1305,6 +1377,35 @@ from .process_manager import ProcessManager, get_process_manager
       }
   ]
 ```
+
+---
+
+## Переменные окружения pipeline (MP tuning)
+
+Значения по умолчанию заданы в коде ([`mp_queue_config.py`](../evileye/core/mp_queue_config.py), [`controller.py`](../evileye/controller/controller.py)). Для production bench **F2** (см. [mp_fps_phase3_summary.md](mp_fps_phase3_summary.md)) явный export обычно **не нужен** — совпадают с дефолтами.
+
+| Переменная | Default (код) | Назначение |
+|------------|-----------------|------------|
+| `EVILEYE_MP_QUEUE_SCALE` | `1` | Множитель размеров facade/control очередей |
+| `EVILEYE_MP_DRAIN_POLL_SEC` | `0.01` | Timeout drain loop det/track (`mp_control.get`) |
+| `EVILEYE_MP_PENDING_CAP` | `max(roi, 2)` | Cap FIFO [`MpAsyncBridge`](../evileye/core/mp_async_bridge.py) (detector) |
+| `EVILEYE_MP_PENDING_CAP_TRACKER` | — | Override cap tracker |
+| `EVILEYE_MP_PENDING_CAP_TRACKER_DEFAULT` | `4` | Default cap tracker, если override пуст |
+| `EVILEYE_CONTROLLER_BACKPRESSURE` | `soft` | Extra sleep в controller при росте `pending`; `0` / `off` — выкл |
+| `EVILEYE_BACKPRESSURE_PENDING_THRESHOLD` | `8 × num_sources` (soft) | Порог pending для sleep |
+| `EVILEYE_BACKPRESSURE_SLEEP_MS_PER_PENDING` | `1.5` (soft) | ms sleep на pending выше порога |
+| `EVILEYE_BACKPRESSURE_SLEEP_MAX_MS` | `40` (soft) | Потолок extra sleep |
+| `EVILEYE_PIPELINE_SYNC_MP` | пусто (выкл) | `adaptive` — sync drain после put (bench); не prod F2 |
+| `EVILEYE_MP_DRAIN_MAX_ITEMS` | `64` | Лимит post-drain items за тик (`processor_step`) |
+
+**Проверка конфига и памяти:**
+
+```bash
+python scripts/validate_config.py configs/poly-videos.json
+./scripts/soak_mp_memory.sh configs/poly-videos.json
+```
+
+Gate-артефакты: [reports/mp_refactor_gate/e2e_gate_summary.md](../reports/mp_refactor_gate/e2e_gate_summary.md).
 
 ---
 
@@ -1381,6 +1482,8 @@ runtime просто перестает публиковать новые JPEG �
 
 | Сценарий | Рекомендация |
 |----------|-------------|
+| Диагностика capture overflow | [capture_buffer_levels.md](capture_buffer_levels.md) — три уровня буферов |
+| Контракты det/track MP | [thread_vs_mp_contracts.md](thread_vs_mp_contracts.md) |
 | Одна камера, лёгкая модель | `"thread"` — overhead от IPC не оправдан |
 | Несколько камер, тяжёлая модель (YOLOv8x) | `"process"` для детекции |
 | GPU-детекция + CPU-трекинг с ReID | `"process"` для обоих |
@@ -1423,6 +1526,16 @@ runtime просто перестает публиковать новые JPEG �
 ---
 
 ## FAQ
+
+### Почему в `process` одна камера «отстаёт», а в `thread` — нет?
+
+Три отличия, не связанных с «камера без GPU»:
+
+1. **Capture (split):** в потоковом режиме GStreamer `get_frames_impl()` за один вызов отдаёт **все** регионы split из `frame_buffer`. В process-режиме родитель читает `frames_queue`: раньше брался только **один** кадр за тик pipeline, из‑за чего Cam1/Cam2 на `capture-1_2` чередовались. Сейчас `_get_frames_from_queue()` снимает очередь, но возвращает **не больше одного кадра на `source_id`**, остальные кадры того же источника возвращаются в очередь.
+
+2. **ProcessorStep:** стадии `detectors`/`trackers` в MP раньше вызывали блокирующий `_drain_step_mp_pending` (~сотни ms–4 s на тик). В `thread` только неблокирующий `get_nowait()` из `queue_out`. `mc_trackers` всегда работал синхронно через `ingest_tick_batch` без MP-wait.
+
+3. **ROI и дропы:** логика детектора одна (`create_roi`, `process_stride`). При редких кадрах с capture тяжёлый ROI (несколько пирамид) усиливает отставание; при переполнении `queue_out` детектор/трекер сбрасывает старые результаты (`detection_thread_base`, `object_tracking_base` dispatch).
 
 ### Куда именно в JSON-конфиге писать `execution_mode`?
 
@@ -1744,23 +1857,25 @@ curl http://localhost:8080/api/v1/configs/runs/1
 **Шаг 7. Смотреть видеопоток (MJPEG)**
 
 ```
-GET /api/v1/pipelines/{rid}/stream.mjpg?fps=5
+GET /api/v1/runs/{rid}/stream.mjpg?fps=5
 ```
 
 Откройте в браузере:
 
 ```
-http://localhost:8080/api/v1/pipelines/1/stream.mjpg?fps=5
+http://localhost:8080/api/v1/runs/1/stream.mjpg?fps=5
 ```
+
+(Устаревший alias: `/api/v1/pipelines/{rid}/...` — deprecated.)
 
 Или получите один кадр:
 
 ```
-GET /api/v1/pipelines/{rid}/snapshot
+GET /api/v1/runs/{rid}/snapshot
 ```
 
 ```bash
-curl http://localhost:8080/api/v1/pipelines/1/snapshot --output frame.jpg
+curl http://localhost:8080/api/v1/runs/1/snapshot --output frame.jpg
 ```
 
 ---

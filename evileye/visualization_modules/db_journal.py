@@ -6,6 +6,7 @@ try:
     )
     from PyQt6.QtGui import QPixmap, QIcon
     from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
+
     pyqt_version = 6
 except ImportError:
     from PyQt5.QtWidgets import (
@@ -15,6 +16,7 @@ except ImportError:
     )
     from PyQt5.QtGui import QPixmap, QIcon
     from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt
+
     pyqt_version = 5
 
 import sys
@@ -34,7 +36,8 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 
 
 class DatabaseJournalWindow(QWidget):
-    def __init__(self, main_window, close_app: bool = False, logger_name: str | None = None, parent_logger: logging.Logger | None = None):
+    def __init__(self, main_window, close_app: bool = False, logger_name: str | None = None,
+                 parent_logger: logging.Logger | None = None):
         super().__init__()
         base_name = "evileye.db_journal"
         full_name = f"{base_name}.{logger_name}" if logger_name else base_name
@@ -44,7 +47,7 @@ class DatabaseJournalWindow(QWidget):
         self.params = {}
         self.database_params = {}
         self.close_app = close_app
-        
+
         # Инициализация пустого UI
         self.db_controller = None
         self.adapter_params = {}
@@ -53,7 +56,7 @@ class DatabaseJournalWindow(QWidget):
         self.obj_journal_enabled = True
         self.tables = {}
         self.database_available = False
-        
+
         # Адаптеры будут созданы в set_db_controller
         self.cam_events_adapter = None
         self.perimeter_events_adapter = None
@@ -70,11 +73,11 @@ class DatabaseJournalWindow(QWidget):
         self.tabs.tabCloseRequested.connect(self._close_tab)
         # Connect tab change signal for lazy journal creation
         self.tabs.currentChanged.connect(self._on_tab_changed)
-        
+
         # Track which journals have been created
         self._objects_journal_created = False
         self._events_journal_created = False
-        
+
         # Flag to prevent journal creation during initial tab setup
         self._initializing_tabs = False
 
@@ -83,30 +86,31 @@ class DatabaseJournalWindow(QWidget):
         self.layout.addWidget(self.tabs)
         self.setLayout(self.layout)
         self.logger.info("DatabaseJournalWindow.__init__ completed")
-    
+
     def set_db_controller(self, db_controller, params, database_params):
         """Установить данные из controller (вызывается после controller.init())"""
         self.logger.info("DatabaseJournalWindow.set_db_controller started")
         self.params = params
         self.database_params = database_params
-        
+
         # Используем утилиту для обеспечения полноты database_params
         from evileye.utils.database_config_utils import ensure_database_config_complete
-        
+
         # Логируем структуру database_params для отладки
-        self.logger.info(f"database_params keys: {list(self.database_params.keys()) if self.database_params else 'None'}")
-        
+        self.logger.info(
+            f"database_params keys: {list(self.database_params.keys()) if self.database_params else 'None'}")
+
         # Убеждаемся, что database_params содержит все необходимые ключи
         self.database_params = ensure_database_config_complete(self.database_params)
-        
+
         # Проверяем наличие обязательных ключей после дополнения
         if 'database_adapters' not in self.database_params or 'database' not in self.database_params:
             self.logger.error("database_params is incomplete after ensuring completeness")
             return
-            
+
         self.adapter_params = self.database_params['database_adapters']
         self.db_params = self.database_params['database']
-        
+
         # Логируем ключевые параметры подключения для отладки
         db_section = self.db_params
         host = db_section.get('host_name', 'localhost')
@@ -119,7 +123,7 @@ class DatabaseJournalWindow(QWidget):
         )
         self.vis_params = self.params.get('visualizer', {})
         self.obj_journal_enabled = self.vis_params.get('objects_journal_enabled', True)
-        
+
         # Use provided db_controller
         if db_controller is not None:
             self.logger.info("Using provided DatabaseControllerPg instance")
@@ -138,18 +142,18 @@ class DatabaseJournalWindow(QWidget):
             from PyQt6.QtWidgets import QApplication
         except ImportError:
             from PyQt5.QtWidgets import QApplication
-        
+
         # Инициализируем адаптеры и создаем вкладки
         self._init_adapters()
         self._create_journal_tabs()
-        
+
         self.logger.info("DatabaseJournalWindow.set_db_controller completed")
-    
+
     def _init_adapters(self):
         """Инициализировать адаптеры событий"""
         if not self.db_controller or not self.adapter_params:
             return
-            
+
         self.logger.info("Initializing event adapters...")
         # Adapter 1: Camera events
         self.logger.info("Creating cam_events_adapter...")
@@ -157,14 +161,14 @@ class DatabaseJournalWindow(QWidget):
         self.cam_events_adapter.set_params(**self.adapter_params.get('DatabaseAdapterCamEvents', {}))
         self.cam_events_adapter.init()
         self.logger.info("cam_events_adapter initialized")
-        
+
         # Adapter 2: Perimeter events
         self.logger.info("Creating perimeter_events_adapter...")
         self.perimeter_events_adapter = JournalAdapterFieldOfViewEvents()
         self.perimeter_events_adapter.set_params(**self.adapter_params.get('DatabaseAdapterFieldOfViewEvents', {}))
         self.perimeter_events_adapter.init()
         self.logger.info("perimeter_events_adapter initialized")
-        
+
         # Adapter 3: Zone events
         self.logger.info("Creating zone_events_adapter...")
         self.zone_events_adapter = JournalAdapterZoneEvents()
@@ -187,7 +191,7 @@ class DatabaseJournalWindow(QWidget):
         except Exception:
             self.attr_events_adapter = None
             self.logger.warning("attr_events_adapter creation failed, continuing without it")
-        
+
         # System events (optional)
         try:
             self.logger.info("Initializing system events adapter...")
@@ -199,26 +203,26 @@ class DatabaseJournalWindow(QWidget):
             self.system_events_adapter.init()
         except Exception:
             self.system_events_adapter = None
-    
+
     def _create_journal_tabs(self):
         """Создать вкладки журналов лениво - только заглушки"""
         if not self.db_controller or not self.tables:
             return
-            
+
         # Очищаем существующие вкладки
         while self.tabs.count() > 0:
             widget = self.tabs.widget(0)
             self.tabs.removeTab(0)
             if widget:
                 widget.deleteLater()
-        
+
         # Reset creation flags
         self._objects_journal_created = False
         self._events_journal_created = False
-        
+
         # Set flag to prevent journal creation during initial setup
         self._initializing_tabs = True
-        
+
         try:
             # Create placeholder tabs (journals will be created lazily on first switch)
             if self.obj_journal_enabled:
@@ -226,7 +230,7 @@ class DatabaseJournalWindow(QWidget):
                 placeholder = QWidget()
                 self.tabs.addTab(placeholder, 'Objects journal')
                 self.logger.info("Objects journal placeholder tab added")
-            
+
             # Add placeholder for events journal
             placeholder = QWidget()
             self.tabs.addTab(placeholder, 'Events journal')
@@ -234,33 +238,33 @@ class DatabaseJournalWindow(QWidget):
         finally:
             # Reset flag after tabs are created
             self._initializing_tabs = False
-    
+
     def _on_tab_changed(self, index):
         """Обработчик переключения вкладок - создавать журналы лениво"""
         if index < 0 or not self.db_controller or not self.tables:
             return
-        
+
         # Don't create journals during initial tab setup
         if self._initializing_tabs:
             return
-        
+
         tab_text = self.tabs.tabText(index)
         widget = self.tabs.widget(index)
-        
+
         # Get image directory from database params
         image_dir = self.db_params.get('image_dir', 'EvilEyeData')
-        
+
         # Create Objects journal if needed
         if 'Objects' in tab_text and not self._objects_journal_created:
             self.logger.info("Lazy creating Objects journal...")
-            
+
             # Set flag BEFORE operations to prevent recursion
             self._objects_journal_created = True
-            
+
             try:
                 # Create DatabaseJournalDataSource for objects
                 objects_ds = DatabaseJournalDataSource(
-                self.db_controller, 
+                    self.db_controller,
                     journal_type='objects',
                     adapters=None,
                     database_params=self.database_params,
@@ -268,7 +272,7 @@ class DatabaseJournalWindow(QWidget):
                     image_dir=image_dir,
                     db_connection_name='unified_objects_conn'
                 )
-                
+
                 # Create UnifiedObjectsJournal
                 objects_journal = UnifiedObjectsJournal(
                     objects_ds,
@@ -277,7 +281,7 @@ class DatabaseJournalWindow(QWidget):
                     logger_name="unified_objects_journal",
                     parent_logger=self.logger
                 )
-                
+
                 # Block signals during tab replacement to prevent currentChanged recursion
                 self.tabs.blockSignals(True)
                 try:
@@ -286,7 +290,7 @@ class DatabaseJournalWindow(QWidget):
                     self.tabs.setCurrentIndex(index)
                 finally:
                     self.tabs.blockSignals(False)
-                
+
                 self.logger.info("Objects journal created and added")
             except Exception as e:
                 # Reset flag on error
@@ -294,14 +298,14 @@ class DatabaseJournalWindow(QWidget):
                 self.logger.error(f"Failed to create UnifiedObjectsJournal: {e}")
                 import traceback
                 self.logger.error(f"Traceback: {traceback.format_exc()}")
-        
+
         # Create Events journal if needed
         elif 'Events' in tab_text and not self._events_journal_created:
             self.logger.info("Lazy creating Events journal...")
-            
+
             # Set flag BEFORE operations to prevent recursion
             self._events_journal_created = True
-            
+
             try:
                 # Prepare adapters for events journal
                 adapters = [self.cam_events_adapter, self.perimeter_events_adapter, self.zone_events_adapter]
@@ -309,7 +313,7 @@ class DatabaseJournalWindow(QWidget):
                     adapters.append(self.attr_events_adapter)
                 if self.system_events_adapter:
                     adapters.append(self.system_events_adapter)
-                
+
                 # Create DatabaseJournalDataSource for events
                 events_ds = DatabaseJournalDataSource(
                     self.db_controller,
@@ -320,7 +324,7 @@ class DatabaseJournalWindow(QWidget):
                     image_dir=image_dir,
                     db_connection_name='unified_events_conn'
                 )
-                
+
                 # Create UnifiedEventsJournal
                 events_journal_widget = UnifiedEventsJournal(
                     events_ds,
@@ -328,8 +332,8 @@ class DatabaseJournalWindow(QWidget):
                     parent=self,
                     logger_name="unified_events_journal",
                     parent_logger=self.logger
-            )
-                
+                )
+
                 # Block signals during tab replacement to prevent currentChanged recursion
                 self.tabs.blockSignals(True)
                 try:
@@ -338,7 +342,7 @@ class DatabaseJournalWindow(QWidget):
                     self.tabs.setCurrentIndex(index)
                 finally:
                     self.tabs.blockSignals(False)
-                
+
                 self.logger.info("Events journal created and added")
             except Exception as e:
                 # Reset flag on error
@@ -346,19 +350,19 @@ class DatabaseJournalWindow(QWidget):
                 import traceback
                 self.logger.error(f"Failed to create UnifiedEventsJournal: {e}")
                 self.logger.error(f"Traceback: {traceback.format_exc()}")
-    
+
     def _ensure_tab_initialized(self, index):
         """Ensure journal is initialized for the tab at given index"""
         if index < 0 or not self.db_controller or not self.tables:
             return
-        
+
         # Check if journal already created
         tab_text = self.tabs.tabText(index)
         if 'Objects' in tab_text and self._objects_journal_created:
             return
         if 'Events' in tab_text and self._events_journal_created:
             return
-        
+
         # Call _on_tab_changed to create journal
         self._on_tab_changed(index)
 
@@ -368,7 +372,7 @@ class DatabaseJournalWindow(QWidget):
             if tab:
                 tab.close()
         self.logger.info('Database journal closed')
-        
+
         # Only save and disconnect if database is available
         if self.database_available and self.db_controller and self.params:
             self.db_controller.save_job_configuration_info(self.params)
@@ -380,7 +384,7 @@ class DatabaseJournalWindow(QWidget):
         # Hide window instead of closing to keep it alive
         self.hide()
         event.accept()
-        
+
         # Only close main window if configured to do so
         if self.main_window and self.close_app:
             self.main_window.close()
@@ -409,4 +413,3 @@ class DatabaseJournalWindow(QWidget):
                 self.hide()
         except Exception:
             pass
-

@@ -19,6 +19,8 @@ from .constants import QueryType, EventType
 from .database_error_handler import DatabaseErrorHandler
 from .image_storage_service import ImageStorageService
 from .database_validator import DatabaseValidator
+
+
 # see https://ru.hexlet.io/blog/posts/python-postgresql
 
 
@@ -232,7 +234,7 @@ class DatabaseControllerPg(DatabaseControllerBase):
         if self.conn_pool:
             self.conn_pool.closeall()
             self.conn_pool = None
-    
+
     def is_connected(self):
         """Проверяет, подключена ли база данных."""
         return self.conn_pool is not None
@@ -569,16 +571,16 @@ class DatabaseControllerPg(DatabaseControllerBase):
                 FROM jobs j
                 WHERE j.job_id = %s AND j.configuration_info IS NOT NULL
             """)
-            
+
             records = self.query(query, (job_id,))
-            
+
             if not records:
                 self.logger.warning(f"No configuration found for job_id: {job_id}")
                 return {}
-                
+
             record = records[0]
             job_id, proj_id, config_id, creation_time, finish_time, is_terminated, config_info = record
-            
+
             # Определяем статус
             status = "Running"
             if is_terminated:
@@ -588,7 +590,7 @@ class DatabaseControllerPg(DatabaseControllerBase):
                     status = "Terminated"
             elif finish_time:
                 status = "Completed"
-            
+
             result = {
                 'job_id': job_id,
                 'project_id': proj_id,
@@ -598,10 +600,10 @@ class DatabaseControllerPg(DatabaseControllerBase):
                 'status': status,
                 'configuration_info': json.loads(config_info) if config_info else None
             }
-            
+
             self.logger.info(f"Retrieved configuration for job_id: {job_id}")
             return result
-            
+
         except Exception as e:
             self.logger.error(f"Error retrieving config for job_id {job_id}: {e}")
             return {}
@@ -632,13 +634,13 @@ class DatabaseControllerPg(DatabaseControllerBase):
                 ORDER BY j.configuration_id, j.creation_time DESC
                 LIMIT %s
             """)
-            
+
             records = self.query(query, (limit,))
-            
+
             result = []
             for record in records:
                 config_id, job_id, proj_id, creation_time, finish_time, is_terminated, config_info, usage_count = record
-                
+
                 # Определяем статус
                 status = "Running"
                 if is_terminated:
@@ -648,7 +650,7 @@ class DatabaseControllerPg(DatabaseControllerBase):
                         status = "Terminated"
                 elif finish_time:
                     status = "Completed"
-                
+
                 result.append({
                     'configuration_id': config_id,
                     'job_id': job_id,
@@ -659,10 +661,10 @@ class DatabaseControllerPg(DatabaseControllerBase):
                     'usage_count': usage_count,
                     'configuration_info': json.loads(config_info) if config_info else None
                 })
-                
+
             self.logger.info(f"Retrieved {len(result)} unique configurations")
             return result
-            
+
         except Exception as e:
             self.logger.error(f"Error retrieving unique configurations: {e}")
             return []
@@ -687,33 +689,33 @@ class DatabaseControllerPg(DatabaseControllerBase):
                 "FROM jobs j",
                 "WHERE j.configuration_info IS NOT NULL"
             ]
-            
+
             params = []
-            
+
             if start_date:
                 query_parts.append("AND j.creation_time >= %s")
                 params.append(start_date)
-                
+
             if end_date:
                 query_parts.append("AND j.creation_time <= %s")
                 params.append(end_date)
-                
+
             if project_id is not None:
                 query_parts.append("AND j.project_id = %s")
                 params.append(project_id)
-                
+
             query_parts.append("ORDER BY j.creation_time DESC")
             query_parts.append("LIMIT %s")
             params.append(limit)
-            
+
             query = sql.SQL(" ".join(query_parts))
-            
+
             records = self.query(query, params)
-            
+
             result = []
             for record in records:
                 job_id, proj_id, config_id, creation_time, finish_time, is_terminated, config_info = record
-                
+
                 # Определяем статус
                 status = "Running"
                 if is_terminated:
@@ -723,7 +725,7 @@ class DatabaseControllerPg(DatabaseControllerBase):
                         status = "Terminated"
                 elif finish_time:
                     status = "Completed"
-                
+
                 result.append({
                     'job_id': job_id,
                     'project_id': proj_id,
@@ -733,10 +735,10 @@ class DatabaseControllerPg(DatabaseControllerBase):
                     'status': status,
                     'configuration_info': json.loads(config_info) if config_info else None
                 })
-                
+
             self.logger.info(f"Retrieved {len(result)} configuration history records")
             return result
-            
+
         except Exception as e:
             self.logger.error(f"Error retrieving config history: {e}")
             return []

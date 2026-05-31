@@ -19,7 +19,7 @@
    - Инициализирует внутренние структуры явно: `primary_by_name`, `primary_by_id`, `class_mapping`
    - Использует `ClassManager` для определения первичных объектов, если доступен
    - Fallback на `class_mapping` для обратной совместимости
-2. **AttributeClassifier** - классифицирует атрибуты на ROI
+2. **AttributeClassifier** - классифицирует атрибуты на ROI (`execution_mode` thread/process; inference через [`YoloRuntime`](../evileye/object_detector/yolo_runtime.py), MP child: `MpWorkerAttributeClassifier` — см. [thread_vs_mp_contracts §9](thread_vs_mp_contracts.md))
 3. **AttributeManager** - управляет состояниями атрибутов
 4. **ObjectsHandler** - интегрирует атрибуты в основной поток
    - Инициализирует `class_manager` и `class_mapping` явно в конструкторе

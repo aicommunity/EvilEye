@@ -116,7 +116,7 @@ async def snapshot_legacy(request: Request, rid: int, source_id: int | None = Qu
 
 
 async def _mjpeg_generator(
-    run_info: dict, fps: int, stop_event: threading.Event, source_id: int | None = None,
+        run_info: dict, fps: int, stop_event: threading.Event, source_id: int | None = None,
 ) -> AsyncGenerator[bytes, None]:
     run_id_str = str(run_info["id"])
     stream_key = f"{run_id_str}:{source_id}" if source_id is not None else run_id_str
@@ -128,11 +128,11 @@ async def _mjpeg_generator(
             data = _load_latest_frame(run_info, source_id=source_id)
             if data:
                 yield (
-                    boundary
-                    + b"\r\n"
-                    + b"Content-Type: image/jpeg\r\n\r\n"
-                    + data
-                    + b"\r\n"
+                        boundary
+                        + b"\r\n"
+                        + b"Content-Type: image/jpeg\r\n\r\n"
+                        + data
+                        + b"\r\n"
                 )
 
             elapsed = 0
@@ -148,10 +148,10 @@ async def _mjpeg_generator(
 
 
 async def _mjpeg_stream_impl(
-    request: Request,
-    rid: int,
-    source_id: int | None = None,
-    fps: int = Query(5, ge=1, le=60, description="Frames per second (1–60)"),
+        request: Request,
+        rid: int,
+        source_id: int | None = None,
+        fps: int = Query(5, ge=1, le=60, description="Frames per second (1–60)"),
 ):
     """
     MJPEG streaming endpoint.
@@ -184,20 +184,20 @@ async def _mjpeg_stream_impl(
 
 @router.get("/runs/{rid}/stream.mjpg")
 async def mjpeg_stream(
-    request: Request,
-    rid: int,
-    source_id: int | None = Query(None),
-    fps: int = Query(5, ge=1, le=60, description="Frames per second (1–60)"),
+        request: Request,
+        rid: int,
+        source_id: int | None = Query(None),
+        fps: int = Query(5, ge=1, le=60, description="Frames per second (1–60)"),
 ):
     return await _mjpeg_stream_impl(request, rid, source_id=source_id, fps=fps)
 
 
 @router.get("/pipelines/{rid}/stream.mjpg", deprecated=True)
 async def mjpeg_stream_legacy(
-    request: Request,
-    rid: int,
-    source_id: int | None = Query(None),
-    fps: int = Query(5, ge=1, le=60, description="Frames per second (1–60)"),
+        request: Request,
+        rid: int,
+        source_id: int | None = Query(None),
+        fps: int = Query(5, ge=1, le=60, description="Frames per second (1–60)"),
 ):
     return await _mjpeg_stream_impl(request, rid, source_id=source_id, fps=fps)
 

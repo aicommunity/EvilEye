@@ -3,7 +3,6 @@ from pydantic import BaseModel, Field
 
 from evileye.api.security import authenticate_user, normalize_role, permissions_for_role
 
-
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 
@@ -22,7 +21,8 @@ async def auth_me(request: Request) -> dict:
         raise HTTPException(status_code=401, detail="Authentication required")
     role = normalize_role(str(user.get("role") or "user"))
     session_user = {"username": user.get("username"), "role": role}
-    return {"authenticated": True, "auth_enabled": True, "user": session_user, "permissions": permissions_for_role(role)}
+    return {"authenticated": True, "auth_enabled": True, "user": session_user,
+            "permissions": permissions_for_role(role)}
 
 
 @router.post("/login")
@@ -36,7 +36,8 @@ async def auth_login(payload: LoginPayload, request: Request) -> dict:
     role = normalize_role(str(user.get("role") or "user"))
     session_user = {"username": user["username"], "role": role}
     request.session["user"] = session_user
-    return {"authenticated": True, "auth_enabled": True, "user": session_user, "permissions": permissions_for_role(role)}
+    return {"authenticated": True, "auth_enabled": True, "user": session_user,
+            "permissions": permissions_for_role(role)}
 
 
 @router.post("/logout")

@@ -12,7 +12,8 @@ import atexit
 
 from ..capture.video_capture_base import CaptureImage
 from .object_detection_base import DetectionResult, DetectionResultList
-from .constants import DEFAULT_THREAD_QUEUE_SIZE, PROCESSING_SLEEP_INTERVAL
+from ..core.mp_queue_config import detector_thread_queue_size
+from .constants import PROCESSING_SLEEP_INTERVAL
 
 
 class DetectionThreadBase:
@@ -24,15 +25,15 @@ class DetectionThreadBase:
     _instances: "weakref.WeakSet[DetectionThreadBase]" = weakref.WeakSet()
 
     def __init__(
-        self,
-        stride: int,
-        classes: list,
-        source_ids: list,
-        roi: list,
-        inf_params: dict,
-        queue_out: Queue,
-        logger_name: Optional[str] = None,
-        parent_logger: Optional[logging.Logger] = None,
+            self,
+            stride: int,
+            classes: list,
+            source_ids: list,
+            roi: list,
+            inf_params: dict,
+            queue_out: Queue,
+            logger_name: Optional[str] = None,
+            parent_logger: Optional[logging.Logger] = None,
     ):
         super().__init__()
         base_name = "evileye.detection_thread"
@@ -46,7 +47,7 @@ class DetectionThreadBase:
         self.roi = roi  # [[]]
         self.inf_params = inf_params
         self.run_flag = False
-        self.queue_in = Queue(maxsize=DEFAULT_THREAD_QUEUE_SIZE)
+        self.queue_in = Queue(maxsize=detector_thread_queue_size())
         self.queue_out = queue_out
         self.source_ids = source_ids
         self.processing_thread = threading.Thread(target=self._process_impl, daemon=True)
@@ -71,6 +72,7 @@ class DetectionThreadBase:
                 t.stop()
             except Exception:
                 pass
+
     def start(self) -> None:
         """Start the detection thread."""
         self.run_flag = True
@@ -123,23 +125,26 @@ class DetectionThreadBase:
     def _process_impl(self) -> None:
         """Main processing loop for detection thread."""
         while self.run_flag:
+            if not self.run_flag:
+                break
             self.init_detection_implementation()
             try:
                 image = self.queue_in.get(timeout=PROCESSING_SLEEP_INTERVAL)
             except Exception:
                 image = None
 
+            if not self.run_flag:
+                break
+
             if not image:
                 sleep(PROCESSING_SLEEP_INTERVAL)
                 continue
 
-            if not self.roi[0]:
-                split_image = [[image, [0, 0]]]
-            else:
-                coords = self.roi_coords_per_camera[image.source_id]
-                from ..utils import utils
+            from .detection_preprocess import split_capture_for_detection
 
-                split_image = utils.create_roi(image, coords)
+            split_image = split_capture_for_detection(
+                image, self.roi, self.roi_coords_per_camera
+            )
 
             detection_result_list = self.process_stride(split_image)
             if detection_result_list is not None:
@@ -172,8 +177,22 @@ class DetectionThreadBase:
 
         images = [img[0].image for img in split_image]
         predict_results = self._run_prediction(images, len(split_image))
-        # Important contract: we must emit a result for each processed input frame (even if empty),
-        # otherwise downstream visualization buffering can stall when there are no detections.
+        return self._detection_result_from_predict(split_image, predict_results)
+
+    def _detection_result_from_predict(
+        self, split_image: list, predict_results: list | None
+    ) -> Optional[DetectionResultList]:
+        """Build DetectionResultList from model outputs (shared by thread and MP drain)."""
+        if not split_image:
+            return None
+        try:
+            first = split_image[0][0] if split_image and split_image[0] else None
+        except Exception:
+            first = None
+        if first is None:
+            return None
+
+        # Important contract: emit a result per input frame (even if empty).
         if not predict_results:
             detection_result_list = DetectionResultList()
             detection_result_list.source_id = first.source_id
@@ -221,7 +240,7 @@ class DetectionThreadBase:
         return predict_results
 
     def _extract_bboxes_from_results(
-        self, predict_results: list, split_image: list
+            self, predict_results: list, split_image: list
     ) -> tuple[list, list, list]:
         """Extract bounding boxes from prediction results."""
         bboxes_coords = []
@@ -242,7 +261,7 @@ class DetectionThreadBase:
         return bboxes_coords, confidences, class_ids
 
     def _post_process_detections(
-        self, bboxes_coords: list, confidences: list, class_ids: list
+            self, bboxes_coords: list, confidences: list, class_ids: list
     ) -> tuple[list, list, list]:
         """Post-process detections: merge ROI boxes, apply NMS, filter by classes."""
         from ..utils import utils
@@ -259,7 +278,7 @@ class DetectionThreadBase:
         return bboxes_coords, confidences, class_ids
 
     def _create_detection_result_list(
-        self, split_image: list, bboxes_coords: list, confidences: list, class_ids: list
+            self, split_image: list, bboxes_coords: list, confidences: list, class_ids: list
     ) -> DetectionResultList:
         """Create DetectionResultList from processed detections."""
         detection_result_list = DetectionResultList()
@@ -283,7 +302,7 @@ class DetectionThreadBase:
         """
         try:
             if isinstance(self.classes, list) and self.classes and all(
-                isinstance(c, int) for c in self.classes
+                    isinstance(c, int) for c in self.classes
             ):
                 return self.classes
             return None
@@ -291,7 +310,7 @@ class DetectionThreadBase:
             return None
 
     def _filter_detections(
-        self, bboxes_coords: list, confidences: list, class_ids: list
+            self, bboxes_coords: list, confidences: list, class_ids: list
     ) -> tuple[list, list, list]:
         """
         Apply class filtering by IDs or names using model_class_mapping.
@@ -303,9 +322,9 @@ class DetectionThreadBase:
             if all(isinstance(c, int) for c in self.classes):
                 desired_ids = set(self.classes)
             elif (
-                all(isinstance(c, str) for c in self.classes)
-                and isinstance(self.model_class_mapping, dict)
-                and self.model_class_mapping
+                    all(isinstance(c, str) for c in self.classes)
+                    and isinstance(self.model_class_mapping, dict)
+                    and self.model_class_mapping
             ):
                 desired_ids = {
                     cid for name, cid in self.model_class_mapping.items() if name in self.classes

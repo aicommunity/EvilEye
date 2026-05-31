@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from multiprocessing import shared_memory
-from multiprocessing import resource_tracker
 from threading import Lock
-from typing import Dict, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -26,18 +25,6 @@ class SharedFrameTransport:
         self._segments: Dict[str, shared_memory.SharedMemory] = {}
         self._lock = Lock()
 
-    @staticmethod
-    def _detach_from_resource_tracker(shm: shared_memory.SharedMemory) -> None:
-        """
-        Detach an attached (non-owner) segment from resource_tracker.
-        Prevents child processes from trying to unlink segments they do not own.
-        """
-        try:
-            raw_name = getattr(shm, "_name", None) or shm.name
-            resource_tracker.unregister(raw_name, "shared_memory")
-        except Exception:
-            pass
-
     def alloc_frame(self, image: np.ndarray, frame_id: int, timestamp: float) -> FrameHandle:
         arr = np.ascontiguousarray(image)
         shm = shared_memory.SharedMemory(create=True, size=arr.nbytes)
@@ -56,12 +43,53 @@ class SharedFrameTransport:
 
     def get_frame_view(self, handle: FrameHandle) -> np.ndarray:
         shm = shared_memory.SharedMemory(name=handle.shm_name)
-        self._detach_from_resource_tracker(shm)
         try:
             view = np.ndarray(handle.shape, dtype=np.dtype(handle.dtype), buffer=shm.buf)
             return np.array(view, copy=True)
         finally:
+            try:
+                shm.close()
+            except Exception:
+                pass
+
+    def relinquish_frame(self, handle: FrameHandle) -> None:
+        """
+        Creator gives up local mapping after enqueueing a handle to another process.
+
+        Does not unlink and does not unregister from resource_tracker here: unregister
+        before a cross-process unlink confuses the tracker subprocess (KeyError on /psm_*).
+        The consumer must call release_frame() to unlink.
+        """
+        with self._lock:
+            shm = self._segments.pop(handle.shm_name, None)
+        if shm is None:
+            return
+        try:
             shm.close()
+        except Exception:
+            pass
+
+    def consume_frame(self, handle: FrameHandle) -> np.ndarray:
+        """Copy pixels from a foreign handle and unlink the segment (IPC consumer)."""
+        try:
+            shm = shared_memory.SharedMemory(name=handle.shm_name)
+        except FileNotFoundError:
+            return np.array([])
+        try:
+            view = np.ndarray(
+                handle.shape, dtype=np.dtype(handle.dtype), buffer=shm.buf
+            )
+            image = np.array(view, copy=True)
+        finally:
+            try:
+                shm.unlink()
+            except FileNotFoundError:
+                pass
+            try:
+                shm.close()
+            except Exception:
+                pass
+        return image
 
     def release_frame(self, handle: FrameHandle) -> None:
         with self._lock:
@@ -69,37 +97,62 @@ class SharedFrameTransport:
         if shm is not None:
             try:
                 shm.close()
-            finally:
-                try:
-                    shm.unlink()
-                except FileNotFoundError:
-                    pass
+            except Exception:
+                pass
+            try:
+                shm.unlink()
+            except FileNotFoundError:
+                pass
             return
-        # Foreign segment (created in another process): after the receiver has
-        # copied the frame, unlink the name so /dev/shm does not fill up during
-        # long process-mode capture runs. The creator may still close its local
-        # handle later; FileNotFoundError is expected in that case.
         try:
             shm = shared_memory.SharedMemory(name=handle.shm_name)
         except FileNotFoundError:
             return
         try:
-            shm.close()
-        finally:
             try:
                 shm.unlink()
             except FileNotFoundError:
                 pass
-
-    def release_all(self) -> None:
-        with self._lock:
-            segments = list(self._segments.values())
-            self._segments.clear()
-        for shm in segments:
+        finally:
             try:
                 shm.close()
-            finally:
-                try:
-                    shm.unlink()
-                except FileNotFoundError:
-                    pass
+            except Exception:
+                pass
+
+    def release_all_owned(self) -> None:
+        """Close and unlink all segments owned by this transport instance."""
+        with self._lock:
+            names = list(self._segments.keys())
+        for name in names:
+            self.release_frame(
+                FrameHandle(
+                    frame_id=0,
+                    shm_name=name,
+                    shape=(),
+                    dtype="uint8",
+                    stride=(),
+                    timestamp=0.0,
+                )
+            )
+
+
+def materialize_payload_item(
+        item: Any,
+        transport: Optional[SharedFrameTransport] = None,
+) -> Any:
+    """Resolve FrameHandle to ndarray; pass through other items."""
+    if not isinstance(item, FrameHandle):
+        return item
+    tr = transport or SharedFrameTransport()
+    try:
+        return tr.get_frame_view(item)
+    except Exception:
+        return None
+
+
+def materialize_payload_list(
+        data: List[Any],
+        transport: Optional[SharedFrameTransport] = None,
+) -> List[Any]:
+    """Materialize a list of queue payloads that may contain FrameHandle entries."""
+    return [materialize_payload_item(x, transport) for x in data]

@@ -20,8 +20,7 @@
                 "mp_no_restart_exit_codes": [
                     -15,
                     0
-                ],
-                "execution_mode": "process"
+                ]
             },
             {
                 "source": "VideoFile",
@@ -55,8 +54,7 @@
                 "mp_no_restart_exit_codes": [
                     -15,
                     0
-                ],
-                "execution_mode": "process"
+                ]
             },
             {
                 "source": "VideoFile",
@@ -90,8 +88,7 @@
                 "mp_no_restart_exit_codes": [
                     -15,
                     0
-                ],
-                "execution_mode": "process"
+                ]
             }
         ],
         "detectors": [
@@ -142,8 +139,7 @@
                 "mp_restart_on_exit": true,
                 "mp_no_restart_exit_codes": [
                     -15
-                ],
-                "execution_mode": "thread"
+                ]
             },
             {
                 "source_ids": [
@@ -173,8 +169,7 @@
                 "mp_restart_on_exit": true,
                 "mp_no_restart_exit_codes": [
                     -15
-                ],
-                "execution_mode": "thread"
+                ]
             },
             {
                 "source_ids": [
@@ -229,8 +224,7 @@
                 "mp_restart_on_exit": true,
                 "mp_no_restart_exit_codes": [
                     -15
-                ],
-                "execution_mode": "thread"
+                ]
             },
             {
                 "source_ids": [
@@ -279,8 +273,7 @@
                 "mp_restart_on_exit": true,
                 "mp_no_restart_exit_codes": [
                     -15
-                ],
-                "execution_mode": "thread"
+                ]
             },
             {
                 "source_ids": [
@@ -310,8 +303,7 @@
                 "mp_restart_on_exit": true,
                 "mp_no_restart_exit_codes": [
                     -15
-                ],
-                "execution_mode": "thread"
+                ]
             }
         ],
         "trackers": [
@@ -335,8 +327,7 @@
                 "mp_restart_on_exit": true,
                 "mp_no_restart_exit_codes": [
                     -15
-                ],
-                "execution_mode": "thread"
+                ]
             },
             {
                 "source_ids": [
@@ -358,8 +349,7 @@
                 "mp_restart_on_exit": true,
                 "mp_no_restart_exit_codes": [
                     -15
-                ],
-                "execution_mode": "thread"
+                ]
             },
             {
                 "source_ids": [
@@ -381,8 +371,7 @@
                 "mp_restart_on_exit": true,
                 "mp_no_restart_exit_codes": [
                     -15
-                ],
-                "execution_mode": "thread"
+                ]
             },
             {
                 "source_ids": [
@@ -404,8 +393,7 @@
                 "mp_restart_on_exit": true,
                 "mp_no_restart_exit_codes": [
                     -15
-                ],
-                "execution_mode": "thread"
+                ]
             },
             {
                 "source_ids": [
@@ -427,8 +415,7 @@
                 "mp_restart_on_exit": true,
                 "mp_no_restart_exit_codes": [
                     -15
-                ],
-                "execution_mode": "thread"
+                ]
             }
         ],
         "mc_trackers": [
@@ -537,7 +524,6 @@
     },
     "server": {
         "enabled": true,
-        "execution_mode": "thread",
         "host": "127.0.0.1",
         "port": 8080,
         "log_level": "info",

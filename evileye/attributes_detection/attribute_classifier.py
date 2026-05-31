@@ -8,8 +8,11 @@ import numpy as np
 from ..core.base_class import EvilEyeBase
 from ..core.tracking_dto import ensure_tracking_result_list
 
-EXEC_MODE_THREAD = "thread"
-EXEC_MODE_PROCESS = "process"
+from ..core.processor_base import (
+    DEFAULT_EXECUTION_MODE,
+    EXEC_MODE_PROCESS,
+    EXEC_MODE_THREAD,
+)
 
 
 @EvilEyeBase.register("AttributeClassifier")
@@ -23,10 +26,13 @@ class AttributeClassifier(EvilEyeBase):
     def __init__(self):
         super().__init__()
         self.enabled = True
-        self.execution_mode = EXEC_MODE_THREAD
+        self.execution_mode = DEFAULT_EXECUTION_MODE
 
-        self.yolo_model = None
         self.model_path = 'models/yolo11n.pt'
+        from ..object_detector.yolo_runtime import YoloRuntime
+
+        self._yolo_runtime: YoloRuntime = YoloRuntime(logger=self.logger)
+        self._yolo_runtime.model = None
         self.attrs = []
         self.attr_class_mapping = {}
         self.conf_threshold = 0.5
@@ -42,7 +48,7 @@ class AttributeClassifier(EvilEyeBase):
 
     def set_params_impl(self):
         self.enabled = self.params.get('enabled', True)
-        self.execution_mode = self.params.get('execution_mode', EXEC_MODE_THREAD)
+        self.execution_mode = self.params.get('execution_mode', DEFAULT_EXECUTION_MODE)
 
         if self.enabled:
             self.model_path = self.params.get('model', 'models/yolo11n.pt')
@@ -77,16 +83,43 @@ class AttributeClassifier(EvilEyeBase):
             return self._init_process_mode()
         return self._init_thread_mode()
 
+    @property
+    def yolo_model(self):
+        return self._yolo_runtime.model
+
+    @yolo_model.setter
+    def yolo_model(self, value) -> None:
+        self._yolo_runtime.model = value
+
     def _init_thread_mode(self):
-        try:
-            from ultralytics import YOLO
-            self.yolo_model = YOLO(self.model_path)
-            self.yolo_model.fuse()
-            self.logger.info(f"AttributeClassifier initialized with YOLO model: {self.model_path}")
-            self.processing_thread = threading.Thread(target=self._process_impl)
+        self._yolo_runtime.release()
+        self.processing_thread = threading.Thread(target=self._process_impl, daemon=True)
+        self.logger.info(
+            "AttributeClassifier thread mode ready (model loads in processing thread): %s",
+            self.model_path,
+        )
+        return True
+
+    def _ensure_yolo_model_in_worker_thread(self) -> bool:
+        if self._yolo_runtime.model is not None:
             return True
+        try:
+            self._yolo_runtime.configure(
+                self.model_path,
+                list(self.attr_class_mapping.keys()),
+                {
+                    "conf": self.conf_threshold,
+                    "imgsz": self.inference_size,
+                    "half": False,
+                },
+            )
+            self._yolo_runtime.load()
+            self.logger.info(
+                "AttributeClassifier YOLO loaded in processing thread: %s", self.model_path
+            )
+            return self._yolo_runtime.model is not None
         except Exception as e:
-            self.logger.info(f"Failed to initialize AttributeClassifier: {e}")
+            self.logger.error("Failed to load AttributeClassifier YOLO: %s", e)
             return False
 
     def _init_process_mode(self):
@@ -113,9 +146,7 @@ class AttributeClassifier(EvilEyeBase):
         return True
 
     def release_impl(self):
-        if self.yolo_model:
-            del self.yolo_model
-            self.yolo_model = None
+        self._yolo_runtime.release()
         if self._mp_control is not None:
             self._mp_control.stop()
             self._mp_control = None
@@ -160,6 +191,9 @@ class AttributeClassifier(EvilEyeBase):
                 continue
             if detections is None:
                 continue
+
+            if self.enabled and self.yolo_model is None:
+                self._ensure_yolo_model_in_worker_thread()
 
             if not self.enabled or self.yolo_model is None:
                 self._put_out_drop_oldest(detections)
@@ -213,14 +247,17 @@ class AttributeClassifier(EvilEyeBase):
         if self.yolo_model is None:
             return {}
         try:
-            results = self.yolo_model.predict(
-                source=roi_image,
+            results = self._yolo_runtime.predict_raw(
+                [roi_image],
                 classes=list(self.attr_class_mapping.keys()),
-                verbose=False,
                 conf=self.conf_threshold,
                 imgsz=self.inference_size,
             )
-            if not results or len(results) == 0:
+            if results is None:
+                return {}
+            if not isinstance(results, list):
+                results = [results]
+            if not results:
                 return {}
             result = results[0]
             if result.boxes is None or len(result.boxes) == 0:

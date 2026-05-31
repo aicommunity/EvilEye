@@ -1,12 +1,22 @@
-from queue import Queue
+from queue import Empty, Queue
 import logging
+import threading
 import time
 from typing import Optional
 
 from .detection_thread_base import DetectionThreadBase
+from ..core.frame import Frame
 from ..core.frame_transport import FrameHandle, SharedFrameTransport
+from ..core.mp_async_bridge import MpAsyncBridge
+from ..core.mp_pending_jobs import DetectorPendingJob
+from ..core.mp_queue_config import (
+    mp_control_queue_size,
+    mp_drain_poll_sec,
+    mp_pending_cap_detector,
+)
 
 utils = None
+
 
 def get_utils():
     global utils
@@ -19,9 +29,9 @@ def get_utils():
 class DetectionThreadYoloMp(DetectionThreadBase):
     """Detection thread backed by a child process via `MpControl`.
 
-    The heavy YOLO inference runs in a separate OS process, bypassing
-    the GIL.  The thread wrapper keeps the same put/get interface so
-    the rest of the pipeline is unaware of the change
+    Process mode uses feed + drain threads (like thread-mode async): the
+    processing loop submits ROI batches to the worker without blocking on
+    each ``get()``; results are finalized and pushed to ``queue_out`` when ready.
     """
     id_cnt = 0
 
@@ -33,8 +43,10 @@ class DetectionThreadYoloMp(DetectionThreadBase):
         from evileye.core.mp_control import MpControl
         from .mp_worker_yolo import MpWorkerYolo
 
+        qsize = mp_control_queue_size(max(len(roi), 1), role="detector")
         self.mp_control = MpControl(
-            max_input_size=max(len(roi), 2),
+            max_input_size=qsize,
+            max_output_size=qsize,
             name=f"det-mp-{DetectionThreadYoloMp.id_cnt}",
             restart_on_exit=restart_on_exit,
             no_restart_exit_codes=no_restart_exit_codes,
@@ -50,13 +62,173 @@ class DetectionThreadYoloMp(DetectionThreadBase):
         self.mp_control.start()
         DetectionThreadYoloMp.id_cnt += 1
 
+        self.processing_thread = None
+        self._mp_feed_thread = threading.Thread(
+            target=self._mp_det_feed_loop, daemon=True,
+        )
+        self._mp_drain_thread = threading.Thread(
+            target=self._mp_det_drain_loop, daemon=True,
+        )
+        self._mp_pending_cap = mp_pending_cap_detector(max(len(roi), 1))
+        self._bridge: MpAsyncBridge[DetectorPendingJob] | None = None
+        self._init_bridge()
+
+    def _init_bridge(self) -> None:
+        self._bridge = MpAsyncBridge(
+            pending_cap=self._mp_pending_cap,
+            mp_control=self.mp_control,
+            release_on_drop=self._release_detector_job,
+            logger=self.logger,
+        )
+
+    def start(self) -> None:
+        """Start feed/drain threads (not the base processing_thread)."""
+        self.run_flag = True
+        self._mp_feed_thread.start()
+        self._mp_drain_thread.start()
+
+    def stop(self) -> None:
+        """Stop MP worker and feed/drain threads."""
+        self.run_flag = False
+        for name, thread in (("feed", self._mp_feed_thread), ("drain", self._mp_drain_thread)):
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=1.5)
+                if thread.is_alive():
+                    self.logger.warning("Detection MP %s thread did not stop within 1.5s", name)
+        if self.mp_control is not None:
+            self.mp_control.stop()
+            self.mp_control = None
+        if self._bridge is not None:
+            self._bridge.clear()
+            self._bridge = None
+        self.logger.info("Detection thread stopped")
+
     def init_detection_implementation(self) -> None:
         """Multiprocessing worker handles model initialization."""
         return None
 
+    def _release_handles(self, handles: list[FrameHandle]) -> None:
+        for handle in handles or []:
+            try:
+                self._frame_transport.release_frame(handle)
+            except Exception:
+                pass
+
+    def _release_detector_job(self, job: DetectorPendingJob) -> None:
+        self._release_handles(job.handles)
+
+    def mp_pending_depth(self) -> int:
+        if self._bridge is None:
+            return 0
+        return self._bridge.depth()
+
+    def mp_diag_put_dropped(self) -> int:
+        if self._bridge is None:
+            return 0
+        return self._bridge.diag_put_dropped()
+
+    def mp_diag_pending_evict(self) -> int:
+        if self._bridge is None:
+            return 0
+        return self._bridge.diag_pending_evict()
+
+    def _build_mp_payload(self, split_image: list) -> tuple[list, list[FrameHandle]]:
+        handles: list[FrameHandle] = []
+        payload: list = []
+        now_ts = time.time()
+        for idx, roi_entry in enumerate(split_image):
+            image = roi_entry[0].image
+            handle = self._frame_transport.alloc_frame(
+                image=image,
+                frame_id=idx,
+                timestamp=now_ts,
+            )
+            handles.append(handle)
+            payload.append(handle)
+        return payload, handles
+
+    def _enqueue_mp_det_job(
+        self, split_image: list, capture_image, payload: list, handles: list[FrameHandle]
+    ) -> bool:
+        if self._bridge is None:
+            return False
+        job = DetectorPendingJob(split_image, capture_image, handles)
+        return self._bridge.enqueue(payload, job)
+
+    def _put_detection_output(self, detection_result_list, capture_image) -> None:
+        if detection_result_list is None:
+            return
+        try:
+            self.queue_out.put_nowait([detection_result_list, capture_image])
+        except Exception:
+            try:
+                _ = self.queue_out.get_nowait()
+                self.queue_out.put_nowait([detection_result_list, capture_image])
+            except Exception:
+                self.logger.warning(
+                    "Output queue full, dropping detection result for %s:%s",
+                    capture_image.source_id,
+                    capture_image.frame_id,
+                )
+
+    def _mp_det_feed_loop(self) -> None:
+        """queue_in -> mp_control input (non-blocking per frame batch)."""
+        self.init_detection_implementation()
+        while self.run_flag:
+            try:
+                image = self.queue_in.get(timeout=0.5)
+            except Empty:
+                continue
+            except Exception:
+                continue
+            if not self.run_flag or image is None:
+                continue
+            from .detection_preprocess import split_capture_for_detection
+
+            split_image = split_capture_for_detection(
+                image, self.roi, self.roi_coords_per_camera
+            )
+            if not split_image:
+                continue
+            try:
+                payload, handles = self._build_mp_payload(split_image)
+                self._enqueue_mp_det_job(split_image, image, payload, handles)
+            except Exception as e:
+                if self.run_flag:
+                    self.logger.error("Error in MP detection feed loop: %s", e)
+
+    def _mp_det_drain_loop(self) -> None:
+        """mp_control output -> queue_out when YOLO worker finishes."""
+        while self.run_flag:
+            if self.mp_control is None or self._bridge is None:
+                break
+            try:
+                predict_results = self.mp_control.get(timeout=mp_drain_poll_sec())
+            except Empty:
+                continue
+            except Exception:
+                continue
+            job = self._bridge.pop_head()
+            if job is None:
+                continue
+            try:
+                if predict_results is None:
+                    predict_results = [None] * len(job.split_image)
+                elif not isinstance(predict_results, list):
+                    predict_results = [predict_results]
+                detection_result_list = self._detection_result_from_predict(
+                    job.split_image, predict_results
+                )
+                self._put_detection_output(detection_result_list, job.capture_image)
+            except Exception as e:
+                if self.run_flag:
+                    self.logger.error("Error in MP detection drain loop: %s", e)
+            finally:
+                self._release_handles(job.handles)
+
     def predict(self, images: list) -> list:
-        frame_handles: list[FrameHandle] = []
-        payload = []
+        """Synchronous RPC fallback (tests); production path uses feed/drain."""
+        payload, handles = [], []
         now_ts = time.time()
         for idx, image in enumerate(images):
             handle = self._frame_transport.alloc_frame(
@@ -64,47 +236,39 @@ class DetectionThreadYoloMp(DetectionThreadBase):
                 frame_id=idx,
                 timestamp=now_ts,
             )
-            frame_handles.append(handle)
+            handles.append(handle)
             payload.append(handle)
         try:
             self.mp_control.put(payload)
-            res = self.mp_control.get()
-            return res
+            return self.mp_control.get()
         finally:
-            for handle in frame_handles:
-                try:
-                    self._frame_transport.release_frame(handle)
-                except Exception:
-                    pass
+            self._release_handles(handles)
 
     def get_bboxes(self, result, roi: list) -> tuple[list, list, list]:
-        bboxes_coords = []
-        confidences = []
-        ids = []
         if result is None:
-            return bboxes_coords, confidences, ids
+            return [], [], []
+        from .bbox_utils import (
+            clip_xyxy_list,
+            mp_dict_list_to_image_coords,
+            roi_boxes_to_image_coords,
+        )
+
+        frame_entry = roi[0]
+        x_off, y_off = roi[1][0], roi[1][1]
         try:
             if isinstance(result, list):
-                coords = [x.get("bbox_xyxy", []) for x in result if isinstance(x, dict)]
-                confs = [x.get("confidence", 0.0) for x in result if isinstance(x, dict)]
-                class_ids = [x.get("class_id", -1) for x in result if isinstance(x, dict)]
+                bboxes_coords, confidences, ids = mp_dict_list_to_image_coords(
+                    result, (x_off, y_off), logger=self.logger
+                )
             else:
-                boxes = result.boxes.numpy()
-                coords = boxes.xyxy
-                confs = boxes.conf
-                class_ids = boxes.cls
-            for coord, class_id, conf in zip(coords, class_ids, confs):
-                utils_module = get_utils()
-                abs_coords = utils_module.roi_to_image(coord, roi[1][0], roi[1][1])
-                bboxes_coords.append(abs_coords)
-                confidences.append(conf)
-                ids.append(class_id)
+                bboxes_coords, confidences, ids = roi_boxes_to_image_coords(
+                    result, (x_off, y_off), logger=self.logger
+                )
         except Exception:
-            pass
-        return bboxes_coords, confidences, ids
+            return [], [], []
 
-    def stop(self):
-        """Stop the child process and the thread wrapper"""
-        super().stop()
-        if self.mp_control is not None:
-            self.mp_control.stop()
+        img = frame_entry.image if isinstance(frame_entry, Frame) else None
+        if img is not None and len(img.shape) >= 2:
+            h, w = img.shape[:2]
+            bboxes_coords = clip_xyxy_list(bboxes_coords, w, h)
+        return bboxes_coords, confidences, ids

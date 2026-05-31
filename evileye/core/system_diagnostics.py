@@ -19,7 +19,7 @@ from evileye.core.memory_monitor import MemoryMonitor
 
 class SystemDiagnostics:
     """Automatic system diagnostics and issue fixing."""
-    
+
     # Error patterns to detect in logs
     ERROR_PATTERNS = {
         'no_frames': re.compile(r'Pipeline PLAYING but no frames received after \d+s'),
@@ -30,8 +30,8 @@ class SystemDiagnostics:
         'pre_event_frames': re.compile(r'No pre-event frames found'),
         'split_stream_empty': re.compile(r'Split stream returned empty capture_images'),
     }
-    
-    def __init__(self, 
+
+    def __init__(self,
                  log_file: Optional[str] = None,
                  check_interval: float = 30.0,
                  auto_fix: bool = True):
@@ -47,34 +47,34 @@ class SystemDiagnostics:
         self.log_file = log_file
         self.check_interval = check_interval
         self.auto_fix = auto_fix
-        
+
         self.running = False
         self.monitor_thread: Optional[threading.Thread] = None
-        
+
         # Issue tracking
         self.detected_issues: deque = deque(maxlen=100)
         self.fixes_applied: deque = deque(maxlen=100)
         self.verification_results: deque = deque(maxlen=100)
-        
+
         # Issue counters by type
         self.issue_counts: Dict[str, int] = defaultdict(int)
-        
+
         # Last log position for file monitoring
         self.last_log_position = 0
-        
+
         # Memory monitor integration
         self.memory_monitor: Optional[MemoryMonitor] = None
-        
+
         # Callbacks for accessing system components
         self.pipeline_getter: Optional[Callable] = None
         self.event_buffer_getter: Optional[Callable] = None
-        
+
         # Statistics
         self.last_check_time: Optional[float] = None
         self.total_checks = 0
         self.total_issues_detected = 0
         self.total_fixes_applied = 0
-    
+
     def set_pipeline_getter(self, getter: Callable) -> None:
         """Set callback to get pipeline instance.
         
@@ -83,7 +83,7 @@ class SystemDiagnostics:
         """
         self.pipeline_getter = getter
         self.logger.debug("Pipeline getter callback set")
-    
+
     def set_event_buffer_getter(self, getter: Callable) -> None:
         """Set callback to get event buffer instances.
         
@@ -92,7 +92,7 @@ class SystemDiagnostics:
         """
         self.event_buffer_getter = getter
         self.logger.debug("Event buffer getter callback set")
-    
+
     def set_memory_monitor(self, monitor: MemoryMonitor) -> None:
         """Set memory monitor instance.
         
@@ -101,7 +101,7 @@ class SystemDiagnostics:
         """
         self.memory_monitor = monitor
         self.logger.debug("Memory monitor set")
-    
+
     def monitor_logs(self) -> List[Dict]:
         """
         Monitor logs for issues.
@@ -110,19 +110,19 @@ class SystemDiagnostics:
             List of detected issues
         """
         issues = []
-        
+
         if not self.log_file or not Path(self.log_file).exists():
             return issues
-        
+
         try:
             with open(self.log_file, 'r', encoding='utf-8', errors='ignore') as f:
                 # Seek to last position
                 f.seek(self.last_log_position)
-                
+
                 # Read new lines
                 new_lines = f.readlines()
                 self.last_log_position = f.tell()
-                
+
                 # Check each line for error patterns
                 for line in new_lines:
                     for issue_type, pattern in self.ERROR_PATTERNS.items():
@@ -136,22 +136,22 @@ class SystemDiagnostics:
                             issues.append(issue)
                             self.issue_counts[issue_type] += 1
                             self.total_issues_detected += 1
-                            
+
                             # Extract source names if present
                             source_match = re.search(r"for (\[.*?\]|'.*?')", line)
                             if source_match:
                                 issue['source'] = source_match.group(1)
-                            
+
                             break  # Only match first pattern per line
         except Exception as e:
             self.logger.error(f"Error monitoring logs: {e}", exc_info=True)
-        
+
         # Store detected issues
         for issue in issues:
             self.detected_issues.append(issue)
-        
+
         return issues
-    
+
     def diagnose_system_state(self) -> Dict:
         """
         Diagnose current system state.
@@ -166,11 +166,11 @@ class SystemDiagnostics:
             'capture_status': {},
             'event_buffer_status': {}
         }
-        
+
         # Check logs for issues
         log_issues = self.monitor_logs()
         diagnosis['issues'].extend(log_issues)
-        
+
         # Check memory
         if self.memory_monitor:
             memory_stats = self.memory_monitor.get_memory_stats()
@@ -183,7 +183,7 @@ class SystemDiagnostics:
                         'rate_mb_per_min': memory_stats.get('leak_rate_mb_per_min', 0),
                         'timestamp': datetime.now().isoformat()
                     })
-        
+
         # Check capture status
         if self.pipeline_getter:
             try:
@@ -202,13 +202,13 @@ class SystemDiagnostics:
                                         # Fallback: try to get as attribute
                                         is_working = getattr(proc, 'is_working', False)
                                     is_inited = getattr(proc, 'is_inited', False)
-                                    
+
                                     diagnosis['capture_status'][str(source_names)] = {
                                         'is_working': is_working,
                                         'is_inited': is_inited,
                                         'source_type': getattr(proc, 'source_type', None)
                                     }
-                                    
+
                                     # Detect issues
                                     if not is_working and is_inited:
                                         diagnosis['issues'].append({
@@ -218,7 +218,7 @@ class SystemDiagnostics:
                                         })
             except Exception as e:
                 self.logger.error(f"Error checking capture status: {e}", exc_info=True)
-        
+
         # Check event buffer status
         if self.event_buffer_getter:
             try:
@@ -232,7 +232,7 @@ class SystemDiagnostics:
                                 'size': size,
                                 'duration': duration
                             }
-                            
+
                             # Detect issues (buffer too large or empty when it shouldn't be)
                             if size > 1000:  # Arbitrary threshold
                                 diagnosis['issues'].append({
@@ -243,9 +243,9 @@ class SystemDiagnostics:
                                 })
             except Exception as e:
                 self.logger.error(f"Error checking event buffer status: {e}", exc_info=True)
-        
+
         return diagnosis
-    
+
     def auto_fix_issue(self, issue: Dict) -> bool:
         """
         Automatically fix detected issue.
@@ -258,7 +258,7 @@ class SystemDiagnostics:
         """
         issue_type = issue.get('type')
         self.logger.info(f"Attempting to fix issue: {issue_type}")
-        
+
         fix_applied = False
         fix_details = {
             'issue_type': issue_type,
@@ -266,7 +266,7 @@ class SystemDiagnostics:
             'method': None,
             'success': False
         }
-        
+
         try:
             if issue_type == 'no_frames' or issue_type == 'capture_not_working':
                 # Pipeline restart is now handled automatically in _grab_frames
@@ -275,7 +275,7 @@ class SystemDiagnostics:
                 self.logger.info(f"Detected no frames for {source} - pipeline should auto-restart")
                 fix_details['method'] = 'auto_restart_handled'
                 fix_applied = True
-                
+
             elif issue_type == 'memory_leak':
                 # Trigger memory cleanup
                 if self.memory_monitor:
@@ -288,7 +288,7 @@ class SystemDiagnostics:
                     self.logger.info(f"Forced GC collected {collected} objects")
                     fix_details['method'] = 'force_gc'
                     fix_applied = True
-                    
+
             elif issue_type == 'event_buffer_overflow':
                 # Clear old frames from event buffer
                 source_id = issue.get('source_id')
@@ -300,36 +300,37 @@ class SystemDiagnostics:
                             if buffer:
                                 # Clear frames older than half the max duration
                                 removed = buffer.clear_old_frames(older_than_seconds=buffer.max_duration_seconds / 2)
-                                self.logger.info(f"Cleared {removed} old frames from EventBuffer for source {source_id}")
+                                self.logger.info(
+                                    f"Cleared {removed} old frames from EventBuffer for source {source_id}")
                                 fix_details['method'] = 'event_buffer_cleanup'
                                 fix_applied = True
                     except Exception as e:
                         self.logger.error(f"Error cleaning event buffer: {e}", exc_info=True)
-                        
+
             elif issue_type == 'pre_event_frames':
                 # This is usually a symptom, not a root cause
                 # Log for monitoring but don't try to fix directly
                 self.logger.debug(f"Pre-event frames issue detected (usually symptom of other problems)")
                 fix_details['method'] = 'monitoring_only'
                 fix_applied = False  # Not a direct fix
-                
+
             else:
                 self.logger.debug(f"No auto-fix available for issue type: {issue_type}")
                 fix_details['method'] = 'no_fix_available'
                 fix_applied = False
-                
+
         except Exception as e:
             self.logger.error(f"Error applying fix for {issue_type}: {e}", exc_info=True)
             fix_details['error'] = str(e)
-        
+
         fix_details['success'] = fix_applied
         self.fixes_applied.append(fix_details)
-        
+
         if fix_applied:
             self.total_fixes_applied += 1
-        
+
         return fix_applied
-    
+
     def verify_fix(self, issue: Dict, wait_time: float = 10.0) -> bool:
         """
         Verify that fix resolved the issue.
@@ -343,47 +344,47 @@ class SystemDiagnostics:
         """
         self.logger.debug(f"Verifying fix for {issue.get('type')}, waiting {wait_time}s...")
         time.sleep(wait_time)
-        
+
         # Re-diagnose system
         new_diagnosis = self.diagnose_system_state()
         issue_type = issue.get('type')
-        
+
         # Check if same type of issue still exists
         same_issue_found = any(
-            i.get('type') == issue_type 
+            i.get('type') == issue_type
             for i in new_diagnosis.get('issues', [])
         )
-        
+
         resolved = not same_issue_found
-        
+
         verification = {
             'issue_type': issue_type,
             'timestamp': datetime.now().isoformat(),
             'resolved': resolved,
             'same_issue_found': same_issue_found
         }
-        
+
         self.verification_results.append(verification)
-        
+
         if resolved:
             self.logger.info(f"Issue {issue_type} appears to be resolved")
         else:
             self.logger.warning(f"Issue {issue_type} still present after fix")
-        
+
         return resolved
-    
+
     def _diagnostic_loop(self) -> None:
         """Main diagnostic loop."""
         self.logger.info("System diagnostics started")
-        
+
         while self.running:
             try:
                 self.last_check_time = time.time()
                 self.total_checks += 1
-                
+
                 # Diagnose system state
                 diagnosis = self.diagnose_system_state()
-                
+
                 # Log summary periodically
                 if self.total_checks % 10 == 0:  # Every 10 checks
                     issue_count = len(diagnosis.get('issues', []))
@@ -392,7 +393,7 @@ class SystemDiagnostics:
                         f"{issue_count} issues detected, "
                         f"{self.total_fixes_applied} fixes applied total"
                     )
-                
+
                 # Auto-fix issues if enabled
                 if self.auto_fix:
                     for issue in diagnosis.get('issues', []):
@@ -403,34 +404,34 @@ class SystemDiagnostics:
                             if fix_applied:
                                 # Verify fix after a delay
                                 self.verify_fix(issue, wait_time=15.0)
-                
+
                 time.sleep(self.check_interval)
             except Exception as e:
                 self.logger.error(f"Error in diagnostic loop: {e}", exc_info=True)
                 time.sleep(self.check_interval)
-        
+
         self.logger.info("System diagnostics stopped")
-    
+
     def start(self) -> None:
         """Start diagnostics in background thread."""
         if self.running:
             self.logger.warning("System diagnostics already running")
             return
-        
+
         self.running = True
         self.monitor_thread = threading.Thread(target=self._diagnostic_loop, daemon=True, name="SystemDiagnostics")
         self.monitor_thread.start()
         self.logger.info("System diagnostics started")
-    
+
     def stop(self) -> None:
         """Stop diagnostics."""
         if not self.running:
             return
-        
+
         self.running = False
         if self.monitor_thread:
             self.monitor_thread.join(timeout=5.0)
-        
+
         # Print summary
         self.logger.info(
             f"System diagnostics stopped. Summary: "
@@ -438,7 +439,7 @@ class SystemDiagnostics:
             f"{self.total_issues_detected} issues detected, "
             f"{self.total_fixes_applied} fixes applied"
         )
-    
+
     def get_summary(self) -> Dict:
         """Get summary of diagnostics.
         

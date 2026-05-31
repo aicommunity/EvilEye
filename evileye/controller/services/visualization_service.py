@@ -18,13 +18,13 @@ class VisualizationService:
         self._visualizer: Optional[IVisualizer] = None
 
     def initialize_visualizer(
-        self,
-        params: Dict[str, Any],
-        pyqt_slots: Dict[str, Any],
-        pyqt_signals: Dict[str, Any],
-        source_id_name_table: Optional[Dict[int, str]] = None,
-        source_video_duration: Optional[Dict[int, float]] = None,
-        class_mapping: Optional[Dict[str, int]] = None,
+            self,
+            params: Dict[str, Any],
+            pyqt_slots: Dict[str, Any],
+            pyqt_signals: Dict[str, Any],
+            source_id_name_table: Optional[Dict[int, str]] = None,
+            source_video_duration: Optional[Dict[int, float]] = None,
+            class_mapping: Optional[Dict[str, int]] = None,
     ) -> IVisualizer:
         """Инициализировать визуализатор.
 

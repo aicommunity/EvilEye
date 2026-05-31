@@ -14,16 +14,16 @@ class PipelineProcessors(PipelineBase):
     Processor-based pipeline implementation.
     Manages multiple processors in a processing chain.
     """
-    
+
     def __init__(self):
         super().__init__()
-        
+
         # List of processor components in execution order
         self.processors: List[ProcessorBase] = []
-        
+
         # Unified processor parameters storage: {processor_name: params_list}
         self._processor_params: Dict[str, List[Dict]] = {}
-        
+
         # Encoders for tracking (can be overridden by derived classes)
         self.encoders: Dict[str, Any] = {}
 
@@ -78,13 +78,13 @@ class PipelineProcessors(PipelineBase):
     def get_params_impl(self):
         """Get parameters from all processors"""
         params = super().get_params_impl()
-        
+
         # Get parameters from each processor type
         for processor in self.processors:
             if processor is not None:
                 section_name = processor.get_name()
                 params[section_name] = processor.get_params()
-        
+
         return params
 
     def start(self):
@@ -92,7 +92,7 @@ class PipelineProcessors(PipelineBase):
         import time
         from ..object_detector.object_detection_base import ObjectDetectorBase
         from .processor_frame import ProcessorFrame
-        
+
         # First, start all processors except sources (detectors, trackers, etc.)
         # This ensures they are ready to receive data before sources begin capturing
         detectors = []
@@ -106,7 +106,7 @@ class PipelineProcessors(PipelineBase):
                         for p in processor.processors:
                             if isinstance(p, ObjectDetectorBase):
                                 detectors.append(p)
-        
+
         # Do not block pipeline startup for a long time on detector readiness.
         # In headless/API runs this delays controller.start(), which in turn
         # prevents preview publication and may look like a hung runtime.
@@ -121,7 +121,7 @@ class PipelineProcessors(PipelineBase):
                 import concurrent.futures
                 timeout_per_detector = 2.0
                 with concurrent.futures.ThreadPoolExecutor(
-                    max_workers=min(len(detectors_with_ready), 8)
+                        max_workers=min(len(detectors_with_ready), 8)
                 ) as executor:
                     future_to_det = {
                         executor.submit(d.is_ready, timeout_per_detector): d
@@ -129,7 +129,7 @@ class PipelineProcessors(PipelineBase):
                     }
                     try:
                         for fut in concurrent.futures.as_completed(
-                            future_to_det, timeout=timeout_per_detector + 1.0
+                                future_to_det, timeout=timeout_per_detector + 1.0
                         ):
                             det = future_to_det[fut]
                             try:
@@ -159,7 +159,7 @@ class PipelineProcessors(PipelineBase):
             time.sleep(0.1)
         else:
             time.sleep(0.1)
-        
+
         # Finally, start sources last so they don't send frames before processors are ready
         for processor in self.processors:
             if processor is not None and isinstance(processor, ProcessorSource):
@@ -171,7 +171,8 @@ class PipelineProcessors(PipelineBase):
             os.getenv("EVILEYE_PROCESSOR_STOP_TIMEOUT_SEC", "8.0") or "8.0"
         )
         source_processors = [p for p in self.processors if p is not None and isinstance(p, ProcessorSource)]
-        other_processors = [p for p in reversed(self.processors) if p is not None and not isinstance(p, ProcessorSource)]
+        other_processors = [p for p in reversed(self.processors) if
+                            p is not None and not isinstance(p, ProcessorSource)]
         for processor in [*source_processors, *other_processors]:
             if processor is not None:
                 stop_done = threading.Event()
@@ -206,31 +207,51 @@ class PipelineProcessors(PipelineBase):
         step_result = None
         tracking_results = None  # Store tracking results for attributes processors
         perf_diag_enabled = self._perf_diag_env
-        if perf_diag_enabled:
+        timeline_enabled = os.getenv(
+            "EVILEYE_PIPELINE_TIMELINE", ""
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        if perf_diag_enabled or timeline_enabled:
             from timeit import default_timer as _t
             t_begin = _t()
             stage_timings = []
 
+        mp_pending_snapshot = 0
+        try:
+            estimate_stats = getattr(self, "estimate_mp_backlog_stats", None)
+            if callable(estimate_stats):
+                stats = estimate_stats()
+                mp_pending_snapshot = int(stats.get("pending", 0))
+            else:
+                estimate_legacy = getattr(self, "estimate_mp_pending_depth", None)
+                if callable(estimate_legacy):
+                    pending, _ = estimate_legacy()
+                    mp_pending_snapshot = int(pending)
+        except Exception:
+            pass
+
         for processor in self.processors:
             if processor is None:
                 continue
-                
+
             if isinstance(processor, ProcessorSource):
                 self.run_sources()
-            
-            if perf_diag_enabled:
+
+            if isinstance(processor, ProcessorStep):
+                processor._mp_pending_snapshot = mp_pending_snapshot
+
+            if perf_diag_enabled or timeline_enabled:
                 t0 = _t()
             step_result = processor.process(step_result)
-            if perf_diag_enabled:
+            if perf_diag_enabled or timeline_enabled:
                 t1 = _t()
                 try:
                     out_len = len(step_result) if step_result is not None else 0
                 except Exception:
                     out_len = -1
                 stage_timings.append((processor.get_name(), (t1 - t0) * 1000.0, out_len))
-            
+
             pipeline_results[processor.get_name()] = step_result
-            
+
             # Store tracking results for attributes processors
             # Always use mc_trackers results for attributes, regardless of mc_trackers status
             if processor.get_name() == 'mc_trackers' and step_result is not None:
@@ -240,18 +261,57 @@ class PipelineProcessors(PipelineBase):
         if pipeline_results:
             self.add_result(pipeline_results)
 
-        if perf_diag_enabled:
+        if perf_diag_enabled or timeline_enabled:
             self._perf_diag_loop += 1
             every = max(1, int(self._perf_diag_every or 60))
-            if (self._perf_diag_loop % every) == 0:
+            log_this_tick = timeline_enabled or (
+                perf_diag_enabled and (self._perf_diag_loop % every) == 0
+            )
+            if log_this_tick:
                 try:
                     total_ms = (_t() - t_begin) * 1000.0
                     top = ", ".join([f"{n}={ms:.1f}ms(len={ln})" for (n, ms, ln) in stage_timings])
-                    self.logger.info(f"PerfDiag(Pipeline): loop={self._perf_diag_loop}, total={total_ms:.1f}ms, {top}")
+                    tag = "PipelineTimeline" if timeline_enabled else "PerfDiag(Pipeline)"
+                    self.logger.info(
+                        "%s: loop=%d total=%.1fms | %s",
+                        tag,
+                        self._perf_diag_loop,
+                        total_ms,
+                        top,
+                    )
                 except Exception:
                     pass
+                self._log_mp_barrier_diag()
 
         return pipeline_results
+
+    def _log_mp_barrier_diag(self) -> None:
+        if not self._perf_diag_env:
+            return
+        every = max(1, int(self._perf_diag_every or 60))
+        if (self._perf_diag_loop % every) != 0:
+            return
+        estimate_stats = getattr(self, "estimate_mp_backlog_stats", None)
+        estimate_legacy = getattr(self, "estimate_mp_pending_depth", None)
+        if not callable(estimate_stats) and not callable(estimate_legacy):
+            return
+        try:
+            if callable(estimate_stats):
+                stats = estimate_stats()
+                pending = int(stats.get("pending", 0))
+                put_dropped = int(stats.get("put_dropped", 0))
+                pending_evict = int(stats.get("pending_evict", 0))
+            else:
+                pending, put_dropped = estimate_legacy()
+                pending_evict = 0
+            self.logger.info(
+                "PerfDiag(MpBarrier): pending=%d put_dropped=%d pending_evict=%d",
+                pending,
+                put_dropped,
+                pending_evict,
+            )
+        except Exception:
+            pass
 
     def calc_memory_consumption(self):
         """Calculate memory consumption for all processors"""
@@ -316,4 +376,3 @@ class PipelineProcessors(PipelineBase):
         """Generate default structure for pipeline"""
         # Default implementation for processor-based pipelines
         pass
-

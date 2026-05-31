@@ -25,18 +25,18 @@ SAMPLE_VIDEOS = {
         "md5": None  # Placeholder MD5
     },
     "sample_split.mp4": {
-        "url": "https://github.com/aicommunity/EvilEye/releases/download/dev/sample_split.mp4", 
+        "url": "https://github.com/aicommunity/EvilEye/releases/download/dev/sample_split.mp4",
         "description": "Sample with two head camera video for splitting to two sources",
         "md5": None  # Placeholder MD5
     },
     "6p-c0.avi": {
         "url": "https://github.com/aicommunity/EvilEye/releases/download/dev/6p-c0.avi",
-        "description": "Video for testing multi-camera tracking (camera 0)", 
+        "description": "Video for testing multi-camera tracking (camera 0)",
         "md5": None  # Placeholder MD5
     },
     "6p-c1.avi": {
         "url": "https://github.com/aicommunity/EvilEye/releases/download/dev/6p-c1.avi",
-        "description": "Video for testing multi-camera tracking (camera 1)", 
+        "description": "Video for testing multi-camera tracking (camera 1)",
         "md5": None  # Placeholder MD5
     }
 }
@@ -60,7 +60,8 @@ def _build_session() -> requests.Session:
     return session
 
 
-def download_file(url, filepath, description="", session: requests.Session | None = None, timeout: float = 30.0, chunk_size: int = 1024 * 1024):
+def download_file(url, filepath, description="", session: requests.Session | None = None, timeout: float = 30.0,
+                  chunk_size: int = 1024 * 1024):
     """
     Download a file with progress bar.
     
@@ -77,21 +78,22 @@ def download_file(url, filepath, description="", session: requests.Session | Non
         download_logger.info(f"Downloading {description}...")
         response = sess.get(url, stream=True, timeout=timeout)
         response.raise_for_status()
-        
+
         total_size = int(response.headers.get('content-length', 0))
-        
+
         with open(filepath, 'wb') as f:
             with tqdm(total=total_size, unit='B', unit_scale=True, desc=description, disable=(total_size == 0)) as pbar:
                 for chunk in response.iter_content(chunk_size=chunk_size):
                     if chunk:
                         f.write(chunk)
                         pbar.update(len(chunk))
-        
+
         return True
-        
+
     except Exception as e:
         download_logger.info(f"Error downloading {description}: {e}")
         return False
+
 
 def verify_file(filepath, expected_md5=None):
     """
@@ -106,13 +108,14 @@ def verify_file(filepath, expected_md5=None):
     """
     if not os.path.exists(filepath):
         return False
-    
+
     if expected_md5:
         with open(filepath, 'rb') as f:
             file_md5 = hashlib.md5(f.read()).hexdigest()
         return file_md5 == expected_md5
-    
+
     return True
+
 
 def download_sample_videos(videos_dir="videos", force=False, parallel=True, max_workers: int | None = None):
     """
@@ -127,7 +130,7 @@ def download_sample_videos(videos_dir="videos", force=False, parallel=True, max_
     """
     videos_path = Path(videos_dir)
     videos_path.mkdir(exist_ok=True)
-    
+
     results = {}
 
     # Helper for single download
@@ -155,41 +158,43 @@ def download_sample_videos(videos_dir="videos", force=False, parallel=True, max_
             name, res = _task(filename, video_info, session)
             results[name] = res
             download_logger.info(f"{name}: {res['status']}")
-    
+
     return results
+
 
 def main():
     """Main function for command line usage."""
     import argparse
-    
+
     parser = argparse.ArgumentParser(description="Download sample videos for EvilEye")
     parser.add_argument("--videos-dir", default="videos", help="Directory to save videos")
     parser.add_argument("--force", action="store_true", help="Force re-download existing files")
-    
+
     args = parser.parse_args()
-    
+
     download_logger.info("EvilEye Sample Videos Downloader")
     download_logger.info("=" * 40)
-    
+
     results = download_sample_videos(args.videos_dir, args.force)
-    
+
     download_logger.info("\nDownload Summary:")
     download_logger.info("-" * 20)
-    
+
     for filename, result in results.items():
         download_logger.info(f"{filename}: {result['status']}")
-    
+
     successful = sum(1 for r in results.values() if "downloaded" in r["status"] or r["status"] == "exists")
     total = len(results)
-    
+
     download_logger.info(f"\nSuccessfully processed {successful}/{total} videos")
-    
+
     if successful == total:
         download_logger.info("All sample videos are ready!")
         return 0
     else:
         download_logger.info("Some videos failed to download. Check your internet connection.")
         return 1
+
 
 if __name__ == "__main__":
     sys.exit(main())

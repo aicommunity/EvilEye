@@ -6,6 +6,7 @@ import threading
 from ..object_tracker.tracking_results import TrackingResult, TrackingResultList
 from queue import Full
 
+
 class ObjectMultiCameraTrackingBase(EvilEyeBase):
     ResultType = TrackingResultList
 

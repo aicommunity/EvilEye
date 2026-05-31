@@ -22,7 +22,7 @@ class VideoCaptureOpencv(VideoCaptureBase):
         CAP_GSTREAMER = 1800
         CAP_FFMPEG = 1900
         CAP_IMAGES = 2000
-    
+
     # Class variable to track already logged GStreamer errors
     _gstreamer_error_logged = set()  # Set of source_names for which error has already been logged
 
@@ -71,14 +71,15 @@ class VideoCaptureOpencv(VideoCaptureBase):
             self.recorder_manager = None
 
     def init_impl(self):
-        api_pref = self.params.get('apiPreference','CAP_FFMPEG')
-        
+        api_pref = self.params.get('apiPreference', 'CAP_FFMPEG')
+
         # Check if GStreamer is requested but OpenCV doesn't support it
         if api_pref == "CAP_GSTREAMER":
             build_info = cv2.getBuildInformation()
             if "GStreamer:                   NO" in build_info or "GStreamer:                      NO" in build_info:
                 # Log error only once per source set
-                source_names_key = tuple(sorted(self.source_names)) if isinstance(self.source_names, list) else str(self.source_names)
+                source_names_key = tuple(sorted(self.source_names)) if isinstance(self.source_names, list) else str(
+                    self.source_names)
                 if source_names_key not in VideoCaptureOpencv._gstreamer_error_logged:
                     error_msg = (
                         f"apiPreference='CAP_GSTREAMER' is specified for {self.source_names}, "
@@ -96,11 +97,12 @@ class VideoCaptureOpencv(VideoCaptureBase):
                         f"GStreamer not supported for {self.source_names} (error already logged, using reconnect logic)"
                     )
                 return False
-        
+
         if self.source_type == CaptureDeviceType.IpCamera and api_pref == "CAP_GSTREAMER":  # Convert RTSP URL to GStreamer format
             if '!' not in self.source_address:
-                str_h265 = (' ! rtph265depay ! h265parse ! avdec_h265 ! decodebin ! videoconvert ! '  # Codec and format specification
-                            'video/x-raw, format=(string)BGR ! appsink')
+                str_h265 = (
+                    ' ! rtph265depay ! h265parse ! avdec_h265 ! decodebin ! videoconvert ! '  # Codec and format specification
+                    'video/x-raw, format=(string)BGR ! appsink')
                 str_h264 = (' ! rtph264depay ! h264parse ! avdec_h264 ! decodebin ! videoconvert ! '
                             'video/x-raw, format=(string)BGR ! appsink')
 
@@ -127,12 +129,14 @@ class VideoCaptureOpencv(VideoCaptureBase):
                 pipeline = f'filesrc location={self.source_address} ! decodebin ! videoconvert ! video/x-raw,format=BGR ! appsink'
                 result = self.capture.open(pipeline, VideoCaptureOpencv.VideoCaptureAPIs[api_pref])
                 if not self.capture.isOpened():
-                    self.logger.warning(f"Failed to open video file with GStreamer for {self.source_names}. Pipeline: {pipeline}")
+                    self.logger.warning(
+                        f"Failed to open video file with GStreamer for {self.source_names}. Pipeline: {pipeline}")
             else:
                 # If pipeline is already specified, use it directly
                 result = self.capture.open(self.source_address, VideoCaptureOpencv.VideoCaptureAPIs[api_pref])
                 if not self.capture.isOpened():
-                    self.logger.warning(f"Failed to open video file with provided GStreamer pipeline for {self.source_names}")
+                    self.logger.warning(
+                        f"Failed to open video file with provided GStreamer pipeline for {self.source_names}")
         else:
             # For FFMPEG and other APIs, use direct file path
             self.capture.open(self.source_address, VideoCaptureOpencv.VideoCaptureAPIs[api_pref])
@@ -210,7 +214,8 @@ class VideoCaptureOpencv(VideoCaptureBase):
                 init_result = False
             timestamp = datetime.datetime.now()
             if init_result and self.get_init_flag() and self.is_opened():
-                self.logger.info(f"Reconnected to a sources: {self.source_names} (is_inited={self.is_inited}, is_working={self.is_working})")
+                self.logger.info(
+                    f"Reconnected to a sources: {self.source_names} (is_inited={self.is_inited}, is_working={self.is_working})")
                 self.is_working = True
                 self.reconnects.append((self.params['camera'], timestamp, self.is_working))
                 # Update last_frame_time to give reset time to start producing frames
@@ -226,7 +231,8 @@ class VideoCaptureOpencv(VideoCaptureBase):
                         rec_err,
                     )
             else:
-                self.logger.warning(f"Could not reconnect to sources: {self.source_names} (init_result={init_result}, is_inited={self.is_inited}, is_opened={self.is_opened()})")
+                self.logger.warning(
+                    f"Could not reconnect to sources: {self.source_names} (init_result={init_result}, is_inited={self.is_inited}, is_opened={self.is_opened()})")
                 self.is_working = False
         # Уведомляем подписчиков вне мьютекса, чтобы не держать его долго
         for sub in self.subscribers:
@@ -237,9 +243,10 @@ class VideoCaptureOpencv(VideoCaptureBase):
             begin_it = timer()
             # Health check: if no frames for too long, trigger reconnect/reset
             if (
-                self.source_type == CaptureDeviceType.IpCamera
-                and self.last_frame_time
-                and (datetime.datetime.now() - self.last_frame_time).total_seconds() > self.capture_config.frame_timeout_seconds
+                    self.source_type == CaptureDeviceType.IpCamera
+                    and self.last_frame_time
+                    and (
+                    datetime.datetime.now() - self.last_frame_time).total_seconds() > self.capture_config.frame_timeout_seconds
             ):
                 self.logger.warning(
                     f"No frames for {self.capture_config.frame_timeout_seconds}s from {self.source_names}, forcing reset"
@@ -272,7 +279,8 @@ class VideoCaptureOpencv(VideoCaptureBase):
                     if self.init():
                         self._reconnect_attempt = 0
                         timestamp = datetime.datetime.now()
-                        self.logger.info(f"Reconnected to a sources: {self.source_names} (is_inited={self.is_inited}, is_working={self.is_working})")
+                        self.logger.info(
+                            f"Reconnected to a sources: {self.source_names} (is_inited={self.is_inited}, is_working={self.is_working})")
                         self.reconnects.append((self.params['camera'], timestamp, self.is_working))
                         for sub in self.subscribers:
                             sub.update()
@@ -358,7 +366,7 @@ class VideoCaptureOpencv(VideoCaptureBase):
     def _retrieve_frames(self) -> None:
         while self.run_flag and not self.stop_event.is_set():
             begin_it = timer()
-            
+
             # Защита от зависания retrieve(): используем таймаут через threading
             # ВАЖНО: retrieve() должен быть защищен мьютексом, так как OpenCV операции не потокобезопасны
             # КРИТИЧНО: Захватываем мьютекс с таймаутом ПЕРЕД запуском потока, чтобы избежать deadlock
@@ -389,12 +397,12 @@ class VideoCaptureOpencv(VideoCaptureBase):
                 sleep_seconds = self._calculate_sleep_seconds(elapsed_seconds, retrieve_fps)
                 time.sleep(sleep_seconds)
                 continue
-            
+
             # Теперь мьютекс захвачен, можем безопасно вызвать retrieve()
             retrieve_result = [None, None]  # [is_read, src_image]
             retrieve_exception = [None]
             retrieve_start_time = timer()
-            
+
             try:
                 def retrieve_with_timeout():
                     try:
@@ -402,13 +410,13 @@ class VideoCaptureOpencv(VideoCaptureBase):
                         retrieve_result[0], retrieve_result[1] = self.capture.retrieve()
                     except Exception as e:
                         retrieve_exception[0] = e
-                
+
                 retrieve_thread = Thread(target=retrieve_with_timeout, daemon=True)
                 retrieve_thread.start()
                 retrieve_thread.join(timeout=1.0)  # Таймаут 1 секунда
-                
+
                 retrieve_elapsed = timer() - retrieve_start_time
-                
+
                 if retrieve_thread.is_alive():
                     # retrieve() завис, пропускаем этот кадр
                     self.logger.warning(
@@ -431,7 +439,7 @@ class VideoCaptureOpencv(VideoCaptureBase):
                 # Всегда освобождаем мьютекс, даже если retrieve() завис или произошло исключение
                 if mutex_acquired:
                     self.mutex.release()
-            
+
             if not is_read or src_image is None:
                 # End-of-file / retrieve failure handling
                 # NOTE: retrieve() returns False if grab() returned False (end of video)
@@ -468,7 +476,9 @@ class VideoCaptureOpencv(VideoCaptureBase):
                 # DropOldestQueue automatically drops oldest when full
                 dropped = False
                 try:
-                    dropped = self.frames_queue.put([is_read, src_image, self.frame_id_counter, self.video_current_frame, self.video_current_position])
+                    dropped = self.frames_queue.put(
+                        [is_read, src_image, self.frame_id_counter, self.video_current_frame,
+                         self.video_current_position])
                 except TypeError:
                     # Standard Queue for VideoFile returns None; keep behavior
                     dropped = False

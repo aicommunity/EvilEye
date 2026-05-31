@@ -8,6 +8,7 @@ from ..core.ipc_contracts import attach_frame_contract
 
 class PreprocessingBase(EvilEyeBase):
     ResultType = Frame
+
     def __init__(self):
         super().__init__()
 

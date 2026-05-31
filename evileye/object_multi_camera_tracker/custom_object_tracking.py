@@ -2,6 +2,7 @@ from typing import Dict, List, Tuple
 import datetime
 from collections import deque
 import os
+import time
 from timeit import default_timer as timer
 import threading
 from queue import Empty
@@ -26,8 +27,24 @@ from ..object_tracker.trackers.sctrack import SCTrack
 from dataclasses import dataclass
 from pympler import asizeof
 from ..core.base_class import EvilEyeBase
+from ..core.frame import Frame
 from ..core.ipc_contracts import BatchMeta
 from ..core.tracking_dto import TrackingDTO, TrackingObjectDTO
+
+MC_MAX_FRAME_ID_SPREAD = int(os.getenv("EVILEYE_MC_MAX_FRAME_ID_SPREAD", "30") or "30")
+MC_MAX_TIMESTAMP_SPREAD_SEC = float(
+    os.getenv("EVILEYE_MC_MAX_TIMESTAMP_SPREAD_SEC", "6.0") or "6.0"
+)
+
+
+def _sync_tracking_result_with_frame(
+    track_info: TrackingResultList,
+    frame: Frame,
+) -> None:
+    if track_info.source_id is None:
+        track_info.source_id = frame.source_id
+    if track_info.frame_id is None:
+        track_info.frame_id = frame.frame_id
 
 
 @EvilEyeBase.register("ObjectMultiCameraTracking")
@@ -61,6 +78,22 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
         self._diag_queue_in_gets_by_source: dict[int, int] = {}
         self._diag_frame_id_updates_by_source: dict[int, int] = {}
         self._diag_frame_id_repeats_by_source: dict[int, int] = {}
+        self._pipeline_tick_batch = True
+        self._diag_tick_batch_skip = 0
+        self._diag_tick_batch_stale_evict = 0
+        self._accumulated_tick_batch: dict[int, tuple[TrackingResultList, Frame]] = {}
+
+    def start(self):
+        self.run_flag = True
+        if self._pipeline_tick_batch:
+            return
+        super().start()
+
+    def stop(self):
+        self.run_flag = False
+        if self._pipeline_tick_batch:
+            return
+        super().stop()
 
     def init_impl(self, **kwargs) -> bool:
         sources_ids = self.params.get("source_ids", [])
@@ -79,6 +112,7 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
         self._diag_queue_in_gets_by_source = {}
         self._diag_frame_id_updates_by_source = {}
         self._diag_frame_id_repeats_by_source = {}
+        self._accumulated_tick_batch = {}
 
     def set_params_impl(self):
         super().set_params_impl()
@@ -89,6 +123,305 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
 
     def default(self):
         self.params.clear()
+
+    @staticmethod
+    def _timestamp_sec(frame: Frame) -> float | None:
+        ts = frame.time_stamp
+        if ts is None:
+            return None
+        if isinstance(ts, datetime.datetime):
+            return ts.timestamp()
+        try:
+            return float(ts)
+        except (TypeError, ValueError):
+            return None
+
+    def _frame_id_for_pair(
+        self, track_info: TrackingResultList, frame: Frame
+    ) -> int | None:
+        frame_id = track_info.frame_id
+        if frame_id is None:
+            frame_id = frame.frame_id
+        if frame_id is None:
+            return None
+        return int(frame_id)
+
+    def _merge_accumulator_item(
+        self,
+        source_id: int,
+        item: tuple[TrackingResultList, Frame],
+    ) -> None:
+        """Keep per-source newest frame_id only (MP cameras drift independently)."""
+        new_fid = self._frame_id_for_pair(item[0], item[1])
+        if new_fid is None:
+            self._accumulated_tick_batch[source_id] = item
+            return
+        old = self._accumulated_tick_batch.get(source_id)
+        if old is None:
+            self._accumulated_tick_batch[source_id] = item
+            return
+        old_fid = self._frame_id_for_pair(old[0], old[1])
+        if old_fid is not None:
+            if new_fid >= old_fid:
+                self._accumulated_tick_batch[source_id] = item
+            return
+        new_ts = self._timestamp_sec(item[1])
+        old_ts = self._timestamp_sec(old[1])
+        if new_ts is not None and old_ts is not None:
+            if new_ts >= old_ts:
+                self._accumulated_tick_batch[source_id] = item
+            return
+        self._accumulated_tick_batch[source_id] = item
+
+    def _batch_timestamp_spread_sec(
+        self, batch: dict[int, tuple[TrackingResultList, Frame]],
+    ) -> float | None:
+        ts_values: list[float] = []
+        for sid in self.source_ids:
+            if sid not in batch:
+                return None
+            ts = self._timestamp_sec(batch[sid][1])
+            if ts is None:
+                return None
+            ts_values.append(ts)
+        if not ts_values:
+            return None
+        return max(ts_values) - min(ts_values)
+
+    def _prune_accumulator_stale_frame_ids(self) -> None:
+        """Drop lagging cameras so spread gate can recover without blocking the batch."""
+        if len(self._accumulated_tick_batch) < len(self.source_ids):
+            return
+        ts_values: dict[int, float] = {}
+        for sid in self.source_ids:
+            if sid not in self._accumulated_tick_batch:
+                return
+            ts = self._timestamp_sec(self._accumulated_tick_batch[sid][1])
+            if ts is None:
+                break
+            ts_values[sid] = ts
+        if len(ts_values) == len(self.source_ids):
+            tmax = max(ts_values.values())
+            if tmax - min(ts_values.values()) <= MC_MAX_TIMESTAMP_SPREAD_SEC:
+                return
+            cutoff = tmax - MC_MAX_TIMESTAMP_SPREAD_SEC
+            for sid, ts in ts_values.items():
+                if ts < cutoff:
+                    del self._accumulated_tick_batch[sid]
+                    self._diag_tick_batch_stale_evict += 1
+            return
+        frame_ids: dict[int, int] = {}
+        for sid in self.source_ids:
+            if sid not in self._accumulated_tick_batch:
+                return
+            track_info, frame = self._accumulated_tick_batch[sid]
+            frame_id = self._frame_id_for_pair(track_info, frame)
+            if frame_id is None:
+                return
+            frame_ids[sid] = frame_id
+        fmax = max(frame_ids.values())
+        if fmax - min(frame_ids.values()) <= MC_MAX_FRAME_ID_SPREAD:
+            return
+        cutoff = fmax - MC_MAX_FRAME_ID_SPREAD
+        for sid, fid in frame_ids.items():
+            if fid < cutoff:
+                del self._accumulated_tick_batch[sid]
+                self._diag_tick_batch_stale_evict += 1
+
+    def ingest_tick_batch(
+        self,
+        batch: dict[int, tuple[TrackingResultList, Frame]],
+    ) -> list[tuple[TrackingResultList, Frame]]:
+        """Merge per-tick tracker outputs; emit when all cameras have fresh inputs."""
+        for source_id, item in batch.items():
+            self._merge_accumulator_item(source_id, item)
+        return self._try_emit_accumulated_batch()
+
+    def _evict_accumulator_by_age(self, max_age_sec: float | None = None) -> None:
+        """Drop accumulator entries too old to fuse (stale MP camera blocks emit)."""
+        if max_age_sec is None:
+            max_age_sec = MC_MAX_TIMESTAMP_SPREAD_SEC
+        now = time.time()
+        for sid in list(self._accumulated_tick_batch.keys()):
+            ts = self._timestamp_sec(self._accumulated_tick_batch[sid][1])
+            if ts is not None and (now - ts) > max_age_sec:
+                del self._accumulated_tick_batch[sid]
+                self._diag_tick_batch_stale_evict += 1
+
+    def _try_emit_accumulated_batch(self) -> list[tuple[TrackingResultList, Frame]]:
+        self._evict_accumulator_by_age()
+        if len(self._accumulated_tick_batch) < len(self.source_ids):
+            return []
+        ready = {
+            sid: self._accumulated_tick_batch[sid]
+            for sid in self.source_ids
+            if sid in self._accumulated_tick_batch
+        }
+        emitted = self.process_tick_batch(ready)
+        if emitted:
+            self._accumulated_tick_batch.clear()
+            return emitted
+        self._prune_accumulator_stale_frame_ids()
+        if len(self._accumulated_tick_batch) < len(self.source_ids):
+            return []
+        ready = {
+            sid: self._accumulated_tick_batch[sid]
+            for sid in self.source_ids
+            if sid in self._accumulated_tick_batch
+        }
+        emitted = self.process_tick_batch(ready)
+        if emitted:
+            self._accumulated_tick_batch.clear()
+        return emitted
+
+    def process_tick_batch(
+        self,
+        batch: dict[int, tuple[TrackingResultList, Frame]],
+    ) -> list[tuple[TrackingResultList, Frame]]:
+        """Process one pipeline tick: all cameras must be present and frame-aligned."""
+        if not batch:
+            return []
+
+        for track_info, frame in batch.values():
+            if not isinstance(track_info, TrackingResultList) or not isinstance(frame, Frame):
+                self._diag_tick_batch_skip += 1
+                return []
+            _sync_tracking_result_with_frame(track_info, frame)
+
+        for sid in self.source_ids:
+            if sid not in batch:
+                if self._perf_diag_env:
+                    self._diag_partial_batches += 1
+                self._diag_tick_batch_skip += 1
+                return []
+
+        frame_id_by_source: dict[int, int | None] = {}
+        frame_ids: list[int] = []
+        for sid in self.source_ids:
+            track_info, image = batch[sid]
+            frame_id = track_info.frame_id
+            if frame_id is None:
+                frame_id = image.frame_id
+            frame_id_by_source[sid] = frame_id
+            if frame_id is None:
+                self._diag_tick_batch_skip += 1
+                return []
+            frame_ids.append(int(frame_id))
+
+        ts_spread = self._batch_timestamp_spread_sec(batch)
+        if ts_spread is not None:
+            if ts_spread > MC_MAX_TIMESTAMP_SPREAD_SEC:
+                self._diag_tick_batch_skip += 1
+                if self._perf_diag_env and self._diag_tick_batch_skip % 30 == 1:
+                    self.logger.info(
+                        "PerfDiag(MC): tick_batch ts_spread=%.3fs (limit=%.3fs) frame_ids=%s",
+                        ts_spread,
+                        MC_MAX_TIMESTAMP_SPREAD_SEC,
+                        frame_id_by_source,
+                    )
+                return []
+        else:
+            spread = max(frame_ids) - min(frame_ids)
+            if spread > MC_MAX_FRAME_ID_SPREAD:
+                self._diag_tick_batch_skip += 1
+                if self._perf_diag_env and self._diag_tick_batch_skip % 30 == 1:
+                    self.logger.info(
+                        "PerfDiag(MC): tick_batch frame_spread=%d max=%d (limit=%d) frame_ids=%s",
+                        spread,
+                        max(frame_ids),
+                        MC_MAX_FRAME_ID_SPREAD,
+                        frame_id_by_source,
+                    )
+                return []
+
+        new_sources_count = 0
+        for sid in self.source_ids:
+            frame_id = frame_id_by_source[sid]
+            if frame_id != self._last_emitted_frame_id_by_source.get(sid):
+                new_sources_count += 1
+        if new_sources_count < 1:
+            self._diag_tick_batch_skip += 1
+            return []
+
+        sc_track_results = [batch[sid] for sid in self.source_ids]
+        is_partial = False
+        outputs: list[tuple[TrackingResultList, Frame]] = []
+
+        if not self.enable:
+            for track_info, image in sc_track_results:
+                item = (track_info, image)
+                self._attach_batch_meta(item, frame_id_by_source, is_partial=is_partial)
+                outputs.append(item)
+            for sid in self.source_ids:
+                self._last_emitted_frame_id_by_source[sid] = frame_id_by_source[sid]
+            if self._perf_diag_env:
+                self._diag_batches += 1
+                self._diag_emitted += len(outputs)
+            return outputs
+
+        sc_tracks: List[List[BOTrack]] = []
+        images = []
+        track_infos = []
+        for track_info, image in sc_track_results:
+            images.append(image)
+            track_infos.append(track_info)
+            tracks = []
+            for t in track_info.tracks:
+                td = t.tracking_data or {}
+                track_object = td.get("track_object")
+                if track_object is not None:
+                    tracks.append(track_object)
+            sc_tracks.append(tracks)
+
+        mc_tracks = self.tracker.update(sc_tracks)
+        if self._perf_diag_env and not mc_tracks:
+            self._diag_empty_mc_tracks += 1
+
+        per_cam_tracks = sum(len(ti.tracks or []) for ti in track_infos)
+        if not mc_tracks:
+            # Clustering produced no global tracks (often missing ReID features).
+            # Still emit per-camera SC tracks from mc_trackers so GUI/obj_handler get boxes.
+            if per_cam_tracks == 0:
+                self._diag_tick_batch_skip += 1
+                return []
+            for track_info, image in sc_track_results:
+                item = (track_info, image)
+                self._attach_batch_meta(item, frame_id_by_source, is_partial=is_partial)
+                outputs.append(item)
+            for sid in self.source_ids:
+                self._last_emitted_frame_id_by_source[sid] = frame_id_by_source[sid]
+            if self._perf_diag_env:
+                self._diag_batches += 1
+                self._diag_emitted += len(outputs)
+            return outputs
+
+        tracks_infos = self._create_tracks_info(track_infos, mc_tracks)
+        if not any(ti.tracks for ti in tracks_infos):
+            if per_cam_tracks == 0:
+                self._diag_tick_batch_skip += 1
+                return []
+            for track_info, image in sc_track_results:
+                item = (track_info, image)
+                self._attach_batch_meta(item, frame_id_by_source, is_partial=is_partial)
+                outputs.append(item)
+            for sid in self.source_ids:
+                self._last_emitted_frame_id_by_source[sid] = frame_id_by_source[sid]
+            if self._perf_diag_env:
+                self._diag_batches += 1
+                self._diag_emitted += len(outputs)
+            return outputs
+        for track_info, image in zip(tracks_infos, images):
+            item = (track_info, image)
+            self._attach_batch_meta(item, frame_id_by_source, is_partial=is_partial)
+            outputs.append(item)
+
+        for sid in self.source_ids:
+            self._last_emitted_frame_id_by_source[sid] = frame_id_by_source[sid]
+
+        if self._perf_diag_env:
+            self._diag_batches += 1
+            self._diag_emitted += len(outputs)
+        return outputs
 
     def _process_impl(self):
         while self.run_flag:
@@ -138,7 +471,7 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
                     continue
                 if self._perf_diag_env:
                     self._diag_queue_in_gets_by_source[source_id] = (
-                        self._diag_queue_in_gets_by_source.get(source_id, 0) + 1
+                            self._diag_queue_in_gets_by_source.get(source_id, 0) + 1
                     )
                 if source_id in latest_by_source and self._perf_diag_env:
                     self._diag_replaced_same_source += 1
@@ -151,9 +484,12 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
                     self._diag_replaced_same_source += 1
                 self._pending_by_source[source_id] = result
 
-            sc_track_results = [self._pending_by_source[source_id] for source_id in self.source_ids if source_id in self._pending_by_source]
+            sc_track_results = [self._pending_by_source[source_id] for source_id in self.source_ids if
+                                source_id in self._pending_by_source]
 
-            is_partial = len(sc_track_results) < len(self.source_ids)
+            num_sources = len(self.source_ids) or 1
+            min_sources_for_batch = max(1, (num_sources // 2) + 1)
+            is_partial = len(sc_track_results) < min_sources_for_batch
             if is_partial:
                 if self._perf_diag_env:
                     self._diag_waiting_for_batch += 1
@@ -205,11 +541,11 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
                         prev_frame_id = self._last_emitted_frame_id_by_source.get(source_id)
                         if new_frame_id != prev_frame_id:
                             self._diag_frame_id_updates_by_source[source_id] = (
-                                self._diag_frame_id_updates_by_source.get(source_id, 0) + 1
+                                    self._diag_frame_id_updates_by_source.get(source_id, 0) + 1
                             )
                         else:
                             self._diag_frame_id_repeats_by_source[source_id] = (
-                                self._diag_frame_id_repeats_by_source.get(source_id, 0) + 1
+                                    self._diag_frame_id_repeats_by_source.get(source_id, 0) + 1
                             )
                     self._last_emitted_frame_id_by_source[source_id] = new_frame_id
                 continue
@@ -250,11 +586,11 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
                     prev_frame_id = self._last_emitted_frame_id_by_source.get(source_id)
                     if new_frame_id != prev_frame_id:
                         self._diag_frame_id_updates_by_source[source_id] = (
-                            self._diag_frame_id_updates_by_source.get(source_id, 0) + 1
+                                self._diag_frame_id_updates_by_source.get(source_id, 0) + 1
                         )
                     else:
                         self._diag_frame_id_repeats_by_source[source_id] = (
-                            self._diag_frame_id_repeats_by_source.get(source_id, 0) + 1
+                                self._diag_frame_id_repeats_by_source.get(source_id, 0) + 1
                         )
                 self._last_emitted_frame_id_by_source[source_id] = new_frame_id
 
@@ -281,11 +617,12 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
                 if (self._perf_diag_counter % every) == 0:
                     try:
                         self.logger.info(
-                            "PerfDiag(MCTracker): loops=%d, waits=%d, batches=%d, partial=%d, replaced=%d, empty_mc=%d, emitted=%d, in_q=%s, out_q=%s, last_batch=%s, queue_in_gets=%s, frame_updates=%s, frame_repeats=%s",
+                            "PerfDiag(MCTracker): loops=%d, waits=%d, batches=%d, partial=%d, tick_skip=%d, replaced=%d, empty_mc=%d, emitted=%d, in_q=%s, out_q=%s, last_batch=%s, queue_in_gets=%s, frame_updates=%s, frame_repeats=%s",
                             self._perf_diag_counter,
                             self._diag_waiting_for_batch,
                             self._diag_batches,
                             self._diag_partial_batches,
+                            self._diag_tick_batch_skip,
                             self._diag_replaced_same_source,
                             self._diag_empty_mc_tracks,
                             self._diag_emitted,
@@ -392,10 +729,10 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
         return cam_id, bboxes_xcycwh, confidences, class_ids
 
     def _create_tracks_info(
-            self, 
-            sc_track_results: List[TrackingResultList], 
+            self,
+            sc_track_results: List[TrackingResultList],
             mc_tracks: List['MCTrack']) -> List[TrackingResultList]:
-        
+
         sc_tracks_by_cam = [list() for i in range(len(sc_track_results))]
         # O(1) lookup: local track_id -> index in sc_track_results[cam_id].tracks
         track_id_to_index = {
@@ -405,35 +742,35 @@ class ObjectMultiCameraTracking(ObjectMultiCameraTrackingBase):
         for t in mc_tracks:
             global_id = t.global_track_id
             for cam_id, track in t.sc_tracks.items():
-                
+
                 track_id = track.track_id
                 src_track_number = track_id_to_index.get(cam_id, {}).get(track_id)
-                
+
                 if src_track_number is None:
                     continue
 
                 src_track = sc_track_results[cam_id].tracks[src_track_number]
                 src_track.tracking_data['global_id'] = global_id
                 sc_tracks_by_cam[cam_id].append(src_track)
-        
+
         for i, results in enumerate(sc_track_results):
-            results.tracks = sc_tracks_by_cam[i]        
+            results.tracks = sc_tracks_by_cam[i]
 
         return sc_track_results
-    
+
 
 class MultiCameraTracker:
     def __init__(
-            self, 
+            self,
             num_cameras: int,
             encoders: List[TrackEncoder],
-            clustering_threshold: float = 0.5, 
+            clustering_threshold: float = 0.5,
             confident_age: int = 0,
             exclude_overlap: bool = False,
             include_lost_tracks: bool = False,
             overlap_threshold: float = 0.5,
             max_track_len: int = 50):
-        
+
         """
         :param num_cameras: Количество камер.
         :param encoder: Экстрактор признаков.
@@ -459,7 +796,7 @@ class MultiCameraTracker:
         :param image: Текущий кадр (numpy.ndarray).
         :return: Список numpy массивов для каждой камеры с глобальными идентификаторами.
         """
-        
+
         # Если ни одна камера не обнаружила объекты, возвращаем пустой список
         if all(len(x) == 0 for x in sct_tracks):
             return []
@@ -467,8 +804,8 @@ class MultiCameraTracker:
         # Обновляем признаки глобальных треков
         for t in self.mct_tracks:
             t.update_features()
-        
-        #Выполняем иерархическую кластеризацию
+
+        # Выполняем иерархическую кластеризацию
         mct_tracks = self._hierarchical_clustering(sct_tracks)
 
         # Обновляем признаки глобальных треков
@@ -482,23 +819,23 @@ class MultiCameraTracker:
         self._update_global_tracks(mct_tracks)
 
         activated_global_tracks = [x for x in self.mct_tracks if x.is_activated]
-        
+
         return activated_global_tracks
-        
+
     def _find_overlaps(self, sct_tracks: List[List[BOTrack]]) -> List[List[bool]]:
         """Находит пересечения между треками на разных камерах."""
-        overlaps = {} # cam_id -> track_id
+        overlaps = {}  # cam_id -> track_id
         for cam_id, tracks in enumerate(sct_tracks):
             local_overlaps = check_overlaps(tracks, self.overlap_threshold)
             overlaps[cam_id] = []
             for i, track in enumerate(tracks):
                 if not local_overlaps[i]:
                     continue
-            
+
                 overlaps[cam_id].append(track.track_id)
-            
+
         return overlaps
-    
+
     def _hierarchical_clustering(self, sct_tracks: List[List[BOTrack]]) -> List[MCTrack]:
         # Извлеекаем признаки из треков
         features = [[] for encoder in self.encoders]
@@ -511,10 +848,10 @@ class MultiCameraTracker:
                         features[i].append(track.smooth_feat[i])
                 tracks.append(track)
                 cam_ids.append(cam_id)
-        
+
         if len(features) == 0 or len(features[0]) == 0:
             return []
-        
+
         # Составляем матрицу расстояний
         dists = []
         for feats in features:
@@ -533,14 +870,14 @@ class MultiCameraTracker:
             clustering = linkage(dist_array, method='average')
             clustering = np.clip(clustering, 0, None)
             cluster_labels = fcluster(clustering, t=self.clustering_threshold, criterion='distance')
-        
+
         # Cгруппировать локальные треки по кластерам
         track_clusters = {}
         for i, label in enumerate(cluster_labels):
             if label not in track_clusters:
                 track_clusters[label] = {}
             track_clusters[label][cam_ids[i]] = tracks[i]
-        
+
         # Создать MCTrack объекты
         mct_tracks = [
             MCTrack(track_clusters[label], confident_age=self.confident_age, maxlen=self.max_track_length)
@@ -549,14 +886,13 @@ class MultiCameraTracker:
         # LOGGER.debug(f"Found clusters:\n{[t.sc_tracks for t in mct_tracks]}")
 
         return mct_tracks
-    
+
     def _update_global_tracks(self, mct_tracks: List[MCTrack]):
         mct_tracks, global_matches = self._assign_by_track_id(mct_tracks)
         mct_tracks, global_matches = self._assign_by_features(mct_tracks, global_matches)
 
         self._clean_global_tracks(global_matches)
         self._init_new_global_tracks(mct_tracks)
-
 
     def _clean_global_tracks(self, global_matches: List[int]):
         matched_sc_track_ids = []
@@ -570,10 +906,10 @@ class MultiCameraTracker:
             ]
 
         for i, global_track in enumerate(self.mct_tracks):
-            
+
             if i in global_matches:
                 continue
-            
+
             if not self.include_lost_tracks:
                 global_track.sc_tracks = {}
                 continue
@@ -585,28 +921,27 @@ class MultiCameraTracker:
                 if track.track_id in matched_sc_track_ids:
                     global_track.sc_tracks.pop(j)
 
-
     def _exclude_removed_global_tracks(self):
         filtered_mct_tracks = []
         for t in self.mct_tracks:
             if t.is_removed:
                 continue
             filtered_mct_tracks.append(t)
-        
+
         self.mct_tracks = filtered_mct_tracks
 
     def _assign_by_track_id(
-            self, 
+            self,
             mct_tracks: List[MCTrack]
-        ) -> Tuple[List[MCTrack], List[int]]:
-        
+    ) -> Tuple[List[MCTrack], List[int]]:
+
         global_matches = []
         mct_matches = []
 
         # Go through all tracks and find matches
-        for i, global_track in enumerate(self.mct_tracks):                    
+        for i, global_track in enumerate(self.mct_tracks):
             global_track_ids = set((c, t.track_id) for c, t in global_track.sc_tracks.items())
-            
+
             for j, mct_track in enumerate(mct_tracks):
                 if j in mct_matches:
                     continue
@@ -614,7 +949,7 @@ class MultiCameraTracker:
                 mct_track_ids = set((c, t.track_id) for c, t in mct_track.sc_tracks.items())
                 if mct_track_ids != global_track_ids:
                     continue
-                
+
                 # Update global track
                 global_track.update(mct_track)
                 # LOGGER.debug(
@@ -630,14 +965,14 @@ class MultiCameraTracker:
         # LOGGER.debug(f"Assignment by id, unmatched tracks:\n{[t.sc_tracks for t in unmatched_mct_tracks]}")
         # LOGGER.debug(f"Assignment by id, global matches:\n{global_matches}")
         return unmatched_mct_tracks, global_matches
-    
+
     def _assign_by_features(self, mct_tracks: List[MCTrack], global_matches: List[int]) -> List[MCTrack]:
-        
+
         unmatched_global_ids = [i for i in range(len(self.mct_tracks)) if i not in global_matches]
         # LOGGER.debug(f"Assigning by features, unmatched_global_ids:\n{unmatched_global_ids}")
         if len(unmatched_global_ids) == 0 or len(mct_tracks) == 0:
             return mct_tracks, global_matches
-        
+
         # Составляем матрицу расстояний между глобальными треками и новыми локальными треками
         global_features_list = [
             np.array([self.mct_tracks[i].smooth_feat[j] for i in unmatched_global_ids])
@@ -660,23 +995,23 @@ class MultiCameraTracker:
 
         # Применяем венгерский алгоритм
         row_ind, col_ind = linear_sum_assignment(distances)
-        
+
         for i, j in zip(row_ind, col_ind):
             if distances[i, j] > self.clustering_threshold:
                 continue
-            
+
             global_id = unmatched_global_ids[i]
             self.mct_tracks[global_id].update(mct_tracks[j], self.include_lost_tracks)
-            
+
             global_matches.append(global_id)
             # LOGGER.debug(
             #     f"Global track {global_id} "
             #     f"was updated by features is with values:\n{mct_tracks[j].sc_tracks}"
             # )
-        
+
         unmatched_mct_tracks = [mct_tracks[j] for j in range(len(mct_tracks)) if j not in col_ind]
         return unmatched_mct_tracks, global_matches
-                
+
     def _init_new_global_tracks(self, mct_tracks: List[MCTrack]):
         used_sc_tracks = {}
         for global_track in self.mct_tracks:
@@ -684,14 +1019,14 @@ class MultiCameraTracker:
                 if c not in used_sc_tracks:
                     used_sc_tracks[c] = []
                 used_sc_tracks[c].append(t.track_id)
-            
+
         for mct_track in mct_tracks:
             for c in list(mct_track.sc_tracks.keys()):
                 if c not in used_sc_tracks:
                     continue
                 if mct_track.sc_tracks[c].track_id in used_sc_tracks[c]:
                     mct_track.sc_tracks.pop(c)
-            
+
             if len(mct_track.sc_tracks) == 0:
                 continue
 
@@ -703,7 +1038,7 @@ class MultiCameraTracker:
     def _create_distance_matrix(self, appearance_features: np.ndarray) -> np.ndarray:
         distances = 1 - cosine_similarity(appearance_features)
         return distances
-    
+
     def _fix_distance_matrix(self, distances: np.ndarray, cam_ids: List[int]) -> np.ndarray:
         """
         Задать рассотояние между треками, которые принадлежат одной камере, равным np.float32.max,

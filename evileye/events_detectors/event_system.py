@@ -14,5 +14,3 @@ class SystemEvent(Event):
     def get_name(self):
         # Name used to map to DB adapter in EventsProcessor
         return 'SystemEvent'
-
-

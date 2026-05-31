@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import json
-import os
-import tempfile
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from evileye.core.logger import get_module_logger
+from evileye.utils.json_io import load_json, save_json_atomic
 
 
 class ConfigurationService:
@@ -33,8 +33,7 @@ class ConfigurationService:
             json.JSONDecodeError: Если файл содержит невалидный JSON
         """
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                config = json.load(f)
+            config = load_json(file_path)
             self._loaded_config = config
             self.logger.info(f"Configuration loaded from: {file_path}")
             return config
@@ -59,26 +58,19 @@ class ConfigurationService:
             if not file_path:
                 self.logger.error("No config file path specified for saving")
                 return False
-
-            dir_name = os.path.dirname(file_path) or "."
-            with tempfile.NamedTemporaryFile(
-                "w", encoding="utf-8", delete=False, dir=dir_name, prefix=".tmp_"
-            ) as tf:
-                json.dump(config, tf, indent=4, ensure_ascii=False)
-                temp_path = tf.name
-
-            os.replace(temp_path, file_path)
-            self.logger.info(f"Configuration saved to: {file_path}")
-            return True
+            ok = save_json_atomic(file_path, config)
+            if ok:
+                self.logger.info(f"Configuration saved to: {file_path}")
+            return ok
         except Exception as e:
             self.logger.error(f"Failed to save configuration: {e}")
             return False
 
     def reconcile_credentials_fields(
-        self,
-        params: Dict[str, Any],
-        loaded_config: Optional[Dict[str, Any]] = None,
-        credentials_loaded: bool = False,
+            self,
+            params: Dict[str, Any],
+            loaded_config: Optional[Dict[str, Any]] = None,
+            credentials_loaded: bool = False,
     ) -> None:
         """Удалить поля учетных данных из params, если их не было в исходной конфигурации.
 
@@ -155,9 +147,9 @@ class ConfigurationService:
             self.logger.warning(f"Failed to reconcile credentials fields: {e}")
 
     def filter_model_class_mapping(
-        self,
-        params: Dict[str, Any],
-        loaded_config: Optional[Dict[str, Any]] = None,
+            self,
+            params: Dict[str, Any],
+            loaded_config: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Удалить model_class_mapping из params, если его не было в исходной конфигурации.
 
@@ -181,7 +173,8 @@ class ConfigurationService:
             for idx, det in enumerate(detectors):
                 if not isinstance(det, dict):
                     continue
-                orig_det = orig_detectors[idx] if idx < len(orig_detectors) and isinstance(orig_detectors[idx], dict) else {}
+                orig_det = orig_detectors[idx] if idx < len(orig_detectors) and isinstance(orig_detectors[idx],
+                                                                                           dict) else {}
                 if 'model_class_mapping' in det and ('model_class_mapping' not in orig_det):
                     try:
                         del det['model_class_mapping']
@@ -191,9 +184,9 @@ class ConfigurationService:
             self.logger.warning(f"Failed to filter model class mapping: {e}")
 
     def restrict_database_keys(
-        self,
-        params: Dict[str, Any],
-        loaded_config: Optional[Dict[str, Any]] = None,
+            self,
+            params: Dict[str, Any],
+            loaded_config: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Ограничить ключи секции database только теми, что были в исходной конфигурации.
 
@@ -230,3 +223,151 @@ class ConfigurationService:
             config: Конфигурация для установки
         """
         self._loaded_config = config
+
+    def ensure_api_preference(
+            self,
+            params: Dict[str, Any],
+            loaded_config: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Restore apiPreference on sources from loaded config when present."""
+        try:
+            config = loaded_config or self._loaded_config or {}
+            pipeline = params.get("pipeline", {}) if isinstance(params, dict) else {}
+            sources = pipeline.get("sources", []) if isinstance(pipeline, dict) else []
+            if not isinstance(sources, list) or not sources:
+                return
+            orig_pipeline = config.get("pipeline", {})
+            orig_sources = (
+                orig_pipeline.get("sources", [])
+                if isinstance(orig_pipeline, dict)
+                else []
+            )
+            for idx, src in enumerate(sources):
+                if not isinstance(src, dict):
+                    continue
+                orig_src = (
+                    orig_sources[idx]
+                    if idx < len(orig_sources) and isinstance(orig_sources[idx], dict)
+                    else {}
+                )
+                if isinstance(orig_src, dict) and "apiPreference" in orig_src:
+                    src["apiPreference"] = orig_src.get("apiPreference")
+        except Exception as e:
+            self.logger.warning("Failed to ensure api preference: %s", e)
+
+    def apply_save_sanitizers(
+            self,
+            params: Dict[str, Any],
+            loaded_config: Optional[Dict[str, Any]] = None,
+            credentials_loaded: bool = False,
+    ) -> None:
+        """Credentials, model_class_mapping, and database key sanitization before save."""
+        config = loaded_config if loaded_config is not None else self._loaded_config
+        self.reconcile_credentials_fields(params, config, credentials_loaded)
+        self.filter_model_class_mapping(params, config)
+        if isinstance(config, dict) and config:
+            self.restrict_database_keys(params, config)
+
+    def strip_root_pipeline_sections(self, params: Dict[str, Any]) -> None:
+        """Remove pipeline sections accidentally promoted to config root."""
+        pipe_keys = [
+            "sources",
+            "preprocessors",
+            "detectors",
+            "trackers",
+            "mc_trackers",
+            "attributes_roi",
+            "attributes_classifier",
+        ]
+        for key in pipe_keys:
+            if key in params:
+                try:
+                    del params[key]
+                except Exception:
+                    pass
+
+    def propagate_record_config_to_sources(
+            self,
+            pipeline_params: Dict[str, Any],
+            params: Dict[str, Any],
+    ) -> None:
+        """Merge global record config into each pipeline source."""
+        try:
+            record_cfg = (params or {}).get("record", {}) or {}
+            if not isinstance(record_cfg, dict) or not record_cfg:
+                return
+
+            allow_custom_out_dir = bool(record_cfg.get("allow_custom_out_dir", False))
+            db_image_dir = ((params or {}).get("database", {}) or {}).get("image_dir") or "EvilEyeData"
+            image_dir_path = Path(db_image_dir)
+            default_out_dir = (
+                str(image_dir_path)
+                if image_dir_path.is_absolute()
+                else str(image_dir_path.resolve())
+            )
+
+            srcs = pipeline_params.get("sources", []) or []
+            enabled_list = record_cfg.get("enabled_sources")
+            for idx, source in enumerate(srcs):
+                if not isinstance(source, dict):
+                    continue
+                per = dict(source.get("record", {})) if isinstance(source.get("record"), dict) else {}
+                merged = {**record_cfg, **per}
+                if allow_custom_out_dir:
+                    if not merged.get("out_dir"):
+                        merged["out_dir"] = default_out_dir
+                else:
+                    merged["out_dir"] = default_out_dir
+
+                if enabled_list and len(enabled_list) > 0:
+                    try:
+                        sid = (source.get("source_ids") or [idx])[0]
+                    except Exception:
+                        sid = idx
+                    sname = None
+                    try:
+                        sname = (source.get("source_names") or [None])[0]
+                    except Exception:
+                        sname = None
+                    enabled = False
+                    for item in enabled_list:
+                        if isinstance(item, int) and item == sid:
+                            enabled = True
+                            break
+                        if isinstance(item, str) and sname and item == sname:
+                            enabled = True
+                            break
+                    merged["enabled"] = enabled
+                else:
+                    has_new_flags = ("continuous_recording_enabled" in merged) or (
+                            "event_recording_enabled" in merged
+                    )
+                    if not has_new_flags:
+                        if "enabled" in merged:
+                            merged["continuous_recording_enabled"] = bool(
+                                merged.get("enabled", False)
+                            )
+                            merged["event_recording_enabled"] = False
+                        else:
+                            merged["enabled"] = False
+                            merged["continuous_recording_enabled"] = False
+                            merged["event_recording_enabled"] = False
+                    elif "enabled" not in merged:
+                        merged["enabled"] = True
+
+                source["record"] = merged
+                try:
+                    sid_log = (source.get("source_ids") or [idx])[0]
+                    sname_log = (source.get("source_names") or [None])[0]
+                    self.logger.info(
+                        "Record config for source id=%s name=%s: enabled=%s out_dir=%s container=%s",
+                        sid_log,
+                        sname_log,
+                        merged.get("enabled"),
+                        merged.get("out_dir"),
+                        merged.get("container"),
+                    )
+                except Exception:
+                    pass
+        except Exception as e:
+            self.logger.warning("Failed to propagate record config: %s", e)

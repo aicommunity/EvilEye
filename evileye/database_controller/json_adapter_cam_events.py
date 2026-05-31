@@ -1,7 +1,7 @@
 import os
-import json
 import datetime
 from .db_adapter import DatabaseAdapterBase
+from .json_event_io import append_json_record
 
 
 class JsonAdapterCamEvents(DatabaseAdapterBase):
@@ -47,27 +47,13 @@ class JsonAdapterCamEvents(DatabaseAdapterBase):
         os.makedirs(day_dir, exist_ok=True)
         file_path = os.path.join(day_dir, 'camera_events.json')
 
-        records = []
-        if os.path.isfile(file_path):
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    records = json.load(f) or []
-            except Exception:
-                records = []
-
         rec = {
             'event_id': event.event_id,
             'ts': event.timestamp.isoformat() if hasattr(event.timestamp, 'isoformat') else str(event.timestamp),
             'camera_full_address': getattr(event, 'camera_address', ''),
             'connection_status': getattr(event, 'con_status', False),
         }
-        records.append(rec)
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(records, f, ensure_ascii=False, indent=2)
+        append_json_record(file_path, rec)
 
     def _update_impl(self, event):
         pass
-
-
-
-

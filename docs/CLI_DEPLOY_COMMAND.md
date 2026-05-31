@@ -69,19 +69,18 @@ You can now create configurations with:
     }
   },
   "database": {
-    "user_name": "postgres",
-    "password": "",
-    "database_name": "evil_eye_db",
-    "host_name": "localhost",
-    "port": 5432,
-    "default_database_name": "postgres",
-    "default_password": "",
-    "default_user_name": "postgres",
-    "default_host_name": "localhost",
-    "default_port": 5432
+    "admin_user_name": "postgres",
+    "admin_password": "your_db_password"
+  },
+  "web_auth": {
+    "enabled": false,
+    "username": "admin",
+    "password": "change-me"
   }
 }
 ```
+
+См. также шаблон [`evileye/credentials_proto.json`](../evileye/credentials_proto.json) и [`docs/CONFIGURATION_GUIDE.md`](CONFIGURATION_GUIDE.md).
 
 ### `configs/`
 Пустая директория для хранения конфигурационных файлов.

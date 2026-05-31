@@ -3,7 +3,8 @@ import copy
 
 
 class AttributeEvent(Event):
-    def __init__(self, timestamp, alarm_type, source_id, object_id, matched_event_name, matched_attrs: list[str], is_finished=False, obj=None):
+    def __init__(self, timestamp, alarm_type, source_id, object_id, matched_event_name, matched_attrs: list[str],
+                 is_finished=False, obj=None):
         super().__init__(timestamp, alarm_type, is_finished)
         self.source_id = source_id
         self.object_id = object_id
@@ -62,5 +63,3 @@ class AttributeEvent(Event):
 
     def get_time_finished(self):
         return self.time_finished
-
-

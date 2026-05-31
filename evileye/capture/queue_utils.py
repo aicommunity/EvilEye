@@ -10,6 +10,8 @@ from queue import Empty
 from threading import Lock
 from typing import Optional, Any
 
+from .queue_policy import put_drop_oldest_deque
+
 
 class DropOldestQueue:
     """Thread-safe queue with drop-oldest strategy when full.
@@ -29,12 +31,7 @@ class DropOldestQueue:
             True if an item had to be dropped to insert the new one.
         """
         with self._lock:
-            dropped = len(self._deque) >= self.maxsize
-            if dropped:
-                # Manually drop to know that we did it
-                self._deque.popleft()
-            self._deque.append(item)
-            return dropped
+            return put_drop_oldest_deque(self._deque, self.maxsize, item)
 
     def get(self, block: bool = False, timeout: Optional[float] = None) -> Any:
         with self._lock:
@@ -60,4 +57,3 @@ class DropOldestQueue:
     def clear(self) -> None:
         with self._lock:
             self._deque.clear()
-
