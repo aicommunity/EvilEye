@@ -353,6 +353,7 @@ def write_results_csv(rows: list[dict[str, Any]], path: Path) -> None:
         "p95 цикла, мс",
         "CPU, %",
         "RAM, ГБ",
+        "GPU, %",
         "GPU-RAM, ГБ",
         "Ошибки",
         "Traceback",
@@ -376,6 +377,7 @@ def write_results_csv(rows: list[dict[str, Any]], path: Path) -> None:
                     "p95 цикла, мс": _fmt(row.get("p95_pipeline_ms")),
                     "CPU, %": _fmt(row.get("avg_cpu_percent")),
                     "RAM, ГБ": _fmt(row.get("max_ram_gb")),
+                    "GPU, %": _fmt(row.get("avg_gpu_util_percent")),
                     "GPU-RAM, ГБ": _fmt(row.get("max_gpu_ram_gb")),
                     "Ошибки": row.get("errors", 0),
                     "Traceback": row.get("tracebacks", 0),
@@ -389,12 +391,12 @@ def write_results_csv(rows: list[dict[str, Any]], path: Path) -> None:
 
 def _markdown_table(rows: list[dict[str, Any]]) -> list[str]:
     lines = [
-        "| Камер | Режим | Захват, кадр/с | Обнаружение, кадр/с | Отслеживание, кадр/с | Визуализация, кадр/с | p95 цикла, мс | CPU, % | RAM, ГБ | GPU-RAM, ГБ | Ошибки | Валиден |",
-        "| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+        "| Камер | Режим | Захват, кадр/с | Обнаружение, кадр/с | Отслеживание, кадр/с | Визуализация, кадр/с | p95 цикла, мс | CPU, % | RAM, ГБ | GPU, % | GPU-RAM, ГБ | Ошибки | Валиден |",
+        "| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
     ]
     for row in rows:
         lines.append(
-            "| {cams} | {mode} | {cap} | {det} | {trk} | {vis} | {p95} | {cpu} | {ram} | {gpu} | {err} | {valid} |".format(
+            "| {cams} | {mode} | {cap} | {det} | {trk} | {vis} | {p95} | {cpu} | {ram} | {gpu_util} | {gpu} | {err} | {valid} |".format(
                 cams=row.get("camera_count"),
                 mode=row.get("mode_label"),
                 cap=_fmt(row.get("avg_capture_fps")),
@@ -404,6 +406,7 @@ def _markdown_table(rows: list[dict[str, Any]]) -> list[str]:
                 p95=_fmt(row.get("p95_pipeline_ms")),
                 cpu=_fmt(row.get("avg_cpu_percent")),
                 ram=_fmt(row.get("max_ram_gb")),
+                gpu_util=_fmt(row.get("avg_gpu_util_percent")),
                 gpu=_fmt(row.get("max_gpu_ram_gb")),
                 err=row.get("errors", 0),
                 valid="да" if row.get("valid_run") else "нет",
@@ -509,7 +512,9 @@ def write_plots(rows: list[dict[str, Any]], plots_dir: Path) -> list[Path]:
         ("detector_fps_est", "Обнаружение, кадры/с", "detection_fps.png"),
         ("tracker_fps_est", "Отслеживание, кадры/с", "tracking_fps.png"),
         ("visual_fps_est", "Визуализация, кадры/с", "visualization_fps.png"),
+        ("avg_cpu_percent", "CPU, %", "cpu_percent.png"),
         ("max_ram_gb", "RAM, ГБ", "ram_gb.png"),
+        ("avg_gpu_util_percent", "GPU, %", "gpu_percent.png"),
         ("max_gpu_ram_gb", "GPU-RAM, ГБ", "gpu_ram_gb.png"),
     ]
 
