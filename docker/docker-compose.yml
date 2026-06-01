@@ -1,0 +1,47 @@
+version: "3.9"
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: evileye/app:latest
+    container_name: evileye_app
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
+      - PYTHONUNBUFFERED=1
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME=evil_eye_db
+    volumes:
+      - ../EvilEyeData:/opt/evileye/EvilEyeData
+      - ../logs:/opt/evileye/logs
+      - ../videos:/opt/evileye/videos
+      - ../configs:/opt/evileye/configs:ro
+    depends_on:
+      - db
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+    command: ["python", "-m", "evileye.cli", "--config", "configs/single_video.json", "--gui", "false"]
+
+  db:
+    image: postgres:15-alpine
+    container_name: evileye_db
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=evil_eye_db
+    volumes:
+      - evileye_db_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+volumes:
+  evileye_db_data:
