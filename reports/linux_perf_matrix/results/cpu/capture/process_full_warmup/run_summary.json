@@ -1,0 +1,35 @@
+{
+  "started_at": "2026-06-01T21:37:21",
+  "manifest": "reports/linux_perf_matrix/configs/cpu/capture/process_full/manifest.json",
+  "timeout_sec": 600,
+  "duration_sec": 20,
+  "autoclose": false,
+  "sample_interval_sec": 2.0,
+  "runs": [
+    {
+      "camera_count": 1,
+      "mode": "thread",
+      "config": "reports/linux_perf_matrix/configs/cpu/capture/process_full/bench_01cam_thread.json",
+      "log": "reports/linux_perf_matrix/results/cpu/capture/process_full_warmup/logs/01cam_thread.log",
+      "samples": "reports/linux_perf_matrix/results/cpu/capture/process_full_warmup/samples/01cam_thread.csv",
+      "exit_code": 0,
+      "timed_out": false,
+      "stopped_by_duration": true,
+      "terminate_ok": true,
+      "elapsed_sec": 26.99
+    },
+    {
+      "camera_count": 1,
+      "mode": "process",
+      "config": "reports/linux_perf_matrix/configs/cpu/capture/process_full/bench_01cam_process.json",
+      "log": "reports/linux_perf_matrix/results/cpu/capture/process_full_warmup/logs/01cam_process.log",
+      "samples": "reports/linux_perf_matrix/results/cpu/capture/process_full_warmup/samples/01cam_process.csv",
+      "exit_code": 0,
+      "timed_out": false,
+      "stopped_by_duration": true,
+      "terminate_ok": true,
+      "elapsed_sec": 26.942
+    }
+  ],
+  "finished_at": "2026-06-01T21:38:15"
+}

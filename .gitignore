@@ -135,7 +135,6 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-results
 go_icp_implementation
 predator_data
 sdrsac_implementation
@@ -156,7 +155,6 @@ EvilEyeData*/
 *.mp4
 *.avi
 logs/
-images/
 mixed_images/
 models/
 *.json.backup
