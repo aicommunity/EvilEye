@@ -161,4 +161,3 @@ mixed_images/
 models/
 *.json.backup
 test_install/
-reports/

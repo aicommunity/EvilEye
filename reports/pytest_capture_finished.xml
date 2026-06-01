@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="6.098" timestamp="2026-04-14T20:49:24.198049+03:00" hostname="user-X99"><testcase classname="tests.unit.capture.test_capture_process_finished_flag" name="test_mark_finished_if_worker_stopped_sets_finished_flag" time="5.680"><failure message="TypeError: Can't instantiate abstract class VideoCaptureBase with abstract methods _grab_frames, _retrieve_frames, default, get_frames_impl, init_impl, release_impl, reset_impl">def test_mark_finished_if_worker_stopped_sets_finished_flag():
+&gt;       cap = object.__new__(VideoCaptureBase)
+E       TypeError: Can't instantiate abstract class VideoCaptureBase with abstract methods _grab_frames, _retrieve_frames, default, get_frames_impl, init_impl, release_impl, reset_impl
+
+tests/unit/capture/test_capture_process_finished_flag.py:13: TypeError</failure></testcase></testsuite></testsuites>

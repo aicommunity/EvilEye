@@ -1,0 +1,68 @@
+{
+  "description": "poly-videos opencv/gst x process/thread",
+  "runs_per_config": 1,
+  "configs": [
+    {
+      "config": "configs/poly-videos.json",
+      "capture": "opencv",
+      "mode": "process",
+      "slug": "poly-videos_opencv_process"
+    },
+    {
+      "config": "configs/poly-videos-thread.json",
+      "capture": "opencv",
+      "mode": "thread",
+      "slug": "poly-videos_opencv_thread"
+    },
+    {
+      "config": "configs/poly-videos-gst.json",
+      "capture": "gst",
+      "mode": "process",
+      "slug": "poly-videos_gst_process"
+    },
+    {
+      "config": "configs/poly-videos-gst-thread.json",
+      "capture": "gst",
+      "mode": "thread",
+      "slug": "poly-videos_gst_thread"
+    }
+  ],
+  "runs": [
+    {
+      "config": "configs/poly-videos.json",
+      "capture": "opencv",
+      "mode": "process",
+      "slug": "poly-videos_opencv_process",
+      "run_index": 1,
+      "log": "logs/poly-videos_opencv_process_run01.log",
+      "samples": "samples/poly-videos_opencv_process_run01.csv"
+    },
+    {
+      "config": "configs/poly-videos-thread.json",
+      "capture": "opencv",
+      "mode": "thread",
+      "slug": "poly-videos_opencv_thread",
+      "run_index": 1,
+      "log": "logs/poly-videos_opencv_thread_run01.log",
+      "samples": "samples/poly-videos_opencv_thread_run01.csv"
+    },
+    {
+      "config": "configs/poly-videos-gst.json",
+      "capture": "gst",
+      "mode": "process",
+      "slug": "poly-videos_gst_process",
+      "run_index": 1,
+      "log": "logs/poly-videos_gst_process_run01.log",
+      "samples": "samples/poly-videos_gst_process_run01.csv"
+    },
+    {
+      "config": "configs/poly-videos-gst-thread.json",
+      "capture": "gst",
+      "mode": "thread",
+      "slug": "poly-videos_gst_thread",
+      "run_index": 1,
+      "log": "logs/poly-videos_gst_thread_run01.log",
+      "samples": "samples/poly-videos_gst_thread_run01.csv"
+    }
+  ]
+}

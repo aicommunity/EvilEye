@@ -1,0 +1,134 @@
+{
+  "base_config": "configs/multi_videos.json",
+  "generated_at": "2026-06-01T21:01:41",
+  "max_cameras": 4,
+  "modes": [
+    "thread",
+    "process"
+  ],
+  "repeat_cameras": true,
+  "shared_detector_pool": true,
+  "detector_process_only": true,
+  "capture_process_also": false,
+  "device": "cpu",
+  "device_label": "CPU",
+  "scenario": "detection",
+  "scenario_label": "захват + обнаружение",
+  "layout": "process_detector",
+  "layout_label": "в отдельном процессе только обнаружение",
+  "runs": [
+    {
+      "camera_count": 1,
+      "mode": "thread",
+      "config": "reports/linux_perf_matrix/configs/cpu/detection/process_detector/bench_01cam_thread.json",
+      "source_ids": [
+        0
+      ],
+      "source_names": [
+        "Cam1"
+      ]
+    },
+    {
+      "camera_count": 1,
+      "mode": "process",
+      "config": "reports/linux_perf_matrix/configs/cpu/detection/process_detector/bench_01cam_process.json",
+      "source_ids": [
+        0
+      ],
+      "source_names": [
+        "Cam1"
+      ]
+    },
+    {
+      "camera_count": 2,
+      "mode": "thread",
+      "config": "reports/linux_perf_matrix/configs/cpu/detection/process_detector/bench_02cam_thread.json",
+      "source_ids": [
+        0,
+        1
+      ],
+      "source_names": [
+        "Cam1",
+        "Cam2"
+      ]
+    },
+    {
+      "camera_count": 2,
+      "mode": "process",
+      "config": "reports/linux_perf_matrix/configs/cpu/detection/process_detector/bench_02cam_process.json",
+      "source_ids": [
+        0,
+        1
+      ],
+      "source_names": [
+        "Cam1",
+        "Cam2"
+      ]
+    },
+    {
+      "camera_count": 3,
+      "mode": "thread",
+      "config": "reports/linux_perf_matrix/configs/cpu/detection/process_detector/bench_03cam_thread.json",
+      "source_ids": [
+        0,
+        1,
+        2
+      ],
+      "source_names": [
+        "Cam1",
+        "Cam2",
+        "Cam3"
+      ]
+    },
+    {
+      "camera_count": 3,
+      "mode": "process",
+      "config": "reports/linux_perf_matrix/configs/cpu/detection/process_detector/bench_03cam_process.json",
+      "source_ids": [
+        0,
+        1,
+        2
+      ],
+      "source_names": [
+        "Cam1",
+        "Cam2",
+        "Cam3"
+      ]
+    },
+    {
+      "camera_count": 4,
+      "mode": "thread",
+      "config": "reports/linux_perf_matrix/configs/cpu/detection/process_detector/bench_04cam_thread.json",
+      "source_ids": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "source_names": [
+        "Cam1",
+        "Cam2",
+        "Cam3",
+        "Cam4"
+      ]
+    },
+    {
+      "camera_count": 4,
+      "mode": "process",
+      "config": "reports/linux_perf_matrix/configs/cpu/detection/process_detector/bench_04cam_process.json",
+      "source_ids": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "source_names": [
+        "Cam1",
+        "Cam2",
+        "Cam3",
+        "Cam4"
+      ]
+    }
+  ],
+  "missing_video_paths": []
+}

@@ -1,0 +1,18 @@
+{
+  "config": "configs/poly-videos.json",
+  "warmup_sec": 25.0,
+  "active_sec": 90.0,
+  "ticks": 219767,
+  "source_frames": 3691,
+  "tracker_matches": 2841,
+  "e2e_tracker_fps": 29.8204,
+  "e2e_p50_ms": 606.3,
+  "e2e_p95_ms": 900.36,
+  "mean_staleness_frames": 6.1711,
+  "p95_staleness_frames": 13,
+  "max_staleness_frames": 17,
+  "staleness_samples": 2841,
+  "pending_unmatched": 850,
+  "pending_unmatched_pct": 23.03,
+  "env_note": "winner_B3"
+}

@@ -1,0 +1,60 @@
+{
+  "started_at": "2026-05-22T12:52:58",
+  "timeout_sec": 120,
+  "runs_per_config": 3,
+  "warmups": [],
+  "runs": [
+    {
+      "slug": "poly-videos_opencv_process",
+      "capture": "opencv",
+      "mode": "process",
+      "base_config": "configs/poly-videos.json",
+      "run_index": 1,
+      "kind": "run",
+      "config": "/tmp/evileye_bench_j7p_8du_.json",
+      "log": "reports/poly_videos_mode_compare/experiments/e2e_fps_matrix/F5/logs/poly-videos_opencv_process_run01.log",
+      "samples": "reports/poly_videos_mode_compare/experiments/e2e_fps_matrix/F5/samples/poly-videos_opencv_process_run01.csv",
+      "exit_code": 0,
+      "timed_out": false,
+      "elapsed_sec": 69.352,
+      "tracebacks": 0,
+      "errors": 0,
+      "success": true
+    },
+    {
+      "slug": "poly-videos_opencv_process",
+      "capture": "opencv",
+      "mode": "process",
+      "base_config": "configs/poly-videos.json",
+      "run_index": 2,
+      "kind": "run",
+      "config": "/tmp/evileye_bench_6607tdg5.json",
+      "log": "reports/poly_videos_mode_compare/experiments/e2e_fps_matrix/F5/logs/poly-videos_opencv_process_run02.log",
+      "samples": "reports/poly_videos_mode_compare/experiments/e2e_fps_matrix/F5/samples/poly-videos_opencv_process_run02.csv",
+      "exit_code": 0,
+      "timed_out": false,
+      "elapsed_sec": 69.123,
+      "tracebacks": 0,
+      "errors": 0,
+      "success": true
+    },
+    {
+      "slug": "poly-videos_opencv_process",
+      "capture": "opencv",
+      "mode": "process",
+      "base_config": "configs/poly-videos.json",
+      "run_index": 3,
+      "kind": "run",
+      "config": "/tmp/evileye_bench_si_tt3tl.json",
+      "log": "reports/poly_videos_mode_compare/experiments/e2e_fps_matrix/F5/logs/poly-videos_opencv_process_run03.log",
+      "samples": "reports/poly_videos_mode_compare/experiments/e2e_fps_matrix/F5/samples/poly-videos_opencv_process_run03.csv",
+      "exit_code": 0,
+      "timed_out": false,
+      "elapsed_sec": 67.164,
+      "tracebacks": 0,
+      "errors": 0,
+      "success": true
+    }
+  ],
+  "finished_at": "2026-05-22T12:56:24"
+}

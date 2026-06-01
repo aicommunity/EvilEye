@@ -1,0 +1,56 @@
+{
+  "config": "configs/poly-videos-gst-thread.json",
+  "ticks": 120,
+  "warmup_sec": 45.0,
+  "tick_sleep": 0.12,
+  "sources_per_source": {
+    "0": 120,
+    "2": 179,
+    "1": 178,
+    "3": 179,
+    "4": 179
+  },
+  "detectors_per_source": {
+    "1": 49,
+    "2": 31,
+    "3": 38,
+    "4": 45,
+    "0": 33
+  },
+  "trackers_per_source": {
+    "1": 48,
+    "3": 37,
+    "4": 45,
+    "2": 30,
+    "0": 28
+  },
+  "mc_ticks_nonempty": 21,
+  "mc_emit_rate": 0.175,
+  "mc_batch_sizes": {
+    "5": 21
+  },
+  "sticky_tracks_last": 0,
+  "sticky_tracks_mean": 2.18,
+  "vis_frames_last": 9,
+  "objects_results_items": 0,
+  "objects_with_payload": 0,
+  "active_objects_per_source": {},
+  "tracks_total": 0,
+  "tracker_frames_total": 188,
+  "has_data": true,
+  "mc_diag": {
+    "tick_batch_skip": 0,
+    "tick_batch_stale_evict": 0,
+    "accumulator_size": 4,
+    "source_ids": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ]
+  },
+  "slug": "poly-videos_gst_thread",
+  "capture": "gst",
+  "mode": "thread"
+}

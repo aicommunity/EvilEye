@@ -1,0 +1,26 @@
+{
+  "started_at": "2026-05-22T09:09:44",
+  "timeout_sec": 120,
+  "runs_per_config": 1,
+  "warmups": [],
+  "runs": [
+    {
+      "slug": "poly-videos_opencv_process",
+      "capture": "opencv",
+      "mode": "process",
+      "base_config": "configs/poly-videos.json",
+      "run_index": 1,
+      "kind": "run",
+      "config": "/tmp/evileye_bench_v7afys6_.json",
+      "log": "reports/poly_videos_mode_compare/experiments/E1_one_cam_process/logs/poly-videos_opencv_process_run01.log",
+      "samples": "reports/poly_videos_mode_compare/experiments/E1_one_cam_process/samples/poly-videos_opencv_process_run01.csv",
+      "exit_code": 0,
+      "timed_out": false,
+      "elapsed_sec": 49.387,
+      "tracebacks": 0,
+      "errors": 0,
+      "success": true
+    }
+  ],
+  "finished_at": "2026-05-22T09:10:34"
+}

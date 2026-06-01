@@ -1,0 +1,56 @@
+{
+  "config": "configs/poly-videos.json",
+  "ticks": 60,
+  "warmup_sec": 25.0,
+  "tick_sleep": 0.12,
+  "sources_per_source": {
+    "0": 60,
+    "1": 59,
+    "2": 58,
+    "3": 60,
+    "4": 57
+  },
+  "detectors_per_source": {
+    "1": 19,
+    "0": 18,
+    "2": 18,
+    "3": 17,
+    "4": 17
+  },
+  "trackers_per_source": {
+    "1": 16,
+    "2": 11,
+    "3": 12,
+    "4": 13,
+    "0": 6
+  },
+  "mc_ticks_nonempty": 4,
+  "mc_emit_rate": 0.0667,
+  "mc_batch_sizes": {
+    "5": 4
+  },
+  "sticky_tracks_last": 0,
+  "sticky_tracks_mean": 0.6,
+  "vis_frames_last": 5,
+  "objects_results_items": 0,
+  "objects_with_payload": 0,
+  "active_objects_per_source": {},
+  "tracks_total": 0,
+  "tracker_frames_total": 58,
+  "has_data": true,
+  "mc_diag": {
+    "tick_batch_skip": 0,
+    "tick_batch_stale_evict": 0,
+    "accumulator_size": 4,
+    "source_ids": [
+      0,
+      1,
+      2,
+      3,
+      4
+    ]
+  },
+  "slug": "poly-videos_opencv_process",
+  "capture": "opencv",
+  "mode": "process"
+}
