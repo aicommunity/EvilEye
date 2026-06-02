@@ -1,8 +1,8 @@
 {
-  "started_at": "2026-06-01T21:56:14",
+  "started_at": "2026-06-02T02:46:38",
   "manifest": "reports/linux_perf_matrix/configs/cpu/detection/process_detector/manifest.json",
   "timeout_sec": 600,
-  "duration_sec": 120,
+  "duration_sec": 180,
   "autoclose": false,
   "sample_interval_sec": 2.0,
   "runs": [
@@ -16,7 +16,7 @@
       "timed_out": false,
       "stopped_by_duration": true,
       "terminate_ok": true,
-      "elapsed_sec": 130.049
+      "elapsed_sec": 189.51
     },
     {
       "camera_count": 1,
@@ -28,7 +28,7 @@
       "timed_out": true,
       "stopped_by_duration": false,
       "terminate_ok": true,
-      "elapsed_sec": 605.033
+      "elapsed_sec": 605.034
     },
     {
       "camera_count": 2,
@@ -40,7 +40,7 @@
       "timed_out": false,
       "stopped_by_duration": true,
       "terminate_ok": true,
-      "elapsed_sec": 129.386
+      "elapsed_sec": 187.141
     },
     {
       "camera_count": 2,
@@ -52,7 +52,7 @@
       "timed_out": true,
       "stopped_by_duration": false,
       "terminate_ok": true,
-      "elapsed_sec": 605.033
+      "elapsed_sec": 605.035
     },
     {
       "camera_count": 3,
@@ -64,7 +64,7 @@
       "timed_out": false,
       "stopped_by_duration": true,
       "terminate_ok": true,
-      "elapsed_sec": 127.98
+      "elapsed_sec": 192.292
     },
     {
       "camera_count": 3,
@@ -76,7 +76,7 @@
       "timed_out": true,
       "stopped_by_duration": false,
       "terminate_ok": true,
-      "elapsed_sec": 605.05
+      "elapsed_sec": 605.035
     },
     {
       "camera_count": 4,
@@ -88,7 +88,7 @@
       "timed_out": false,
       "stopped_by_duration": true,
       "terminate_ok": true,
-      "elapsed_sec": 127.479
+      "elapsed_sec": 191.082
     },
     {
       "camera_count": 4,
@@ -100,8 +100,8 @@
       "timed_out": true,
       "stopped_by_duration": false,
       "terminate_ok": true,
-      "elapsed_sec": 605.038
+      "elapsed_sec": 605.027
     }
   ],
-  "finished_at": "2026-06-01T22:45:09"
+  "finished_at": "2026-06-02T03:39:39"
 }

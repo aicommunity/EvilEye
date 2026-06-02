@@ -1,53 +1,20 @@
 {
   "base_config": "configs/multi_videos.json",
-  "generated_at": "2026-06-01T22:41:51",
+  "generated_at": "2026-06-02T00:00:21",
   "max_cameras": 4,
   "devices": [
-    "cuda:0"
+    "cuda:0",
+    "cpu"
   ],
   "scenarios": [
-    "capture",
     "detection",
     "tracking",
-    "visualization",
     "full"
   ],
   "layouts": [
-    "process_detector",
-    "process_capture_detector",
-    "process_full"
+    "process_detector"
   ],
   "runs": [
-    {
-      "device": "cuda:0",
-      "device_label": "GPU",
-      "scenario": "capture",
-      "scenario_label": "только захват",
-      "layout": "process_detector",
-      "layout_label": "в отдельном процессе только обнаружение",
-      "manifest": "reports/linux_perf_matrix/configs/cuda_0/capture/process_detector/manifest.json",
-      "result_dir": "reports/linux_perf_matrix/results/cuda_0/capture/process_detector"
-    },
-    {
-      "device": "cuda:0",
-      "device_label": "GPU",
-      "scenario": "capture",
-      "scenario_label": "только захват",
-      "layout": "process_capture_detector",
-      "layout_label": "в отдельных процессах захват и обнаружение",
-      "manifest": "reports/linux_perf_matrix/configs/cuda_0/capture/process_capture_detector/manifest.json",
-      "result_dir": "reports/linux_perf_matrix/results/cuda_0/capture/process_capture_detector"
-    },
-    {
-      "device": "cuda:0",
-      "device_label": "GPU",
-      "scenario": "capture",
-      "scenario_label": "только захват",
-      "layout": "process_full",
-      "layout_label": "все поддерживаемые стадии в отдельных процессах",
-      "manifest": "reports/linux_perf_matrix/configs/cuda_0/capture/process_full/manifest.json",
-      "result_dir": "reports/linux_perf_matrix/results/cuda_0/capture/process_full"
-    },
     {
       "device": "cuda:0",
       "device_label": "GPU",
@@ -57,26 +24,6 @@
       "layout_label": "в отдельном процессе только обнаружение",
       "manifest": "reports/linux_perf_matrix/configs/cuda_0/detection/process_detector/manifest.json",
       "result_dir": "reports/linux_perf_matrix/results/cuda_0/detection/process_detector"
-    },
-    {
-      "device": "cuda:0",
-      "device_label": "GPU",
-      "scenario": "detection",
-      "scenario_label": "захват + обнаружение",
-      "layout": "process_capture_detector",
-      "layout_label": "в отдельных процессах захват и обнаружение",
-      "manifest": "reports/linux_perf_matrix/configs/cuda_0/detection/process_capture_detector/manifest.json",
-      "result_dir": "reports/linux_perf_matrix/results/cuda_0/detection/process_capture_detector"
-    },
-    {
-      "device": "cuda:0",
-      "device_label": "GPU",
-      "scenario": "detection",
-      "scenario_label": "захват + обнаружение",
-      "layout": "process_full",
-      "layout_label": "все поддерживаемые стадии в отдельных процессах",
-      "manifest": "reports/linux_perf_matrix/configs/cuda_0/detection/process_full/manifest.json",
-      "result_dir": "reports/linux_perf_matrix/results/cuda_0/detection/process_full"
     },
     {
       "device": "cuda:0",
@@ -91,56 +38,6 @@
     {
       "device": "cuda:0",
       "device_label": "GPU",
-      "scenario": "tracking",
-      "scenario_label": "захват + обнаружение + отслеживание",
-      "layout": "process_capture_detector",
-      "layout_label": "в отдельных процессах захват и обнаружение",
-      "manifest": "reports/linux_perf_matrix/configs/cuda_0/tracking/process_capture_detector/manifest.json",
-      "result_dir": "reports/linux_perf_matrix/results/cuda_0/tracking/process_capture_detector"
-    },
-    {
-      "device": "cuda:0",
-      "device_label": "GPU",
-      "scenario": "tracking",
-      "scenario_label": "захват + обнаружение + отслеживание",
-      "layout": "process_full",
-      "layout_label": "все поддерживаемые стадии в отдельных процессах",
-      "manifest": "reports/linux_perf_matrix/configs/cuda_0/tracking/process_full/manifest.json",
-      "result_dir": "reports/linux_perf_matrix/results/cuda_0/tracking/process_full"
-    },
-    {
-      "device": "cuda:0",
-      "device_label": "GPU",
-      "scenario": "visualization",
-      "scenario_label": "захват + визуализация",
-      "layout": "process_detector",
-      "layout_label": "в отдельном процессе только обнаружение",
-      "manifest": "reports/linux_perf_matrix/configs/cuda_0/visualization/process_detector/manifest.json",
-      "result_dir": "reports/linux_perf_matrix/results/cuda_0/visualization/process_detector"
-    },
-    {
-      "device": "cuda:0",
-      "device_label": "GPU",
-      "scenario": "visualization",
-      "scenario_label": "захват + визуализация",
-      "layout": "process_capture_detector",
-      "layout_label": "в отдельных процессах захват и обнаружение",
-      "manifest": "reports/linux_perf_matrix/configs/cuda_0/visualization/process_capture_detector/manifest.json",
-      "result_dir": "reports/linux_perf_matrix/results/cuda_0/visualization/process_capture_detector"
-    },
-    {
-      "device": "cuda:0",
-      "device_label": "GPU",
-      "scenario": "visualization",
-      "scenario_label": "захват + визуализация",
-      "layout": "process_full",
-      "layout_label": "все поддерживаемые стадии в отдельных процессах",
-      "manifest": "reports/linux_perf_matrix/configs/cuda_0/visualization/process_full/manifest.json",
-      "result_dir": "reports/linux_perf_matrix/results/cuda_0/visualization/process_full"
-    },
-    {
-      "device": "cuda:0",
-      "device_label": "GPU",
       "scenario": "full",
       "scenario_label": "полный пайплайн",
       "layout": "process_detector",
@@ -149,24 +46,34 @@
       "result_dir": "reports/linux_perf_matrix/results/cuda_0/full/process_detector"
     },
     {
-      "device": "cuda:0",
-      "device_label": "GPU",
-      "scenario": "full",
-      "scenario_label": "полный пайплайн",
-      "layout": "process_capture_detector",
-      "layout_label": "в отдельных процессах захват и обнаружение",
-      "manifest": "reports/linux_perf_matrix/configs/cuda_0/full/process_capture_detector/manifest.json",
-      "result_dir": "reports/linux_perf_matrix/results/cuda_0/full/process_capture_detector"
+      "device": "cpu",
+      "device_label": "CPU",
+      "scenario": "detection",
+      "scenario_label": "захват + обнаружение",
+      "layout": "process_detector",
+      "layout_label": "в отдельном процессе только обнаружение",
+      "manifest": "reports/linux_perf_matrix/configs/cpu/detection/process_detector/manifest.json",
+      "result_dir": "reports/linux_perf_matrix/results/cpu/detection/process_detector"
     },
     {
-      "device": "cuda:0",
-      "device_label": "GPU",
+      "device": "cpu",
+      "device_label": "CPU",
+      "scenario": "tracking",
+      "scenario_label": "захват + обнаружение + отслеживание",
+      "layout": "process_detector",
+      "layout_label": "в отдельном процессе только обнаружение",
+      "manifest": "reports/linux_perf_matrix/configs/cpu/tracking/process_detector/manifest.json",
+      "result_dir": "reports/linux_perf_matrix/results/cpu/tracking/process_detector"
+    },
+    {
+      "device": "cpu",
+      "device_label": "CPU",
       "scenario": "full",
       "scenario_label": "полный пайплайн",
-      "layout": "process_full",
-      "layout_label": "все поддерживаемые стадии в отдельных процессах",
-      "manifest": "reports/linux_perf_matrix/configs/cuda_0/full/process_full/manifest.json",
-      "result_dir": "reports/linux_perf_matrix/results/cuda_0/full/process_full"
+      "layout": "process_detector",
+      "layout_label": "в отдельном процессе только обнаружение",
+      "manifest": "reports/linux_perf_matrix/configs/cpu/full/process_detector/manifest.json",
+      "result_dir": "reports/linux_perf_matrix/results/cpu/full/process_detector"
     }
   ],
   "missing_video_paths": [],

@@ -12,7 +12,7 @@
           0
         ],
         "loop_play": true,
-        "desired_fps": 30.0,
+        "desired_fps": 120.0,
         "split": false,
         "num_split": 0,
         "src_coords": [
@@ -30,7 +30,7 @@
           1
         ],
         "loop_play": true,
-        "desired_fps": 30.0,
+        "desired_fps": 120.0,
         "split": false,
         "num_split": 0,
         "src_coords": [
@@ -48,7 +48,7 @@
           2
         ],
         "loop_play": true,
-        "desired_fps": 30.0,
+        "desired_fps": 120.0,
         "split": false,
         "num_split": 0,
         "src_coords": [
@@ -148,7 +148,7 @@
     "ipc_mode": "standard"
   },
   "controller": {
-    "fps": 30.0,
+    "fps": 120.0,
     "enable_close_from_gui": true,
     "class_names": [
       "person",
@@ -358,9 +358,9 @@
       2
     ],
     "fps": [
-      30.0,
-      30.0,
-      30.0
+      120.0,
+      120.0,
+      120.0
     ],
     "gui_enabled": false,
     "show_debug_info": true,

@@ -1,6 +1,6 @@
 {
   "base_config": "configs/multi_videos.json",
-  "generated_at": "2026-06-01T22:41:51",
+  "generated_at": "2026-06-02T00:00:21",
   "max_cameras": 4,
   "modes": [
     "thread",
