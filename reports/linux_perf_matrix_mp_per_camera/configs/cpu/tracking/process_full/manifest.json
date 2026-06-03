@@ -1,0 +1,72 @@
+{
+  "base_config": "configs\\multi_videos.json",
+  "generated_at": "2026-06-03T21:55:21",
+  "max_cameras": 2,
+  "modes": [
+    "thread",
+    "process"
+  ],
+  "repeat_cameras": false,
+  "shared_detector_pool": false,
+  "per_camera_components": true,
+  "detector_process_only": false,
+  "capture_process_also": false,
+  "process_all_stages": true,
+  "device": "cpu",
+  "device_label": "CPU",
+  "scenario": "tracking",
+  "scenario_label": "захват + обнаружение + отслеживание",
+  "layout": "process_full",
+  "layout_label": "захват, обнаружение и отслеживание в отдельных процессах (по одному процессу на камеру)",
+  "runs": [
+    {
+      "camera_count": 1,
+      "mode": "thread",
+      "config": "reports\\linux_perf_matrix_mp_per_camera\\configs\\cpu\\tracking\\process_full\\bench_01cam_thread.json",
+      "source_ids": [
+        0
+      ],
+      "source_names": [
+        "Video 1"
+      ]
+    },
+    {
+      "camera_count": 1,
+      "mode": "process",
+      "config": "reports\\linux_perf_matrix_mp_per_camera\\configs\\cpu\\tracking\\process_full\\bench_01cam_process.json",
+      "source_ids": [
+        0
+      ],
+      "source_names": [
+        "Video 1"
+      ]
+    },
+    {
+      "camera_count": 2,
+      "mode": "thread",
+      "config": "reports\\linux_perf_matrix_mp_per_camera\\configs\\cpu\\tracking\\process_full\\bench_02cam_thread.json",
+      "source_ids": [
+        0,
+        1
+      ],
+      "source_names": [
+        "Video 1",
+        "Video 2"
+      ]
+    },
+    {
+      "camera_count": 2,
+      "mode": "process",
+      "config": "reports\\linux_perf_matrix_mp_per_camera\\configs\\cpu\\tracking\\process_full\\bench_02cam_process.json",
+      "source_ids": [
+        0,
+        1
+      ],
+      "source_names": [
+        "Video 1",
+        "Video 2"
+      ]
+    }
+  ],
+  "missing_video_paths": []
+}

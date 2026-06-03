@@ -184,6 +184,8 @@ def _run_one(
     perf_every: int,
     python_executable: str,
     autoclose: bool,
+    duration_hard_stop: bool,
+    duration_stop_grace_sec: int,
 ) -> dict[str, Any]:
     camera_count = int(run["camera_count"])
     mode = str(run["mode"])
@@ -243,11 +245,25 @@ def _run_one(
 
         wait_limit = timeout_sec
         if duration_sec is not None:
-            wait_limit = max(timeout_sec, duration_sec + 120)
+            wait_limit = (
+                duration_sec + max(1, duration_stop_grace_sec)
+                if duration_hard_stop
+                else max(timeout_sec, duration_sec + 120)
+            )
         try:
             exit_code = proc.wait(timeout=wait_limit)
         except subprocess.TimeoutExpired:
-            if duration_sec is not None:
+            if duration_sec is not None and duration_hard_stop:
+                log.write(f"\n# hard_stopped_by_duration after {duration_sec}s + {duration_stop_grace_sec}s grace\n")
+                log.flush()
+                terminate_ok = _terminate_process_tree(proc)
+                if not terminate_ok:
+                    log.write("# terminate_failed: could not stop process tree after duration\n")
+                    log.flush()
+                stopped_by_duration = True
+                timed_out = not terminate_ok
+                exit_code = 0 if terminate_ok else 124
+            elif duration_sec is not None:
                 timed_out = True
                 log.write(f"\n# stopped_by_duration after {duration_sec}s\n")
                 log.flush()
@@ -327,6 +343,8 @@ def run_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                 perf_every=args.perf_every,
                 python_executable=args.python,
                 autoclose=args.autoclose,
+                duration_hard_stop=args.duration_hard_stop,
+                duration_stop_grace_sec=args.duration_stop_grace_sec,
             )
         )
 
@@ -353,6 +371,16 @@ def main() -> int:
     parser.add_argument("--sample-interval-sec", type=float, default=2.0)
     parser.add_argument("--perf-every", type=int, default=30)
     parser.add_argument("--python", default=sys.executable)
+    parser.add_argument(
+        "--duration-hard-stop",
+        action="store_true",
+        help=(
+            "Для fixed-duration benchmark завершать дерево процессов после "
+            "--duration-sec + --duration-stop-grace-sec и считать прогон остановленным по длительности, "
+            "если завершение прошло успешно."
+        ),
+    )
+    parser.add_argument("--duration-stop-grace-sec", type=int, default=30)
     parser.add_argument("--camera-counts", type=int, nargs="*")
     parser.add_argument("--modes", choices=["thread", "process"], nargs="*")
     parser.add_argument(

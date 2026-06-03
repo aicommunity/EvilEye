@@ -13,11 +13,25 @@ import render_multiprocessing_benchmark_report as mp_report
 
 
 PRIMARY_METRIC = {
-    "capture": ("avg_capture_fps", "Захват, кадры/с"),
+    "capture": ("visual_fps_est", "Визуализация, кадры/с"),
     "detection": ("detector_fps_est", "Обнаружение, кадры/с"),
     "tracking": ("tracker_fps_est", "Отслеживание, кадры/с"),
     "visualization": ("visual_fps_est", "Визуализация, кадры/с"),
     "full": ("detector_fps_est", "Обнаружение, кадры/с"),
+}
+
+SCENARIO_LABELS = {
+    "capture": "только захват",
+    "detection": "захват + обнаружение",
+    "tracking": "захват + обнаружение + отслеживание",
+    "visualization": "захват + визуализация",
+    "full": "полный пайплайн",
+}
+
+LAYOUT_LABELS = {
+    "process_detector": "в отдельном процессе только обнаружение",
+    "process_capture_detector": "в отдельных процессах захват и обнаружение",
+    "process_full": "все поддерживаемые стадии в отдельных процессах",
 }
 
 
@@ -29,7 +43,7 @@ def _safe_float(value: Any) -> float | None:
     if value in (None, ""):
         return None
     try:
-        result = float(value)
+        result = float(str(value).replace(",", "."))
     except (TypeError, ValueError):
         return None
     if math.isnan(result) or math.isinf(result):
@@ -77,6 +91,64 @@ def _collect_matrix_rows(matrix: dict[str, Any], args: argparse.Namespace) -> li
             extended["resource_ok"] = _resource_ok(extended, args)
             extended["valid_for_report"] = bool(extended.get("valid_run")) and bool(extended["resource_ok"])
             rows.append(extended)
+    return sorted(
+        rows,
+        key=lambda row: (
+            str(row.get("device")),
+            str(row.get("scenario")),
+            str(row.get("layout")),
+            int(row.get("camera_count") or 0),
+            str(row.get("mode")),
+        ),
+    )
+
+
+def _collect_results_csv_rows(results_root: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
+    """Fallback for copied/partial artifacts where logs are absent but results.csv exists."""
+    rows: list[dict[str, Any]] = []
+    for csv_path in sorted(results_root.rglob("results.csv")):
+        try:
+            relative = csv_path.relative_to(results_root)
+            device, scenario, layout = relative.parts[:3]
+        except (ValueError, IndexError):
+            continue
+        with csv_path.open("r", encoding="utf-8-sig", newline="") as inp:
+            reader = csv.DictReader(inp, delimiter=";")
+            for item in reader:
+                mode_label = str(item.get("Режим", ""))
+                mode = "process" if "Мультипроцесс" in mode_label else "thread"
+                metric_name, metric_label = PRIMARY_METRIC.get(scenario, ("detector_fps_est", "Обнаружение, кадры/с"))
+                row: dict[str, Any] = {
+                    "device": "cuda:0" if device == "cuda_0" else device,
+                    "device_label": "GPU" if device == "cuda_0" else device.upper(),
+                    "scenario": scenario,
+                    "scenario_label": SCENARIO_LABELS.get(scenario, scenario),
+                    "layout": layout,
+                    "layout_label": LAYOUT_LABELS.get(layout, layout),
+                    "camera_count": int(item.get("Количество камер") or 0),
+                    "mode": mode,
+                    "mode_label": mode_label,
+                    "avg_capture_fps": _safe_float(item.get("Захват, кадры/с")),
+                    "detector_fps_est": _safe_float(item.get("Обнаружение, кадры/с")),
+                    "tracker_fps_est": _safe_float(item.get("Отслеживание, кадры/с")),
+                    "visual_fps_est": _safe_float(item.get("Визуализация, кадры/с")),
+                    "p95_pipeline_ms": _safe_float(item.get("p95 цикла, мс")),
+                    "avg_cpu_percent": _safe_float(item.get("CPU, %")),
+                    "max_ram_gb": _safe_float(item.get("RAM, ГБ")),
+                    "avg_gpu_util_percent": _safe_float(item.get("GPU, %")),
+                    "max_gpu_ram_gb": _safe_float(item.get("GPU-RAM, ГБ")),
+                    "errors": int(item.get("Ошибки") or 0),
+                    "valid_run": item.get("Валидный прогон") == "да",
+                    "timed_out": item.get("Таймаут") == "да",
+                    "exit_code": item.get("Код выхода"),
+                    "primary_metric": metric_name,
+                    "primary_metric_label": metric_label,
+                    "source_results_csv": str(csv_path),
+                }
+                row["primary_fps"] = row.get(metric_name)
+                row["resource_ok"] = _resource_ok(row, args)
+                row["valid_for_report"] = bool(row.get("valid_run")) and bool(row["resource_ok"])
+                rows.append(row)
     return sorted(
         rows,
         key=lambda row: (
@@ -307,6 +379,8 @@ def render(args: argparse.Namespace) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     rows = _collect_matrix_rows(matrix, args)
+    if not rows:
+        rows = _collect_results_csv_rows(repo_root / "reports/linux_perf_matrix/results", args)
     if not rows:
         raise SystemExit("Не найдены результаты матрицы. Сначала выполните scripts/run_linux_perf_matrix.sh.")
 

@@ -31,7 +31,7 @@ SCENARIO_LABELS = {
 LAYOUT_LABELS = {
     "process_detector": "в отдельном процессе только обнаружение",
     "process_capture_detector": "в отдельных процессах захват и обнаружение",
-    "process_full": "все поддерживаемые стадии в отдельных процессах",
+    "process_full": "захват, обнаружение и отслеживание в отдельных процессах (по одному процессу на камеру)",
 }
 
 DEVICE_LABELS = {
@@ -163,8 +163,19 @@ def _config_for_run(
     return config
 
 
+def _result_dir_for_run(
+    results_root: str,
+    device_key: str,
+    scenario: str,
+    layout: str,
+) -> str:
+    root = results_root.rstrip("/")
+    return f"{root}/{device_key}/{scenario}/{layout}"
+
+
 def prepare_matrix(args: argparse.Namespace) -> dict[str, Any]:
     repo_root = mp_bench._repo_root()
+    results_root = str(args.results_root).rstrip("/")
     base_path = (repo_root / args.base_config).resolve()
     base_config = mp_bench._load_json(base_path)
     requested_max_cameras = args.max_cameras or mp_bench.DEFAULT_MAX_CAMERAS
@@ -189,6 +200,8 @@ def prepare_matrix(args: argparse.Namespace) -> dict[str, Any]:
     matrix: dict[str, Any] = {
         "base_config": str(base_path.relative_to(repo_root)),
         "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "results_root": results_root,
+        "shared_detector_pool": bool(args.shared_detector_pool),
         "max_cameras": max_cameras,
         "devices": list(args.devices),
         "scenarios": list(args.scenarios),
@@ -199,6 +212,7 @@ def prepare_matrix(args: argparse.Namespace) -> dict[str, Any]:
             "Каждый manifest содержит парное сравнение thread/process для одной схемы multiprocessing.",
             "Запись видео, база данных, storage monitor и GUI отключаются в сгенерированных runtime-конфигах.",
             "Сценарий visualization оставляет только захват и headless-визуализацию; FPS визуализации также измеряется в остальных сценариях.",
+            "Для process_full при --no-shared-detector-pool на каждую камеру создаются отдельные entries sources/detectors/trackers.",
         ],
     }
 
@@ -214,8 +228,10 @@ def prepare_matrix(args: argparse.Namespace) -> dict[str, Any]:
                     "modes": ["thread", "process"],
                     "repeat_cameras": bool(args.repeat_cameras),
                     "shared_detector_pool": bool(args.shared_detector_pool),
+                    "per_camera_components": not bool(args.shared_detector_pool),
                     "detector_process_only": layout in {"process_detector", "process_capture_detector"},
                     "capture_process_also": layout == "process_capture_detector",
+                    "process_all_stages": layout == "process_full",
                     "device": device,
                     "device_label": DEVICE_LABELS.get(device, device),
                     "scenario": scenario,
@@ -264,7 +280,9 @@ def prepare_matrix(args: argparse.Namespace) -> dict[str, Any]:
                         "layout": layout,
                         "layout_label": LAYOUT_LABELS[layout],
                         "manifest": mp_bench._path_for_manifest(manifest_path, repo_root),
-                        "result_dir": f"reports/linux_perf_matrix/results/{device_key}/{scenario}/{layout}",
+                        "result_dir": _result_dir_for_run(
+                            results_root, device_key, scenario, layout
+                        ),
                     }
                 )
 
@@ -279,12 +297,22 @@ def main() -> int:
     )
     parser.add_argument("--base-config", default="configs/multi_videos.json")
     parser.add_argument("--out-dir", default=DEFAULT_OUT_DIR)
+    parser.add_argument(
+        "--results-root",
+        default="reports/linux_perf_matrix/results",
+        help="Корень каталогов результатов (пути в matrix_manifest.json).",
+    )
     parser.add_argument("--max-cameras", type=int, default=4)
     parser.add_argument("--repeat-cameras", action="store_true")
     parser.add_argument("--allow-missing", action="store_true")
     parser.add_argument("--target-fps", type=float, default=30.0)
     parser.add_argument("--num-detection-threads", type=int, default=1)
-    parser.add_argument("--shared-detector-pool", action="store_true", default=True)
+    parser.add_argument(
+        "--shared-detector-pool",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Объединять совместимые детекторы в один пул (для per-camera MP используйте --no-shared-detector-pool).",
+    )
     parser.add_argument("--devices", nargs="+", default=list(DEFAULT_DEVICES))
     parser.add_argument("--scenarios", nargs="+", choices=DEFAULT_SCENARIOS, default=list(DEFAULT_SCENARIOS))
     parser.add_argument("--layouts", nargs="+", choices=DEFAULT_LAYOUTS, default=list(DEFAULT_LAYOUTS))
