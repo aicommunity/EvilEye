@@ -1,0 +1,35 @@
+{
+  "started_at": "2026-06-03T22:51:43",
+  "manifest": "reports/linux_perf_matrix_mp_per_camera/configs/cuda_0/full/process_full/manifest.json",
+  "timeout_sec": 900,
+  "duration_sec": 30,
+  "autoclose": false,
+  "sample_interval_sec": 2.0,
+  "runs": [
+    {
+      "camera_count": 1,
+      "mode": "thread",
+      "config": "reports/linux_perf_matrix_mp_per_camera/configs/cuda_0/full/process_full/bench_01cam_thread.json",
+      "log": "reports/linux_perf_matrix_mp_per_camera/results/cuda_0/full/process_full_warmup/logs/01cam_thread.log",
+      "samples": "reports/linux_perf_matrix_mp_per_camera/results/cuda_0/full/process_full_warmup/samples/01cam_thread.csv",
+      "exit_code": 0,
+      "timed_out": false,
+      "stopped_by_duration": true,
+      "terminate_ok": true,
+      "elapsed_sec": 44.18
+    },
+    {
+      "camera_count": 1,
+      "mode": "process",
+      "config": "reports/linux_perf_matrix_mp_per_camera/configs/cuda_0/full/process_full/bench_01cam_process.json",
+      "log": "reports/linux_perf_matrix_mp_per_camera/results/cuda_0/full/process_full_warmup/logs/01cam_process.log",
+      "samples": "reports/linux_perf_matrix_mp_per_camera/results/cuda_0/full/process_full_warmup/samples/01cam_process.csv",
+      "exit_code": 0,
+      "timed_out": false,
+      "stopped_by_duration": true,
+      "terminate_ok": true,
+      "elapsed_sec": 39.616
+    }
+  ],
+  "finished_at": "2026-06-03T22:53:07"
+}

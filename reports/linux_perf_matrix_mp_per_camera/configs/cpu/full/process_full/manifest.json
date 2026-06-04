@@ -1,0 +1,136 @@
+{
+  "base_config": "configs/multi_videos.json",
+  "generated_at": "2026-06-03T22:24:09",
+  "max_cameras": 4,
+  "modes": [
+    "thread",
+    "process"
+  ],
+  "repeat_cameras": true,
+  "shared_detector_pool": false,
+  "per_camera_components": true,
+  "detector_process_only": false,
+  "capture_process_also": false,
+  "process_all_stages": true,
+  "device": "cpu",
+  "device_label": "CPU",
+  "scenario": "full",
+  "scenario_label": "полный пайплайн",
+  "layout": "process_full",
+  "layout_label": "захват, обнаружение и отслеживание в отдельных процессах (по одному процессу на камеру)",
+  "runs": [
+    {
+      "camera_count": 1,
+      "mode": "thread",
+      "config": "reports/linux_perf_matrix_mp_per_camera/configs/cpu/full/process_full/bench_01cam_thread.json",
+      "source_ids": [
+        0
+      ],
+      "source_names": [
+        "Cam1"
+      ]
+    },
+    {
+      "camera_count": 1,
+      "mode": "process",
+      "config": "reports/linux_perf_matrix_mp_per_camera/configs/cpu/full/process_full/bench_01cam_process.json",
+      "source_ids": [
+        0
+      ],
+      "source_names": [
+        "Cam1"
+      ]
+    },
+    {
+      "camera_count": 2,
+      "mode": "thread",
+      "config": "reports/linux_perf_matrix_mp_per_camera/configs/cpu/full/process_full/bench_02cam_thread.json",
+      "source_ids": [
+        0,
+        1
+      ],
+      "source_names": [
+        "Cam1",
+        "Cam2"
+      ]
+    },
+    {
+      "camera_count": 2,
+      "mode": "process",
+      "config": "reports/linux_perf_matrix_mp_per_camera/configs/cpu/full/process_full/bench_02cam_process.json",
+      "source_ids": [
+        0,
+        1
+      ],
+      "source_names": [
+        "Cam1",
+        "Cam2"
+      ]
+    },
+    {
+      "camera_count": 3,
+      "mode": "thread",
+      "config": "reports/linux_perf_matrix_mp_per_camera/configs/cpu/full/process_full/bench_03cam_thread.json",
+      "source_ids": [
+        0,
+        1,
+        2
+      ],
+      "source_names": [
+        "Cam1",
+        "Cam2",
+        "Cam3"
+      ]
+    },
+    {
+      "camera_count": 3,
+      "mode": "process",
+      "config": "reports/linux_perf_matrix_mp_per_camera/configs/cpu/full/process_full/bench_03cam_process.json",
+      "source_ids": [
+        0,
+        1,
+        2
+      ],
+      "source_names": [
+        "Cam1",
+        "Cam2",
+        "Cam3"
+      ]
+    },
+    {
+      "camera_count": 4,
+      "mode": "thread",
+      "config": "reports/linux_perf_matrix_mp_per_camera/configs/cpu/full/process_full/bench_04cam_thread.json",
+      "source_ids": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "source_names": [
+        "Cam1",
+        "Cam2",
+        "Cam3",
+        "Cam4"
+      ]
+    },
+    {
+      "camera_count": 4,
+      "mode": "process",
+      "config": "reports/linux_perf_matrix_mp_per_camera/configs/cpu/full/process_full/bench_04cam_process.json",
+      "source_ids": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "source_names": [
+        "Cam1",
+        "Cam2",
+        "Cam3",
+        "Cam4"
+      ]
+    }
+  ],
+  "missing_video_paths": []
+}

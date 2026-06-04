@@ -3,16 +3,16 @@
     "pipeline_class": "PipelineSurveillance",
     "sources": [
       {
-        "camera": "D:\\pr\\vkr\\EvilEye\\videos\\6p-c0.avi",
+        "camera": "/home/user/EvilEye/videos/6p-c0.avi",
         "source": "VideoFile",
         "source_names": [
-          "Video 1"
+          "Cam1"
         ],
         "source_ids": [
           0
         ],
         "loop_play": true,
-        "desired_fps": 30.0,
+        "desired_fps": 120.0,
         "split": false,
         "num_split": 0,
         "src_coords": [
@@ -21,16 +21,16 @@
         "execution_mode": "thread"
       },
       {
-        "camera": "D:\\pr\\vkr\\EvilEye\\videos\\6p-c1.avi",
+        "camera": "/home/user/EvilEye/videos/6p-c1.avi",
         "source": "VideoFile",
         "source_names": [
-          "Video 2"
+          "Cam2"
         ],
         "source_ids": [
           1
         ],
         "loop_play": true,
-        "desired_fps": 30.0,
+        "desired_fps": 120.0,
         "split": false,
         "num_split": 0,
         "src_coords": [
@@ -41,7 +41,7 @@
     ],
     "detectors": [
       {
-        "model": "D:\\pr\\vkr\\EvilEye\\models\\yolo11n.pt",
+        "model": "/home/user/EvilEye/models/yolo11n.pt",
         "classes": [
           0,
           1,
@@ -63,7 +63,7 @@
         "device": "cpu"
       },
       {
-        "model": "D:\\pr\\vkr\\EvilEye\\models\\yolo11n.pt",
+        "model": "/home/user/EvilEye/models/yolo11n.pt",
         "classes": [
           0,
           1,
@@ -129,7 +129,7 @@
     "ipc_mode": "standard"
   },
   "controller": {
-    "fps": 30.0,
+    "fps": 120.0,
     "enable_close_from_gui": true,
     "class_names": [
       "person",
@@ -338,8 +338,8 @@
       1
     ],
     "fps": [
-      30.0,
-      30.0
+      120.0,
+      120.0
     ],
     "gui_enabled": false,
     "show_debug_info": true,
