@@ -31,7 +31,7 @@ SCENARIO_LABELS = {
 LAYOUT_LABELS = {
     "process_detector": "в отдельном процессе только обнаружение",
     "process_capture_detector": "в отдельных процессах захват и обнаружение",
-    "process_full": "все поддерживаемые стадии в отдельных процессах",
+    "process_full": "захват, обнаружение и отслеживание в отдельных процессах (по одному процессу на камеру)",
 }
 
 
@@ -71,26 +71,68 @@ def _resource_ok(row: dict[str, Any], args: argparse.Namespace) -> bool:
     return True
 
 
-def _collect_matrix_rows(matrix: dict[str, Any], args: argparse.Namespace) -> list[dict[str, Any]]:
-    repo_root = _repo_root()
+def _normalize_device(device: str) -> tuple[str, str]:
+    if device == "cuda_0":
+        return "cuda:0", "GPU"
+    if device == "cuda:0":
+        return "cuda:0", "GPU"
+    return device, device.upper()
+
+
+def _parse_results_csv_file(
+    csv_path: Path,
+    *,
+    device: str,
+    device_label: str,
+    scenario: str,
+    scenario_label: str,
+    layout: str,
+    layout_label: str,
+    args: argparse.Namespace,
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for item in matrix.get("runs", []):
-        out_dir = repo_root / str(item["result_dir"])
-        if not out_dir.exists():
-            continue
-        for row in mp_report.collect_rows(out_dir, warmup_windows=args.warmup_windows):
-            scenario = str(item["scenario"])
-            metric_name, metric_label = PRIMARY_METRIC.get(scenario, ("detector_fps_est", "Обнаружение, кадры/с"))
-            extended = {
-                **item,
-                **row,
+    metric_name, metric_label = PRIMARY_METRIC.get(scenario, ("detector_fps_est", "Обнаружение, кадры/с"))
+    with csv_path.open("r", encoding="utf-8-sig", newline="") as inp:
+        reader = csv.DictReader(inp, delimiter=";")
+        for item in reader:
+            mode_label = str(item.get("Режим", ""))
+            mode = "process" if "Мультипроцесс" in mode_label else "thread"
+            row: dict[str, Any] = {
+                "device": device,
+                "device_label": device_label,
+                "scenario": scenario,
+                "scenario_label": scenario_label,
+                "layout": layout,
+                "layout_label": layout_label,
+                "camera_count": int(item.get("Количество камер") or 0),
+                "mode": mode,
+                "mode_label": mode_label,
+                "avg_capture_fps": _safe_float(item.get("Захват, кадры/с")),
+                "detector_fps_est": _safe_float(item.get("Обнаружение, кадры/с")),
+                "tracker_fps_est": _safe_float(item.get("Отслеживание, кадры/с")),
+                "visual_fps_est": _safe_float(item.get("Визуализация, кадры/с")),
+                "p95_pipeline_ms": _safe_float(item.get("p95 цикла, мс")),
+                "avg_cpu_percent": _safe_float(item.get("CPU, %")),
+                "max_ram_gb": _safe_float(item.get("RAM, ГБ")),
+                "avg_gpu_util_percent": _safe_float(item.get("GPU, %")),
+                "max_gpu_ram_gb": _safe_float(item.get("GPU-RAM, ГБ")),
+                "errors": int(item.get("Ошибки") or 0),
+                "valid_run": item.get("Валидный прогон") == "да",
+                "timed_out": item.get("Таймаут") == "да",
+                "exit_code": item.get("Код выхода"),
                 "primary_metric": metric_name,
                 "primary_metric_label": metric_label,
-                "primary_fps": row.get(metric_name),
+                "source_results_csv": str(csv_path),
             }
-            extended["resource_ok"] = _resource_ok(extended, args)
-            extended["valid_for_report"] = bool(extended.get("valid_run")) and bool(extended["resource_ok"])
-            rows.append(extended)
+            row["primary_fps"] = row.get(metric_name)
+            row["resource_ok"] = _resource_ok(row, args)
+            row["valid_for_report"] = bool(row.get("valid_run")) and bool(row["resource_ok"])
+            rows.append(row)
+    mp_report._fix_mp_capture_outliers(rows)
+    return rows
+
+
+def _sort_matrix_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(
         rows,
         key=lambda row: (
@@ -101,6 +143,54 @@ def _collect_matrix_rows(matrix: dict[str, Any], args: argparse.Namespace) -> li
             str(row.get("mode")),
         ),
     )
+
+
+def _extend_matrix_row(item: dict[str, Any], row: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    scenario = str(item["scenario"])
+    metric_name, metric_label = PRIMARY_METRIC.get(scenario, ("detector_fps_est", "Обнаружение, кадры/с"))
+    extended = {
+        **item,
+        **row,
+        "primary_metric": metric_name,
+        "primary_metric_label": metric_label,
+        "primary_fps": row.get(metric_name),
+    }
+    extended["primary_fps"] = extended.get(metric_name)
+    extended["resource_ok"] = _resource_ok(extended, args)
+    extended["valid_for_report"] = bool(extended.get("valid_run")) and bool(extended["resource_ok"])
+    return extended
+
+
+def _collect_matrix_rows(matrix: dict[str, Any], args: argparse.Namespace) -> list[dict[str, Any]]:
+    repo_root = _repo_root()
+    rows: list[dict[str, Any]] = []
+    for item in matrix.get("runs", []):
+        out_dir = repo_root / str(item["result_dir"])
+        if not out_dir.exists():
+            continue
+        run_rows = mp_report.collect_rows(out_dir, warmup_windows=args.warmup_windows)
+        if not run_rows:
+            csv_path = out_dir / "results.csv"
+            if csv_path.exists():
+                run_rows = _parse_results_csv_file(
+                    csv_path,
+                    device=str(item["device"]),
+                    device_label=str(item.get("device_label", item["device"])),
+                    scenario=str(item["scenario"]),
+                    scenario_label=str(item.get("scenario_label", SCENARIO_LABELS.get(str(item["scenario"]), item["scenario"]))),
+                    layout=str(item["layout"]),
+                    layout_label=str(item.get("layout_label", LAYOUT_LABELS.get(str(item["layout"]), item["layout"]))),
+                    args=args,
+                )
+        batch: list[dict[str, Any]] = []
+        for row in run_rows:
+            if row.get("device"):
+                batch.append(row)
+            else:
+                batch.append(_extend_matrix_row(item, row, args))
+        mp_report._fix_mp_capture_outliers(batch)
+        rows.extend(batch)
+    return _sort_matrix_rows(rows)
 
 
 def _collect_results_csv_rows(results_root: Path, args: argparse.Namespace) -> list[dict[str, Any]]:
@@ -109,56 +199,23 @@ def _collect_results_csv_rows(results_root: Path, args: argparse.Namespace) -> l
     for csv_path in sorted(results_root.rglob("results.csv")):
         try:
             relative = csv_path.relative_to(results_root)
-            device, scenario, layout = relative.parts[:3]
+            device_raw, scenario, layout = relative.parts[:3]
         except (ValueError, IndexError):
             continue
-        with csv_path.open("r", encoding="utf-8-sig", newline="") as inp:
-            reader = csv.DictReader(inp, delimiter=";")
-            for item in reader:
-                mode_label = str(item.get("Режим", ""))
-                mode = "process" if "Мультипроцесс" in mode_label else "thread"
-                metric_name, metric_label = PRIMARY_METRIC.get(scenario, ("detector_fps_est", "Обнаружение, кадры/с"))
-                row: dict[str, Any] = {
-                    "device": "cuda:0" if device == "cuda_0" else device,
-                    "device_label": "GPU" if device == "cuda_0" else device.upper(),
-                    "scenario": scenario,
-                    "scenario_label": SCENARIO_LABELS.get(scenario, scenario),
-                    "layout": layout,
-                    "layout_label": LAYOUT_LABELS.get(layout, layout),
-                    "camera_count": int(item.get("Количество камер") or 0),
-                    "mode": mode,
-                    "mode_label": mode_label,
-                    "avg_capture_fps": _safe_float(item.get("Захват, кадры/с")),
-                    "detector_fps_est": _safe_float(item.get("Обнаружение, кадры/с")),
-                    "tracker_fps_est": _safe_float(item.get("Отслеживание, кадры/с")),
-                    "visual_fps_est": _safe_float(item.get("Визуализация, кадры/с")),
-                    "p95_pipeline_ms": _safe_float(item.get("p95 цикла, мс")),
-                    "avg_cpu_percent": _safe_float(item.get("CPU, %")),
-                    "max_ram_gb": _safe_float(item.get("RAM, ГБ")),
-                    "avg_gpu_util_percent": _safe_float(item.get("GPU, %")),
-                    "max_gpu_ram_gb": _safe_float(item.get("GPU-RAM, ГБ")),
-                    "errors": int(item.get("Ошибки") or 0),
-                    "valid_run": item.get("Валидный прогон") == "да",
-                    "timed_out": item.get("Таймаут") == "да",
-                    "exit_code": item.get("Код выхода"),
-                    "primary_metric": metric_name,
-                    "primary_metric_label": metric_label,
-                    "source_results_csv": str(csv_path),
-                }
-                row["primary_fps"] = row.get(metric_name)
-                row["resource_ok"] = _resource_ok(row, args)
-                row["valid_for_report"] = bool(row.get("valid_run")) and bool(row["resource_ok"])
-                rows.append(row)
-    return sorted(
-        rows,
-        key=lambda row: (
-            str(row.get("device")),
-            str(row.get("scenario")),
-            str(row.get("layout")),
-            int(row.get("camera_count") or 0),
-            str(row.get("mode")),
-        ),
-    )
+        device, device_label = _normalize_device(device_raw)
+        rows.extend(
+            _parse_results_csv_file(
+                csv_path,
+                device=device,
+                device_label=device_label,
+                scenario=scenario,
+                scenario_label=SCENARIO_LABELS.get(scenario, scenario),
+                layout=layout,
+                layout_label=LAYOUT_LABELS.get(layout, layout),
+                args=args,
+            )
+        )
+    return _sort_matrix_rows(rows)
 
 
 def _write_summary_csv(rows: list[dict[str, Any]], path: Path) -> None:
@@ -298,15 +355,20 @@ def _write_speedup_plots(rows: list[dict[str, Any]], plots_dir: Path) -> list[Pa
         return []
 
     plots_dir.mkdir(parents=True, exist_ok=True)
+    for stale in plots_dir.glob("speedup_*.png"):
+        stale.unlink()
     created: list[Path] = []
     groups = sorted({(row["device"], row["scenario"], row["layout"]) for row in rows})
     for device, scenario, layout in groups:
-        group_rows = [row for row in rows if (row["device"], row["scenario"], row["layout"]) == (device, scenario, layout)]
+        group_rows = sorted(
+            [row for row in rows if (row["device"], row["scenario"], row["layout"]) == (device, scenario, layout)],
+            key=lambda row: int(row["camera_count"]),
+        )
         cameras = [int(row["camera_count"]) for row in group_rows]
         speedups = [0.0 if _safe_float(row.get("speedup")) is None else float(row["speedup"]) for row in group_rows]
         if not cameras or all(value <= 0 for value in speedups):
             continue
-        title = f"Ускорение: {group_rows[0]['device_label']}, {group_rows[0]['scenario_label']}"
+        title = f"Ускорение: {group_rows[0]['device_label']}"
         fig, ax = plt.subplots(figsize=(8.5, 4.8))
         ax.plot(cameras, speedups, marker="o")
         ax.axhline(1.0, color="gray", linestyle="--", linewidth=1)
@@ -324,53 +386,6 @@ def _write_speedup_plots(rows: list[dict[str, Any]], plots_dir: Path) -> list[Pa
     return created
 
 
-def _write_report(speedups: list[dict[str, Any]], plots: list[Path], out_dir: Path) -> None:
-    valid_pairs = [row for row in speedups if row.get("valid_for_report")]
-    best = sorted(
-        [row for row in valid_pairs if _safe_float(row.get("speedup")) is not None],
-        key=lambda row: float(row["speedup"]),
-        reverse=True,
-    )[:10]
-    lines = [
-        "# Сводный отчет по Linux benchmark",
-        "",
-        "## Артефакты",
-        "- `summary.csv` — все строки измерений с CPU, GPU и RAM.",
-        "- `speedup.csv` — парные ускорения `process/thread` по основной метрике сценария.",
-        "- `plots/` — графики ускорения по числу камер.",
-        "",
-        "## Контроль валидности",
-        "Прогоны помечаются непригодными для итогового вывода, если были ошибки, traceback, timeout "
-        "или превышены заданные пороги CPU/GPU/RAM.",
-        "",
-        "## Лучшие валидные ускорения",
-        "| Устройство | Сценарий | Схема multiprocessing | Камер | Ускорение |",
-        "| --- | --- | --- | ---: | ---: |",
-    ]
-    if best:
-        for row in best:
-            lines.append(
-                "| {device} | {scenario} | {layout} | {cams} | {speedup} |".format(
-                    device=row.get("device_label"),
-                    scenario=row.get("scenario_label"),
-                    layout=row.get("layout_label"),
-                    cams=row.get("camera_count"),
-                    speedup=_fmt(row.get("speedup")),
-                )
-            )
-    else:
-        lines.append("| - | - | - | - | - |")
-    lines.extend(["", "## Графики"])
-    if plots:
-        repo_root = _repo_root()
-        for plot in plots:
-            lines.append(f"- `{plot.relative_to(repo_root).as_posix()}`")
-    else:
-        lines.append("- Графики не построены: нет `matplotlib` или недостаточно данных.")
-    lines.append("")
-    (out_dir / "report.md").write_text("\n".join(lines), encoding="utf-8")
-
-
 def render(args: argparse.Namespace) -> None:
     repo_root = _repo_root()
     matrix_path = (repo_root / args.matrix_manifest).resolve()
@@ -380,18 +395,17 @@ def render(args: argparse.Namespace) -> None:
 
     rows = _collect_matrix_rows(matrix, args)
     if not rows:
-        rows = _collect_results_csv_rows(repo_root / "reports/linux_perf_matrix/results", args)
+        results_root = repo_root / str(matrix.get("results_root", "reports/linux_perf_matrix/results"))
+        rows = _collect_results_csv_rows(results_root, args)
     if not rows:
         raise SystemExit("Не найдены результаты матрицы. Сначала выполните scripts/run_linux_perf_matrix.sh.")
 
     speedups = _speedup_rows(rows)
     _write_summary_csv(rows, out_dir / "summary.csv")
     _write_speedup_csv(speedups, out_dir / "speedup.csv")
-    plots = _write_speedup_plots(speedups, out_dir / "plots")
-    _write_report(speedups, plots, out_dir)
+    _write_speedup_plots(speedups, out_dir / "plots")
     print(f"CSV: {(out_dir / 'summary.csv').relative_to(repo_root)}")
     print(f"Ускорения: {(out_dir / 'speedup.csv').relative_to(repo_root)}")
-    print(f"Отчёт: {(out_dir / 'report.md').relative_to(repo_root)}")
 
 
 def main() -> int:

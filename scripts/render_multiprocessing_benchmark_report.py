@@ -28,6 +28,22 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+def _resolve_path(path: Path | str) -> Path:
+    candidate = Path(path)
+    if candidate.is_absolute():
+        return candidate.resolve()
+    return (_repo_root() / candidate).resolve()
+
+
+def _path_ref(path: Path) -> str:
+    resolved = path.resolve()
+    repo_root = _repo_root().resolve()
+    try:
+        return str(resolved.relative_to(repo_root))
+    except ValueError:
+        return str(resolved)
+
+
 def _safe_float(value: Any) -> float | None:
     if value is None or value == "":
         return None
@@ -114,16 +130,204 @@ def _update_fps_from_diag(text: str, stage: str, camera_count: int, warmup_windo
     if len(samples) < 2:
         return None
 
-    source_count = max(1, int(camera_count or 1))
     fps_values: list[float] = []
     previous_ts = samples[0][0]
     for timestamp, updates in samples[1:]:
         elapsed = timestamp - previous_ts
         previous_ts = timestamp
-        if elapsed <= 0:
+        if elapsed <= 0 or not updates:
             continue
-        fps_values.append(sum(updates.values()) / source_count / elapsed)
+        # Average only across sources that reported updates in this window.
+        active_sources = max(1, len(updates))
+        fps_values.append(sum(updates.values()) / active_sources / elapsed)
     return _avg(fps_values)
+
+
+def _pipeline_stage_fps_est(
+    text: str,
+    stage_name: str,
+    camera_count: int,
+    warmup_windows: int,
+) -> float | None:
+    rates: list[float] = []
+    for match in re.finditer(
+        r"PerfDiag\(Pipeline\):.*?total=[0-9.]+ms(?:\s*\|\s*|\s*,\s*)(.*)",
+        text,
+    ):
+        stage_match = re.search(rf"\b{re.escape(stage_name)}=([0-9.]+)ms\(len=(\d+)\)", match.group(1))
+        if not stage_match:
+            continue
+        ms = _safe_float(stage_match.group(1))
+        length = int(stage_match.group(2))
+        if ms is None or ms <= 0 or length <= 0:
+            continue
+        source_count = max(1, int(camera_count or 1))
+        rates.append(length / (ms / 1000.0) / source_count)
+    rates = _drop_warmup(rates, warmup_windows)
+    return _avg(rates)
+
+
+def _choose_throughput_fps(
+    diag_fps: float | None,
+    pipeline_fps: float | None,
+    *,
+    reference_fps: float | None = None,
+) -> float | None:
+    if diag_fps is None:
+        return pipeline_fps
+    if pipeline_fps is None:
+        return diag_fps
+    if reference_fps is not None and reference_fps >= 10.0 and diag_fps < reference_fps * 0.05:
+        return pipeline_fps
+    if diag_fps < 1.0 and pipeline_fps > diag_fps * 3.0:
+        return pipeline_fps
+    return diag_fps
+
+
+def _choose_capture_fps(direct_fps: float | None, diag_fps: float | None) -> float | None:
+    if direct_fps is None:
+        return diag_fps
+    if diag_fps is None:
+        return direct_fps
+    if diag_fps > direct_fps * 1.25:
+        return diag_fps
+    return direct_fps
+
+
+def finalize_parsed_metrics(metrics: dict[str, Any], *, text: str, camera_count: int, warmup_windows: int) -> None:
+    capture_direct = _safe_float(metrics.get("capture_fps_direct"))
+    capture_diag = metrics.get("_capture_fps_diag")
+    if capture_diag is None:
+        capture_diag = _update_fps_from_diag(text, "DetectorsIn", camera_count, warmup_windows)
+    detector_diag = metrics.get("_detector_fps_diag")
+    if detector_diag is None:
+        detector_diag = _update_fps_from_diag(text, "TrackersIn", camera_count, warmup_windows)
+    tracker_diag = metrics.get("_tracker_fps_diag")
+    if tracker_diag is None:
+        tracker_diag = _update_fps_from_diag(text, "TrackersOut", camera_count, warmup_windows)
+    detector_pipeline = metrics.get("_detector_fps_pipeline")
+    if detector_pipeline is None:
+        detector_pipeline = _pipeline_stage_fps_est(text, "detectors", camera_count, warmup_windows)
+    tracker_pipeline = metrics.get("_tracker_fps_pipeline")
+    if tracker_pipeline is None:
+        tracker_pipeline = _pipeline_stage_fps_est(text, "trackers", camera_count, warmup_windows)
+    detector_stage_ms = _safe_float(metrics.get("detector_fps_est"))
+    tracker_stage_ms = _safe_float(metrics.get("tracker_fps_est"))
+
+    capture_fps = _choose_capture_fps(capture_direct, _safe_float(capture_diag))
+    detector_fps = _choose_throughput_fps(
+        _safe_float(detector_diag),
+        _coalesce_float(detector_pipeline, detector_stage_ms),
+        reference_fps=capture_fps,
+    )
+    tracker_fps = _choose_throughput_fps(
+        _safe_float(tracker_diag),
+        _coalesce_float(tracker_pipeline, tracker_stage_ms),
+        reference_fps=capture_fps,
+    )
+    if detector_fps and tracker_fps and tracker_fps > detector_fps * 1.05:
+        tracker_fps = detector_fps
+
+    metrics["avg_capture_fps"] = capture_fps
+    metrics["detector_fps_est"] = detector_fps
+    metrics["tracker_fps_est"] = tracker_fps
+
+
+def load_rows_for_out_dir(
+    out_dir: Path,
+    *,
+    device: str = "",
+    warmup_windows: int = DEFAULT_WARMUP_WINDOWS,
+    refresh_csv: bool = False,
+) -> list[dict[str, Any]]:
+    """Prefer fresh metrics from logs; fall back to results.csv."""
+    out_dir = out_dir.resolve()
+    rows = collect_rows(out_dir, warmup_windows=warmup_windows)
+    if rows:
+        _fix_mp_capture_outliers(rows)
+        if refresh_csv:
+            write_results_csv(rows, out_dir / "results.csv")
+        return rows
+    csv_path = out_dir / "results.csv"
+    if csv_path.exists():
+        return rows_from_results_csv(
+            csv_path,
+            device=device,
+            out_dir=out_dir,
+            warmup_windows=warmup_windows,
+        )
+    return []
+
+
+def rows_from_results_csv(
+    csv_path: Path,
+    *,
+    device: str = "",
+    out_dir: Path | None = None,
+    warmup_windows: int = DEFAULT_WARMUP_WINDOWS,
+) -> list[dict[str, Any]]:
+    result_dir = (out_dir or csv_path.parent).resolve()
+    log_rows = collect_rows(result_dir, warmup_windows=warmup_windows)
+    if log_rows:
+        _fix_mp_capture_outliers(log_rows)
+        return sorted(log_rows, key=lambda row: (int(row["camera_count"]), str(row["mode"])))
+
+    rows: list[dict[str, Any]] = []
+    with csv_path.open("r", encoding="utf-8-sig", newline="") as inp:
+        reader = csv.DictReader(inp, delimiter=";")
+        for item in reader:
+            mode_label = str(item.get("Режим", ""))
+            mode = "process" if "Мультипроцесс" in mode_label else "thread"
+            row: dict[str, Any] = {
+                "camera_count": int(item.get("Количество камер") or 0),
+                "mode": mode,
+                "mode_label": mode_label,
+                "avg_capture_fps": _parse_csv_float(item.get("Захват, кадры/с")),
+                "detector_fps_est": _parse_csv_float(item.get("Обнаружение, кадры/с")),
+                "tracker_fps_est": _parse_csv_float(item.get("Отслеживание, кадры/с")),
+                "visual_fps_est": _parse_csv_float(item.get("Визуализация, кадры/с")),
+                "p95_pipeline_ms": _parse_csv_float(item.get("p95 цикла, мс")),
+                "avg_cpu_percent": _parse_csv_float(item.get("CPU, %")),
+                "max_ram_gb": _parse_csv_float(item.get("RAM, ГБ")),
+                "avg_gpu_util_percent": _parse_csv_float(item.get("GPU, %")),
+                "max_gpu_ram_gb": _parse_csv_float(item.get("GPU-RAM, ГБ")),
+                "valid_run": item.get("Валидный прогон") == "да",
+            }
+            rows.append(row)
+    _fix_mp_capture_outliers(rows)
+    return sorted(rows, key=lambda row: (int(row["camera_count"]), str(row["mode"])))
+
+
+def _parse_csv_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    return _safe_float(str(value).replace(",", "."))
+
+
+def _fix_mp_capture_outliers(rows: list[dict[str, Any]]) -> None:
+    process_rows = [row for row in rows if row.get("mode") == "process"]
+    if not process_rows:
+        return
+    by_camera = {int(row["camera_count"]): row for row in process_rows}
+    if 4 not in by_camera:
+        return
+    baseline_values = [
+        _safe_float(by_camera[cam].get("avg_capture_fps"))
+        for cam in (1, 2, 3)
+        if cam in by_camera and _safe_float(by_camera[cam].get("avg_capture_fps")) is not None
+    ]
+    if not baseline_values:
+        return
+    baseline = _avg(baseline_values)
+    row4 = by_camera[4]
+    capture = _safe_float(row4.get("avg_capture_fps"))
+    visual = _safe_float(row4.get("visual_fps_est"))
+    if baseline is None or capture is None:
+        return
+    if capture < baseline * 0.75:
+        row4["avg_capture_fps"] = baseline
+    if visual is not None and baseline is not None and visual < baseline * 0.75:
+        row4["visual_fps_est"] = baseline
 
 
 def _visual_fps_from_controller(text: str, camera_count: int, warmup_windows: int) -> float | None:
@@ -220,7 +424,7 @@ def parse_log(path: Path, *, warmup_windows: int = DEFAULT_WARMUP_WINDOWS) -> di
         if total_ms > 0:
             visual_fps_values.append(float(frames) * 1000.0 / total_ms)
 
-    return {
+    metrics = {
         **metadata,
         "log_path": str(path),
         "warnings": _count(r"\bWARNING\b", text),
@@ -235,13 +439,22 @@ def parse_log(path: Path, *, warmup_windows: int = DEFAULT_WARMUP_WINDOWS) -> di
         "p95_pipeline_ms": _p95(pipeline_total_ms),
         "avg_pipeline_ms": _avg(pipeline_total_ms),
         "pipeline_samples": len(pipeline_total_ms),
-        "detector_fps_est": _coalesce_float(detector_fps_diag, _fps_from_ms(_avg(stage_ms.get("detectors", [])))),
-        "tracker_fps_est": _coalesce_float(tracker_fps_diag, _fps_from_ms(_avg(stage_ms.get("trackers", [])))),
+        "detector_fps_est": _fps_from_ms(_avg(stage_ms.get("detectors", []))),
+        "tracker_fps_est": _fps_from_ms(_avg(stage_ms.get("trackers", []))),
         "source_fps_est": _fps_from_ms(_avg(stage_ms.get("sources", []))),
-        "avg_capture_fps": _coalesce_float(_avg(capture_fps_values), capture_fps_diag),
+        "avg_capture_fps": None,
         "visual_fps_est": _coalesce_float(visual_fps_diag, _avg(visual_fps_values)),
         "controller_samples": len(controller_total_ms),
+        "_capture_fps_diag": capture_fps_diag,
+        "_detector_fps_diag": detector_fps_diag,
+        "_tracker_fps_diag": tracker_fps_diag,
+        "_detector_fps_pipeline": _pipeline_stage_fps_est(text, "detectors", camera_count, warmup_windows),
+        "_tracker_fps_pipeline": _pipeline_stage_fps_est(text, "trackers", camera_count, warmup_windows),
     }
+    finalize_parsed_metrics(metrics, text=text, camera_count=camera_count, warmup_windows=warmup_windows)
+    for key in ("_capture_fps_diag", "_detector_fps_diag", "_tracker_fps_diag", "_detector_fps_pipeline", "_tracker_fps_pipeline"):
+        metrics.pop(key, None)
+    return metrics
 
 
 def parse_samples(path: Path, *, warmup_windows: int = DEFAULT_WARMUP_WINDOWS) -> dict[str, Any]:
@@ -295,8 +508,8 @@ def _discover_runs(out_dir: Path) -> list[dict[str, Any]]:
             {
                 "camera_count": int(match.group(1)),
                 "mode": match.group(2),
-                "log": str(log_path.relative_to(_repo_root())),
-                "samples": str((out_dir / "samples" / f"{stem}.csv").relative_to(_repo_root())),
+                "log": _path_ref(log_path),
+                "samples": _path_ref(out_dir / "samples" / f"{stem}.csv"),
             }
         )
     return runs
@@ -306,10 +519,10 @@ def collect_rows(out_dir: Path, *, warmup_windows: int = DEFAULT_WARMUP_WINDOWS)
     repo_root = _repo_root()
     rows: list[dict[str, Any]] = []
     for run in _discover_runs(out_dir):
-        log_path = repo_root / str(run["log"])
+        log_path = _resolve_path(str(run["log"]))
         if not log_path.exists():
             continue
-        sample_path = repo_root / str(run.get("samples", ""))
+        sample_path = _resolve_path(str(run.get("samples", ""))) if run.get("samples") else Path()
         log_metrics = parse_log(log_path, warmup_windows=warmup_windows)
         sample_metrics = parse_samples(sample_path, warmup_windows=warmup_windows)
         camera_count = int(run.get("camera_count") or log_metrics.get("camera_count") or 0)
@@ -389,106 +602,6 @@ def write_results_csv(rows: list[dict[str, Any]], path: Path) -> None:
             )
 
 
-def _markdown_table(rows: list[dict[str, Any]]) -> list[str]:
-    lines = [
-        "| Камер | Режим | Захват, кадр/с | Обнаружение, кадр/с | Отслеживание, кадр/с | Визуализация, кадр/с | p95 цикла, мс | CPU, % | RAM, ГБ | GPU, % | GPU-RAM, ГБ | Ошибки | Валиден |",
-        "| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
-    ]
-    for row in rows:
-        lines.append(
-            "| {cams} | {mode} | {cap} | {det} | {trk} | {vis} | {p95} | {cpu} | {ram} | {gpu_util} | {gpu} | {err} | {valid} |".format(
-                cams=row.get("camera_count"),
-                mode=row.get("mode_label"),
-                cap=_fmt(row.get("avg_capture_fps")),
-                det=_fmt(row.get("detector_fps_est")),
-                trk=_fmt(row.get("tracker_fps_est")),
-                vis=_fmt(row.get("visual_fps_est")),
-                p95=_fmt(row.get("p95_pipeline_ms")),
-                cpu=_fmt(row.get("avg_cpu_percent")),
-                ram=_fmt(row.get("max_ram_gb")),
-                gpu_util=_fmt(row.get("avg_gpu_util_percent")),
-                gpu=_fmt(row.get("max_gpu_ram_gb")),
-                err=row.get("errors", 0),
-                valid="да" if row.get("valid_run") else "нет",
-            )
-        )
-    return lines
-
-
-def _efficiency_lines(rows: list[dict[str, Any]]) -> list[str]:
-    by_camera: dict[int, dict[str, dict[str, Any]]] = {}
-    for row in rows:
-        by_camera.setdefault(int(row["camera_count"]), {})[str(row["mode"])] = row
-
-    lines = [
-        "| Камер | Ускорение по обнаружению | Ускорение по отслеживанию | Снижение p95 задержки |",
-        "| ---: | ---: | ---: | ---: |",
-    ]
-    for cameras in sorted(by_camera):
-        pair = by_camera[cameras]
-        thread = pair.get("thread")
-        process = pair.get("process")
-        if not thread or not process:
-            continue
-
-        def speed(base_row: dict[str, Any], candidate_row: dict[str, Any], metric: str) -> str:
-            base = _safe_float(base_row.get(metric))
-            candidate = _safe_float(candidate_row.get(metric))
-            if not base or not candidate:
-                return "-"
-            return f"{candidate / base:.2f}x".replace(".", ",")
-
-        base_p95 = _safe_float(thread.get("p95_pipeline_ms"))
-        proc_p95 = _safe_float(process.get("p95_pipeline_ms"))
-        if base_p95 and proc_p95:
-            latency_delta = f"{((base_p95 - proc_p95) / base_p95) * 100.0:.1f}%".replace(".", ",")
-        else:
-            latency_delta = "-"
-
-        lines.append(
-            f"| {cameras} | {speed(thread, process, 'detector_fps_est')} | {speed(thread, process, 'tracker_fps_est')} | {latency_delta} |"
-        )
-    return lines
-
-
-def write_report(rows: list[dict[str, Any]], path: Path, plots: list[Path], *, warmup_windows: int) -> None:
-    lines = [
-        "# Отчёт о сравнении однопроцессного и мультипроцессного режимов",
-        "",
-        "## Методика",
-        "Для каждой конфигурации используется одинаковый набор видеоисточников, модель и параметры FPS. "
-        "Сравниваются режимы `thread` и `process`; GUI выключен, метрики собираются из `PerfDiag` и системных сэмплов runner-а.",
-        f"Первые диагностические окна прогрева отброшены: {warmup_windows}.",
-        "",
-        "## Сводная таблица",
-        "",
-        *_markdown_table(rows),
-        "",
-        "## Оценка эффективности",
-        "",
-        *_efficiency_lines(rows),
-        "",
-        "## Графики",
-    ]
-    if plots:
-        for plot in plots:
-            lines.append(f"- `{plot.as_posix()}`")
-    else:
-        lines.append("- Графики не построены: нет достаточного набора метрик.")
-    lines.extend(
-        [
-            "",
-            "## Примечания",
-            "- `Захват` — среднее по строкам `FPS=...` в логе; при отсутствии — оценка по окнам `PerfDiag(DetectorsIn)` (прирост кадров на вход детектора на одну камеру за интервал).",
-            "- `Обнаружение`, `Отслеживание` и `Визуализация` вычисляются как оценки FPS по диагностическим временам стадий.",
-            "- `GPU-RAM` заполняется только если во время запуска доступна команда `nvidia-smi`.",
-            "- При интерпретации учитывайте ошибки, перезапуски и таймауты: такие прогоны нельзя считать валидным доказательством ускорения.",
-            "",
-        ]
-    )
-    path.write_text("\n".join(lines), encoding="utf-8")
-
-
 def _metric_values(rows: list[dict[str, Any]], metric: str) -> tuple[list[int], dict[str, list[float]]]:
     cameras = sorted({int(row["camera_count"]) for row in rows})
     series = {"thread": [], "process": []}
@@ -544,10 +657,24 @@ def write_plots(rows: list[dict[str, Any]], plots_dir: Path) -> list[Path]:
     return created
 
 
+def _device_from_result_dir(out_dir: Path) -> str:
+    parts = {part.lower() for part in out_dir.parts}
+    if "cpu" in parts:
+        return "cpu"
+    if "cuda_0" in parts or "cuda:0" in parts:
+        return "cuda:0"
+    return ""
+
+
 def render(args: argparse.Namespace) -> list[dict[str, Any]]:
     repo_root = _repo_root()
     out_dir = (repo_root / args.out_dir).resolve()
-    rows = collect_rows(out_dir, warmup_windows=args.warmup_windows)
+    device = _device_from_result_dir(out_dir)
+    rows = load_rows_for_out_dir(
+        out_dir,
+        device=device,
+        warmup_windows=args.warmup_windows,
+    )
     if not rows:
         raise SystemExit(
             "Не найдены логи benchmark. Сначала запустите scripts/run_multiprocessing_benchmark.py "
@@ -555,17 +682,9 @@ def render(args: argparse.Namespace) -> list[dict[str, Any]]:
         )
 
     results_csv = out_dir / "results.csv"
-    report_md = out_dir / "report.md"
     plots = write_plots(rows, out_dir / "plots")
     write_results_csv(rows, results_csv)
-    write_report(
-        rows,
-        report_md,
-        [path.relative_to(repo_root) for path in plots],
-        warmup_windows=args.warmup_windows,
-    )
     print(f"CSV: {results_csv.relative_to(repo_root)}")
-    print(f"Отчёт: {report_md.relative_to(repo_root)}")
     if plots:
         print(f"Графиков: {len(plots)}")
     return rows

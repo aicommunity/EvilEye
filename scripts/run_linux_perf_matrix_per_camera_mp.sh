@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Матрица benchmark: захват + детектор + трекер в отдельных процессах, по одному на камеру.
-# Результаты, графики и сводки — в отдельном каталоге (не перезаписывает yolo_process_only).
 set -euo pipefail
 
 PYTHON_BIN="${PYTHON_BIN:-venv/bin/python}"
@@ -132,5 +130,3 @@ echo "==> Сборка каталога для диплома: ${REPORT_BUNDLE}"
   --summary-dir "${SUMMARY_OUT}" \
   --bundle-dir "${REPORT_BUNDLE}" \
   --warmup-windows 1
-
-echo "Готово. Смотрите: ${REPORT_BUNDLE}/README.md"

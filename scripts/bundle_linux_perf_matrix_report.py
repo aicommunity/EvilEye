@@ -41,14 +41,16 @@ def bundle(args: argparse.Namespace) -> None:
         shutil.rmtree(bundle_dir)
     bundle_dir.mkdir(parents=True, exist_ok=True)
 
-    for name in ("summary.csv", "speedup.csv", "report.md"):
+    for name in ("summary.csv", "speedup.csv"):
         src = summary_dir / name
         if src.exists():
             shutil.copy2(src, bundle_dir / name)
 
-    plots_src = summary_dir / "plots"
-    if plots_src.exists():
-        plots_dst = bundle_dir / "summary_plots"
+    for plots_src_name, plots_dst_name in (("plots", "summary_plots"), ("plots", "plots")):
+        plots_src = summary_dir / plots_src_name
+        if not plots_src.exists():
+            continue
+        plots_dst = bundle_dir / plots_dst_name
         if plots_dst.exists():
             shutil.rmtree(plots_dst)
         shutil.copytree(plots_src, plots_dst)
@@ -90,7 +92,7 @@ def bundle(args: argparse.Namespace) -> None:
         "",
         "## Содержимое",
         "",
-        "- `summary.csv`, `speedup.csv`, `report.md` — сводка по всей матрице.",
+        "- `summary.csv`, `speedup.csv` — сводка по всей матрице.",
         "- `summary_plots/` — графики ускорения из сводного renderer-а (если построены).",
         "- `tables/*_results.csv` — таблицы по каждой группе (устройство × сценарий × layout).",
         "- `plots/<группа>/` — графики FPS и ресурсов для группы.",
@@ -115,6 +117,13 @@ def bundle(args: argparse.Namespace) -> None:
     )
     (bundle_dir / "README.md").write_text("\n".join(readme_lines) + "\n", encoding="utf-8")
     print(f"Каталог отчёта: {bundle_dir.relative_to(repo_root)}")
+
+    corrected_script = repo_root / "scripts/generate_mp_per_camera_corrected_plots.py"
+    if corrected_script.exists() and any("cpu" in str(item.get("device", "")) for item in matrix.get("runs", [])):
+        import subprocess
+        import sys
+
+        subprocess.run([sys.executable, str(corrected_script)], check=False, cwd=repo_root)
 
 
 def main() -> int:
