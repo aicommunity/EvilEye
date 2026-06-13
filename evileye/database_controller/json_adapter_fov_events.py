@@ -96,7 +96,7 @@ class JsonAdapterFovEvents(DatabaseAdapterBase):
         if getattr(self, "_image_storage", None):
             self._image_storage.save_image_simple(preview_rel, frame_rel, image)
         else:
-            preview = cv2.resize(image.image.copy(), (320, 240), cv2.INTER_NEAREST)
+            preview = ImageStorageService.resize_preserving_aspect(image.image.copy(), 320, 240)
             cv2.imwrite(preview_abs, preview)
             cv2.imwrite(frame_abs, image.image)
         return preview_rel, frame_rel

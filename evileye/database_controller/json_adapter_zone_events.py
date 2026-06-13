@@ -69,9 +69,9 @@ class JsonAdapterZoneEvents(DatabaseAdapterBase):
         img = event.img_left if is_update else event.img_entered
         if box and img is not None and hasattr(img, 'image'):
             ih, iw = img.image.shape[:2]
-            bx, by, bw, bh = box
+            x1, y1, x2, y2 = box
             if iw and ih:
-                box = [bx / iw, by / ih, bw / iw, bh / ih]
+                box = [x1 / iw, y1 / ih, x2 / iw, y2 / ih]
 
         rec = {
             'event_id': event.event_id,
@@ -107,7 +107,7 @@ class JsonAdapterZoneEvents(DatabaseAdapterBase):
         if getattr(self, "_image_storage", None):
             self._image_storage.save_image_simple(preview_rel, frame_rel, image)
         else:
-            preview = cv2.resize(image.image.copy(), (320, 240), cv2.INTER_NEAREST)
+            preview = ImageStorageService.resize_preserving_aspect(image.image.copy(), 320, 240)
             cv2.imwrite(preview_abs, preview)
             cv2.imwrite(frame_abs, image.image)
         return preview_rel, frame_rel

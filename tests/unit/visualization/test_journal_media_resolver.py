@@ -97,3 +97,46 @@ def test_enrich_grouped_row_adds_flags(tmp_path):
     assert enriched["date_folder"] == "2026-06-13"
     assert enriched["has_found_preview"] is True
     assert enriched["bbox_found"] == [0.1, 0.1, 0.2, 0.2]
+
+
+def test_enrich_grouped_row_list_mode_skips_bbox(tmp_path):
+    base = tmp_path / "EvilEyeData"
+    preview_dir = base / "Detections" / "2026-06-13" / "Images" / "FoundPreviews"
+    preview_dir.mkdir(parents=True)
+    preview_file = preview_dir / "obj_preview.jpg"
+    preview_file.write_bytes(b"\xff\xd8\xff" + b"x" * 100)
+
+    row = {
+        "time": "2026-06-13T10:00:00",
+        "event": "ObjectEvent",
+        "information": "Object Id=1",
+        "preview": "obj_preview.jpg",
+        "found_event": {
+            "event_type": "found",
+            "ts": "2026-06-13T10:00:00",
+            "date_folder": "2026-06-13",
+            "image_filename": "obj_preview.jpg",
+            "bounding_box": [0.1, 0.1, 0.2, 0.2],
+        },
+    }
+    enriched = enrich_grouped_row(row, base_dir=str(base), journal_type="objects", list_mode=True)
+    assert enriched["has_found_preview"] is True
+    assert "bbox_found" not in enriched
+    assert "found_event" not in enriched
+
+
+def test_resolve_event_video_mkv_extension(tmp_path):
+    base = tmp_path / "EvilEyeData"
+    rel = "Events/2026-06-13/Videos/Cam1/Cam1_ZoneEvent_1_20260613_120000.mkv"
+    full = base / rel
+    full.parent.mkdir(parents=True)
+    full.write_bytes(b"x" * 2000)
+    event = {
+        "event_type": "zone_entered",
+        "ts": "2026-06-13T12:00:00",
+        "source_name": "Cam1",
+        "event_id_numeric": 1,
+        "video_path": rel,
+    }
+    resolved = resolve_event_video_path(event, str(base))
+    assert resolved == str(full)

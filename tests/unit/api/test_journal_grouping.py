@@ -43,3 +43,26 @@ def test_objects_grouping_includes_date_folder():
     )
     assert rows[0]["date_folder"] == "2026-06-13"
     assert rows[0]["preview"] == "a.jpg"
+
+
+def test_group_objects_rows_sorted_newest_first():
+    rows = group_objects_rows(
+        [
+            {
+                "event_type": "found",
+                "object_id": 1,
+                "ts": "2026-06-13T09:00:00",
+                "source_name": "Cam1",
+                "date_folder": "2026-06-13",
+            },
+            {
+                "event_type": "found",
+                "object_id": 2,
+                "ts": "2026-06-13T11:00:00",
+                "source_name": "Cam1",
+                "date_folder": "2026-06-13",
+            },
+        ]
+    )
+    assert len(rows) == 2
+    assert rows[0]["time"] >= rows[1]["time"]

@@ -55,6 +55,7 @@ def group_objects_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "lost_event": lost_event,
             }
         )
+    table_rows.sort(key=lambda row: str(row.get("time") or ""), reverse=True)
     return table_rows
 
 

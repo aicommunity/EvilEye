@@ -8,6 +8,7 @@ echo "== Unit tests =="
 pytest \
   tests/unit/visualization/test_journal_media_resolver.py \
   tests/unit/api/test_journal_grouping.py \
+  tests/unit/api/test_journal_merge_logic.py \
   tests/unit/api/test_journal_routes.py \
   tests/unit/api/test_web_improvements.py \
   tests/integration/api/test_journals_smoke.py \

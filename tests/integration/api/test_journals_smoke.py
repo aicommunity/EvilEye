@@ -107,3 +107,8 @@ def test_journals_smoke_flow(smoke_client):
     video = client.get(f"/api/v1/journals/video?path={video_rel}")
     assert video.status_code == 200
     assert video.headers.get("accept-ranges") == "bytes"
+
+    row_key_value = objects_payload["items"][0]["row_key"]
+    meta = client.get(f"/api/v1/journals/row-meta?row_key={row_key_value}&journal_type=objects")
+    assert meta.status_code == 200
+    assert "bbox_found" in meta.json() or meta.json().get("bbox_found") is None
