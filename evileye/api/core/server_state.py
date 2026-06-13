@@ -264,19 +264,24 @@ def list_camera_summaries(*, scope: str = "current") -> list[Dict[str, Any]]:
     return cameras
 
 
-def _journal_stats() -> dict[str, Any]:
-    try:
-        from evileye.api.core.journal_service import load_events_page, load_objects_page
+_journal_stats_cache: tuple[float, dict[str, Any]] | None = None
+_JOURNAL_STATS_TTL_SEC = 60
 
-        events = load_events_page(page=0, size=1, filters={})
-        objects = load_objects_page(page=0, size=1, filters={})
-        if not events.get("available"):
-            return {"available": False}
-        return {
-            "available": True,
-            "events_total": int(events.get("total") or 0),
-            "objects_total": int(objects.get("total") or 0),
-        }
+
+def _journal_stats() -> dict[str, Any]:
+    global _journal_stats_cache
+    now = time.time()
+    if _journal_stats_cache is not None:
+        cached_at, payload = _journal_stats_cache
+        if now - cached_at < _JOURNAL_STATS_TTL_SEC:
+            return payload
+    try:
+        import datetime
+        from evileye.api.core.journal_service import load_journal_stats
+
+        stats = load_journal_stats(date=datetime.date.today().isoformat())
+        _journal_stats_cache = (now, stats)
+        return stats
     except Exception:
         return {"available": False}
 

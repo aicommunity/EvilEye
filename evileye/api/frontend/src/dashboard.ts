@@ -29,7 +29,9 @@ import {
 import {
   isJournalDetailOpen,
   mergePrependRows,
+  prependJournalRows,
   renderJournalTable as renderJournalTableUi,
+  scrollJournalToTopIfFollowing,
   setupJournalInfiniteScroll,
 } from './journal-ui.js';
 
@@ -156,6 +158,7 @@ let journalObjectsRows: JournalGroupedRow[] = [];
 let journalEventsHasMore = true;
 let journalObjectsHasMore = true;
 let journalFiltersLoaded = false;
+let lastOverview: Awaited<ReturnType<typeof stateApi.overview>> | null = null;
 
 let currentStreamRid: number | null = null;
 let currentStreamSourceId: number | null = null;
@@ -454,7 +457,8 @@ function showPanel(panel: PanelId): void {
   if (panel === 'journals') {
     journalEventsPage = 0;
     journalObjectsPage = 0;
-    void ensureJournalFiltersMeta().then(() => loadJournals(false));
+    ensureJournalDefaultDate();
+    void Promise.all([ensureJournalFiltersMeta(), loadJournals(false)]);
     startJournalRefresh();
   } else {
     stopJournalRefresh();
@@ -468,7 +472,7 @@ function startJournalRefresh(): void {
   journalRefreshTimer = window.setInterval(() => {
     if (activePanel !== 'journals' || isJournalDetailOpen()) return;
     void pollJournals();
-  }, 1000);
+  }, 3000);
 }
 
 function stopJournalRefresh(): void {
@@ -869,17 +873,19 @@ async function pollJournals(): Promise<void> {
     if (journalActiveTab === 'events') {
       const events = await journalsApi.eventsGrouped(0, 30, filters);
       if (!events.available) return;
-      journalEventsRows = mergePrependRows(journalEventsRows, events.items);
-      renderJournalTableUi(journalEventsEl, journalEventsRows, 'events', eventColumns, 'События не найдены.', {
-        preserveScroll: true,
-      });
+      const { rows, added } = mergePrependRows(journalEventsRows, events.items);
+      if (added === 0) return;
+      journalEventsRows = rows;
+      prependJournalRows(journalEventsEl, rows.slice(0, added), 'events', eventColumns);
+      scrollJournalToTopIfFollowing(journalEventsEl);
     } else {
       const objects = await journalsApi.objectsGrouped(0, 30, filters);
       if (!objects.available) return;
-      journalObjectsRows = mergePrependRows(journalObjectsRows, objects.items);
-      renderJournalTableUi(journalObjectsEl, journalObjectsRows, 'objects', objectColumns, 'Объекты не найдены.', {
-        preserveScroll: true,
-      });
+      const { rows, added } = mergePrependRows(journalObjectsRows, objects.items);
+      if (added === 0) return;
+      journalObjectsRows = rows;
+      prependJournalRows(journalObjectsEl, rows.slice(0, added), 'objects', objectColumns);
+      scrollJournalToTopIfFollowing(journalObjectsEl);
     }
   } catch {
     // ignore polling errors
@@ -888,7 +894,8 @@ async function pollJournals(): Promise<void> {
 
 async function loadOverview(): Promise<void> {
   if (!hasPermission('live:view')) return;
-  renderOverview(await stateApi.overview());
+  lastOverview = await stateApi.overview();
+  renderOverview(lastOverview);
 }
 
 async function loadCameras(): Promise<void> {
@@ -923,6 +930,7 @@ async function loadJournals(append = false): Promise<void> {
       journalEventsHasMore = events.items.length >= 30;
       renderJournalTableUi(journalEventsEl, journalEventsRows, 'events', eventColumns, 'События не найдены.', {
         append,
+        scrollToTop: !append,
       });
       return;
     }
@@ -936,6 +944,7 @@ async function loadJournals(append = false): Promise<void> {
     journalObjectsHasMore = objects.items.length >= 30;
     renderJournalTableUi(journalObjectsEl, journalObjectsRows, 'objects', objectColumns, 'Объекты не найдены.', {
       append,
+      scrollToTop: !append,
     });
   } catch (e) {
     handleApiError(e, 'Не удалось загрузить журналы');
@@ -1070,16 +1079,26 @@ function getJournalFilters(): { source_name?: string; event_type?: string; date?
   return filters;
 }
 
+/** По умолчанию показываем только сегодня — без смешения с архивом за прошлые дни. */
+function ensureJournalDefaultDate(): void {
+  if (journalFilterDate?.value?.trim()) return;
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  journalFilterDate.value = `${yyyy}-${mm}-${dd}`;
+}
+
 async function refreshAll(): Promise<void> {
-  await loadSystemInfo();
-  await loadRuns();
-  await loadOverview();
-  await loadCameras();
-  await loadConfigs();
-  if (activePanel === 'journals') await loadJournals(false);
-  if (hasPermission('logs:view')) await loadLogs();
-  if (hasPermission('history:view')) await loadHistory();
-  if (hasPermission('users:manage')) await loadUsers();
+  const tasks: Promise<void>[] = [loadSystemInfo(), loadRuns(), loadOverview(), loadConfigs()];
+  if (activePanel === 'journals') tasks.push(loadJournals(false));
+  if (hasPermission('logs:view')) tasks.push(loadLogs());
+  if (hasPermission('history:view')) tasks.push(loadHistory());
+  if (hasPermission('users:manage')) tasks.push(loadUsers());
+  await Promise.all(tasks);
+  if (hasPermission('live:view') && !(lastOverview?.cameras?.length)) {
+    await loadCameras();
+  }
 }
 
 function openRunDetail(rid: number): void {

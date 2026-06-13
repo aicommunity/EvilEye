@@ -112,6 +112,17 @@ export const journalsApi = {
     configHistory(limit = 30) {
         return request(`/journals/config-history?limit=${limit}`);
     },
+    rowMeta(rowKeyValue, journalType) {
+        const p = new URLSearchParams({ row_key: rowKeyValue, journal_type: journalType });
+        return request(`/journals/row-meta?${p}`);
+    },
+    stats(date) {
+        const p = new URLSearchParams();
+        if (date)
+            p.set('date', date);
+        const qs = p.toString();
+        return request(`/journals/stats${qs ? `?${qs}` : ''}`);
+    },
 };
 export function journalPreviewUrl(params) {
     const p = new URLSearchParams({ path: params.path, journal_type: params.journalType });

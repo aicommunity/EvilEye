@@ -457,6 +457,40 @@ def load_objects_grouped_page(*, page: int, size: int, filters: Dict[str, Any], 
     return result
 
 
+def load_journal_stats(*, date: str | None = None) -> dict[str, Any]:
+    import datetime
+
+    resolved_date = date
+    if not resolved_date or resolved_date.lower() == "today":
+        resolved_date = datetime.date.today().isoformat()
+
+    scoped_filters: dict[str, Any] = {"date_folder": resolved_date}
+    controller = _db_controller()
+    if controller is not None:
+        events_source = _make_db_source(controller, journal_type="events", date=resolved_date)
+        objects_source = _make_db_source(controller, journal_type="objects", date=resolved_date)
+        events_filters = {**scoped_filters, "journal_kind": "events"}
+        objects_filters = {**scoped_filters, "journal_kind": "objects"}
+        return {
+            "available": True,
+            "events_total": int(events_source.get_total(events_filters)),
+            "objects_total": int(objects_source.get_total(objects_filters)),
+        }
+
+    if not _json_journal_available():
+        return {"available": False}
+
+    source = _get_json_source(date=resolved_date)
+    source.begin_request()
+    events_total = source.get_total({**scoped_filters, "journal_kind": "events"})
+    objects_total = source.get_total({**scoped_filters, "journal_kind": "objects"})
+    return {
+        "available": True,
+        "events_total": int(events_total),
+        "objects_total": int(objects_total),
+    }
+
+
 def load_row_meta(*, row_key_value: str, journal_type: str) -> dict[str, Any]:
     cached = _grouped_row_cache.get(journal_type, {}).get(row_key_value)
     if not cached:

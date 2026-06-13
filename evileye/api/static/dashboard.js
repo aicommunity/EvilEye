@@ -1,5 +1,5 @@
 import { ApiError, authApi, journalsApi, logsApi, stateApi, systemApi, usersApi, configsList, configGet, configCreate, configUpdate, configDelete, runsList, runGet, runCreate, runStart, runStop, runDelete, streamSnapshotUrl, streamMjpgUrl, streamStop, streamStatus, } from './api.js';
-import { isJournalDetailOpen, mergePrependRows, renderJournalTable as renderJournalTableUi, setupJournalInfiniteScroll, } from './journal-ui.js';
+import { isJournalDetailOpen, mergePrependRows, prependJournalRows, renderJournalTable as renderJournalTableUi, scrollJournalToTopIfFollowing, setupJournalInfiniteScroll, } from './journal-ui.js';
 const navOverview = document.getElementById('nav-overview');
 const navCameras = document.getElementById('nav-cameras');
 const navJournals = document.getElementById('nav-journals');
@@ -112,6 +112,7 @@ let journalObjectsRows = [];
 let journalEventsHasMore = true;
 let journalObjectsHasMore = true;
 let journalFiltersLoaded = false;
+let lastOverview = null;
 let currentStreamRid = null;
 let currentStreamSourceId = null;
 let streamPollTimer = null;
@@ -394,7 +395,8 @@ function showPanel(panel) {
     if (panel === 'journals') {
         journalEventsPage = 0;
         journalObjectsPage = 0;
-        void ensureJournalFiltersMeta().then(() => loadJournals(false));
+        ensureJournalDefaultDate();
+        void Promise.all([ensureJournalFiltersMeta(), loadJournals(false)]);
         startJournalRefresh();
     }
     else {
@@ -411,7 +413,7 @@ function startJournalRefresh() {
         if (activePanel !== 'journals' || isJournalDetailOpen())
             return;
         void pollJournals();
-    }, 1000);
+    }, 3000);
 }
 function stopJournalRefresh() {
     if (journalRefreshTimer != null) {
@@ -787,19 +789,23 @@ async function pollJournals() {
             const events = await journalsApi.eventsGrouped(0, 30, filters);
             if (!events.available)
                 return;
-            journalEventsRows = mergePrependRows(journalEventsRows, events.items);
-            renderJournalTableUi(journalEventsEl, journalEventsRows, 'events', eventColumns, 'События не найдены.', {
-                preserveScroll: true,
-            });
+            const { rows, added } = mergePrependRows(journalEventsRows, events.items);
+            if (added === 0)
+                return;
+            journalEventsRows = rows;
+            prependJournalRows(journalEventsEl, rows.slice(0, added), 'events', eventColumns);
+            scrollJournalToTopIfFollowing(journalEventsEl);
         }
         else {
             const objects = await journalsApi.objectsGrouped(0, 30, filters);
             if (!objects.available)
                 return;
-            journalObjectsRows = mergePrependRows(journalObjectsRows, objects.items);
-            renderJournalTableUi(journalObjectsEl, journalObjectsRows, 'objects', objectColumns, 'Объекты не найдены.', {
-                preserveScroll: true,
-            });
+            const { rows, added } = mergePrependRows(journalObjectsRows, objects.items);
+            if (added === 0)
+                return;
+            journalObjectsRows = rows;
+            prependJournalRows(journalObjectsEl, rows.slice(0, added), 'objects', objectColumns);
+            scrollJournalToTopIfFollowing(journalObjectsEl);
         }
     }
     catch {
@@ -809,7 +815,8 @@ async function pollJournals() {
 async function loadOverview() {
     if (!hasPermission('live:view'))
         return;
-    renderOverview(await stateApi.overview());
+    lastOverview = await stateApi.overview();
+    renderOverview(lastOverview);
 }
 async function loadCameras() {
     if (!hasPermission('live:view'))
@@ -847,6 +854,7 @@ async function loadJournals(append = false) {
             journalEventsHasMore = events.items.length >= 30;
             renderJournalTableUi(journalEventsEl, journalEventsRows, 'events', eventColumns, 'События не найдены.', {
                 append,
+                scrollToTop: !append,
             });
             return;
         }
@@ -859,6 +867,7 @@ async function loadJournals(append = false) {
         journalObjectsHasMore = objects.items.length >= 30;
         renderJournalTableUi(journalObjectsEl, journalObjectsRows, 'objects', objectColumns, 'Объекты не найдены.', {
             append,
+            scrollToTop: !append,
         });
     }
     catch (e) {
@@ -990,20 +999,30 @@ function getJournalFilters() {
         filters.date = date;
     return filters;
 }
+/** По умолчанию показываем только сегодня — без смешения с архивом за прошлые дни. */
+function ensureJournalDefaultDate() {
+    if (journalFilterDate?.value?.trim())
+        return;
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    journalFilterDate.value = `${yyyy}-${mm}-${dd}`;
+}
 async function refreshAll() {
-    await loadSystemInfo();
-    await loadRuns();
-    await loadOverview();
-    await loadCameras();
-    await loadConfigs();
+    const tasks = [loadSystemInfo(), loadRuns(), loadOverview(), loadConfigs()];
     if (activePanel === 'journals')
-        await loadJournals(false);
+        tasks.push(loadJournals(false));
     if (hasPermission('logs:view'))
-        await loadLogs();
+        tasks.push(loadLogs());
     if (hasPermission('history:view'))
-        await loadHistory();
+        tasks.push(loadHistory());
     if (hasPermission('users:manage'))
-        await loadUsers();
+        tasks.push(loadUsers());
+    await Promise.all(tasks);
+    if (hasPermission('live:view') && !(lastOverview?.cameras?.length)) {
+        await loadCameras();
+    }
 }
 function openRunDetail(rid) {
     runDetailRid.textContent = String(rid);

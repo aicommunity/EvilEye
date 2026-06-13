@@ -126,6 +126,7 @@ export interface JournalGroupedRow {
   found_video_path?: string | null;
   lost_video_path?: string | null;
   stream_video_path?: string | null;
+  stream_offset_seconds?: number | null;
   bbox_found?: [number, number, number, number] | null;
   bbox_lost?: [number, number, number, number] | null;
   zone_coords?: [number, number][] | null;
@@ -225,6 +226,18 @@ export const journalsApi = {
   configHistory(limit = 30) {
     return request<{ available: boolean; items: Record<string, unknown>[]; message?: string; reason?: string }>(
       `/journals/config-history?limit=${limit}`,
+    );
+  },
+  rowMeta(rowKeyValue: string, journalType: 'events' | 'objects'): Promise<Partial<JournalGroupedRow>> {
+    const p = new URLSearchParams({ row_key: rowKeyValue, journal_type: journalType });
+    return request<Partial<JournalGroupedRow>>(`/journals/row-meta?${p}`);
+  },
+  stats(date?: string) {
+    const p = new URLSearchParams();
+    if (date) p.set('date', date);
+    const qs = p.toString();
+    return request<{ available: boolean; events_total?: number; objects_total?: number }>(
+      `/journals/stats${qs ? `?${qs}` : ''}`,
     );
   },
 };
