@@ -113,6 +113,20 @@ class JournalPathResolver:
                     if os.path.exists(full_path):
                         resolved = full_path
 
+        # Qt parity: preview missing → try full frame (FoundFrames / LostFrames)
+        if not resolved and base_dir and img_path:
+            resolved = JournalPathResolver._resolve_frame_fallback(
+                img_path, base_dir, event_data, journal_type
+            )
+
+        # If we resolved a preview path that no longer exists on disk, try frame sibling
+        if resolved and not os.path.exists(resolved):
+            frame_from_preview = JournalPathResolver.resolve_frame_path(resolved, journal_type)
+            if frame_from_preview and os.path.exists(frame_from_preview):
+                resolved = frame_from_preview
+            else:
+                resolved = None
+
         # Сохранить в кэш
         if cache is not None:
             cache[cache_key] = resolved
@@ -176,26 +190,94 @@ class JournalPathResolver:
         return None
 
     @staticmethod
+    def _resolve_frame_fallback(
+        img_path: str,
+        base_dir: str,
+        event_data: Optional[dict],
+        journal_type: str,
+    ) -> Optional[str]:
+        """Resolve full frame when preview metadata path or file is missing."""
+        if not img_path or not base_dir:
+            return None
+
+        date_folder = ''
+        if event_data:
+            date_folder = str(event_data.get('date_folder') or '')
+
+        filename = os.path.basename(img_path)
+        lower = img_path.replace('\\', '/').lower()
+
+        if journal_type == 'objects':
+            if 'detected_frames' in lower or 'foundpreviews' in lower or 'found_previews' in lower:
+                frame_dir = 'FoundFrames'
+            elif 'lost_frames' in lower or 'lostpreviews' in lower or 'lost_previews' in lower:
+                frame_dir = 'LostFrames'
+            else:
+                return None
+
+            if not date_folder:
+                date_match = re.search(r'(\d{4}-\d{2}-\d{2})', img_path)
+                if date_match:
+                    date_folder = date_match.group(1)
+
+            if date_folder:
+                if filename.endswith('_preview.jpeg'):
+                    frame_filename = filename.replace('_preview.jpeg', '_frame.jpeg')
+                elif filename.endswith('_preview.jpg'):
+                    frame_filename = filename.replace('_preview.jpg', '_frame.jpg')
+                else:
+                    frame_filename = filename
+
+                frame_path = os.path.join(
+                    base_dir, 'Detections', date_folder, 'Images', frame_dir, frame_filename
+                )
+                if os.path.exists(frame_path):
+                    return frame_path
+
+        elif journal_type == 'events':
+            if 'foundpreviews' in lower or 'lostpreviews' in lower:
+                frame_dir = 'FoundFrames' if 'foundpreviews' in lower else 'LostFrames'
+                if date_folder:
+                    if filename.endswith('_preview.jpeg'):
+                        frame_filename = filename.replace('_preview.jpeg', '_frame.jpeg')
+                    elif filename.endswith('_preview.jpg'):
+                        frame_filename = filename.replace('_preview.jpg', '_frame.jpg')
+                    else:
+                        frame_filename = filename
+                    frame_path = os.path.join(
+                        base_dir, 'Events', date_folder, 'Images', frame_dir, frame_filename
+                    )
+                    if os.path.exists(frame_path):
+                        return frame_path
+
+        return None
+
+    @staticmethod
     def resolve_frame_path(preview_path: str, journal_type: str = 'objects') -> Optional[str]:
-        """Разрешить путь к frame изображению из preview пути
-        
-        Args:
-            preview_path: Путь к preview изображению
-            journal_type: Тип журнала ('objects' или 'events')
-            
-        Returns:
-            Путь к frame изображению или None
-        """
+        """Разрешить путь к frame изображению из preview пути"""
         if not preview_path or 'preview' not in preview_path.lower():
             return None
 
-        # Заменить preview на frame
-        frame_path = preview_path.replace('previews', 'frames').replace('_preview.', '_frame.')
-        frame_path = frame_path.replace('FoundPreviews', 'FoundFrames')
-        frame_path = frame_path.replace('LostPreviews', 'LostFrames')
+        candidates: list[str] = []
+        if 'FoundPreviews' in preview_path:
+            candidates.append(preview_path.replace('FoundPreviews', 'FoundFrames').replace('_preview.', '_frame.'))
+        elif 'LostPreviews' in preview_path:
+            candidates.append(preview_path.replace('LostPreviews', 'LostFrames').replace('_preview.', '_frame.'))
 
-        if os.path.exists(frame_path):
-            return frame_path
+        candidates.extend([
+            preview_path.replace('FoundPreviews', 'FoundFrames').replace('LostPreviews', 'LostFrames').replace('_preview.', '_frame.'),
+            preview_path.replace('previews', 'frames').replace('_preview.', '_frame.'),
+            preview_path.replace('found_previews', 'found_frames').replace('_preview.', '_frame.'),
+            preview_path.replace('lost_previews', 'lost_frames').replace('_preview.', '_frame.'),
+        ])
+
+        seen: set[str] = set()
+        for cand in candidates:
+            if not cand or cand in seen:
+                continue
+            seen.add(cand)
+            if os.path.exists(cand):
+                return cand
 
         return None
 

@@ -432,8 +432,14 @@ class LabelingManager:
             "height": int(bbox[3] - bbox[1])
         }
 
-        # Create relative path to image (without date folder)
-        relative_image_path = os.path.join('detected_frames', image_filename)
+        # Relative path to preview image (relative to image_dir)
+        relative_image_path = os.path.join(
+            'Detections',
+            self.date_str,
+            'Images',
+            'FoundPreviews',
+            preview_filename,
+        )
 
         # Get source name from cameras params if available
         source_name = self._get_source_name(obj.source_id)
@@ -515,8 +521,14 @@ class LabelingManager:
             "height": int(bbox[3] - bbox[1])
         }
 
-        # Create relative path to image (without date folder)
-        relative_image_path = os.path.join('lost_frames', image_filename)
+        # Relative path to preview image (relative to image_dir)
+        relative_image_path = os.path.join(
+            'Detections',
+            self.date_str,
+            'Images',
+            'LostPreviews',
+            preview_filename,
+        )
 
         # Get source name from cameras params if available
         source_name = self._get_source_name(obj.source_id)
