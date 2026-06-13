@@ -1,5 +1,6 @@
 import time
 from .db_adapter import DatabaseAdapterBase
+from .constants import QueryType, EventType
 import copy
 import datetime
 import os
@@ -7,6 +8,7 @@ import cv2
 from ..utils import threading_events
 from ..utils import utils
 from psycopg2 import sql
+from .event_image_writer import EventImageWriter
 
 
 class DatabaseAdapterFieldOfViewEvents(DatabaseAdapterBase):
@@ -16,6 +18,13 @@ class DatabaseAdapterFieldOfViewEvents(DatabaseAdapterBase):
         self.preview_width = self.db_params['preview_width']
         self.preview_height = self.db_params['preview_height']
         self.preview_size = (self.preview_width, self.preview_height)
+        self._event_image_writer = EventImageWriter(
+            self.image_dir,
+            self.preview_width,
+            self.preview_height,
+            db_controller=self.db_controller,
+            logger=self.logger,
+        )
 
     def set_params_impl(self):
         super().set_params_impl()
@@ -23,7 +32,7 @@ class DatabaseAdapterFieldOfViewEvents(DatabaseAdapterBase):
 
     def _insert_impl(self, event):
         fields, data, preview_path = self._prepare_for_saving(event)
-        query_type = 'insert'
+        query_type = QueryType.INSERT
         insert_query = sql.SQL("INSERT INTO {} ({}) VALUES ({})").format(
             sql.Identifier(self.table_name),
             sql.SQL(",").join(map(sql.Identifier, fields)),
@@ -34,7 +43,7 @@ class DatabaseAdapterFieldOfViewEvents(DatabaseAdapterBase):
     def _update_impl(self, event):
         fields, data, preview_path = self._prepare_for_updating(event)
 
-        query_type = 'update'
+        query_type = QueryType.UPDATE
         data.append(event.event_id)
         data = tuple(data)
         update_query = sql.SQL('UPDATE {table} SET {data} WHERE event_id=({selected})').format(
@@ -45,53 +54,31 @@ class DatabaseAdapterFieldOfViewEvents(DatabaseAdapterBase):
             fields=sql.SQL(",").join(map(sql.Identifier, fields)))
         self.queue_in.put((query_type, update_query, data, preview_path))
 
-    def _execute_query(self):
-        while self.run_flag:
-            time.sleep(0.01)
-            try:
-                if not self.queue_in.empty():
-                    query_type, query_string, data, preview_path = self.queue_in.get()
-                    if query_string is not None:
-                        pass
-                else:
-                    query_type = query_string = data = preview_path = None
-            except ValueError:
-                break
+    def _process_queue_item(self, item):
+        query_type, query_string, data, preview_path = item
 
-            if query_string is None:
-                continue
+        if query_string is None:
+            return
 
-            try:
-                record = self.db_controller.query(query_string, data)
-            except Exception as e:
-                # Attempt to auto-migrate missing columns and retry once
-                msg = str(e)
-                if 'UndefinedColumn' in msg or 'does not exist' in msg:
-                    try:
-                        self._ensure_fov_columns()
-                        self.logger.warning('DB: Missing columns in fov_events detected. Applied auto-migration. Retrying query...')
-                        record = self.db_controller.query(query_string, data)
-                    except Exception as e2:
-                        self.logger.error(f'DB: FOVEvents query failed after migration attempt: {e2}')
-                        continue
-                else:
-                    self.logger.error(f'DB: FOVEvents query failed: {e}')
-                    continue
-            # row_num = record[0][0]
-            if query_type == 'insert':
-                threading_events.notify('new event')
-            elif query_type == 'update':
-                threading_events.notify('update event')
+        try:
+            record = self.db_controller.query(query_string, data)
+        except Exception as e:
+            should_retry, last_error = self.error_handler.handle_query_error(
+                error=e,
+                query_string=str(query_string) if query_string else None,
+                retry_callback=None,
+                max_retries=1,
+            )
+            if last_error:
+                return
+            record = self.db_controller.query(query_string, data)
+        if query_type == QueryType.INSERT:
+            threading_events.notify(EventType.NEW_EVENT)
+        elif query_type == QueryType.UPDATE:
+            threading_events.notify(EventType.UPDATE_EVENT)
 
     def _save_image(self, preview_path, frame_path, image, box):
-        preview_save_dir = os.path.join(self.image_dir, preview_path)
-        frame_save_dir = os.path.join(self.image_dir, frame_path)
-        preview = cv2.resize(copy.deepcopy(image.image), self.preview_size, cv2.INTER_NEAREST)
-        preview_boxes = utils.draw_preview_boxes(preview, self.preview_width, self.preview_height, box)
-        preview_saved = cv2.imwrite(preview_save_dir, preview_boxes)
-        frame_saved = cv2.imwrite(frame_save_dir, image.image)
-        if not preview_saved or not frame_saved:
-            self.logger.error(f'ERROR: can\'t save image file {frame_save_dir}')
+        self._event_image_writer.save(preview_path, frame_path, image, box=box)
 
     def _prepare_for_updating(self, event):
         fields_for_updating = {'time_lost': event.time_lost,
@@ -105,7 +92,8 @@ class DatabaseAdapterFieldOfViewEvents(DatabaseAdapterBase):
                 src_name = camera['source_names'][id_idx]
                 break
 
-        fields_for_updating['lost_preview_path'] = self._get_img_path('preview', 'lost', src_name, time_lost=event.time_lost)
+        fields_for_updating['lost_preview_path'] = self._get_img_path('preview', 'lost', src_name,
+                                                                      time_lost=event.time_lost)
 
         return (list(fields_for_updating.keys()), list(fields_for_updating.values()),
                 fields_for_updating['lost_preview_path'])
@@ -131,7 +119,8 @@ class DatabaseAdapterFieldOfViewEvents(DatabaseAdapterBase):
                 break
         fields_for_saving['preview_path'] = self._get_img_path('preview', 'detected', src_name, event.time_obj_detected)
         if event.time_lost is not None:
-            fields_for_saving['lost_preview_path'] = self._get_img_path('preview', 'lost', src_name, time_lost=event.time_lost)
+            fields_for_saving['lost_preview_path'] = self._get_img_path('preview', 'lost', src_name,
+                                                                        time_lost=event.time_lost)
         return (list(fields_for_saving.keys()), list(fields_for_saving.values()),
                 fields_for_saving['preview_path'])
 
@@ -173,18 +162,4 @@ class DatabaseAdapterFieldOfViewEvents(DatabaseAdapterBase):
             img_path = os.path.join(obj_type_path, f'{timestamp}_{src_name}_{image_type}.jpeg')
         return os.path.relpath(img_path, save_dir)
 
-    def _ensure_fov_columns(self):
-        # Ensure newly added columns exist in fov_events table
-        try:
-            alter_tpl = "ALTER TABLE {} ADD COLUMN IF NOT EXISTS {} {};"
-            table = self.table_name
-            # List of required columns and types
-            required = [
-                ('video_path', 'text'),
-                ('video_path_lost', 'text'),
-            ]
-            for col, coltype in required:
-                query = alter_tpl.format(table, col, coltype)
-                self.db_controller.query(query, None)
-        except Exception as e:
-            self.logger.error(f'DB: Failed to ensure fov_events columns: {e}')
+    # NOTE: schema migrations are applied centrally at DB startup (see `database_controller/migrations.py`).

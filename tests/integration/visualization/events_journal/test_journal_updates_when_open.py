@@ -2,21 +2,15 @@
 
 import sys
 import os
-from evileye.core.logging_config import setup_evileye_logging
-from evileye.core.logger import get_module_logger
 import time
 import json
 import datetime
 import threading
 
-# Инициализация логирования для тестов
-logger = setup_evileye_logging(log_level="INFO", log_to_console=True, log_to_file=True)
-test_logger = get_module_logger("test")
-
-def test_journal_updates_when_open(qapp):
+def test_journal_updates_when_open(journal_test_logger, qapp):
     """Test journal updates when window is open"""
     
-    test_logger.info("=== Test Journal Updates When Open ===")
+    journal_test_logger.info("=== Test Journal Updates When Open ===")
     
     try:
         from PyQt6.QtCore import QTimer
@@ -72,18 +66,18 @@ def test_journal_updates_when_open(qapp):
         with open(test_json_path, 'w') as f:
             json.dump(initial_data, f, indent=2)
         
-        test_logger.info(f"✅ Created initial test data: {test_json_path}")
+        journal_test_logger.info(f"✅ Created initial test data: {test_json_path}")
         
         # Create EventsJournalJson widget
         journal = EventsJournalJson(base_dir)
         journal.show()
         
-        test_logger.info("\n🧪 Testing Journal Updates When Open:")
-        test_logger.info("   - Journal window should be visible")
-        test_logger.info("   - Timer should be active")
-        test_logger.info("   - New objects will be added every 3 seconds")
-        test_logger.info("   - Journal should update automatically")
-        test_logger.info("   - Press Ctrl+C to exit this test")
+        journal_test_logger.info("\n🧪 Testing Journal Updates When Open:")
+        journal_test_logger.info("   - Journal window should be visible")
+        journal_test_logger.info("   - Timer should be active")
+        journal_test_logger.info("   - New objects will be added every 3 seconds")
+        journal_test_logger.info("   - Journal should update automatically")
+        journal_test_logger.info("   - Press Ctrl+C to exit this test")
         
         # Flag to stop the background thread
         stop_thread = threading.Event()
@@ -116,11 +110,11 @@ def test_journal_updates_when_open(qapp):
                     with open(test_json_path, 'w') as f:
                         json.dump(existing_data, f, indent=2)
                     
-                    test_logger.info(f"✅ Added new object {object_id} at {datetime.datetime.now().strftime('%H:%M:%S')}")
+                    journal_test_logger.info(f"✅ Added new object {object_id} at {datetime.datetime.now().strftime('%H:%M:%S')}")
                     object_id += 1
                     
                 except Exception as e:
-                    test_logger.error(f"❌ Error adding new object: {e}")
+                    journal_test_logger.error(f"❌ Error adding new object: {e}")
                     break
         
         # Start background thread to add objects
@@ -130,13 +124,13 @@ def test_journal_updates_when_open(qapp):
         # Set up a timer to check if updates are working
         def check_updates():
             row_count = journal.table.rowCount()
-            test_logger.info(f"📊 Current table rows: {row_count}")
+            journal_test_logger.info(f"📊 Current table rows: {row_count}")
             
             # Check if timer is running
             if hasattr(journal, 'update_timer') and journal.update_timer.isActive():
-                test_logger.info("✅ Update timer is active")
+                journal_test_logger.info("✅ Update timer is active")
             else:
-                test_logger.info("❌ Update timer is not active")
+                journal_test_logger.info("❌ Update timer is not active")
         
         timer = QTimer()
         timer.timeout.connect(check_updates)
@@ -188,8 +182,8 @@ def test_journal_updates_when_open(qapp):
             pass
         
     except KeyboardInterrupt:
-        test_logger.info("\n✅ Test interrupted by user")
+        journal_test_logger.info("\n✅ Test interrupted by user")
     except Exception as e:
-        test_logger.error(f"❌ Error: {e}")
+        journal_test_logger.error(f"❌ Error: {e}")
         import traceback
         traceback.print_exc()

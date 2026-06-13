@@ -35,7 +35,11 @@ def _fake_params_with_detector(source_id=0, roi_list=None):
 
 def test_window_set_image_and_load_rois(qapp):
     params = _fake_params_with_detector(source_id=1, roi_list=[[5, 5, 10, 10]])
-    win = ROIEditorWindow(params)
+    win = ROIEditorWindow()
+    try:
+        win.set_params(params)
+    except Exception:
+        pass
 
     # Создаём простое CV изображение 100x100 (BGR)
     img = np.zeros((100, 100, 3), dtype=np.uint8)

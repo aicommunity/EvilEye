@@ -28,6 +28,11 @@
                 "source_names": [
                     "Cam2",
                     "Cam3"
+                ],
+                "mp_restart_on_exit": false,
+                "mp_no_restart_exit_codes": [
+                    -15,
+                    0
                 ]
             }
         ],
@@ -52,7 +57,11 @@
                     []
                 ],
                 "vid_stride": 1,
-                "num_detection_threads": 1
+                "num_detection_threads": 1,
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             }
         ],
         "trackers": [
@@ -72,7 +81,11 @@
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
                     "with_reid": true
-                }
+                },
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "source_ids": [
@@ -90,7 +103,11 @@
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
                     "with_reid": true
-                }
+                },
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             }
         ],
         "mc_trackers": [
@@ -102,7 +119,11 @@
                     3,
                     4
                 ],
-                "enable": true
+                "enable": true,
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             }
         ]
     },

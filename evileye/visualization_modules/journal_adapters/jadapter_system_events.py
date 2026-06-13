@@ -26,5 +26,3 @@ class JournalAdapterSystemEvents(JournalAdapterBase):
             'NULL::integer AS source_id FROM system_events'
         )
         return query
-
-

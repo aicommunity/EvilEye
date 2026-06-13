@@ -1,0 +1,27 @@
+============================= test session starts ==============================
+platform linux -- Python 3.10.12, pytest-9.0.2, pluggy-1.6.0 -- /usr/bin/python
+cachedir: .pytest_cache
+rootdir: /home/user/EvilEye
+configfile: pyproject.toml
+plugins: anyio-4.12.1
+collecting ... collected 1 item
+
+tests/unit/capture/test_get_frames_from_queue_split.py::test_get_frames_from_queue_one_per_source_id FAILED
+
+=================================== FAILURES ===================================
+_________________ test_get_frames_from_queue_one_per_source_id _________________
+
+    def test_get_frames_from_queue_one_per_source_id():
+>       cap = _CaptureStub()
+E       TypeError: Can't instantiate abstract class _CaptureStub with abstract methods _grab_frames, _retrieve_frames, default, reset_impl
+
+tests/unit/capture/test_get_frames_from_queue_split.py:33: TypeError
+=============================== warnings summary ===============================
+tests/unit/capture/test_get_frames_from_queue_split.py::test_get_frames_from_queue_one_per_source_id
+  /home/user/.local/lib/python3.10/site-packages/albumentations/__init__.py:24: UserWarning: A new version of Albumentations is available: 2.0.8 (you have 1.4.24). Upgrade using: pip install -U albumentations. To disable automatic update checks, set the environment variable NO_ALBUMENTATIONS_UPDATE to 1.
+    check_for_updates()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/unit/capture/test_get_frames_from_queue_split.py::test_get_frames_from_queue_one_per_source_id
+========================= 1 failed, 1 warning in 5.45s =========================

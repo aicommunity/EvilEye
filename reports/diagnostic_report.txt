@@ -1,0 +1,41 @@
+================================================================================
+EvilEye System Diagnostics Report
+================================================================================
+Generated: 2026-01-22 10:45:12
+
+Configuration: configs/poly-videos-gst.json
+Duration: 30.0s (requested: 30s)
+Checks performed: 6
+Auto-fix enabled: True
+
+--- Memory Statistics ---
+Initial RSS: 6495.8 MB
+Current RSS: 9281.9 MB
+Peak RSS: 9281.9 MB
+Growth: +2786.0 MB
+Leaks detected: 0
+Cleanups triggered: 0
+
+--- Issues Detected ---
+Total issues: 2
+By type:
+  - pre_event_frames: 2
+Recent issues:
+  - [2026-01-22T10:44:57.802870] pre_event_frames for Unknown
+  - [2026-01-22T10:45:08.194117] pre_event_frames for Unknown
+
+--- Fixes Applied ---
+Total fixes: 0
+
+--- Capture Status ---
+No capture sources found
+
+--- Event Buffer Status ---
+Source 0: size=11, duration=15.0s
+Source 1: size=17, duration=-6.3s
+Source 3: size=15, duration=-8.3s
+
+--- Recommendations ---
+  - No critical issues detected - system appears to be functioning normally
+
+================================================================================

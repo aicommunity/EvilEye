@@ -1,7 +1,7 @@
 import os
-import json
 import datetime
 from .db_adapter import DatabaseAdapterBase
+from .json_event_io import append_json_record
 
 
 class JsonAdapterSystemEvents(DatabaseAdapterBase):
@@ -31,6 +31,10 @@ class JsonAdapterSystemEvents(DatabaseAdapterBase):
     def start(self):
         self.run_flag = True
 
+    def _process_queue_item(self, item):
+        """JSON адаптер не использует очередь; метод требуется базовым классом."""
+        return
+
     def stop(self):
         self.run_flag = False
 
@@ -43,24 +47,12 @@ class JsonAdapterSystemEvents(DatabaseAdapterBase):
         os.makedirs(day_dir, exist_ok=True)
         file_path = os.path.join(day_dir, 'system_events.json')
 
-        records = []
-        if os.path.isfile(file_path):
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    records = json.load(f) or []
-            except Exception:
-                records = []
-
         rec = {
             'event_id': getattr(event, 'event_id', None),
             'ts': (event.timestamp.isoformat() if hasattr(event.timestamp, 'isoformat') else str(event.timestamp)),
             'event_type': getattr(event, 'event_type', ''),
         }
-        records.append(rec)
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(records, f, ensure_ascii=False, indent=2)
+        append_json_record(file_path, rec)
 
     def _update_impl(self, event):
         pass
-
-

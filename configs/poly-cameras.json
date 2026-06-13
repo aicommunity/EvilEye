@@ -1,6 +1,7 @@
 {
     "pipeline": {
         "pipeline_class": "PipelineSurveillance",
+        "ipc_mode": "standard",
         "sources": [
             {
                 "split": false,
@@ -18,10 +19,13 @@
                 "loop_play": true,
                 "source": "IpCamera",
                 "camera": "rtsp://10.245.1.200",
-                "type": "VideoCaptureGStreamer",
-                "apiPreference": "CAP_GSTREAMER",
-                "gstreamer_available": true,
-                "source_fps": 25.166666666666668
+                "type": "VideoCaptureOpencv",
+                "apiPreference": "CAP_FFMPEG",
+                "execution_mode": "process",
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "split": true,
@@ -52,10 +56,13 @@
                 "loop_play": true,
                 "source": "IpCamera",
                 "camera": "rtsp://10.245.1.199",
-                "type": "VideoCaptureGStreamer",
-                "apiPreference": "CAP_GSTREAMER",
-                "gstreamer_available": true,
-                "source_fps": 10.0
+                "type": "VideoCaptureOpencv",
+                "apiPreference": "CAP_FFMPEG",
+                "execution_mode": "process",
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "split": true,
@@ -86,10 +93,13 @@
                 "loop_play": true,
                 "source": "IpCamera",
                 "camera": "rtsp://10.245.1.202",
-                "type": "VideoCaptureGStreamer",
-                "apiPreference": "CAP_GSTREAMER",
-                "gstreamer_available": true,
-                "source_fps": 10.0
+                "type": "VideoCaptureOpencv",
+                "apiPreference": "CAP_FFMPEG",
+                "execution_mode": "process",
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             }
         ],
         "detectors": [
@@ -130,7 +140,12 @@
                     0
                 ],
                 "num_detection_threads": 3,
-                "model": "models/yolov8n.pt"
+                "model": "models/yolov8n.pt",
+                "execution_mode": "process",
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "roi": [
@@ -150,7 +165,12 @@
                     1
                 ],
                 "num_detection_threads": 3,
-                "model": "models/yolov8n.pt"
+                "model": "models/yolov8n.pt",
+                "execution_mode": "process",
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "roi": [
@@ -195,7 +215,12 @@
                     2
                 ],
                 "num_detection_threads": 3,
-                "model": "models/yolov8n.pt"
+                "model": "models/yolov8n.pt",
+                "execution_mode": "process",
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "roi": [
@@ -234,7 +259,12 @@
                     3
                 ],
                 "num_detection_threads": 3,
-                "model": "models/yolov8n.pt"
+                "model": "models/yolov8n.pt",
+                "execution_mode": "process",
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "roi": [
@@ -254,7 +284,12 @@
                     4
                 ],
                 "num_detection_threads": 3,
-                "model": "models/yolov8n.pt"
+                "model": "models/yolov8n.pt",
+                "execution_mode": "process",
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             }
         ],
         "trackers": [
@@ -263,6 +298,11 @@
                     0
                 ],
                 "fps": 5,
+                "execution_mode": "process",
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ],
                 "botsort_cfg": {
                     "appearance_thresh": 0.25,
                     "gmc_method": "sparseOptFlow",
@@ -273,6 +313,7 @@
                     "track_high_thresh": 0.5,
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
+                    "fuse_score": true,
                     "with_reid": true
                 }
             },
@@ -281,6 +322,11 @@
                     1
                 ],
                 "fps": 5,
+                "execution_mode": "process",
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ],
                 "botsort_cfg": {
                     "appearance_thresh": 0.25,
                     "gmc_method": "sparseOptFlow",
@@ -291,6 +337,7 @@
                     "track_high_thresh": 0.5,
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
+                    "fuse_score": true,
                     "with_reid": true
                 }
             },
@@ -299,6 +346,11 @@
                     2
                 ],
                 "fps": 5,
+                "execution_mode": "process",
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ],
                 "botsort_cfg": {
                     "appearance_thresh": 0.25,
                     "gmc_method": "sparseOptFlow",
@@ -309,6 +361,7 @@
                     "track_high_thresh": 0.5,
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
+                    "fuse_score": true,
                     "with_reid": true
                 }
             },
@@ -317,6 +370,11 @@
                     3
                 ],
                 "fps": 5,
+                "execution_mode": "process",
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ],
                 "botsort_cfg": {
                     "appearance_thresh": 0.25,
                     "gmc_method": "sparseOptFlow",
@@ -327,6 +385,7 @@
                     "track_high_thresh": 0.5,
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
+                    "fuse_score": true,
                     "with_reid": true
                 }
             },
@@ -335,6 +394,11 @@
                     4
                 ],
                 "fps": 5,
+                "execution_mode": "process",
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ],
                 "botsort_cfg": {
                     "appearance_thresh": 0.25,
                     "gmc_method": "sparseOptFlow",
@@ -345,6 +409,7 @@
                     "track_high_thresh": 0.5,
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
+                    "fuse_score": true,
                     "with_reid": true
                 }
             }
@@ -410,8 +475,8 @@
         "event_buffer_fps": null,
         "enabled_sources": [],
         "container": "mp4",
-        "segment_length_sec": 300,
-        "retention_days": 3,
+        "segment_length_sec": 1800,
+        "retention_days": 7,
         "min_free_space_pct": 80,
         "filename_tmpl": "{source_name}_{start_time}_{seq}.{ext}"
     },
@@ -485,6 +550,15 @@
         "lost_store_time_secs": 60,
         "lost_thresh": 5
     },
+    "server": {
+        "enabled": true,
+        "execution_mode": "process",
+        "host": "0.0.0.0",
+        "port": 8080,
+        "log_level": "info",
+        "preview_encoder": "turbojpeg",
+        "preview_encode_workers": 2
+    },
     "controller": {
         "autoclose": false,
         "fps": 30,
@@ -492,6 +566,7 @@
         "gui_enabled": true,
         "show_journal": false,
         "enable_close_from_gui": true,
+        "obj_handler_empty_heartbeat_every": 3,
         "class_mapping": {
             "person": 0,
             "bicycle": 1,

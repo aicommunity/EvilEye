@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Dict, Any
+import os
 
 
 @dataclass
@@ -20,16 +21,16 @@ class RecordingParams:
     min_file_size_kb: int = 500  # Minimum file size in KB, files smaller will be deleted
     out_dir: str = "videos/recordings"
     filename_tmpl: str = "{source_name}_{start_time}_{seq}.{ext}"
-    
+
     # Continuous recording settings
     continuous_recording_enabled: bool = False  # Enable continuous recording from all cameras
-    
+
     # Event-based recording settings
     event_recording_enabled: bool = False  # Enable recording of video clips around events
     event_pre_seconds: int = 10  # Seconds before event to save
     event_post_seconds: int = 10  # Seconds after event to save
     event_buffer_fps: Optional[float] = None  # FPS for event buffer (None = use source FPS)
-    
+
     # Video validation settings
     validate_video_integrity: bool = True  # Enable video file integrity validation
     video_validation_timeout: float = 2.0  # Timeout for video validation in seconds
@@ -98,7 +99,8 @@ class RecordingParams:
             min_file_size_kb=int(overrides.get("min_file_size_kb", self.min_file_size_kb)),
             out_dir=str(overrides.get("out_dir", self.out_dir)),
             filename_tmpl=str(overrides.get("filename_tmpl", self.filename_tmpl)),
-            continuous_recording_enabled=bool(overrides.get("continuous_recording_enabled", self.continuous_recording_enabled)),
+            continuous_recording_enabled=bool(
+                overrides.get("continuous_recording_enabled", self.continuous_recording_enabled)),
             event_recording_enabled=bool(overrides.get("event_recording_enabled", self.event_recording_enabled)),
             event_pre_seconds=int(overrides.get("event_pre_seconds", self.event_pre_seconds)),
             event_post_seconds=int(overrides.get("event_post_seconds", self.event_post_seconds)),
@@ -113,4 +115,22 @@ class RecordingParams:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    def check_out_dir_writable(self) -> tuple[bool, str]:
+        """Best-effort check that out_dir exists and is writable.
 
+        Returns:
+            (ok, reason): ok=True when recording directory can be created and is writable;
+            ok=False with a short reason otherwise.
+        """
+        try:
+            path = Path(self.out_dir)
+            # Ensure directory exists (may raise PermissionError / FileNotFoundError / OSError)
+            path.mkdir(parents=True, exist_ok=True)
+            # Basic writability check (directory must be traversable too)
+            if not path.is_dir():
+                return False, f"not a directory: {path}"
+            if not os.access(path, os.W_OK | os.X_OK):
+                return False, f"not writable: {path}"
+            return True, ""
+        except Exception as e:
+            return False, str(e)

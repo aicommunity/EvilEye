@@ -1,0 +1,62 @@
+@startuml
+!theme plain
+skinparam classAttributeIconSize 0
+title EvilEye mt_refactoring2 - Core Class/Package View
+
+package "evileye.core" {
+  class RuntimeContext
+  class RuntimeServices
+  class FrameTransport
+  class IPCContracts
+  class MpControl
+  class MpWorker
+  class MpSessionRegistry
+}
+
+package "evileye.pipeline" {
+  class PipelineSurveillance
+  class ProcessorStep
+}
+
+package "evileye.dto" {
+  class InferenceDTO
+  class TrackingDTO
+}
+
+package "evileye.api.core" {
+  class PipelineManager
+  class ConfigRunManager
+  class ServerState
+}
+
+package "evileye.controller" {
+  class Controller
+  class StreamingService
+}
+
+package "evileye.objects_handler" {
+  class ObjectsHandler
+  class ObjectResult
+}
+
+Controller --> PipelineSurveillance
+Controller --> RuntimeServices
+Controller --> StreamingService
+
+PipelineSurveillance --> ProcessorStep
+ProcessorStep --> FrameTransport
+FrameTransport --> IPCContracts
+IPCContracts --> MpControl
+MpControl --> MpWorker
+MpControl --> MpSessionRegistry
+MpWorker --> InferenceDTO
+MpWorker --> TrackingDTO
+
+ProcessorStep --> ObjectsHandler
+ObjectsHandler --> ObjectResult
+
+PipelineManager --> Controller
+ConfigRunManager --> RuntimeContext
+ServerState --> PipelineManager
+
+@enduml

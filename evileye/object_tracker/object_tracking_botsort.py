@@ -1,40 +1,25 @@
 import numpy as np
 import datetime
 from typing import List
-from ultralytics.engine.results import Boxes
+from queue import Empty
 from ultralytics.trackers.bot_sort import BOTrack
 from .object_tracking_base import ObjectTrackingBase
 from .trackers.bot_sort import BOTSORT
 from .trackers.track_encoder import TrackEncoder
 from .trackers.cfg.utils import read_cfg
-from time import sleep
 from ..object_detector.object_detection_base import DetectionResult
 from ..object_detector.object_detection_base import DetectionResultList
 from .tracking_results import TrackingResult
 from .tracking_results import TrackingResultList
-from dataclasses import dataclass
-import copy
 from ..core.base_class import EvilEyeBase
-
-@dataclass
-class BostSortCfg:
-    appearance_thresh: float = 0.25
-    gmc_method: str = "sparseOptFlow"
-    match_thresh: float = 0.8
-    new_track_thresh: float = 0.6
-    proximity_thresh: float = 0.5
-    track_buffer: int = 30
-    track_high_thresh: float = 0.5
-    track_low_thresh: float = 0.1
-    tracker_type: str = "botsort"
-    fuse_score: bool = True
-    with_reid: bool = False
-
+from ..core.processor_base import EXEC_MODE_PROCESS
+from .botsort_config import BostSortCfg
+from .track_update_core import parse_detections_to_boxes, run_tracker_update
 
 
 @EvilEyeBase.register("ObjectTrackingBotsort")
 class ObjectTrackingBotsort(ObjectTrackingBase):
-    #tracker: BOTSORT
+    # tracker: BOTSORT
 
     def __init__(self):
         super().__init__()
@@ -42,18 +27,6 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
         self.tracker = None
         self.encoders = None
         self.fps = 5
-
-        self.cfg_dict = dict()
-        self.cfg_dict["appearance_thresh"] = 0.25
-        self.cfg_dict["gmc_method"] = "sparseOptFlow"
-        self.cfg_dict["match_thresh"] = 0.8
-        self.cfg_dict["new_track_thresh"] = 0.6
-        self.cfg_dict["proximity_thresh"] = 0.5
-        self.cfg_dict["track_buffer"] = 30
-        self.cfg_dict["track_high_thresh"] = 0.5
-        self.cfg_dict["track_low_thresh"] = 0.1
-        self.cfg_dict["tracker_type"] = "botsort"
-        self.cfg_dict["with_reid"] = False
 
     def init_impl(self, **kwargs):
         try:
@@ -70,18 +43,19 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
             else:
                 self.encoders = None
                 self.logger.debug("No encoders provided, ReID disabled")
-            
+
             super().init_impl(**kwargs)
-            
-            # Ensure botsort_cfg is set (should be set by set_params_impl, but check anyway)
             if not self.botsort_cfg:
-                # Try to set default config if not set
                 self.logger.warning("botsort_cfg not set, using default configuration")
                 self.botsort_cfg = BostSortCfg()
-            
-            self.logger.debug(f"Initializing BOTSORT with fps={self.fps}, with_reid={self.botsort_cfg.with_reid}")
-            self.tracker = BOTSORT(self.botsort_cfg, self.encoders, frame_rate=self.fps)
-            self.logger.debug("BOTSORT tracker initialized successfully")
+
+            self.tracker = None
+            if self.execution_mode != EXEC_MODE_PROCESS:
+                self.logger.debug(
+                    f"Initializing BOTSORT with fps={self.fps}, with_reid={self.botsort_cfg.with_reid}"
+                )
+                self.tracker = BOTSORT(self.botsort_cfg, self.encoders, frame_rate=self.fps)
+                self.logger.debug("BOTSORT tracker initialized successfully")
             return True
         except Exception as e:
             self.logger.error(f"Failed to initialize ObjectTrackingBotsort: {e}", exc_info=True)
@@ -89,31 +63,51 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
             return False
 
     def release_impl(self):
-        super().init_impl()
+        super().release_impl()
         self.tracker = None
 
     def reset_impl(self):
-        self.tracker.reset()
+        if self.tracker is not None:
+            self.tracker.reset()
 
     def set_params_impl(self):
         self.source_ids = self.params.get('source_ids', [])
         self.fps = self.params.get('fps', 5)
+        self.execution_mode = self.params.get('execution_mode', self.execution_mode)
 
-        self.cfg_dict = self.params.get('botsort_cfg', self.cfg_dict)
-        cfg_dict = self.cfg_dict
-
+        cfg_dict = self.params.get("botsort_cfg", None)
         if cfg_dict:
-            self.botsort_cfg = BostSortCfg(appearance_thresh=cfg_dict["appearance_thresh"], gmc_method=cfg_dict["gmc_method"],
-                                           match_thresh=cfg_dict["match_thresh"], new_track_thresh=cfg_dict["new_track_thresh"],
-                                           proximity_thresh=cfg_dict["proximity_thresh"], track_buffer=cfg_dict["track_buffer"],
-                                           track_high_thresh=cfg_dict["track_high_thresh"], track_low_thresh=cfg_dict["track_low_thresh"],
-                                           tracker_type=cfg_dict["tracker_type"], with_reid=cfg_dict["with_reid"])
+            self.botsort_cfg = BostSortCfg(
+                appearance_thresh=cfg_dict.get("appearance_thresh", self.botsort_cfg.appearance_thresh),
+                gmc_method=cfg_dict.get("gmc_method", self.botsort_cfg.gmc_method),
+                match_thresh=cfg_dict.get("match_thresh", self.botsort_cfg.match_thresh),
+                new_track_thresh=cfg_dict.get("new_track_thresh", self.botsort_cfg.new_track_thresh),
+                proximity_thresh=cfg_dict.get("proximity_thresh", self.botsort_cfg.proximity_thresh),
+                track_buffer=cfg_dict.get("track_buffer", self.botsort_cfg.track_buffer),
+                track_high_thresh=cfg_dict.get("track_high_thresh", self.botsort_cfg.track_high_thresh),
+                track_low_thresh=cfg_dict.get("track_low_thresh", self.botsort_cfg.track_low_thresh),
+                tracker_type=cfg_dict.get("tracker_type", self.botsort_cfg.tracker_type),
+                fuse_score=cfg_dict.get("fuse_score", self.botsort_cfg.fuse_score),
+                with_reid=cfg_dict.get("with_reid", self.botsort_cfg.with_reid),
+            )
 
     def get_params_impl(self):
         params = dict()
         params['source_ids'] = self.source_ids
         params['fps'] = self.fps
-        params['botsort_cfg'] = self.cfg_dict
+        params['botsort_cfg'] = {
+            "appearance_thresh": self.botsort_cfg.appearance_thresh,
+            "gmc_method": self.botsort_cfg.gmc_method,
+            "match_thresh": self.botsort_cfg.match_thresh,
+            "new_track_thresh": self.botsort_cfg.new_track_thresh,
+            "proximity_thresh": self.botsort_cfg.proximity_thresh,
+            "track_buffer": self.botsort_cfg.track_buffer,
+            "track_high_thresh": self.botsort_cfg.track_high_thresh,
+            "track_low_thresh": self.botsort_cfg.track_low_thresh,
+            "tracker_type": self.botsort_cfg.tracker_type,
+            "fuse_score": self.botsort_cfg.fuse_score,
+            "with_reid": self.botsort_cfg.with_reid,
+        }
         return params
 
     def default(self):
@@ -121,71 +115,72 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
 
     def _process_impl(self):
         while self.run_flag:
-            sleep(0.01)
-            detections = self.queue_in.get()
-            if detections is None:
+            try:
+                detections = self.queue_in.get(timeout=0.5)
+            except Empty:
                 continue
+            if detections is None:
+                break
             if self.tracker is None:
                 continue
             detection_result, image = detections
-            
+            source_id = getattr(detection_result, "source_id", None)
+            frame_id = getattr(detection_result, "frame_id", None)
+            if isinstance(detection_result, dict):
+                source_id = detection_result.get("source_id", source_id)
+                frame_id = detection_result.get("frame_id", frame_id)
+
             # Check if image is valid
             if image is None or image.image is None:
-                self.logger.warning(f"Received None image for source {detection_result.source_id if detection_result else 'unknown'}, skipping")
+                self.logger.warning(
+                    f"Received None image for source {source_id if detection_result else 'unknown'}, skipping"
+                )
                 continue
-            
+
+            # Important contract: emit a result per processed frame (even if empty).
+            # Otherwise downstream visualization buffering can stall when there are no detections.
             try:
-                cam_id, boxes = self._parse_det_info(detection_result, image.image)
-                tracks = self.tracker.update(boxes, image.image)
-                if len(tracks) > 0:
-                    pass
-                tracks_info = self._create_tracks_info(cam_id, detection_result.frame_id, None, tracks)
-                self.queue_out.put((tracks_info, image))
+                if detection_result is None or not getattr(detection_result, "detections", None):
+                    if isinstance(detection_result, dict):
+                        has_detections = bool(detection_result.get("detections", []))
+                    else:
+                        has_detections = bool(getattr(detection_result, "detections", None))
+                else:
+                    has_detections = True
+                if not has_detections:
+                    tracks_info = TrackingResultList()
+                    tracks_info.source_id = source_id
+                    tracks_info.frame_id = frame_id
+                    tracks_info.time_stamp = datetime.datetime.now()
+                    self._put_out_drop_oldest((tracks_info, image))
+                    continue
+            except Exception:
+                # If something is malformed, fall through to normal processing attempt.
+                pass
+
+            try:
+                tracks_info = run_tracker_update(
+                    self.tracker, detection_result, image.image
+                )
+                self._put_out_drop_oldest((tracks_info, image))
             except Exception as e:
-                self.logger.error(f"Error processing detection for source {detection_result.source_id if detection_result else 'unknown'}: {e}", exc_info=True)
+                self.logger.error(
+                    f"Error processing detection for source {source_id if detection_result else 'unknown'}: {e}",
+                    exc_info=True,
+                )
                 continue
 
     def _parse_det_info(self, det_info: DetectionResultList, image: np.ndarray) -> tuple:
-        if image is None:
-            raise ValueError("image cannot be None")
-        
-        cam_id = det_info.source_id
-        objects = det_info.detections
-
-        bboxes_xyxy = []
-        confidences = []
-        class_ids = []
-
-        for obj in objects:
-            bboxes_xyxy.append(obj.bounding_box)
-            confidences.append(obj.confidence)
-            class_ids.append(obj.class_id)
-
-        bboxes_xyxy = np.array(bboxes_xyxy).reshape(-1, 4)
-        confidences = np.array(confidences).reshape(-1, 1)
-        class_ids = np.array(class_ids).reshape(-1, 1)
-
-        bboxes_xyxy = np.array(bboxes_xyxy)
-        confidences = np.array(confidences)
-        class_ids = np.array(class_ids)
-        
-        boxes_array = np.concatenate([bboxes_xyxy, confidences, class_ids], axis=1)
-        
-        # Validate image shape
-        if not hasattr(image, 'shape') or len(image.shape) < 2:
-            raise ValueError(f"Invalid image shape: {image.shape if hasattr(image, 'shape') else 'no shape attribute'}")
-        
-        orig_shape = (image.shape[1], image.shape[0])
-        boxes = Boxes(boxes_array, orig_shape)
-        return cam_id, boxes
+        """Delegate to shared track_update_core (tests / legacy callers)."""
+        return parse_detections_to_boxes(det_info, image)
 
     def _create_tracks_info(
-            self, 
-            cam_id: int, 
-            frame_id: int, 
-            detection: DetectionResult, 
+            self,
+            cam_id: int,
+            frame_id: int,
+            detection: DetectionResult,
             tracks: list[BOTrack]):
-        
+
         tracks_info = TrackingResultList()
         tracks_info.source_id = cam_id
         tracks_info.frame_id = frame_id
@@ -205,7 +200,7 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
             object_info.track_id = track_id
             if detection:
                 object_info.detection_history.append(detection)
-            
+
             # Add BOTrack object to tracking data
             # in order to use it in multi-camera tracking during reidentification
             object_info.tracking_data = {
@@ -215,4 +210,3 @@ class ObjectTrackingBotsort(ObjectTrackingBase):
             tracks_info.tracks.append(object_info)
 
         return tracks_info
-

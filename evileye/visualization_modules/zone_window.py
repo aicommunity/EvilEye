@@ -8,7 +8,6 @@ try:
     from PyQt6.QtGui import QPixmap, QIcon, QAction, QPainter, QBrush, QPen, QColor, QPolygonF
     from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QPointF, QPoint, QSize, QRectF, QSizeF, QTimer
 
-
     pyqt_version = 6
 except ImportError:
     from PyQt5.QtWidgets import (
@@ -66,7 +65,7 @@ class GraphicsView(QGraphicsView):
     # Сигналы для уведомления об изменениях зон
     zone_added = pyqtSignal()
     zone_removed = pyqtSignal()
-    
+
     def __init__(self, parent=None, sources_zones=None, params=None):
         super().__init__(parent)
         self.scene = QGraphicsScene(self)
@@ -163,16 +162,19 @@ class GraphicsView(QGraphicsView):
             self.polygon.setPolygon(poly)
             self.sources_zones[self.source_id].append(['poly', self.polygon_coords, self.polygon.boundingRect()])
             if self.params:
-                if str(self.source_id) not in self.params.get('events_detectors', {}).get('ZoneEventsDetector', {}).get('sources', {}):
+                if str(self.source_id) not in self.params.get('events_detectors', {}).get('ZoneEventsDetector', {}).get(
+                        'sources', {}):
                     if 'events_detectors' not in self.params:
                         self.params['events_detectors'] = {}
                     if 'ZoneEventsDetector' not in self.params['events_detectors']:
                         self.params['events_detectors']['ZoneEventsDetector'] = {}
                     if 'sources' not in self.params['events_detectors']['ZoneEventsDetector']:
                         self.params['events_detectors']['ZoneEventsDetector']['sources'] = {}
-                    self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.source_id)] = [self.polygon_coords]
+                    self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.source_id)] = [
+                        self.polygon_coords]
                 else:
-                    self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.source_id)].append(self.polygon_coords)
+                    self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.source_id)].append(
+                        self.polygon_coords)
             # Оповещаем о добавлении зоны
             threading_events.notify('new zone', self.source_id, self.polygon_coords, 'poly')
             # Отправляем сигнал об изменении
@@ -208,8 +210,10 @@ class GraphicsView(QGraphicsView):
                     zone_top_left = self.mapFromScene(
                         self.pix.mapToScene(zone_coords[0][0] * self.pix.pixmap().width(),
                                             zone_coords[0][1] * self.pix.pixmap().height()))
-                    zone_size = self.pix.mapFromScene(self.pix.mapToScene((zone_coords[2][0] - zone_coords[0][0]) * self.pix.pixmap().width(),
-                                                                          (zone_coords[2][1] - zone_coords[0][1]) * self.pix.pixmap().height())).toPoint()
+                    zone_size = self.pix.mapFromScene(
+                        self.pix.mapToScene((zone_coords[2][0] - zone_coords[0][0]) * self.pix.pixmap().width(),
+                                            (zone_coords[2][1] - zone_coords[0][
+                                                1]) * self.pix.pixmap().height())).toPoint()
                     if not (top_left.x() - 2 <= zone_top_left.x() <= top_left.x() + 2 and
                             top_left.y() - 2 <= zone_top_left.y() <= top_left.y() + 2 and
                             item_size.x() - 2 <= zone_size.x() <= item_size.x() + 2 and
@@ -257,18 +261,22 @@ class GraphicsView(QGraphicsView):
             norm_bottom_left = (bottom_left.x() / self.pix.pixmap().width(),
                                 bottom_left.y() / self.pix.pixmap().height())
             norm_zone_coords = [(norm_top_left[0], norm_top_left[1]), (norm_top_right[0], norm_top_right[1]),
-                                (norm_bottom_right[0], norm_bottom_right[1]), (norm_bottom_left[0], norm_bottom_left[1])]
+                                (norm_bottom_right[0], norm_bottom_right[1]),
+                                (norm_bottom_left[0], norm_bottom_left[1])]
             if self.params:
-                if str(self.source_id) not in self.params.get('events_detectors', {}).get('ZoneEventsDetector', {}).get('sources', {}):
+                if str(self.source_id) not in self.params.get('events_detectors', {}).get('ZoneEventsDetector', {}).get(
+                        'sources', {}):
                     if 'events_detectors' not in self.params:
                         self.params['events_detectors'] = {}
                     if 'ZoneEventsDetector' not in self.params['events_detectors']:
                         self.params['events_detectors']['ZoneEventsDetector'] = {}
                     if 'sources' not in self.params['events_detectors']['ZoneEventsDetector']:
                         self.params['events_detectors']['ZoneEventsDetector']['sources'] = {}
-                    self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.source_id)] = [norm_zone_coords]
+                    self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.source_id)] = [
+                        norm_zone_coords]
                 else:
-                    self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.source_id)].append(norm_zone_coords)
+                    self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.source_id)].append(
+                        norm_zone_coords)
             self.sources_zones[self.source_id].append(['rect', norm_zone_coords, self.rectangle.boundingRect()])
             # Оповещаем о добавлении зоны
             threading_events.notify('new zone', self.source_id, norm_zone_coords, 'rect')
@@ -306,7 +314,7 @@ class GraphicsView(QGraphicsView):
             # Используем QTimer для отложенного вызова fitInView
             # Это решает проблему с неправильным размером view при resizeEvent
             QTimer.singleShot(0, self._delayed_fit_in_view)
-    
+
     def _delayed_fit_in_view(self):
         """Отложенное масштабирование изображения на все доступное пространство"""
         if self.pix is not None:
@@ -326,19 +334,19 @@ class ZoneWindow(QWidget):
     # Сигналы для уведомления о событиях
     zones_updated = pyqtSignal(list)  # zones
     zone_editor_closed = pyqtSignal(dict, int, bool)  # zones_data, source_id, accepted
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.logger = get_module_logger("zone_window")
         self.params = {}
-        
+
         # Инициализация пустого UI
         sources_zones = {}
         self.view = GraphicsView(self, sources_zones=sources_zones, params=None)
         self.pixmap = None
 
         self.is_rect_clicked = False
-        
+
         # Добавляем флаги для отслеживания изменений
         self.current_source_id = None
         self.saved_zones_data = None
@@ -353,7 +361,7 @@ class ZoneWindow(QWidget):
         self.layout.addWidget(self.drawing_toolbar)
         self.layout.addWidget(self.view)
         self.setLayout(self.layout)
-    
+
     def set_params(self, params):
         """Установить параметры (вызывается после controller.init())"""
         self.params = params
@@ -376,38 +384,38 @@ class ZoneWindow(QWidget):
         """
         import cv2
         import numpy as np
-        
+
         # Проверяем, что это OpenCV изображение
         if not isinstance(cv_image, np.ndarray):
             raise TypeError(f"Expected OpenCV image (numpy array), got {type(cv_image)}")
-        
+
         height, width = cv_image.shape[:2]
-        
+
         # Конвертируем BGR в RGB для Qt
         if len(cv_image.shape) == 3:
             rgb_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
         else:
             rgb_image = cv_image
-        
+
         # Создаем QPixmap из OpenCV изображения
         try:
             from PyQt6.QtGui import QImage
         except ImportError:
             from PyQt5.QtGui import QImage
-        
+
         h, w, ch = rgb_image.shape
         bytes_per_line = ch * w
         qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
         pixmap = QPixmap.fromImage(qt_image)
-        
+
         self.logger.info(f"Converted OpenCV image {width}x{height} to QPixmap for ZoneWindow")
-        
+
         # Устанавливаем минимальный размер окна, но позволяем ему быть больше
         min_width = max(800, width + 50)  # Минимум 800px или размер изображения + отступы
         min_height = max(600, height + 100)  # Минимум 600px или размер изображения + отступы для тулбара
         self.resize(QSize(min_width, min_height))
         self.view.add_pixmap(source_id, pixmap)
-        
+
         # Сохраняем текущий источник и исходное состояние зон
         self.current_source_id = source_id
         self._save_initial_zones_state()
@@ -459,7 +467,6 @@ class ZoneWindow(QWidget):
         self.drawing_toolbar.addAction(self.polygon_zone)
         self.drawing_toolbar.addAction(self.delete_zone)
         self.toolbar_width = self.drawing_toolbar.frameGeometry().width()
-    
 
     def get_zone_info(self):
         return self.view.get_zone_info()
@@ -487,7 +494,7 @@ class ZoneWindow(QWidget):
         self.view.polygon_clicked(False)
         # Подключаем обработчик для отслеживания изменений
         self.view.zone_removed.connect(self._on_zone_changed)
-    
+
     def _on_zone_changed(self):
         """Обработчик изменений зон"""
         self.has_unsaved_changes = True
@@ -508,7 +515,7 @@ class ZoneWindow(QWidget):
                 from PyQt5.QtWidgets import QMessageBox as _QMB
                 StdBtn = _QMB
                 buttons = _QMB.Yes | _QMB.No | _QMB.Cancel
-            
+
             mb = _QMB()
             mb.setWindowTitle("Save changes?")
             mb.setText("Zones have changed. Save changes?")
@@ -517,7 +524,7 @@ class ZoneWindow(QWidget):
             yes = StdBtn.Yes
             no = StdBtn.No
             cancel = StdBtn.Cancel
-            
+
             if res == yes:
                 # Принимаем изменения
                 if self.current_source_id is not None:
@@ -544,7 +551,7 @@ class ZoneWindow(QWidget):
                 zones_dict = {str(self.current_source_id): zones_data}
                 self.zone_editor_closed.emit(zones_dict, self.current_source_id, False)
             event.accept()
-        
+
         super().closeEvent(event)
         self.view.close()
 
@@ -558,35 +565,33 @@ class ZoneWindow(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         self.view.setVisible(True)
-    
+
     def _save_initial_zones_state(self):
         """Сохраняет исходное состояние зон для сравнения изменений"""
         if self.current_source_id is not None:
             zones_data = self.get_zones_for_source(self.current_source_id)
             self.saved_zones_data = zones_data.copy() if zones_data else []
             self.has_unsaved_changes = False
-    
-    
+
     def _check_zones_changes(self):
         """Проверяет, были ли изменены зоны по сравнению с исходным состоянием"""
         if self.current_source_id is None or self.saved_zones_data is None:
             return False
-        
+
         current_zones = self.get_zones_for_source(self.current_source_id)
         current_zones = current_zones if current_zones else []
-        
+
         # Сравниваем количество зон
         if len(current_zones) != len(self.saved_zones_data):
             return True
-        
+
         # Сравниваем содержимое зон
         for i, (current_zone, saved_zone) in enumerate(zip(current_zones, self.saved_zones_data)):
             if current_zone != saved_zone:
                 return True
-        
+
         return False
-    
-    
+
     def _restore_initial_zones_state(self):
         """Восстанавливает исходное состояние зон"""
         if self.current_source_id is not None and self.saved_zones_data is not None and self.params:
@@ -594,8 +599,9 @@ class ZoneWindow(QWidget):
             if 'events_detectors' in self.params and 'ZoneEventsDetector' in self.params['events_detectors']:
                 if 'sources' in self.params['events_detectors']['ZoneEventsDetector']:
                     if str(self.current_source_id) in self.params['events_detectors']['ZoneEventsDetector']['sources']:
-                        del self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.current_source_id)]
-            
+                        del self.params['events_detectors']['ZoneEventsDetector']['sources'][
+                            str(self.current_source_id)]
+
             # Восстанавливаем исходные зоны
             if self.saved_zones_data:
                 if 'events_detectors' not in self.params:
@@ -604,12 +610,13 @@ class ZoneWindow(QWidget):
                     self.params['events_detectors']['ZoneEventsDetector'] = {}
                 if 'sources' not in self.params['events_detectors']['ZoneEventsDetector']:
                     self.params['events_detectors']['ZoneEventsDetector']['sources'] = {}
-                self.params['events_detectors']['ZoneEventsDetector']['sources'][str(self.current_source_id)] = self.saved_zones_data
-            
+                self.params['events_detectors']['ZoneEventsDetector']['sources'][
+                    str(self.current_source_id)] = self.saved_zones_data
+
             # Обновляем внутреннее состояние view
             if self.current_source_id in self.view.sources_zones:
                 self.view.sources_zones[self.current_source_id] = []
                 for zone_coords in self.saved_zones_data:
                     self.view.sources_zones[self.current_source_id].append(['poly', zone_coords, None])
-            
+
             self.has_unsaved_changes = False

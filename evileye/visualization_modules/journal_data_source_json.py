@@ -31,7 +31,7 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
     def set_date(self, date_folder: Optional[str]) -> None:
         self.date_folder = date_folder
         self._cache = []
-    
+
     def _load_source_mappings(self):
         """Load source name to (source_id, address) mappings"""
         try:
@@ -44,7 +44,7 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                     self._source_name_id_address[src_name] = (src_id, address)
         except Exception as e:
             self.logger.warning(f"Failed to load source mappings: {e}")
-    
+
     def force_refresh(self) -> None:
         """Force refresh of cache by clearing timestamps"""
         self._last_file_timestamps.clear()
@@ -59,10 +59,10 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
         dates = set()
         if os.path.isdir(detections_dir):
             dates.update([d for d in os.listdir(detections_dir)
-                         if os.path.isdir(os.path.join(detections_dir, d)) and d[:4].isdigit()])
+                          if os.path.isdir(os.path.join(detections_dir, d)) and d[:4].isdigit()])
         if os.path.isdir(events_dir):
             dates.update([d for d in os.listdir(events_dir)
-                         if os.path.isdir(os.path.join(events_dir, d)) and d[:4].isdigit()])
+                          if os.path.isdir(os.path.join(events_dir, d)) and d[:4].isdigit()])
         return sorted(list(dates))
 
     def _check_file_changed(self, filepath: str) -> bool:
@@ -70,10 +70,10 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
         try:
             if not os.path.exists(filepath):
                 return False
-            
+
             current_mtime = os.path.getmtime(filepath)
             last_mtime = self._last_file_timestamps.get(filepath, 0)
-            
+
             if current_mtime > last_mtime:
                 self._last_file_timestamps[filepath] = current_mtime
                 return True
@@ -84,7 +84,7 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
     def _load_cache(self) -> None:
         """Load cache and track file timestamps"""
         dates = [self.date_folder] if self.date_folder else self.list_available_dates()[-7:]
-        
+
         # Check if files have changed
         files_changed = False
         for d in dates:
@@ -103,7 +103,7 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
             ]
             if any(self._check_file_changed(fp) for fp in fps):
                 files_changed = True
-        
+
         # Only reload if files have changed or cache is empty
         if files_changed or not self._cache:
             self._cache.clear()  # Clear cache to reload
@@ -130,26 +130,28 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
     def _read_file(self, filepath: str, event_type: str, date_folder: str) -> None:
         if not os.path.isfile(filepath):
             return
-        
+
         # Skip files that previously failed to parse (unless file was modified)
         if filepath in self._failed_files:
             # Check if file was modified since last failure
             try:
                 current_mtime = os.path.getmtime(filepath)
-                if filepath in self._last_file_timestamps and current_mtime <= self._last_file_timestamps.get(filepath, 0):
+                if filepath in self._last_file_timestamps and current_mtime <= self._last_file_timestamps.get(filepath,
+                                                                                                              0):
                     # File hasn't changed, skip it
                     return
                 # File was modified, remove from failed list and try again
                 self._failed_files.discard(filepath)
             except Exception:
                 pass
-        
+
         try:
             with open(filepath, 'r', encoding='utf-8') as f:
                 try:
                     data = json.load(f)
                 except json.JSONDecodeError as json_err:
-                    self.logger.warning(f"JSON parse error in {filepath}: {json_err}. File may be corrupted or incomplete. Skipping file.")
+                    self.logger.warning(
+                        f"JSON parse error in {filepath}: {json_err}. File may be corrupted or incomplete. Skipping file.")
                     # Mark file as failed
                     self._failed_files.add(filepath)
                     try:
@@ -157,7 +159,7 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                     except Exception:
                         pass
                     return
-            
+
             # Handle different JSON structures
             if isinstance(data, list):
                 # Direct array of objects
@@ -168,7 +170,7 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
             else:
                 # Single object or other structure
                 items = [data] if data else []
-            
+
             for idx, item in enumerate(items):
                 ev = self._map_item(item, event_type, date_folder, idx)
                 if ev:
@@ -191,11 +193,11 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
             else:
                 # Fallback: generate from hash for old data without event_id
                 event_id_str = f"{date_folder}:{event_type}:{idx}"
-                event_id_numeric = int(hashlib.md5(event_id_str.encode()).hexdigest()[:8], 16) % (10**10)
-            
+                event_id_numeric = int(hashlib.md5(event_id_str.encode()).hexdigest()[:8], 16) % (10 ** 10)
+
             # Handle bounding box format (store raw for drawing)
             bbox = item.get('bounding_box', None)
-            
+
             # Handle different timestamp fields for different event types
             if event_type == 'found':
                 timestamp = item.get('timestamp') or item.get('ts')
@@ -204,7 +206,7 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
             else:
                 # For attr_*, fov_*, zone_*, cam, prefer 'ts' if present
                 timestamp = item.get('timestamp') or item.get('ts')
-            
+
             if event_type in ('found', 'lost'):
                 return {
                     'event_id': event_id_str,
@@ -337,12 +339,14 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
             return items
         for key, direction in reversed(sort):
             reverse = (direction.lower() == 'desc')
+
             # Handle None values properly for sorting
             def sort_key(e):
                 value = e.get(key)
                 if value is None:
                     return '' if reverse else 'zzz'  # Empty string for desc, 'zzz' for asc
                 return str(value)
+
             items.sort(key=sort_key, reverse=reverse)
         return items
 
@@ -364,5 +368,3 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
 
     def close(self) -> None:
         self._cache = []
-
-

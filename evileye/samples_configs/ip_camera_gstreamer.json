@@ -3,6 +3,7 @@
         "pipeline_class": "PipelineSurveillance",
         "sources": [
             {
+                "execution_mode": "thread",
                 "camera": "rtsp://demo:demo@ipvmdemo.dyndns.org:5541/onvif-media/media.amp",
                 "source": "IpCamera",
                 "type": "VideoCaptureGStreamer",
@@ -24,6 +25,7 @@
         ],
         "detectors": [
             {
+                "execution_mode": "thread",
                 "source_ids": [
                     0
                 ],
@@ -71,6 +73,7 @@
         ],
         "trackers": [
             {
+                "execution_mode": "thread",
                 "source_ids": [
                     0
                 ],

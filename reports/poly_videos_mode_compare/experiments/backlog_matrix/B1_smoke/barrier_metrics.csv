@@ -1,0 +1,2 @@
+﻿log_file;slug;capture;mode;run_index;pipeline_ticks;pct_det_len0;pct_trk_len0;detectors_in_sum;trackers_out_sum;lag_ratio;mc_batch_in_sum;mc_emitted_sum;drop_events;errors;tracebacks;mp_pending_mean;mp_pending_max;mp_pending_p95;mp_dropped_sum;mp_pending_evict_max
+reports/poly_videos_mode_compare/experiments/backlog_matrix/B1_smoke/logs/poly-videos_opencv_process_run01.log;poly-videos_opencv_process;opencv;process;1;23;52.17;121.74;1270;566;2.244;34;25;0;0;0;16.39;29;29.0;0;55

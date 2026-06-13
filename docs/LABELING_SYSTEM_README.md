@@ -112,11 +112,13 @@ EvilEyeData/
 | `bounding_box` | object | **АБСОЛЮТНЫЕ ПИКСЕЛЬНЫЕ координаты рамки** |
 | `confidence` | float | Уверенность детекции (0.0-1.0) |
 | `class_id` | int | ID класса объекта |
-| `class_name` | string | Название класса объекта |
+| `class_name` | string | Название класса объекта (получается через `class_mapping` или fallback на COCO классы) |
 | `source_id` | int | ID источника видео |
 | `source_name` | string | **Название источника видео** |
 | `track_id` | int | ID трека |
 | `global_id` | int/null | Глобальный ID (для multi-camera tracking) |
+
+**Примечание о `class_mapping`**: `LabelingManager` использует атрибут `class_mapping` (словарь `{имя_класса: class_id}`) для преобразования ID классов в имена. Атрибут инициализируется явно в конструкторе (`class_mapping = {}`), что делает поведение предсказуемым. Если `class_mapping` предоставлен (обычно из централизованной системы классов через `ClassManager`), он используется для определения имён классов. При отсутствии `class_mapping` система использует fallback на стандартные COCO классы для обратной совместимости.
 
 ### Поля bounding_box (ОБНОВЛЕННЫЕ)
 
@@ -253,8 +255,17 @@ from evileye.objects_handler.objects_handler import ObjectsHandler
 # Создание обработчика объектов
 obj_handler = ObjectsHandler(db_controller=None, db_adapter=None)
 
+# Передача class_mapping в LabelingManager (если используется централизованная система классов)
+if obj_handler.class_manager:
+    # ClassManager автоматически предоставляет class_mapping
+    obj_handler.labeling_manager.class_mapping = obj_handler.class_manager.get_class_mapping()
+elif obj_handler.class_mapping:
+    # Использование class_mapping из конфигурации детектора
+    obj_handler.labeling_manager.class_mapping = obj_handler.class_mapping
+
 # Метки будут автоматически сохраняться при обработке объектов
 # Буферизация и асинхронное сохранение работают автоматически
+# class_name будет определяться через class_mapping или fallback на COCO классы
 ```
 
 ## Экспорт для обучения

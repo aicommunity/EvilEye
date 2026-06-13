@@ -15,6 +15,11 @@
                 ],
                 "source_names": [
                     "Cam1"
+                ],
+                "mp_restart_on_exit": false,
+                "mp_no_restart_exit_codes": [
+                    -15,
+                    0
                 ]
             },
             {
@@ -44,6 +49,11 @@
                 "source_names": [
                     "Cam2",
                     "Cam3"
+                ],
+                "mp_restart_on_exit": false,
+                "mp_no_restart_exit_codes": [
+                    -15,
+                    0
                 ]
             },
             {
@@ -73,6 +83,11 @@
                 "source_names": [
                     "Cam4",
                     "Cam5"
+                ],
+                "mp_restart_on_exit": false,
+                "mp_no_restart_exit_codes": [
+                    -15,
+                    0
                 ]
             }
         ],
@@ -120,6 +135,10 @@
                             2160
                         ]
                     ]
+                ],
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
                 ]
             },
             {
@@ -146,6 +165,10 @@
                 "num_detection_threads": 3,
                 "roi": [
                     []
+                ],
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
                 ]
             },
             {
@@ -197,6 +220,10 @@
                             1292
                         ]
                     ]
+                ],
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
                 ]
             },
             {
@@ -242,6 +269,10 @@
                             265
                         ]
                     ]
+                ],
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
                 ]
             },
             {
@@ -268,6 +299,10 @@
                 "num_detection_threads": 3,
                 "roi": [
                     []
+                ],
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
                 ]
             }
         ],
@@ -288,7 +323,11 @@
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
                     "with_reid": true
-                }
+                },
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "source_ids": [
@@ -306,7 +345,11 @@
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
                     "with_reid": true
-                }
+                },
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "source_ids": [
@@ -324,7 +367,11 @@
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
                     "with_reid": true
-                }
+                },
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "source_ids": [
@@ -342,7 +389,11 @@
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
                     "with_reid": true
-                }
+                },
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "source_ids": [
@@ -360,7 +411,11 @@
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
                     "with_reid": true
-                }
+                },
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             }
         ],
         "mc_trackers": [
@@ -372,7 +427,11 @@
                     3,
                     4
                 ],
-                "enable": true
+                "enable": true,
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             }
         ]
     },
@@ -457,12 +516,24 @@
     "objects_handler": {
         "history_len": 30,
         "lost_store_time_secs": 60,
-        "lost_thresh": 5
+        "lost_thresh": 5,
+        "save_object_images": false,
+        "save_labeling_data": false,
+        "save_min_interval_sec": 0.5
+    },
+    "server": {
+        "enabled": true,
+        "host": "127.0.0.1",
+        "port": 8080,
+        "log_level": "info",
+        "preview_encoder": "turbojpeg",
+        "preview_encode_workers": 2
     },
     "controller": {
         "autoclose": false,
         "fps": 30,
         "show_main_gui": true,
+        "use_database": false,
         "show_journal": false,
         "enable_close_from_gui": true,
         "class_names": [
@@ -552,7 +623,9 @@
             "mode": "daily_time",
             "time": "01:00",
             "interval_minutes": 0
-        }
+        },
+        "show_memory_usage": true,
+        "memory_periodic_check_sec": 300
     },
     "storage_monitor": {
         "enabled": true,

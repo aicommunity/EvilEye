@@ -30,28 +30,18 @@ class TestROIEditorBasic(unittest.TestCase):
         with patch('evileye.visualization_modules.roi_editor_window.get_module_logger') as mock_logger:
             mock_logger.return_value = Mock()
             self.params = {}
-            self.roi_window = ROIEditorWindow(self.params)
+            self.roi_window = ROIEditorWindow()
+            try:
+                self.roi_window.set_params(self.params)
+            except Exception:
+                pass
     
     def tearDown(self):
         """Очистка после тестов"""
-        # Автоматически закрываем окно через 100ms
-        def close_window():
-            try:
-                if hasattr(self, 'roi_window') and self.roi_window:
-                    self.roi_window.close()
-                self.app.quit()
-            except Exception:
-                pass
-        
-        QTimer.singleShot(100, close_window)
-        # Даем время на закрытие окна
-        time.sleep(0.2)
-        
-        # Явно закрываем окно на случай, если таймер не сработал
+        # Close window; do not quit QApplication (shared across tests).
         try:
             if hasattr(self, 'roi_window') and self.roi_window:
                 self.roi_window.close()
-            self.app.quit()
         except Exception:
             pass
     

@@ -1,0 +1,5 @@
+﻿slug;capture;mode;mc_emit_rate;sticky_tracks_mean;objects_results_items;vis_frames_last;has_data
+poly-videos_gst_process;gst;process;0.1833;1.03;5;5;True
+poly-videos_gst_thread;gst;thread;0.175;2.18;0;9;True
+poly-videos_opencv_process;opencv;process;0.0667;0.6;0;5;True
+poly-videos_opencv_thread;opencv;thread;0.2;2.87;0;5;True

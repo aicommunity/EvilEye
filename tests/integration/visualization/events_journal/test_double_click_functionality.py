@@ -2,17 +2,10 @@
 
 import sys
 import os
-from evileye.core.logging_config import setup_evileye_logging
-from evileye.core.logger import get_module_logger
-
-# Инициализация логирования для тестов
-logger = setup_evileye_logging(log_level="INFO", log_to_console=True, log_to_file=True)
-test_logger = get_module_logger("test")
-
-def test_double_click_functionality(qapp):
+def test_double_click_functionality(journal_test_logger, qapp):
     """Test double click functionality in JSON journal"""
     
-    test_logger.info("=== Test Double Click Functionality ===")
+    journal_test_logger.info("=== Test Double Click Functionality ===")
     
     try:
         from PyQt6.QtCore import Qt
@@ -45,7 +38,7 @@ def test_double_click_functionality(qapp):
         os.makedirs(os.path.dirname(frame_path), exist_ok=True)
         cv2.imwrite(frame_path, test_image)
         
-        test_logger.info(f"✅ Created test images: {preview_path}, {frame_path}")
+        journal_test_logger.info(f"✅ Created test images: {preview_path}, {frame_path}")
         
         # Create test JSON data with current timestamp
         test_json_path = os.path.join(test_images_dir, 'objects_found.json')
@@ -83,23 +76,23 @@ def test_double_click_functionality(qapp):
         with open(test_json_path, 'w') as f:
             json.dump(test_data, f, indent=2)
         
-        test_logger.info(f"✅ Created test JSON data: {test_json_path}")
+        journal_test_logger.info(f"✅ Created test JSON data: {test_json_path}")
         
         # Create EventsJournalJson widget
         journal = EventsJournalJson(base_dir)
         journal.show()
         
-        test_logger.info("\n🧪 Testing Double Click Functionality:")
+        journal_test_logger.info("\n🧪 Testing Double Click Functionality:")
         
         # Check that double click signal is connected
         if hasattr(journal, '_display_image'):
-            test_logger.info("✅ Double click handler is connected")
+            journal_test_logger.info("✅ Double click handler is connected")
         else:
-            test_logger.info("❌ Double click handler is not connected")
+            journal_test_logger.info("❌ Double click handler is not connected")
         
         # Check that data is loaded
         if journal.table.rowCount() > 0:
-            test_logger.info(f"✅ Table loaded {journal.table.rowCount()} rows")
+            journal_test_logger.info(f"✅ Table loaded {journal.table.rowCount()} rows")
             
             # Check that event data is stored for double click
             first_row = 0
@@ -107,30 +100,30 @@ def test_double_click_functionality(qapp):
             if preview_item:
                 event_data = preview_item.data(Qt.ItemDataRole.UserRole)
                 if event_data:
-                    test_logger.info("✅ Event data stored for double click functionality")
+                    journal_test_logger.info("✅ Event data stored for double click functionality")
                     if 'bounding_box' in event_data:
-                        test_logger.info("✅ Bounding box data available")
+                        journal_test_logger.info("✅ Bounding box data available")
                         bbox = event_data['bounding_box']
-                        test_logger.info(f"   Bounding box: {bbox}")
+                        journal_test_logger.info(f"   Bounding box: {bbox}")
                     else:
-                        test_logger.info("❌ Bounding box data missing")
+                        journal_test_logger.info("❌ Bounding box data missing")
                 else:
-                    test_logger.info("❌ Event data not stored")
+                    journal_test_logger.info("❌ Event data not stored")
             else:
-                test_logger.info("❌ Preview item not found")
+                journal_test_logger.info("❌ Preview item not found")
             
             # Test the _display_image method directly
-            test_logger.info("\n🧪 Testing _display_image method:")
+            journal_test_logger.info("\n🧪 Testing _display_image method:")
             try:
                 # Test with row and column parameters
                 journal._display_image(0, 5)  # First row, Preview column
-                test_logger.info("✅ _display_image method executed without errors")
+                journal_test_logger.info("✅ _display_image method executed without errors")
             except Exception as e:
-                test_logger.error(f"❌ Error in _display_image: {e}")
+                journal_test_logger.error(f"❌ Error in _display_image: {e}")
                 import traceback
                 traceback.print_exc()
         else:
-            test_logger.info("❌ Table is empty")
+            journal_test_logger.info("❌ Table is empty")
         
         # Автоматически закрываем окно через 100ms
         try:
@@ -185,14 +178,14 @@ def test_double_click_functionality(qapp):
         except Exception:
             pass
         
-        test_logger.info("\n✅ Double click functionality test completed")
-        test_logger.info("\n📋 Summary:")
-        test_logger.info("   ✅ Double click handler is connected")
-        test_logger.info("   ✅ Event data is stored for double click functionality")
-        test_logger.info("   ✅ Bounding box data is available")
-        test_logger.info("   ✅ _display_image method works correctly")
+        journal_test_logger.info("\n✅ Double click functionality test completed")
+        journal_test_logger.info("\n📋 Summary:")
+        journal_test_logger.info("   ✅ Double click handler is connected")
+        journal_test_logger.info("   ✅ Event data is stored for double click functionality")
+        journal_test_logger.info("   ✅ Bounding box data is available")
+        journal_test_logger.info("   ✅ _display_image method works correctly")
         
     except Exception as e:
-        test_logger.error(f"❌ Error: {e}")
+        journal_test_logger.error(f"❌ Error: {e}")
         import traceback
         traceback.print_exc()

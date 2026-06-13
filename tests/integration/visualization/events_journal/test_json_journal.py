@@ -2,9 +2,6 @@
 
 import sys
 import os
-from evileye.core.logging_config import setup_evileye_logging
-from evileye.core.logger import get_module_logger
-
 try:
     from PyQt6.QtWidgets import QApplication
     from PyQt6.QtCore import Qt, QTimer
@@ -16,18 +13,14 @@ except ImportError:
 
 from evileye.visualization_modules.events_journal_json import EventsJournalJson
 
-# Инициализация логирования для тестов
-logger = setup_evileye_logging(log_level="INFO", log_to_console=True, log_to_file=True)
-test_logger = get_module_logger("test")
-
-def test_json_journal(qapp):
+def test_json_journal(journal_test_logger, qapp):
     app = qapp
     
     # Test with existing data
     journal = EventsJournalJson('EvilEyeData')
     journal.show()
     
-    test_logger.info("JSON Journal test window opened.")
+    journal_test_logger.info("JSON Journal test window opened.")
     
     # Автоматически закрываем окно через 100ms
     def close_window():

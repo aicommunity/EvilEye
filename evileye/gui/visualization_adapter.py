@@ -15,7 +15,7 @@ class VisualizationAdapter(IVisualizationProvider):
     
     This adapter allows Controller to use visualization without knowing about GUI details.
     """
-    
+
     def __init__(self, visualizer=None, logger: Optional[logging.Logger] = None):
         """
         Initialize visualization adapter.
@@ -27,7 +27,7 @@ class VisualizationAdapter(IVisualizationProvider):
         self.visualizer = visualizer
         self.logger = logger or get_module_logger("visualization_adapter")
         self._initialized = False
-    
+
     def set_visualizer(self, visualizer) -> None:
         """
         Set visualizer instance.
@@ -39,10 +39,10 @@ class VisualizationAdapter(IVisualizationProvider):
         if visualizer:
             self._initialized = True
             self.logger.info("Visualizer set in adapter")
-    
-    def update(self, processing_frames: Dict[int, Any], 
+
+    def update(self, processing_frames: Dict[int, Any],
                source_last_processed_frame_id: Dict[int, int],
-               objects: List[Any], 
+               objects: List[Any],
                dropped_frames: Dict[int, int],
                debug_info: Dict[str, Any]) -> None:
         """
@@ -71,7 +71,7 @@ class VisualizationAdapter(IVisualizationProvider):
                 elif isinstance(processing_frames, list):
                     # Already a list
                     processing_frames_list = processing_frames
-                
+
                 # Convert dropped_frames to list format expected by visualizer
                 # visualizer.update() expects list, but we might have dict[int, int]
                 dropped_frames_list = dropped_frames
@@ -79,7 +79,7 @@ class VisualizationAdapter(IVisualizationProvider):
                     # Convert dict to list - visualizer expects list format
                     # For now, pass empty list if dict format (visualizer might not use it)
                     dropped_frames_list = []
-                
+
                 self.visualizer.update(
                     processing_frames_list,
                     source_last_processed_frame_id,
@@ -89,7 +89,7 @@ class VisualizationAdapter(IVisualizationProvider):
                 )
             except Exception as e:
                 self.logger.error(f"Error updating visualizer: {e}", exc_info=True)
-    
+
     def start(self) -> None:
         """Start visualization."""
         if self.visualizer:
@@ -98,7 +98,7 @@ class VisualizationAdapter(IVisualizationProvider):
                 self.logger.info("Visualizer started via adapter")
             except Exception as e:
                 self.logger.error(f"Error starting visualizer: {e}", exc_info=True)
-    
+
     def stop(self) -> None:
         """Stop visualization."""
         if self.visualizer:
@@ -107,7 +107,7 @@ class VisualizationAdapter(IVisualizationProvider):
                 self.logger.info("Visualizer stopped via adapter")
             except Exception as e:
                 self.logger.error(f"Error stopping visualizer: {e}", exc_info=True)
-    
+
     def set_params(self, **params) -> None:
         """Set visualization parameters."""
         if self.visualizer:
@@ -115,7 +115,7 @@ class VisualizationAdapter(IVisualizationProvider):
                 self.visualizer.set_params(**params)
             except Exception as e:
                 self.logger.error(f"Error setting visualizer params: {e}", exc_info=True)
-    
+
     def get_params(self) -> Dict[str, Any]:
         """Get current visualization parameters."""
         if self.visualizer:
@@ -124,11 +124,11 @@ class VisualizationAdapter(IVisualizationProvider):
             except Exception as e:
                 self.logger.error(f"Error getting visualizer params: {e}", exc_info=True)
         return {}
-    
+
     def is_available(self) -> bool:
         """Check if visualizer is available."""
         return self.visualizer is not None and self._initialized
-    
+
     def set_current_main_widget_size(self, width: int, height: int) -> None:
         """Set main widget size for visualizer."""
         if self.visualizer and hasattr(self.visualizer, 'set_current_main_widget_size'):

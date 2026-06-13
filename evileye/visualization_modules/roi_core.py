@@ -9,6 +9,7 @@ try:
     from PyQt6.QtCore import Qt, pyqtSignal, QTimer
     from PyQt6.QtGui import QPixmap, QImage, QPen, QColor, QPalette, QBrush, QCursor
     from PyQt6.QtCore import QPointF, QRectF, QPoint
+
     pyqt_version = 6
 except ImportError:
     from PyQt5.QtWidgets import (
@@ -19,9 +20,11 @@ except ImportError:
     from PyQt5.QtCore import Qt, pyqtSignal, QTimer
     from PyQt5.QtGui import QPixmap, QImage, QPen, QColor, QPalette, QBrush, QCursor
     from PyQt5.QtCore import QPointF, QRectF, QPoint
+
     pyqt_version = 5
 
 from ..core.logger import get_module_logger
+
 try:
     import sip  # For checking deleted Qt wrappers
 except Exception:
@@ -387,7 +390,8 @@ class ROIGraphicsView(QGraphicsView):
                 else:
                     rect = QRectF(display_x1, display_y1, display_x2 - display_x1, display_y2 - display_y1)
                 pen_width = self._get_scaled_pen_width()
-                pen = QPen(QColor(*color), pen_width) if isinstance(color, tuple) and len(color) == 3 else QPen(Qt.GlobalColor.red, pen_width)
+                pen = QPen(QColor(*color), pen_width) if isinstance(color, tuple) and len(color) == 3 else QPen(
+                    Qt.GlobalColor.red, pen_width)
                 roi_area = rect.width() * rect.height()
                 z_value = 1000 - int(roi_area / 1000)
                 try:
@@ -434,7 +438,7 @@ class ROIGraphicsView(QGraphicsView):
             (rect.left(), rect.center().y()),
         ]
         for i, pos in enumerate(positions):
-            handle = ResizeHandle(pos[0] - handle_size/2, pos[1] - handle_size/2, handle_size)
+            handle = ResizeHandle(pos[0] - handle_size / 2, pos[1] - handle_size / 2, handle_size)
             handle.handle_index = i
             handle.parent_roi = roi_item
             handle.parent_view = self
@@ -591,7 +595,8 @@ class ROIGraphicsView(QGraphicsView):
                 self.roi_data[index]["coords"] = source_coords
                 self.roi_updated.emit(index, source_coords)
             else:
-                display_coords = [int(new_rect.x()), int(new_rect.y()), int(new_rect.x() + new_rect.width()), int(new_rect.y() + new_rect.height())]
+                display_coords = [int(new_rect.x()), int(new_rect.y()), int(new_rect.x() + new_rect.width()),
+                                  int(new_rect.y() + new_rect.height())]
                 self.roi_data[index]["coords"] = display_coords
                 self.roi_updated.emit(index, display_coords)
         except ValueError:
@@ -611,20 +616,34 @@ class ROICoordsDialog(QDialog):
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         form_layout = QFormLayout()
-        self.x1_spin = QSpinBox(); self.x1_spin.setRange(0, 10000); self.x1_spin.setValue(self.coords[0]); form_layout.addRow("X1:", self.x1_spin)
-        self.y1_spin = QSpinBox(); self.y1_spin.setRange(0, 10000); self.y1_spin.setValue(self.coords[1]); form_layout.addRow("Y1:", self.y1_spin)
-        self.x2_spin = QSpinBox(); self.x2_spin.setRange(0, 10000); self.x2_spin.setValue(self.coords[2]); form_layout.addRow("X2:", self.x2_spin)
-        self.y2_spin = QSpinBox(); self.y2_spin.setRange(0, 10000); self.y2_spin.setValue(self.coords[3]); form_layout.addRow("Y2:", self.y2_spin)
+        self.x1_spin = QSpinBox();
+        self.x1_spin.setRange(0, 10000);
+        self.x1_spin.setValue(self.coords[0]);
+        form_layout.addRow("X1:", self.x1_spin)
+        self.y1_spin = QSpinBox();
+        self.y1_spin.setRange(0, 10000);
+        self.y1_spin.setValue(self.coords[1]);
+        form_layout.addRow("Y1:", self.y1_spin)
+        self.x2_spin = QSpinBox();
+        self.x2_spin.setRange(0, 10000);
+        self.x2_spin.setValue(self.coords[2]);
+        form_layout.addRow("X2:", self.x2_spin)
+        self.y2_spin = QSpinBox();
+        self.y2_spin.setRange(0, 10000);
+        self.y2_spin.setValue(self.coords[3]);
+        form_layout.addRow("Y2:", self.y2_spin)
         layout.addLayout(form_layout)
         button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        button_box.accepted.connect(self.accept); button_box.rejected.connect(self.reject)
+        button_box.accepted.connect(self.accept);
+        button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
 
     def get_coords(self) -> Optional[List[int]]:
-        x1 = self.x1_spin.value(); y1 = self.y1_spin.value(); x2 = self.x2_spin.value(); y2 = self.y2_spin.value()
+        x1 = self.x1_spin.value();
+        y1 = self.y1_spin.value();
+        x2 = self.x2_spin.value();
+        y2 = self.y2_spin.value()
         if x1 >= x2 or y1 >= y2:
             self.logger.warning("Invalid ROI coordinates")
             return None
         return [x1, y1, x2, y2]
-
-

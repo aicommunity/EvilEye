@@ -8,6 +8,8 @@ import os
 import datetime
 import time
 import threading
+import weakref
+import atexit
 from typing import Dict, List, Any, Optional
 from pathlib import Path
 from queue import Queue
@@ -23,7 +25,9 @@ class LabelingManager:
     - objects_found.json: For objects detected for the first time
     - objects_lost.json: For objects that were lost (tracking ended)
     """
-    
+
+    _instances: "weakref.WeakSet[LabelingManager]" = weakref.WeakSet()
+
     def __init__(self, base_dir: str = 'EvilEyeData', cameras_params: list = None, preload_data: bool = True):
         """
         Initialize the labeling manager.
@@ -38,30 +42,30 @@ class LabelingManager:
         self.base_dir = base_dir
         self.detections_dir = os.path.join(base_dir, 'Detections')
         self.cameras_params = cameras_params or []
-        
+
         # Create base directory if it doesn't exist
         os.makedirs(self.detections_dir, exist_ok=True)
-        
+
         # Current date for file naming
         self.current_date = datetime.date.today()
         self.date_str = self.current_date.strftime('%Y-%m-%d')
-        
+
         # Create date-specific directory
         self.current_day_dir = os.path.join(self.detections_dir, self.date_str)
         metadata_dir = os.path.join(self.current_day_dir, 'Metadata')
         os.makedirs(metadata_dir, exist_ok=True)
-        
+
         # File paths - in Metadata subdirectory
         self.found_labels_file = os.path.join(metadata_dir, 'objects_found.json')
         self.lost_labels_file = os.path.join(metadata_dir, 'objects_lost.json')
-        
+
         # File locks to prevent simultaneous read/write access
         self.found_file_lock = Lock()
         self.lost_file_lock = Lock()
-        
+
         # Initialize files if they don't exist
         self._init_label_files()
-        
+
         # Buffering configuration
         self.buffer_size = 100  # Save when buffer reaches this size
         self.save_interval = 30  # Save every N seconds
@@ -70,7 +74,7 @@ class LabelingManager:
         self.last_save_time = time.time()
         self.running = True
         self.buffer_lock = Lock()
-        
+
         # Pre-load existing data into buffers to avoid clearing files (optional)
         # This can be disabled to avoid hangs during initialization
         if preload_data:
@@ -79,14 +83,34 @@ class LabelingManager:
             except Exception as e:
                 self.logger.warning(f"Warning: Failed to pre-load existing data: {e}")
                 self.logger.info("Continuing with fresh start")
-        
+
+        # Инъекция class_mapping от Controller (явная инициализация вместо hasattr)
+        self.class_mapping: dict = {}
+
         # Start background save thread
         self.save_thread = Thread(target=self._save_worker, daemon=True)
         self.save_thread.start()
-    
+        try:
+            LabelingManager._instances.add(self)
+        except Exception:
+            pass
+
+    @classmethod
+    def shutdown_all(cls) -> None:
+        """Best-effort shutdown of all created managers (used in tests)."""
+        try:
+            managers = list(cls._instances)
+        except Exception:
+            return
+        for m in managers:
+            try:
+                m.stop()
+            except Exception:
+                pass
+
     def _init_label_files(self):
         """Initialize JSON label files if they don't exist."""
-        
+
         # Initialize objects_found.json
         if not os.path.exists(self.found_labels_file):
             found_data = {
@@ -99,7 +123,7 @@ class LabelingManager:
                 "objects": []
             }
             self._save_json(self.found_labels_file, found_data, self.found_file_lock)
-        
+
         # Initialize objects_lost.json
         if not os.path.exists(self.lost_labels_file):
             lost_data = {
@@ -112,7 +136,7 @@ class LabelingManager:
                 "objects": []
             }
             self._save_json(self.lost_labels_file, lost_data, self.lost_file_lock)
-    
+
     def _load_json(self, file_path: str, file_lock: Lock = None, timeout: float = 5.0) -> Dict[str, Any]:
         """
         Load JSON file safely with optional file locking and timeout.
@@ -137,7 +161,7 @@ class LabelingManager:
                     # Python < 3.2 doesn't support timeout, use blocking acquire
                     file_lock.acquire()
                     lock_acquired = True
-                
+
                 if lock_acquired:
                     return self._load_json_internal(file_path, timeout=timeout)
                 else:
@@ -157,7 +181,7 @@ class LabelingManager:
                     file_lock.release()
         else:
             return self._load_json_internal(file_path, timeout=timeout)
-    
+
     def _load_json_internal(self, file_path: str, timeout: float = 5.0) -> Dict[str, Any]:
         """
         Internal JSON loading method with timeout to prevent hangs.
@@ -175,25 +199,25 @@ class LabelingManager:
             import threading
             result = [None]
             exception = [None]
-            
+
             def read_file():
                 try:
                     with open(file_path, 'r', encoding='utf-8') as f:
                         result[0] = json.load(f)
                 except Exception as e:
                     exception[0] = e
-            
+
             thread = threading.Thread(target=read_file, daemon=True)
             thread.start()
             thread.join(timeout=timeout)
-            
+
             if exception[0]:
                 raise exception[0]
             if result[0] is None:
                 raise TimeoutError(f"File read timeout: {file_path}")
-            
+
             data = result[0]
-            
+
             # Ensure the data has the required structure
             if not isinstance(data, dict):
                 data = {}
@@ -220,7 +244,7 @@ class LabelingManager:
                 },
                 "objects": []
             }
-    
+
     def _save_json(self, file_path: str, data: Dict[str, Any], file_lock: Lock = None):
         """Save JSON file safely with optional file locking."""
         if file_lock:
@@ -231,7 +255,7 @@ class LabelingManager:
                 file_lock.release()
         else:
             return self._save_json_internal(file_path, data)
-    
+
     def _save_json_internal(self, file_path: str, data: Dict[str, Any]):
         """Internal JSON saving method."""
         try:
@@ -239,12 +263,12 @@ class LabelingManager:
             file_dir = os.path.dirname(file_path)
             if file_dir and not os.path.exists(file_dir):
                 os.makedirs(file_dir, exist_ok=True)
-            
+
             # Create temporary file first
             temp_file = f"{file_path}.tmp"
             with open(temp_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
-            
+
             # Atomic rename to prevent corruption
             os.replace(temp_file, file_path)
             return True
@@ -257,7 +281,7 @@ class LabelingManager:
                 except:
                     pass
             return False
-    
+
     def _update_metadata(self, data: Dict[str, Any], total_objects: int):
         """Update metadata in label data."""
         # Ensure metadata exists
@@ -268,10 +292,10 @@ class LabelingManager:
                 "description": "Object detection labels",
                 "total_objects": 0
             }
-        
+
         data["metadata"]["last_updated"] = datetime.datetime.now().isoformat()
         data["metadata"]["total_objects"] = total_objects
-    
+
     def add_object_found(self, object_data: Dict[str, Any]):
         """
         Add a newly detected object to the found labels buffer.
@@ -281,53 +305,53 @@ class LabelingManager:
         """
         with self.buffer_lock:
             self.found_buffer.append(object_data)
-            
+
             # Save if buffer is full
             if len(self.found_buffer) >= self.buffer_size:
                 self._save_found_buffer()
-    
+
     def _save_found_buffer(self):
         """Save found objects buffer to file."""
         if not self.found_buffer:
             return
-            
+
         with self.buffer_lock:
             # Load current data with file lock
             data = self._load_json(self.found_labels_file, self.found_file_lock)
-            
+
             # Ensure objects list exists
             if "objects" not in data:
                 data["objects"] = []
-            
+
             # Check for duplicates before adding
             existing_timestamps = {obj.get('timestamp') for obj in data["objects"]}
             existing_ids = {obj.get('object_id') for obj in data["objects"]}
             new_objects = []
-            
+
             for obj in self.found_buffer:
                 if obj.get('timestamp') not in existing_timestamps or obj.get('object_id') not in existing_ids:
                     new_objects.append(obj)
             #    else:
             #        print(f"⚠️ Skipping duplicate found object with timestamp: {obj.get('timestamp')} for object: {obj.get('object_id')}")
-            
+
             # Add only new objects
             if new_objects:
                 data["objects"].extend(new_objects)
             #    print(f"💾 Saving {len(new_objects)} new found objects (total: {len(data['objects'])})")
-            #else:
+            # else:
             #    print(f"ℹ️ No new found objects to save")
-            
+
             # Update metadata
             self._update_metadata(data, len(data["objects"]))
-            
+
             # Save updated data with file lock
             if self._save_json(self.found_labels_file, data, self.found_file_lock):
                 # Clear buffer only if save was successful
                 self.found_buffer.clear()
             #    print(f"✅ Found objects saved successfully")
-            #else:
+            # else:
             #    print(f"❌ Failed to save found objects")
-    
+
     def add_object_lost(self, object_data: Dict[str, Any]):
         """
         Add a lost object to the lost labels buffer.
@@ -337,55 +361,55 @@ class LabelingManager:
         """
         with self.buffer_lock:
             self.lost_buffer.append(object_data)
-            
+
             # Save if buffer is full
             if len(self.lost_buffer) >= self.buffer_size:
                 self._save_lost_buffer()
-    
+
     def _save_lost_buffer(self):
         """Save lost objects buffer to file."""
         if not self.lost_buffer:
             return
-            
+
         with self.buffer_lock:
             # Load current data with file lock
             data = self._load_json(self.lost_labels_file, self.lost_file_lock)
-            
+
             # Ensure objects list exists
             if "objects" not in data:
                 data["objects"] = []
-            
+
             # Check for duplicates before adding
             existing_timestamps = {obj.get('detected_timestamp') for obj in data["objects"]}
             existing_ids = {obj.get('object_id') for obj in data["objects"]}
             new_objects = []
-            
+
             for obj in self.lost_buffer:
                 if obj.get('detected_timestamp') not in existing_timestamps or obj.get('object_id') not in existing_ids:
                     new_objects.append(obj)
-                #else:
+                # else:
                 #    print(f"⚠️ Skipping duplicate lost object with timestamp: {obj.get('detected_timestamp')} for object: {obj.get('object_id')}")
-            
+
             # Add only new objects
             if new_objects:
                 data["objects"].extend(new_objects)
-                #print(f"💾 Saving {len(new_objects)} new lost objects (total: {len(data['objects'])})")
-            #else:
+                # print(f"💾 Saving {len(new_objects)} new lost objects (total: {len(data['objects'])})")
+            # else:
             #    print(f"ℹ️ No new lost objects to save")
-            
+
             # Update metadata
             self._update_metadata(data, len(data["objects"]))
-            
+
             # Save updated data with file lock
             if self._save_json(self.lost_labels_file, data, self.lost_file_lock):
                 # Clear buffer only if save was successful
                 self.lost_buffer.clear()
             #    print(f"✅ Lost objects saved successfully")
-            #else:
+            # else:
             #    print(f"❌ Failed to save lost objects")
-    
-    def create_found_object_data(self, obj, image_width: int, image_height: int, 
-                                image_filename: str, preview_filename: str) -> Dict[str, Any]:
+
+    def create_found_object_data(self, obj, image_width: int, image_height: int,
+                                 image_filename: str, preview_filename: str) -> Dict[str, Any]:
         """
         Create object data dictionary for found objects.
         
@@ -407,17 +431,21 @@ class LabelingManager:
             "width": int(bbox[2] - bbox[0]),
             "height": int(bbox[3] - bbox[1])
         }
-        
+
         # Create relative path to image (without date folder)
         relative_image_path = os.path.join('detected_frames', image_filename)
-        
+
         # Get source name from cameras params if available
         source_name = self._get_source_name(obj.source_id)
-        
+
+        # Convert timestamp to datetime if needed
+        time_stamp_dt = self._timestamp_to_datetime(obj.time_stamp)
+        timestamp_str = time_stamp_dt.isoformat() if time_stamp_dt else datetime.datetime.now().isoformat()
+
         object_data = {
             "object_id": obj.object_id,
             "frame_id": obj.frame_id,
-            "timestamp": obj.time_stamp.isoformat(),
+            "timestamp": timestamp_str,
             "image_filename": relative_image_path,
             "bounding_box": pixel_bbox,
             "confidence": float(obj.track.confidence),
@@ -428,7 +456,7 @@ class LabelingManager:
             "track_id": obj.track.track_id,
             "global_id": getattr(obj, 'global_id', None)
         }
-        
+
         # Добавляем атрибуты, если они есть
         if hasattr(obj, 'attributes') and obj.attributes:
             object_data["attributes"] = {}
@@ -442,11 +470,29 @@ class LabelingManager:
                         "enter_count": int(attr_data.get("enter_count", 0)),
                         "last_seen_ts": attr_data.get("last_seen_ts")
                     }
-        
+
         return object_data
-    
+
+    def _timestamp_to_datetime(self, timestamp):
+        """
+        Convert timestamp (float or datetime) to datetime object.
+        
+        Args:
+            timestamp: Can be float (Unix timestamp) or datetime object or None
+            
+        Returns:
+            datetime object or None
+        """
+        if timestamp is None:
+            return None
+        if isinstance(timestamp, datetime.datetime):
+            return timestamp
+        if isinstance(timestamp, (int, float)):
+            return datetime.datetime.fromtimestamp(timestamp)
+        return None
+
     def create_lost_object_data(self, obj, image_width: int, image_height: int,
-                               image_filename: str, preview_filename: str) -> Dict[str, Any]:
+                                image_filename: str, preview_filename: str) -> Dict[str, Any]:
         """
         Create object data dictionary for lost objects.
         
@@ -468,18 +514,24 @@ class LabelingManager:
             "width": int(bbox[2] - bbox[0]),
             "height": int(bbox[3] - bbox[1])
         }
-        
+
         # Create relative path to image (without date folder)
         relative_image_path = os.path.join('lost_frames', image_filename)
-        
+
         # Get source name from cameras params if available
         source_name = self._get_source_name(obj.source_id)
-        
+
+        # Convert timestamps to datetime if needed
+        time_detected_dt = self._timestamp_to_datetime(obj.time_detected)
+        time_lost_dt = self._timestamp_to_datetime(obj.time_lost)
+        detected_timestamp_str = time_detected_dt.isoformat() if time_detected_dt else datetime.datetime.now().isoformat()
+        lost_timestamp_str = time_lost_dt.isoformat() if time_lost_dt else datetime.datetime.now().isoformat()
+
         object_data = {
             "object_id": obj.object_id,
             "frame_id": obj.frame_id,
-            "detected_timestamp": obj.time_detected.isoformat(),
-            "lost_timestamp": obj.time_lost.isoformat(),
+            "detected_timestamp": detected_timestamp_str,
+            "lost_timestamp": lost_timestamp_str,
             "image_filename": relative_image_path,
             "bounding_box": pixel_bbox,
             "confidence": float(obj.track.confidence),
@@ -491,7 +543,7 @@ class LabelingManager:
             "global_id": getattr(obj, 'global_id', None),
             "lost_frames": obj.lost_frames
         }
-        
+
         # Добавляем атрибуты, если они есть
         if hasattr(obj, 'attributes') and obj.attributes:
             object_data["attributes"] = {}
@@ -505,9 +557,9 @@ class LabelingManager:
                         "enter_count": int(attr_data.get("enter_count", 0)),
                         "last_seen_ts": attr_data.get("last_seen_ts")
                     }
-        
+
         return object_data
-    
+
     def _get_class_name(self, class_id: int) -> str:
         """
         Get class name from class ID.
@@ -519,12 +571,12 @@ class LabelingManager:
             Class name string
         """
         # Use class_mapping if available
-        if hasattr(self, 'class_mapping') and self.class_mapping:
+        if self.class_mapping:
             for name, cid in self.class_mapping.items():
                 if cid == class_id:
                     return name
             return f"class_{class_id}"
-        
+
         # Fallback to default COCO classes for backward compatibility
         coco_classes = [
             "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat",
@@ -538,12 +590,12 @@ class LabelingManager:
             "mouse", "remote", "keyboard", "cell phone", "microwave", "oven", "toaster", "sink",
             "refrigerator", "book", "clock", "vase", "scissors", "teddy bear", "hair drier", "toothbrush"
         ]
-        
+
         if 0 <= class_id < len(coco_classes):
             return coco_classes[class_id]
         else:
             return f"class_{class_id}"
-    
+
     def _get_source_name(self, source_id: int) -> str:
         """
         Get source name from source ID using cameras parameters.
@@ -561,7 +613,7 @@ class LabelingManager:
                 if id_idx < len(source_names):
                     return source_names[id_idx]
         return f"camera_{source_id}"
-    
+
     def get_statistics(self) -> Dict[str, Any]:
         """
         Get statistics about saved labels.
@@ -571,7 +623,7 @@ class LabelingManager:
         """
         found_data = self._load_json(self.found_labels_file, self.found_file_lock)
         lost_data = self._load_json(self.lost_labels_file, self.lost_file_lock)
-        
+
         return {
             "found_objects": len(found_data.get("objects", [])),
             "lost_objects": len(lost_data.get("objects", [])),
@@ -580,7 +632,7 @@ class LabelingManager:
             "lost_labels_file": self.lost_labels_file,
             "date": self.date_str
         }
-    
+
     def export_labels_for_training(self, output_dir: str = None) -> str:
         """
         Export labels in a format suitable for training.
@@ -593,16 +645,16 @@ class LabelingManager:
         """
         if output_dir is None:
             output_dir = os.path.join(self.base_dir, 'training_data')
-        
+
         os.makedirs(output_dir, exist_ok=True)
-        
+
         # Load current data with file locks
         found_data = self._load_json(self.found_labels_file, self.found_file_lock)
         lost_data = self._load_json(self.lost_labels_file, self.lost_file_lock)
-        
+
         # Combine all objects
         all_objects = found_data.get("objects", []) + lost_data.get("objects", [])
-        
+
         # Create training format
         training_data = {
             "metadata": {
@@ -614,41 +666,72 @@ class LabelingManager:
             },
             "objects": all_objects
         }
-        
+
         # Save training data
         training_file = os.path.join(output_dir, f'{self.date_str}_training_labels.json')
         self._save_json(training_file, training_data)
-        
+
         return training_file
-    
+
     def _save_worker(self):
         """Background worker for periodic saving."""
         while self.running:
             time.sleep(1)  # Check every second
-            
+
             current_time = time.time()
             if current_time - self.last_save_time > self.save_interval:
                 self._save_all_buffers()
                 self.last_save_time = current_time
-    
+
     def _save_all_buffers(self):
         """Save all buffers (found and lost objects)."""
         self._save_found_buffer()
         self._save_lost_buffer()
-    
+
     def flush_buffers(self):
         """Force save all buffered data."""
         self._save_all_buffers()
-    
+
     def stop(self):
         """Stop the labeling manager and save any remaining data."""
         self.running = False
         self.flush_buffers()
-        
+
         # Wait for save thread to finish
         if self.save_thread.is_alive():
             self.save_thread.join(timeout=5)
-    
+
+    def _preload_existing_data(self, timeout: float = 5.0):
+        """
+        Best-effort preload for compatibility with ObjectsHandler startup path.
+        Returns maximum existing object_id or 0 when data is unavailable.
+        """
+        _ = timeout
+        try:
+            max_existing = 0
+            found_data = self._load_json(self.found_labels_file, self.found_file_lock)
+            for obj in (found_data.get("objects", []) or []):
+                try:
+                    max_existing = max(max_existing, int(obj.get("object_id", 0) or 0))
+                except Exception:
+                    continue
+            lost_data = self._load_json(self.lost_labels_file, self.lost_file_lock)
+            for obj in (lost_data.get("objects", []) or []):
+                try:
+                    max_existing = max(max_existing, int(obj.get("object_id", 0) or 0))
+                except Exception:
+                    continue
+            return max_existing
+        except Exception:
+            return 0
+
+
+try:
+    atexit.register(LabelingManager.shutdown_all)
+except Exception:
+    pass
+
+
     def _preload_existing_data(self, timeout: float = 5.0):
         """
         Pre-load existing data from JSON files to avoid clearing them on startup.
@@ -662,14 +745,14 @@ class LabelingManager:
         """
         try:
             self.logger.info(f"Pre-loading existing data from {self.date_str}...")
-            
+
             # Check and repair JSON files if needed (with timeout)
             try:
                 self._check_and_repair_json_files(timeout=timeout)
             except Exception as e:
                 self.logger.warning(f"Warning: Error checking/repairing JSON files: {e}")
                 # Continue anyway
-            
+
             # Load found objects with file lock (with timeout)
             existing_found = []
             try:
@@ -680,7 +763,7 @@ class LabelingManager:
             except (Exception, TimeoutError) as e:
                 self.logger.warning(f"Warning: Error loading found objects: {e}")
                 existing_found = []
-            
+
             # Load lost objects with file lock (with timeout)
             existing_lost = []
             try:
@@ -691,11 +774,11 @@ class LabelingManager:
             except (Exception, TimeoutError) as e:
                 self.logger.warning(f"Warning: Error loading lost objects: {e}")
                 existing_lost = []
-            
+
             total_existing = len(existing_found) + len(existing_lost)
             if total_existing > 0:
                 self.logger.info(f"Successfully pre-loaded {total_existing} existing objects")
-                
+
                 # Return the maximum object_id found for counter initialization
                 try:
                     max_object_id = self._get_max_object_id(existing_found, existing_lost)
@@ -706,12 +789,13 @@ class LabelingManager:
             else:
                 self.logger.info(f"No existing objects found, starting fresh")
                 return 0
-                
+
         except Exception as e:
             self.logger.warning(f"Warning: Error pre-loading existing data: {e}")
             self.logger.info(f"Continuing with fresh start")
             return 0
-    
+
+
     def _get_max_object_id(self, found_objects: List[Dict], lost_objects: List[Dict]) -> int:
         """
         Get the maximum object_id from existing objects.
@@ -724,7 +808,7 @@ class LabelingManager:
             Maximum object_id found, or 0 if no objects exist
         """
         max_id = 0
-        
+
         # Check found objects
         for obj in found_objects:
             obj_id = obj.get('object_id')
@@ -734,7 +818,7 @@ class LabelingManager:
                     max_id = max(max_id, obj_id_int)
                 except (ValueError, TypeError):
                     continue
-        
+
         # Check lost objects
         for obj in lost_objects:
             obj_id = obj.get('object_id')
@@ -744,9 +828,10 @@ class LabelingManager:
                     max_id = max(max_id, obj_id_int)
                 except (ValueError, TypeError):
                     continue
-        
+
         return max_id
-    
+
+
     def _check_and_repair_json_files(self, timeout: float = 5.0):
         """
         Check and repair corrupted JSON files with timeout to prevent hangs.
@@ -771,7 +856,7 @@ class LabelingManager:
                         self._repair_json_file(self.found_labels_file, "found")
                     except Exception as repair_e:
                         self.logger.warning(f"Failed to repair found objects file: {repair_e}")
-            
+
             # Check lost objects file with timeout
             if os.path.exists(self.lost_labels_file):
                 try:
@@ -788,10 +873,11 @@ class LabelingManager:
                         self._repair_json_file(self.lost_labels_file, "lost")
                     except Exception as repair_e:
                         self.logger.warning(f"Failed to repair lost objects file: {repair_e}")
-                    
+
         except Exception as e:
             self.logger.warning(f"Warning: Error checking JSON files: {e}")
-    
+
+
     def _repair_json_file(self, file_path: str, file_type: str):
         """Attempt to repair a corrupted JSON file."""
         try:
@@ -799,7 +885,7 @@ class LabelingManager:
             backup_path = f"{file_path}.backup.{int(time.time())}"
             os.rename(file_path, backup_path)
             self.logger.info(f"Backup created: {backup_path}")
-            
+
             # Create new valid file
             new_data = {
                 "metadata": {
@@ -810,12 +896,12 @@ class LabelingManager:
                 },
                 "objects": []
             }
-            
+
             # Use appropriate file lock based on file type
             file_lock = self.found_file_lock if "found" in file_path else self.lost_file_lock
             self._save_json(file_path, new_data, file_lock)
             self.logger.info(f"Restored {file_type} objects file")
-            
+
         except Exception as e:
             self.logger.error(f"Failed to restore {file_type} objects file: {e}")
             # Try to restore from backup

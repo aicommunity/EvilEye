@@ -3,16 +3,19 @@ try:
     from PyQt6 import QtGui
     from PyQt6.QtCore import Qt, QPointF, QRectF
     from PyQt6.QtGui import QPixmap, QPainter, QPen, QBrush, QColor, QPolygonF
+
     pyqt_version = 6
 except ImportError:
     from PyQt5.QtCore import QThread, QMutex, pyqtSignal, QEventLoop, QTimer, pyqtSlot
     from PyQt5 import QtGui
     from PyQt5.QtCore import Qt, QPointF, QRectF
     from PyQt5.QtGui import QPixmap, QPainter, QPen, QBrush, QColor, QPolygonF
+
     pyqt_version = 5
 
 from timeit import default_timer as timer
 from ..utils import utils
+from .preview_render import PreviewRenderContext, apply_preview_overlay
 from queue import Queue
 from queue import Empty
 import copy
@@ -20,6 +23,7 @@ import time
 import cv2
 from ..events_detectors.zone import ZoneForm
 import logging
+import os
 
 
 class VideoThread(QThread):
@@ -37,7 +41,8 @@ class VideoThread(QThread):
     add_zone_signal = pyqtSignal(int, QPixmap)
     add_roi_signal = pyqtSignal(int, QPixmap)
 
-    def __init__(self, source_id, fps, rows, cols, show_debug_info, font_params, text_config=None, class_mapping=None, logger_name: str | None = None, parent_logger: logging.Logger | None = None):
+    def __init__(self, source_id, fps, rows, cols, show_debug_info, font_params, text_config=None, class_mapping=None,
+                 logger_name: str | None = None, parent_logger: logging.Logger | None = None):
         super().__init__()
         base_name = "evileye.video_thread"
         full_name = f"{base_name}.{logger_name}" if logger_name else base_name
@@ -71,7 +76,7 @@ class VideoThread(QThread):
         # Persistent object boxes to bridge short tracker gaps: obj_id -> { 'box': [x1,y1,x2,y2] px, 'ttl': int }
         self.persist_obj_boxes: dict[int, dict] = {}
         self.signal_hold_frames = 10
-        
+
         # Thread-safe storage for clean images (before any drawing)
         self.last_clean_image = None
         self.clean_image_mutex = QMutex()
@@ -97,6 +102,19 @@ class VideoThread(QThread):
         # Определяем количество потоков в зависимости от параметра split
         VideoThread.thread_counter += 1
 
+        # Perf diagnostics (disabled by default). Enable with env EVILEYE_PERF_DIAG=1
+        self._perf_diag_env = os.getenv("EVILEYE_PERF_DIAG", "").strip().lower() in {"1", "true", "yes", "on"}
+        self._perf_diag_every = int(os.getenv("EVILEYE_PERF_DIAG_EVERY", "60") or "60")
+        self._perf_diag_counter = 0
+        self._last_perf_stats = {
+            "overlay_ms": 0.0,
+            "cvt_color_ms": 0.0,
+            "qt_scale_ms": 0.0,
+            "qpixmap_ms": 0.0,
+            "emit_ms": 0.0,
+            "queue_size": 0,
+        }
+
     def start_thread(self):
         self.run_flag = True
         self.start()
@@ -121,26 +139,53 @@ class VideoThread(QThread):
 
     def convert_cv_qt(self, cv_img, widget_width, widget_height) -> QPixmap:
         # Переводим из opencv image в QPixmap
-        rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
-        h, w, ch = rgb_image.shape
-        bytes_per_line = ch * w
-        convert_to_qt = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format.Format_RGB888)
+        cvt_start = timer()
+        h, w, ch = cv_img.shape
+        bytes_per_line = cv_img.strides[0]
+        qimage_format = getattr(QtGui.QImage.Format, "Format_BGR888", None)
+        if qimage_format is not None:
+            convert_to_qt = QtGui.QImage(cv_img.data, w, h, bytes_per_line, qimage_format)
+        else:
+            rgb_image = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
+            h, w, ch = rgb_image.shape
+            bytes_per_line = rgb_image.strides[0]
+            convert_to_qt = QtGui.QImage(rgb_image.data, w, h, bytes_per_line, QtGui.QImage.Format.Format_RGB888)
+        cvt_ms = (timer() - cvt_start) * 1000.0
+        scale_ms = 0.0
         if self.is_add_zone_clicked:
             zones_window_image = convert_to_qt.scaled(int(widget_width), int(widget_height),
-                                                      Qt.AspectRatioMode.KeepAspectRatio)
+                                                      Qt.AspectRatioMode.KeepAspectRatio,
+                                                      Qt.TransformationMode.FastTransformation)
             self.is_add_zone_clicked = False
             self.add_zone_signal.emit(self.thread_num, QPixmap.fromImage(zones_window_image))
-        
+
         if self.is_add_roi_clicked:
             roi_window_image = convert_to_qt.scaled(int(widget_width), int(widget_height),
-                                                    Qt.AspectRatioMode.KeepAspectRatio)
+                                                    Qt.AspectRatioMode.KeepAspectRatio,
+                                                    Qt.TransformationMode.FastTransformation)
             self.is_add_roi_clicked = False
             self.add_roi_signal.emit(self.thread_num, QPixmap.fromImage(roi_window_image))
         # Подгоняем под указанный размер, но сохраняем пропорции
-        scaled_image = convert_to_qt.scaled(int(widget_width / VideoThread.cols),
-                                            int(widget_height / VideoThread.rows), Qt.AspectRatioMode.KeepAspectRatio)
-        return QPixmap.fromImage(scaled_image)
-    
+        target_w = int(widget_width / VideoThread.cols)
+        target_h = int(widget_height / VideoThread.rows)
+        scale_start = timer()
+        if w == target_w and h == target_h:
+            scaled_image = convert_to_qt
+        else:
+            scaled_image = convert_to_qt.scaled(
+                target_w,
+                target_h,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.FastTransformation,
+            )
+        scale_ms = (timer() - scale_start) * 1000.0
+        pixmap_start = timer()
+        pixmap = QPixmap.fromImage(scaled_image)
+        pixmap_ms = (timer() - pixmap_start) * 1000.0
+        self._last_perf_stats["cvt_color_ms"] = cvt_ms
+        self._last_perf_stats["qt_scale_ms"] = scale_ms
+        self._last_perf_stats["qpixmap_ms"] = pixmap_ms
+        return pixmap
 
     def _draw_signal_overlay(self, image: QPixmap):
         if not self.signal_enabled:
@@ -163,7 +208,7 @@ class VideoThread(QThread):
             pen.setWidth(4)
             painter.setPen(pen)
             # Draw border around full pixmap
-            painter.drawRect(0, 0, image.width()-1, image.height()-1)
+            painter.drawRect(0, 0, image.width() - 1, image.height() - 1)
             # Draw active events list (top-left)
             painter.setBrush(QBrush())
             # Background for list (semi-transparent) с адаптацией контрастности к цвету события
@@ -185,12 +230,13 @@ class VideoThread(QThread):
             if text_lines:
                 pad = 6
                 line_h = 18
-                box_w = max(120, max((painter.fontMetrics().horizontalAdvance(t) for t in text_lines), default=0) + 2*pad)
-                box_h = pad*2 + line_h*len(text_lines)
+                box_w = max(120,
+                            max((painter.fontMetrics().horizontalAdvance(t) for t in text_lines), default=0) + 2 * pad)
+                box_h = pad * 2 + line_h * len(text_lines)
                 painter.fillRect(0, 0, box_w, box_h, bg)
                 painter.setPen(QPen(qcolor))
                 for i, t in enumerate(text_lines):
-                    painter.drawText(pad, pad + (i+1)*line_h - 4, t)
+                    painter.drawText(pad, pad + (i + 1) * line_h - 4, t)
             # bbox событий теперь рисуются в utils.draw_boxes_tracking вместе с объектными
         finally:
             if painter.isActive():
@@ -223,7 +269,30 @@ class VideoThread(QThread):
         try:
             frame, track_info, source_name, source_duration_secs, debug_info = self.queue.get()
             begin_it = timer()
-            
+
+            # During capture restarts/teardown the producer can push a placeholder with image=None.
+            # Avoid allocating QPixmap/QImage buffers and avoid noisy exceptions in that case.
+            try:
+                if frame is None or getattr(frame, "image", None) is None:
+                    # Keep clean image consistent
+                    try:
+                        self.clean_image_mutex.lock()
+                        self.last_clean_image = None
+                    finally:
+                        try:
+                            self.clean_image_mutex.unlock()
+                        except Exception:
+                            pass
+                    return 0
+                # Some pipelines can produce empty arrays; treat them as missing frames.
+                try:
+                    if hasattr(frame.image, "size") and frame.image.size == 0:
+                        return 0
+                except Exception:
+                    pass
+            except Exception:
+                return 0
+
             # Create a shallow copy of frame and copy only the image array (numpy array)
             # This is much more memory-efficient than deepcopy
             from ..capture.video_capture_base import CaptureImage
@@ -233,19 +302,14 @@ class VideoThread(QThread):
             display_frame.frame_id = frame.frame_id
             display_frame.current_video_frame = frame.current_video_frame
             display_frame.current_video_position = frame.current_video_position
-            # Copy only the image numpy array, not the entire frame object
-            if frame.image is not None:
-                display_frame.image = frame.image.copy()
-            else:
-                display_frame.image = None
-            
+            # IMPORTANT: frame.image is already an owning numpy array (copied in capture).
+            # Avoid extra copies here to reduce RSS spikes when streams connect / restart.
+            display_frame.image = frame.image
+
             # Store clean image in thread-safe storage (before any drawing)
-            # Use copy() instead of deepcopy() for numpy arrays - much more efficient
+            # Avoid copying: keep a reference to the latest clean frame.
             self.clean_image_mutex.lock()
-            if frame.image is not None:
-                self.last_clean_image = frame.image.copy()
-            else:
-                self.last_clean_image = None
+            self.last_clean_image = frame.image
             self.clean_image_mutex.unlock()
             # Remember original size to normalize pixel bboxes to display size correctly
             try:
@@ -255,7 +319,7 @@ class VideoThread(QThread):
             except Exception:
                 self.last_frame_w = None
                 self.last_frame_h = None
-            
+
             # Update persistent boxes TTL and merge with latest boxes
             try:
                 # Decrease TTL
@@ -287,28 +351,72 @@ class VideoThread(QThread):
                             active_obj_ids.add(oid)
             except Exception:
                 active_obj_ids = set()
-
-            utils.draw_boxes_tracking(display_frame, track_info, source_name, source_duration_secs,
-                                      self.font_scale, self.font_thickness, self.font_color,
-                                      text_config=self.text_config, class_mapping=self.class_mapping,
-                                      event_active_obj_ids=active_obj_ids,
-                                      event_color=(self.signal_color.red(), self.signal_color.green(), self.signal_color.blue()))
-            if self.show_debug_info:
-                utils.draw_debug_info(display_frame, debug_info)
+            active_event_labels = []
+            try:
+                if self.visualizer_ref and hasattr(self.visualizer_ref, 'get_active_events'):
+                    active_keys = self.visualizer_ref.get_active_events(self.source_id) or set()
+                    active_event_labels = [
+                        f"AttributeEvent: {evt_name} [{obj_id}]"
+                        for (_, obj_id, evt_name) in active_keys
+                    ]
+            except Exception:
+                active_event_labels = []
+            preview_context = PreviewRenderContext(
+                source_name=source_name,
+                source_duration_msecs=source_duration_secs,
+                track_info=track_info or [],
+                debug_info=debug_info or {},
+                show_debug_info=self.show_debug_info,
+                font_scale=self.font_scale,
+                font_thickness=self.font_thickness,
+                font_color=self.font_color,
+                text_config=self.text_config or {},
+                class_mapping=self.class_mapping or {},
+                event_signal_enabled=self.signal_enabled,
+                event_color_rgb=(self.signal_color.red(), self.signal_color.green(), self.signal_color.blue()),
+                event_active_obj_ids=active_obj_ids,
+                active_event_labels=active_event_labels,
+                zones=self.zones.get(self.source_id, []) if self.show_zones and self.zones else [],
+            )
+            overlay_start = timer()
+            apply_preview_overlay(display_frame, preview_context)
+            self._last_perf_stats["overlay_ms"] = (timer() - overlay_start) * 1000.0
             qt_image = self.convert_cv_qt(display_frame.image, self.widget_width, self.widget_height)
-            
-            if self.show_zones:
-                self.draw_zones(qt_image, self.zones)
-            # Draw event signalization overlay last
-            self._draw_signal_overlay(qt_image)
             end_it = timer()
             elapsed_seconds = end_it - begin_it
             # Сигнал из потока для обновления label на новое изображение
+            emit_start = timer()
             self.update_image_signal.emit(self.thread_num, qt_image)
             # Сигнал с оригинальным OpenCV изображением для ROI Editor (до любых отрисовок)
             self.update_original_cv_image_signal.emit(self.thread_num, frame.image)
             # Сигнал с чистым OpenCV изображением без нарисованных элементов для ROI Editor (до любых отрисовок)
             self.clean_image_available_signal.emit(self.thread_num, frame.image)
+            self._last_perf_stats["emit_ms"] = (timer() - emit_start) * 1000.0
+            if self._perf_diag_env:
+                try:
+                    self._perf_diag_counter += 1
+                    every = max(1, int(self._perf_diag_every or 60))
+                    if (self._perf_diag_counter % every) == 0:
+                        try:
+                            qsz = self.queue.qsize()
+                        except Exception:
+                            qsz = -1
+                        self._last_perf_stats["queue_size"] = qsz
+                        self.logger.info(
+                            "PerfDiag(VideoThread): src_id=%s, processed=%d, frame_id=%s, qsize=%s, proc_ms=%.1f, overlay_ms=%.1f, cvt_ms=%.1f, scale_ms=%.1f, pixmap_ms=%.1f, emit_ms=%.1f",
+                            self.source_id,
+                            self._perf_diag_counter,
+                            getattr(frame, "frame_id", None),
+                            qsz,
+                            (timer() - begin_it) * 1000.0,
+                            self._last_perf_stats["overlay_ms"],
+                            self._last_perf_stats["cvt_color_ms"],
+                            self._last_perf_stats["qt_scale_ms"],
+                            self._last_perf_stats["qpixmap_ms"],
+                            self._last_perf_stats["emit_ms"],
+                        )
+                except Exception:
+                    pass
             return elapsed_seconds
         except Empty:
             return 0
@@ -325,6 +433,15 @@ class VideoThread(QThread):
         self.run_flag = False
         self.logger.info('Visualization stopped')
 
+    def get_runtime_stats(self) -> dict:
+        stats = dict(self._last_perf_stats)
+        try:
+            stats["queue_size"] = self.queue.qsize()
+        except Exception:
+            pass
+        stats["source_id"] = self.source_id
+        return stats
+
     @pyqtSlot(dict)
     def display_zones(self, zones):
         if zones:
@@ -337,7 +454,7 @@ class VideoThread(QThread):
     def add_zone_clicked(self, thread_id):
         if self.thread_num == thread_id:
             self.is_add_zone_clicked = True
-    
+
     @pyqtSlot(int)
     def add_roi_clicked(self, thread_id):
         if self.thread_num == thread_id:
@@ -362,7 +479,7 @@ class VideoThread(QThread):
         else:
             if event_name in self.active_events:
                 del self.active_events[event_name]
-    
+
     def get_clean_image(self):
         """Получить чистое изображение (до любых отрисовок) thread-safe способом"""
         self.clean_image_mutex.lock()

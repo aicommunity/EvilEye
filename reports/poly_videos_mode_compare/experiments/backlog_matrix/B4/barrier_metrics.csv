@@ -1,0 +1,4 @@
+﻿log_file;slug;capture;mode;run_index;pipeline_ticks;pct_det_len0;pct_trk_len0;detectors_in_sum;trackers_out_sum;lag_ratio;mc_batch_in_sum;mc_emitted_sum;drop_events;errors;tracebacks;mp_pending_mean;mp_pending_max;mp_pending_p95;mp_dropped_sum;mp_pending_evict_max
+reports/poly_videos_mode_compare/experiments/backlog_matrix/B4/logs/poly-videos_opencv_process_run01.log;poly-videos_opencv_process;opencv;process;1;18;38.89;122.22;1211;559;2.166;28;20;0;0;0;23.33;46;46.0;0;33
+reports/poly_videos_mode_compare/experiments/backlog_matrix/B4/logs/poly-videos_opencv_process_run02.log;poly-videos_opencv_process;opencv;process;2;18;27.78;122.22;1200;566;2.12;22;20;0;0;0;22.89;45;45.0;0;29
+reports/poly_videos_mode_compare/experiments/backlog_matrix/B4/logs/poly-videos_opencv_process_run03.log;poly-videos_opencv_process;opencv;process;3;19;47.37;126.32;1210;563;2.149;25;5;0;0;0;22.95;46;45.0;0;28

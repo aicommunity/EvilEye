@@ -5,9 +5,10 @@ import multiprocessing
 from typing import Optional, Dict
 from evileye.core.logger import get_module_logger
 from evileye.controller.controller import Controller
-from evileye.api.core.broker_access import get_broker
+from evileye.core.runtime_services import get_frame_broker
 
 """ Module for managing pipelines """
+
 
 class PipelineState:
     CREATED = "created"
@@ -22,7 +23,7 @@ class PipelineRunner:
     def __init__(self, pipeline_id: int, config_body: dict, name: str = None):
         self.pipeline_id = pipeline_id
         self.config_body = config_body
-        self.pipeline_name = name or f"Pipeline-{pipeline_id}" 
+        self.pipeline_name = name or f"Pipeline-{pipeline_id}"
         self.controller = None
         self.state = PipelineState.CREATED
         self.error: Optional[str] = None
@@ -34,7 +35,7 @@ class PipelineRunner:
             return
         try:
             os.environ["EVILEYE_PIPELINE_ID"] = str(self.pipeline_id)
-            self.logger.info(f"Set EVILEYE_PIPELINE_ID={self.pipeline_id} for controller")            
+            self.logger.info(f"Set EVILEYE_PIPELINE_ID={self.pipeline_id} for controller")
             # Ensure no GUI in API mode
             controller_cfg = self.config_body.setdefault("controller", {})
             controller_cfg["gui_enabled"] = False
@@ -53,7 +54,7 @@ class PipelineRunner:
             self.logger.info(f"Controller.start() completed for pipeline '{self.pipeline_id}'")
             # Give controller a moment to initialize
             import time
-            time.sleep(5.0)  
+            time.sleep(5.0)
             self.state = PipelineState.RUNNING
             self.logger.info(f"Pipeline '{self.pipeline_id}' running")
 
@@ -61,7 +62,6 @@ class PipelineRunner:
             self.state = PipelineState.ERROR
             self.error = str(e)
             self.logger.error(f"Pipeline '{self.pipeline_id}' failed to start: {e}")
-
 
     def stop(self) -> None:
         self.logger.info(f"Pipeline '{self.pipeline_id}' stop() called")
@@ -82,14 +82,14 @@ class PipelineRunner:
                     self.logger.info(f"Controller stopped for pipeline '{self.pipeline_id}'")
                 except Exception as e:
                     self.logger.error(f"Error stopping controller: {e}")
-                
+
                 self.logger.info(f"Releasing controller for pipeline '{self.pipeline_id}'")
                 try:
                     self.controller.release()
                     self.logger.info(f"Controller released for pipeline '{self.pipeline_id}'")
                 except Exception as e:
                     self.logger.error(f"Error releasing controller: {e}")
-            
+
             self.logger.info(f"Checking for child processes for pipeline '{self.pipeline_id}'")
             processes = multiprocessing.active_children()
             if processes:
@@ -99,7 +99,7 @@ class PipelineRunner:
                         self.logger.info(f"Terminating child process {process.pid}")
                         try:
                             process.terminate()
-                            process.join(timeout=1.0)  
+                            process.join(timeout=1.0)
                             if process.is_alive():
                                 self.logger.warning(f"Force killing child process {process.pid}")
                                 process.kill()
@@ -108,13 +108,13 @@ class PipelineRunner:
                             self.logger.error(f"Error killing process {process.pid}: {e}")
             else:
                 self.logger.info(f"No child processes found for pipeline '{self.pipeline_id}'")
-            
+
             try:
-                if get_broker().stop_stream(str(self.pipeline_id)):
+                if get_frame_broker().stop_stream(str(self.pipeline_id)):
                     self.logger.info(f"Stopped stream for pipeline '{self.pipeline_id}'")
             except Exception as e:
                 self.logger.error(f"Error stopping stream for pipeline '{self.pipeline_id}': {e}")
-            
+
             self.state = PipelineState.STOPPED
             self.logger.info(f"Pipeline '{self.pipeline_id}' stopped successfully")
         except Exception as e:
@@ -155,9 +155,9 @@ class PipelineManager:
             runner = self._items.get(pid)
             if runner is None:
                 raise KeyError("Pipeline not found")
-        
+
         runner.start()
-        
+
         with self._lock:
             return {
                 "id": pid,
@@ -171,9 +171,9 @@ class PipelineManager:
             runner = self._items.get(pid)
             if runner is None:
                 raise KeyError("Pipeline not found")
-        
+
         runner.stop()
-        
+
         with self._lock:
             return {
                 "id": pid,
@@ -197,14 +197,34 @@ class PipelineManager:
         """Get runner for a specific pipeline (thread-safe)."""
         with self._lock:
             return self._items.get(pid)
-    
+
     def _describe_locked(self, pid: int, runner: PipelineRunner) -> Dict:
-        return {
+        info: Dict = {
             "id": pid,
             "name": runner.pipeline_name,
             "state": runner.state,
             "error": runner.error,
         }
+        if runner.state != PipelineState.RUNNING or runner.controller is None:
+            return info
+
+        try:
+            obj_handler = runner.controller.obj_handler
+            if obj_handler:
+                active = len(obj_handler.active_objs.objects) if hasattr(obj_handler, "active_objs") else 0
+                lost = len(obj_handler.lost_objs.objects) if hasattr(obj_handler, "lost_objs") else 0
+                info["statistics"] = {"active_objects": active, "lost_objects": lost}
+
+            if hasattr(runner.controller, "pipeline") and runner.controller.pipeline:
+                sources = runner.controller.pipeline.get_sources()
+                info["sources"] = [
+                    {"source_id": s.get_id(), "source_name": getattr(s, "source_name", f"Source-{s.get_id()}")}
+                    for s in sources
+                ]
+        except Exception:
+            pass
+
+        return info
 
     def shutdown(self) -> None:
         with self._lock:
@@ -212,24 +232,24 @@ class PipelineManager:
                 self.logger.info("PipelineManager shutdown already called, skipping")
                 return
             self._shutdown_called = True
-        
+
         self.logger.info("PipelineManager shutdown initiated")
-        
+
         with self._lock:
             ids = list(self._items.keys())
-        
+
         self.logger.info(f"Stopping {len(ids)} pipelines: {ids}")
-        
+
         for pid in ids:
             try:
                 self.logger.info(f"Stopping pipeline '{pid}'")
                 self.stop(pid)
             except Exception as e:
                 self.logger.error(f"Error stopping pipeline '{pid}': {e}")
-        
+
         import time
         time.sleep(1.0)
-        
+
         processes = multiprocessing.active_children()
         if processes:
             self.logger.warning(f"Found {len(processes)} active processes after pipeline stop, force cleaning up...")
@@ -245,7 +265,7 @@ class PipelineManager:
                             process.join(timeout=0.2)
                     except Exception as e:
                         self.logger.error(f"Error killing process {process.pid}: {e}")
-        
+
         remaining = multiprocessing.active_children()
         if remaining:
             self.logger.error(f"CRITICAL: Still {len(remaining)} processes alive after cleanup!")
@@ -255,14 +275,12 @@ class PipelineManager:
                     if hasattr(process, 'kill'):
                         process.kill()
                     else:
-                        if os.name == 'nt':  
-                            subprocess.run(['taskkill', '/F', '/PID', str(process.pid)], 
-                                         capture_output=True)
-                        else:  
-                            os.kill(process.pid, 9)  
+                        if os.name == 'nt':
+                            subprocess.run(['taskkill', '/F', '/PID', str(process.pid)],
+                                           capture_output=True)
+                        else:
+                            os.kill(process.pid, 9)
                 except Exception as e:
                     self.logger.error(f"Failed to kill process {process.pid}: {e}")
-        
+
         self.logger.info("PipelineManager shutdown completed")
-
-

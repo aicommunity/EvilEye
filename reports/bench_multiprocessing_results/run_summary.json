@@ -1,0 +1,97 @@
+{
+  "started_at": "2026-05-13T14:39:05",
+  "manifest": "reports/bench_multiprocessing/configs/manifest.json",
+  "timeout_sec": 240,
+  "sample_interval_sec": 2.0,
+  "runs": [
+    {
+      "camera_count": 1,
+      "mode": "thread",
+      "config": "reports/bench_multiprocessing/configs/bench_01cam_thread.json",
+      "log": "reports/bench_multiprocessing_results/logs/01cam_thread.log",
+      "samples": "reports/bench_multiprocessing_results/samples/01cam_thread.csv",
+      "exit_code": 0,
+      "timed_out": false,
+      "terminate_ok": true,
+      "elapsed_sec": 136.15
+    },
+    {
+      "camera_count": 1,
+      "mode": "process",
+      "config": "reports/bench_multiprocessing/configs/bench_01cam_process.json",
+      "log": "reports/bench_multiprocessing_results/logs/01cam_process.log",
+      "samples": "reports/bench_multiprocessing_results/samples/01cam_process.csv",
+      "exit_code": -7,
+      "timed_out": false,
+      "terminate_ok": true,
+      "elapsed_sec": 23.558
+    },
+    {
+      "camera_count": 2,
+      "mode": "thread",
+      "config": "reports/bench_multiprocessing/configs/bench_02cam_thread.json",
+      "log": "reports/bench_multiprocessing_results/logs/02cam_thread.log",
+      "samples": "reports/bench_multiprocessing_results/samples/02cam_thread.csv",
+      "exit_code": 0,
+      "timed_out": false,
+      "terminate_ok": true,
+      "elapsed_sec": 141.761
+    },
+    {
+      "camera_count": 2,
+      "mode": "process",
+      "config": "reports/bench_multiprocessing/configs/bench_02cam_process.json",
+      "log": "reports/bench_multiprocessing_results/logs/02cam_process.log",
+      "samples": "reports/bench_multiprocessing_results/samples/02cam_process.csv",
+      "exit_code": 0,
+      "timed_out": false,
+      "terminate_ok": true,
+      "elapsed_sec": 39.382
+    },
+    {
+      "camera_count": 3,
+      "mode": "thread",
+      "config": "reports/bench_multiprocessing/configs/bench_03cam_thread.json",
+      "log": "reports/bench_multiprocessing_results/logs/03cam_thread.log",
+      "samples": "reports/bench_multiprocessing_results/samples/03cam_thread.csv",
+      "exit_code": 0,
+      "timed_out": false,
+      "terminate_ok": true,
+      "elapsed_sec": 145.692
+    },
+    {
+      "camera_count": 3,
+      "mode": "process",
+      "config": "reports/bench_multiprocessing/configs/bench_03cam_process.json",
+      "log": "reports/bench_multiprocessing_results/logs/03cam_process.log",
+      "samples": "reports/bench_multiprocessing_results/samples/03cam_process.csv",
+      "exit_code": -7,
+      "timed_out": false,
+      "terminate_ok": true,
+      "elapsed_sec": 36.945
+    },
+    {
+      "camera_count": 4,
+      "mode": "thread",
+      "config": "reports/bench_multiprocessing/configs/bench_04cam_thread.json",
+      "log": "reports/bench_multiprocessing_results/logs/04cam_thread.log",
+      "samples": "reports/bench_multiprocessing_results/samples/04cam_thread.csv",
+      "exit_code": 0,
+      "timed_out": false,
+      "terminate_ok": true,
+      "elapsed_sec": 149.375
+    },
+    {
+      "camera_count": 4,
+      "mode": "process",
+      "config": "reports/bench_multiprocessing/configs/bench_04cam_process.json",
+      "log": "reports/bench_multiprocessing_results/logs/04cam_process.log",
+      "samples": "reports/bench_multiprocessing_results/samples/04cam_process.csv",
+      "exit_code": 0,
+      "timed_out": false,
+      "terminate_ok": true,
+      "elapsed_sec": 76.704
+    }
+  ],
+  "finished_at": "2026-05-13T14:51:35"
+}

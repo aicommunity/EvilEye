@@ -9,7 +9,13 @@ class ZoneEvent(Event):
         self.zone = zone
         self.object_id = obj.object_id
         if not is_finished:
-            self.img_entered = copy.deepcopy(obj.last_image)
+            # Use shallow copy + numpy array copy instead of deepcopy for images
+            if obj.last_image and hasattr(obj.last_image, 'image') and obj.last_image.image is not None:
+                self.img_entered = copy.copy(obj.last_image)
+                if hasattr(self.img_entered, 'image'):
+                    self.img_entered.image = obj.last_image.image.copy()
+            else:
+                self.img_entered = obj.last_image
             self.img_left = None
             self.box_entered = obj.track.bounding_box
             self.box_left = None
@@ -19,7 +25,13 @@ class ZoneEvent(Event):
             self.video_path_left = None
         else:
             self.img_entered = None
-            self.img_left = copy.deepcopy(obj.last_image)
+            # Use shallow copy + numpy array copy instead of deepcopy for images
+            if obj.last_image and hasattr(obj.last_image, 'image') and obj.last_image.image is not None:
+                self.img_left = copy.copy(obj.last_image)
+                if hasattr(self.img_left, 'image'):
+                    self.img_left.image = obj.last_image.image.copy()
+            else:
+                self.img_left = obj.last_image
             self.box_entered = None
             self.box_left = obj.track.bounding_box
             self.time_entered = None

@@ -1,0 +1,1043 @@
+import {
+  ApiError,
+  authApi,
+  journalsApi,
+  logsApi,
+  stateApi,
+  systemApi,
+  configsList,
+  configGet,
+  configCreate,
+  configUpdate,
+  configDelete,
+  runsList,
+  runGet,
+  runCreate,
+  runStart,
+  runStop,
+  runDelete,
+  streamSnapshotUrl,
+  streamMjpgUrl,
+  streamStop,
+  streamStatus,
+  type ConfigRun,
+  type StateRun,
+  type StateCamera,
+} from './api.js';
+
+type PanelId = 'overview' | 'cameras' | 'journals' | 'logs' | 'configs' | 'runs' | 'history';
+
+const navOverview = document.getElementById('nav-overview')!;
+const navCameras = document.getElementById('nav-cameras')!;
+const navJournals = document.getElementById('nav-journals')!;
+const navLogs = document.getElementById('nav-logs')!;
+const navConfigs = document.getElementById('nav-configs')!;
+const navRuns = document.getElementById('nav-runs')!;
+const navHistory = document.getElementById('nav-history')!;
+const panelOverview = document.getElementById('panel-overview')!;
+const panelCameras = document.getElementById('panel-cameras')!;
+const panelJournals = document.getElementById('panel-journals')!;
+const panelLogs = document.getElementById('panel-logs')!;
+const panelConfigs = document.getElementById('panel-configs')!;
+const panelRuns = document.getElementById('panel-runs')!;
+const panelHistory = document.getElementById('panel-history')!;
+const historyRefreshBtn = document.getElementById('history-refresh-btn')!;
+const historyListEl = document.getElementById('history-list')!;
+const journalFilterSource = document.getElementById('journal-filter-source') as HTMLInputElement;
+const journalFilterEvent = document.getElementById('journal-filter-event') as HTMLInputElement;
+
+const overviewRefreshBtn = document.getElementById('overview-refresh-btn')!;
+const overviewCardsEl = document.getElementById('overview-cards')!;
+const overviewRunsEl = document.getElementById('overview-runs')!;
+const camerasRefreshBtn = document.getElementById('cameras-refresh-btn')!;
+const camerasListEl = document.getElementById('cameras-list')!;
+const journalsRefreshBtn = document.getElementById('journals-refresh-btn')!;
+const journalEventsEl = document.getElementById('journal-events')!;
+const journalObjectsEl = document.getElementById('journal-objects')!;
+const journalHistoryEl = document.getElementById('journal-history')!;
+const logsRefreshBtn = document.getElementById('logs-refresh-btn')!;
+const logsListEl = document.getElementById('logs-list')!;
+
+const configSearchInput = document.getElementById('config-search') as HTMLInputElement;
+const configsListEl = document.getElementById('configs-list')!;
+const configCreateBtn = document.getElementById('config-create-btn')!;
+const configModal = document.getElementById('config-modal')!;
+const configModalTitle = document.getElementById('config-modal-title')!;
+const configNameInput = document.getElementById('config-name') as HTMLInputElement;
+const configBodyTextarea = document.getElementById('config-body') as HTMLTextAreaElement;
+const configSaveBtn = document.getElementById('config-save-btn')!;
+const configModalClose = document.getElementById('config-modal-close')!;
+const configCloseBtn = document.getElementById('config-close-btn')!;
+
+const runSearchInput = document.getElementById('run-search') as HTMLInputElement;
+const runsListEl = document.getElementById('runs-list')!;
+const runRefreshBtn = document.getElementById('run-refresh-btn')!;
+const runConfigSelect = document.getElementById('run-config-select') as HTMLSelectElement;
+const runNameInput = document.getElementById('run-name') as HTMLInputElement;
+const runCreateBtn = document.getElementById('run-create-btn')!;
+const runUseBodyCheck = document.getElementById('run-use-body') as HTMLInputElement;
+const runBodyWrap = document.getElementById('run-body-wrap')!;
+const runBodyTextarea = document.getElementById('run-body') as HTMLTextAreaElement;
+
+const runDetailModal = document.getElementById('run-detail-modal')!;
+const runDetailRid = document.getElementById('run-detail-rid')!;
+const runDetailName = document.getElementById('run-detail-name')!;
+const runDetailState = document.getElementById('run-detail-state')!;
+const runDetailConfigPath = document.getElementById('run-detail-config-path')!;
+const runDetailPid = document.getElementById('run-detail-pid')!;
+const runDetailError = document.getElementById('run-detail-error')!;
+const runDetailActions = document.getElementById('run-detail-actions')!;
+const runDetailClose = document.getElementById('run-detail-close')!;
+
+const streamContainer = document.getElementById('stream-container')!;
+const streamRidEl = document.getElementById('stream-rid')!;
+const streamNameEl = document.getElementById('stream-name')!;
+const streamStateEl = document.getElementById('stream-state')!;
+const streamStatusEl = document.getElementById('stream-status')!;
+const streamFrame = document.getElementById('stream-frame') as HTMLImageElement;
+const streamBackBtn = document.getElementById('stream-back-btn')!;
+const streamFpsInput = document.getElementById('stream-fps-input') as HTMLInputElement;
+const streamApplyFpsBtn = document.getElementById('stream-apply-fps-btn')!;
+
+const footerVersion = document.getElementById('footer-version')!;
+const errorToast = document.getElementById('error-toast')!;
+const successToast = document.getElementById('success-toast')!;
+const authStatus = document.getElementById('auth-status')!;
+const authUserLabel = document.getElementById('auth-user-label')!;
+const authLogoutBtn = document.getElementById('auth-logout-btn')!;
+const authModal = document.getElementById('auth-modal')!;
+const authUsernameInput = document.getElementById('auth-username') as HTMLInputElement;
+const authPasswordInput = document.getElementById('auth-password') as HTMLInputElement;
+const authLoginBtn = document.getElementById('auth-login-btn')!;
+
+let currentStreamRid: number | null = null;
+let currentStreamSourceId: number | null = null;
+let streamPollTimer: number | null = null;
+let cameraPreviewTimer: number | null = null;
+let activePanel: PanelId = 'overview';
+let configEditName: string | null = null;
+let runsCache: ConfigRun[] = [];
+let configNamesCache: string[] = [];
+let authEnabled = false;
+let currentPermissions = new Set<string>();
+
+const stateLabels: Record<string, string> = {
+  created: 'created',
+  starting: 'starting',
+  running: 'running',
+  stopping: 'stopping',
+  stopped: 'stopped',
+  error: 'error',
+};
+
+function showError(msg: string): void {
+  errorToast.textContent = msg;
+  errorToast.classList.add('show');
+  setTimeout(() => errorToast.classList.remove('show'), 4000);
+}
+
+function showSuccess(msg: string): void {
+  successToast.textContent = msg;
+  successToast.classList.add('show');
+  setTimeout(() => successToast.classList.remove('show'), 3000);
+}
+
+function escapeHtml(s: string): string {
+  const div = document.createElement('div');
+  div.textContent = s;
+  return div.innerHTML;
+}
+
+function parseOptionalNumber(value: string | undefined): number | null {
+  if (value == null || value === '') return null;
+  const parsed = Number(value);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function hasPermission(permission: string): boolean {
+  if (!authEnabled) return true;
+  return currentPermissions.has(permission) || currentPermissions.has('system:admin');
+}
+
+function stateBadge(state: string): string {
+  const badgeClass =
+    state === 'running'
+      ? 'badge-running'
+      : state === 'error'
+      ? 'badge-error'
+      : state === 'starting'
+      ? 'badge-pending'
+      : 'badge-stopped';
+  return `<span class="badge ${badgeClass}">${escapeHtml(stateLabels[state] ?? state)}</span>`;
+}
+
+function sourceCountLabel(count: number): string {
+  if (count % 10 === 1 && count % 100 !== 11) return `${count} источник`;
+  if (count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14)) return `${count} источника`;
+  return `${count} источников`;
+}
+
+function renderOverviewRunItem(run: StateRun, options?: { primary?: boolean }): string {
+  const sourceCount = Array.isArray(run.sources) ? run.sources.length : 0;
+  const label = options?.primary ? 'Выделен сервером' : sourceCount > 0 ? sourceCountLabel(sourceCount) : 'Без источников';
+  return `<li class="overview-run">
+    <span class="run-name">${escapeHtml(run.name ?? `Запуск ${run.id}`)}</span>
+    <span class="run-id">#${run.id}</span>
+    ${stateBadge(run.state)}
+    <span class="run-config">${escapeHtml(run.pipeline_class ?? 'pipeline: n/a')}</span>
+    <span class="run-id">${escapeHtml(label)}</span>
+    ${run.latest_frame_available ? '<span class="badge badge-running">preview</span>' : ''}
+    <span class="overview-run-actions">
+      <button type="button" class="btn btn-sm btn-outline overview-run-detail" data-rid="${run.id}">Просмотр</button>
+      <button type="button" class="btn btn-sm btn-primary overview-run-stream" data-rid="${run.id}" ${run.state === 'running' ? '' : 'disabled'}>Поток</button>
+    </span>
+  </li>`;
+}
+
+function bindOverviewRunActions(): void {
+  overviewRunsEl.querySelectorAll<HTMLElement>('[data-rid]').forEach((btn) => {
+    const ridAttr = btn.dataset.rid;
+    const rid = Number(ridAttr);
+    if (Number.isNaN(rid)) return;
+    btn.addEventListener('click', () => {
+      if (btn.classList.contains('overview-run-detail')) {
+        openRunDetail(rid);
+      } else if (btn.classList.contains('overview-run-stream')) {
+        openStream(rid);
+      }
+    });
+  });
+}
+
+function streamAvailabilityText(status: {
+  stream_active: boolean;
+  has_frame: boolean;
+  web_stream_available: boolean;
+  frame_dir_configured: boolean;
+}): string {
+  if (status.stream_active) return 'Viewer active';
+  if (status.has_frame) return 'Frame ready';
+  if (!status.frame_dir_configured) return 'No web preview';
+  if (!status.web_stream_available) return 'Stream unavailable';
+  return 'No frame';
+}
+
+function openAuthModal(): void {
+  authModal.classList.add('open');
+}
+
+function closeAuthModal(): void {
+  authModal.classList.remove('open');
+  authPasswordInput.value = '';
+}
+
+function updateAuthUi(user: { username: string; role: string } | null): void {
+  authStatus.classList.toggle('hidden', !authEnabled || user == null);
+  authUserLabel.textContent = user ? `${user.username} (${user.role})` : '';
+}
+
+function applyAccessPolicy(): void {
+  navJournals.classList.toggle('hidden', !hasPermission('journal:view'));
+  navLogs.classList.toggle('hidden', !hasPermission('journal:view'));
+  navConfigs.classList.toggle('hidden', !hasPermission('config:view'));
+  navRuns.classList.toggle('hidden', !hasPermission('runtime:control'));
+  navHistory.classList.toggle('hidden', !hasPermission('runtime:view'));
+  configCreateBtn.classList.toggle('hidden', !hasPermission('config:edit'));
+  panelRuns.querySelector('.create-card')?.classList.toggle('hidden', !hasPermission('runtime:control'));
+}
+
+function handleApiError(error: unknown, fallbackMessage: string): void {
+  if (error instanceof ApiError && error.status === 401) {
+    openAuthModal();
+    showError('Требуется авторизация');
+    return;
+  }
+  if (error instanceof ApiError && error.status === 403) {
+    showError(error.message);
+    return;
+  }
+  showError(error instanceof Error ? error.message : fallbackMessage);
+}
+
+async function loadSystemInfo(): Promise<void> {
+  try {
+    const v = await systemApi.version();
+    footerVersion.textContent = `EvilEye ${v.evileye}`;
+  } catch {
+    footerVersion.textContent = '—';
+  }
+}
+
+async function bootstrapAuth(): Promise<boolean> {
+  try {
+    const me = await authApi.me();
+    authEnabled = me.auth_enabled;
+    currentPermissions = new Set(me.permissions ?? []);
+    updateAuthUi(me.user);
+    applyAccessPolicy();
+    if (!me.auth_enabled) {
+      closeAuthModal();
+      return true;
+    }
+    if (me.user) {
+      closeAuthModal();
+      return true;
+    }
+    openAuthModal();
+    return false;
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 401) {
+      authEnabled = true;
+      currentPermissions = new Set();
+      updateAuthUi(null);
+      applyAccessPolicy();
+      openAuthModal();
+      return false;
+    }
+    handleApiError(e, 'Не удалось проверить авторизацию');
+    return false;
+  }
+}
+
+async function login(): Promise<void> {
+  const username = authUsernameInput.value.trim();
+  const password = authPasswordInput.value;
+  if (!username || !password) {
+    showError('Введите имя пользователя и пароль');
+    return;
+  }
+  authLoginBtn.setAttribute('disabled', 'true');
+  try {
+    const result = await authApi.login(username, password);
+    authEnabled = result.auth_enabled;
+    currentPermissions = new Set(result.permissions ?? []);
+    updateAuthUi(result.user);
+    applyAccessPolicy();
+    closeAuthModal();
+    showSuccess('Вход выполнен');
+    await refreshAll();
+  } catch (e) {
+    handleApiError(e, 'Не удалось выполнить вход');
+  } finally {
+    authLoginBtn.removeAttribute('disabled');
+  }
+}
+
+async function logout(): Promise<void> {
+  try {
+    await authApi.logout();
+    currentPermissions = new Set();
+    updateAuthUi(null);
+    applyAccessPolicy();
+    openAuthModal();
+    showSuccess('Сессия завершена');
+  } catch (e) {
+    handleApiError(e, 'Не удалось завершить сессию');
+  }
+}
+
+function showPanel(panel: PanelId): void {
+  activePanel = panel;
+  panelOverview.classList.toggle('active', panel === 'overview');
+  panelCameras.classList.toggle('active', panel === 'cameras');
+  panelJournals.classList.toggle('active', panel === 'journals');
+  panelLogs.classList.toggle('active', panel === 'logs');
+  panelConfigs.classList.toggle('active', panel === 'configs');
+  panelRuns.classList.toggle('active', panel === 'runs');
+  panelHistory.classList.toggle('active', panel === 'history');
+  navOverview.classList.toggle('active', panel === 'overview');
+  navCameras.classList.toggle('active', panel === 'cameras');
+  navJournals.classList.toggle('active', panel === 'journals');
+  navLogs.classList.toggle('active', panel === 'logs');
+  navConfigs.classList.toggle('active', panel === 'configs');
+  navRuns.classList.toggle('active', panel === 'runs');
+  navHistory.classList.toggle('active', panel === 'history');
+}
+
+function renderConfigsList(names: string[], searchQuery: string): void {
+  const q = searchQuery.trim().toLowerCase();
+  const filtered = q ? names.filter((n) => n.toLowerCase().includes(q)) : names;
+  configsListEl.innerHTML =
+    filtered.length === 0
+      ? '<li class="empty">' + (q ? 'Ничего не найдено.' : 'Конфигов пока нет. Создайте первый.') + '</li>'
+      : filtered
+          .map(
+            (n) =>
+              `<li class="config-item" data-name="${n.replace(/"/g, '&quot;')}">
+                <span class="config-name">${escapeHtml(n)}</span>
+                <div class="config-actions">
+                  <button type="button" class="btn btn-sm btn-outline config-view" data-name="${n.replace(/"/g, '&quot;')}">Просмотр</button>
+                  <button type="button" class="btn btn-sm btn-outline config-edit" data-name="${n.replace(/"/g, '&quot;')}">Изменить</button>
+                  <button type="button" class="btn btn-sm btn-danger config-delete" data-name="${n.replace(/"/g, '&quot;')}">Удалить</button>
+                </div>
+              </li>`
+          )
+          .join('');
+}
+
+async function loadConfigs(): Promise<void> {
+  if (!hasPermission('config:view')) {
+    configsListEl.innerHTML = '<li class="empty">Доступ к настройкам доступен только администратору.</li>';
+    return;
+  }
+  try {
+    const names = await configsList();
+    configNamesCache = names;
+    renderConfigsList(names, configSearchInput?.value?.trim() ?? '');
+    runConfigSelect.innerHTML = names.map((n) => `<option value="${n.replace(/"/g, '&quot;')}">${escapeHtml(n)}</option>`).join('');
+  } catch (e) {
+    handleApiError(e, 'Не удалось загрузить список конфигов');
+  }
+}
+
+async function openConfigModal(mode: 'view' | 'edit' | 'create', name?: string): Promise<void> {
+  configEditName = null;
+  configModal.classList.add('open');
+  configBodyTextarea.readOnly = mode === 'view';
+  configNameInput.readOnly = mode !== 'create';
+  configSaveBtn.classList.toggle('hidden', mode === 'view');
+  if (mode === 'create') {
+    configModalTitle.textContent = 'Новый конфиг';
+    configNameInput.value = '';
+    configBodyTextarea.value = '{}';
+    return;
+  }
+  if (!name) return;
+  configModalTitle.textContent = mode === 'edit' ? `Изменить ${name}` : `Просмотр ${name}`;
+  configNameInput.value = name;
+  configEditName = name;
+  try {
+    const body = await configGet(name);
+    configBodyTextarea.value = JSON.stringify(body, null, 2);
+  } catch (e) {
+    handleApiError(e, 'Не удалось загрузить конфиг');
+  }
+}
+
+function closeConfigModal(): void {
+  configModal.classList.remove('open');
+}
+
+async function saveConfig(): Promise<void> {
+  if (!hasPermission('config:edit')) {
+    showError('Только администратор может менять конфиги');
+    return;
+  }
+  const name = configEditName ?? configNameInput.value.trim();
+  if (!name) {
+    showError('Введите имя файла');
+    return;
+  }
+  try {
+    const body = JSON.parse(configBodyTextarea.value || '{}');
+    if (configEditName) {
+      await configUpdate(name, body);
+      showSuccess('Конфиг обновлён');
+    } else {
+      await configCreate(name, body);
+      showSuccess('Конфиг создан');
+    }
+    closeConfigModal();
+    await loadConfigs();
+  } catch (e) {
+    handleApiError(e, 'Не удалось сохранить конфиг');
+  }
+}
+
+async function deleteConfig(name: string): Promise<void> {
+  if (!hasPermission('config:edit')) {
+    showError('Только администратор может менять конфиги');
+    return;
+  }
+  if (!confirm(`Удалить конфиг ${name}?`)) return;
+  try {
+    await configDelete(name);
+    showSuccess('Конфиг удалён');
+    await loadConfigs();
+  } catch (e) {
+    handleApiError(e, 'Не удалось удалить конфиг');
+  }
+}
+
+function renderRunsList(runs: ConfigRun[], searchQuery: string): void {
+  const q = searchQuery.trim().toLowerCase();
+  const filtered = q
+    ? runs.filter(
+        (r) =>
+          String(r.id).includes(q) ||
+          (r.name ?? '').toLowerCase().includes(q) ||
+          (r.config_path ?? '').toLowerCase().includes(q) ||
+          (r.state ?? '').toLowerCase().includes(q)
+      )
+    : runs;
+  runsListEl.innerHTML =
+    filtered.length === 0
+      ? '<li class="empty">' + (q ? 'Ничего не найдено.' : 'Запусков пока нет. Создайте выше.') + '</li>'
+      : filtered
+          .map(
+            (r) => `
+        <li class="run-item" data-rid="${r.id}">
+          <div class="run-info">
+            <span class="run-name">${escapeHtml(r.name ?? `Запуск ${r.id}`)}</span>
+            <span class="run-id">#${r.id}</span>
+            ${stateBadge(r.state)}
+            ${r.source ? `<span class="run-id">${escapeHtml(r.source)}</span>` : ''}
+            <span class="run-config">${escapeHtml(r.config_path)}</span>
+            ${r.error ? `<span class="run-error">${escapeHtml(r.error)}</span>` : ''}
+          </div>
+          <div class="run-actions">
+            <button type="button" class="btn btn-sm btn-outline run-detail" data-rid="${r.id}">Просмотр</button>
+            ${
+              r.state === 'running'
+                ? `<button type="button" class="btn btn-sm btn-danger run-stop" data-rid="${r.id}">Остановить</button>
+                   <button type="button" class="btn btn-sm btn-primary run-stream" data-rid="${r.id}">Поток</button>`
+                : `<button type="button" class="btn btn-sm btn-success run-start" data-rid="${r.id}">Запустить</button>
+                   <button type="button" class="btn btn-sm btn-outline run-delete" data-rid="${r.id}">Удалить</button>`
+            }
+          </div>
+        </li>`
+          )
+          .join('');
+}
+
+async function loadRuns(): Promise<void> {
+  if (!hasPermission('runtime:view')) {
+    runsListEl.innerHTML = '<li class="empty">Недостаточно прав для просмотра запусков.</li>';
+    return;
+  }
+  try {
+    const map = await runsList();
+    runsCache = Object.entries(map)
+      .map(([id, r]) => ({ ...r, id: Number(id) }))
+      .sort((a, b) => a.id - b.id);
+    renderRunsList(runsCache, runSearchInput?.value?.trim() ?? '');
+  } catch (e) {
+    handleApiError(e, 'Не удалось загрузить список запусков');
+  }
+}
+
+function renderOverview(overview: Awaited<ReturnType<typeof stateApi.overview>>): void {
+  const activeRuns = overview.active_runs ?? [];
+  const historyRuns = overview.history_runs ?? [];
+  const allRuns = [...activeRuns];
+  historyRuns.forEach((run) => {
+    if (!allRuns.some((item) => item.id === run.id)) allRuns.push(run);
+  });
+  overviewCardsEl.innerHTML = `
+    <div class="metric-card"><span class="metric-label">Статус сервера</span><strong>${escapeHtml(overview.server.status)}</strong></div>
+    <div class="metric-card"><span class="metric-label">Активные запуски</span><strong>${overview.server.active_runs_total}</strong></div>
+    <div class="metric-card"><span class="metric-label">Камеры</span><strong>${overview.server.cameras_total}</strong></div>
+    <div class="metric-card"><span class="metric-label">Web preview</span><strong>${overview.server.web_previews_available}</strong></div>
+    <div class="metric-card"><span class="metric-label">История запусков</span><strong>${overview.server.history_runs_total}</strong></div>`;
+  overviewRunsEl.innerHTML = allRuns.length
+    ? allRuns.map((run) => renderOverviewRunItem(run)).join('')
+    : '<li class="empty">Runtime-запусков нет.</li>';
+  bindOverviewRunActions();
+}
+
+function renderCameras(cameras: StateCamera[]): void {
+  const ts = Date.now();
+  const groups = new Map<number, StateCamera[]>();
+  cameras.forEach((camera) => {
+    const runCameras = groups.get(camera.run_id) ?? [];
+    runCameras.push(camera);
+    groups.set(camera.run_id, runCameras);
+  });
+  camerasListEl.innerHTML = cameras.length
+    ? `<div class="camera-groups">${Array.from(groups.entries())
+        .map(([runId, runCameras]) => {
+          const first = runCameras[0];
+          return `<section class="camera-run-group">
+            <div class="camera-group-header">
+              <span class="run-name">${escapeHtml(first.run_name ?? `Запуск ${runId}`)}</span>
+              <span class="run-id">#${runId}</span>
+              ${stateBadge(first.run_state)}
+              <span class="run-config">${escapeHtml(first.pipeline_class ?? 'pipeline n/a')}</span>
+            </div>
+            <div class="camera-group-grid">
+              ${runCameras
+                .map(
+                  (camera) =>
+                    `<article class="camera-card"><div class="camera-card-head"><span class="run-name">${escapeHtml(camera.source_name)}</span>${stateBadge(camera.run_state)}</div><p class="hint">Run #${camera.run_id} · source #${camera.source_id ?? '—'} · ${escapeHtml(camera.run_name ?? 'без имени')}</p><p class="camera-meta">${escapeHtml(camera.source_type ?? 'source n/a')} · ${escapeHtml(camera.address ?? 'адрес не указан')}</p>${camera.preview_available ? `<img src="${streamSnapshotUrl(camera.run_id, camera.source_id)}&t=${ts}" alt="Preview ${escapeHtml(camera.source_name)}" class="camera-preview" data-rid="${camera.run_id}" data-sid="${camera.source_id ?? ''}">` : `<div class="camera-preview camera-preview-empty">${camera.run_state === 'running' ? 'Кадр ещё не готов' : 'Запуск остановлен'}</div>`}<div class="camera-actions"><button type="button" class="btn btn-sm btn-outline camera-open-stream" data-rid="${camera.run_id}" data-sid="${camera.source_id ?? ''}" ${camera.preview_available ? '' : 'disabled'}>Открыть поток</button></div></article>`
+                )
+                .join('')}
+            </div>
+          </section>`;
+        })
+        .join('')}</div>`
+    : '<p class="empty">Сведения о камерах пока недоступны.</p>';
+  camerasListEl.querySelectorAll('.camera-open-stream').forEach((btn) => {
+    btn.addEventListener('click', () =>
+      openStream(Number((btn as HTMLElement).dataset.rid), parseOptionalNumber((btn as HTMLElement).dataset.sid))
+    );
+  });
+  camerasListEl.querySelectorAll<HTMLImageElement>('.camera-preview[data-rid][data-sid]').forEach((img) => {
+    img.addEventListener('error', () => disableCameraPreview(img));
+  });
+  scheduleCameraPreviewRefresh();
+}
+
+function stopCameraPreviewRefresh(): void {
+  if (cameraPreviewTimer != null) {
+    window.clearInterval(cameraPreviewTimer);
+    cameraPreviewTimer = null;
+  }
+}
+
+function disableCameraPreview(img: HTMLImageElement): void {
+  const placeholder = document.createElement('div');
+  placeholder.className = 'camera-preview camera-preview-empty';
+  placeholder.textContent = 'Preview остановлен';
+  const objectUrl = img.dataset.objectUrl;
+  if (objectUrl) {
+    URL.revokeObjectURL(objectUrl);
+  }
+  img.replaceWith(placeholder);
+  if (!camerasListEl.querySelector('.camera-preview[data-rid][data-sid]')) {
+    stopCameraPreviewRefresh();
+  }
+}
+
+function requestCameraPreview(img: HTMLImageElement, rid: number, sid: number | null): void {
+  if (img.dataset.previewLoading === '1') {
+    img.dataset.previewPending = '1';
+    return;
+  }
+  img.dataset.previewLoading = '1';
+  img.dataset.previewPending = '0';
+  const baseUrl = streamSnapshotUrl(rid, sid);
+  const url = `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}t=${Date.now()}`;
+  void fetch(url, { credentials: 'same-origin', cache: 'no-store' })
+    .then((response) => {
+      if (!response.ok) {
+        throw new Error(`Snapshot request failed: ${response.status}`);
+      }
+      return response.blob();
+    })
+    .then((blob) => {
+      if (!document.body.contains(img)) {
+        return;
+      }
+      const nextObjectUrl = URL.createObjectURL(blob);
+      const previousObjectUrl = img.dataset.objectUrl;
+      img.src = nextObjectUrl;
+      img.dataset.objectUrl = nextObjectUrl;
+      if (previousObjectUrl) {
+        URL.revokeObjectURL(previousObjectUrl);
+      }
+    })
+    .catch(() => {
+      if (document.body.contains(img)) {
+        disableCameraPreview(img);
+      }
+    })
+    .finally(() => {
+      img.dataset.previewLoading = '0';
+      if (img.dataset.previewPending === '1' && document.body.contains(img)) {
+        requestCameraPreview(img, rid, sid);
+      }
+    });
+}
+
+function refreshCameraPreviews(): void {
+  if (activePanel !== 'cameras' || document.visibilityState !== 'visible') {
+    return;
+  }
+  camerasListEl.querySelectorAll<HTMLImageElement>('.camera-preview[data-rid][data-sid]').forEach((img) => {
+    const rid = Number(img.dataset.rid);
+    const sid = parseOptionalNumber(img.dataset.sid);
+    if (!Number.isNaN(rid)) {
+      const run = runsCache.find((item) => item.id === rid);
+      if (run && run.state !== 'running') {
+        disableCameraPreview(img);
+        return;
+      }
+      requestCameraPreview(img, rid, sid);
+    }
+  });
+}
+
+function scheduleCameraPreviewRefresh(): void {
+  stopCameraPreviewRefresh();
+  if (!camerasListEl.querySelector('.camera-preview[data-rid][data-sid]')) {
+    return;
+  }
+  cameraPreviewTimer = window.setInterval(() => refreshCameraPreviews(), 1500);
+}
+
+function renderJournalTable(container: HTMLElement, items: Record<string, unknown>[], columns: string[], emptyText: string): void {
+  if (!items.length) {
+    container.innerHTML = `<p class="empty">${emptyText}</p>`;
+    return;
+  }
+  const header = columns.map((name) => `<th>${escapeHtml(name)}</th>`).join('');
+  const rows = items
+    .map((item) => `<tr>${columns.map((column) => `<td>${escapeHtml(String(item[column] ?? '—'))}</td>`).join('')}</tr>`)
+    .join('');
+  container.innerHTML = `<table class="journal-table"><thead><tr>${header}</tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+async function loadOverview(): Promise<void> {
+  if (!hasPermission('live:view')) return;
+  renderOverview(await stateApi.overview());
+}
+
+async function loadCameras(): Promise<void> {
+  if (!hasPermission('live:view')) return;
+  renderCameras((await stateApi.cameras('all')).items);
+}
+
+function getJournalFilters(): { source_name?: string; event_type?: string } {
+  const filters: { source_name?: string; event_type?: string } = {};
+  const src = journalFilterSource?.value?.trim();
+  const evt = journalFilterEvent?.value?.trim();
+  if (src) filters.source_name = src;
+  if (evt) filters.event_type = evt;
+  return filters;
+}
+
+async function loadJournals(): Promise<void> {
+  if (!hasPermission('journal:view')) return;
+  const filters = getJournalFilters();
+  const [events, objects, history] = await Promise.all([
+    journalsApi.events(0, 30, filters),
+    journalsApi.objects(0, 30, filters),
+    journalsApi.configHistory(),
+  ]);
+  renderJournalTable(journalEventsEl, events.items, ['event_type', 'source_name', 'information', 'ts'], 'События не найдены.');
+  renderJournalTable(journalObjectsEl, objects.items, ['event_type', 'source_name', 'information', 'ts'], 'Объекты не найдены.');
+  renderJournalTable(journalHistoryEl, history.items, ['job_id', 'project_id', 'configuration_id', 'status', 'creation_time'], 'История конфигураций недоступна.');
+}
+
+async function loadHistory(): Promise<void> {
+  try {
+    const data = await stateApi.runs('all');
+    const runs = data.items ?? [];
+    if (!runs.length) {
+      historyListEl.innerHTML = '<p class="empty">Нет записей истории запусков.</p>';
+      return;
+    }
+    const cols = ['id', 'name', 'pipeline_class', 'state', 'pid', 'error'] as const;
+    const header = cols.map((c) => `<th>${escapeHtml(c)}</th>`).join('');
+    const rows = runs
+      .map(
+        (r) => {
+          const rec = r as unknown as Record<string, unknown>;
+          return `<tr>${cols.map((c) => `<td>${escapeHtml(String(rec[c] ?? '—'))}</td>`).join('')}</tr>`;
+        }
+      )
+      .join('');
+    historyListEl.innerHTML = `<table class="journal-table"><thead><tr>${header}</tr></thead><tbody>${rows}</tbody></table>`;
+  } catch (e) {
+    handleApiError(e, 'Не удалось загрузить историю запусков');
+  }
+}
+
+async function loadLogs(): Promise<void> {
+  if (!hasPermission('journal:view')) return;
+  const logs = await logsApi.runtime();
+  logsListEl.innerHTML = logs.files.length
+    ? logs.files
+        .map((file) => `<article class="log-card"><h3>${escapeHtml(file.name)}</h3><pre>${escapeHtml(file.lines.join('\n'))}</pre></article>`)
+        .join('')
+    : '<p class="empty">Технические логи недоступны.</p>';
+}
+
+async function refreshAll(): Promise<void> {
+  await loadSystemInfo();
+  await loadRuns();
+  await loadOverview();
+  await loadCameras();
+  await loadConfigs();
+  await loadJournals();
+  await loadLogs();
+  await loadHistory();
+}
+
+function openRunDetail(rid: number): void {
+  runDetailRid.textContent = String(rid);
+  runDetailName.textContent = '…';
+  runDetailState.textContent = '…';
+  runDetailConfigPath.textContent = '…';
+  runDetailPid.textContent = '…';
+  runDetailError.textContent = '';
+  runDetailError.classList.add('hidden');
+  runDetailModal.classList.add('open');
+  runGet(rid)
+    .then((run) => {
+      runDetailName.textContent = run.name ?? `Запуск ${rid}`;
+      runDetailState.textContent = stateLabels[run.state] ?? run.state;
+      runDetailState.className = `badge ${run.state === 'running' ? 'badge-running' : 'badge-stopped'}`;
+      runDetailConfigPath.textContent = run.config_path ?? '—';
+      runDetailPid.textContent = run.pid != null ? String(run.pid) : '—';
+      if (run.error) {
+        runDetailError.textContent = run.error;
+        runDetailError.classList.remove('hidden');
+      }
+      runDetailActions.innerHTML =
+        run.state === 'running' || run.state === 'starting'
+          ? `<button type="button" class="btn btn-sm btn-danger run-detail-stop" data-rid="${rid}">Остановить</button><button type="button" class="btn btn-sm btn-primary run-detail-stream" data-rid="${rid}" ${run.state === 'running' ? '' : 'disabled'}>Поток</button>${run.state !== 'running' ? '<span class="run-error">Поток будет доступен после перехода запуска в running.</span>' : ''}`
+          : `<button type="button" class="btn btn-sm btn-success run-detail-start" data-rid="${rid}">Запустить</button><button type="button" class="btn btn-sm btn-outline run-detail-delete" data-rid="${rid}">Удалить</button>`;
+      runDetailActions.querySelectorAll('[data-rid]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const r = Number((btn as HTMLElement).dataset.rid);
+          if (btn.classList.contains('run-detail-start')) void startRun(r);
+          else if (btn.classList.contains('run-detail-stop')) void stopRun(r);
+          else if (btn.classList.contains('run-detail-delete')) void deleteRun(r);
+          else if (btn.classList.contains('run-detail-stream')) {
+            closeRunDetail();
+            openStream(r);
+          }
+        });
+      });
+    })
+    .catch((e) => handleApiError(e, 'Не удалось загрузить данные запуска'));
+}
+
+function closeRunDetail(): void {
+  runDetailModal.classList.remove('open');
+}
+
+async function createRun(): Promise<void> {
+  if (!hasPermission('runtime:control')) {
+    showError('Только администратор может создавать запуски');
+    return;
+  }
+  const useBody = runUseBodyCheck.checked;
+  const payload: { name?: string; config_name?: string; config_body?: Record<string, unknown> } = {
+    name: runNameInput.value?.trim() || undefined,
+  };
+  if (useBody) {
+    try {
+      payload.config_body = JSON.parse(runBodyTextarea.value || '{}');
+    } catch {
+      showError('Неверный JSON в конфигурации');
+      return;
+    }
+  } else {
+    const configName = runConfigSelect.value?.trim();
+    if (!configName) {
+      showError('Выберите конфиг или вставьте свой JSON');
+      return;
+    }
+    payload.config_name = configName;
+  }
+  runCreateBtn.setAttribute('disabled', 'true');
+  try {
+    await runCreate(payload);
+    showSuccess('Запуск создан');
+    await refreshAll();
+    runNameInput.value = '';
+    if (useBody) runBodyTextarea.value = '{}';
+  } catch (e) {
+    handleApiError(e, 'Не удалось создать запуск');
+  } finally {
+    runCreateBtn.removeAttribute('disabled');
+  }
+}
+
+async function startRun(rid: number): Promise<void> {
+  if (!hasPermission('runtime:control')) {
+    showError('Только администратор может управлять запусками');
+    return;
+  }
+  try {
+    await runStart(rid);
+    showSuccess('Запуск стартовал');
+    await refreshAll();
+  } catch (e) {
+    handleApiError(e, 'Не удалось запустить');
+  }
+}
+
+async function stopRun(rid: number): Promise<void> {
+  if (!hasPermission('runtime:control')) {
+    showError('Только администратор может управлять запусками');
+    return;
+  }
+  try {
+    await runStop(rid);
+    if (currentStreamRid === rid) closeStream();
+    camerasListEl.querySelectorAll<HTMLImageElement>(`.camera-preview[data-rid="${rid}"]`).forEach((img) => disableCameraPreview(img));
+    showSuccess('Запуск остановлен');
+    await refreshAll();
+  } catch (e) {
+    handleApiError(e, 'Не удалось остановить');
+  }
+}
+
+async function deleteRun(rid: number): Promise<void> {
+  if (!hasPermission('runtime:control')) {
+    showError('Только администратор может удалять запуски');
+    return;
+  }
+  if (!confirm(`Удалить запуск ${rid}?`)) return;
+  try {
+    await runDelete(rid);
+    showSuccess('Запуск удалён');
+    closeRunDetail();
+    await refreshAll();
+    if (currentStreamRid === rid) closeStream();
+  } catch (e) {
+    handleApiError(e, 'Не удалось удалить запуск');
+  }
+}
+
+function openStream(rid: number, sourceId?: number | null): void {
+  const run = runsCache.find((item) => item.id === rid);
+  if (run && run.state !== 'running') {
+    showError('Поток доступен только для running-запуска.');
+    return;
+  }
+  const fps = streamFpsInput?.value ? Number(streamFpsInput.value) : 10;
+  streamFpsInput.value = String(Math.max(1, Math.min(30, fps)));
+  currentStreamRid = rid;
+  currentStreamSourceId = sourceId ?? null;
+  streamRidEl.textContent = String(rid);
+  streamNameEl.textContent = '…';
+  streamStateEl.textContent = '…';
+  streamStatusEl.textContent = '…';
+  streamFrame.src = streamMjpgUrl(rid, fps, currentStreamSourceId);
+  streamContainer.classList.add('open');
+  streamPollTimer = window.setInterval(() => void pollStreamInfo(), 3000);
+  void pollStreamInfo();
+}
+
+function applyStreamFps(): void {
+  if (currentStreamRid == null) return;
+  const fps = streamFpsInput?.value ? Number(streamFpsInput.value) : 10;
+  const safeFps = Math.max(1, Math.min(30, fps));
+  streamFpsInput.value = String(safeFps);
+  streamFrame.src = streamMjpgUrl(currentStreamRid, safeFps, currentStreamSourceId);
+  showSuccess(`FPS установлен: ${safeFps}`);
+}
+
+async function pollStreamInfo(): Promise<void> {
+  if (currentStreamRid == null) return;
+  try {
+    const run = await runGet(currentStreamRid);
+    if (run.state !== 'running') {
+      closeStream();
+      return;
+    }
+    streamNameEl.textContent = run.name ?? `Запуск ${run.id}`;
+    streamStateEl.textContent = stateLabels[run.state] ?? run.state;
+    streamStateEl.className = `badge ${run.state === 'running' ? 'badge-running' : 'badge-stopped'}`;
+    const status = await streamStatus(currentStreamRid, currentStreamSourceId).catch(() => null);
+    if (!status) {
+      closeStream();
+      return;
+    }
+    if (status) {
+      streamStatusEl.textContent = streamAvailabilityText(status);
+      streamStatusEl.className = status.stream_active || status.has_frame ? 'stream-status-active' : '';
+      if (!status.web_stream_available) {
+        streamFrame.src = '';
+      }
+    }
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 409) {
+      showError(e.message);
+      closeStream();
+    }
+  }
+}
+
+function closeStream(): void {
+  const rid = currentStreamRid;
+  const sourceId = currentStreamSourceId;
+  streamFrame.src = '';
+  streamContainer.classList.remove('open');
+  currentStreamRid = null;
+  currentStreamSourceId = null;
+  if (streamPollTimer != null) {
+    clearInterval(streamPollTimer);
+    streamPollTimer = null;
+  }
+  if (rid != null) {
+    void streamStop(rid, sourceId).catch(() => null);
+  }
+}
+
+function delegateConfigs(e: Event): void {
+  const t = (e.target as HTMLElement).closest('[data-name]');
+  if (!t) return;
+  const name = (t as HTMLElement).dataset.name;
+  if (!name) return;
+  const target = e.target as HTMLElement;
+  if (target.classList.contains('config-view')) void openConfigModal('view', name);
+  else if (target.classList.contains('config-edit')) void openConfigModal('edit', name);
+  else if (target.classList.contains('config-delete')) void deleteConfig(name);
+}
+
+function delegateRuns(e: Event): void {
+  const t = (e.target as HTMLElement).closest('[data-rid]');
+  if (!t) return;
+  const rid = Number((t as HTMLElement).dataset.rid);
+  if (Number.isNaN(rid)) return;
+  const target = e.target as HTMLElement;
+  if (target.classList.contains('run-detail')) openRunDetail(rid);
+  else if (target.classList.contains('run-start')) void startRun(rid);
+  else if (target.classList.contains('run-stop')) void stopRun(rid);
+  else if (target.classList.contains('run-delete')) void deleteRun(rid);
+  else if (target.classList.contains('run-stream')) openStream(rid);
+}
+
+export function initDashboard(): void {
+  navOverview.addEventListener('click', () => showPanel('overview'));
+  navCameras.addEventListener('click', () => showPanel('cameras'));
+  navJournals.addEventListener('click', () => showPanel('journals'));
+  navLogs.addEventListener('click', () => showPanel('logs'));
+  navConfigs.addEventListener('click', () => showPanel('configs'));
+  navRuns.addEventListener('click', () => showPanel('runs'));
+  navHistory.addEventListener('click', () => showPanel('history'));
+  showPanel('overview');
+
+  overviewRefreshBtn.addEventListener('click', () => void refreshAll());
+  camerasRefreshBtn.addEventListener('click', () => void loadCameras());
+  journalsRefreshBtn.addEventListener('click', () => void loadJournals());
+  logsRefreshBtn.addEventListener('click', () => void loadLogs());
+  historyRefreshBtn.addEventListener('click', () => void loadHistory());
+
+  journalFilterSource?.addEventListener('change', () => void loadJournals());
+  journalFilterEvent?.addEventListener('change', () => void loadJournals());
+
+  configCreateBtn.addEventListener('click', () => void openConfigModal('create'));
+  configModalClose.addEventListener('click', closeConfigModal);
+  configModal.querySelector('.modal-backdrop')?.addEventListener('click', closeConfigModal);
+  configSaveBtn.addEventListener('click', () => void saveConfig());
+  configCloseBtn.addEventListener('click', closeConfigModal);
+  configsListEl.addEventListener('click', delegateConfigs);
+  configSearchInput?.addEventListener('input', () => renderConfigsList(configNamesCache, configSearchInput.value ?? ''));
+
+  runUseBodyCheck.addEventListener('change', () => {
+    runBodyWrap.classList.toggle('hidden', !runUseBodyCheck.checked);
+  });
+  runCreateBtn.addEventListener('click', () => void createRun());
+  runRefreshBtn.addEventListener('click', () => void loadRuns());
+  runsListEl.addEventListener('click', delegateRuns);
+  runSearchInput?.addEventListener('input', () => renderRunsList(runsCache, runSearchInput.value ?? ''));
+
+  runDetailClose.addEventListener('click', closeRunDetail);
+  runDetailModal.querySelector('.modal-backdrop')?.addEventListener('click', closeRunDetail);
+
+  streamBackBtn.addEventListener('click', closeStream);
+  streamApplyFpsBtn.addEventListener('click', applyStreamFps);
+
+  authLoginBtn.addEventListener('click', () => void login());
+  authLogoutBtn.addEventListener('click', () => void logout());
+  authPasswordInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      void login();
+    }
+  });
+
+  void (async () => {
+    const ok = await bootstrapAuth();
+    if (!ok) return;
+    await refreshAll();
+  })();
+}
+
+initDashboard();

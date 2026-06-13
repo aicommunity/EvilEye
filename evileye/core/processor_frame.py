@@ -12,7 +12,7 @@ class ProcessorFrame(ProcessorBase):
             if not isinstance(frames_list, (list, tuple)):
                 # Single Frame object
                 frames_list = [frames_list]
-            
+
             for item in frames_list:
                 # Handle both Frame objects and tuples [data, frame]
                 if isinstance(item, tuple) and len(item) == 2:
@@ -22,7 +22,7 @@ class ProcessorFrame(ProcessorBase):
                 else:
                     # Assume it's a Frame object
                     frame_to_process = item
-                
+
                 is_processor_found = False
                 for processor in self.processors:
                     source_ids = processor.get_source_ids()
@@ -36,10 +36,19 @@ class ProcessorFrame(ProcessorBase):
                 if not is_processor_found:
                     processing_results.append(item)
 
+        from .stage_result_normalizer import normalize_result_meta
+
+        # Drain outputs from all processors.
+        # With bounded queues downstream must consume faster than 1 item/tick.
+        max_items_per_processor = 64
         for processor in self.processors:
-            result = processor.get()
-            if result:
-                processing_results.append(result)
+            drained = 0
+            while drained < max_items_per_processor:
+                result = processor.get()
+                if not result:
+                    break
+                processing_results.append(normalize_result_meta(result))
+                drained += 1
 
         # Always return original data if no results from processors
         if not processing_results and frames_list is not None:

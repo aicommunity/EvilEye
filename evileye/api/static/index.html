@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>EvilEye — Операционная консоль</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Outfit:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/main.css">
+</head>
+<body>
+  <div class="layout">
+    <header class="header">
+      <div class="header-brand">
+        <h1 class="logo">EvilEye</h1>
+        <p class="tagline">Актуальное состояние сервера, камер, журналов, логов и настроек</p>
+      </div>
+      <div id="auth-status" class="auth-status hidden">
+        <span id="auth-user-label" class="auth-user-label">—</span>
+        <button type="button" id="auth-logout-btn" class="btn btn-outline btn-sm">Выйти</button>
+      </div>
+      <nav class="tabs">
+        <button type="button" id="nav-overview" class="tab active">Обзор</button>
+        <button type="button" id="nav-cameras" class="tab">Камеры</button>
+        <button type="button" id="nav-journals" class="tab">Журналы</button>
+        <button type="button" id="nav-logs" class="tab">Логи</button>
+        <button type="button" id="nav-runs" class="tab">Запуски</button>
+        <button type="button" id="nav-configs" class="tab">Настройки</button>
+        <button type="button" id="nav-history" class="tab">История</button>
+      </nav>
+    </header>
+
+    <main class="main">
+      <section id="panel-overview" class="panel active">
+        <div class="card">
+          <h2>Обзор сервера</h2>
+          <p class="hint">Сводка по серверу, всем запускам и web preview без перехода между вкладками.</p>
+          <div class="toolbar">
+            <button type="button" id="overview-refresh-btn" class="btn btn-outline">Обновить обзор</button>
+          </div>
+          <div id="overview-cards" class="metric-grid"></div>
+          <h3 class="section-title">Все запуски</h3>
+          <ul id="overview-runs" class="runs-list compact-list"></ul>
+        </div>
+      </section>
+
+      <section id="panel-cameras" class="panel">
+        <div class="card">
+          <h2>Камеры и preview</h2>
+          <p class="hint">Камеры и preview по всем запускам с быстрым переходом в нужный поток.</p>
+          <div class="toolbar">
+            <button type="button" id="cameras-refresh-btn" class="btn btn-outline">Обновить камеры</button>
+          </div>
+          <div id="cameras-list" class="camera-grid"></div>
+        </div>
+      </section>
+
+      <section id="panel-journals" class="panel">
+        <div class="card">
+          <h2>Журналы</h2>
+          <p class="hint">Предметные журналы текущей активной конфигурации: события, объекты и история конфигураций.</p>
+          <div class="toolbar">
+            <input type="text" id="journal-filter-source" placeholder="Источник (source_name)" class="search-input" aria-label="Фильтр по источнику" style="max-width:200px">
+            <input type="text" id="journal-filter-event" placeholder="Тип события (event_type)" class="search-input" aria-label="Фильтр по типу события" style="max-width:200px">
+            <button type="button" id="journals-refresh-btn" class="btn btn-outline">Обновить журналы</button>
+          </div>
+          <h3 class="section-title">Events</h3>
+          <div id="journal-events"></div>
+          <h3 class="section-title">Objects</h3>
+          <div id="journal-objects"></div>
+          <h3 class="section-title">Configuration history</h3>
+          <div id="journal-history"></div>
+        </div>
+      </section>
+
+      <section id="panel-logs" class="panel">
+        <div class="card">
+          <h2>Логи</h2>
+          <p class="hint">Технические логи сервера и runtime для диагностики текущего контекста.</p>
+          <div class="toolbar">
+            <button type="button" id="logs-refresh-btn" class="btn btn-outline">Обновить логи</button>
+          </div>
+          <div id="logs-list" class="log-grid"></div>
+        </div>
+      </section>
+
+      <section id="panel-configs" class="panel">
+        <div class="card">
+          <h2>Настройки</h2>
+          <p class="hint">Файлы конфигурации в формате JSON. Можно просматривать, создавать, редактировать и удалять.</p>
+          <div class="toolbar">
+            <input type="search" id="config-search" placeholder="Поиск по названию…" class="search-input" aria-label="Поиск конфигов">
+            <button type="button" id="config-create-btn" class="btn btn-primary">Создать конфиг</button>
+          </div>
+          <ul id="configs-list" class="configs-list"></ul>
+        </div>
+      </section>
+
+      <section id="panel-runs" class="panel">
+        <div class="card create-card">
+          <h2>Новый запуск</h2>
+          <p class="hint">Создайте runtime-запуск по выбранному конфигу или вставьте свой JSON. После старта preview будет доступен на вкладке «Камеры».</p>
+          <div class="form-row">
+            <label class="checkbox-label">
+              <input type="checkbox" id="run-use-body" aria-label="Свой JSON">
+              <span>Вставить свой JSON</span>
+            </label>
+          </div>
+          <div class="form-row run-form-main">
+            <select id="run-config-select" aria-label="Конфиг"></select>
+            <input type="text" id="run-name" placeholder="Имя запуска (необязательно)" aria-label="Имя запуска">
+            <button type="button" id="run-create-btn" class="btn btn-primary">Создать запуск</button>
+          </div>
+          <div id="run-body-wrap" class="form-row hidden">
+            <label for="run-body">JSON конфигурации</label>
+            <textarea id="run-body" rows="8" placeholder='{"sources": [...]}' aria-label="JSON конфигурации"></textarea>
+          </div>
+        </div>
+        <div class="card runs-card">
+          <h2>Список запусков</h2>
+          <p class="hint">Просмотр, запуск, остановка и удаление runtime-запусков.</p>
+          <div class="toolbar runs-toolbar">
+            <input type="search" id="run-search" placeholder="Поиск по id, имени, конфигу, статусу…" class="search-input" aria-label="Поиск запусков">
+            <button type="button" id="run-refresh-btn" class="btn btn-outline">Обновить</button>
+          </div>
+          <ul id="runs-list" class="runs-list"></ul>
+        </div>
+      </section>
+
+      <section id="panel-history" class="panel">
+        <div class="card">
+          <h2>История запусков</h2>
+          <p class="hint">Все завершённые runtime-запуски из реестра.</p>
+          <div class="toolbar">
+            <button type="button" id="history-refresh-btn" class="btn btn-outline">Обновить историю</button>
+          </div>
+          <div id="history-list"></div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span id="footer-version">—</span>
+    </footer>
+
+    <div id="config-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="config-modal-title">
+      <div class="modal-backdrop"></div>
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 id="config-modal-title">Конфиг</h2>
+          <button type="button" id="config-modal-close" class="btn btn-outline" aria-label="Закрыть">&times;</button>
+        </div>
+        <div class="modal-body">
+          <label for="config-name">Имя файла (.json)</label>
+          <input type="text" id="config-name" placeholder="my_config.json" aria-label="Имя конфига">
+          <label for="config-body">Содержимое JSON</label>
+          <textarea id="config-body" rows="14" placeholder="{}" aria-label="JSON"></textarea>
+        </div>
+        <div class="modal-footer config-modal-footer">
+          <button type="button" id="config-save-btn" class="btn btn-primary">Сохранить</button>
+          <button type="button" id="config-close-btn" class="btn btn-outline">Закрыть</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="run-detail-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="run-detail-title">
+      <div class="modal-backdrop"></div>
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 id="run-detail-title">Подробности запуска</h2>
+          <button type="button" id="run-detail-close" class="btn btn-outline" aria-label="Закрыть">&times;</button>
+        </div>
+        <div class="modal-body run-detail-body">
+          <p><strong>ID</strong> <span id="run-detail-rid">—</span></p>
+          <p><strong>Имя</strong> <span id="run-detail-name">—</span></p>
+          <p><strong>Статус</strong> <span id="run-detail-state">—</span></p>
+          <p><strong>Конфиг</strong> <span id="run-detail-config-path">—</span></p>
+          <p><strong>PID</strong> <span id="run-detail-pid">—</span></p>
+          <p id="run-detail-error" class="run-detail-error hidden"></p>
+          <div id="run-detail-actions" class="run-detail-actions"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="stream-container" class="stream-container">
+      <div class="stream-header">
+        <div class="stream-info">
+          <span>Видеопоток запуска <strong id="stream-rid">-</strong></span>
+          <span id="stream-name" class="stream-name">-</span>
+          <span id="stream-state" class="badge">-</span>
+          <span id="stream-status" class="stream-status">-</span>
+        </div>
+        <div class="stream-controls">
+          <label class="stream-fps-label">FPS <input type="number" id="stream-fps-input" value="10" min="1" max="30" aria-label="FPS потока"></label>
+          <button type="button" id="stream-apply-fps-btn" class="btn btn-sm btn-outline">Применить FPS</button>
+        </div>
+        <div class="stream-actions">
+          <button type="button" id="stream-back-btn" class="btn btn-outline">Закрыть</button>
+        </div>
+      </div>
+      <div class="stream-body">
+        <div class="stream-main">
+          <p class="stream-main-title">Видеопоток</p>
+          <img id="stream-frame" alt="Видеопоток" class="stream-frame">
+        </div>
+      </div>
+    </div>
+
+    <div id="error-toast" class="toast toast-error" role="alert"></div>
+    <div id="success-toast" class="toast toast-success" role="alert"></div>
+
+    <div id="auth-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
+      <div class="modal-backdrop"></div>
+      <div class="modal-content auth-modal-content">
+        <div class="modal-header">
+          <h2 id="auth-modal-title">Вход в веб-интерфейс</h2>
+        </div>
+        <div class="modal-body">
+          <p class="hint">Введите имя пользователя и пароль для доступа к API.</p>
+          <label for="auth-username">Имя пользователя</label>
+          <input type="text" id="auth-username" autocomplete="username" aria-label="Имя пользователя">
+          <label for="auth-password">Пароль</label>
+          <input type="password" id="auth-password" autocomplete="current-password" aria-label="Пароль">
+        </div>
+        <div class="modal-footer auth-modal-footer">
+          <button type="button" id="auth-login-btn" class="btn btn-primary">Войти</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="/dashboard.js"></script>
+</body>
+</html>

@@ -1,0 +1,61 @@
+================================================================================
+EvilEye System Diagnostics Report
+================================================================================
+Generated: 2026-01-22 11:38:12
+
+Configuration: configs/poly-videos-gst.json
+Duration: 600.0s (requested: 600s)
+Checks performed: 28
+Auto-fix enabled: True
+
+--- Memory Statistics ---
+Initial RSS: 8067.8 MB
+Current RSS: 35310.9 MB
+Peak RSS: 35478.8 MB
+Growth: +27243.1 MB
+Leaks detected: 0
+Cleanups triggered: 18
+
+--- Issues Detected ---
+Total issues: 57
+By type:
+  - pre_event_frames: 53
+  - none_image: 4
+Recent issues:
+  - [2026-01-22T11:36:24.092361] pre_event_frames for Unknown
+  - [2026-01-22T11:36:39.114075] pre_event_frames for Unknown
+  - [2026-01-22T11:36:39.114135] pre_event_frames for Unknown
+  - [2026-01-22T11:37:04.455006] pre_event_frames for Unknown
+  - [2026-01-22T11:37:14.725501] pre_event_frames for Unknown
+  - [2026-01-22T11:37:14.725598] pre_event_frames for Unknown
+  - [2026-01-22T11:37:29.760794] pre_event_frames for Unknown
+  - [2026-01-22T11:37:55.167982] pre_event_frames for Unknown
+  - [2026-01-22T11:37:55.168068] pre_event_frames for Unknown
+  - [2026-01-22T11:37:55.168117] pre_event_frames for Unknown
+
+--- Fixes Applied ---
+Total fixes: 18
+Recent fixes:
+  - [2026-01-22T11:34:07.131881] memory_leak via memory_cleanup (SUCCESS)
+  - [2026-01-22T11:34:32.418846] memory_leak via memory_cleanup (SUCCESS)
+  - [2026-01-22T11:34:57.711363] memory_leak via memory_cleanup (SUCCESS)
+  - [2026-01-22T11:35:23.043784] memory_leak via memory_cleanup (SUCCESS)
+  - [2026-01-22T11:35:48.385465] memory_leak via memory_cleanup (SUCCESS)
+  - [2026-01-22T11:36:13.771079] memory_leak via memory_cleanup (SUCCESS)
+  - [2026-01-22T11:36:39.116958] memory_leak via memory_cleanup (SUCCESS)
+  - [2026-01-22T11:37:04.466910] memory_leak via memory_cleanup (SUCCESS)
+  - [2026-01-22T11:37:29.772725] memory_leak via memory_cleanup (SUCCESS)
+  - [2026-01-22T11:37:55.204314] memory_leak via memory_cleanup (SUCCESS)
+
+--- Capture Status ---
+No capture sources found
+
+--- Event Buffer Status ---
+Source 0: size=440, duration=-25.5s
+Source 1: size=252, duration=23.2s
+Source 3: size=578, duration=1.5s
+
+--- Recommendations ---
+  - No critical issues detected - system appears to be functioning normally
+
+================================================================================

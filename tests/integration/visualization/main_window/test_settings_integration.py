@@ -25,14 +25,12 @@ from evileye.visualization_modules.configurer.configurer_window import Configure
 from unittest.mock import patch, Mock
 
 
-def test_settings_integration():
+def test_settings_integration(qapp):
     """Тест интеграции Settings"""
     print("🧪 Тестирование интеграции Settings в MainWindow...")
     
-    # Создаем QApplication
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
+    # Use shared QApplication fixture (do not create/quit app here)
+    app = qapp
     
     # Создаем временный файл конфигурации
     temp_config = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
@@ -180,14 +178,9 @@ def test_settings_integration():
             mock_msgbox_main.question = Mock(return_value=question_return_value)
             mock_msgbox_main.StandardButton = QMessageBox.StandardButton
             
-            # Создаем MainWindow
-            main_window = MainWindow(
-                controller=controller,
-                params_file_path=temp_config.name,
-                params=test_config,
-                win_width=1600,
-                win_height=720
-            )
+            # Создаем MainWindow (new API: set controller after construction)
+            main_window = MainWindow(1600, 720)
+            main_window.set_controller(controller, temp_config.name, test_config)
         
             print("✅ MainWindow создан успешно")
             

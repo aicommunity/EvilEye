@@ -1,13 +1,8 @@
-from typing import Optional
-from .pipeline_manager import PipelineManager
+"""Compatibility shim for pipeline manager access.
 
-""" Module for accessing the pipeline manager, singleton """
+Prefer ``evileye.core.runtime_services.get_pipeline_manager``.
+"""
 
-_manager: Optional[PipelineManager] = None
+from evileye.core.runtime_services import get_pipeline_manager as get_manager
 
-
-def get_manager() -> PipelineManager:
-    global _manager
-    if _manager is None:
-        _manager = PipelineManager()
-    return _manager
+__all__ = ["get_manager"]

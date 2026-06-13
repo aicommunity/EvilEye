@@ -2,19 +2,13 @@
 
 import sys
 import os
-from evileye.core.logging_config import setup_evileye_logging
-from evileye.core.logger import get_module_logger
 import time
 import threading
 
-# Инициализация логирования для тестов
-logger = setup_evileye_logging(log_level="INFO", log_to_console=True, log_to_file=True)
-test_logger = get_module_logger("test")
-
-def test_realtime_updates():
+def test_realtime_updates(journal_test_logger):
     """Test real-time updates in journal window"""
     
-    test_logger.info("=== Test Real-time Updates ===")
+    journal_test_logger.info("=== Test Real-time Updates ===")
     
     try:
         from PyQt6.QtWidgets import QApplication
@@ -73,18 +67,18 @@ def test_realtime_updates():
         with open(test_json_path, 'w') as f:
             json.dump(initial_data, f, indent=2)
         
-        test_logger.info(f"✅ Created initial test data: {test_json_path}")
+        journal_test_logger.info(f"✅ Created initial test data: {test_json_path}")
         
         # Create EventsJournalJson widget
         journal = EventsJournalJson(base_dir)
         journal.show()
         
-        test_logger.info("\n🧪 Testing Real-time Updates:")
-        test_logger.info("   - Journal window should be visible")
-        test_logger.info("   - Initial data should be loaded")
-        test_logger.info("   - New objects will be added every 5 seconds")
-        test_logger.info("   - Journal should update automatically")
-        test_logger.info("   - Press Ctrl+C to exit this test")
+        journal_test_logger.info("\n🧪 Testing Real-time Updates:")
+        journal_test_logger.info("   - Journal window should be visible")
+        journal_test_logger.info("   - Initial data should be loaded")
+        journal_test_logger.info("   - New objects will be added every 5 seconds")
+        journal_test_logger.info("   - Journal should update automatically")
+        journal_test_logger.info("   - Press Ctrl+C to exit this test")
         
         # Flag to stop the background thread
         stop_thread = threading.Event()
@@ -116,11 +110,11 @@ def test_realtime_updates():
                     with open(test_json_path, 'w') as f:
                         json.dump(existing_data, f, indent=2)
                     
-                    test_logger.info(f"✅ Added new object {object_id} at {datetime.datetime.now().strftime('%H:%M:%S')}")
+                    journal_test_logger.info(f"✅ Added new object {object_id} at {datetime.datetime.now().strftime('%H:%M:%S')}")
                     object_id += 1
                     
                 except Exception as e:
-                    test_logger.error(f"❌ Error adding new object: {e}")
+                    journal_test_logger.error(f"❌ Error adding new object: {e}")
                     break
         
         # Start background thread to add objects
@@ -130,13 +124,13 @@ def test_realtime_updates():
         # Set up a timer to check if updates are working
         def check_updates():
             row_count = journal.table.rowCount()
-            test_logger.info(f"📊 Current table rows: {row_count}")
+            journal_test_logger.info(f"📊 Current table rows: {row_count}")
             
             # Check if timer is running
             if hasattr(journal, 'update_timer') and journal.update_timer.isActive():
-                test_logger.info("✅ Update timer is active")
+                journal_test_logger.info("✅ Update timer is active")
             else:
-                test_logger.info("❌ Update timer is not active")
+                journal_test_logger.info("❌ Update timer is not active")
         
         timer = QTimer()
         timer.timeout.connect(check_updates)
@@ -199,8 +193,8 @@ def test_realtime_updates():
             pass
         
     except KeyboardInterrupt:
-        test_logger.info("\n✅ Test interrupted by user")
+        journal_test_logger.info("\n✅ Test interrupted by user")
     except Exception as e:
-        test_logger.error(f"❌ Error: {e}")
+        journal_test_logger.error(f"❌ Error: {e}")
         import traceback
         traceback.print_exc()

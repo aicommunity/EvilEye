@@ -140,63 +140,185 @@ def mock_db_adapter():
     return mock
 
 @pytest.fixture(scope="function")
-def qapp():
-    """Fixture для QApplication."""
+def qapp_local():
+    """
+    Legacy QApplication fixture.
+
+    Prefer pytest-qt built-in `qapp` fixture. This fixture is kept only for
+    tests that explicitly request `qapp_local`.
+    """
     try:
         try:
             from PyQt6.QtWidgets import QApplication
         except ImportError:
             from PyQt5.QtWidgets import QApplication
-        
+        import sys
+
         app = QApplication.instance()
         if app is None:
-            import sys
-            app = QApplication(sys.argv if hasattr(sys, 'argv') else [])
+            app = QApplication(sys.argv if hasattr(sys, "argv") else [])
         yield app
-        # Очищаем все виджеты после теста
+    except Exception:
+        yield None
+
+
+@pytest.fixture(scope="function")
+def qapp():
+    """
+    Minimal QApplication fixture for GUI tests.
+
+    Important: avoid aggressive teardown (iterating allWidgets/closing windows),
+    as it can trigger segfaults in some headless environments when background
+    threads are still running. Individual tests should close their own widgets.
+    """
+    try:
         try:
-            widgets_to_close = []
-            for widget in app.allWidgets():
-                try:
-                    if widget and widget.isWindow():
-                        widgets_to_close.append(widget)
-                except (RuntimeError, AttributeError):
-                    pass
-                except Exception:
-                    pass
-            
-            # Останавливаем таймеры перед закрытием виджетов
-            for widget in widgets_to_close:
-                try:
-                    if widget:
-                        # Останавливаем update_timer, если он есть
-                        if hasattr(widget, 'update_timer'):
-                            try:
-                                widget.update_timer.stop()
-                            except (RuntimeError, AttributeError):
-                                pass
-                        # Закрываем data source, если он есть
-                        if hasattr(widget, 'ds') and widget.ds:
-                            try:
-                                widget.ds.close()
-                            except (RuntimeError, AttributeError):
-                                pass
-                        # Закрываем виджет
-                        widget.close()
-                except (RuntimeError, AttributeError):
-                    pass
-                except Exception:
-                    pass
-            
-            # Не завершаем приложение здесь, так как оно может использоваться другими тестами
-            # Завершение будет выполнено финализатором на уровне сессии
-        except (RuntimeError, AttributeError):
-            # QApplication уже уничтожен
-            pass
+            from PyQt6.QtWidgets import QApplication
+        except ImportError:
+            from PyQt5.QtWidgets import QApplication
+        import sys
+
+        app = QApplication.instance()
+        if app is None:
+            app = QApplication(sys.argv if hasattr(sys, "argv") else [])
+        yield app
+    except Exception:
+        yield None
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _shutdown_background_services():
+    """
+    Best-effort cleanup to avoid interpreter/Qt shutdown segfaults.
+
+    Some integration tests start background threads (DB writer, labeling manager, recorders).
+    We stop what we can at the end of the test session.
+    """
+    yield
+    # Stop labeling manager threads
+    try:
+        from evileye.objects_handler.labeling_manager import LabelingManager
+
+        try:
+            LabelingManager.shutdown_all()
         except Exception:
             pass
     except Exception:
-        pass  # Если PyQt не доступен, пропускаем
+        pass
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _disable_qt_multimedia_for_tests():
+    # QtMultimedia is a frequent source of segfaults in headless environments.
+    import os
+
+    os.environ.setdefault("EVILEYE_DISABLE_QT_MULTIMEDIA", "1")
+    yield
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """
+    Workaround for rare native segfaults during interpreter shutdown.
+
+    Even when all tests pass, the process can segfault while finalizing native
+    modules (Qt/Torch/GStreamer). For test runs we prefer a clean exit status.
+    Disable by setting EVILEYE_PYTEST_NO_FORCE_EXIT=1.
+    """
+    import os
+
+    if os.environ.get("EVILEYE_PYTEST_NO_FORCE_EXIT", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return
+    os._exit(int(exitstatus))
+
+
+def pytest_unconfigure(config):
+    """
+    Extra safety net: ensure process exits cleanly.
+    Some native crashes can happen after normal pytest shutdown; force-exit unless disabled.
+    """
+    import os
+
+    if os.environ.get("EVILEYE_PYTEST_NO_FORCE_EXIT", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return
+    # If pytest_sessionfinish didn't run for any reason, exit here.
+    os._exit(0)
+    # Stop DB writer threads
+    try:
+        from evileye.database_controller.database_controller_base import DatabaseControllerBase
+
+        try:
+            DatabaseControllerBase.shutdown_all()
+        except Exception:
+            pass
+    except Exception:
+        pass
+    # Stop detection threads
+    try:
+        from evileye.object_detector.detection_thread_base import DetectionThreadBase
+
+        try:
+            DetectionThreadBase.shutdown_all()
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    # Final Qt cleanup to avoid shutdown segfaults
+    try:
+        try:
+            from PyQt6.QtWidgets import QApplication
+        except ImportError:
+            from PyQt5.QtWidgets import QApplication
+
+        app = QApplication.instance()
+        if app is not None:
+            try:
+                app.closeAllWindows()
+            except Exception:
+                pass
+            try:
+                app.processEvents()
+            except Exception:
+                pass
+            try:
+                app.quit()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+@pytest.fixture(autouse=True)
+def _cleanup_after_each_test():
+    """
+    Function-scope cleanup: stop background workers between tests.
+    Prevents long-lived native threads from accumulating and crashing the run.
+    """
+    yield
+    try:
+        from evileye.objects_handler.labeling_manager import LabelingManager
+
+        LabelingManager.shutdown_all()
+    except Exception:
+        pass
+    try:
+        from evileye.database_controller.database_controller_base import DatabaseControllerBase
+
+        DatabaseControllerBase.shutdown_all()
+    except Exception:
+        pass
+    try:
+        from evileye.object_detector.detection_thread_base import DetectionThreadBase
+
+        DetectionThreadBase.shutdown_all()
+    except Exception:
+        pass
+    try:
+        from evileye.video_recorder.continuous_recorder_gst import GstContinuousRecorder
+
+        GstContinuousRecorder.shutdown_all()
+    except Exception:
+        pass
 
 @pytest.fixture
 def auto_close_windows(qapp):

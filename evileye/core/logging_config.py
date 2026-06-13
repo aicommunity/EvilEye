@@ -17,8 +17,8 @@ from datetime import datetime
 
 class EvilEyeLoggingConfig:
     """Centralized logging configuration for EvilEye"""
-    
-    def __init__(self, 
+
+    def __init__(self,
                  log_level: str = "INFO",
                  log_to_console: bool = True,
                  log_to_file: bool = True,
@@ -41,40 +41,42 @@ class EvilEyeLoggingConfig:
         self.log_to_file = log_to_file
         self.max_file_size = max_file_size
         self.backup_count = backup_count
-        
+
         # Определяем папку для логов
         if log_dir is None:
             # Используем рабочую директорию запуска процесса
             self.log_dir = Path.cwd() / "logs"
         else:
             self.log_dir = Path(log_dir)
-        
+
         # Создаем папку для логов если она не существует
         self._ensure_log_directory()
-        
+
         # Генерируем уникальный идентификатор сессии
         self.session_id = self._generate_session_id()
-        
+
         # Настройка форматов
         self.console_format = "%(asctime)s - %(levelname)s - %(message)s"
         self.file_format = "%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s"
-        
+
         # Пути к файлам логов с идентификатором сессии
         self.main_log_file = self.log_dir / f"{self.session_id}_evileye_main.log"
         self.debug_log_file = self.log_dir / f"{self.session_id}_evileye_debug.log"
         self.error_log_file = self.log_dir / f"{self.session_id}_evileye_errors.log"
         self.performance_log_file = self.log_dir / f"{self.session_id}_evileye_performance.log"
-    
+
     def _generate_session_id(self) -> str:
         """
-        Генерирует уникальный идентификатор сессии в формате YYYYMMDD_HHMMSS
-        
-        Returns:
-            Строка с идентификатором сессии (например, "20260112_103000")
+        Генерирует уникальный идентификатор сессии в формате YYYYMMDD_HHMMSS.
+        Если задано EVILEYE_LOG_SESSION_ID (например, дочерним процессом веб-сервера),
+        используется оно — один запуск приложения пишет в одну группу файлов логов.
         """
+        env_sid = (os.environ.get("EVILEYE_LOG_SESSION_ID") or "").strip()
+        if env_sid:
+            return env_sid
         now = datetime.now()
         return now.strftime("%Y%m%d_%H%M%S")
-    
+
     def _ensure_log_directory(self):
         """Creates logs folder if it doesn't exist"""
         try:
@@ -85,7 +87,7 @@ class EvilEyeLoggingConfig:
             import tempfile
             self.log_dir = Path(tempfile.gettempdir()) / "evileye_logs"
             self.log_dir.mkdir(parents=True, exist_ok=True)
-    
+
     def setup_logging(self, logger_name: str = "evileye") -> logging.Logger:
         """
         Настраивает логирование для указанного логгера
@@ -99,48 +101,41 @@ class EvilEyeLoggingConfig:
         # Создаем логгер
         logger = logging.getLogger(logger_name)
         logger.setLevel(self.log_level)
-        
+
         # Очищаем существующие обработчики
         logger.handlers.clear()
-        
+
         # Настраиваем форматтеры
         console_formatter = logging.Formatter(self.console_format)
         file_formatter = logging.Formatter(self.file_format)
-        
+
         # Обработчик для консоли
         if self.log_to_console:
             console_handler = logging.StreamHandler(sys.stdout)
             console_handler.setLevel(self.log_level)
             console_handler.setFormatter(console_formatter)
             logger.addHandler(console_handler)
-        
+
         # Обработчики для файлов
         if self.log_to_file:
             # Основной лог (INFO и выше)
             main_handler = logging.handlers.RotatingFileHandler(
                 self.main_log_file,
+                delay=True,
                 maxBytes=self.max_file_size,
                 backupCount=self.backup_count,
                 encoding='utf-8'
             )
-            main_handler.setLevel(logging.INFO)
+            # Mirror the logger level so that in DEBUG mode we still write debug records
+            # into the same main log file (no separate debug file by default).
+            main_handler.setLevel(self.log_level)
             main_handler.setFormatter(file_formatter)
             logger.addHandler(main_handler)
-            
-            # Отладочный лог (DEBUG и выше)
-            debug_handler = logging.handlers.RotatingFileHandler(
-                self.debug_log_file,
-                maxBytes=self.max_file_size,
-                backupCount=self.backup_count,
-                encoding='utf-8'
-            )
-            debug_handler.setLevel(logging.DEBUG)
-            debug_handler.setFormatter(file_formatter)
-            logger.addHandler(debug_handler)
-            
+
             # Лог ошибок (ERROR и выше)
             error_handler = logging.handlers.RotatingFileHandler(
                 self.error_log_file,
+                delay=True,
                 maxBytes=self.max_file_size,
                 backupCount=self.backup_count,
                 encoding='utf-8'
@@ -148,23 +143,24 @@ class EvilEyeLoggingConfig:
             error_handler.setLevel(logging.ERROR)
             error_handler.setFormatter(file_formatter)
             logger.addHandler(error_handler)
-        
+
         # Предотвращаем дублирование логов
         logger.propagate = False
-        
+
         return logger
-    
+
     def get_performance_logger(self) -> logging.Logger:
         """Возвращает специальный логгер для метрик производительности"""
         perf_logger = logging.getLogger("evileye.performance")
         perf_logger.setLevel(logging.INFO)
-        
+
         # Очищаем существующие обработчики
         perf_logger.handlers.clear()
-        
+
         if self.log_to_file:
             perf_handler = logging.handlers.RotatingFileHandler(
                 self.performance_log_file,
+                delay=True,
                 maxBytes=self.max_file_size,
                 backupCount=self.backup_count,
                 encoding='utf-8'
@@ -175,10 +171,10 @@ class EvilEyeLoggingConfig:
             )
             perf_handler.setFormatter(perf_formatter)
             perf_logger.addHandler(perf_handler)
-        
+
         perf_logger.propagate = False
         return perf_logger
-    
+
     def get_log_info(self) -> Dict[str, Any]:
         """Возвращает информацию о настройках логирования"""
         return {
@@ -198,10 +194,10 @@ class EvilEyeLoggingConfig:
         }
 
 
-def setup_evileye_logging(log_level: str = "INFO", 
-                         log_to_console: bool = True,
-                         log_to_file: bool = True,
-                         log_dir: Optional[str] = None) -> logging.Logger:
+def setup_evileye_logging(log_level: str = "INFO",
+                          log_to_console: bool = True,
+                          log_to_file: bool = True,
+                          log_dir: Optional[str] = None) -> logging.Logger:
     """
     Удобная функция для быстрой настройки логирования EvilEye
     
@@ -220,7 +216,10 @@ def setup_evileye_logging(log_level: str = "INFO",
         log_to_file=log_to_file,
         log_dir=log_dir
     )
-    
+    # Один session_id на процесс запуска: дочерние процессы (веб-сервер и т.д.) наследуют
+    # эту переменную и не создают отдельный *_{main,errors}.log с другой меткой времени.
+    os.environ["EVILEYE_LOG_SESSION_ID"] = config.session_id
+
     return config.setup_logging()
 
 
@@ -241,11 +240,30 @@ def log_system_info(logger: logging.Logger):
     """Логирует информацию о системе"""
     import platform
     import psutil
-    
+
     logger.info("=== EvilEye System Information ===")
     logger.info(f"Python version: {sys.version}")
     logger.info(f"Platform: {platform.platform()}")
     logger.info(f"CPU count: {psutil.cpu_count()}")
-    logger.info(f"Memory: {psutil.virtual_memory().total / (1024**3):.1f} GB")
+    logger.info(f"Memory: {psutil.virtual_memory().total / (1024 ** 3):.1f} GB")
     logger.info(f"Working directory: {os.getcwd()}")
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            logger.info(
+                "CUDA: available (%s, %d device(s), torch.cuda %s)",
+                torch.cuda.get_device_name(0),
+                torch.cuda.device_count(),
+                torch.version.cuda,
+            )
+        else:
+            logger.warning(
+                "CUDA: not available to PyTorch in this process "
+                "(detectors/trackers in process mode need spawn + GPU driver)"
+            )
+    except ImportError:
+        logger.info("CUDA: PyTorch not installed")
+    except Exception as exc:
+        logger.warning("CUDA: status check failed: %s", exc)
     logger.info("=" * 40)
