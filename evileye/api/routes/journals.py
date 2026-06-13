@@ -90,10 +90,13 @@ async def journal_preview(
         path: str = Query(..., min_length=1),
         date: str | None = None,
         journal_type: str = Query("events", pattern="^(events|objects)$"),
+        mode: str = Query("found", pattern="^(found|lost)$"),
 ):
     try:
         secured = resolve_secured_journal_file(
-            resolver=lambda: resolve_journal_preview_path(path=path, date=date, journal_type=journal_type),
+            resolver=lambda: resolve_journal_preview_path(
+                path=path, date=date, journal_type=journal_type, mode=mode,
+            ),
         )
     except JournalPathForbidden:
         raise HTTPException(status_code=403, detail="Path outside data directory")
@@ -107,10 +110,13 @@ async def journal_frame(
         path: str = Query(..., min_length=1),
         date: str | None = None,
         journal_type: str = Query("events", pattern="^(events|objects)$"),
+        mode: str = Query("found", pattern="^(found|lost)$"),
 ):
     try:
         secured = resolve_secured_journal_file(
-            resolver=lambda: resolve_journal_frame_path(path=path, date=date, journal_type=journal_type),
+            resolver=lambda: resolve_journal_frame_path(
+                path=path, date=date, journal_type=journal_type, mode=mode,
+            ),
         )
     except JournalPathForbidden:
         raise HTTPException(status_code=403, detail="Path outside data directory")

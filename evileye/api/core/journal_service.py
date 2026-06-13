@@ -356,8 +356,17 @@ def load_objects_grouped_page(*, page: int, size: int, filters: Dict[str, Any], 
     return result
 
 
-def resolve_journal_preview_path(*, path: str, date: str | None, journal_type: str) -> str | None:
-    event_data = {"date_folder": date} if date else None
+def resolve_journal_preview_path(
+        *,
+        path: str,
+        date: str | None,
+        journal_type: str,
+        mode: str = "found",
+) -> str | None:
+    preview_mode = "lost" if str(mode).lower() == "lost" else "found"
+    event_data: dict[str, str] = {"preview_mode": preview_mode}
+    if date:
+        event_data["date_folder"] = date
     return JournalPathResolver.resolve_image_path(
         path,
         _image_base_dir(),
@@ -366,8 +375,14 @@ def resolve_journal_preview_path(*, path: str, date: str | None, journal_type: s
     )
 
 
-def resolve_journal_frame_path(*, path: str, date: str | None, journal_type: str) -> str | None:
-    preview = resolve_journal_preview_path(path=path, date=date, journal_type=journal_type)
+def resolve_journal_frame_path(
+        *,
+        path: str,
+        date: str | None,
+        journal_type: str,
+        mode: str = "found",
+) -> str | None:
+    preview = resolve_journal_preview_path(path=path, date=date, journal_type=journal_type, mode=mode)
     if not preview:
         return None
     frame = JournalPathResolver.resolve_frame_path(preview, journal_type=journal_type)

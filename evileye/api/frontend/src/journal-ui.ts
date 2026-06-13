@@ -99,14 +99,61 @@ function renderPreviewCell(row: JournalGroupedRow, journalType: JournalType): st
   </td>`;
 }
 
+export function bindJournalRowsMap(items: JournalGroupedRow[]): Map<string, JournalGroupedRow> {
+  return new Map(items.map((row) => [rowKey(row), row]));
+}
+
+export interface ScrollAnchor {
+  key: string;
+  offset: number;
+}
+
+function scrollContainerFor(container: HTMLElement): HTMLElement {
+  return container.classList.contains('journal-table-wrap')
+    ? container
+    : (container.closest('.journal-table-wrap') as HTMLElement | null) ?? container;
+}
+
+export function captureScrollAnchor(container: HTMLElement): ScrollAnchor | null {
+  const scroller = scrollContainerFor(container);
+  const rows = scroller.querySelectorAll<HTMLElement>('tr[data-row-key]');
+  const scrollerTop = scroller.getBoundingClientRect().top;
+  for (const row of rows) {
+    const rect = row.getBoundingClientRect();
+    if (rect.bottom > scrollerTop + 1) {
+      return { key: row.dataset.rowKey ?? '', offset: rect.top - scrollerTop };
+    }
+  }
+  return null;
+}
+
+export function restoreScrollAnchor(container: HTMLElement, anchor: ScrollAnchor | null): void {
+  if (!anchor?.key) return;
+  const scroller = scrollContainerFor(container);
+  const escaped = anchor.key.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const row = scroller.querySelector<HTMLElement>(`tr[data-row-key="${escaped}"]`);
+  if (!row) return;
+  const scrollerTop = scroller.getBoundingClientRect().top;
+  const rowTop = row.getBoundingClientRect().top;
+  scroller.scrollTop += rowTop - scrollerTop - anchor.offset;
+}
+
+export interface RenderJournalOptions {
+  append?: boolean;
+  preserveScroll?: boolean;
+}
+
 export function renderJournalTable(
   container: HTMLElement,
   items: JournalGroupedRow[],
   journalType: JournalType,
   columns: Array<{ key: string; label: string; preview?: boolean }>,
   emptyText: string,
-  append = false,
+  options: RenderJournalOptions = {},
 ): void {
+  const append = options.append ?? false;
+  const preserveScroll = options.preserveScroll ?? false;
+  const anchor = preserveScroll ? captureScrollAnchor(container) : null;
   if (!items.length && !append) {
     container.innerHTML = `<p class="empty">${escapeHtml(emptyText)}</p>`;
     return;
@@ -130,6 +177,27 @@ export function renderJournalTable(
   }
   container.innerHTML = `<table class="journal-table"><thead><tr>${header}</tr></thead><tbody>${rows}</tbody></table>`;
   mountJournalPreviewCells(container, bindJournalRowsMap(items));
+  if (anchor) restoreScrollAnchor(container, anchor);
+}
+
+export function setupJournalInfiniteScroll(
+  container: HTMLElement,
+  onLoadMore: () => Promise<void>,
+): () => void {
+  const scroller = scrollContainerFor(container);
+  let loading = false;
+  const handler = () => {
+    if (loading) return;
+    const nearBottom =
+      scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight * 0.8;
+    if (!nearBottom) return;
+    loading = true;
+    void onLoadMore().finally(() => {
+      loading = false;
+    });
+  };
+  scroller.addEventListener('scroll', handler);
+  return () => scroller.removeEventListener('scroll', handler);
 }
 
 function getModalElements(): {
@@ -285,8 +353,4 @@ export function mountJournalPreviewCells(container: HTMLElement, rowsByKey?: Map
       openJournalDetailModal(row, journalType);
     });
   });
-}
-
-export function bindJournalRowsMap(items: JournalGroupedRow[]): Map<string, JournalGroupedRow> {
-  return new Map(items.map((row) => [rowKey(row), row]));
 }

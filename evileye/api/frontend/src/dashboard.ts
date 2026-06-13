@@ -30,6 +30,7 @@ import {
   isJournalDetailOpen,
   mergePrependRows,
   renderJournalTable as renderJournalTableUi,
+  setupJournalInfiniteScroll,
 } from './journal-ui.js';
 
 type JournalTabId = 'events' | 'objects' | 'history';
@@ -75,8 +76,6 @@ const journalsRefreshBtn = document.getElementById('journals-refresh-btn')!;
 const journalEventsEl = document.getElementById('journal-events')!;
 const journalObjectsEl = document.getElementById('journal-objects')!;
 const journalHistoryEl = document.getElementById('journal-history')!;
-const journalEventsMoreBtn = document.getElementById('journal-events-more')!;
-const journalObjectsMoreBtn = document.getElementById('journal-objects-more')!;
 const logsRefreshBtn = document.getElementById('logs-refresh-btn')!;
 const logsListEl = document.getElementById('logs-list')!;
 const usersRefreshBtn = document.getElementById('users-refresh-btn')!;
@@ -154,6 +153,8 @@ let journalRefreshTimer: number | null = null;
 let journalActiveTab: JournalTabId = 'events';
 let journalEventsRows: JournalGroupedRow[] = [];
 let journalObjectsRows: JournalGroupedRow[] = [];
+let journalEventsHasMore = true;
+let journalObjectsHasMore = true;
 let journalFiltersLoaded = false;
 
 let currentStreamRid: number | null = null;
@@ -869,12 +870,16 @@ async function pollJournals(): Promise<void> {
       const events = await journalsApi.eventsGrouped(0, 30, filters);
       if (!events.available) return;
       journalEventsRows = mergePrependRows(journalEventsRows, events.items);
-      renderJournalTableUi(journalEventsEl, journalEventsRows, 'events', eventColumns, 'События не найдены.');
+      renderJournalTableUi(journalEventsEl, journalEventsRows, 'events', eventColumns, 'События не найдены.', {
+        preserveScroll: true,
+      });
     } else {
       const objects = await journalsApi.objectsGrouped(0, 30, filters);
       if (!objects.available) return;
       journalObjectsRows = mergePrependRows(journalObjectsRows, objects.items);
-      renderJournalTableUi(journalObjectsEl, journalObjectsRows, 'objects', objectColumns, 'Объекты не найдены.');
+      renderJournalTableUi(journalObjectsEl, journalObjectsRows, 'objects', objectColumns, 'Объекты не найдены.', {
+        preserveScroll: true,
+      });
     }
   } catch {
     // ignore polling errors
@@ -915,8 +920,10 @@ async function loadJournals(append = false): Promise<void> {
         return;
       }
       journalEventsRows = append ? [...journalEventsRows, ...events.items] : events.items;
-      renderJournalTableUi(journalEventsEl, journalEventsRows, 'events', eventColumns, 'События не найдены.', append);
-      journalEventsMoreBtn.classList.toggle('hidden', events.items.length < 30);
+      journalEventsHasMore = events.items.length >= 30;
+      renderJournalTableUi(journalEventsEl, journalEventsRows, 'events', eventColumns, 'События не найдены.', {
+        append,
+      });
       return;
     }
 
@@ -926,8 +933,10 @@ async function loadJournals(append = false): Promise<void> {
       return;
     }
     journalObjectsRows = append ? [...journalObjectsRows, ...objects.items] : objects.items;
-    renderJournalTableUi(journalObjectsEl, journalObjectsRows, 'objects', objectColumns, 'Объекты не найдены.', append);
-    journalObjectsMoreBtn.classList.toggle('hidden', objects.items.length < 30);
+    journalObjectsHasMore = objects.items.length >= 30;
+    renderJournalTableUi(journalObjectsEl, journalObjectsRows, 'objects', objectColumns, 'Объекты не найдены.', {
+      append,
+    });
   } catch (e) {
     handleApiError(e, 'Не удалось загрузить журналы');
   }
@@ -1316,8 +1325,14 @@ export function initDashboard(): void {
   overviewRefreshBtn.addEventListener('click', () => void refreshAll());
   camerasRefreshBtn.addEventListener('click', () => void loadCameras());
   journalsRefreshBtn.addEventListener('click', () => void loadJournals(false));
-  journalEventsMoreBtn.addEventListener('click', () => void loadJournals(true));
-  journalObjectsMoreBtn.addEventListener('click', () => void loadJournals(true));
+  setupJournalInfiniteScroll(journalEventsEl, async () => {
+    if (journalActiveTab !== 'events' || !journalEventsHasMore) return;
+    await loadJournals(true);
+  });
+  setupJournalInfiniteScroll(journalObjectsEl, async () => {
+    if (journalActiveTab !== 'objects' || !journalObjectsHasMore) return;
+    await loadJournals(true);
+  });
   logsRefreshBtn.addEventListener('click', () => void loadLogs());
   usersRefreshBtn.addEventListener('click', () => void loadUsers());
   historyRefreshBtn.addEventListener('click', () => void loadHistory());

@@ -92,6 +92,22 @@ def test_preview_serves_jpeg(journal_client):
     assert response.headers["content-type"].startswith("image/")
 
 
+def test_preview_mode_lost_prefers_lost_previews(journal_client, tmp_path):
+    client, preview_name, _video = journal_client
+    base = tmp_path / "EvilEyeData"
+    lost_dir = base / "Detections" / "2026-06-13" / "Images" / "LostPreviews"
+    lost_dir.mkdir(parents=True, exist_ok=True)
+    lost_name = "obj_lost.jpg"
+    lost_file = lost_dir / lost_name
+    lost_file.write_bytes(b"\xff\xd8\xff" + b"l" * 100)
+
+    response = client.get(
+        f"/api/v1/journals/preview?path={lost_name}&date=2026-06-13&journal_type=objects&mode=lost"
+    )
+    assert response.status_code == 200
+    assert response.content.startswith(b"\xff\xd8\xffl")
+
+
 def test_video_serves_mp4_with_range(journal_client):
     client, _preview, video_rel = journal_client
     response = client.get(f"/api/v1/journals/video?path={video_rel}")

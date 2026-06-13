@@ -1,0 +1,38 @@
+name: Web Journals
+
+on:
+  push:
+    paths:
+      - 'evileye/api/**'
+      - 'evileye/visualization_modules/journal_*'
+      - 'tests/unit/api/test_journal_*'
+      - 'tests/integration/api/test_journals_smoke.py'
+      - 'scripts/verify_web_journals.sh'
+      - '.github/workflows/web-journals.yml'
+  pull_request:
+    paths:
+      - 'evileye/api/**'
+      - 'evileye/visualization_modules/journal_*'
+      - 'tests/unit/api/test_journal_*'
+      - 'tests/integration/api/test_journals_smoke.py'
+      - 'scripts/verify_web_journals.sh'
+      - '.github/workflows/web-journals.yml'
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Install TypeScript
+        run: npm install --prefix /tmp/package typescript@5.7.3
+
+      - name: Verify web journals
+        run: bash scripts/verify_web_journals.sh

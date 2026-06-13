@@ -70,26 +70,37 @@ class JournalPathResolver:
                 # Попробовать с date_folder
                 if event_data:
                     date_folder = event_data.get('date_folder', '')
+                    preview_mode = str(event_data.get('preview_mode') or 'found').lower()
+                    prefer_lost = preview_mode == 'lost'
                     if date_folder:
                         if journal_type == 'objects':
-                            candidates = [
+                            found_candidates = [
                                 os.path.join(base_dir, 'Detections', date_folder, 'Images', 'FoundPreviews',
                                              os.path.basename(img_path)),
-                                os.path.join(base_dir, 'Detections', date_folder, 'Images', 'LostPreviews',
-                                             os.path.basename(img_path)),
                                 os.path.join(base_dir, 'images', date_folder, 'found_previews',
+                                             os.path.basename(img_path)),
+                            ]
+                            lost_candidates = [
+                                os.path.join(base_dir, 'Detections', date_folder, 'Images', 'LostPreviews',
                                              os.path.basename(img_path)),
                                 os.path.join(base_dir, 'images', date_folder, 'lost_previews',
                                              os.path.basename(img_path)),
                             ]
+                            candidates = (lost_candidates + found_candidates) if prefer_lost else (found_candidates + lost_candidates)
                         else:  # events
-                            candidates = [
+                            found_candidates = [
                                 os.path.join(base_dir, 'Events', date_folder, 'Images', 'FoundPreviews',
                                              os.path.basename(img_path)),
+                            ]
+                            lost_candidates = [
                                 os.path.join(base_dir, 'Events', date_folder, 'Images', 'LostPreviews',
                                              os.path.basename(img_path)),
-                                os.path.join(base_dir, 'images', date_folder, img_path),
                             ]
+                            candidates = (lost_candidates + found_candidates + [
+                                os.path.join(base_dir, 'images', date_folder, img_path),
+                            ]) if prefer_lost else (found_candidates + lost_candidates + [
+                                os.path.join(base_dir, 'images', date_folder, img_path),
+                            ])
 
                         for cand in candidates:
                             if cand and os.path.exists(cand):
