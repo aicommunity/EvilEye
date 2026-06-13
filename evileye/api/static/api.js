@@ -100,6 +100,9 @@ function journalQuery(page, size, filters) {
     return p.toString();
 }
 export const journalsApi = {
+    filtersMeta() {
+        return request('/journals/filters/meta');
+    },
     eventsGrouped(page = 0, size = 30, filters) {
         return request(`/journals/events/grouped?${journalQuery(page, size, filters)}`);
     },
@@ -110,11 +113,29 @@ export const journalsApi = {
         return request(`/journals/config-history?limit=${limit}`);
     },
 };
-export function journalPreviewUrl(path, date, journalType = 'events') {
-    const p = new URLSearchParams({ path, journal_type: journalType });
-    if (date)
-        p.set('date', date);
+export function journalPreviewUrl(params) {
+    const p = new URLSearchParams({ path: params.path, journal_type: params.journalType });
+    if (params.date)
+        p.set('date', params.date);
+    if (params.mode)
+        p.set('mode', params.mode);
     return `${API_BASE}/journals/preview?${p}`;
+}
+export function journalFrameUrl(params) {
+    const p = new URLSearchParams({ path: params.path, journal_type: params.journalType });
+    if (params.date)
+        p.set('date', params.date);
+    if (params.mode)
+        p.set('mode', params.mode);
+    return `${API_BASE}/journals/frame?${p}`;
+}
+export function journalVideoUrl(params) {
+    const p = new URLSearchParams({ path: params.path });
+    return `${API_BASE}/journals/video?${p}`;
+}
+/** @deprecated use journalPreviewUrl({ path, date, journalType }) */
+export function journalPreviewUrlLegacy(path, date, journalType = 'events') {
+    return journalPreviewUrl({ path, date, journalType });
 }
 export const logsApi = {
     list(limit = 50) {

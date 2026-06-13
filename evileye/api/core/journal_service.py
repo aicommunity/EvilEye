@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -11,6 +12,30 @@ from evileye.database.config_history_manager import ConfigHistoryManager
 from evileye.database_controller.database_controller_pg import DatabaseControllerPg
 from evileye.visualization_modules.journal_data_source_db import DatabaseJournalDataSource
 from evileye.visualization_modules.journal_data_source_json import JsonLabelJournalDataSource
+from evileye.visualization_modules.journal_media_resolver import enrich_grouped_row, relative_to_base
+from evileye.visualization_modules.journal_path_resolver import JournalPathResolver
+
+
+class JournalPathError(Exception):
+    pass
+
+
+class JournalPathForbidden(JournalPathError):
+    pass
+
+
+class JournalPathNotFound(JournalPathError):
+    pass
+
+
+def assert_path_under_base(resolved: str, base_dir: str) -> str:
+    base = Path(base_dir).resolve()
+    target = Path(resolved).resolve()
+    if not str(target).startswith(str(base)):
+        raise JournalPathForbidden("Path outside data directory")
+    if not target.is_file():
+        raise JournalPathNotFound("File not found")
+    return str(target)
 
 
 def _load_credentials() -> dict[str, Any]:
@@ -81,6 +106,56 @@ def _current_source_names() -> set[str]:
             if name:
                 source_names.add(str(name))
     return source_names
+
+
+def _source_mappings() -> dict[str, tuple[Any, Any]]:
+    mappings: dict[str, tuple[Any, Any]] = {}
+    params = _runtime_params()
+    pipeline = params.get("pipeline") if isinstance(params, dict) else None
+    if not isinstance(pipeline, dict):
+        pipeline = params
+    for source in (pipeline.get("sources") if isinstance(pipeline, dict) else None) or []:
+        if not isinstance(source, dict):
+            continue
+        address = source.get("camera") or source.get("video") or source.get("path") or ""
+        source_ids = source.get("source_ids") or []
+        source_names = source.get("source_names") or []
+        for source_id, source_name in zip(source_ids, source_names):
+            mappings[str(source_name)] = (source_id, address)
+    return mappings
+
+
+def _enrich_rows(rows: list[dict[str, Any]], *, journal_type: str) -> list[dict[str, Any]]:
+    base_dir = _image_base_dir()
+    mappings = _source_mappings()
+    return [
+        enrich_grouped_row(row, base_dir=base_dir, journal_type=journal_type, source_mappings=mappings)
+        for row in rows
+    ]
+
+
+def load_filters_meta() -> dict[str, Any]:
+    dates: list[str] = []
+    try:
+        controller = _db_controller()
+        if controller is not None:
+            source = _make_db_source(controller, journal_type="events")
+            if hasattr(source, "list_available_dates"):
+                dates = list(source.list_available_dates())
+        elif _json_journal_available():
+            source = _make_json_source()
+            dates = list(source.list_available_dates())
+    except Exception:
+        dates = []
+    return {
+        "dates": dates,
+        "source_names": sorted(_current_source_names()),
+        "event_types_events": [
+            "attr_found", "attr_lost", "zone_entered", "zone_left",
+            "fov_found", "fov_lost", "cam", "sys",
+        ],
+        "event_types_objects": ["found", "lost"],
+    }
 
 
 def _merge_current_filters(filters: Dict[str, Any]) -> Dict[str, Any]:
@@ -249,8 +324,14 @@ def load_events_grouped_page(*, page: int, size: int, filters: Dict[str, Any], d
     payload = load_events_page(page=page, size=size, filters=filters, date=date)
     if not payload.get("available"):
         return payload
-    grouped = group_events_rows(payload.get("items") or [])
-    result = {"available": True, "items": grouped, "total": payload.get("total", len(grouped))}
+    grouped = _enrich_rows(group_events_rows(payload.get("items") or []), journal_type="events")
+    result = {
+        "available": True,
+        "items": grouped,
+        "total": payload.get("total", len(grouped)),
+        "page": page,
+        "size": size,
+    }
     for key in ("mode", "reason", "message"):
         if key in payload:
             result[key] = payload[key]
@@ -261,8 +342,14 @@ def load_objects_grouped_page(*, page: int, size: int, filters: Dict[str, Any], 
     payload = load_objects_page(page=page, size=size, filters=filters, date=date)
     if not payload.get("available"):
         return payload
-    grouped = group_objects_rows(payload.get("items") or [])
-    result = {"available": True, "items": grouped, "total": payload.get("total", len(grouped))}
+    grouped = _enrich_rows(group_objects_rows(payload.get("items") or []), journal_type="objects")
+    result = {
+        "available": True,
+        "items": grouped,
+        "total": payload.get("total", len(grouped)),
+        "page": page,
+        "size": size,
+    }
     for key in ("mode", "reason", "message"):
         if key in payload:
             result[key] = payload[key]
@@ -270,8 +357,6 @@ def load_objects_grouped_page(*, page: int, size: int, filters: Dict[str, Any], 
 
 
 def resolve_journal_preview_path(*, path: str, date: str | None, journal_type: str) -> str | None:
-    from evileye.visualization_modules.journal_path_resolver import JournalPathResolver
-
     event_data = {"date_folder": date} if date else None
     return JournalPathResolver.resolve_image_path(
         path,
@@ -279,6 +364,33 @@ def resolve_journal_preview_path(*, path: str, date: str | None, journal_type: s
         event_data=event_data,
         journal_type=journal_type,
     )
+
+
+def resolve_journal_frame_path(*, path: str, date: str | None, journal_type: str) -> str | None:
+    preview = resolve_journal_preview_path(path=path, date=date, journal_type=journal_type)
+    if not preview:
+        return None
+    frame = JournalPathResolver.resolve_frame_path(preview, journal_type=journal_type)
+    return frame or preview
+
+
+def resolve_journal_video_path(*, path: str | None = None) -> str | None:
+    if not path:
+        return None
+    base_dir = _image_base_dir()
+    candidate = path
+    if not os.path.isabs(candidate):
+        candidate = os.path.join(base_dir, path)
+    if os.path.isfile(candidate):
+        return candidate
+    return None
+
+
+def resolve_secured_journal_file(*, resolver) -> str:
+    resolved = resolver()
+    if not resolved:
+        raise JournalPathNotFound("Media file not found")
+    return assert_path_under_base(resolved, _image_base_dir())
 
 
 def load_config_history(*, limit: int) -> dict[str, Any]:

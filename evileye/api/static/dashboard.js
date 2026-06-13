@@ -1,4 +1,5 @@
-import { ApiError, authApi, journalsApi, logsApi, stateApi, systemApi, usersApi, configsList, configGet, configCreate, configUpdate, configDelete, runsList, runGet, runCreate, runStart, runStop, runDelete, streamSnapshotUrl, streamMjpgUrl, streamStop, streamStatus, journalPreviewUrl, } from './api.js';
+import { ApiError, authApi, journalsApi, logsApi, stateApi, systemApi, usersApi, configsList, configGet, configCreate, configUpdate, configDelete, runsList, runGet, runCreate, runStart, runStop, runDelete, streamSnapshotUrl, streamMjpgUrl, streamStop, streamStatus, } from './api.js';
+import { isJournalDetailOpen, mergePrependRows, renderJournalTable as renderJournalTableUi, } from './journal-ui.js';
 const navOverview = document.getElementById('nav-overview');
 const navCameras = document.getElementById('nav-cameras');
 const navJournals = document.getElementById('nav-journals');
@@ -17,8 +18,16 @@ const panelHistory = document.getElementById('panel-history');
 const panelUsers = document.getElementById('panel-users');
 const historyRefreshBtn = document.getElementById('history-refresh-btn');
 const historyListEl = document.getElementById('history-list');
+const journalFilterDate = document.getElementById('journal-filter-date');
+const journalFilterDateAll = document.getElementById('journal-filter-date-all');
+const journalFilterEventType = document.getElementById('journal-filter-event-type');
 const journalFilterSource = document.getElementById('journal-filter-source');
-const journalFilterEvent = document.getElementById('journal-filter-event');
+const journalTabEvents = document.getElementById('journal-tab-events');
+const journalTabObjects = document.getElementById('journal-tab-objects');
+const journalTabHistory = document.getElementById('journal-tab-history');
+const journalPaneEvents = document.getElementById('journal-pane-events');
+const journalPaneObjects = document.getElementById('journal-pane-objects');
+const journalPaneHistory = document.getElementById('journal-pane-history');
 const overviewRefreshBtn = document.getElementById('overview-refresh-btn');
 const overviewCardsEl = document.getElementById('overview-cards');
 const overviewCurrentRunEl = document.getElementById('overview-current-run');
@@ -99,6 +108,10 @@ const authRegisterPassword2Input = document.getElementById('auth-register-passwo
 let journalEventsPage = 0;
 let journalObjectsPage = 0;
 let journalRefreshTimer = null;
+let journalActiveTab = 'events';
+let journalEventsRows = [];
+let journalObjectsRows = [];
+let journalFiltersLoaded = false;
 let currentStreamRid = null;
 let currentStreamSourceId = null;
 let streamPollTimer = null;
@@ -381,7 +394,7 @@ function showPanel(panel) {
     if (panel === 'journals') {
         journalEventsPage = 0;
         journalObjectsPage = 0;
-        void loadJournals(false);
+        void ensureJournalFiltersMeta().then(() => loadJournals(false));
         startJournalRefresh();
     }
     else {
@@ -395,9 +408,10 @@ function showPanel(panel) {
 function startJournalRefresh() {
     stopJournalRefresh();
     journalRefreshTimer = window.setInterval(() => {
-        if (activePanel === 'journals')
-            void loadJournals(false);
-    }, 5000);
+        if (activePanel !== 'journals' || isJournalDetailOpen())
+            return;
+        void pollJournals();
+    }, 1000);
 }
 function stopJournalRefresh() {
     if (journalRefreshTimer != null) {
@@ -689,32 +703,104 @@ function scheduleCameraPreviewRefresh() {
     cameraPreviewTimer = window.setInterval(() => refreshCameraPreviews(), 1000);
     refreshCameraPreviews();
 }
-function renderJournalTable(container, items, columns, emptyText, append = false) {
-    if (!items.length && !append) {
-        container.innerHTML = `<p class="empty">${emptyText}</p>`;
+const eventColumns = [
+    { key: 'time', label: 'Время' },
+    { key: 'event', label: 'Событие' },
+    { key: 'information', label: 'Информация' },
+    { key: 'source', label: 'Источник' },
+    { key: 'time_lost', label: 'Потерян' },
+    { key: 'preview', label: 'Preview', preview: true },
+];
+const objectColumns = [
+    { key: 'time', label: 'Время' },
+    { key: 'event', label: 'Событие' },
+    { key: 'information', label: 'Информация' },
+    { key: 'source', label: 'Источник' },
+    { key: 'time_lost', label: 'Потерян' },
+    { key: 'preview', label: 'Preview', preview: true },
+];
+async function ensureJournalFiltersMeta() {
+    if (journalFiltersLoaded)
         return;
-    }
-    const header = columns.map((col) => `<th>${escapeHtml(col.label)}</th>`).join('');
-    const rows = items
-        .map((item) => {
-        const cells = columns.map((col) => {
-            if (col.preview) {
-                const previewPath = String(item.preview ?? '');
-                if (!previewPath)
-                    return '<td>—</td>';
-                const journalType = col.key === 'preview' && String(item.event ?? '') === 'ObjectEvent' ? 'objects' : 'events';
-                return `<td><img class="journal-preview" src="${journalPreviewUrl(previewPath, String(item.date_folder ?? ''), journalType)}" alt="preview" loading="lazy"></td>`;
-            }
-            return `<td>${escapeHtml(String(item[col.key] ?? '—'))}</td>`;
+    try {
+        const meta = await journalsApi.filtersMeta();
+        journalFilterEventType.innerHTML = '<option value="">Все типы</option>';
+        const eventTypes = journalActiveTab === 'objects' ? meta.event_types_objects : meta.event_types_events;
+        eventTypes.forEach((value) => {
+            journalFilterEventType.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`);
         });
-        return `<tr>${cells.join('')}</tr>`;
-    })
-        .join('');
-    if (append && container.querySelector('tbody')) {
-        container.querySelector('tbody').insertAdjacentHTML('beforeend', rows);
+        journalFilterSource.innerHTML = '<option value="">Все источники</option>';
+        meta.source_names.forEach((value) => {
+            journalFilterSource.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`);
+        });
+        journalFiltersLoaded = true;
+    }
+    catch {
+        journalFiltersLoaded = true;
+    }
+}
+function setJournalTab(tab) {
+    journalActiveTab = tab;
+    journalTabEvents.classList.toggle('active', tab === 'events');
+    journalTabObjects.classList.toggle('active', tab === 'objects');
+    journalTabHistory.classList.toggle('active', tab === 'history');
+    journalPaneEvents.classList.toggle('active', tab === 'events');
+    journalPaneObjects.classList.toggle('active', tab === 'objects');
+    journalPaneHistory.classList.toggle('active', tab === 'history');
+    journalFilterSource.classList.toggle('hidden', tab !== 'objects');
+    journalFiltersLoaded = false;
+    void ensureJournalFiltersMeta();
+    if (tab === 'history') {
+        void loadJournalHistory();
+    }
+}
+async function loadJournalHistory() {
+    if (!hasPermission('history:view')) {
+        journalHistoryEl.innerHTML = '<p class="empty">Недостаточно прав для просмотра истории конфигураций.</p>';
         return;
     }
-    container.innerHTML = `<table class="journal-table"><thead><tr>${header}</tr></thead><tbody>${rows}</tbody></table>`;
+    try {
+        const history = await journalsApi.configHistory();
+        if (!history.available) {
+            const historyMessage = history.message ?? 'История конфигураций недоступна.';
+            journalHistoryEl.innerHTML = `<p class="empty">${escapeHtml(String(historyMessage))}</p>`;
+            return;
+        }
+        renderJournalTableUi(journalHistoryEl, history.items, 'events', [
+            { key: 'job_id', label: 'Job' },
+            { key: 'project_id', label: 'Project' },
+            { key: 'configuration_id', label: 'Config' },
+            { key: 'status', label: 'Status' },
+            { key: 'creation_time', label: 'Created' },
+        ], 'История конфигураций пуста.');
+    }
+    catch (e) {
+        handleApiError(e, 'Не удалось загрузить историю конфигураций');
+    }
+}
+async function pollJournals() {
+    if (journalActiveTab === 'history')
+        return;
+    const filters = getJournalFilters();
+    try {
+        if (journalActiveTab === 'events') {
+            const events = await journalsApi.eventsGrouped(0, 30, filters);
+            if (!events.available)
+                return;
+            journalEventsRows = mergePrependRows(journalEventsRows, events.items);
+            renderJournalTableUi(journalEventsEl, journalEventsRows, 'events', eventColumns, 'События не найдены.');
+        }
+        else {
+            const objects = await journalsApi.objectsGrouped(0, 30, filters);
+            if (!objects.available)
+                return;
+            journalObjectsRows = mergePrependRows(journalObjectsRows, objects.items);
+            renderJournalTableUi(journalObjectsEl, journalObjectsRows, 'objects', objectColumns, 'Объекты не найдены.');
+        }
+    }
+    catch {
+        // ignore polling errors
+    }
 }
 async function loadOverview() {
     if (!hasPermission('live:view'))
@@ -726,76 +812,46 @@ async function loadCameras() {
         return;
     renderCameras((await stateApi.cameras('current')).items);
 }
-const eventColumns = [
-    { key: 'time', label: 'Время' },
-    { key: 'event', label: 'Событие' },
-    { key: 'information', label: 'Информация' },
-    { key: 'source', label: 'Источник' },
-    { key: 'preview', label: 'Preview', preview: true },
-];
-const objectColumns = [
-    { key: 'time', label: 'Время' },
-    { key: 'event', label: 'Событие' },
-    { key: 'information', label: 'Информация' },
-    { key: 'source', label: 'Источник' },
-    { key: 'time_lost', label: 'Потерян' },
-    { key: 'preview', label: 'Preview', preview: true },
-];
 async function loadJournals(append = false) {
     if (!hasPermission('journal:view'))
         return;
     const filters = getJournalFilters();
     try {
+        if (journalActiveTab === 'history') {
+            await loadJournalHistory();
+            return;
+        }
         if (!append) {
-            journalEventsPage = 0;
-            journalObjectsPage = 0;
+            if (journalActiveTab === 'events')
+                journalEventsPage = 0;
+            else
+                journalObjectsPage = 0;
+        }
+        else if (journalActiveTab === 'events') {
+            journalEventsPage += 1;
         }
         else {
-            journalEventsPage += 1;
             journalObjectsPage += 1;
         }
-        const [events, objects, history] = await Promise.all([
-            journalsApi.eventsGrouped(journalEventsPage, 30, filters),
-            journalsApi.objectsGrouped(journalObjectsPage, 30, filters),
-            append ? Promise.resolve({ available: true, items: [], total: 0 }) : journalsApi.configHistory(),
-        ]);
-        if (!events.available) {
-            journalEventsEl.innerHTML = `<p class="empty">${escapeHtml(String(events.message ?? 'Журнал событий недоступен.'))}</p>`;
-        }
-        else {
-            if (events.mode === 'json' && events.message) {
-                journalEventsEl.dataset.hint = events.message;
+        if (journalActiveTab === 'events') {
+            const events = await journalsApi.eventsGrouped(journalEventsPage, 30, filters);
+            if (!events.available) {
+                journalEventsEl.innerHTML = `<p class="empty">${escapeHtml(String(events.message ?? 'Журнал событий недоступен.'))}</p>`;
+                return;
             }
-            renderJournalTable(journalEventsEl, events.items, eventColumns, 'События не найдены.', append);
+            journalEventsRows = append ? [...journalEventsRows, ...events.items] : events.items;
+            renderJournalTableUi(journalEventsEl, journalEventsRows, 'events', eventColumns, 'События не найдены.', append);
             journalEventsMoreBtn.classList.toggle('hidden', events.items.length < 30);
+            return;
         }
+        const objects = await journalsApi.objectsGrouped(journalObjectsPage, 30, filters);
         if (!objects.available) {
             journalObjectsEl.innerHTML = `<p class="empty">${escapeHtml(String(objects.message ?? 'Журнал объектов недоступен.'))}</p>`;
+            return;
         }
-        else {
-            if (objects.mode === 'json' && objects.message) {
-                journalObjectsEl.dataset.hint = objects.message;
-            }
-            renderJournalTable(journalObjectsEl, objects.items, objectColumns, 'Объекты не найдены.', append);
-            journalObjectsMoreBtn.classList.toggle('hidden', objects.items.length < 30);
-        }
-        if (!append) {
-            if (!history.available) {
-                const historyMessage = 'message' in history && history.message
-                    ? history.message
-                    : 'История конфигураций недоступна.';
-                journalHistoryEl.innerHTML = `<p class="empty">${escapeHtml(String(historyMessage))}</p>`;
-            }
-            else {
-                renderJournalTable(journalHistoryEl, history.items, [
-                    { key: 'job_id', label: 'Job' },
-                    { key: 'project_id', label: 'Project' },
-                    { key: 'configuration_id', label: 'Config' },
-                    { key: 'status', label: 'Status' },
-                    { key: 'creation_time', label: 'Created' },
-                ], 'История конфигураций пуста.');
-            }
-        }
+        journalObjectsRows = append ? [...journalObjectsRows, ...objects.items] : objects.items;
+        renderJournalTableUi(journalObjectsEl, journalObjectsRows, 'objects', objectColumns, 'Объекты не найдены.', append);
+        journalObjectsMoreBtn.classList.toggle('hidden', objects.items.length < 30);
     }
     catch (e) {
         handleApiError(e, 'Не удалось загрузить журналы');
@@ -916,11 +972,14 @@ async function rejectUser(email) {
 function getJournalFilters() {
     const filters = {};
     const src = journalFilterSource?.value?.trim();
-    const evt = journalFilterEvent?.value?.trim();
+    const evt = journalFilterEventType?.value?.trim();
+    const date = journalFilterDate?.value?.trim();
     if (src)
         filters.source_name = src;
     if (evt)
         filters.event_type = evt;
+    if (date)
+        filters.date = date;
     return filters;
 }
 async function refreshAll() {
@@ -1201,8 +1260,22 @@ export function initDashboard() {
     logsRefreshBtn.addEventListener('click', () => void loadLogs());
     usersRefreshBtn.addEventListener('click', () => void loadUsers());
     historyRefreshBtn.addEventListener('click', () => void loadHistory());
-    journalFilterSource?.addEventListener('input', () => void loadJournals(false));
-    journalFilterEvent?.addEventListener('input', () => void loadJournals(false));
+    journalTabEvents.addEventListener('click', () => {
+        setJournalTab('events');
+        void loadJournals(false);
+    });
+    journalTabObjects.addEventListener('click', () => {
+        setJournalTab('objects');
+        void loadJournals(false);
+    });
+    journalTabHistory.addEventListener('click', () => setJournalTab('history'));
+    journalFilterDate?.addEventListener('change', () => void loadJournals(false));
+    journalFilterDateAll?.addEventListener('click', () => {
+        journalFilterDate.value = '';
+        void loadJournals(false);
+    });
+    journalFilterEventType?.addEventListener('change', () => void loadJournals(false));
+    journalFilterSource?.addEventListener('change', () => void loadJournals(false));
     configCreateBtn.addEventListener('click', () => void openConfigModal('create'));
     configModalClose.addEventListener('click', closeConfigModal);
     configModal.querySelector('.modal-backdrop')?.addEventListener('click', closeConfigModal);

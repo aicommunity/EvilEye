@@ -451,6 +451,140 @@ body {
   font-weight: 600;
 }
 
+.journal-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.journal-tab {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 0.35rem 0.9rem;
+  cursor: pointer;
+}
+
+.journal-tab.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.journal-pane {
+  display: none;
+}
+
+.journal-pane.active {
+  display: block;
+}
+
+.journal-table-wrap {
+  max-height: 520px;
+  overflow: auto;
+}
+
+.journal-preview-cell {
+  min-width: 300px;
+}
+
+.journal-preview-inner {
+  position: relative;
+  width: 300px;
+  max-width: 100%;
+  aspect-ratio: 2 / 1;
+  background: #000;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.journal-preview-img,
+.journal-detail-media {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  background: #000;
+}
+
+.journal-preview-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.journal-preview-controls {
+  position: absolute;
+  left: 0.35rem;
+  bottom: 0.35rem;
+  display: flex;
+  gap: 0.25rem;
+}
+
+.journal-preview-btn {
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  border-radius: 4px;
+  padding: 0.15rem 0.45rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.journal-preview-btn.active {
+  background: rgba(59, 130, 246, 0.85);
+}
+
+.journal-detail-modal .journal-detail-content {
+  width: min(960px, 92vw);
+  max-height: 90vh;
+  overflow: auto;
+}
+
+.journal-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.journal-detail-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.journal-detail-tab {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  border-radius: 6px;
+  padding: 0.35rem 0.75rem;
+  cursor: pointer;
+}
+
+.journal-detail-tab.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.journal-detail-media-wrap {
+  position: relative;
+  min-height: 320px;
+  background: #000;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.journal-detail-media-wrap .journal-preview-overlay {
+  position: absolute;
+  inset: 0;
+}
+
 .streaming-empty {
   padding: 2.5rem 1.5rem;
   text-align: center;

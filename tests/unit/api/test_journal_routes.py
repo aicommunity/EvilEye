@@ -1,0 +1,106 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+from evileye.api.app import create_app
+from evileye.api.core import journal_service
+
+
+@pytest.fixture()
+def journal_client(tmp_path, monkeypatch):
+    base = tmp_path / "EvilEyeData"
+    preview_dir = base / "Detections" / "2026-06-13" / "Images" / "FoundPreviews"
+    preview_dir.mkdir(parents=True)
+    preview = preview_dir / "obj_preview.jpg"
+    preview.write_bytes(b"\xff\xd8\xff" + b"x" * 100)
+
+    video_rel = "Events/2026-06-13/Videos/Cam1/clip.mp4"
+    video = base / video_rel
+    video.parent.mkdir(parents=True)
+    video.write_bytes(b"x" * 2000)
+
+    config_path = tmp_path / "poly.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "controller": {"use_database": False, "image_dir": str(base)},
+                "pipeline": {"sources": [{"source_names": ["Cam1"], "source_ids": [0]}]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        journal_service,
+        "get_current_run_summary",
+        lambda: {"config_path": str(config_path)},
+    )
+    app = create_app()
+    return TestClient(app), str(preview.name), video_rel
+
+
+def test_filters_meta_returns_dates(journal_client):
+    client, _preview, _video = journal_client
+    response = client.get("/api/v1/journals/filters/meta")
+    assert response.status_code == 200
+    payload = response.json()
+    assert "dates" in payload
+    assert "source_names" in payload
+
+
+def test_events_grouped_enriched_row(journal_client):
+    client, _preview, _video = journal_client
+    metadata = Path("EvilEyeData/Detections/2026-06-13/Metadata")
+    metadata.mkdir(parents=True, exist_ok=True)
+    (metadata / "objects_found.json").write_text(
+        json.dumps(
+            [
+                {
+                    "event_id": 1,
+                    "timestamp": "2026-06-13T10:00:00",
+                    "source_id": 0,
+                    "source_name": "Cam1",
+                    "object_id": 42,
+                    "class_name": "person",
+                    "image_filename": "obj_preview.jpg",
+                    "date_folder": "2026-06-13",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    response = client.get("/api/v1/journals/objects/grouped?page=0&size=5")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is True
+    assert payload["items"]
+    row = payload["items"][0]
+    assert "row_key" in row
+    assert row.get("date_folder") == "2026-06-13"
+
+
+def test_preview_serves_jpeg(journal_client):
+    client, preview_name, _video = journal_client
+    response = client.get(
+        f"/api/v1/journals/preview?path={preview_name}&date=2026-06-13&journal_type=objects"
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/")
+
+
+def test_video_serves_mp4_with_range(journal_client):
+    client, _preview, video_rel = journal_client
+    response = client.get(f"/api/v1/journals/video?path={video_rel}")
+    assert response.status_code == 200
+    assert response.headers.get("accept-ranges") == "bytes"
+    assert "video/mp4" in response.headers.get("content-type", "")
+
+
+def test_path_traversal_blocked(journal_client):
+    client, _preview, _video = journal_client
+    response = client.get("/api/v1/journals/video?path=../../../etc/passwd")
+    assert response.status_code in {403, 404}

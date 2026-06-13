@@ -60,22 +60,32 @@
       </section>
 
       <section id="panel-journals" class="panel">
-        <div class="card">
+        <div class="card journal-card">
           <h2>Журналы</h2>
           <p class="hint">Предметные журналы текущей активной конфигурации: события, объекты и история конфигураций.</p>
-          <div class="toolbar">
-            <input type="text" id="journal-filter-source" placeholder="Источник (source_name)" class="search-input" aria-label="Фильтр по источнику" style="max-width:200px">
-            <input type="text" id="journal-filter-event" placeholder="Тип события (event_type)" class="search-input" aria-label="Фильтр по типу события" style="max-width:200px">
-            <button type="button" id="journals-refresh-btn" class="btn btn-outline">Обновить журналы</button>
+          <div class="journal-tabs">
+            <button type="button" id="journal-tab-events" class="journal-tab active">События</button>
+            <button type="button" id="journal-tab-objects" class="journal-tab">Объекты</button>
+            <button type="button" id="journal-tab-history" class="journal-tab">История конфигураций</button>
           </div>
-          <h3 class="section-title">События</h3>
-          <div id="journal-events"></div>
-          <button type="button" id="journal-events-more" class="btn btn-sm btn-outline hidden">Загрузить ещё</button>
-          <h3 class="section-title">Объекты</h3>
-          <div id="journal-objects"></div>
-          <button type="button" id="journal-objects-more" class="btn btn-sm btn-outline hidden">Загрузить ещё</button>
-          <h3 class="section-title">История конфигураций</h3>
-          <div id="journal-history"></div>
+          <div class="journal-toolbar toolbar">
+            <input type="date" id="journal-filter-date" class="search-input" aria-label="Дата">
+            <button type="button" id="journal-filter-date-all" class="btn btn-sm btn-outline">Все даты</button>
+            <select id="journal-filter-event-type" class="search-input" aria-label="Тип события"></select>
+            <select id="journal-filter-source" class="search-input hidden" aria-label="Источник"></select>
+            <button type="button" id="journals-refresh-btn" class="btn btn-outline">Обновить</button>
+          </div>
+          <div id="journal-pane-events" class="journal-pane active">
+            <div id="journal-events" class="journal-table-wrap"></div>
+            <button type="button" id="journal-events-more" class="btn btn-sm btn-outline hidden">Загрузить ещё</button>
+          </div>
+          <div id="journal-pane-objects" class="journal-pane">
+            <div id="journal-objects" class="journal-table-wrap"></div>
+            <button type="button" id="journal-objects-more" class="btn btn-sm btn-outline hidden">Загрузить ещё</button>
+          </div>
+          <div id="journal-pane-history" class="journal-pane">
+            <div id="journal-history"></div>
+          </div>
         </div>
       </section>
 
@@ -279,6 +289,19 @@
       </div>
     </div>
   </div>
+
+  <div id="journal-detail-modal" class="modal journal-detail-modal" hidden>
+    <div class="modal-backdrop"></div>
+    <div class="modal-content journal-detail-content">
+      <header class="journal-detail-header">
+        <h3 id="journal-detail-title">Детали</h3>
+        <button type="button" id="journal-detail-close" class="btn btn-sm btn-outline">×</button>
+      </header>
+      <div class="journal-detail-tabs"></div>
+      <div id="journal-detail-body"></div>
+    </div>
+  </div>
+
   <script type="module" src="/dashboard.js"></script>
 </body>
 </html>

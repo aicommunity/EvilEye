@@ -50,6 +50,7 @@ def group_objects_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "time_lost": lost_event.get("ts") if lost_event else "",
                 "preview": found_event.get("image_filename") if found_event else "",
                 "lost_preview": lost_event.get("image_filename") if lost_event else "",
+                "date_folder": (found_event or lost_event or {}).get("date_folder", ""),
                 "found_event": found_event,
                 "lost_event": lost_event,
             }
@@ -65,19 +66,19 @@ def group_events_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for ev in rows:
         event_type = ev.get("event_type") or ""
         if event_type in ("attr_found", "attr_lost"):
-            key = ("attr", ev.get("object_id"), ev.get("source_id"))
+            key = ("attr", ev.get("object_id"))
             if event_type == "attr_found":
                 grouped[key]["found"] = ev
             else:
                 grouped[key]["lost"] = ev
         elif event_type in ("zone_entered", "zone_left"):
-            key = ("zone", ev.get("object_id"), ev.get("zone_id"))
+            key = ("zone", ev.get("source_id"), ev.get("object_id"))
             if event_type == "zone_entered":
                 grouped[key]["found"] = ev
             else:
                 grouped[key]["lost"] = ev
         elif event_type in ("fov_found", "fov_lost"):
-            key = ("fov", ev.get("object_id"), ev.get("source_id"))
+            key = ("fov", ev.get("source_id"), ev.get("object_id"))
             if event_type == "fov_found":
                 grouped[key]["found"] = ev
             else:
@@ -121,6 +122,9 @@ def group_events_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "time_lost": lost_ev.get("ts") if lost_ev else "",
                 "preview": found_ev.get("image_filename", "") if found_ev else "",
                 "lost_preview": lost_ev.get("image_filename", "") if lost_ev else "",
+                "date_folder": base.get("date_folder", ""),
+                "found_event": found_ev,
+                "lost_event": lost_ev,
             }
         )
 

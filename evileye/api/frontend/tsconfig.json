@@ -10,6 +10,6 @@
     "lib": ["ES2020", "DOM", "DOM.Iterable"],
     "skipLibCheck": true
   },
-  "include": ["src/dashboard.ts", "src/api.ts"],
+  "include": ["src/dashboard.ts", "src/api.ts", "src/journal-ui.ts"],
   "exclude": ["node_modules"]
 }

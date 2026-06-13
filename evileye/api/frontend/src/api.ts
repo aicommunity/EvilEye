@@ -109,6 +109,37 @@ export interface StateCamera {
   alive: boolean;
 }
 
+export interface JournalGroupedRow {
+  time?: string;
+  time_lost?: string;
+  event?: string;
+  information?: string;
+  source?: string;
+  date_folder?: string;
+  preview?: string;
+  lost_preview?: string;
+  has_found_preview?: boolean;
+  has_lost_preview?: boolean;
+  has_found_video?: boolean;
+  has_lost_video?: boolean;
+  has_stream_video?: boolean;
+  found_video_path?: string | null;
+  lost_video_path?: string | null;
+  stream_video_path?: string | null;
+  bbox_found?: [number, number, number, number] | null;
+  bbox_lost?: [number, number, number, number] | null;
+  zone_coords?: [number, number][] | null;
+  row_key?: string;
+  [key: string]: unknown;
+}
+
+export interface JournalFiltersMeta {
+  dates: string[];
+  source_names: string[];
+  event_types_events: string[];
+  event_types_objects: string[];
+}
+
 export interface JournalPage<T> {
   available: boolean;
   items: T[];
@@ -182,11 +213,14 @@ function journalQuery(page: number, size: number, filters?: { source_name?: stri
 }
 
 export const journalsApi = {
+  filtersMeta(): Promise<JournalFiltersMeta> {
+    return request<JournalFiltersMeta>('/journals/filters/meta');
+  },
   eventsGrouped(page = 0, size = 30, filters?: { source_name?: string; event_type?: string; date?: string }) {
-    return request<JournalPage<Record<string, unknown>>>(`/journals/events/grouped?${journalQuery(page, size, filters)}`);
+    return request<JournalPage<JournalGroupedRow>>(`/journals/events/grouped?${journalQuery(page, size, filters)}`);
   },
   objectsGrouped(page = 0, size = 30, filters?: { source_name?: string; event_type?: string; date?: string }) {
-    return request<JournalPage<Record<string, unknown>>>(`/journals/objects/grouped?${journalQuery(page, size, filters)}`);
+    return request<JournalPage<JournalGroupedRow>>(`/journals/objects/grouped?${journalQuery(page, size, filters)}`);
   },
   configHistory(limit = 30) {
     return request<{ available: boolean; items: Record<string, unknown>[]; message?: string; reason?: string }>(
@@ -195,10 +229,38 @@ export const journalsApi = {
   },
 };
 
-export function journalPreviewUrl(path: string, date?: string | null, journalType: 'events' | 'objects' = 'events'): string {
-  const p = new URLSearchParams({ path, journal_type: journalType });
-  if (date) p.set('date', date);
+export function journalPreviewUrl(params: {
+  path: string;
+  date?: string | null;
+  journalType: 'events' | 'objects';
+  mode?: 'found' | 'lost';
+}): string {
+  const p = new URLSearchParams({ path: params.path, journal_type: params.journalType });
+  if (params.date) p.set('date', params.date);
+  if (params.mode) p.set('mode', params.mode);
   return `${API_BASE}/journals/preview?${p}`;
+}
+
+export function journalFrameUrl(params: {
+  path: string;
+  date?: string | null;
+  journalType: 'events' | 'objects';
+  mode?: 'found' | 'lost';
+}): string {
+  const p = new URLSearchParams({ path: params.path, journal_type: params.journalType });
+  if (params.date) p.set('date', params.date);
+  if (params.mode) p.set('mode', params.mode);
+  return `${API_BASE}/journals/frame?${p}`;
+}
+
+export function journalVideoUrl(params: { path: string }): string {
+  const p = new URLSearchParams({ path: params.path });
+  return `${API_BASE}/journals/video?${p}`;
+}
+
+/** @deprecated use journalPreviewUrl({ path, date, journalType }) */
+export function journalPreviewUrlLegacy(path: string, date?: string | null, journalType: 'events' | 'objects' = 'events'): string {
+  return journalPreviewUrl({ path, date, journalType });
 }
 
 export const logsApi = {
