@@ -7,12 +7,13 @@ from typing import Any, Dict, Optional
 
 from evileye.api.core.journal_adapters_factory import create_event_journal_adapters
 from evileye.api.core.journal_grouping import group_events_rows, group_objects_rows
+from evileye.api.core.journal_time import normalize_row_times
 from evileye.api.core.server_state import get_current_run_summary
 from evileye.database.config_history_manager import ConfigHistoryManager
 from evileye.database_controller.database_controller_pg import DatabaseControllerPg
 from evileye.visualization_modules.journal_data_source_db import DatabaseJournalDataSource
 from evileye.visualization_modules.journal_data_source_json import JsonLabelJournalDataSource
-from evileye.visualization_modules.journal_media_resolver import enrich_grouped_row, relative_to_base
+from evileye.visualization_modules.journal_media_resolver import enrich_grouped_row, relative_to_base, row_key
 from evileye.visualization_modules.journal_path_resolver import JournalPathResolver
 
 
@@ -26,6 +27,14 @@ class JournalPathForbidden(JournalPathError):
 
 class JournalPathNotFound(JournalPathError):
     pass
+
+
+_db_controller_cache: DatabaseControllerPg | None = None
+_db_controller_failed: bool = False
+_grouped_row_cache: dict[str, dict[str, dict[str, Any]]] = {"events": {}, "objects": {}}
+_json_source_cache: dict[tuple[str, str | None], JsonLabelJournalDataSource] = {}
+_runtime_params_cache: tuple[str, float, dict[str, Any]] | None = None
+_image_base_dir_cache: tuple[str, float, str] | None = None
 
 
 def assert_path_under_base(resolved: str, base_dir: str) -> str:
@@ -54,7 +63,24 @@ def _database_config() -> dict[str, Any]:
     return database if isinstance(database, dict) else {}
 
 
-def _runtime_params() -> dict[str, Any]:
+def _config_mtime(config_path: str | None) -> float:
+    if not config_path:
+        return 0.0
+    try:
+        return os.path.getmtime(config_path)
+    except OSError:
+        return 0.0
+
+
+def _current_config_path() -> str | None:
+    current_run = get_current_run_summary()
+    if not isinstance(current_run, dict):
+        return None
+    config_path = current_run.get("config_path")
+    return str(config_path) if config_path else None
+
+
+def _load_runtime_params_uncached() -> dict[str, Any]:
     current_run = get_current_run_summary()
     if not current_run:
         return {}
@@ -74,6 +100,17 @@ def _runtime_params() -> dict[str, Any]:
     return {}
 
 
+def _runtime_params() -> dict[str, Any]:
+    global _runtime_params_cache
+    config_path = _current_config_path() or ""
+    mtime = _config_mtime(config_path or None)
+    if _runtime_params_cache and _runtime_params_cache[0] == config_path and _runtime_params_cache[1] == mtime:
+        return _runtime_params_cache[2]
+    params = _load_runtime_params_uncached()
+    _runtime_params_cache = (config_path, mtime, params)
+    return params
+
+
 def _database_enabled_in_config() -> bool:
     params = _runtime_params()
     controller = params.get("controller") if isinstance(params, dict) else None
@@ -83,13 +120,20 @@ def _database_enabled_in_config() -> bool:
 
 
 def _image_base_dir() -> str:
+    global _image_base_dir_cache
+    config_path = _current_config_path() or ""
+    mtime = _config_mtime(config_path or None)
+    if _image_base_dir_cache and _image_base_dir_cache[0] == config_path and _image_base_dir_cache[1] == mtime:
+        return _image_base_dir_cache[2]
     params = _runtime_params()
     controller = params.get("controller") if isinstance(params, dict) else None
+    image_dir = "EvilEyeData"
     if isinstance(controller, dict):
-        image_dir = controller.get("image_dir")
-        if image_dir:
-            return str(image_dir)
-    return "EvilEyeData"
+        configured = controller.get("image_dir")
+        if configured:
+            image_dir = str(configured)
+    _image_base_dir_cache = (config_path, mtime, image_dir)
+    return image_dir
 
 
 def _current_source_names() -> set[str]:
@@ -125,13 +169,32 @@ def _source_mappings() -> dict[str, tuple[Any, Any]]:
     return mappings
 
 
-def _enrich_rows(rows: list[dict[str, Any]], *, journal_type: str) -> list[dict[str, Any]]:
+def _enrich_rows(
+        rows: list[dict[str, Any]],
+        *,
+        journal_type: str,
+        list_mode: bool = True,
+        cache_rows: bool = False,
+) -> list[dict[str, Any]]:
     base_dir = _image_base_dir()
     mappings = _source_mappings()
-    return [
-        enrich_grouped_row(row, base_dir=base_dir, journal_type=journal_type, source_mappings=mappings)
-        for row in rows
-    ]
+    enriched_rows: list[dict[str, Any]] = []
+    for row in rows:
+        if cache_rows:
+            _grouped_row_cache.setdefault(journal_type, {})[row_key(row)] = dict(row)
+        enriched_rows.append(
+            normalize_row_times(
+                enrich_grouped_row(
+                    row,
+                    base_dir=base_dir,
+                    journal_type=journal_type,
+                    source_mappings=mappings,
+                    include_raw_events=not list_mode,
+                    list_mode=list_mode,
+                )
+            )
+        )
+    return enriched_rows
 
 
 def load_filters_meta() -> dict[str, Any]:
@@ -167,6 +230,15 @@ def _merge_current_filters(filters: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _db_controller() -> Optional[DatabaseControllerPg]:
+    global _db_controller_cache, _db_controller_failed
+    if _db_controller_failed:
+        return None
+    if _db_controller_cache is not None:
+        try:
+            if _db_controller_cache.is_connected():
+                return _db_controller_cache
+        except Exception:
+            _db_controller_cache = None
     if not _database_enabled_in_config():
         return None
     db_config = _database_config()
@@ -178,9 +250,12 @@ def _db_controller() -> Optional[DatabaseControllerPg]:
         controller.init()
         controller.connect()
         if not controller.is_connected():
+            _db_controller_failed = True
             return None
+        _db_controller_cache = controller
         return controller
     except Exception:
+        _db_controller_failed = True
         return None
 
 
@@ -267,11 +342,25 @@ def _make_db_source(
     return source
 
 
-def _make_json_source(*, date: str | None = None) -> JsonLabelJournalDataSource:
-    source = JsonLabelJournalDataSource(_image_base_dir(), params=_runtime_params())
+def _get_json_source(*, date: str | None = None) -> JsonLabelJournalDataSource:
+    base_dir = _image_base_dir()
+    cache_key = (base_dir, date)
+    source = _json_source_cache.get(cache_key)
+    if source is None:
+        source = JsonLabelJournalDataSource(base_dir, params=_runtime_params())
+        if date:
+            source.set_date(date)
+        _json_source_cache[cache_key] = source
+        return source
+    source.set_base_dir(base_dir)
+    source.params = _runtime_params()
     if date:
         source.set_date(date)
     return source
+
+
+def _make_json_source(*, date: str | None = None) -> JsonLabelJournalDataSource:
+    return _get_json_source(date=date)
 
 
 def _with_journal_meta(payload: dict[str, Any], *, mode: str) -> dict[str, Any]:
@@ -297,7 +386,8 @@ def load_events_page(*, page: int, size: int, filters: Dict[str, Any], date: str
     if not _json_journal_available():
         return _unavailable_payload()
     scoped_filters = {**scoped_filters, "journal_kind": "events"}
-    source = _make_json_source(date=date)
+    source = _get_json_source(date=date)
+    source.begin_request()
     items = source.fetch(page, size, scoped_filters, sort=[("ts", "desc")])
     total = source.get_total(scoped_filters)
     return _with_journal_meta({"available": True, "items": items, "total": total}, mode="json")
@@ -314,7 +404,8 @@ def load_objects_page(*, page: int, size: int, filters: Dict[str, Any], date: st
     if not _json_journal_available():
         return _unavailable_payload()
     scoped_filters = {**scoped_filters, "journal_kind": "objects"}
-    source = _make_json_source(date=date)
+    source = _get_json_source(date=date)
+    source.begin_request()
     items = source.fetch(page, size, scoped_filters, sort=[("ts", "desc")])
     total = source.get_total(scoped_filters)
     return _with_journal_meta({"available": True, "items": items, "total": total}, mode="json")
@@ -324,7 +415,12 @@ def load_events_grouped_page(*, page: int, size: int, filters: Dict[str, Any], d
     payload = load_events_page(page=page, size=size, filters=filters, date=date)
     if not payload.get("available"):
         return payload
-    grouped = _enrich_rows(group_events_rows(payload.get("items") or []), journal_type="events")
+    grouped = _enrich_rows(
+        group_events_rows(payload.get("items") or []),
+        journal_type="events",
+        list_mode=True,
+        cache_rows=True,
+    )
     result = {
         "available": True,
         "items": grouped,
@@ -342,7 +438,12 @@ def load_objects_grouped_page(*, page: int, size: int, filters: Dict[str, Any], 
     payload = load_objects_page(page=page, size=size, filters=filters, date=date)
     if not payload.get("available"):
         return payload
-    grouped = _enrich_rows(group_objects_rows(payload.get("items") or []), journal_type="objects")
+    grouped = _enrich_rows(
+        group_objects_rows(payload.get("items") or []),
+        journal_type="objects",
+        list_mode=True,
+        cache_rows=True,
+    )
     result = {
         "available": True,
         "items": grouped,
@@ -354,6 +455,26 @@ def load_objects_grouped_page(*, page: int, size: int, filters: Dict[str, Any], 
         if key in payload:
             result[key] = payload[key]
     return result
+
+
+def load_row_meta(*, row_key_value: str, journal_type: str) -> dict[str, Any]:
+    cached = _grouped_row_cache.get(journal_type, {}).get(row_key_value)
+    if not cached:
+        raise JournalPathNotFound("Row not found in cache")
+    enriched = _enrich_rows([cached], journal_type=journal_type, list_mode=False)[0]
+    return {
+        "row_key": enriched.get("row_key"),
+        "bbox_found": enriched.get("bbox_found"),
+        "bbox_lost": enriched.get("bbox_lost"),
+        "zone_coords": enriched.get("zone_coords"),
+        "has_found_video": enriched.get("has_found_video"),
+        "has_lost_video": enriched.get("has_lost_video"),
+        "has_stream_video": enriched.get("has_stream_video"),
+        "found_video_path": enriched.get("found_video_path"),
+        "lost_video_path": enriched.get("lost_video_path"),
+        "stream_video_path": enriched.get("stream_video_path"),
+        "stream_offset_seconds": enriched.get("stream_offset_seconds"),
+    }
 
 
 def resolve_journal_preview_path(

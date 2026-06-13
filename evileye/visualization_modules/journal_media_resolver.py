@@ -12,6 +12,7 @@ from evileye.visualization_modules.journal_path_resolver import JournalPathResol
 DEFAULT_IMAGE_WIDTH = 1920
 DEFAULT_IMAGE_HEIGHT = 1080
 MIN_VIDEO_BYTES = 1000
+VIDEO_EXTENSIONS = (".mp4", ".mkv", ".webm", ".avi")
 
 
 def row_key(row: dict[str, Any]) -> str:
@@ -49,6 +50,23 @@ def _video_file_ok(path: str) -> bool:
         return os.path.getsize(path) >= MIN_VIDEO_BYTES
     except OSError:
         return False
+
+
+def _glob_video(pattern_base: str) -> str | None:
+    for ext in VIDEO_EXTENSIONS:
+        for path in glob.glob(pattern_base + ext):
+            if _video_file_ok(path):
+                return path
+    return None
+
+
+def _saved_video_path(event_data: dict[str, Any], base_dir: str, *, is_lost: bool) -> str | None:
+    video_path_key = "video_path_lost" if is_lost else "video_path"
+    saved_video_path = event_data.get(video_path_key)
+    if not saved_video_path:
+        return None
+    full_path = os.path.join(base_dir, str(saved_video_path))
+    return full_path if _video_file_ok(full_path) else None
 
 
 def resolve_event_video_path(
@@ -129,12 +147,12 @@ def resolve_event_video_path(
     if event_id_numeric is not None:
         for camera_folder in possible_camera_folders:
             for src_name in possible_source_names:
-                candidate = os.path.join(
+                candidate_base = os.path.join(
                     videos_base_dir,
                     camera_folder,
-                    f"{src_name}_{event_name}_{event_id_numeric}_{time_str}.mp4",
+                    f"{src_name}_{event_name}_{event_id_numeric}_{time_str}",
                 )
-                found = _check(candidate)
+                found = _glob_video(candidate_base)
                 if found:
                     return found
 
@@ -143,13 +161,14 @@ def resolve_event_video_path(
                 folder_path = os.path.join(videos_base_dir, folder_name)
                 if not os.path.isdir(folder_path):
                     continue
-                pattern = f"*_{event_name}_{event_id_numeric}_{time_str}.mp4"
-                for video_path in glob.glob(os.path.join(folder_path, pattern)):
-                    found = _check(video_path)
-                    if found:
-                        return found
-                pattern_time = f"*_{event_name}_*_{time_str}.mp4"
-                matching = glob.glob(os.path.join(folder_path, pattern_time))
+                pattern_base = os.path.join(folder_path, f"*_{event_name}_{event_id_numeric}_{time_str}")
+                found = _glob_video(pattern_base)
+                if found:
+                    return found
+                pattern_time_base = os.path.join(folder_path, f"*_{event_name}_*_{time_str}")
+                matching = []
+                for ext in VIDEO_EXTENSIONS:
+                    matching.extend(glob.glob(pattern_time_base + ext))
                 for video_path in matching:
                     filename = os.path.basename(video_path)
                     if any(src in filename for src in possible_source_names if src):
@@ -165,24 +184,26 @@ def resolve_event_video_path(
 
     for camera_folder in possible_camera_folders:
         for src_name in possible_source_names:
-            alt_path = os.path.join(videos_base_dir, camera_folder, f"{src_name}_{event_name}_{time_str}.mp4")
-            found = _check(alt_path)
+            alt_base = os.path.join(videos_base_dir, camera_folder, f"{src_name}_{event_name}_{time_str}")
+            found = _glob_video(alt_base)
             if found:
                 return found
 
     try:
         all_matching: list[str] = []
-        pattern = f"*_{event_name}_*_{time_str}.mp4"
-        for folder_name in os.listdir(videos_base_dir):
-            folder_path = os.path.join(videos_base_dir, folder_name)
-            if os.path.isdir(folder_path):
-                all_matching.extend(glob.glob(os.path.join(folder_path, pattern)))
-        if not all_matching:
-            pattern_partial = f"*_{event_name}_*_{time_str_partial}*.mp4"
+        for ext in VIDEO_EXTENSIONS:
+            pattern = f"*_{event_name}_*_{time_str}{ext}"
             for folder_name in os.listdir(videos_base_dir):
                 folder_path = os.path.join(videos_base_dir, folder_name)
                 if os.path.isdir(folder_path):
-                    all_matching.extend(glob.glob(os.path.join(folder_path, pattern_partial)))
+                    all_matching.extend(glob.glob(os.path.join(folder_path, pattern)))
+        if not all_matching:
+            for ext in VIDEO_EXTENSIONS:
+                pattern_partial = f"*_{event_name}_*_{time_str_partial}*{ext}"
+                for folder_name in os.listdir(videos_base_dir):
+                    folder_path = os.path.join(videos_base_dir, folder_name)
+                    if os.path.isdir(folder_path):
+                        all_matching.extend(glob.glob(os.path.join(folder_path, pattern_partial)))
         for video_path in all_matching:
             filename = os.path.basename(video_path)
             if any(src in filename for src in possible_source_names if src):
@@ -256,9 +277,11 @@ def resolve_stream_segment_path(
         camera_path = os.path.join(streams_dir, camera_folder)
         if not os.path.isdir(camera_path):
             continue
-        for segment_file in glob.glob(os.path.join(camera_path, "*.mp4")):
+        for segment_file in glob.glob(os.path.join(camera_path, "*")):
+            if os.path.splitext(segment_file)[1].lower() not in VIDEO_EXTENSIONS:
+                continue
             filename = os.path.basename(segment_file)
-            parts = filename.replace(".mp4", "").split("_")
+            parts = os.path.splitext(filename)[0].split("_")
             if len(parts) < 3:
                 continue
             try:
@@ -309,6 +332,14 @@ def resolve_preview_image_path(
     )
 
 
+def _dimensions_for_bbox(abs_preview_path: str | None, journal_type: str) -> tuple[int, int]:
+    if not abs_preview_path:
+        return 0, 0
+    frame = JournalPathResolver.resolve_frame_path(abs_preview_path, journal_type=journal_type)
+    target = frame if frame and os.path.isfile(frame) else abs_preview_path
+    return _image_dimensions(target)
+
+
 def enrich_grouped_row(
         row: dict[str, Any],
         *,
@@ -316,6 +347,7 @@ def enrich_grouped_row(
         journal_type: str,
         source_mappings: dict[str, tuple[Any, Any]] | None = None,
         include_raw_events: bool = True,
+        list_mode: bool = False,
 ) -> dict[str, Any]:
     enriched = dict(row)
     found_event = enriched.get("found_event") if isinstance(enriched.get("found_event"), dict) else None
@@ -341,44 +373,58 @@ def enrich_grouped_row(
     for mode, path_key in (("found", "preview"), ("lost", "lost_preview")):
         img_path = str(enriched.get(path_key) or "")
         event_data = _event_data(mode)
-        abs_path = resolve_preview_image_path(img_path, base_dir, event_data, journal_type)
-        enriched[f"has_{mode}_preview"] = bool(abs_path and os.path.isfile(abs_path))
+        if list_mode:
+            enriched[f"has_{mode}_preview"] = bool(img_path)
+        else:
+            abs_path = resolve_preview_image_path(img_path, base_dir, event_data, journal_type)
+            enriched[f"has_{mode}_preview"] = bool(abs_path and os.path.isfile(abs_path))
 
     if journal_type == "events":
-        found_abs = resolve_event_video_path(
-            found_event, base_dir, is_lost=False, source_mappings=source_mappings, preview_path=str(enriched.get("preview") or "")
-        )
-        lost_abs = resolve_event_video_path(
-            lost_event, base_dir, is_lost=True, source_mappings=source_mappings, preview_path=str(enriched.get("lost_preview") or "")
-        )
+        if list_mode:
+            found_abs = _saved_video_path(found_event or {}, base_dir, is_lost=False)
+            lost_abs = _saved_video_path(lost_event or {}, base_dir, is_lost=True)
+        else:
+            found_abs = resolve_event_video_path(
+                found_event, base_dir, is_lost=False, source_mappings=source_mappings, preview_path=str(enriched.get("preview") or "")
+            )
+            lost_abs = resolve_event_video_path(
+                lost_event, base_dir, is_lost=True, source_mappings=source_mappings, preview_path=str(enriched.get("lost_preview") or "")
+            )
         enriched["has_found_video"] = bool(found_abs)
         enriched["has_lost_video"] = bool(lost_abs)
         enriched["found_video_path"] = relative_to_base(found_abs, base_dir)
         enriched["lost_video_path"] = relative_to_base(lost_abs, base_dir)
         enriched["has_stream_video"] = False
         enriched["stream_video_path"] = None
+        enriched["stream_offset_seconds"] = 0
     else:
-        segment_abs, _offset = resolve_stream_segment_path(found_event, base_dir, source_mappings=source_mappings)
+        if list_mode:
+            segment_abs = None
+            offset = 0
+        else:
+            segment_abs, offset = resolve_stream_segment_path(found_event, base_dir, source_mappings=source_mappings)
         enriched["has_found_video"] = False
         enriched["has_lost_video"] = False
         enriched["found_video_path"] = None
         enriched["lost_video_path"] = None
         enriched["has_stream_video"] = bool(segment_abs)
         enriched["stream_video_path"] = relative_to_base(segment_abs, base_dir)
+        enriched["stream_offset_seconds"] = offset if segment_abs else 0
 
-    for mode in ("found", "lost"):
-        ev = found_event if mode == "found" else lost_event
-        img_path = str(enriched.get("preview" if mode == "found" else "lost_preview") or "")
-        abs_path = resolve_preview_image_path(img_path, base_dir, _event_data(mode), journal_type)
-        img_w, img_h = _image_dimensions(abs_path)
-        bbox, zone = EventMetadataExtractor.get_bbox_and_zone(ev or {}, is_lost=(mode == "lost"))
-        enriched[f"bbox_{mode}"] = EventMetadataExtractor.normalize_bbox_for_display(bbox, img_w, img_h)
-        if mode == "found":
-            enriched["zone_coords"] = EventMetadataExtractor.normalize_zone_coords(zone, img_w, img_h)
-        if enriched.get(f"bbox_{mode}") is None:
-            enriched[f"bbox_{mode}"] = None
+    if not list_mode:
+        for mode in ("found", "lost"):
+            ev = found_event if mode == "found" else lost_event
+            img_path = str(enriched.get("preview" if mode == "found" else "lost_preview") or "")
+            abs_path = resolve_preview_image_path(img_path, base_dir, _event_data(mode), journal_type)
+            img_w, img_h = _dimensions_for_bbox(abs_path, journal_type)
+            bbox, zone = EventMetadataExtractor.get_bbox_and_zone(ev or {}, is_lost=(mode == "lost"))
+            enriched[f"bbox_{mode}"] = EventMetadataExtractor.normalize_bbox_for_display(bbox, img_w, img_h)
+            if mode == "found":
+                enriched["zone_coords"] = EventMetadataExtractor.normalize_zone_coords(zone, img_w, img_h)
+            if enriched.get(f"bbox_{mode}") is None:
+                enriched[f"bbox_{mode}"] = None
 
-    if not include_raw_events:
+    if list_mode or not include_raw_events:
         enriched.pop("found_event", None)
         enriched.pop("lost_event", None)
 
