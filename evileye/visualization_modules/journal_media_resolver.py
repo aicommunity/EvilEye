@@ -348,6 +348,7 @@ def enrich_grouped_row(
         source_mappings: dict[str, tuple[Any, Any]] | None = None,
         include_raw_events: bool = True,
         list_mode: bool = False,
+        meta_only: bool = False,
 ) -> dict[str, Any]:
     enriched = dict(row)
     found_event = enriched.get("found_event") if isinstance(enriched.get("found_event"), dict) else None
@@ -380,7 +381,7 @@ def enrich_grouped_row(
             enriched[f"has_{mode}_preview"] = bool(abs_path and os.path.isfile(abs_path))
 
     if journal_type == "events":
-        if list_mode:
+        if list_mode or meta_only:
             found_abs = _saved_video_path(found_event or {}, base_dir, is_lost=False)
             lost_abs = _saved_video_path(lost_event or {}, base_dir, is_lost=True)
         else:
@@ -398,7 +399,7 @@ def enrich_grouped_row(
         enriched["stream_video_path"] = None
         enriched["stream_offset_seconds"] = 0
     else:
-        if list_mode:
+        if list_mode or meta_only:
             segment_abs = None
             offset = 0
         else:
@@ -416,7 +417,10 @@ def enrich_grouped_row(
             ev = found_event if mode == "found" else lost_event
             img_path = str(enriched.get("preview" if mode == "found" else "lost_preview") or "")
             abs_path = resolve_preview_image_path(img_path, base_dir, _event_data(mode), journal_type)
-            img_w, img_h = _dimensions_for_bbox(abs_path, journal_type)
+            if meta_only:
+                img_w, img_h = DEFAULT_IMAGE_WIDTH, DEFAULT_IMAGE_HEIGHT
+            else:
+                img_w, img_h = _dimensions_for_bbox(abs_path, journal_type)
             bbox, zone = EventMetadataExtractor.get_bbox_and_zone(ev or {}, is_lost=(mode == "lost"))
             enriched[f"bbox_{mode}"] = EventMetadataExtractor.normalize_bbox_for_display(bbox, img_w, img_h)
             if mode == "found":

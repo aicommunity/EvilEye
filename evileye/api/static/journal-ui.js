@@ -370,44 +370,62 @@ export function openJournalDetailModal(row, journalType, options = {}) {
     title.textContent = `${row.event ?? 'Event'} — ${row.information ?? ''}`;
     modal.hidden = false;
     modal.classList.add('open');
-    body.innerHTML = '<p class="empty">Загрузка…</p>';
-    void ensureRowBbox(row, journalType).then((enrichedRow) => {
-        if (!detailOpen)
-            return;
-        const hasFound = Boolean(enrichedRow.has_found_preview || enrichedRow.preview);
-        const hasLost = Boolean(enrichedRow.has_lost_preview || enrichedRow.lost_preview);
+    let enrichedRow = row;
+    let activeTab = 'found';
+    const buildTabs = (currentRow) => {
+        const hasFound = Boolean(currentRow.has_found_preview || currentRow.preview);
+        const hasLost = Boolean(currentRow.has_lost_preview || currentRow.lost_preview);
         const hasVideo = journalType === 'events'
-            ? Boolean(enrichedRow.has_found_video || enrichedRow.has_lost_video)
-            : Boolean(enrichedRow.has_stream_video);
+            ? Boolean(currentRow.has_found_video || currentRow.has_lost_video)
+            : Boolean(currentRow.has_stream_video);
         const tabDefs = [
             { id: 'found', label: 'Found', visible: hasFound },
             { id: 'lost', label: 'Lost', visible: hasLost },
             { id: 'video', label: 'Видео', visible: hasVideo },
         ];
-        const visibleTabs = tabDefs.filter((tab) => tab.visible);
-        tabs.innerHTML = visibleTabs
-            .map((tab) => `<button type="button" class="journal-detail-tab" data-tab="${tab.id}">${tab.label}</button>`)
-            .join('');
-        const cellMode = hasFound ? 'found' : 'lost';
-        const preferredTab = options.initialTab ?? cellMode;
-        const initialTab = visibleTabs.find((tab) => tab.id === preferredTab)?.id
-            ?? visibleTabs.find((tab) => tab.id !== 'video')?.id
-            ?? visibleTabs[0]?.id
-            ?? 'found';
-        const renderActiveTab = (tabId) => {
-            tabs.querySelectorAll('.journal-detail-tab').forEach((btn) => {
-                btn.classList.toggle('active', btn.dataset.tab === tabId);
-            });
-            renderDetailTab(body, enrichedRow, journalType, tabId);
-        };
-        renderActiveTab(initialTab);
+        return tabDefs.filter((tab) => tab.visible);
+    };
+    const renderActiveTab = (tabId) => {
+        activeTab = tabId;
         tabs.querySelectorAll('.journal-detail-tab').forEach((btn) => {
-            btn.onclick = () => {
-                renderActiveTab(btn.dataset.tab);
-            };
+            btn.classList.toggle('active', btn.dataset.tab === tabId);
         });
-        closeBtn.onclick = () => closeJournalDetailModal();
-        modal.querySelector('.modal-backdrop')?.addEventListener('click', () => closeJournalDetailModal(), { once: true });
+        renderDetailTab(body, enrichedRow, journalType, tabId);
+    };
+    const visibleTabs = buildTabs(enrichedRow);
+    tabs.innerHTML = visibleTabs
+        .map((tab) => `<button type="button" class="journal-detail-tab" data-tab="${tab.id}">${tab.label}</button>`)
+        .join('');
+    const cellMode = visibleTabs.some((tab) => tab.id === 'found') ? 'found' : 'lost';
+    const preferredTab = options.initialTab ?? cellMode;
+    const initialTab = visibleTabs.find((tab) => tab.id === preferredTab)?.id
+        ?? visibleTabs.find((tab) => tab.id !== 'video')?.id
+        ?? visibleTabs[0]?.id
+        ?? 'found';
+    renderActiveTab(initialTab);
+    tabs.querySelectorAll('.journal-detail-tab').forEach((btn) => {
+        btn.onclick = () => {
+            renderActiveTab(btn.dataset.tab);
+        };
+    });
+    closeBtn.onclick = () => closeJournalDetailModal();
+    modal.querySelector('.modal-backdrop')?.addEventListener('click', () => closeJournalDetailModal(), { once: true });
+    void ensureRowBbox(row, journalType).then((metaRow) => {
+        if (!detailOpen)
+            return;
+        enrichedRow = metaRow;
+        const updatedTabs = buildTabs(enrichedRow);
+        if (updatedTabs.length !== visibleTabs.length) {
+            tabs.innerHTML = updatedTabs
+                .map((tab) => `<button type="button" class="journal-detail-tab" data-tab="${tab.id}">${tab.label}</button>`)
+                .join('');
+            tabs.querySelectorAll('.journal-detail-tab').forEach((btn) => {
+                btn.onclick = () => {
+                    renderActiveTab(btn.dataset.tab);
+                };
+            });
+        }
+        renderActiveTab(activeTab);
     });
 }
 export function closeJournalDetailModal() {

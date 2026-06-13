@@ -107,9 +107,10 @@ async def journal_stats(date: str | None = None) -> dict:
 async def journal_row_meta(
         row_key: str = Query(..., min_length=1),
         journal_type: str = Query("events", pattern="^(events|objects)$"),
+        meta_only: bool = Query(True),
 ) -> dict:
     try:
-        return load_row_meta(row_key_value=row_key, journal_type=journal_type)
+        return load_row_meta(row_key_value=row_key, journal_type=journal_type, meta_only=meta_only)
     except JournalPathNotFound:
         raise HTTPException(status_code=404, detail="Row metadata not found")
 

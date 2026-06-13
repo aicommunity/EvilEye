@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import json
-import os
-from pathlib import Path
-from typing import Any, Dict, Optional
+from collections import OrderedDict
 
 from evileye.api.core.journal_adapters_factory import create_event_journal_adapters
 from evileye.api.core.journal_grouping import group_events_rows, group_objects_rows
@@ -35,6 +32,8 @@ _grouped_row_cache: dict[str, dict[str, dict[str, Any]]] = {"events": {}, "objec
 _json_source_cache: dict[tuple[str, str | None], JsonLabelJournalDataSource] = {}
 _runtime_params_cache: tuple[str, float, dict[str, Any]] | None = None
 _image_base_dir_cache: tuple[str, float, str] | None = None
+_path_resolve_cache: OrderedDict[tuple[str, ...], str | None] = OrderedDict()
+_PATH_RESOLVE_CACHE_MAX = 4096
 
 
 def assert_path_under_base(resolved: str, base_dir: str) -> str:
@@ -175,6 +174,7 @@ def _enrich_rows(
         journal_type: str,
         list_mode: bool = True,
         cache_rows: bool = False,
+        meta_only: bool = False,
 ) -> list[dict[str, Any]]:
     base_dir = _image_base_dir()
     mappings = _source_mappings()
@@ -191,6 +191,7 @@ def _enrich_rows(
                     source_mappings=mappings,
                     include_raw_events=not list_mode,
                     list_mode=list_mode,
+                    meta_only=meta_only,
                 )
             )
         )
@@ -491,11 +492,16 @@ def load_journal_stats(*, date: str | None = None) -> dict[str, Any]:
     }
 
 
-def load_row_meta(*, row_key_value: str, journal_type: str) -> dict[str, Any]:
+def load_row_meta(*, row_key_value: str, journal_type: str, meta_only: bool = True) -> dict[str, Any]:
     cached = _grouped_row_cache.get(journal_type, {}).get(row_key_value)
     if not cached:
         raise JournalPathNotFound("Row not found in cache")
-    enriched = _enrich_rows([cached], journal_type=journal_type, list_mode=False)[0]
+    enriched = _enrich_rows(
+        [cached],
+        journal_type=journal_type,
+        list_mode=False,
+        meta_only=meta_only,
+    )[0]
     return {
         "row_key": enriched.get("row_key"),
         "bbox_found": enriched.get("bbox_found"),
@@ -511,7 +517,39 @@ def load_row_meta(*, row_key_value: str, journal_type: str) -> dict[str, Any]:
     }
 
 
+def _cached_path_resolve(cache_key: tuple[str, ...], resolver) -> str | None:
+    cached = _path_resolve_cache.get(cache_key)
+    if cache_key in _path_resolve_cache:
+        _path_resolve_cache.move_to_end(cache_key)
+        return cached
+    resolved = resolver()
+    _path_resolve_cache[cache_key] = resolved
+    if len(_path_resolve_cache) > _PATH_RESOLVE_CACHE_MAX:
+        _path_resolve_cache.popitem(last=False)
+    return resolved
+
+
 def resolve_journal_preview_path(
+        *,
+        path: str,
+        date: str | None,
+        journal_type: str,
+        mode: str = "found",
+) -> str | None:
+    preview_mode = "lost" if str(mode).lower() == "lost" else "found"
+    cache_key = ("preview", path, date or "", journal_type, preview_mode)
+    return _cached_path_resolve(
+        cache_key,
+        lambda: _resolve_journal_preview_path_uncached(
+            path=path,
+            date=date,
+            journal_type=journal_type,
+            mode=mode,
+        ),
+    )
+
+
+def _resolve_journal_preview_path_uncached(
         *,
         path: str,
         date: str | None,
@@ -537,7 +575,31 @@ def resolve_journal_frame_path(
         journal_type: str,
         mode: str = "found",
 ) -> str | None:
-    preview = resolve_journal_preview_path(path=path, date=date, journal_type=journal_type, mode=mode)
+    cache_key = ("frame", path, date or "", journal_type, str(mode).lower())
+    return _cached_path_resolve(
+        cache_key,
+        lambda: _resolve_journal_frame_path_uncached(
+            path=path,
+            date=date,
+            journal_type=journal_type,
+            mode=mode,
+        ),
+    )
+
+
+def _resolve_journal_frame_path_uncached(
+        *,
+        path: str,
+        date: str | None,
+        journal_type: str,
+        mode: str = "found",
+) -> str | None:
+    preview = _resolve_journal_preview_path_uncached(
+        path=path,
+        date=date,
+        journal_type=journal_type,
+        mode=mode,
+    )
     if not preview:
         return None
     frame = JournalPathResolver.resolve_frame_path(preview, journal_type=journal_type)
