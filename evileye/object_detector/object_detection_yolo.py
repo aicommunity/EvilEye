@@ -62,6 +62,7 @@ class ObjectDetectorYolo(ModelBasedDetectorBase):
                 self.queue_out,
                 logger_name=f"det{i}",
                 parent_logger=self.logger,
+                on_cuda_oom_fatal=self._report_cuda_oom_disabled,
             )
             thread.start()
             self.detection_threads.append(thread)

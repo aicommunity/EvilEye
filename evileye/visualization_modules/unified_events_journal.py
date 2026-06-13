@@ -492,10 +492,14 @@ class UnifiedEventsJournal(UnifiedJournalBase):
         # Add system events as standalone rows
         for ev in sys_events:
             system_event = ev.get('system_event', '')
-            if system_event == 'SystemStart':
-                information = 'System started'
-            else:
-                information = 'System stopped'
+            information = ev.get('information')
+            if not information:
+                if system_event == 'SystemStart':
+                    information = 'System started'
+                elif system_event == 'CudaOutOfMemory':
+                    information = 'CUDA out of memory: detection disabled'
+                else:
+                    information = 'System stopped'
             table_rows.append({
                 'source': 'System',
                 'event': 'SystemEvent',
@@ -653,12 +657,15 @@ class UnifiedEventsJournal(UnifiedJournalBase):
 
             # Add system events
             for ev in sys_events:
-                # Format information to match old journal: 'System started' or 'System stopped'
                 system_event = ev.get('system_event', '')
-                if system_event == 'SystemStart':
-                    information = 'System started'
-                else:
-                    information = 'System stopped'
+                information = ev.get('information')
+                if not information:
+                    if system_event == 'SystemStart':
+                        information = 'System started'
+                    elif system_event == 'CudaOutOfMemory':
+                        information = 'CUDA out of memory: detection disabled'
+                    else:
+                        information = 'System stopped'
                 new_table_rows.append({
                     'source': 'System',
                     'event': 'SystemEvent',

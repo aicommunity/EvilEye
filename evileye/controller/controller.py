@@ -376,6 +376,19 @@ class Controller(ControllerProcessingMixin):
 
         self.logger.info(f"System message [{type}]: {message}")
 
+    def _wire_detector_system_event_callbacks(self) -> None:
+        """Connect detector MP fatal-error reporting to the system events journal."""
+        if self.pipeline is None or not hasattr(self.pipeline, "get_detectors"):
+            return
+        detectors = self.pipeline.get_detectors() or []
+        wired = 0
+        for detector in detectors:
+            if hasattr(detector, "set_system_event_callback"):
+                detector.set_system_event_callback(self.system_event)
+                wired += 1
+        if wired:
+            self.logger.debug("Wired system_event callback to %s detector(s)", wired)
+
     def add_pipeline(self, pipeline_type):
         pass
 
@@ -1088,6 +1101,8 @@ class Controller(ControllerProcessingMixin):
             pipeline_params=pipeline_params,
             credentials=self.credentials,
         )
+
+        self._wire_detector_system_event_callbacks()
 
         # Preload controller's class mapping into centralized ClassManager
         try:

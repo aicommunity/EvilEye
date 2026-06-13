@@ -2,11 +2,12 @@ from queue import Empty, Queue
 import logging
 import threading
 import time
-from typing import Optional
+from typing import Callable, Optional
 
 from .detection_thread_base import DetectionThreadBase
 from ..core.frame import Frame
 from ..core.frame_transport import FrameHandle, SharedFrameTransport
+from ..core.gpu_errors import cuda_memory_snapshot, format_cuda_oom_message
 from ..core.mp_async_bridge import MpAsyncBridge
 from ..core.mp_pending_jobs import DetectorPendingJob
 from ..core.mp_queue_config import (
@@ -39,17 +40,21 @@ class DetectionThreadYoloMp(DetectionThreadBase):
                  source_ids: list, roi: list, inf_params: dict,
                  restart_on_exit: bool, no_restart_exit_codes: set[int],
                  queue_out: Queue, logger_name: Optional[str] = None,
-                 parent_logger: Optional[logging.Logger] = None):
+                 parent_logger: Optional[logging.Logger] = None,
+                 on_cuda_oom_fatal: Optional[Callable[[str], None]] = None):
         from evileye.core.mp_control import MpControl
         from .mp_worker_yolo import MpWorkerYolo
 
         qsize = mp_control_queue_size(max(len(roi), 1), role="detector")
+        self._on_cuda_oom_fatal = on_cuda_oom_fatal
+        self._gpu_disabled = False
         self.mp_control = MpControl(
             max_input_size=qsize,
             max_output_size=qsize,
             name=f"det-mp-{DetectionThreadYoloMp.id_cnt}",
             restart_on_exit=restart_on_exit,
             no_restart_exit_codes=no_restart_exit_codes,
+            on_worker_fatal_exit=self._handle_worker_fatal_exit,
         )
         self.mp_worker = self.mp_control.add_worker(MpWorkerYolo)
         self.model_name = model_name
@@ -132,6 +137,74 @@ class DetectionThreadYoloMp(DetectionThreadBase):
             return 0
         return self._bridge.diag_pending_evict()
 
+    def is_gpu_disabled(self) -> bool:
+        return self._gpu_disabled
+
+    def _handle_worker_fatal_exit(self, slot_index: int, exit_code: int, pool_name: str) -> None:
+        if self._gpu_disabled:
+            return
+        self._gpu_disabled = True
+        message = format_cuda_oom_message(
+            component=pool_name,
+            detail="detection worker disabled after fatal CUDA OOM",
+            extra={
+                "slot": slot_index,
+                "exit_code": exit_code,
+                "source_ids": self.source_ids,
+                "cuda": cuda_memory_snapshot(),
+            },
+        )
+        self.logger.error(message)
+        self._drain_mp_output_queue()
+        self._flush_pending_jobs_empty()
+        callback = self._on_cuda_oom_fatal
+        if callback is not None:
+            try:
+                callback(message)
+            except Exception as exc:
+                self.logger.error("CUDA OOM callback failed: %s", exc, exc_info=True)
+
+    def _drain_mp_output_queue(self) -> None:
+        if self.mp_control is None:
+            return
+        while True:
+            try:
+                self.mp_control.get_nowait()
+            except Exception:
+                break
+
+    def _flush_pending_jobs_empty(self) -> None:
+        if self._bridge is None:
+            return
+        while True:
+            job = self._bridge.pop_head()
+            if job is None:
+                break
+            try:
+                detection_result_list = self._detection_result_from_predict(
+                    job.split_image,
+                    [None] * len(job.split_image),
+                )
+                self._put_detection_output(detection_result_list, job.capture_image)
+            except Exception as exc:
+                self.logger.error("Failed to flush pending MP job after CUDA OOM: %s", exc)
+            finally:
+                self._release_handles(job.handles)
+
+    def _put_empty_detection_for_capture(self, capture_image) -> None:
+        from .detection_preprocess import split_capture_for_detection
+
+        split_image = split_capture_for_detection(
+            capture_image, self.roi, self.roi_coords_per_camera
+        )
+        if not split_image:
+            return
+        detection_result_list = self._detection_result_from_predict(
+            split_image,
+            [None] * len(split_image),
+        )
+        self._put_detection_output(detection_result_list, capture_image)
+
     def _build_mp_payload(self, split_image: list) -> tuple[list, list[FrameHandle]]:
         handles: list[FrameHandle] = []
         payload: list = []
@@ -190,6 +263,9 @@ class DetectionThreadYoloMp(DetectionThreadBase):
             )
             if not split_image:
                 continue
+            if self._gpu_disabled or (self.mp_control is not None and not self.mp_control.is_operational()):
+                self._put_empty_detection_for_capture(image)
+                continue
             try:
                 payload, handles = self._build_mp_payload(split_image)
                 self._enqueue_mp_det_job(split_image, image, payload, handles)
@@ -205,6 +281,17 @@ class DetectionThreadYoloMp(DetectionThreadBase):
             try:
                 predict_results = self.mp_control.get(timeout=mp_drain_poll_sec())
             except Empty:
+                if self._gpu_disabled:
+                    job = self._bridge.pop_head()
+                    if job is not None:
+                        try:
+                            detection_result_list = self._detection_result_from_predict(
+                                job.split_image,
+                                [None] * len(job.split_image),
+                            )
+                            self._put_detection_output(detection_result_list, job.capture_image)
+                        finally:
+                            self._release_handles(job.handles)
                 continue
             except Exception:
                 continue

@@ -238,15 +238,35 @@ class VideoCaptureBase(EvilEyeBase):
         )
 
         try:
-            # Sanitize credentials in URL for logs
+            ok, reason = self.recording_params.check_out_dir_writable()
+            if not ok:
+                self.logger.error(
+                    "Recording disabled for %s: out_dir is not writable (%s): %s",
+                    meta.source_name,
+                    getattr(self.recording_params, "out_dir", None),
+                    reason,
+                )
+                return
+        except Exception as exc:
+            self.logger.warning(
+                "Could not verify recording out_dir for %s: %s",
+                meta.source_name,
+                exc,
+            )
+
+        try:
             url = self._sanitize_url_for_logging(str(meta.source_address))
             self.logger.info(
-                f"Starting recording: backend={backend} name={meta.source_name} url={url} out_dir={getattr(self.recording_params, 'out_dir', None)}")
+                "Starting recording: backend=%s name=%s url=%s out_dir=%s",
+                backend,
+                meta.source_name,
+                url,
+                getattr(self.recording_params, "out_dir", None),
+            )
         except Exception as e:
             self.logger.error(f"Error logging recording start: {e}")
 
         try:
-            # Prefer continuous recorder manager if capture already set it up.
             if self.recorder_manager is None:
                 self.recorder_manager = ContinuousRecorderManager(self.recording_params)
             self.recorder_manager.configure(self.recording_params)
@@ -286,6 +306,41 @@ class VideoCaptureBase(EvilEyeBase):
             except Exception:
                 pass
 
+    def _recording_config_dict(self) -> dict | None:
+        """Serialize active recording settings for MP worker / get_params round-trip."""
+        if isinstance(self.params, dict):
+            record_cfg = self.params.get("record")
+            if isinstance(record_cfg, dict) and record_cfg:
+                return dict(record_cfg)
+        if not self.recording_params:
+            return None
+        rp = self.recording_params
+        return {
+            "enabled": rp.enabled,
+            "continuous_recording_enabled": rp.continuous_recording_enabled,
+            "event_recording_enabled": rp.event_recording_enabled,
+            "event_pre_seconds": rp.event_pre_seconds,
+            "event_post_seconds": rp.event_post_seconds,
+            "event_buffer_fps": rp.event_buffer_fps,
+            "container": rp.container,
+            "segment_length_sec": rp.segment_length_sec,
+            "retention_days": rp.retention_days,
+            "min_free_space_pct": rp.min_free_space_pct,
+            "min_file_size_kb": rp.min_file_size_kb,
+            "out_dir": rp.out_dir,
+            "filename_tmpl": rp.filename_tmpl,
+            "validate_video_integrity": rp.validate_video_integrity,
+            "video_validation_timeout": rp.video_validation_timeout,
+        }
+
+    def _worker_capture_params(self) -> dict:
+        """Params passed to MpWorkerCapture; must include record for child-process recording."""
+        params = dict(self.params or {})
+        record_cfg = self._recording_config_dict()
+        if record_cfg is not None:
+            params["record"] = record_cfg
+        return params
+
     def _init_process_mode(self) -> bool:
         """Initialise MpControl + MpWorkerCapture for process-based capture."""
         from ..core.mp_control import MpControl, parse_mp_restart_policy
@@ -303,7 +358,7 @@ class VideoCaptureBase(EvilEyeBase):
             no_restart_exit_codes=no_restart_exit_codes,
         )
         worker = self._mp_control.add_worker(MpWorkerCapture)
-        worker.set_params(self.params if self.params else {})
+        worker.set_params(self._worker_capture_params())
         self._mp_control.start()
         self.logger.info("Capture initialised in PROCESS mode")
         return True
@@ -508,6 +563,9 @@ class VideoCaptureBase(EvilEyeBase):
         else:
             # Use class name - this is the registered name in EvilEyeBase._registry
             params['type'] = self.__class__.__name__
+        record_cfg = self._recording_config_dict()
+        if record_cfg is not None:
+            params['record'] = record_cfg
         return params
 
     def get_disconnects_info(self) -> list[tuple[str, datetime.datetime, bool]]:

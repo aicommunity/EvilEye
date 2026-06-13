@@ -3,8 +3,9 @@ import logging
 import logging.handlers
 import threading
 import time
-from typing import Iterable
+from typing import Callable, Iterable, Optional
 from timeit import default_timer as timer
+from .gpu_errors import MP_EXIT_CUDA_OOM
 from .logger import get_module_logger
 from .mp_context import get_spawn_context
 from .mp_worker import run_mp_worker_entry
@@ -30,12 +31,17 @@ class MpControl:
             name="MpControl",
             restart_on_exit=True,
             no_restart_exit_codes=None,
+            fatal_exit_codes=None,
+            on_worker_fatal_exit: Optional[Callable[[int, int, str], None]] = None,
     ):
         self.name = name
         self.logger = get_module_logger(f"mp_control.{name}")
         self.workers_list = []
         self.restart_on_exit = bool(restart_on_exit)
         self.no_restart_exit_codes = set(no_restart_exit_codes or {-15})
+        self.fatal_exit_codes = set(fatal_exit_codes or {MP_EXIT_CUDA_OOM})
+        self.on_worker_fatal_exit = on_worker_fatal_exit
+        self._fatal_shutdown = False
         self._mp_ctx = get_spawn_context()
 
         if max_input_size is None:
@@ -147,6 +153,7 @@ class MpControl:
         """Spawn all registered workers as daemon processes"""
         self._stopping.clear()
         self._suppressed_restart_pids.clear()
+        self._fatal_shutdown = False
         self._start_log_listener()
         for worker in self.workers_list:
             p = self._mp_ctx.Process(
@@ -228,13 +235,44 @@ class MpControl:
         )
         self._monitor_thread.start()
 
+    def is_operational(self) -> bool:
+        """False after a fatal worker exit that suppresses further restarts."""
+        if self._fatal_shutdown:
+            return False
+        return any(p.is_alive() for p in self.processes)
+
+    def _handle_fatal_worker_exit(self, slot_index: int, exit_code: int | None) -> None:
+        self._fatal_shutdown = True
+        self.restart_on_exit = False
+        code = int(exit_code) if exit_code is not None else -1
+        self.logger.error(
+            "Worker pid=%s in pool '%s' exited with fatal code %s; "
+            "auto-restart disabled for this CUDA consumer",
+            self.processes[slot_index].pid if slot_index < len(self.processes) else "?",
+            self.name,
+            code,
+        )
+        callback = self.on_worker_fatal_exit
+        if callback is not None:
+            try:
+                callback(slot_index, code, self.name)
+            except Exception as exc:
+                self.logger.error("on_worker_fatal_exit callback failed: %s", exc, exc_info=True)
+
     def _health_monitor_loop(self):
         while not self._monitor_stop.is_set():
             for i, p in enumerate(self.processes):
                 if not p.is_alive() and not self._monitor_stop.is_set() and not self._stopping.is_set():
                     if p.pid in self._suppressed_restart_pids:
                         continue
-                    if not self.restart_on_exit:
+                    exit_code = p.exitcode
+                    if exit_code in self.fatal_exit_codes:
+                        self._suppressed_restart_pids.add(p.pid)
+                        with self._stats_lock:
+                            self._stats["restart_suppressed_total"] += 1
+                        self._handle_fatal_worker_exit(i, exit_code)
+                        continue
+                    if not self.restart_on_exit or self._fatal_shutdown:
                         with self._stats_lock:
                             self._stats["restart_suppressed_total"] += 1
                         self._suppressed_restart_pids.add(p.pid)

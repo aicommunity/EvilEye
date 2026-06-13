@@ -300,12 +300,20 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                     'date_folder': date_folder,
                 }
             elif event_type == 'sys':
+                info = item.get('event_message') or item.get('event_type') or 'System event'
+                if item.get('event_type') == 'SystemStart':
+                    info = 'System started'
+                elif item.get('event_type') == 'SystemStop':
+                    info = 'System stopped'
+                elif item.get('event_type') == 'CudaOutOfMemory':
+                    info = item.get('event_message') or 'CUDA out of memory: detection disabled'
                 return {
                     'event_id': event_id_str,
                     'event_id_numeric': event_id_numeric,
                     'event_type': event_type,
                     'ts': timestamp,
                     'system_event': item.get('event_type'),
+                    'information': info,
                     'source_id': None,  # System events don't have source_id
                     'source_name': None,
                     'video_path': None,  # System events don't have video

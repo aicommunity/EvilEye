@@ -360,13 +360,28 @@ class ConfigurationService:
                     sid_log = (source.get("source_ids") or [idx])[0]
                     sname_log = (source.get("source_names") or [None])[0]
                     self.logger.info(
-                        "Record config for source id=%s name=%s: enabled=%s out_dir=%s container=%s",
+                        "Record config for source id=%s name=%s: enabled=%s continuous=%s out_dir=%s container=%s",
                         sid_log,
                         sname_log,
                         merged.get("enabled"),
+                        merged.get("continuous_recording_enabled"),
                         merged.get("out_dir"),
                         merged.get("container"),
                     )
+                    if merged.get("enabled") and merged.get("continuous_recording_enabled"):
+                        from evileye.video_recorder.recording_params import RecordingParams
+
+                        rp = RecordingParams.from_config({"record": merged})
+                        ok, reason = rp.check_out_dir_writable()
+                        if not ok:
+                            self.logger.error(
+                                "Continuous recording for source id=%s name=%s will fail: "
+                                "out_dir not writable: %s (%s)",
+                                sid_log,
+                                sname_log,
+                                merged.get("out_dir"),
+                                reason,
+                            )
                 except Exception:
                     pass
         except Exception as e:
