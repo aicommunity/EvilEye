@@ -61,6 +61,14 @@ async def lifespan(_app: FastAPI):
     logger.info("FastAPI lifespan startup")
     ensure_default_admin_credentials()
     _app.state.web_auth = load_web_auth_config()
+    try:
+        from evileye.core.mp_session_registry import cleanup_stale_sessions
+
+        cleaned = cleanup_stale_sessions()
+        if cleaned:
+            logger.info("Cleaned %d stale MP worker process(es) on startup", cleaned)
+    except Exception as exc:
+        logger.warning("MP stale session cleanup failed on startup: %s", exc)
 
     try:
         yield

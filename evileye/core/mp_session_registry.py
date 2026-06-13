@@ -150,6 +150,31 @@ def cleanup_current_session_workers() -> int:
         return killed
 
 
+def cleanup_session_by_id(session_id: str) -> int:
+    """Terminate workers registered under a specific session id."""
+    if not session_id:
+        return 0
+    with _LOCK:
+        path = _session_file(session_id)
+        payload = _read_json(path)
+        if not payload:
+            return 0
+        workers = payload.get("workers", {})
+        killed = 0
+        for pid_str in list(workers.keys()):
+            try:
+                pid = int(pid_str)
+            except Exception:
+                continue
+            if _pid_exists(pid) and _is_evileye_python_process(pid):
+                if _terminate_pid(pid):
+                    killed += 1
+            workers.pop(pid_str, None)
+        payload["workers"] = workers
+        _write_json(path, payload)
+        return killed
+
+
 def cleanup_stale_sessions() -> int:
     """
     Cleanup orphaned worker processes from stale EvilEye sessions.

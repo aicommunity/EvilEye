@@ -244,6 +244,7 @@ def register_runtime(
         managed: bool = False,
         state: str = "running",
         error: Optional[str] = None,
+        session_id: Optional[str] = None,
 ) -> Dict:
     now = time.time()
     existing = load_runtime_record(rid, refresh_state=False) or {}
@@ -258,6 +259,7 @@ def register_runtime(
         "managed": bool(managed or existing.get("managed")),
         "state": state,
         "error": error,
+        "session_id": session_id or existing.get("session_id"),
         "started_at": existing.get("started_at") or now,
         "updated_at": now,
     }
