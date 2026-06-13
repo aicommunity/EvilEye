@@ -388,6 +388,19 @@ body {
   border: 1px dashed var(--border);
 }
 
+.camera-preview-loading {
+  opacity: 0.35;
+  background:
+    linear-gradient(90deg, #1a1a1a 0%, #2a2a2a 50%, #1a1a1a 100%);
+  background-size: 200% 100%;
+  animation: camera-preview-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes camera-preview-pulse {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
 .camera-actions {
   margin-top: 0.75rem;
 }
@@ -1060,4 +1073,44 @@ body {
 .toast-success {
   background: var(--success);
   color: #fff;
+}
+
+.log-file-row {
+  cursor: pointer;
+}
+
+.log-file-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.log-view-pre {
+  max-height: 70vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.modal-content-wide {
+  max-width: min(960px, 95vw);
+}
+
+.auth-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.journal-preview {
+  max-width: 120px;
+  max-height: 80px;
+  object-fit: cover;
+  border-radius: 4px;
+}
+
+.camera-card-mini {
+  max-width: 280px;
+}
+
+.overview-run-detail p {
+  margin: 0.35rem 0;
 }

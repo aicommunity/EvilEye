@@ -11,6 +11,26 @@ class LoginPayload(BaseModel):
     password: str = Field(..., min_length=1)
 
 
+class RegisterPayload(BaseModel):
+    email: str = Field(..., min_length=3)
+    password: str = Field(..., min_length=6)
+
+
+@router.post("/register")
+async def auth_register(payload: RegisterPayload) -> dict:
+    from evileye.api.core.user_store import get_user_store
+
+    try:
+        user = get_user_store().register(payload.email, payload.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "ok": True,
+        "message": "Registration submitted. Wait for administrator approval.",
+        "user": {"email": user.get("email"), "status": user.get("status")},
+    }
+
+
 @router.get("/me")
 async def auth_me(request: Request) -> dict:
     auth = request.app.state.web_auth

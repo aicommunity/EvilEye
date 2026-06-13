@@ -1195,9 +1195,9 @@ class Controller(ControllerProcessingMixin):
             self.logger.info("Skipping embedded web server for managed runtime launch")
             if self._streaming_service is not None and relay_base_url:
                 self._streaming_service.set_frame_relay(relay_base_url, relay_token)
-        elif server_cfg.get("execution_mode") == "process" and server_cfg.get("enabled", False):
+        elif server_cfg.get("enabled", False) and str(server_cfg.get("execution_mode", "process")).lower() == "process":
             host = server_cfg.get("host", "127.0.0.1")
-            port = int(server_cfg.get("port", 8080))
+            port = int(server_cfg.get("port", 8181))
             scheme = "https" if server_cfg.get("ssl_certfile") or server_cfg.get("ssl_keyfile") else "http"
             inferred_base_url = relay_base_url or f"{scheme}://{host}:{port}/api/v1"
             if not self._can_bind_embedded_server(host, port):

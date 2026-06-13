@@ -544,7 +544,7 @@ def run(
 @app.command("server")
 def start_api(
         host: str = typer.Option("127.0.0.1", "--host", help="Bind host"),
-        port: int = typer.Option(8080, "--port", help="Bind port"),
+        port: int = typer.Option(8181, "--port", help="Bind port"),
         reload: bool = typer.Option(True, "--reload/--no-reload", help="Auto-reload on code changes"),
         workers: int = typer.Option(1, "--workers", help="Number of worker processes"),
         verbose: bool = typer.Option(False, "--verbose", help="Enable verbose logging"),

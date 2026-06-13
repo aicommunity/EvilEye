@@ -537,10 +537,11 @@
     "server": {
         "enabled": true,
         "host": "127.0.0.1",
-        "port": 8080,
+        "port": 8181,
         "log_level": "info",
         "preview_encoder": "turbojpeg",
-        "preview_encode_workers": 2
+        "preview_encode_workers": 2,
+        "execution_mode": "process"
     },
     "controller": {
         "autoclose": false,

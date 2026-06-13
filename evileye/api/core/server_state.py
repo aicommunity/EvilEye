@@ -120,6 +120,19 @@ def _log_files() -> list[Path]:
     return sorted(logs_dir.glob("*.log"), key=lambda item: item.stat().st_mtime, reverse=True)
 
 
+def _preview_frame_available(run_id: int | None, source_id: int | None = None) -> bool:
+    if run_id is None:
+        return False
+    try:
+        broker = get_frame_broker()
+        run_key = str(run_id)
+        if source_id is not None and broker.latest_jpeg(f"{run_key}:{source_id}"):
+            return True
+        return bool(broker.latest_jpeg(run_key))
+    except Exception:
+        return False
+
+
 def _read_log_tail(path: Path, *, lines: int = 120) -> list[str]:
     try:
         payload = path.read_text(encoding="utf-8", errors="ignore").splitlines()
@@ -131,12 +144,8 @@ def _read_log_tail(path: Path, *, lines: int = 120) -> list[str]:
 def _run_summary(record: Dict[str, Any]) -> Dict[str, Any]:
     config_summary = load_config_summary(record.get("config_path"))
     runtime_snapshot = load_runtime_snapshot(int(record.get("id") or 0)) if record.get("id") is not None else None
-    latest_frame_exists = False
-    try:
-        rid = record.get("id")
-        latest_frame_exists = bool(rid is not None and get_frame_broker().latest_jpeg(str(rid)))
-    except Exception:
-        latest_frame_exists = False
+    rid = record.get("id")
+    latest_frame_exists = _preview_frame_available(rid)
     return {
         "id": record.get("id"),
         "name": record.get("name"),
@@ -151,6 +160,10 @@ def _run_summary(record: Dict[str, Any]) -> Dict[str, Any]:
         "error": record.get("error"),
         "started_at": record.get("started_at"),
         "updated_at": record.get("updated_at"),
+        "uptime_seconds": (
+            max(0.0, time.time() - float(record.get("started_at")))
+            if record.get("started_at") else None
+        ),
         "pipeline_class": config_summary.pipeline_class,
         "detector_count": config_summary.detector_count,
         "tracker_count": config_summary.tracker_count,
@@ -242,7 +255,7 @@ def list_camera_summaries(*, scope: str = "current") -> list[Dict[str, Any]]:
                     "address": source.get("address"),
                     "preview_available": bool(
                         run.get("state") == "running"
-                        and run.get("latest_frame_available")
+                        and _preview_frame_available(run.get("id"), source.get("source_id"))
                     ),
                     "alive": bool(run.get("alive")),
                 }
@@ -251,11 +264,27 @@ def list_camera_summaries(*, scope: str = "current") -> list[Dict[str, Any]]:
     return cameras
 
 
+def _journal_stats() -> dict[str, Any]:
+    try:
+        from evileye.api.core.journal_service import load_events_page, load_objects_page
+
+        events = load_events_page(page=0, size=1, filters={})
+        objects = load_objects_page(page=0, size=1, filters={})
+        if not events.get("available"):
+            return {"available": False}
+        return {
+            "available": True,
+            "events_total": int(events.get("total") or 0),
+            "objects_total": int(objects.get("total") or 0),
+        }
+    except Exception:
+        return {"available": False}
+
+
 def build_overview() -> Dict[str, Any]:
     current_run = get_current_run_summary()
     active_runs = list_active_run_summaries()
-    active_cameras = list_camera_summaries(scope="active")
-    history_runs = list_history_run_summaries(exclude_current=True)
+    active_cameras = list_camera_summaries(scope="current")
     log_files = _log_files()
     latest_logs = []
     for path in log_files[:3]:
@@ -268,6 +297,7 @@ def build_overview() -> Dict[str, Any]:
         )
 
     current_state = current_run.get("state") if current_run else "stopped"
+    journal_stats = _journal_stats()
     return {
         "timestamp": time.time(),
         "server": {
@@ -275,15 +305,14 @@ def build_overview() -> Dict[str, Any]:
             "current_run_id": current_run.get("id") if current_run else None,
             "current_run_state": current_state,
             "active_runs_total": len(active_runs),
-            "history_runs_total": len(history_runs),
             "cameras_total": len(active_cameras),
             "web_previews_available": sum(1 for camera in active_cameras if camera.get("preview_available")),
             "log_files": [path.name for path in log_files[:10]],
+            "journal_stats": journal_stats,
         },
         "current_run": current_run,
         "active_runs": active_runs,
         "cameras": active_cameras,
-        "history_runs": history_runs,
         "latest_logs": latest_logs,
     }
 

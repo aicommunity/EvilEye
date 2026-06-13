@@ -334,6 +334,14 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
             res = [e for e in res if e.get('source_id') == sid]
         if sname := filters.get('source_name'):
             res = [e for e in res if e.get('source_name') == sname]
+        if snames := filters.get('source_names'):
+            allowed = {str(name) for name in snames}
+            res = [e for e in res if str(e.get('source_name') or '') in allowed]
+        if journal_kind := filters.get('journal_kind'):
+            if journal_kind == 'objects':
+                res = [e for e in res if e.get('event_type') in ('found', 'lost')]
+            elif journal_kind == 'events':
+                res = [e for e in res if e.get('event_type') not in ('found', 'lost')]
         if cls := filters.get('class_name'):
             res = [e for e in res if e.get('class_name') == cls]
         if oid := filters.get('object_id'):

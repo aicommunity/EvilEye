@@ -506,7 +506,7 @@ evileye create my_config --sources 2 --source-type video_file
 evileye run configs/my_config.json
 
 # Start FastAPI web server
-evileye server --host 0.0.0.0 --port 8080
+evileye server --host 0.0.0.0 --port 8181
 
 # Validate configuration file
 evileye validate configs/my_config.json
@@ -588,7 +588,7 @@ evileye-launch configs/my_config.json
 FastAPI web server for remote access and API integration:
 
 ```bash
-# Start web server with default settings (127.0.0.1:8080)
+# Start web server with default settings (127.0.0.1:8181)
 evileye server
 
 # Start on specific host and port
@@ -606,7 +606,7 @@ evileye server --log-level debug
 
 **Options:**
 - `--host HOST` - Bind host (default: 127.0.0.1)
-- `--port PORT` - Bind port (default: 8080)
+- `--port PORT` - Bind port (default: 8181)
 - `--reload` / `--no-reload` - Request reload (currently not supported when passing the app instance; server logs a warning and runs without reload)
 - `--workers N` - Worker count (values other than `1` are ignored; API uses in-process shared state)
 - `--config CONFIG` - Auto-run selected config after server starts
@@ -614,11 +614,11 @@ evileye server --log-level debug
 - `--verbose` - Enable verbose logging
 
 **API Documentation:**
-- Interactive API docs: `http://localhost:8080/docs`
-- ReDoc documentation: `http://localhost:8080/redoc`
-- OpenAPI schema: `http://localhost:8080/openapi.json`
+- Interactive API docs: `http://localhost:8181/docs`
+- ReDoc documentation: `http://localhost:8181/redoc`
+- OpenAPI schema: `http://localhost:8181/openapi.json`
 
-**Веб-интерфейс (frontend):** лёгкое SPA на TypeScript доступно по адресу `http://localhost:8080/` после однократной сборки:
+**Веб-интерфейс (frontend):** лёгкое SPA на TypeScript доступно по адресу `http://localhost:8181/` после однократной сборки:
 ```bash
 cd evileye/api/frontend && npm install && npm run build
 ```
@@ -627,7 +627,7 @@ cd evileye/api/frontend && npm install && npm run build
 **Alternative entry point:**
 ```bash
 # Use evileye-srv as alternative entry point
-evileye-srv --host 0.0.0.0 --port 8080
+evileye-srv --host 0.0.0.0 --port 8181
 ```
 
 ### Configuration Creator (`evileye create`)
@@ -775,7 +775,7 @@ evileye run configs/automated_config.json
 evileye-process --config configs/headless_config.json --no-gui
 
 # Use web server for API integration
-evileye server --host 0.0.0.0 --port 8080 --config configs/api_config.json
+evileye server --host 0.0.0.0 --port 8181 --config configs/api_config.json
 ```
 
 ## Development
