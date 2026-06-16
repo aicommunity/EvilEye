@@ -18,4 +18,4 @@
 
 Скопировано файлов графиков: 32.
 
-Подробная методика: `docs/diploma_benchmark_methodology.md`.
+**Повторный пересчёт метрик:** [docs/diploma_benchmark_methodology.md](../../../docs/diploma_benchmark_methodology.md) (§3 — сценарий A).

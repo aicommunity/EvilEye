@@ -2,7 +2,7 @@
 
 Структурированная система тестов для проекта EvilEye.
 
-## MP refactor tests (thread vs process)
+## MP refactor (unit)
 
 | Test file | Covers |
 |-----------|--------|
@@ -11,8 +11,9 @@
 | `tests/unit/object_tracker/test_botsort_parent_init.py` | R6: no BOTSORT in parent (process) |
 | `tests/unit/capture/test_queue_policy.py` | drop-oldest / queue policy |
 
-**Gate scripts (manual):**
+**Benchmark / gate (manual):**
 
+- Полный runbook пересчёта метрик: **[docs/diploma_benchmark_methodology.md](../docs/diploma_benchmark_methodology.md)**
 - `scripts/soak_mp_memory.sh` — MEM-4 RSS soak
 - Artifacts: `reports/mp_refactor_gate/e2e_gate_summary.md`
 

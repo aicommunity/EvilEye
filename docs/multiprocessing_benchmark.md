@@ -2,6 +2,15 @@
 
 Документ описывает воспроизводимый сценарий сравнения однопроцессного режима `thread` и мультипроцессного режима `process` для системы EvilEye. Цель зачётных тестов — измерить прирост производительности от вынесения тяжёлой стадии (YOLO) в отдельный процесс при росте числа камер, **включая визуализацию**: когда инференс и цикл отображения больше не делят один GIL в одном процессе, частота обновления выхода пайплайна может вырасти вместе с пропускной способностью захвата, детекции и трекинга.
 
+## Навигация
+
+| Документ | Когда использовать |
+|----------|-------------------|
+| **[diploma_benchmark_methodology.md](diploma_benchmark_methodology.md)** | **Полный runbook:** все сценарии (matrix per camera, gate, KPI, E2E matrix), метрики, отладка |
+| Этот файл | Классический 3-шаговый bench (cap + YOLO pool), poly-videos E2E, env MP |
+| [mp_fps_phase3_summary.md](mp_fps_phase3_summary.md) | Итоги тюнинга F2, интерпретация KPI |
+| [reports/mp_refactor_gate/e2e_gate_summary.md](../reports/mp_refactor_gate/e2e_gate_summary.md) | Эталон gate от 2026-05-22 |
+
 На произвольном железе нельзя гарантировать выигрыш по каждой метрике в каждой точке (IPC, число ядер, GPU/CPU), поэтому ниже зафиксирован **сценарий сравнения в одинаковых условиях**, который максимизирует шанс увидеть ожидаемый эффект.
 
 ## Базовый принцип
@@ -183,6 +192,40 @@ python scripts/compare_poly_e2e_fps_matrix.py --matrix-dir reports/poly_videos_m
 ```
 
 См. [`docs/mp_fps_phase3_summary.md`](mp_fps_phase3_summary.md) (выводы) и сырые артефакты в `reports/poly_videos_mode_compare/` (JSON/CSV). **Не дублируйте** полные таблицы матрицы в docs — только ссылка + интерпретация. Post-refactor gate: [`reports/mp_refactor_gate/`](../reports/mp_refactor_gate/).
+
+## Linux perf matrix (per-camera MP)
+
+Полная матрица CPU/GPU для layout **process_full** (capture + detector + tracker в отдельных процессах, по одному на камеру):
+
+```bash
+./scripts/run_linux_perf_matrix_per_camera_mp.sh
+```
+
+Расширенная матрица (все сценарии × layouts):
+
+```bash
+./scripts/run_linux_perf_matrix.sh
+```
+
+Подробная пошаговая инструкция, env-переменные, артефакты и критерии валидности — в **[diploma_benchmark_methodology.md](diploma_benchmark_methodology.md)** (§3, §8–§10).
+
+## KPI gate и memory soak
+
+**IPC KPI gate** (регрессия shutdown, p95, RSS):
+
+```bash
+venv/bin/python scripts/run_ipc_kpi_gate.py --profile configs/kpi_gate_profile.json
+pytest tests/unit/scripts/test_benchmark_ipc_kpi_gate.py -q
+```
+
+**MP memory soak** (30 min, gate MEM-4):
+
+```bash
+SOAK_LOG=reports/mp_refactor_gate/soak_mp_rss.log \
+  ./scripts/soak_mp_memory.sh configs/poly-videos.json
+```
+
+**MP refactor E2E gate** (e2e_ratio ≥ 3.0, staleness in band) — см. [diploma_benchmark_methodology.md §5](diploma_benchmark_methodology.md#5-сценарий-c--mp-refactor-gate).
 
 ## Интерпретация результата
 

@@ -15,7 +15,9 @@ Last full pass: **2026-05-22** (branch `mt_refactoring2`, post MP refactor R0–
 | docs/mp_fps_phase2_summary.md | bench | Historical | **OK** | |
 | docs/mp_fps_phase3_summary.md | bench | Historical + gate | **OK** | Post-refactor § |
 | docs/mp_fps_post_fix_summary.md | bench | Historical | **OK** | |
-| docs/multiprocessing_benchmark.md | scripts/ | Bench | **OK** | bridge cap wording |
+| docs/multiprocessing_benchmark.md | scripts/ | Bench | **OK** | bridge cap wording; nav → diploma runbook |
+| docs/diploma_benchmark_methodology.md | scripts/ | Bench runbook | **OK** | Full repro: matrix, gate, KPI, metrics |
+| docs/BENCHMARKS_MERGE_SCOPE.md | — | Merge guide | **OK** | Scope benchmarks → main |
 | docs/ARCHITECTURE.md | all | Architecture | **OK** | MP boundary § L5 |
 | docs/PIPELINE_ARCHITECTURE.md | pipelines/ | Pipeline | **OK** | ProcessorStep MP |
 | docs/CONFIGURATION_GUIDE.md | core/ | Config | **OK** | execution_mode, register table |

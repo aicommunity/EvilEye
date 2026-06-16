@@ -11,7 +11,7 @@
 | `unit/object_tracker/test_botsort_parent_init.py` | R6 parent init |
 | `unit/capture/test_queue_policy.py` | queue_policy |
 
-Gate: `scripts/soak_mp_memory.sh`, `reports/mp_refactor_gate/`.
+Gate: `scripts/soak_mp_memory.sh`, `reports/mp_refactor_gate/`. Runbook: [docs/diploma_benchmark_methodology.md](../../docs/diploma_benchmark_methodology.md).
 
 ## INTEGRATION тесты
 
