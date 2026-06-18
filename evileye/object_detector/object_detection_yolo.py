@@ -66,6 +66,12 @@ class ObjectDetectorYolo(ModelBasedDetectorBase):
             )
             thread.start()
             self.detection_threads.append(thread)
+        try:
+            from evileye.core.mp_cuda_startup import get_mp_cuda_startup_health
+
+            get_mp_cuda_startup_health().register_expected_workers(self.num_detection_threads)
+        except Exception:
+            pass
         self.logger.info(
             f"Detection initialized in PROCESS mode with "
             f"{self.num_detection_threads} worker(s)"

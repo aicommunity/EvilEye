@@ -166,14 +166,25 @@ class PipelineProcessors(PipelineBase):
                 processor.start()
 
     def stop(self):
-        """Stop all processors in reverse order"""
+        """Stop all processors: GPU stages first, then other stages, capture last."""
         stop_timeout_sec = float(
             os.getenv("EVILEYE_PROCESSOR_STOP_TIMEOUT_SEC", "8.0") or "8.0"
         )
         source_processors = [p for p in self.processors if p is not None and isinstance(p, ProcessorSource)]
-        other_processors = [p for p in reversed(self.processors) if
-                            p is not None and not isinstance(p, ProcessorSource)]
-        for processor in [*source_processors, *other_processors]:
+        other_processors = [
+            p for p in self.processors
+            if p is not None and not isinstance(p, ProcessorSource)
+        ]
+        detector_processors = [
+            p for p in other_processors
+            if getattr(p, "processor_name", None) == "detectors"
+        ]
+        non_detector_others = [
+            p for p in reversed(other_processors)
+            if p not in detector_processors
+        ]
+        stop_order = [*detector_processors, *non_detector_others, *source_processors]
+        for processor in stop_order:
             if processor is not None:
                 stop_done = threading.Event()
                 stop_error: list[Exception] = []

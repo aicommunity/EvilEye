@@ -76,6 +76,7 @@ class DetectionThreadYoloMp(DetectionThreadBase):
         )
         self._mp_pending_cap = mp_pending_cap_detector(max(len(roi), 1))
         self._bridge: MpAsyncBridge[DetectorPendingJob] | None = None
+        self._stopped = False
         self._init_bridge()
 
     def _init_bridge(self) -> None:
@@ -94,6 +95,9 @@ class DetectionThreadYoloMp(DetectionThreadBase):
 
     def stop(self) -> None:
         """Stop MP worker and feed/drain threads."""
+        if self._stopped:
+            return
+        self._stopped = True
         self.run_flag = False
         for name, thread in (("feed", self._mp_feed_thread), ("drain", self._mp_drain_thread)):
             if thread is not None and thread.is_alive():
@@ -157,6 +161,15 @@ class DetectionThreadYoloMp(DetectionThreadBase):
         self.logger.error(message)
         self._drain_mp_output_queue()
         self._flush_pending_jobs_empty()
+        try:
+            from evileye.core.mp_cuda_startup import get_mp_cuda_startup_health
+
+            if get_mp_cuda_startup_health().record_fatal_oom():
+                restart_cb = get_mp_cuda_startup_health().restart_callback
+                if restart_cb is not None:
+                    restart_cb()
+        except Exception as exc:
+            self.logger.error("Mass CUDA OOM startup check failed: %s", exc, exc_info=True)
         callback = self._on_cuda_oom_fatal
         if callback is not None:
             try:

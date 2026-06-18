@@ -470,6 +470,11 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
             self.processing_thread.join(timeout=2.0)
             if self.processing_thread.is_alive():
                 self.logger.warning("Detection processing_thread did not stop within 2s")
+        for thread in getattr(self, "detection_threads", None) or []:
+            try:
+                thread.stop()
+            except Exception:
+                self.logger.warning("Failed to stop detection thread", exc_info=True)
         # Stop multiprocessing pool if active
         if self._mp_control is not None:
             self._mp_control.stop()

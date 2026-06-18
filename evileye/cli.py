@@ -11,6 +11,7 @@ import os
 import shutil
 import subprocess
 import logging
+import signal
 from pathlib import Path
 from typing import Optional, Tuple
 from datetime import datetime, timedelta
@@ -94,6 +95,93 @@ def _get_next_interval(now: datetime, interval_minutes: int) -> datetime:
     return now + timedelta(minutes=interval_minutes)
 
 
+def _scheduler_stop_grace_sec() -> float:
+    try:
+        return max(30.0, float(os.getenv("EVILEYE_SCHEDULER_STOP_GRACE_SEC", "120") or "120"))
+    except (TypeError, ValueError):
+        return 120.0
+
+
+def _scheduler_gpu_settle_sec() -> float:
+    try:
+        return max(0.0, float(os.getenv("EVILEYE_SCHEDULER_GPU_SETTLE_SEC", "8") or "8"))
+    except (TypeError, ValueError):
+        return 8.0
+
+
+def _scheduler_prepare_next_launch(logger: logging.Logger) -> None:
+    """Cleanup orphaned MP workers and wait for GPU memory to settle before relaunch."""
+    try:
+        from evileye.core.mp_session_registry import cleanup_stale_sessions
+
+        cleaned = cleanup_stale_sessions()
+        if cleaned:
+            logger.info(
+                "[scheduler] Cleaned up %d stale MP worker process(es) before launch",
+                cleaned,
+            )
+    except Exception as exc:
+        logger.warning("[scheduler] Stale session cleanup failed: %s", exc)
+
+    settle = _scheduler_gpu_settle_sec()
+    if settle > 0:
+        logger.info(
+            "[scheduler] Waiting %.1fs for GPU memory to settle before launch",
+            settle,
+        )
+        time.sleep(settle)
+
+
+def _scheduler_terminate_child(proc: subprocess.Popen, logger: logging.Logger) -> None:
+    """Terminate the scheduled child process and its process group."""
+    pid = proc.pid
+    grace_sec = _scheduler_stop_grace_sec()
+    try:
+        pgid = os.getpgid(pid)
+    except Exception:
+        pgid = pid
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except Exception:
+        try:
+            proc.terminate()
+        except Exception as exc:
+            logger.error("[scheduler] Error terminating process %s: %s", pid, exc, exc_info=True)
+            return
+    try:
+        proc.wait(timeout=grace_sec)
+        logger.info("[scheduler] Process %s terminated gracefully", pid)
+        return
+    except subprocess.TimeoutExpired:
+        logger.warning(
+            "[scheduler] Process %s did not exit after SIGTERM within %.0fs, killing process group",
+            pid,
+            grace_sec,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[scheduler] Error waiting for process %s after terminate: %s, killing",
+            pid,
+            exc,
+        )
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception as exc:
+            logger.error("[scheduler] Failed to kill process %s: %s", pid, exc)
+            return
+    try:
+        proc.wait(timeout=10)
+        logger.info("[scheduler] Process %s killed and terminated", pid)
+    except subprocess.TimeoutExpired:
+        logger.error(
+            "[scheduler] Process %s did not exit after SIGKILL within 10s, but continuing anyway",
+            pid,
+        )
+
+
 def _run_with_scheduler(
         base_cmd: list,
         config_path: Path,
@@ -123,6 +211,8 @@ def _run_with_scheduler(
     prev_iteration_end_time = None
     while True:
         iteration += 1
+        if iteration > 1:
+            _scheduler_prepare_next_launch(logger)
         iteration_start_time = datetime.now()
         if prev_iteration_end_time is not None:
             logger.info(
@@ -143,7 +233,12 @@ def _run_with_scheduler(
             # Устанавливаем переменную окружения для определения запуска через CLI
             env = os.environ.copy()
             env['EVILEYE_CLI_LAUNCHED'] = '1'
-            proc = subprocess.Popen(base_cmd, cwd=os.getcwd(), env=env)
+            proc = subprocess.Popen(
+                base_cmd,
+                cwd=os.getcwd(),
+                env=env,
+                start_new_session=True,
+            )
         except Exception as e:
             logger.error(f"[scheduler] Failed to start process: {e}", exc_info=True)
             console.print(f"[red]Failed to start process: {e}[/red]")
@@ -245,36 +340,7 @@ def _run_with_scheduler(
                         f"[yellow][scheduler] Stopping current run (pid={proc.pid}) for scheduled restart[/yellow]"
                     )
                     try:
-                        proc.terminate()
-                        try:
-                            proc.wait(timeout=30)
-                            logger.info(f"[scheduler] Process {proc.pid} terminated gracefully")
-                        except subprocess.TimeoutExpired:
-                            logger.warning(
-                                f"[scheduler] Process {proc.pid} did not exit after SIGTERM within 30s, killing"
-                            )
-                            proc.kill()
-                            # Ждём завершения после kill
-                            try:
-                                proc.wait(timeout=10)
-                                logger.info(f"[scheduler] Process {proc.pid} killed and terminated")
-                            except subprocess.TimeoutExpired:
-                                logger.error(
-                                    f"[scheduler] Process {proc.pid} did not exit after SIGKILL within 10s, "
-                                    f"but continuing anyway"
-                                )
-                        except Exception as e:
-                            logger.warning(
-                                f"[scheduler] Error waiting for process {proc.pid} after terminate: {e}, killing"
-                            )
-                            try:
-                                proc.kill()
-                                proc.wait(timeout=10)
-                                logger.info(f"[scheduler] Process {proc.pid} killed after error")
-                            except Exception as e2:
-                                logger.error(
-                                    f"[scheduler] Failed to kill process {proc.pid}: {e2}"
-                                )
+                        _scheduler_terminate_child(proc, logger)
                     except Exception as e:
                         logger.error(f"[scheduler] Error terminating process {proc.pid}: {e}", exc_info=True)
 
@@ -310,13 +376,12 @@ def _run_with_scheduler(
             logger.info("[scheduler] Interrupted by user, terminating child and stopping loop")
             if proc.poll() is None:
                 try:
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=10)
-                    except Exception:
-                        proc.kill()
+                    _scheduler_terminate_child(proc, logger)
                 except Exception:
-                    pass
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
             raise typer.Exit(0)
 
         # Если процесс завершился сам до наступления следующего планового запуска —

@@ -69,6 +69,25 @@ def _is_evileye_python_process(pid: int) -> bool:
     return ("python" in cmd) and ("evileye" in cmd)
 
 
+def _is_zombie(pid: int) -> bool:
+    try:
+        status = Path(f"/proc/{pid}/status").read_text(encoding="utf-8", errors="ignore")
+        for line in status.splitlines():
+            if line.startswith("State:"):
+                return " Z" in line or line.rstrip().endswith("Z")
+    except Exception:
+        pass
+    return False
+
+
+def _is_active_evileye_owner(pid: int) -> bool:
+    if not pid or not _pid_exists(pid):
+        return False
+    if _is_zombie(pid):
+        return False
+    return _is_evileye_python_process(pid)
+
+
 def _terminate_pid(pid: int, timeout_sec: float = 2.0) -> bool:
     if not _pid_exists(pid):
         return True
@@ -191,7 +210,7 @@ def cleanup_stale_sessions() -> int:
             if current_sid and sid == current_sid:
                 continue
             owner_pid = int(payload.get("owner_pid") or 0)
-            owner_alive = _pid_exists(owner_pid) and _is_evileye_python_process(owner_pid)
+            owner_alive = _is_active_evileye_owner(owner_pid)
             if owner_alive:
                 # Another active EvilEye run; do not touch.
                 continue

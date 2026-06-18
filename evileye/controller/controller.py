@@ -388,6 +388,24 @@ class Controller(ControllerProcessingMixin):
                 wired += 1
         if wired:
             self.logger.debug("Wired system_event callback to %s detector(s)", wired)
+        self._wire_mp_cuda_startup_restart()
+
+    def _wire_mp_cuda_startup_restart(self) -> None:
+        """Request full CLI restart when most MP detection workers fail with CUDA OOM at startup."""
+        try:
+            from evileye.core.mp_cuda_startup import get_mp_cuda_startup_health
+
+            def _on_mass_cuda_oom() -> None:
+                self.logger.error(
+                    "Mass CUDA OOM during startup: requesting full process restart"
+                )
+                if self.auto_restart:
+                    self.restart_flag = True
+                self.run_flag = False
+
+            get_mp_cuda_startup_health().set_restart_callback(_on_mass_cuda_oom)
+        except Exception as exc:
+            self.logger.warning("Failed to wire MP CUDA startup restart: %s", exc)
 
     def add_pipeline(self, pipeline_type):
         pass

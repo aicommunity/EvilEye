@@ -3,6 +3,7 @@ import json
 import time
 import os
 import datetime
+import cv2
 from typing import TYPE_CHECKING, Optional, Union
 from ..core.base_class import EvilEyeBase
 from ..core.interfaces import IObjectHandler, IDatabaseAdapter
