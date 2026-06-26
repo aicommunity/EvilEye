@@ -32,6 +32,10 @@ def run_mp_worker_entry(
     Fork mode passed ``target=worker`` (bound instance); spawn must not pickle locks,
     threading primitives, or GPU handles held by a parent-side worker object.
     """
+    if worker_class.__name__ == "MpWorkerCapture":
+        from evileye.core.gstreamer_runtime import ensure_gstreamer_spawn_runtime
+
+        ensure_gstreamer_spawn_runtime()
     apply_resource_tracker_patch()
     worker = worker_class(
         input_queue,

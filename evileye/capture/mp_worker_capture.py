@@ -98,6 +98,9 @@ class MpWorkerCapture(MpWorker):
 
     def init_worker(self) -> None:
         """Create and initialise the capture backend inside child process."""
+        from evileye.core.gstreamer_runtime import ensure_gstreamer_spawn_runtime
+
+        ensure_gstreamer_spawn_runtime()
         params = self._capture_params
 
         capture_type = params.get("type", "")

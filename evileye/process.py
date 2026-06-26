@@ -6,25 +6,43 @@ import tempfile
 import uuid
 from pathlib import Path
 
-try:
-    from PyQt6 import QtCore
-    from PyQt6.QtWidgets import QApplication
-
-    pyqt_version = 6
-except ImportError:
-    from PyQt5 import QtCore
-    from PyQt5.QtWidgets import QApplication
-
-    pyqt_version = 5
-
-# Add project root to path for imports when running as script
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from evileye.core.logging_config import setup_evileye_logging, log_system_info
-from evileye.api.core.runtime_registry import allocate_pipeline_id, mark_runtime_stopped, register_runtime, \
-    update_runtime_snapshot
-from evileye.core.mp_session_registry import cleanup_stale_sessions
-from evileye.core.mp_context import ensure_spawn_start_method
+import multiprocessing as _mp
+
+_MP_SPAWN_CHILD = _mp.parent_process() is not None
+
+if _MP_SPAWN_CHILD:
+    from evileye.core.gstreamer_runtime import ensure_gstreamer_spawn_runtime
+
+    ensure_gstreamer_spawn_runtime()
+
+if not _MP_SPAWN_CHILD:
+    try:
+        from PyQt6 import QtCore
+        from PyQt6.QtWidgets import QApplication
+
+        pyqt_version = 6
+    except ImportError:
+        from PyQt5 import QtCore
+        from PyQt5.QtWidgets import QApplication
+
+        pyqt_version = 5
+
+    from evileye.core.logging_config import setup_evileye_logging, log_system_info
+    from evileye.api.core.runtime_registry import allocate_pipeline_id, mark_runtime_stopped, register_runtime, \
+        update_runtime_snapshot
+    from evileye.core.mp_session_registry import cleanup_stale_sessions
+    from evileye.core.mp_context import ensure_spawn_start_method
+else:
+    pyqt_version = None
+    QtCore = None
+    QApplication = None
+
+    def ensure_spawn_start_method():
+        from evileye.core.mp_context import ensure_spawn_start_method as _ensure
+
+        return _ensure()
 
 
 def create_args_parser():

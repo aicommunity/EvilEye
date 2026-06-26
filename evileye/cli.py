@@ -319,15 +319,29 @@ def _run_with_scheduler(
                         continue_scheduler = True
                         break
 
-                    # Если процесс завершился сам ДО наступления времени next_run,
-                    # считаем это штатным/ручным завершением и выходим из планировщика,
-                    # чтобы не перезапускать приложение против воли пользователя.
-                    if now < next_run:
+                    # Graceful exit (code 0) before next_run = user/manual shutdown.
+                    if retcode == 0 and now < next_run:
                         logger.info(
                             "[scheduler] Process finished before next scheduled time — "
                             "stopping scheduler loop (respecting manual/normal shutdown)"
                         )
                         continue_scheduler = False
+                        break
+
+                    # Unexpected crash (SIGKILL, SIGSEGV, OOM, etc.) — auto-restart.
+                    if retcode != 0 and now < next_run:
+                        logger.warning(
+                            "[scheduler] Unexpected child death (return code=%s) before next "
+                            "scheduled time — auto-restarting iteration",
+                            retcode,
+                        )
+                        console.print(
+                            f"[yellow][scheduler] Unexpected exit (code={retcode}): "
+                            f"relaunching next iteration[/yellow]"
+                        )
+                        continue_scheduler = True
+                        break
+
                     break
 
                 if now >= next_run:

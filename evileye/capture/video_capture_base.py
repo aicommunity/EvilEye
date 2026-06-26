@@ -119,7 +119,7 @@ class VideoCaptureBase(EvilEyeBase):
         try:
             import multiprocessing as mp
 
-            return mp.current_process().name != "MainProcess"
+            return mp.parent_process() is not None
         except Exception:
             return False
 

@@ -9,22 +9,24 @@ from collections import deque
 from queue import Empty, Full, Queue
 from typing import Any, List, Optional, Tuple
 
-import cv2
 import numpy as np
-
-from .constants import CaptureConstants
-from .exceptions import CaptureConnectionError, CaptureInitializationError
-from .video_capture_base import CaptureDeviceType, EXEC_MODE_PROCESS
-from ..core.frame import CaptureImage, Frame
 
 try:
     import gi
 
     gi.require_version("Gst", "1.0")
     from gi.repository import Gst, GLib
+
+    if not Gst.is_initialized():
+        Gst.init(None)
 except ImportError:
     Gst = None
     GLib = None
+
+from .constants import CaptureConstants
+from .exceptions import CaptureConnectionError, CaptureInitializationError
+from .video_capture_base import CaptureDeviceType, EXEC_MODE_PROCESS
+from ..core.frame import CaptureImage, Frame
 
 from evileye.video_recorder.continuous_recorder_gst import GstContinuousRecorder
 from evileye.video_recorder.recorder_base import SourceMeta
@@ -48,7 +50,6 @@ __all__ = [
     "Queue",
     "SourceMeta",
     "Tuple",
-    "cv2",
     "datetime",
     "deque",
     "np",

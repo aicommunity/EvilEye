@@ -14,7 +14,6 @@ from .gstreamer_capture_common import (
     Optional,
     Queue,
     Tuple,
-    cv2,
     datetime,
     deque,
     np,

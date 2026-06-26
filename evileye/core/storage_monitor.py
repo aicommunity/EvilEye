@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import os
+import shutil
 import time
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Iterator, List, Optional, Tuple
 
 from evileye.core.logger import get_module_logger
 from evileye.video_recorder.utils import get_disk_free_percent
@@ -14,44 +15,40 @@ from evileye.video_recorder.utils import get_disk_free_percent
 class StorageMonitor:
     """
     Monitors and manages storage space for the image_dir directory.
-    
+
     Performs periodic checks for:
     - Directory size limits
     - Free disk space limits
     - File retention periods for different data types
-    
+
     Deletes old files in priority order when constraints are violated.
-    """
+  """
 
     def __init__(self, image_dir: str, config: Optional[Dict] = None):
-        """
-        Initialize storage monitor.
-        
-        Args:
-            image_dir: Base directory to monitor (e.g., 'EvilEyeData')
-            config: Configuration dictionary with monitoring settings
-        """
-        # Используем get_module_logger(), т.к. StorageMonitor не наследуется от EvilEyeBase
-        # и не имеет lifecycle. Это утилитный класс без состояния экземпляра в логгере.
         self.logger = get_module_logger("storage_monitor")
         self.image_dir = Path(image_dir)
 
-        # Default configuration
         default_config = {
             "enabled": True,
             "check_interval_seconds": 300,
             "max_dir_size_gb": 200,
             "min_free_space_percent": 10,
+            "max_cleanup_seconds": 120,
+            "max_files_per_cycle": 500,
+            "dir_size_cache_ttl_seconds": 60,
+            "heartbeat_interval_seconds": 30,
+            "initial_delay_seconds": int(
+                os.environ.get("EVILEYE_STORAGE_INITIAL_DELAY_SEC", "0")
+            ),
             "retention_days": {
                 "streaming_video": 7,
                 "event_videos": 7,
                 "object_images": 180,
-                "event_images": 180
+                "event_images": 180,
             },
-            "active_file_age_seconds": 60
+            "active_file_age_seconds": 60,
         }
 
-        # Merge with provided config
         if config:
             default_config.update(config)
             if "retention_days" in config:
@@ -61,24 +58,42 @@ class StorageMonitor:
         self.check_interval_seconds = default_config.get("check_interval_seconds", 300)
         self.max_dir_size_gb = default_config.get("max_dir_size_gb", 200)
         self.min_free_space_percent = default_config.get("min_free_space_percent", 10)
+        self.max_cleanup_seconds = float(default_config.get("max_cleanup_seconds", 120))
+        self.max_files_per_cycle = int(default_config.get("max_files_per_cycle", 500))
+        self.dir_size_cache_ttl_seconds = float(
+            default_config.get("dir_size_cache_ttl_seconds", 60)
+        )
+        self.heartbeat_interval_seconds = float(
+            default_config.get("heartbeat_interval_seconds", 30)
+        )
+        self.initial_delay_seconds = float(default_config.get("initial_delay_seconds", 0))
         self.retention_days = default_config.get("retention_days", {})
         self.active_file_age_seconds = default_config.get("active_file_age_seconds", 60)
-        # Default to slower, safer shutdown for heavy filesystems/cleanup.
         self.stop_timeout_seconds = float(
             os.environ.get("EVILEYE_STORAGE_MONITOR_STOP_TIMEOUT_SEC", "20.0")
         )
 
-        # Threading
         self._monitor_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._running = False
 
+        self._dir_size_cache_bytes: Optional[int] = None
+        self._dir_size_cache_time: float = 0.0
+        self._cleanup_deadline: float = 0.0
+        self._files_deleted_this_cycle = 0
+        self._last_heartbeat: float = 0.0
+        self._newest_streaming_files: Dict[Path, float] = {}
+
         self.logger.info(f"StorageMonitor initialized for directory: {self.image_dir}")
         self.logger.info(f"Enabled: {self.enabled}, Check interval: {self.check_interval_seconds}s")
-        self.logger.info(f"Max dir size: {self.max_dir_size_gb} GB, Min free space: {self.min_free_space_percent}%")
+        self.logger.info(
+            f"Max dir size: {self.max_dir_size_gb} GB, Min free space: {self.min_free_space_percent}%"
+        )
+        self.logger.info(
+            f"Cleanup budget: {self.max_cleanup_seconds}s, max {self.max_files_per_cycle} files/cycle"
+        )
 
     def start(self) -> None:
-        """Start monitoring thread."""
         if not self.enabled:
             self.logger.info("Storage monitoring is disabled")
             return
@@ -89,15 +104,13 @@ class StorageMonitor:
 
         self._stop_event.clear()
         self._running = True
-
-        # Start monitoring thread for periodic checks
-        # The thread will perform initial check immediately, then continue with periodic checks
-        self._monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True, name="StorageMonitor")
+        self._monitor_thread = threading.Thread(
+            target=self._monitor_loop, daemon=True, name="StorageMonitor"
+        )
         self._monitor_thread.start()
         self.logger.info("Storage monitor started (initial check will run in background thread)")
 
     def stop(self) -> None:
-        """Stop monitoring thread."""
         if not self._running:
             return
 
@@ -116,62 +129,72 @@ class StorageMonitor:
                 self.logger.info("Storage monitor stopped")
 
     def _monitor_loop(self) -> None:
-        """
-        Main monitoring loop running in separate thread.
-        
-        Performs initial check immediately on startup, then continues with periodic checks.
-        All checks run in the same background thread.
-        """
-        # Perform initial check immediately on startup (in the same background thread)
+        if self.initial_delay_seconds > 0:
+            self.logger.info(
+                "Delaying initial storage check for %.0fs to avoid competing with startup",
+                self.initial_delay_seconds,
+            )
+            if self._stop_event.wait(timeout=self.initial_delay_seconds):
+                return
+
         self.logger.info("Performing initial storage check and cleanup on startup...")
+        self._begin_cleanup_cycle()
         self._perform_storage_check(is_initial=True)
-        # If shutdown is in progress, don't transition into periodic monitoring.
-        # This avoids confusing "starting periodic monitoring" logs during app exit,
-        # and helps the thread terminate promptly when stop() is called while the
-        # initial check is still running.
         if self._stop_event.is_set() or (not self.enabled) or (not self._running):
             return
         self.logger.info("Initial storage check completed, starting periodic monitoring")
 
-        # Continue with periodic checks in the same thread
         while not self._stop_event.is_set():
             try:
                 if not self.enabled:
                     break
-
-                # Perform periodic check
+                self._begin_cleanup_cycle()
                 self._perform_storage_check(is_initial=False)
-
             except Exception as e:
                 self.logger.error(f"Error in storage monitor loop: {e}", exc_info=True)
 
-            # Wait for next check or stop signal
             if self._stop_event.wait(timeout=self.check_interval_seconds):
                 break
 
+    def _begin_cleanup_cycle(self) -> None:
+        self._cleanup_deadline = time.time() + self.max_cleanup_seconds
+        self._files_deleted_this_cycle = 0
+        self._last_heartbeat = time.time()
+        self._refresh_newest_streaming_files()
+
+    def _cleanup_budget_exhausted(self) -> bool:
+        if self._files_deleted_this_cycle >= self.max_files_per_cycle:
+            self.logger.info(
+                "Cleanup file budget reached (%s files); will continue next cycle",
+                self.max_files_per_cycle,
+            )
+            return True
+        if time.time() >= self._cleanup_deadline:
+            self.logger.info(
+                "Cleanup time budget reached (%.0fs); will continue next cycle",
+                self.max_cleanup_seconds,
+            )
+            return True
+        return False
+
+    def _maybe_heartbeat(self, phase: str) -> None:
+        now = time.time()
+        if now - self._last_heartbeat >= self.heartbeat_interval_seconds:
+            self._last_heartbeat = now
+            self.logger.info(
+                "Storage cleanup in progress (%s): deleted=%s files this cycle",
+                phase,
+                self._files_deleted_this_cycle,
+            )
+
     def _perform_storage_check(self, is_initial: bool = False) -> None:
-        """
-        Perform storage check and cleanup.
-        
-        This method is called both for initial check on startup and for periodic checks.
-        All checks run in the same background thread.
-        
-        Args:
-            is_initial: True if this is the initial check on startup, False for periodic checks
-        """
         try:
             if not self.enabled:
                 return
 
-            # Check retention first (has priority - files older than retention period 
-            # are deleted regardless of size/space constraints)
             self._check_retention()
 
-            # Startup: constraints check can be very expensive (directory scan + deletion).
-            # On initial start we only do retention cleanup; constraints will be checked
-            # periodically after the system is up.
             if not is_initial:
-                # Then check constraints (size and free space limits)
                 self._check_constraints()
 
         except Exception as e:
@@ -179,18 +202,13 @@ class StorageMonitor:
             self.logger.error(f"Error during {check_type} storage check: {e}", exc_info=True)
 
     def _check_constraints(self) -> None:
-        """Check general constraints (directory size and free disk space)."""
         try:
             if not self.image_dir.exists():
-                self.logger.debug(f"Image directory does not exist: {self.image_dir}")
                 return
 
-            # Check directory size
-            dir_size_gb = self._get_dir_size(self.image_dir) / (1024 ** 3)
-            size_violated = dir_size_gb > self.max_dir_size_gb
-
-            # Check free disk space
+            dir_size_gb = self._get_dir_size(self.image_dir, force_refresh=True) / (1024 ** 3)
             free_space_percent = get_disk_free_percent(self.image_dir)
+            size_violated = dir_size_gb > self.max_dir_size_gb
             space_violated = free_space_percent < self.min_free_space_percent
 
             if size_violated or space_violated:
@@ -210,12 +228,6 @@ class StorageMonitor:
             self.logger.error(f"Error checking storage constraints: {e}", exc_info=True)
 
     def _check_retention(self) -> None:
-        """
-        Check file retention periods for different data types.
-        
-        This has priority over size/space constraints - files older than retention period
-        are deleted regardless of whether storage limits are violated.
-        """
         try:
             if not self.image_dir.exists():
                 return
@@ -223,17 +235,15 @@ class StorageMonitor:
             now = datetime.now()
             self.logger.debug("Checking file retention periods (priority check)")
 
-            # Check streaming video retention
             streaming_retention = self.retention_days.get("streaming_video", 7)
             if streaming_retention > 0:
                 self._delete_old_files_by_retention(
                     self.image_dir / "Streams",
                     streaming_retention,
                     now,
-                    "streaming video"
+                    "streaming video",
                 )
 
-            # Check event videos retention
             event_videos_retention = self.retention_days.get("event_videos", 7)
             if event_videos_retention > 0:
                 events_dir = self.image_dir / "Events"
@@ -246,20 +256,19 @@ class StorageMonitor:
                                     videos_dir,
                                     event_videos_retention,
                                     now,
-                                    "event videos"
+                                    "event videos",
                                 )
 
-            # Check object images retention
             object_images_retention = self.retention_days.get("object_images", 180)
             if object_images_retention > 0:
+                self._delete_legacy_images_by_date(object_images_retention, now)
                 self._delete_old_files_by_retention(
                     self.image_dir / "Detections",
                     object_images_retention,
                     now,
-                    "object images"
+                    "object images",
                 )
 
-            # Check event images retention
             event_images_retention = self.retention_days.get("event_images", 180)
             if event_images_retention > 0:
                 events_dir = self.image_dir / "Events"
@@ -272,26 +281,50 @@ class StorageMonitor:
                                     images_dir,
                                     event_images_retention,
                                     now,
-                                    "event images"
+                                    "event images",
                                 )
 
         except Exception as e:
             self.logger.error(f"Error checking file retention: {e}", exc_info=True)
 
+    def _delete_legacy_images_by_date(self, retention_days: int, now: datetime) -> None:
+        images_root = self.image_dir / "images"
+        if not images_root.exists() or retention_days <= 0:
+            return
+
+        cutoff_date = now - timedelta(days=retention_days)
+        for date_dir in images_root.iterdir():
+            if self._cleanup_budget_exhausted():
+                return
+            if not date_dir.is_dir():
+                continue
+            try:
+                dir_date = datetime.strptime(date_dir.name, "%Y_%m_%d")
+            except ValueError:
+                continue
+            if dir_date >= cutoff_date:
+                continue
+            try:
+                dir_size = sum(
+                    f.stat().st_size for f in date_dir.rglob("*") if f.is_file()
+                )
+                shutil.rmtree(date_dir)
+                self._adjust_dir_size_cache(-dir_size)
+                self._files_deleted_this_cycle += 1
+                self.logger.info(
+                    "Retention cleanup (legacy images): removed %s (%.2f GB, older than %s days)",
+                    date_dir.name,
+                    dir_size / (1024 ** 3),
+                    retention_days,
+                )
+            except Exception as e:
+                self.logger.error(f"Error removing legacy images dir {date_dir}: {e}")
+
     def _delete_old_files_by_priority(
-            self,
-            size_violated: bool,
-            space_violated: bool
+        self,
+        size_violated: bool,
+        space_violated: bool,
     ) -> None:
-        """
-        Delete old files in priority order when constraints are violated.
-        
-        Priority order:
-        1. Streaming video (Streams/)
-        2. Event videos (Events/*/Videos/)
-        3. Object images (Detections/)
-        4. Event images (Events/*/Images/)
-        """
         if not (size_violated or space_violated):
             return
 
@@ -303,26 +336,23 @@ class StorageMonitor:
         deleted_count = 0
         deleted_size = 0
 
-        # Priority 1: Streaming video
         streams_dir = self.image_dir / "Streams"
         if streams_dir.exists():
-            self.logger.debug(f"Checking streaming video directory: {streams_dir}")
             count, size = self._delete_oldest_files(streams_dir, check_constraints=True)
             deleted_count += count
             deleted_size += size
             if count > 0:
                 self.logger.info(f"Deleted {count} streaming video files ({size / (1024 ** 2):.2f} MB)")
-            else:
-                self.logger.debug(f"No streaming video files deleted from {streams_dir}")
 
-        # Check if constraints are still violated
         if not self._constraints_still_violated():
+            self._finalize_priority_cleanup(deleted_count, deleted_size)
             return
 
-        # Priority 2: Event videos
         events_dir = self.image_dir / "Events"
         if events_dir.exists():
             for date_dir in events_dir.iterdir():
+                if self._cleanup_budget_exhausted():
+                    break
                 if date_dir.is_dir():
                     videos_dir = date_dir / "Videos"
                     if videos_dir.exists():
@@ -330,26 +360,32 @@ class StorageMonitor:
                         deleted_count += count
                         deleted_size += size
                         if count > 0:
-                            self.logger.info(f"Deleted {count} event video files ({size / (1024 ** 2):.2f} MB)")
-
+                            self.logger.info(
+                                f"Deleted {count} event video files ({size / (1024 ** 2):.2f} MB)"
+                            )
                         if not self._constraints_still_violated():
+                            self._finalize_priority_cleanup(deleted_count, deleted_size)
                             return
 
-        # Priority 3: Object images
+        object_images_retention = self.retention_days.get("object_images", 180)
+        if object_images_retention > 0:
+            self._delete_legacy_images_by_date(object_images_retention, datetime.now())
+
         detections_dir = self.image_dir / "Detections"
-        if detections_dir.exists():
+        if detections_dir.exists() and not self._cleanup_budget_exhausted():
             count, size = self._delete_oldest_files(detections_dir, check_constraints=True)
             deleted_count += count
             deleted_size += size
             if count > 0:
                 self.logger.info(f"Deleted {count} object image files ({size / (1024 ** 2):.2f} MB)")
-
             if not self._constraints_still_violated():
+                self._finalize_priority_cleanup(deleted_count, deleted_size)
                 return
 
-        # Priority 4: Event images
         if events_dir.exists():
             for date_dir in events_dir.iterdir():
+                if self._cleanup_budget_exhausted():
+                    break
                 if date_dir.is_dir():
                     images_dir = date_dir / "Images"
                     if images_dir.exists():
@@ -357,19 +393,22 @@ class StorageMonitor:
                         deleted_count += count
                         deleted_size += size
                         if count > 0:
-                            self.logger.info(f"Deleted {count} event image files ({size / (1024 ** 2):.2f} MB)")
-
+                            self.logger.info(
+                                f"Deleted {count} event image files ({size / (1024 ** 2):.2f} MB)"
+                            )
                         if not self._constraints_still_violated():
-                            return
+                            break
 
+        self._finalize_priority_cleanup(deleted_count, deleted_size)
+
+    def _finalize_priority_cleanup(self, deleted_count: int, deleted_size: int) -> None:
         if deleted_count > 0:
             self.logger.info(
                 f"Total cleanup: {deleted_count} files deleted, "
                 f"{deleted_size / (1024 ** 3):.2f} GB freed"
             )
-            # Remove empty directories after file deletion
             self._remove_empty_directories(self.image_dir)
-        else:
+        elif self._constraints_still_violated(refresh_size=True):
             self.logger.warning(
                 "Storage constraints violated but no files could be deleted. "
                 "All files may be currently being written. Consider disabling recording "
@@ -377,18 +416,12 @@ class StorageMonitor:
             )
 
     def _delete_old_files_by_retention(
-            self,
-            base_dir: Path,
-            retention_days: int,
-            now: datetime,
-            data_type: str
+        self,
+        base_dir: Path,
+        retention_days: int,
+        now: datetime,
+        data_type: str,
     ) -> None:
-        """
-        Delete files older than retention period.
-        
-        This has priority over size/space constraints - files are deleted
-        if they exceed retention period, regardless of storage limits.
-        """
         if not base_dir.exists() or retention_days <= 0:
             return
 
@@ -397,18 +430,10 @@ class StorageMonitor:
         deleted_size = 0
         active_files_count = 0
 
-        self.logger.debug(
-            f"Checking retention for {data_type} in {base_dir}: "
-            f"cutoff date = {cutoff_date.strftime('%Y-%m-%d')} ({retention_days} days ago)"
-        )
-
-        # Recursively find all files
-        files_to_check = list(base_dir.rglob("*"))
-        self.logger.debug(f"Found {len([f for f in files_to_check if f.is_file()])} files to check for retention")
-
-        for file_path in files_to_check:
-            if not file_path.is_file():
-                continue
+        for file_path in self._iter_files(base_dir):
+            if self._cleanup_budget_exhausted():
+                break
+            self._maybe_heartbeat(f"retention {data_type}")
 
             try:
                 file_mtime = datetime.fromtimestamp(file_path.stat().st_mtime)
@@ -420,19 +445,10 @@ class StorageMonitor:
                         file_path.unlink(missing_ok=True)
                         deleted_count += 1
                         deleted_size += file_size
-                        # Log detailed info at DEBUG level to avoid log flooding
-                        self.logger.debug(
-                            f"Deleted file (retention priority): {file_path} "
-                            f"(size: {file_size / (1024 ** 2):.2f} MB, "
-                            f"age: {file_age_days} days, retention: {retention_days} days)"
-                        )
+                        self._files_deleted_this_cycle += 1
+                        self._adjust_dir_size_cache(-file_size)
                     else:
                         active_files_count += 1
-                        if active_files_count <= 3:
-                            self.logger.debug(
-                                f"Skipping active file (retention): {file_path} "
-                                f"(age: {file_age_days} days)"
-                            )
             except Exception as e:
                 self.logger.debug(f"Error processing file {file_path} for retention: {e}")
 
@@ -441,74 +457,48 @@ class StorageMonitor:
                 f"Retention cleanup ({data_type}): {deleted_count} files deleted "
                 f"({deleted_size / (1024 ** 2):.2f} MB), older than {retention_days} days"
             )
-            # Remove empty directories after file deletion
             self._remove_empty_directories(base_dir)
-        elif active_files_count > 0:
-            self.logger.debug(
-                f"Retention check ({data_type}): {active_files_count} files older than "
-                f"{retention_days} days but currently active (being written)"
-            )
 
     def _delete_oldest_files(
-            self,
-            base_dir: Path,
-            check_constraints: bool = False
+        self,
+        base_dir: Path,
+        check_constraints: bool = False,
     ) -> Tuple[int, int]:
-        """
-        Delete oldest files in directory until constraints are satisfied.
-        
-        Returns:
-            Tuple of (deleted_count, deleted_size_bytes)
-        """
         deleted_count = 0
         deleted_size = 0
-
-        # Collect all files with modification times
-        files_with_mtime: List[Tuple[Path, float, int]] = []
-        for file_path in base_dir.rglob("*"):
-            if file_path.is_file():
-                try:
-                    stat = file_path.stat()
-                    mtime = stat.st_mtime
-                    file_size = stat.st_size
-                    files_with_mtime.append((file_path, mtime, file_size))
-                except Exception:
-                    continue
-
-        # Sort by modification time (oldest first)
-        files_with_mtime.sort(key=lambda x: x[1])
-
-        self.logger.debug(f"Found {len(files_with_mtime)} files in {base_dir}, starting deletion...")
-
         active_files_count = 0
-        # Delete oldest files until constraints are satisfied
-        # Check constraints every N files to avoid expensive recalculations
-        check_interval = max(10, len(files_with_mtime) // 100)  # Check every 1% or at least 10 files
+
+        files_with_mtime: List[Tuple[Path, float, int]] = []
+        for file_path in self._iter_files(base_dir):
+            try:
+                stat = file_path.stat()
+                files_with_mtime.append((file_path, stat.st_mtime, stat.st_size))
+            except Exception:
+                continue
+
+        files_with_mtime.sort(key=lambda x: x[1])
+        check_interval = max(10, len(files_with_mtime) // 100) if files_with_mtime else 10
+
         for idx, (file_path, mtime, file_size) in enumerate(files_with_mtime):
-            # Check constraints periodically (not after every file to avoid slow recalculations)
+            if self._cleanup_budget_exhausted():
+                break
+            self._maybe_heartbeat(f"constraints {base_dir.name}")
+
             if check_constraints and idx > 0 and idx % check_interval == 0:
                 if not self._constraints_still_violated():
-                    self.logger.debug("Constraints satisfied, stopping deletion")
                     break
 
             if not self._is_file_active(file_path):
                 try:
-                    file_mtime = datetime.fromtimestamp(mtime)
                     file_path.unlink(missing_ok=True)
                     deleted_count += 1
                     deleted_size += file_size
-                    # Log detailed info at DEBUG level to avoid log flooding
-                    self.logger.debug(
-                        f"Deleted file (constraints): {file_path} "
-                        f"(size: {file_size / (1024 ** 2):.2f} MB, "
-                        f"modified: {file_mtime.strftime('%Y-%m-%d %H:%M:%S')})"
-                    )
+                    self._files_deleted_this_cycle += 1
+                    self._adjust_dir_size_cache(-file_size)
                 except Exception as e:
                     self.logger.error(f"Error deleting file {file_path}: {e}", exc_info=True)
             else:
                 active_files_count += 1
-                if active_files_count <= 5:  # Log first 5 active files
-                    self.logger.debug(f"Skipping active file: {file_path}")
 
         if active_files_count > 5:
             self.logger.warning(
@@ -516,43 +506,68 @@ class StorageMonitor:
                 f"Storage constraints may be too strict. Consider disabling recording."
             )
 
-        self.logger.debug(
-            f"Deletion completed: {deleted_count} deleted, {active_files_count} active files skipped"
-        )
-
         return deleted_count, deleted_size
 
+    def _refresh_newest_streaming_files(self) -> None:
+        streams_dir = self.image_dir / "Streams"
+        newest: Dict[Path, float] = {}
+        if not streams_dir.exists():
+            self._newest_streaming_files = newest
+            return
+        try:
+            for cam_dir in streams_dir.iterdir():
+                if not cam_dir.is_dir():
+                    continue
+                latest_mtime = 0.0
+                latest_path: Optional[Path] = None
+                for file_path in self._iter_files(cam_dir):
+                    try:
+                        mtime = file_path.stat().st_mtime
+                        if mtime >= latest_mtime:
+                            latest_mtime = mtime
+                            latest_path = file_path
+                    except Exception:
+                        continue
+                if latest_path is not None:
+                    newest[cam_dir] = latest_mtime
+        except Exception as e:
+            self.logger.debug(f"Error scanning newest streaming files: {e}")
+        self._newest_streaming_files = newest
+
     def _is_file_active(self, file_path: Path) -> bool:
-        """
-        Check if file is currently being written.
-        
-        A file is considered active if it was modified within
-        active_file_age_seconds seconds.
-        """
         try:
             if not file_path.exists():
                 return False
 
             file_mtime = file_path.stat().st_mtime
             file_age = time.time() - file_mtime
-            return file_age < self.active_file_age_seconds
+            if file_age < self.active_file_age_seconds:
+                return True
+
+            for cam_dir, newest_mtime in self._newest_streaming_files.items():
+                try:
+                    file_path.relative_to(cam_dir)
+                except ValueError:
+                    continue
+                if abs(file_mtime - newest_mtime) < 1.0:
+                    return True
+
+            return False
 
         except Exception:
-            # If we can't check, assume file is active to be safe
             return True
 
-    def _constraints_still_violated(self) -> bool:
-        """Check if storage constraints are still violated."""
+    def _constraints_still_violated(self, refresh_size: bool = False) -> bool:
         try:
             if not self.image_dir.exists():
                 return False
 
-            # Check directory size
-            dir_size_gb = self._get_dir_size(self.image_dir) / (1024 ** 3)
+            dir_size_gb = self._get_dir_size(
+                self.image_dir, force_refresh=refresh_size
+            ) / (1024 ** 3)
             if dir_size_gb > self.max_dir_size_gb:
                 return True
 
-            # Check free disk space
             free_space_percent = get_disk_free_percent(self.image_dir)
             if free_space_percent < self.min_free_space_percent:
                 return True
@@ -562,68 +577,60 @@ class StorageMonitor:
         except Exception:
             return False
 
-    def _get_dir_size(self, directory: Path) -> int:
-        """
-        Calculate total size of directory recursively.
-        
-        Returns:
-            Size in bytes
-        """
+    def _get_dir_size(self, directory: Path, force_refresh: bool = False) -> int:
+        now = time.time()
+        if (
+            not force_refresh
+            and self._dir_size_cache_bytes is not None
+            and now - self._dir_size_cache_time < self.dir_size_cache_ttl_seconds
+        ):
+            return self._dir_size_cache_bytes
+
         total_size = 0
         try:
-            for item in directory.rglob("*"):
-                if item.is_file():
-                    try:
-                        total_size += item.stat().st_size
-                    except (OSError, PermissionError):
-                        pass
+            for file_path in self._iter_files(directory):
+                try:
+                    total_size += file_path.stat().st_size
+                except (OSError, PermissionError):
+                    pass
         except Exception as e:
             self.logger.debug(f"Error calculating directory size: {e}")
 
+        self._dir_size_cache_bytes = total_size
+        self._dir_size_cache_time = now
         return total_size
 
+    def _adjust_dir_size_cache(self, delta_bytes: int) -> None:
+        if self._dir_size_cache_bytes is None:
+            return
+        self._dir_size_cache_bytes = max(0, self._dir_size_cache_bytes + delta_bytes)
+        self._dir_size_cache_time = time.time()
+
+    def _iter_files(self, base_dir: Path) -> Iterator[Path]:
+        if not base_dir.exists():
+            return
+        for root, _, files in os.walk(base_dir):
+            if self._stop_event.is_set():
+                return
+            for name in files:
+                yield Path(root) / name
+
     def _remove_empty_directories(self, base_dir: Path) -> None:
-        """
-        Remove empty directories recursively starting from the deepest level.
-        
-        Args:
-            base_dir: Base directory to start cleanup from (won't be deleted itself)
-        """
         if not base_dir.exists() or not base_dir.is_dir():
             return
 
         removed_count = 0
-
         try:
-            # Collect all directories, sorted by depth (deepest first)
-            all_dirs = []
             for root, dirs, files in os.walk(base_dir, topdown=False):
-                # topdown=False means we traverse from deepest to shallowest
                 dir_path = Path(root)
-                all_dirs.append(dir_path)
-
-            # Remove empty directories (deepest first)
-            for dir_path in all_dirs:
-                # Skip base directory itself
                 if dir_path == base_dir:
                     continue
-
                 try:
-                    # Check if directory is empty
-                    if dir_path.exists() and dir_path.is_dir():
-                        # Try to list directory contents
-                        try:
-                            contents = list(dir_path.iterdir())
-                            if len(contents) == 0:
-                                # Directory is empty, remove it
-                                dir_path.rmdir()
-                                removed_count += 1
-                                self.logger.debug(f"Removed empty directory: {dir_path}")
-                        except OSError:
-                            # Directory might have been removed already or is not accessible
-                            pass
-                except Exception as e:
-                    self.logger.debug(f"Error removing directory {dir_path}: {e}")
+                    if dir_path.exists() and dir_path.is_dir() and not any(dir_path.iterdir()):
+                        dir_path.rmdir()
+                        removed_count += 1
+                except Exception:
+                    pass
 
             if removed_count > 0:
                 self.logger.info(f"Removed {removed_count} empty directories")
