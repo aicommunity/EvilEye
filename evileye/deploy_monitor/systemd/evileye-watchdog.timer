@@ -1,0 +1,10 @@
+[Unit]
+Description=Run EvilEye health watchdog every 5 minutes
+
+[Timer]
+OnCalendar=*:0/5
+Persistent=true
+Unit=evileye-watchdog.service
+
+[Install]
+WantedBy=timers.target

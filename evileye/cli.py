@@ -766,14 +766,98 @@ def list_configs() -> None:
     console.print(table)
 
 
+def _monitor_source_dir() -> Path:
+    """Locate packaged or repo-checkout monitor assets for site deploy."""
+    candidates = [
+        Path(__file__).parent / "deploy_monitor",
+        Path(__file__).resolve().parents[1] / "deploy" / "monitor",
+    ]
+    for candidate in candidates:
+        if (candidate / "scripts" / "install_timer.sh").is_file():
+            return candidate
+    raise FileNotFoundError(
+        "Monitor assets not found. Expected evileye/deploy_monitor or deploy/monitor "
+        "with scripts/install_timer.sh"
+    )
+
+
+def _deploy_monitor_assets(site_dir: Path) -> None:
+    """
+    Copy watchdog/monitor scripts into <site>/monitor/.
+
+    Does not enable systemd timers or start EvilEye — only files and empty runtime dirs.
+    Re-running updates scripts/systemd from the package without wiping incidents/logs.
+    """
+    source = _monitor_source_dir()
+    monitor_dir = site_dir / "monitor"
+    scripts_dst = monitor_dir / "scripts"
+    systemd_dst = monitor_dir / "systemd"
+
+    scripts_dst.mkdir(parents=True, exist_ok=True)
+    systemd_dst.mkdir(parents=True, exist_ok=True)
+
+    copied_scripts = 0
+    for src in sorted((source / "scripts").glob("*")):
+        if not src.is_file():
+            continue
+        shutil.copy2(src, scripts_dst / src.name)
+        # Ensure shell scripts are executable on Unix.
+        if src.suffix == ".sh" or src.name.endswith(".sh"):
+            mode = (scripts_dst / src.name).stat().st_mode
+            (scripts_dst / src.name).chmod(mode | 0o111)
+        copied_scripts += 1
+
+    copied_units = 0
+    systemd_src = source / "systemd"
+    if systemd_src.is_dir():
+        for src in sorted(systemd_src.glob("*")):
+            if not src.is_file():
+                continue
+            shutil.copy2(src, systemd_dst / src.name)
+            copied_units += 1
+
+    readme_src = source / "README.md"
+    if readme_src.is_file():
+        shutil.copy2(readme_src, monitor_dir / "README.md")
+
+    # Runtime directories (empty placeholders; never start services here).
+    for name in ("incidents", "reports", "logs"):
+        # logs live at site root; incidents/reports under monitor/
+        if name == "logs":
+            (site_dir / "logs").mkdir(parents=True, exist_ok=True)
+        else:
+            (monitor_dir / name).mkdir(parents=True, exist_ok=True)
+
+    hint = monitor_dir / "INSTALL_HINT.txt"
+    hint.write_text(
+        "Monitor scripts were deployed by `evileye deploy`.\n"
+        "They are NOT started automatically.\n\n"
+        "To enable the user systemd watchdog on this machine:\n"
+        f"  DEPLOY_DIR={site_dir} {scripts_dst / 'install_timer.sh'}\n\n"
+        "Manual health check:\n"
+        f"  DEPLOY_DIR={site_dir} {scripts_dst / 'health_check.sh'}\n",
+        encoding="utf-8",
+    )
+
+    console.print(
+        f"[green]Deployed monitor assets "
+        f"({copied_scripts} scripts, {copied_units} systemd templates) → {monitor_dir}[/green]"
+    )
+    console.print(
+        "[blue]Note:[/blue] watchdog timers were [bold]not[/bold] enabled; "
+        f"run install_timer.sh when ready (see {hint.name})."
+    )
+
+
 @app.command()
 def deploy() -> None:
     """
-    Deploy EvilEye configuration files to current directory.
-    
+    Deploy EvilEye site files to the current directory.
+
     This command:
-    1. Copies credentials_proto.json to credentials.json (if credentials.json doesn't exist)
-    2. Creates configs folder if it doesn't exist
+    1. Copies credentials_proto.json to credentials.json (if missing)
+    2. Creates configs/ and logs/ folders if missing
+    3. Deploys monitor/watchdog scripts and systemd templates (does not start services)
     """
 
     current_dir = Path.cwd()
@@ -809,8 +893,21 @@ def deploy() -> None:
             console.print(f"[red]Error creating configs folder: {e}[/red]")
             raise typer.Exit(1)
 
-    console.print("[green]Deployment completed successfully![/green]")
+    # Step 3: Monitor / watchdog assets (files only — no systemd enable, no process start)
+    try:
+        _deploy_monitor_assets(current_dir)
+    except FileNotFoundError as e:
+        console.print(f"[red]Error deploying monitor assets: {e}[/red]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error deploying monitor assets: {e}[/red]")
+        raise typer.Exit(1)
 
+    console.print("[green]Deployment completed successfully![/green]")
+    console.print(
+        "[dim]Next: create a config (`evileye create ...`), then optionally "
+        "enable watchdog via monitor/scripts/install_timer.sh[/dim]"
+    )
 
 @app.command()
 def deploy_samples() -> None:

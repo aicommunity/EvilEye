@@ -112,7 +112,10 @@ exclude = ["tests*", "scripts*", "samples*", "configs*", "models*", "icons*", "d
 "evileye" = [
     "*.json", "*.yaml", "*.yml", "*.onnx", "*.pt", "*.pth",
     "icons/*.svg", "models/*.pt", "models/*.onnx",
-    "samples_configs/*.json", "credentials_proto.json", "database_config.json"
+    "samples_configs/*.json", "credentials_proto.json", "database_config.json",
+    "deploy_monitor/README.md",
+    "deploy_monitor/scripts/*",
+    "deploy_monitor/systemd/*",
 ]
 
 [tool.black]
