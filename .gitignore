@@ -148,12 +148,19 @@ x64/
 *.bin
 *.pdb
 *.exe
-yolov8n.pt
-credentials.json
 
+# Local / runtime artifacts (do not commit)
+credentials.json
 EvilEyeData*/
 *.mp4
 *.avi
+*.avi.download
+*.download
+*.onnx
+*.pt
+# Runtime event/object image dumps (keep tracked sample sequence_*.jpg under images/)
+images/frames/
+images/previews/
 logs/
 mixed_images/
 models/
