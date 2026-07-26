@@ -388,6 +388,19 @@ body {
   border: 1px dashed var(--border);
 }
 
+.camera-preview-loading {
+  opacity: 0.35;
+  background:
+    linear-gradient(90deg, #1a1a1a 0%, #2a2a2a 50%, #1a1a1a 100%);
+  background-size: 200% 100%;
+  animation: camera-preview-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes camera-preview-pulse {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
 .camera-actions {
   margin-top: 0.75rem;
 }
@@ -436,6 +449,176 @@ body {
 .journal-table th {
   color: var(--text-muted);
   font-weight: 600;
+}
+
+.journal-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.journal-tab {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 0.35rem 0.9rem;
+  cursor: pointer;
+}
+
+.journal-tab.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.journal-pane {
+  display: none;
+}
+
+.journal-pane.active {
+  display: block;
+}
+
+.journal-table-wrap {
+  max-height: 520px;
+  overflow: auto;
+}
+
+.journal-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.journal-preview-cell {
+  width: 18%;
+  min-width: 0;
+  max-width: 220px;
+  overflow: visible;
+}
+
+.journal-preview-inner {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 200px;
+  height: 160px;
+  max-width: 100%;
+  vertical-align: top;
+  background: #000;
+  border-radius: 8px;
+  overflow: hidden;
+  line-height: 0;
+}
+
+.journal-preview-img {
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  object-position: center center;
+  background: #000;
+}
+
+.journal-detail-media {
+  width: auto;
+  height: auto;
+  max-width: min(920px, 88vw);
+  max-height: min(82vh, 900px);
+  display: block;
+  object-fit: contain;
+  margin: 0 auto;
+  background: #000;
+}
+
+.journal-preview-overlay-wrap {
+  position: absolute;
+  pointer-events: none;
+}
+
+.journal-preview-overlay {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.journal-detail-media-wrap {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+  background: #000;
+  border-radius: 8px;
+  overflow: hidden;
+  line-height: 0;
+}
+
+#journal-detail-body {
+  padding: 0.75rem;
+  text-align: center;
+  min-height: 120px;
+}
+
+.journal-preview-controls {
+  position: absolute;
+  left: 0.35rem;
+  bottom: 0.35rem;
+  display: flex;
+  gap: 0.25rem;
+}
+
+.journal-preview-btn {
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  border-radius: 4px;
+  padding: 0.15rem 0.45rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.journal-preview-btn.active {
+  background: rgba(59, 130, 246, 0.85);
+}
+
+.journal-detail-modal:not([hidden]) {
+  display: flex;
+}
+
+.journal-detail-modal .journal-detail-content {
+  width: min(960px, 94vw);
+  max-height: 92vh;
+  overflow: auto;
+}
+
+.journal-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.journal-detail-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.journal-detail-tab {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  border-radius: 6px;
+  padding: 0.35rem 0.75rem;
+  cursor: pointer;
+}
+
+.journal-detail-tab.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
 }
 
 .streaming-empty {
@@ -1060,4 +1243,44 @@ body {
 .toast-success {
   background: var(--success);
   color: #fff;
+}
+
+.log-file-row {
+  cursor: pointer;
+}
+
+.log-file-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.log-view-pre {
+  max-height: 70vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.modal-content-wide {
+  max-width: min(960px, 95vw);
+}
+
+.auth-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.journal-preview-legacy {
+  max-width: 120px;
+  max-height: 80px;
+  object-fit: cover;
+  border-radius: 4px;
+}
+
+.camera-card-mini {
+  max-width: 280px;
+}
+
+.overview-run-detail p {
+  margin: 0.35rem 0;
 }

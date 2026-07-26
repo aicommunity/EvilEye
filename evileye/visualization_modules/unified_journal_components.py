@@ -1354,157 +1354,17 @@ class UnifiedImageWindow(QWidget):
         return None, 0
 
     def _resolve_stream_segment_path(self):
-        """Resolve stream segment path for objects"""
-        if not self.found_event or not self.base_dir:
-            self.logger.debug("_resolve_stream_segment_path: missing found_event or base_dir")
-            return None, 0
+        from evileye.visualization_modules.journal_media_resolver import resolve_stream_segment_path
 
-        # Get timestamp from event
-        timestamp = self.found_event.get('ts') or self.found_event.get('time_stamp')
-        if not timestamp:
-            self.logger.debug("_resolve_stream_segment_path: no timestamp in event")
-            return None, 0
-
-        # Parse timestamp
-        if isinstance(timestamp, str):
-            try:
-                dt = datetime.datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-            except Exception as e:
-                self.logger.debug(f"_resolve_stream_segment_path: failed to parse timestamp '{timestamp}': {e}")
-                return None, 0
-        elif isinstance(timestamp, datetime.datetime):
-            dt = timestamp
-        else:
-            self.logger.debug(f"_resolve_stream_segment_path: invalid timestamp type {type(timestamp)}")
-            return None, 0
-
-        date_folder = dt.strftime('%Y-%m-%d')
-        time_str = dt.strftime('%Y%m%d_%H%M%S')
-
-        # Get source name
-        source_name = self.found_event.get('source_name', '')
-        source_id = self.found_event.get('source_id')
-
-        self.logger.debug(
-            f"_resolve_stream_segment_path: event_time={dt}, source_name={source_name}, source_id={source_id}, date_folder={date_folder}")
-
-        # Build stream directory path
-        streams_dir = os.path.join(self.base_dir, 'Streams', date_folder)
-        if not os.path.exists(streams_dir):
-            self.logger.debug(f"_resolve_stream_segment_path: streams directory does not exist: {streams_dir}")
-            return None, 0
-
-        # Try to find camera folder - check all possible folders
-        camera_folders = []
-
-        # Try exact source_name match
-        if source_name:
-            camera_folder_path = os.path.join(streams_dir, source_name)
-            if os.path.exists(camera_folder_path):
-                camera_folders.append(source_name)
-                self.logger.debug(f"_resolve_stream_segment_path: found camera folder by source_name: {source_name}")
-
-        # Try composite names (for split sources) - check all folders in streams_dir
+        source_mappings = {}
         if self.data_source and hasattr(self.data_source, '_source_name_id_address'):
             source_mappings = self.data_source._source_name_id_address
-            if source_id is not None:
-                # Find all source names that map to this source_id
-                for src_name, (src_id, address) in source_mappings.items():
-                    if src_id == source_id:
-                        composite_folder = os.path.join(streams_dir, src_name)
-                        if os.path.exists(composite_folder) and src_name not in camera_folders:
-                            camera_folders.append(src_name)
-                            self.logger.debug(
-                                f"_resolve_stream_segment_path: found camera folder by source_id mapping: {src_name}")
-
-        # Also check all existing folders in streams_dir (for cases where folder name doesn't match source_name)
-        try:
-            for folder_name in os.listdir(streams_dir):
-                folder_path = os.path.join(streams_dir, folder_name)
-                if os.path.isdir(folder_path) and folder_name not in camera_folders:
-                    # Check if this folder might contain segments for our source
-                    # For split sources, folder might be like "Cam2-Cam3" but source_name is "Cam2"
-                    if source_name and (source_name in folder_name or folder_name in source_name):
-                        camera_folders.append(folder_name)
-                        self.logger.debug(
-                            f"_resolve_stream_segment_path: found potential camera folder by name match: {folder_name}")
-        except Exception as e:
-            self.logger.debug(f"_resolve_stream_segment_path: error listing streams_dir: {e}")
-
-        if not camera_folders:
-            self.logger.warning(
-                f"_resolve_stream_segment_path: no camera folders found for source_name={source_name}, source_id={source_id}, streams_dir={streams_dir}")
-            return None, 0
-
-        # Search for segment file
-        segment_length_sec = 300  # Default segment length (5 minutes)
-        import glob
-
-        for camera_folder in camera_folders:
-            camera_path = os.path.join(streams_dir, camera_folder)
-            if not os.path.isdir(camera_path):
-                continue
-
-            self.logger.debug(f"_resolve_stream_segment_path: searching in camera folder: {camera_folder}")
-
-            # List all segment files in this folder (don't filter by source_name in filename)
-            # Format: {source_name}_{YYYYMMDD}_{HHMMSS}_{seq}.mp4
-            # But folder might contain segments from multiple sources or with different naming
-            all_segments = glob.glob(os.path.join(camera_path, '*.mp4'))
-
-            if not all_segments:
-                self.logger.debug(f"_resolve_stream_segment_path: no .mp4 files found in {camera_path}")
-                continue
-
-            self.logger.debug(
-                f"_resolve_stream_segment_path: found {len(all_segments)} segment files in {camera_folder}")
-
-            # Find segment that contains the event time
-            best_segment = None
-            best_offset = 0
-            min_time_diff = float('inf')
-
-            for segment_file in all_segments:
-                filename = os.path.basename(segment_file)
-                # Extract start time from filename: {source_name}_{YYYYMMDD}_{HHMMSS}_{seq}.mp4
-                # Format: parts[0] = source_name, parts[1] = YYYYMMDD, parts[2] = HHMMSS, parts[3] = seq
-                parts = filename.replace('.mp4', '').split('_')
-                if len(parts) >= 3:
-                    try:
-                        date_part = parts[1]  # YYYYMMDD
-                        time_part = parts[2]  # HHMMSS
-                        segment_start_str = f"{date_part}_{time_part}"
-                        segment_start = datetime.datetime.strptime(segment_start_str, '%Y%m%d_%H%M%S')
-
-                        # Check if event time is within this segment
-                        segment_end = segment_start + datetime.timedelta(seconds=segment_length_sec)
-                        if segment_start <= dt < segment_end:
-                            # Calculate offset
-                            offset_seconds = (dt - segment_start).total_seconds()
-                            self.logger.info(
-                                f"_resolve_stream_segment_path: found exact segment match: {filename}, offset={offset_seconds}s")
-                            return segment_file, int(offset_seconds)
-
-                        # Track closest segment for fallback
-                        time_diff = abs((dt - segment_start).total_seconds())
-                        if time_diff < segment_length_sec and time_diff < min_time_diff:
-                            min_time_diff = time_diff
-                            best_segment = segment_file
-                            best_offset = max(0, int((dt - segment_start).total_seconds()))
-                    except Exception as e:
-                        self.logger.debug(
-                            f"_resolve_stream_segment_path: error parsing segment filename '{filename}': {e}")
-                        continue
-
-            # If exact match not found, use closest segment
-            if best_segment:
-                self.logger.info(
-                    f"_resolve_stream_segment_path: using closest segment: {os.path.basename(best_segment)}, time_diff={min_time_diff}s, offset={best_offset}s")
-                return best_segment, best_offset
-
-        self.logger.warning(
-            f"_resolve_stream_segment_path: no suitable segment found for event_time={dt}, source_name={source_name}")
-        return None, 0
+        return resolve_stream_segment_path(
+            self.found_event,
+            self.base_dir,
+            source_mappings=source_mappings,
+            logger=self.logger,
+        )
 
     def _create_video_tab(self):
         """Create video tab with player"""

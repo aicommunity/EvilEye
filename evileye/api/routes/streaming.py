@@ -7,6 +7,7 @@ import threading
 
 from evileye.api.core.config_run_access import get_config_run_manager
 from evileye.api.core.runtime_registry import load_runtime_record
+from evileye.api.core.server_state import get_run_summary
 from evileye.core.runtime_services import get_frame_broker
 
 router = APIRouter(prefix="/api/v1", tags=["streaming"])
@@ -50,6 +51,24 @@ def _resolve_run(rid: int) -> dict:
     return run_info
 
 
+def _source_count(run_info: dict) -> int:
+    sources = run_info.get("sources")
+    if isinstance(sources, list) and sources:
+        return len(sources)
+    summary = get_run_summary(int(run_info.get("id") or 0))
+    if summary and isinstance(summary.get("sources"), list):
+        return len(summary["sources"])
+    return 0
+
+
+def _require_source_id_if_multi(run_info: dict, source_id: int | None) -> None:
+    if source_id is None and _source_count(run_info) > 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Multiple sources: specify source_id query parameter",
+        )
+
+
 def _load_latest_frame(run_info: dict, *, source_id: int | None = None) -> bytes | None:
     run_id_str = str(run_info["id"])
     broker_key = f"{run_id_str}:{source_id}" if source_id is not None else run_id_str
@@ -91,6 +110,7 @@ async def _snapshot_impl(request: Request, rid: int, source_id: int | None = Non
     """
     _touch_preview_demand(request, rid, source_id=source_id)
     run_info = _resolve_run(rid)
+    _require_source_id_if_multi(run_info, source_id)
     data = _load_latest_frame(run_info, source_id=source_id)
     if not data:
         raise HTTPException(status_code=404, detail="No frame available")
@@ -161,6 +181,7 @@ async def _mjpeg_stream_impl(
     """
     _touch_preview_demand(request, rid, source_id=source_id)
     run_info = _resolve_run(rid)
+    _require_source_id_if_multi(run_info, source_id)
     if not _web_stream_available(run_info, source_id=source_id):
         raise HTTPException(
             status_code=409,
@@ -242,6 +263,7 @@ async def _stream_status_impl(request: Request, rid: int, source_id: int | None 
     """
     _touch_preview_demand(request, rid, source_id=source_id)
     run_info = _resolve_run(rid)
+    _require_source_id_if_multi(run_info, source_id)
     return _stream_status_payload(rid, run_info, source_id=source_id)
 
 

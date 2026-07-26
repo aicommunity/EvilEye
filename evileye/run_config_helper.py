@@ -320,6 +320,16 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
                         logger.info("Qt aboutToQuit: stopping controller...")
                     except Exception:
                         pass
+                    if shutdown_state.get("requested_signal") == signal.SIGTERM:
+                        try:
+                            cleaned = cleanup_current_session_workers()
+                            if cleaned:
+                                logger.warning(
+                                    "SIGTERM shutdown: proactively cleaned %d lingering MP worker process(es)",
+                                    cleaned,
+                                )
+                        except Exception:
+                            pass
                     try:
                         ctrl.release()
                         return
@@ -535,6 +545,11 @@ def run_config(config_path: str, gui: bool = True, autoclose: bool = False) -> i
                                     "GUI shutdown thread alive after %.1fs timeout; cleaned %d lingering worker process(es)",
                                     shutdown_join_timeout,
                                     cleaned,
+                                )
+                            else:
+                                logger.warning(
+                                    "GUI shutdown thread alive after %.1fs timeout; no lingering workers cleaned",
+                                    shutdown_join_timeout,
                                 )
                         except Exception:
                             pass

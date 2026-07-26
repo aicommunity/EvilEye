@@ -107,7 +107,7 @@ class ServerProcessManager:
         self._dropped_frames = 0
         self._published_frames = 0
 
-    def start(self, host="127.0.0.1", port=8080, log_level="info", ssl_certfile=None, ssl_keyfile=None):
+    def start(self, host="127.0.0.1", port=8181, log_level="info", ssl_certfile=None, ssl_keyfile=None):
         if self._process is not None and self._process.is_alive():
             self.logger.warning("Server process already running")
             return
@@ -231,7 +231,7 @@ class ServerProcessManager:
 
 # -- Original single-process entry point ---------------------------------
 
-def run_api_server(host: str = "127.0.0.1", port: int = 8080,
+def run_api_server(host: str = "127.0.0.1", port: int = 8181,
                    reload: bool = True, log_level: str = "info",
                    config: str | None = None, workers: int = 1,
                    verbose: bool = False, ssl_certfile: str | None = None,
@@ -335,7 +335,7 @@ def run_api_server(host: str = "127.0.0.1", port: int = 8080,
 def _create_args_parser() -> argparse.ArgumentParser:
     pars = argparse.ArgumentParser(description="EvilEye API server wrapper")
     pars.add_argument("--host", type=str, default="127.0.0.1", help="Bind host")
-    pars.add_argument("--port", type=int, default=8080, help="Bind port")
+    pars.add_argument("--port", type=int, default=8181, help="Bind port")
     pars.add_argument("--reload", action=argparse.BooleanOptionalAction, default=True,
                       help="Enable auto-reload (note: not supported with app instance)")
     pars.add_argument("--workers", type=int, default=1, help="Number of worker processes")

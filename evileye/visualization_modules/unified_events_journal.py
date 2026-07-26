@@ -492,10 +492,14 @@ class UnifiedEventsJournal(UnifiedJournalBase):
         # Add system events as standalone rows
         for ev in sys_events:
             system_event = ev.get('system_event', '')
-            if system_event == 'SystemStart':
-                information = 'System started'
-            else:
-                information = 'System stopped'
+            information = ev.get('information')
+            if not information:
+                if system_event == 'SystemStart':
+                    information = 'System started'
+                elif system_event == 'CudaOutOfMemory':
+                    information = 'CUDA out of memory: detection disabled'
+                else:
+                    information = 'System stopped'
             table_rows.append({
                 'source': 'System',
                 'event': 'SystemEvent',
@@ -653,12 +657,15 @@ class UnifiedEventsJournal(UnifiedJournalBase):
 
             # Add system events
             for ev in sys_events:
-                # Format information to match old journal: 'System started' or 'System stopped'
                 system_event = ev.get('system_event', '')
-                if system_event == 'SystemStart':
-                    information = 'System started'
-                else:
-                    information = 'System stopped'
+                information = ev.get('information')
+                if not information:
+                    if system_event == 'SystemStart':
+                        information = 'System started'
+                    elif system_event == 'CudaOutOfMemory':
+                        information = 'CUDA out of memory: detection disabled'
+                    else:
+                        information = 'System stopped'
                 new_table_rows.append({
                     'source': 'System',
                     'event': 'SystemEvent',
@@ -1036,263 +1043,19 @@ class UnifiedEventsJournal(UnifiedJournalBase):
 
     def _resolve_video_path(self, event_data: Optional[dict], preview_path: str = '', is_lost: bool = False) -> \
     Optional[str]:
-        """Resolve video fragment path for event with detailed logging
-        
-        Args:
-            event_data: Event data dictionary from DB
-            preview_path: Preview image path for logging
-            is_lost: If True, look for lost video path, otherwise found video path
-        
-        Returns:
-            Absolute path to video fragment, or None if not found
-        """
-        if not event_data or not self.base_dir:
-            if preview_path:
-                self.logger.debug(
-                    f"Video resolution skipped: event_data={event_data is not None}, base_dir={bool(self.base_dir)}, preview={preview_path}")
-            return None
+        from evileye.visualization_modules.journal_media_resolver import resolve_event_video_path
 
-        # First, try to use saved video path from DB (preferred method)
-        video_path_key = 'video_path_lost' if is_lost else 'video_path'
-        saved_video_path = event_data.get(video_path_key)
-
-        if saved_video_path:
-            # Path from DB is relative to base_dir (e.g., "Events/2026-01-06/Videos/Cam1/Cam1_ZoneEvent_1762776230_20260106_001307.mp4")
-            full_path = os.path.join(self.base_dir, saved_video_path)
-            if os.path.exists(full_path):
-                # Check file size - if too small, it might be corrupted
-                try:
-                    file_size = os.path.getsize(full_path)
-                    if file_size < 1000:  # Less than 1KB - likely corrupted or empty
-                        self.logger.warning(
-                            f"Saved video path from DB exists but is too small ({file_size} bytes): {full_path}, preview={preview_path}")
-                        # Continue to fallback search
-                    else:
-                        self.logger.debug(f"Using saved video path from DB: {saved_video_path}, preview={preview_path}")
-                        return full_path
-                except Exception as e:
-                    self.logger.warning(f"Error checking saved video file size: {e}, preview={preview_path}")
-                    # Continue to fallback search
-            else:
-                self.logger.debug(
-                    f"Saved video path from DB does not exist (file may have been deleted): {full_path}, preview={preview_path}. Trying fallback search...")
-
-        # Fallback to constructing path from event data (for backward compatibility)
-        # Extract event info
-        event_type = event_data.get('event_type', '')
-        time_stamp = event_data.get('ts') or event_data.get('time_stamp')
-        source_name = event_data.get('source_name', '')
-        source_id = event_data.get('source_id')
-        event_id_numeric = event_data.get('event_id_numeric')  # Numeric ID from DB
-        event_id_str = event_data.get('event_id', '')
-
-        if not all([event_type, time_stamp]):
-            self.logger.debug(
-                f"Video resolution skipped: missing required fields (event_type={bool(event_type)}, time_stamp={bool(time_stamp)}), preview={preview_path}")
-            return None
-
-        # Format timestamp
-        if isinstance(time_stamp, datetime.datetime):
-            date_folder = time_stamp.strftime('%Y-%m-%d')
-            time_str = time_stamp.strftime('%Y%m%d_%H%M%S')
-            time_str_partial = time_stamp.strftime('%Y%m%d_%H%M')  # For flexible matching (ignore seconds)
-        elif isinstance(time_stamp, str):
-            try:
-                dt = datetime.datetime.fromisoformat(time_stamp.replace('Z', '+00:00'))
-                date_folder = dt.strftime('%Y-%m-%d')
-                time_str = dt.strftime('%Y%m%d_%H%M%S')
-                time_str_partial = dt.strftime('%Y%m%d_%H%M')  # For flexible matching (ignore seconds)
-            except Exception as e:
-                self.logger.warning(
-                    f"Failed to parse timestamp '{time_stamp}' for video resolution: {e}, preview={preview_path}")
-                return None
-        else:
-            self.logger.warning(
-                f"Invalid timestamp type {type(time_stamp)} for video resolution, preview={preview_path}")
-            return None
-
-        # Map event_type to EventRecorder format
-        event_name_map = {
-            'zone_entered': 'ZoneEvent',
-            'zone_left': 'ZoneEvent',
-            'attr_found': 'AttributeEvent',
-            'attr_lost': 'AttributeEvent',
-            'fov_found': 'FOVEvent',
-            'fov_lost': 'FOVEvent',
-        }
-        event_name = event_name_map.get(event_type, event_type)
-
-        # Get possible camera folder names and source names
-        # EventRecorder uses "-".join(source.source_names) for folder, but source_names[0] for filename
-        possible_camera_folders = []
-        possible_source_names = []
-
-        # Get source mappings from data_source if available
         source_mappings = {}
         if hasattr(self.data_source, '_source_name_id_address'):
             source_mappings = self.data_source._source_name_id_address
-
-        # If we have source_id, find all source_names that map to it
-        if source_id is not None:
-            for src_name, (src_id, address) in source_mappings.items():
-                if src_id == source_id:
-                    possible_source_names.append(src_name)
-
-        # Also add source_name from event_data if available
-        if source_name and source_name not in possible_source_names:
-            possible_source_names.append(source_name)
-
-        # If no source_names found, use source_name from event_data or empty
-        if not possible_source_names:
-            possible_source_names = [source_name] if source_name else []
-
-        # Build possible camera folder names
-        # EventRecorder creates folders using "-".join(source_names) for split sources
-        # So we need to check all combinations
-        if len(possible_source_names) > 1:
-            # For split sources, try composite name
-            possible_camera_folders.append("-".join(possible_source_names))
-        # Also try individual source names
-        for src_name in possible_source_names:
-            if src_name not in possible_camera_folders:
-                possible_camera_folders.append(src_name)
-
-        # If no camera folders found, use source_name from event_data
-        if not possible_camera_folders:
-            possible_camera_folders = [source_name] if source_name else []
-
-        # Try to find video file using numeric event_id (preferred method)
-        videos_base_dir = os.path.join(self.base_dir, 'Events', date_folder, 'Videos')
-
-        if event_id_numeric is not None and os.path.exists(videos_base_dir):
-            # First, try exact match with possible folders and source names
-            for camera_folder in possible_camera_folders:
-                for src_name in possible_source_names:
-                    # Format: {source_name}_{event_name}_{event_id}_{time_str}.mp4
-                    video_path = os.path.join(
-                        videos_base_dir, camera_folder,
-                        f'{src_name}_{event_name}_{event_id_numeric}_{time_str}.mp4'
-                    )
-                    if os.path.exists(video_path):
-                        self.logger.info(
-                            f"Found video fragment for event: type={event_type}, source={src_name}, camera_folder={camera_folder}, event_id={event_id_numeric}, time={time_str}, path={video_path}, preview={preview_path}")
-                        return video_path
-
-            # If not found, search all folders for files matching event_id and time
-            try:
-                for folder_name in os.listdir(videos_base_dir):
-                    folder_path = os.path.join(videos_base_dir, folder_name)
-                    if not os.path.isdir(folder_path):
-                        continue
-
-                    # Look for file matching event_id and time_str
-                    pattern = f'*_{event_name}_{event_id_numeric}_{time_str}.mp4'
-                    import glob
-                    matching_files = glob.glob(os.path.join(folder_path, pattern))
-                    if matching_files:
-                        video_path = matching_files[0]
-                        self.logger.info(
-                            f"Found video fragment (searched all folders): type={event_type}, event_id={event_id_numeric}, time={time_str}, path={video_path}, preview={preview_path}")
-                        return video_path
-
-                    # Also try with any event_id (event_id_numeric may not match real DB event_id)
-                    # Look for files matching time_str and event_name
-                    pattern_time = f'*_{event_name}_*_{time_str}.mp4'
-                    matching_files = glob.glob(os.path.join(folder_path, pattern_time))
-                    if matching_files:
-                        # Prefer files with source_name in filename
-                        for video_path in matching_files:
-                            filename = os.path.basename(video_path)
-                            # Check if any of possible_source_names is in filename
-                            if any(src_name in filename for src_name in possible_source_names if src_name):
-                                self.logger.info(
-                                    f"Found video fragment (by time and source): type={event_type}, time={time_str}, path={video_path}, preview={preview_path}")
-                                return video_path
-                        # If no match by source_name, use first found
-                        if matching_files:
-                            video_path = matching_files[0]
-                            self.logger.info(
-                                f"Found video fragment (by time only): type={event_type}, time={time_str}, path={video_path}, preview={preview_path}")
-                            return video_path
-            except Exception as e:
-                self.logger.debug(f"Error searching all folders: {e}, preview={preview_path}")
-
-        # Fallback: try without event_id (old format or if event_id_numeric not available)
-        for camera_folder in possible_camera_folders:
-            for src_name in possible_source_names:
-                # Try format without event_id
-                alt_path = os.path.join(
-                    videos_base_dir, camera_folder,
-                    f'{src_name}_{event_name}_{time_str}.mp4'
-                )
-                if os.path.exists(alt_path):
-                    self.logger.info(
-                        f"Found video fragment (alt format) for event: type={event_type}, source={src_name}, camera_folder={camera_folder}, time={time_str}, path={alt_path}, preview={preview_path}")
-                    return alt_path
-
-        # Final fallback: search all folders for files matching time_str (most flexible)
-        if os.path.exists(videos_base_dir):
-            try:
-                import glob
-                # First, try exact time match
-                pattern = f'*_{event_name}_*_{time_str}.mp4'
-                all_matching = []
-                for folder_name in os.listdir(videos_base_dir):
-                    folder_path = os.path.join(videos_base_dir, folder_name)
-                    if not os.path.isdir(folder_path):
-                        continue
-                    matching_files = glob.glob(os.path.join(folder_path, pattern))
-                    all_matching.extend(matching_files)
-
-                # If no exact match, try partial time match (ignore seconds) - allows for small time differences
-                if not all_matching:
-                    pattern_partial = f'*_{event_name}_*_{time_str_partial}*.mp4'
-                    for folder_name in os.listdir(videos_base_dir):
-                        folder_path = os.path.join(videos_base_dir, folder_name)
-                        if not os.path.isdir(folder_path):
-                            continue
-                        matching_files = glob.glob(os.path.join(folder_path, pattern_partial))
-                        all_matching.extend(matching_files)
-
-                if all_matching:
-                    # Prefer files with source_name in filename
-                    for video_path in all_matching:
-                        filename = os.path.basename(video_path)
-                        if any(src_name in filename for src_name in possible_source_names if src_name):
-                            self.logger.info(
-                                f"Found video fragment (final fallback by time and source): type={event_type}, time={time_str}, path={video_path}, preview={preview_path}")
-                            return video_path
-                    # If no match by source_name, use first found
-                    video_path = all_matching[0]
-                    self.logger.info(
-                        f"Found video fragment (final fallback by time only): type={event_type}, time={time_str}, path={video_path}, preview={preview_path}")
-                    return video_path
-            except Exception as e:
-                self.logger.debug(f"Error in final fallback search: {e}, preview={preview_path}")
-
-        # Log failure with details
-        tried_paths = []
-        if event_id_numeric is not None:
-            for camera_folder in possible_camera_folders:
-                for src_name in possible_source_names:
-                    tried_paths.append(os.path.join(
-                        self.base_dir, 'Events', date_folder, 'Videos', camera_folder,
-                        f'{src_name}_{event_name}_{event_id_numeric}_{time_str}.mp4'
-                    ))
-        for camera_folder in possible_camera_folders:
-            for src_name in possible_source_names:
-                tried_paths.append(os.path.join(
-                    self.base_dir, 'Events', date_folder, 'Videos', camera_folder,
-                    f'{src_name}_{event_name}_{time_str}.mp4'
-                ))
-
-        self.logger.warning(
-            f"No video fragment found for event: type={event_type}, source_name={source_name}, source_id={source_id}, "
-            f"time={time_str}, event_id_numeric={event_id_numeric}, event_id_str={event_id_str}, date_folder={date_folder}, "
-            f"possible_camera_folders={possible_camera_folders}, possible_source_names={possible_source_names}, "
-            f"tried_paths={tried_paths[:5]}..., preview={preview_path}"
+        return resolve_event_video_path(
+            event_data,
+            self.base_dir,
+            is_lost=is_lost,
+            source_mappings=source_mappings,
+            preview_path=preview_path,
+            logger=self.logger,
         )
-        return None
 
     def showEvent(self, event):
         """Handle show event - load data only on first show"""

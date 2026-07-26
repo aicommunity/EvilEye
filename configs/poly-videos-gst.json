@@ -507,8 +507,9 @@
     },
     "server": {
         "enabled": true,
+        "execution_mode": "process",
         "host": "127.0.0.1",
-        "port": 8080,
+        "port": 8181,
         "log_level": "info",
         "preview_encoder": "turbojpeg",
         "preview_encode_workers": 2

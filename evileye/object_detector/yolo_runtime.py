@@ -8,6 +8,7 @@ from typing import Any
 
 from ultralytics import YOLO
 
+from ..core.gpu_errors import CudaOutOfMemoryError, is_cuda_oom_error
 from .ultralytics_postprocess import apply_ultralytics_optimizations
 
 
@@ -32,12 +33,19 @@ class YoloRuntime:
         model_path = self.model_name
         if model_path and not Path(str(model_path)).is_absolute():
             model_path = str((Path.cwd() / model_path).resolve())
-        self.model = YOLO(model_path)
-        apply_ultralytics_optimizations(
-            self.model,
-            half=bool(self.inf_params.get("half", True)),
-            logger=self._logger,
-        )
+        try:
+            self.model = YOLO(model_path)
+            apply_ultralytics_optimizations(
+                self.model,
+                half=bool(self.inf_params.get("half", True)),
+                logger=self._logger,
+            )
+        except Exception as exc:
+            if is_cuda_oom_error(exc):
+                raise CudaOutOfMemoryError(
+                    f"Failed to load YOLO model on CUDA: {model_path}: {exc}"
+                ) from exc
+            raise
 
     def predict(self, images: list) -> list:
         """MP worker path: Ultralytics predict → DTO dict lists per image."""
@@ -63,12 +71,19 @@ class YoloRuntime:
         params = dict(self.inf_params)
         params.update(predict_kwargs)
         cls = self.classes if classes is None else classes
-        return self.model.predict(
-            images,
-            classes=cls,
-            verbose=False,
-            **params,
-        )
+        try:
+            return self.model.predict(
+                images,
+                classes=cls,
+                verbose=False,
+                **params,
+            )
+        except Exception as exc:
+            if is_cuda_oom_error(exc):
+                raise CudaOutOfMemoryError(
+                    f"YOLO predict failed due to CUDA OOM: {exc}"
+                ) from exc
+            raise
 
     def release(self) -> None:
         self.model = None

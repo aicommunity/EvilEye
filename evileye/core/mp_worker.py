@@ -2,10 +2,18 @@ from abc import ABC, abstractmethod
 import logging
 import logging.handlers
 import multiprocessing as mp
+import sys
 from queue import Empty, Full
 from timeit import default_timer as timer
 from typing import Any, Dict, Optional, Type
 
+from .gpu_errors import (
+    CudaOutOfMemoryError,
+    MP_EXIT_CUDA_OOM,
+    cuda_memory_snapshot,
+    format_cuda_oom_message,
+    is_cuda_oom_error,
+)
 from .logger import get_module_logger
 from .resource_tracker_patch import apply_resource_tracker_patch
 
@@ -24,6 +32,10 @@ def run_mp_worker_entry(
     Fork mode passed ``target=worker`` (bound instance); spawn must not pickle locks,
     threading primitives, or GPU handles held by a parent-side worker object.
     """
+    if worker_class.__name__ == "MpWorkerCapture":
+        from evileye.core.gstreamer_runtime import ensure_gstreamer_spawn_runtime
+
+        ensure_gstreamer_spawn_runtime()
     apply_resource_tracker_patch()
     worker = worker_class(
         input_queue,
@@ -97,11 +109,39 @@ class MpWorker(ABC):
         """Restore params produced by get_spawn_state() in the child process."""
         return
 
+    def _handle_fatal_worker_error(self, exc: BaseException, *, phase: str) -> None:
+        """Log fatal worker errors and terminate the child with a distinct exit code."""
+        process_name = mp.current_process().name
+        if is_cuda_oom_error(exc):
+            message = format_cuda_oom_message(
+                component=process_name,
+                detail=str(exc),
+                extra={"phase": phase, "cuda": cuda_memory_snapshot()},
+            )
+            if self.logger:
+                self.logger.error(message, exc_info=True)
+            sys.exit(MP_EXIT_CUDA_OOM)
+        if isinstance(exc, CudaOutOfMemoryError):
+            if self.logger:
+                self.logger.error(str(exc), exc_info=True)
+            sys.exit(MP_EXIT_CUDA_OOM)
+        if self.logger:
+            self.logger.error(
+                "Fatal worker error in %s during %s: %s",
+                process_name,
+                phase,
+                exc,
+                exc_info=True,
+            )
+        sys.exit(1)
+
     def __call__(self):
         self._init_logger()
         try:
             self.init_worker()
         except Exception as e:
+            if is_cuda_oom_error(e) or isinstance(e, CudaOutOfMemoryError):
+                self._handle_fatal_worker_error(e, phase="init")
             if self.logger:
                 self.logger.error(f"Worker init failed: {e}", exc_info=True)
             return
@@ -138,6 +178,8 @@ class MpWorker(ABC):
             except Empty:
                 continue
             except Exception as e:
+                if is_cuda_oom_error(e) or isinstance(e, CudaOutOfMemoryError):
+                    self._handle_fatal_worker_error(e, phase="worker_impl")
                 if self.logger:
                     self.logger.error(
                         f"Error in process {mp.current_process().name}: {e}",

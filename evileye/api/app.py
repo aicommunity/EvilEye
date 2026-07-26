@@ -11,12 +11,14 @@ from evileye.api.routes.auth import router as auth_router
 from evileye.api.routes.configs import router as configs_router
 from evileye.api.routes.journals import router as journals_router
 from evileye.api.routes.logs import router as logs_router
+from evileye.api.routes.users import router as users_router
 # from evileye.api.routes.pipelines import router as pipelines_router  # DEPRECATED
 from evileye.api.routes.state import router as state_router
 from evileye.api.routes.streaming import router as streaming_router
 # from evileye.api.routes.events import router as events_router  # DEPRECATED
 from evileye.api.routes.internal import router as internal_router
 from evileye.api.core.config_run_access import get_config_run_manager
+from evileye.api.core.web_auth_bootstrap import ensure_default_admin_credentials
 from evileye.api.security import (
     current_user,
     is_api_request_protected,
@@ -57,6 +59,16 @@ class AuthGuardMiddleware(BaseHTTPMiddleware):
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     logger.info("FastAPI lifespan startup")
+    ensure_default_admin_credentials()
+    _app.state.web_auth = load_web_auth_config()
+    try:
+        from evileye.core.mp_session_registry import cleanup_stale_sessions
+
+        cleaned = cleanup_stale_sessions()
+        if cleaned:
+            logger.info("Cleaned %d stale MP worker process(es) on startup", cleaned)
+    except Exception as exc:
+        logger.warning("MP stale session cleanup failed on startup: %s", exc)
 
     try:
         yield
@@ -110,6 +122,7 @@ def create_app() -> FastAPI:
     app.include_router(state_router)
     app.include_router(journals_router)
     app.include_router(logs_router)
+    app.include_router(users_router)
     app.include_router(configs_router)
     # app.include_router(pipelines_router)  # DEPRECATED: use /api/v1/configs/runs
     app.include_router(streaming_router)

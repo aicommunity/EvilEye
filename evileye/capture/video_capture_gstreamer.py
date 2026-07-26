@@ -1,4 +1,17 @@
-import cv2
+try:
+    import gi
+
+    gi.require_version('Gst', '1.0')
+    from gi.repository import Gst, GLib
+
+    GSTREAMER_AVAILABLE = True
+    if not Gst.is_initialized():
+        Gst.init(None)
+except ImportError:
+    GSTREAMER_AVAILABLE = False
+    Gst = None
+    GLib = None
+
 import numpy as np
 import threading
 import time
@@ -10,19 +23,6 @@ from .constants import CaptureConstants
 from .exceptions import CaptureInitializationError, CaptureConnectionError
 from ..core.frame import CaptureImage, Frame
 from ..core.base_class import EvilEyeBase
-
-# Try to import GStreamer, fallback to OpenCV if not available
-try:
-    import gi
-
-    gi.require_version('Gst', '1.0')
-    from gi.repository import Gst, GLib
-
-    GSTREAMER_AVAILABLE = True
-except ImportError:
-    GSTREAMER_AVAILABLE = False
-    Gst = None
-    GLib = None
 
 from evileye.video_recorder.recorder_base import SourceMeta
 from evileye.video_recorder.continuous_recorder_gst import GstContinuousRecorder

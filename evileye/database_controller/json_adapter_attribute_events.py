@@ -82,9 +82,9 @@ class JsonAdapterAttributeEvents(DatabaseAdapterBase):
             img = getattr(event, 'img_finished', None) if is_update else getattr(event, 'img_found', None)
             if box and img is not None and hasattr(img, 'image'):
                 ih, iw = img.image.shape[:2]
-                bx, by, bw, bh = box
+                x1, y1, x2, y2 = box
                 if iw and ih:
-                    box = [bx / iw, by / ih, bw / iw, bh / ih]
+                    box = [x1 / iw, y1 / ih, x2 / iw, y2 / ih]
 
             # Save preview and full frame images (pure, без оверлеев) в унифицированные папки
             preview_rel, frame_rel = self._save_images(day_dir, event, is_update)
@@ -140,7 +140,7 @@ class JsonAdapterAttributeEvents(DatabaseAdapterBase):
             if getattr(self, "_image_storage", None):
                 self._image_storage.save_image_simple(preview_rel, frame_rel, image_wrap)
             else:
-                preview = cv2.resize(image_wrap.image.copy(), (320, 240), cv2.INTER_NEAREST)
+                preview = ImageStorageService.resize_preserving_aspect(image_wrap.image.copy(), 320, 240)
                 cv2.imwrite(preview_abs, preview)
                 cv2.imwrite(frame_abs, image_wrap.image)
             # Пути относительно image_dir

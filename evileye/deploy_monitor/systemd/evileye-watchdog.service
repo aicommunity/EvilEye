@@ -1,0 +1,13 @@
+[Unit]
+Description=EvilEye health watchdog
+After=network.target
+
+[Service]
+Type=oneshot
+# Critical: default KillMode=control-group kills evileye children spawned by
+# restart_evileye.sh when this oneshot exits (causes restart storms).
+KillMode=process
+# install_timer.sh fills Environment= and paths for the target site.
+Environment=DISPLAY=:0
+ExecStart=/path/to/site/monitor/scripts/health_check.sh
+WorkingDirectory=/path/to/site

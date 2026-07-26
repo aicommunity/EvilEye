@@ -376,6 +376,37 @@ class Controller(ControllerProcessingMixin):
 
         self.logger.info(f"System message [{type}]: {message}")
 
+    def _wire_detector_system_event_callbacks(self) -> None:
+        """Connect detector MP fatal-error reporting to the system events journal."""
+        if self.pipeline is None or not hasattr(self.pipeline, "get_detectors"):
+            return
+        detectors = self.pipeline.get_detectors() or []
+        wired = 0
+        for detector in detectors:
+            if hasattr(detector, "set_system_event_callback"):
+                detector.set_system_event_callback(self.system_event)
+                wired += 1
+        if wired:
+            self.logger.debug("Wired system_event callback to %s detector(s)", wired)
+        self._wire_mp_cuda_startup_restart()
+
+    def _wire_mp_cuda_startup_restart(self) -> None:
+        """Request full CLI restart when most MP detection workers fail with CUDA OOM at startup."""
+        try:
+            from evileye.core.mp_cuda_startup import get_mp_cuda_startup_health
+
+            def _on_mass_cuda_oom() -> None:
+                self.logger.error(
+                    "Mass CUDA OOM during startup: requesting full process restart"
+                )
+                if self.auto_restart:
+                    self.restart_flag = True
+                self.run_flag = False
+
+            get_mp_cuda_startup_health().set_restart_callback(_on_mass_cuda_oom)
+        except Exception as exc:
+            self.logger.warning("Failed to wire MP CUDA startup restart: %s", exc)
+
     def add_pipeline(self, pipeline_type):
         pass
 
@@ -1089,6 +1120,8 @@ class Controller(ControllerProcessingMixin):
             credentials=self.credentials,
         )
 
+        self._wire_detector_system_event_callbacks()
+
         # Preload controller's class mapping into centralized ClassManager
         try:
             if self.class_mapping:
@@ -1180,9 +1213,9 @@ class Controller(ControllerProcessingMixin):
             self.logger.info("Skipping embedded web server for managed runtime launch")
             if self._streaming_service is not None and relay_base_url:
                 self._streaming_service.set_frame_relay(relay_base_url, relay_token)
-        elif server_cfg.get("execution_mode") == "process" and server_cfg.get("enabled", False):
+        elif server_cfg.get("enabled", False) and str(server_cfg.get("execution_mode", "process")).lower() == "process":
             host = server_cfg.get("host", "127.0.0.1")
-            port = int(server_cfg.get("port", 8080))
+            port = int(server_cfg.get("port", 8181))
             scheme = "https" if server_cfg.get("ssl_certfile") or server_cfg.get("ssl_keyfile") else "http"
             inferred_base_url = relay_base_url or f"{scheme}://{host}:{port}/api/v1"
             if not self._can_bind_embedded_server(host, port):

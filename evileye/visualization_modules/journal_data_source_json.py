@@ -22,15 +22,27 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
         self._last_file_timestamps = {}  # Track file modification times
         self._source_name_id_address = {}
         self._failed_files = set()  # Track files that failed to parse (to avoid repeated attempts)
+        self._request_generation = 0
+        self._cache_loaded_generation = -1
         self._load_source_mappings()
 
     def set_base_dir(self, base_dir: str) -> None:
+        if self.base_dir == base_dir:
+            return
         self.base_dir = base_dir
         self._cache = []
+        self._last_file_timestamps.clear()
 
     def set_date(self, date_folder: Optional[str]) -> None:
+        if self.date_folder == date_folder:
+            return
         self.date_folder = date_folder
         self._cache = []
+        self._cache_loaded_generation = -1
+
+    def begin_request(self) -> None:
+        """Mark start of API request so fetch/get_total share one cache load."""
+        self._request_generation += 1
 
     def _load_source_mappings(self):
         """Load source name to (source_id, address) mappings"""
@@ -81,51 +93,54 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
         except Exception:
             return False
 
+    def _metadata_files_for_date(self, date_folder: str) -> List[tuple[str, str, str]]:
+        detections_metadata = os.path.join(self.base_dir, 'Detections', date_folder, 'Metadata')
+        events_metadata = os.path.join(self.base_dir, 'Events', date_folder, 'Metadata')
+        return [
+            (os.path.join(detections_metadata, 'objects_found.json'), 'found', date_folder),
+            (os.path.join(detections_metadata, 'objects_lost.json'), 'lost', date_folder),
+            (os.path.join(events_metadata, 'attribute_events_found.json'), 'attr_found', date_folder),
+            (os.path.join(events_metadata, 'attribute_events_finished.json'), 'attr_lost', date_folder),
+            (os.path.join(events_metadata, 'fov_events_found.json'), 'fov_found', date_folder),
+            (os.path.join(events_metadata, 'fov_events_lost.json'), 'fov_lost', date_folder),
+            (os.path.join(events_metadata, 'zone_events_entered.json'), 'zone_entered', date_folder),
+            (os.path.join(events_metadata, 'zone_events_left.json'), 'zone_left', date_folder),
+            (os.path.join(events_metadata, 'camera_events.json'), 'cam', date_folder),
+            (os.path.join(events_metadata, 'system_events.json'), 'sys', date_folder),
+        ]
+
+    def _purge_cache_for_file(self, filepath: str) -> None:
+        self._cache = [entry for entry in self._cache if entry.get('_source_file') != filepath]
+
     def _load_cache(self) -> None:
-        """Load cache and track file timestamps"""
+        """Load cache and track file timestamps."""
+        if self._cache_loaded_generation == self._request_generation and self._cache:
+            return
+
         dates = [self.date_folder] if self.date_folder else self.list_available_dates()[-7:]
 
-        # Check if files have changed
-        files_changed = False
-        for d in dates:
-            if not d:
+        changed_files: List[tuple[str, str, str]] = []
+        for date_folder in dates:
+            if not date_folder:
                 continue
-            # Detections metadata
-            detections_metadata = os.path.join(self.base_dir, 'Detections', d, 'Metadata')
-            # Events metadata
-            events_metadata = os.path.join(self.base_dir, 'Events', d, 'Metadata')
-            fps = [
-                os.path.join(detections_metadata, 'objects_found.json'),
-                os.path.join(detections_metadata, 'objects_lost.json'),
-                os.path.join(events_metadata, 'attribute_events_found.json'),
-                os.path.join(events_metadata, 'attribute_events_finished.json'),
-                os.path.join(events_metadata, 'system_events.json'),
-            ]
-            if any(self._check_file_changed(fp) for fp in fps):
-                files_changed = True
+            for filepath, event_type, date in self._metadata_files_for_date(date_folder):
+                if self._check_file_changed(filepath):
+                    changed_files.append((filepath, event_type, date))
 
-        # Only reload if files have changed or cache is empty
-        if files_changed or not self._cache:
-            self._cache.clear()  # Clear cache to reload
-            for d in dates:
-                if not d:
-                    continue
-                # Detections metadata
-                detections_metadata = os.path.join(self.base_dir, 'Detections', d, 'Metadata')
-                # Events metadata
-                events_metadata = os.path.join(self.base_dir, 'Events', d, 'Metadata')
-                self._read_file(os.path.join(detections_metadata, 'objects_found.json'), 'found', d)
-                self._read_file(os.path.join(detections_metadata, 'objects_lost.json'), 'lost', d)
-                self._read_file(os.path.join(events_metadata, 'attribute_events_found.json'), 'attr_found', d)
-                self._read_file(os.path.join(events_metadata, 'attribute_events_finished.json'), 'attr_lost', d)
-                self._read_file(os.path.join(events_metadata, 'fov_events_found.json'), 'fov_found', d)
-                self._read_file(os.path.join(events_metadata, 'fov_events_lost.json'), 'fov_lost', d)
-                self._read_file(os.path.join(events_metadata, 'zone_events_entered.json'), 'zone_entered', d)
-                self._read_file(os.path.join(events_metadata, 'zone_events_left.json'), 'zone_left', d)
-                self._read_file(os.path.join(events_metadata, 'camera_events.json'), 'cam', d)
-                self._read_file(os.path.join(events_metadata, 'system_events.json'), 'sys', d)
-            # default sort: ts desc (robust to None)
+        if changed_files:
+            for filepath, event_type, date_folder in changed_files:
+                self._purge_cache_for_file(filepath)
+                self._read_file(filepath, event_type, date_folder)
             self._cache.sort(key=lambda e: (e.get('ts') or ''), reverse=True)
+        elif not self._cache:
+            for date_folder in dates:
+                if not date_folder:
+                    continue
+                for filepath, event_type, date in self._metadata_files_for_date(date_folder):
+                    self._read_file(filepath, event_type, date)
+            self._cache.sort(key=lambda e: (e.get('ts') or ''), reverse=True)
+
+        self._cache_loaded_generation = self._request_generation
 
     def _read_file(self, filepath: str, event_type: str, date_folder: str) -> None:
         if not os.path.isfile(filepath):
@@ -174,6 +189,7 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
             for idx, item in enumerate(items):
                 ev = self._map_item(item, event_type, date_folder, idx)
                 if ev:
+                    ev['_source_file'] = filepath
                     self._cache.append(ev)
         except Exception as e:
             self.logger.error(f"Read error {filepath}: {e}")
@@ -300,12 +316,20 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                     'date_folder': date_folder,
                 }
             elif event_type == 'sys':
+                info = item.get('event_message') or item.get('event_type') or 'System event'
+                if item.get('event_type') == 'SystemStart':
+                    info = 'System started'
+                elif item.get('event_type') == 'SystemStop':
+                    info = 'System stopped'
+                elif item.get('event_type') == 'CudaOutOfMemory':
+                    info = item.get('event_message') or 'CUDA out of memory: detection disabled'
                 return {
                     'event_id': event_id_str,
                     'event_id_numeric': event_id_numeric,
                     'event_type': event_type,
                     'ts': timestamp,
                     'system_event': item.get('event_type'),
+                    'information': info,
                     'source_id': None,  # System events don't have source_id
                     'source_name': None,
                     'video_path': None,  # System events don't have video
@@ -326,6 +350,14 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
             res = [e for e in res if e.get('source_id') == sid]
         if sname := filters.get('source_name'):
             res = [e for e in res if e.get('source_name') == sname]
+        if snames := filters.get('source_names'):
+            allowed = {str(name) for name in snames}
+            res = [e for e in res if str(e.get('source_name') or '') in allowed]
+        if journal_kind := filters.get('journal_kind'):
+            if journal_kind == 'objects':
+                res = [e for e in res if e.get('event_type') in ('found', 'lost')]
+            elif journal_kind == 'events':
+                res = [e for e in res if e.get('event_type') not in ('found', 'lost')]
         if cls := filters.get('class_name'):
             res = [e for e in res if e.get('class_name') == cls]
         if oid := filters.get('object_id'):
@@ -356,7 +388,8 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
         items = self._apply_sort(items, sort)
         start = max(0, page * size)
         end = start + size
-        return items[start:end]
+        page_items = items[start:end]
+        return [{k: v for k, v in row.items() if k != '_source_file'} for row in page_items]
 
     def get_total(self, filters: Dict) -> int:
         self._load_cache()

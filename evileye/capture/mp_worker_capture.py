@@ -50,12 +50,42 @@ class MpWorkerCapture(MpWorker):
         from .video_capture_opencv import VideoCaptureOpencv
         return VideoCaptureOpencv()
 
+    def _log_recording_status(self, capture) -> None:
+        try:
+            rp = getattr(capture, "recording_params", None)
+            rm = getattr(capture, "recorder_manager", None)
+            if rp is None:
+                self.logger.warning(
+                    "Capture worker started without recording_params for %s",
+                    self._capture_params.get("camera", "?"),
+                )
+                return
+            continuous = bool(rp.enabled and rp.continuous_recording_enabled)
+            recorder_active = bool(rm and getattr(rm, "recorder", None))
+            self.logger.info(
+                "Capture worker recording: source=%s enabled=%s continuous=%s "
+                "recorder_active=%s out_dir=%s",
+                self._capture_params.get("source_names"),
+                rp.enabled,
+                rp.continuous_recording_enabled,
+                recorder_active,
+                rp.out_dir,
+            )
+            if continuous and not recorder_active:
+                self.logger.error(
+                    "Continuous recording is enabled but recorder did not start for %s",
+                    self._capture_params.get("source_names"),
+                )
+        except Exception as exc:
+            self.logger.debug("Could not log capture recording status: %s", exc)
+
     def _init_capture_instance(self, capture, params: dict) -> bool:
         capture.set_params(**params)
         if not capture.init():
             return False
 
         capture.start()
+        self._log_recording_status(capture)
         self._capture = capture
         self.logger.info(
             "Capture worker initialised: type=%s source=%s",
@@ -68,6 +98,9 @@ class MpWorkerCapture(MpWorker):
 
     def init_worker(self) -> None:
         """Create and initialise the capture backend inside child process."""
+        from evileye.core.gstreamer_runtime import ensure_gstreamer_spawn_runtime
+
+        ensure_gstreamer_spawn_runtime()
         params = self._capture_params
 
         capture_type = params.get("type", "")

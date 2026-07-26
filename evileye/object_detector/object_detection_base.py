@@ -81,6 +81,25 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
         self._model_class_mapping_cache: Optional[dict] = None
         self.class_manager = None  # Will be set by Controller
         self._roi_cache: dict[int, list[list[int]]] = {}
+        self._system_event_callback = None
+        self._cuda_oom_reported = False
+
+    def set_system_event_callback(self, callback) -> None:
+        """Register callback(type, message) for system journal events."""
+        self._system_event_callback = callback
+
+    def _report_cuda_oom_disabled(self, message: str) -> None:
+        """Emit one journal event per detector when CUDA inference is disabled."""
+        if self._cuda_oom_reported:
+            return
+        self._cuda_oom_reported = True
+        self.logger.error(message)
+        callback = self._system_event_callback
+        if callback is not None:
+            try:
+                callback("CudaOutOfMemory", message)
+            except Exception as exc:
+                self.logger.error("Failed to emit CUDA OOM system event: %s", exc, exc_info=True)
 
     def _init_queues(self):
         """Create queues matching current execution_mode."""
@@ -451,6 +470,11 @@ class ObjectDetectorBase(EvilEyeBase, ABC):
             self.processing_thread.join(timeout=2.0)
             if self.processing_thread.is_alive():
                 self.logger.warning("Detection processing_thread did not stop within 2s")
+        for thread in getattr(self, "detection_threads", None) or []:
+            try:
+                thread.stop()
+            except Exception:
+                self.logger.warning("Failed to stop detection thread", exc_info=True)
         # Stop multiprocessing pool if active
         if self._mp_control is not None:
             self._mp_control.stop()

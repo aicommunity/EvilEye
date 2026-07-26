@@ -4,6 +4,7 @@ import signal
 import subprocess
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -36,6 +37,8 @@ class ConfigRunItem:
         self.pid: Optional[int] = None
         self.state: str = ConfigRunState.CREATED
         self.error: Optional[str] = None
+        self.session_id: Optional[str] = None
+        self._proc: subprocess.Popen | None = None
 
 
 class _FramePoller:
@@ -120,6 +123,75 @@ class ConfigRunManager:
         self._shutdown_called = False
         self.logger = get_module_logger("api.config_run_manager")
 
+    @staticmethod
+    def _stop_grace_sec() -> float:
+        try:
+            return max(1.0, float(os.getenv("EVILEYE_RUN_STOP_GRACE_SEC", "60")))
+        except ValueError:
+            return 60.0
+
+    def _terminate_process_tree(self, pid: int, *, grace_sec: float) -> bool:
+        if not pid:
+            return True
+        try:
+            pgid = os.getpgid(pid)
+        except ProcessLookupError:
+            return True
+        except Exception:
+            pgid = pid
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+        except ProcessLookupError:
+            return True
+        except Exception:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except Exception:
+                return False
+
+        deadline = time.monotonic() + grace_sec
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                return True
+            time.sleep(0.2)
+
+        try:
+            import psutil  # type: ignore
+
+            parent = psutil.Process(pid)
+            children = parent.children(recursive=True)
+            for child in children:
+                try:
+                    child.kill()
+                except Exception:
+                    pass
+            try:
+                parent.kill()
+            except Exception:
+                pass
+            return True
+        except Exception:
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except Exception:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except Exception:
+                    return False
+            return True
+
+    def _cleanup_run_session(self, item: ConfigRunItem) -> None:
+        if not item.session_id:
+            return
+        try:
+            from evileye.core.mp_session_registry import cleanup_session_by_id
+
+            cleanup_session_by_id(item.session_id)
+        except Exception as exc:
+            self.logger.warning("MP session cleanup failed for run %s: %s", item.id, exc)
+
     def _describe_locked(self, item: ConfigRunItem) -> Dict:
         return {
             "id": item.id,
@@ -128,6 +200,7 @@ class ConfigRunManager:
             "pid": item.pid,
             "state": item.state,
             "error": item.error,
+            "session_id": item.session_id,
         }
 
     def _refresh_item_state_locked(self, item: ConfigRunItem) -> None:
@@ -243,11 +316,13 @@ class ConfigRunManager:
             item.state = ConfigRunState.STARTING
             auth = load_web_auth_config()
 
+            session_id = uuid.uuid4().hex
             env = {
                 **os.environ,
                 "EVILEYE_PIPELINE_ID": str(rid),
                 "EVILEYE_PIPELINE_NAME": item.name,
                 "EVILEYE_MANAGED_RUN": "1",
+                "EVILEYE_SESSION_ID": session_id,
                 "PYTHONUNBUFFERED": "1",
             }
             if api_base_url:
@@ -262,8 +337,15 @@ class ConfigRunManager:
                 "--no-autoclose",
             ]
             self.logger.info(f"Starting config run '{rid}': {' '.join(cmd)}")
-            proc = subprocess.Popen(cmd, cwd=str(Path.cwd()), env=env)
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(Path.cwd()),
+                env=env,
+                start_new_session=True,
+            )
+            item._proc = proc
             item.pid = proc.pid
+            item.session_id = session_id
             item.state = ConfigRunState.RUNNING
             item.error = None
             register_runtime(
@@ -275,6 +357,7 @@ class ConfigRunManager:
                 source="web",
                 managed=True,
                 state="running",
+                session_id=session_id,
             )
             self.logger.info(f"ConfigRun '{rid}' running with pid {item.pid}")
         except Exception as e:
@@ -293,22 +376,19 @@ class ConfigRunManager:
                 if runtime is None:
                     raise KeyError("Config run not found")
                 pid = runtime.get("pid")
+                session_id = runtime.get("session_id")
                 if not pid:
                     return runtime
                 try:
-                    os.kill(pid, signal.SIGTERM)
+                    self._terminate_process_tree(int(pid), grace_sec=self._stop_grace_sec())
                 except Exception as e:
                     mark_runtime_stopped(rid, error=str(e))
                     raise
-                for _ in range(10):
+                if session_id:
                     try:
-                        os.kill(pid, 0)
-                    except OSError:
-                        break
-                    time.sleep(0.2)
-                else:
-                    try:
-                        os.kill(pid, signal.SIGKILL)
+                        from evileye.core.mp_session_registry import cleanup_session_by_id
+
+                        cleanup_session_by_id(str(session_id))
                     except Exception:
                         pass
                 mark_runtime_stopped(rid)
@@ -325,24 +405,18 @@ class ConfigRunManager:
         try:
             item.state = ConfigRunState.STOPPING
             self.logger.info(f"Stopping config run '{rid}', pid={item.pid}")
-            os.kill(item.pid, signal.SIGTERM)
-            for _ in range(10):
+            pid = item.pid
+            if pid is not None:
+                self._terminate_process_tree(int(pid), grace_sec=self._stop_grace_sec())
+            if item._proc is not None:
                 try:
-                    os.kill(item.pid, 0)
-                except OSError:
-                    item.pid = None
-                    item.state = ConfigRunState.STOPPED
-                    break
-                else:
-                    time.sleep(0.2)
-            if item.state != ConfigRunState.STOPPED and item.pid is not None:
-                self.logger.warning(f"Force killing config run '{rid}', pid={item.pid}")
-                try:
-                    os.kill(item.pid, signal.SIGKILL)
+                    item._proc.wait(timeout=1.0)
                 except Exception:
                     pass
-                item.pid = None
-                item.state = ConfigRunState.STOPPED
+                item._proc = None
+            item.pid = None
+            item.state = ConfigRunState.STOPPED
+            self._cleanup_run_session(item)
         except Exception as e:
             item.state = ConfigRunState.ERROR
             item.error = str(e)

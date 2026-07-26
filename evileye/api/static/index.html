@@ -28,6 +28,7 @@
         <button type="button" id="nav-runs" class="tab">Запуски</button>
         <button type="button" id="nav-configs" class="tab">Настройки</button>
         <button type="button" id="nav-history" class="tab">История</button>
+        <button type="button" id="nav-users" class="tab">Пользователи</button>
       </nav>
     </header>
 
@@ -35,20 +36,22 @@
       <section id="panel-overview" class="panel active">
         <div class="card">
           <h2>Обзор сервера</h2>
-          <p class="hint">Сводка по серверу, всем запускам и web preview без перехода между вкладками.</p>
+          <p class="hint">Сводка по серверу.</p>
           <div class="toolbar">
             <button type="button" id="overview-refresh-btn" class="btn btn-outline">Обновить обзор</button>
           </div>
           <div id="overview-cards" class="metric-grid"></div>
-          <h3 class="section-title">Все запуски</h3>
-          <ul id="overview-runs" class="runs-list compact-list"></ul>
+          <h3 class="section-title">Текущий запуск</h3>
+          <div id="overview-current-run"></div>
+          <h3 class="section-title">Камеры</h3>
+          <div id="overview-cameras" class="camera-group-grid"></div>
         </div>
       </section>
 
       <section id="panel-cameras" class="panel">
         <div class="card">
           <h2>Камеры и preview</h2>
-          <p class="hint">Камеры и preview по всем запускам с быстрым переходом в нужный поток.</p>
+          <p class="hint">Камеры и preview текущего запуска.</p>
           <div class="toolbar">
             <button type="button" id="cameras-refresh-btn" class="btn btn-outline">Обновить камеры</button>
           </div>
@@ -57,20 +60,32 @@
       </section>
 
       <section id="panel-journals" class="panel">
-        <div class="card">
+        <div class="card journal-card">
           <h2>Журналы</h2>
           <p class="hint">Предметные журналы текущей активной конфигурации: события, объекты и история конфигураций.</p>
-          <div class="toolbar">
-            <input type="text" id="journal-filter-source" placeholder="Источник (source_name)" class="search-input" aria-label="Фильтр по источнику" style="max-width:200px">
-            <input type="text" id="journal-filter-event" placeholder="Тип события (event_type)" class="search-input" aria-label="Фильтр по типу события" style="max-width:200px">
-            <button type="button" id="journals-refresh-btn" class="btn btn-outline">Обновить журналы</button>
+          <div class="journal-tabs">
+            <button type="button" id="journal-tab-events" class="journal-tab active">События</button>
+            <button type="button" id="journal-tab-objects" class="journal-tab">Объекты</button>
+            <button type="button" id="journal-tab-history" class="journal-tab">История конфигураций</button>
           </div>
-          <h3 class="section-title">Events</h3>
-          <div id="journal-events"></div>
-          <h3 class="section-title">Objects</h3>
-          <div id="journal-objects"></div>
-          <h3 class="section-title">Configuration history</h3>
-          <div id="journal-history"></div>
+          <div class="journal-toolbar toolbar">
+            <input type="date" id="journal-filter-date" class="search-input" aria-label="Дата">
+            <button type="button" id="journal-filter-date-all" class="btn btn-sm btn-outline">Все даты</button>
+            <select id="journal-filter-event-type" class="search-input" aria-label="Тип события"></select>
+            <select id="journal-filter-source" class="search-input hidden" aria-label="Источник"></select>
+            <button type="button" id="journals-refresh-btn" class="btn btn-outline">Обновить</button>
+          </div>
+          <div id="journal-pane-events" class="journal-pane active">
+            <div id="journal-events" class="journal-table-wrap"></div>
+            <button type="button" id="journal-events-more" class="btn btn-sm btn-outline hidden">Загрузить ещё</button>
+          </div>
+          <div id="journal-pane-objects" class="journal-pane">
+            <div id="journal-objects" class="journal-table-wrap"></div>
+            <button type="button" id="journal-objects-more" class="btn btn-sm btn-outline hidden">Загрузить ещё</button>
+          </div>
+          <div id="journal-pane-history" class="journal-pane">
+            <div id="journal-history"></div>
+          </div>
         </div>
       </section>
 
@@ -136,6 +151,16 @@
             <button type="button" id="history-refresh-btn" class="btn btn-outline">Обновить историю</button>
           </div>
           <div id="history-list"></div>
+        </div>
+      </section>
+      <section id="panel-users" class="panel">
+        <div class="card">
+          <h2>Пользователи</h2>
+          <p class="hint">Регистрации по email — подтверждение администратором.</p>
+          <div class="toolbar">
+            <button type="button" id="users-refresh-btn" class="btn btn-outline">Обновить</button>
+          </div>
+          <div id="users-list"></div>
         </div>
       </section>
     </main>
@@ -210,6 +235,23 @@
     <div id="error-toast" class="toast toast-error" role="alert"></div>
     <div id="success-toast" class="toast toast-success" role="alert"></div>
 
+    <div id="log-view-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="log-view-title">
+      <div class="modal-backdrop"></div>
+      <div class="modal-content modal-content-wide">
+        <div class="modal-header">
+          <h2 id="log-view-title">Лог</h2>
+          <button type="button" id="log-view-close" class="btn btn-outline" aria-label="Закрыть">&times;</button>
+        </div>
+        <div class="modal-body">
+          <pre id="log-view-content" class="log-view-pre"></pre>
+        </div>
+        <div class="modal-footer">
+          <a id="log-view-download" class="btn btn-outline" download>Скачать</a>
+          <button type="button" id="log-view-close-btn" class="btn btn-primary">Закрыть</button>
+        </div>
+      </div>
+    </div>
+
     <div id="auth-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
       <div class="modal-backdrop"></div>
       <div class="modal-content auth-modal-content">
@@ -217,18 +259,49 @@
           <h2 id="auth-modal-title">Вход в веб-интерфейс</h2>
         </div>
         <div class="modal-body">
-          <p class="hint">Введите имя пользователя и пароль для доступа к API.</p>
-          <label for="auth-username">Имя пользователя</label>
-          <input type="text" id="auth-username" autocomplete="username" aria-label="Имя пользователя">
-          <label for="auth-password">Пароль</label>
-          <input type="password" id="auth-password" autocomplete="current-password" aria-label="Пароль">
-        </div>
-        <div class="modal-footer auth-modal-footer">
-          <button type="button" id="auth-login-btn" class="btn btn-primary">Войти</button>
+          <div class="auth-tabs">
+            <button type="button" id="auth-tab-login" class="btn btn-sm btn-primary">Вход</button>
+            <button type="button" id="auth-tab-register" class="btn btn-sm btn-outline">Регистрация</button>
+          </div>
+          <div id="auth-login-panel">
+            <p class="hint">Введите имя пользователя или email и пароль.</p>
+            <label for="auth-username">Имя пользователя / email</label>
+            <input type="text" id="auth-username" autocomplete="username" aria-label="Имя пользователя">
+            <label for="auth-password">Пароль</label>
+            <input type="password" id="auth-password" autocomplete="current-password" aria-label="Пароль">
+            <div class="modal-footer auth-modal-footer">
+              <button type="button" id="auth-login-btn" class="btn btn-primary">Войти</button>
+            </div>
+          </div>
+          <div id="auth-register-panel" class="hidden">
+            <p class="hint">Регистрация по email. После отправки дождитесь подтверждения администратором.</p>
+            <label for="auth-register-email">Email</label>
+            <input type="email" id="auth-register-email" autocomplete="email" aria-label="Email">
+            <label for="auth-register-password">Пароль</label>
+            <input type="password" id="auth-register-password" autocomplete="new-password" aria-label="Пароль">
+            <label for="auth-register-password2">Подтверждение пароля</label>
+            <input type="password" id="auth-register-password2" autocomplete="new-password" aria-label="Подтверждение пароля">
+            <div class="modal-footer auth-modal-footer">
+              <button type="button" id="auth-register-btn" class="btn btn-primary">Зарегистрироваться</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
   </div>
+
+  <div id="journal-detail-modal" class="modal journal-detail-modal" hidden>
+    <div class="modal-backdrop"></div>
+    <div class="modal-content journal-detail-content">
+      <header class="journal-detail-header">
+        <h3 id="journal-detail-title">Детали</h3>
+        <button type="button" id="journal-detail-close" class="btn btn-sm btn-outline">×</button>
+      </header>
+      <div class="journal-detail-tabs"></div>
+      <div id="journal-detail-body"></div>
+    </div>
+  </div>
+
   <script type="module" src="/dashboard.js"></script>
 </body>
 </html>

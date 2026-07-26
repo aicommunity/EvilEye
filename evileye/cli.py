@@ -11,6 +11,7 @@ import os
 import shutil
 import subprocess
 import logging
+import signal
 from pathlib import Path
 from typing import Optional, Tuple
 from datetime import datetime, timedelta
@@ -94,6 +95,93 @@ def _get_next_interval(now: datetime, interval_minutes: int) -> datetime:
     return now + timedelta(minutes=interval_minutes)
 
 
+def _scheduler_stop_grace_sec() -> float:
+    try:
+        return max(30.0, float(os.getenv("EVILEYE_SCHEDULER_STOP_GRACE_SEC", "120") or "120"))
+    except (TypeError, ValueError):
+        return 120.0
+
+
+def _scheduler_gpu_settle_sec() -> float:
+    try:
+        return max(0.0, float(os.getenv("EVILEYE_SCHEDULER_GPU_SETTLE_SEC", "8") or "8"))
+    except (TypeError, ValueError):
+        return 8.0
+
+
+def _scheduler_prepare_next_launch(logger: logging.Logger) -> None:
+    """Cleanup orphaned MP workers and wait for GPU memory to settle before relaunch."""
+    try:
+        from evileye.core.mp_session_registry import cleanup_stale_sessions
+
+        cleaned = cleanup_stale_sessions()
+        if cleaned:
+            logger.info(
+                "[scheduler] Cleaned up %d stale MP worker process(es) before launch",
+                cleaned,
+            )
+    except Exception as exc:
+        logger.warning("[scheduler] Stale session cleanup failed: %s", exc)
+
+    settle = _scheduler_gpu_settle_sec()
+    if settle > 0:
+        logger.info(
+            "[scheduler] Waiting %.1fs for GPU memory to settle before launch",
+            settle,
+        )
+        time.sleep(settle)
+
+
+def _scheduler_terminate_child(proc: subprocess.Popen, logger: logging.Logger) -> None:
+    """Terminate the scheduled child process and its process group."""
+    pid = proc.pid
+    grace_sec = _scheduler_stop_grace_sec()
+    try:
+        pgid = os.getpgid(pid)
+    except Exception:
+        pgid = pid
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except Exception:
+        try:
+            proc.terminate()
+        except Exception as exc:
+            logger.error("[scheduler] Error terminating process %s: %s", pid, exc, exc_info=True)
+            return
+    try:
+        proc.wait(timeout=grace_sec)
+        logger.info("[scheduler] Process %s terminated gracefully", pid)
+        return
+    except subprocess.TimeoutExpired:
+        logger.warning(
+            "[scheduler] Process %s did not exit after SIGTERM within %.0fs, killing process group",
+            pid,
+            grace_sec,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[scheduler] Error waiting for process %s after terminate: %s, killing",
+            pid,
+            exc,
+        )
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception as exc:
+            logger.error("[scheduler] Failed to kill process %s: %s", pid, exc)
+            return
+    try:
+        proc.wait(timeout=10)
+        logger.info("[scheduler] Process %s killed and terminated", pid)
+    except subprocess.TimeoutExpired:
+        logger.error(
+            "[scheduler] Process %s did not exit after SIGKILL within 10s, but continuing anyway",
+            pid,
+        )
+
+
 def _run_with_scheduler(
         base_cmd: list,
         config_path: Path,
@@ -123,6 +211,8 @@ def _run_with_scheduler(
     prev_iteration_end_time = None
     while True:
         iteration += 1
+        if iteration > 1:
+            _scheduler_prepare_next_launch(logger)
         iteration_start_time = datetime.now()
         if prev_iteration_end_time is not None:
             logger.info(
@@ -143,7 +233,12 @@ def _run_with_scheduler(
             # Устанавливаем переменную окружения для определения запуска через CLI
             env = os.environ.copy()
             env['EVILEYE_CLI_LAUNCHED'] = '1'
-            proc = subprocess.Popen(base_cmd, cwd=os.getcwd(), env=env)
+            proc = subprocess.Popen(
+                base_cmd,
+                cwd=os.getcwd(),
+                env=env,
+                start_new_session=True,
+            )
         except Exception as e:
             logger.error(f"[scheduler] Failed to start process: {e}", exc_info=True)
             console.print(f"[red]Failed to start process: {e}[/red]")
@@ -224,15 +319,29 @@ def _run_with_scheduler(
                         continue_scheduler = True
                         break
 
-                    # Если процесс завершился сам ДО наступления времени next_run,
-                    # считаем это штатным/ручным завершением и выходим из планировщика,
-                    # чтобы не перезапускать приложение против воли пользователя.
-                    if now < next_run:
+                    # Graceful exit (code 0) before next_run = user/manual shutdown.
+                    if retcode == 0 and now < next_run:
                         logger.info(
                             "[scheduler] Process finished before next scheduled time — "
                             "stopping scheduler loop (respecting manual/normal shutdown)"
                         )
                         continue_scheduler = False
+                        break
+
+                    # Unexpected crash (SIGKILL, SIGSEGV, OOM, etc.) — auto-restart.
+                    if retcode != 0 and now < next_run:
+                        logger.warning(
+                            "[scheduler] Unexpected child death (return code=%s) before next "
+                            "scheduled time — auto-restarting iteration",
+                            retcode,
+                        )
+                        console.print(
+                            f"[yellow][scheduler] Unexpected exit (code={retcode}): "
+                            f"relaunching next iteration[/yellow]"
+                        )
+                        continue_scheduler = True
+                        break
+
                     break
 
                 if now >= next_run:
@@ -245,36 +354,7 @@ def _run_with_scheduler(
                         f"[yellow][scheduler] Stopping current run (pid={proc.pid}) for scheduled restart[/yellow]"
                     )
                     try:
-                        proc.terminate()
-                        try:
-                            proc.wait(timeout=30)
-                            logger.info(f"[scheduler] Process {proc.pid} terminated gracefully")
-                        except subprocess.TimeoutExpired:
-                            logger.warning(
-                                f"[scheduler] Process {proc.pid} did not exit after SIGTERM within 30s, killing"
-                            )
-                            proc.kill()
-                            # Ждём завершения после kill
-                            try:
-                                proc.wait(timeout=10)
-                                logger.info(f"[scheduler] Process {proc.pid} killed and terminated")
-                            except subprocess.TimeoutExpired:
-                                logger.error(
-                                    f"[scheduler] Process {proc.pid} did not exit after SIGKILL within 10s, "
-                                    f"but continuing anyway"
-                                )
-                        except Exception as e:
-                            logger.warning(
-                                f"[scheduler] Error waiting for process {proc.pid} after terminate: {e}, killing"
-                            )
-                            try:
-                                proc.kill()
-                                proc.wait(timeout=10)
-                                logger.info(f"[scheduler] Process {proc.pid} killed after error")
-                            except Exception as e2:
-                                logger.error(
-                                    f"[scheduler] Failed to kill process {proc.pid}: {e2}"
-                                )
+                        _scheduler_terminate_child(proc, logger)
                     except Exception as e:
                         logger.error(f"[scheduler] Error terminating process {proc.pid}: {e}", exc_info=True)
 
@@ -310,13 +390,12 @@ def _run_with_scheduler(
             logger.info("[scheduler] Interrupted by user, terminating child and stopping loop")
             if proc.poll() is None:
                 try:
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=10)
-                    except Exception:
-                        proc.kill()
+                    _scheduler_terminate_child(proc, logger)
                 except Exception:
-                    pass
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
             raise typer.Exit(0)
 
         # Если процесс завершился сам до наступления следующего планового запуска —
@@ -544,7 +623,7 @@ def run(
 @app.command("server")
 def start_api(
         host: str = typer.Option("127.0.0.1", "--host", help="Bind host"),
-        port: int = typer.Option(8080, "--port", help="Bind port"),
+        port: int = typer.Option(8181, "--port", help="Bind port"),
         reload: bool = typer.Option(True, "--reload/--no-reload", help="Auto-reload on code changes"),
         workers: int = typer.Option(1, "--workers", help="Number of worker processes"),
         verbose: bool = typer.Option(False, "--verbose", help="Enable verbose logging"),
@@ -687,14 +766,98 @@ def list_configs() -> None:
     console.print(table)
 
 
+def _monitor_source_dir() -> Path:
+    """Locate packaged or repo-checkout monitor assets for site deploy."""
+    candidates = [
+        Path(__file__).parent / "deploy_monitor",
+        Path(__file__).resolve().parents[1] / "deploy" / "monitor",
+    ]
+    for candidate in candidates:
+        if (candidate / "scripts" / "install_timer.sh").is_file():
+            return candidate
+    raise FileNotFoundError(
+        "Monitor assets not found. Expected evileye/deploy_monitor or deploy/monitor "
+        "with scripts/install_timer.sh"
+    )
+
+
+def _deploy_monitor_assets(site_dir: Path) -> None:
+    """
+    Copy watchdog/monitor scripts into <site>/monitor/.
+
+    Does not enable systemd timers or start EvilEye — only files and empty runtime dirs.
+    Re-running updates scripts/systemd from the package without wiping incidents/logs.
+    """
+    source = _monitor_source_dir()
+    monitor_dir = site_dir / "monitor"
+    scripts_dst = monitor_dir / "scripts"
+    systemd_dst = monitor_dir / "systemd"
+
+    scripts_dst.mkdir(parents=True, exist_ok=True)
+    systemd_dst.mkdir(parents=True, exist_ok=True)
+
+    copied_scripts = 0
+    for src in sorted((source / "scripts").glob("*")):
+        if not src.is_file():
+            continue
+        shutil.copy2(src, scripts_dst / src.name)
+        # Ensure shell scripts are executable on Unix.
+        if src.suffix == ".sh" or src.name.endswith(".sh"):
+            mode = (scripts_dst / src.name).stat().st_mode
+            (scripts_dst / src.name).chmod(mode | 0o111)
+        copied_scripts += 1
+
+    copied_units = 0
+    systemd_src = source / "systemd"
+    if systemd_src.is_dir():
+        for src in sorted(systemd_src.glob("*")):
+            if not src.is_file():
+                continue
+            shutil.copy2(src, systemd_dst / src.name)
+            copied_units += 1
+
+    readme_src = source / "README.md"
+    if readme_src.is_file():
+        shutil.copy2(readme_src, monitor_dir / "README.md")
+
+    # Runtime directories (empty placeholders; never start services here).
+    for name in ("incidents", "reports", "logs"):
+        # logs live at site root; incidents/reports under monitor/
+        if name == "logs":
+            (site_dir / "logs").mkdir(parents=True, exist_ok=True)
+        else:
+            (monitor_dir / name).mkdir(parents=True, exist_ok=True)
+
+    hint = monitor_dir / "INSTALL_HINT.txt"
+    hint.write_text(
+        "Monitor scripts were deployed by `evileye deploy`.\n"
+        "They are NOT started automatically.\n\n"
+        "To enable the user systemd watchdog on this machine:\n"
+        f"  DEPLOY_DIR={site_dir} {scripts_dst / 'install_timer.sh'}\n\n"
+        "Manual health check:\n"
+        f"  DEPLOY_DIR={site_dir} {scripts_dst / 'health_check.sh'}\n",
+        encoding="utf-8",
+    )
+
+    console.print(
+        f"[green]Deployed monitor assets "
+        f"({copied_scripts} scripts, {copied_units} systemd templates) → {monitor_dir}[/green]"
+    )
+    console.print(
+        "[blue]Note:[/blue] watchdog timers were [bold]not[/bold] enabled; "
+        f"run install_timer.sh when ready (see {hint.name})."
+    )
+
+
 @app.command()
 def deploy() -> None:
     """
-    Deploy EvilEye configuration files to current directory.
-    
+    Deploy EvilEye site files to the current directory.
+
     This command:
-    1. Copies credentials_proto.json to credentials.json (if credentials.json doesn't exist)
-    2. Creates configs folder if it doesn't exist
+    1. Copies credentials_proto.json to credentials.json (if missing)
+    2. Creates configs/ and logs/ folders if missing
+    3. Deploys monitor/watchdog scripts and systemd templates (does not start services)
     """
 
     current_dir = Path.cwd()
@@ -730,8 +893,21 @@ def deploy() -> None:
             console.print(f"[red]Error creating configs folder: {e}[/red]")
             raise typer.Exit(1)
 
-    console.print("[green]Deployment completed successfully![/green]")
+    # Step 3: Monitor / watchdog assets (files only — no systemd enable, no process start)
+    try:
+        _deploy_monitor_assets(current_dir)
+    except FileNotFoundError as e:
+        console.print(f"[red]Error deploying monitor assets: {e}[/red]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error deploying monitor assets: {e}[/red]")
+        raise typer.Exit(1)
 
+    console.print("[green]Deployment completed successfully![/green]")
+    console.print(
+        "[dim]Next: create a config (`evileye create ...`), then optionally "
+        "enable watchdog via monitor/scripts/install_timer.sh[/dim]"
+    )
 
 @app.command()
 def deploy_samples() -> None:

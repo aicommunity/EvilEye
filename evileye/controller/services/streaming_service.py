@@ -150,7 +150,12 @@ class StreamingService:
         throttle_key = f"{self._pipeline_id}:{source_id}" if source_id is not None else self._pipeline_id
         has_local_stream, has_server_preview_demand, has_server_process, has_relay = self._get_consumer_state(
             throttle_key)
-        return has_local_stream or has_server_preview_demand or has_relay
+        return (
+            has_local_stream
+            or has_server_preview_demand
+            or has_server_process
+            or has_relay
+        )
 
     def get_runtime_stats(self) -> dict:
         with self._condition:
@@ -219,7 +224,7 @@ class StreamingService:
         # preview heartbeat so snapshots do not stay permanently "not ready" if
         # explicit demand propagation is delayed or lost.
         if has_server_process:
-            return self._throttle_ok(throttle_key, fps_override=min(self._publish_fps, 1.0))
+            return self._throttle_ok(throttle_key, fps_override=min(self._publish_fps, 3.0))
 
         if not has_local_stream and not has_server_preview_demand and not has_relay:
             return False

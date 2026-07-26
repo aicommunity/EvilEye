@@ -92,8 +92,8 @@ evileye server --workers 4
 | `--verbose` | Подробные логи | `false` |
 
 После запуска доступны:
-- Swagger UI: `http://localhost:8080/docs`
-- ReDoc: `http://localhost:8080/redoc`
+- Swagger UI: `http://localhost:8181/docs`
+- ReDoc: `http://localhost:8181/redoc`
 
 **Важно**: при `evileye server` секция `"server"` из JSON-конфига **не читается**.
 Все настройки сервера передаются через CLI-флаги. Секция `"server"` в конфиге
@@ -165,7 +165,7 @@ evileye-launch configs/single_video_multiprocess.json
 
 ```
 ┌───────────────────────────────────────────────────────────────┐
-│ evileye server --port 8080                                   │
+│ evileye server --port 8181                                   │
 │                                                               │
 │  Основной server-процесс                                      │
 │  ┌─────────────────────────────────────────────────────────┐  │
@@ -239,11 +239,11 @@ evileye run configs/single_video_multiprocess.json
 
 ```bash
 # Вариант A: сервер отдельно, пайплайн через API
-evileye server --host 0.0.0.0 --port 8080
+evileye server --host 0.0.0.0 --port 8181
 # Затем через API: POST /api/v1/configs/runs для запуска пайплайна
 
 # Вариант B: все в одном - сервер как дочерний процесс
-# В конфиге: "server": {"enabled": true, "execution_mode": "process", "port": 8080}
+# В конфиге: "server": {"enabled": true, "execution_mode": "process", "port": 8181}
 evileye run configs/single_video_multiprocess.json
 # Сервер автоматически поднимется на порту 8080
 ```
@@ -425,7 +425,7 @@ ProcessorStep не знает, работает ли компонент в по�
         "enabled": true,
         "execution_mode": "process",
         "host": "0.0.0.0",
-        "port": 8080
+        "port": 8181
     }
 }
 ```
@@ -1578,7 +1578,7 @@ runtime просто перестает публиковать новые JPEG �
         "enabled": true,                   // <-- обязательно true, иначе не запустится
         "execution_mode": "process",       // <-- СЮДА, на уровне server
         "host": "0.0.0.0",
-        "port": 8080
+        "port": 8181
     },
 
     "controller": { ... },                // <-- НЕ поддерживает execution_mode
@@ -1597,7 +1597,7 @@ events и controller всегда работают в потоках.
 
 | Способ | Команда | Когда использовать |
 |--------|---------|-------------------|
-| **Отдельно** | `evileye server --port 8080` | API-сервер управляет пайплайнами через REST. Стандартный режим |
+| **Отдельно** | `evileye server --port 8181` | API-сервер управляет пайплайнами через REST. Стандартный режим |
 | **Вместе с пайплайном** | `evileye run config.json` + `server.enabled: true` | Controller сам поднимает сервер в отдельном процессе. Удобно для standalone-режима |
 
 При `evileye server`:
@@ -1666,17 +1666,17 @@ events и controller всегда работают в потоках.
 ### Как запустить пайплайн с мультипроцессностью через REST API?
 
 Пошаговая инструкция с конкретными HTTP-запросами. Предполагается, что
-сервер запущен через `evileye server --host 0.0.0.0 --port 8080`.
+сервер запущен через `evileye server --host 0.0.0.0 --port 8181`.
 
 ---
 
 **Шаг 1. Запустить сервер**
 
 ```bash
-evileye server --host 0.0.0.0 --port 8080
+evileye server --host 0.0.0.0 --port 8181
 ```
 
-Сервер поднимается, Swagger UI доступен по адресу `http://localhost:8080/docs`.
+Сервер поднимается, Swagger UI доступен по адресу `http://localhost:8181/docs`.
 
 ---
 
@@ -1687,7 +1687,7 @@ GET /api/v1/configs
 ```
 
 ```bash
-curl http://localhost:8080/api/v1/configs
+curl http://localhost:8181/api/v1/configs
 ```
 
 Ответ:
@@ -1705,7 +1705,7 @@ GET /api/v1/configs/{name}
 ```
 
 ```bash
-curl http://localhost:8080/api/v1/configs/single_video_multiprocess.json
+curl http://localhost:8181/api/v1/configs/single_video_multiprocess.json
 ```
 
 Ответ — полный JSON-конфиг. Убедитесь, что в нём есть `"execution_mode": "process"`
@@ -1724,7 +1724,7 @@ POST /api/v1/configs/runs
 **Вариант A — по имени файла из `configs/`:**
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/configs/runs \
+curl -X POST http://localhost:8181/api/v1/configs/runs \
   -H "Content-Type: application/json" \
   -d '{
     "name": "my-mp-pipeline",
@@ -1735,7 +1735,7 @@ curl -X POST http://localhost:8080/api/v1/configs/runs \
 **Вариант B — с полным телом конфига (inline):**
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/configs/runs \
+curl -X POST http://localhost:8181/api/v1/configs/runs \
   -H "Content-Type: application/json" \
   -d '{
     "name": "my-mp-pipeline",
@@ -1789,7 +1789,7 @@ POST /api/v1/configs/runs/{rid}/start
 ```
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/configs/runs/1/start
+curl -X POST http://localhost:8181/api/v1/configs/runs/1/start
 ```
 
 Ответ:
@@ -1828,7 +1828,7 @@ GET /api/v1/configs/runs/{rid}
 ```
 
 ```bash
-curl http://localhost:8080/api/v1/configs/runs/1
+curl http://localhost:8181/api/v1/configs/runs/1
 ```
 
 Ответ:
@@ -1863,7 +1863,7 @@ GET /api/v1/runs/{rid}/stream.mjpg?fps=5
 Откройте в браузере:
 
 ```
-http://localhost:8080/api/v1/runs/1/stream.mjpg?fps=5
+http://localhost:8181/api/v1/runs/1/stream.mjpg?fps=5
 ```
 
 (Устаревший alias: `/api/v1/pipelines/{rid}/...` — deprecated.)
@@ -1875,7 +1875,7 @@ GET /api/v1/runs/{rid}/snapshot
 ```
 
 ```bash
-curl http://localhost:8080/api/v1/runs/1/snapshot --output frame.jpg
+curl http://localhost:8181/api/v1/runs/1/snapshot --output frame.jpg
 ```
 
 ---
@@ -1887,7 +1887,7 @@ POST /api/v1/configs/runs/{rid}/stop
 ```
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/configs/runs/1/stop
+curl -X POST http://localhost:8181/api/v1/configs/runs/1/stop
 ```
 
 Ответ:
@@ -1918,7 +1918,7 @@ DELETE /api/v1/configs/runs/{rid}
 ```
 
 ```bash
-curl -X DELETE http://localhost:8080/api/v1/configs/runs/1
+curl -X DELETE http://localhost:8181/api/v1/configs/runs/1
 ```
 
 ---

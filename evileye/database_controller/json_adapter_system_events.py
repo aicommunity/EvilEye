@@ -51,6 +51,7 @@ class JsonAdapterSystemEvents(DatabaseAdapterBase):
             'event_id': getattr(event, 'event_id', None),
             'ts': (event.timestamp.isoformat() if hasattr(event.timestamp, 'isoformat') else str(event.timestamp)),
             'event_type': getattr(event, 'event_type', ''),
+            'event_message': getattr(event, 'event_message', ''),
         }
         append_json_record(file_path, rec)
 

@@ -107,12 +107,16 @@ class EventMetadataExtractor:
             elif isinstance(box, (list, tuple)) and len(box) == 4:
                 a, b, c, d = [float(x) for x in box]
 
-                # Если уже нормализовано [x1, y1, x2, y2]
                 if max(a, b, c, d) <= 1.0:
-                    return [a, b, c, d]
-                else:
-                    # Предполагаем [x, y, w, h] в пикселях
-                    return [a / img_w, b / img_h, (a + c) / img_w, (b + d) / img_h]
+                    if c >= a and d >= b:
+                        return [a, b, c, d]
+                    return [a, b, a + c, b + d]
+
+                x, y, w, h = a, b, c, d
+                if w > 0 and h > 0 and w < img_w * 2 and h < img_h * 2:
+                    return [x / img_w, y / img_h, (x + w) / img_w, (y + h) / img_h]
+                x1, y1, x2, y2 = a, b, c, d
+                return [x1 / img_w, y1 / img_h, x2 / img_w, y2 / img_h]
         except Exception:
             pass
 

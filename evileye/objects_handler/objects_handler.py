@@ -3,6 +3,7 @@ import json
 import time
 import os
 import datetime
+import cv2
 from typing import TYPE_CHECKING, Optional, Union
 from ..core.base_class import EvilEyeBase
 from ..core.interfaces import IObjectHandler, IDatabaseAdapter
@@ -21,8 +22,7 @@ from .labeling_manager import LabelingManager
 from ..core.object_pool import ObjectPool
 from ..core.tracking_dto import ensure_tracking_result_list
 from pympler import asizeof
-import cv2
-from ..utils import utils
+from ..database_controller.image_storage_service import ImageStorageService
 from .attribute_manager import AttributeManager
 import os
 
@@ -978,12 +978,12 @@ class ObjectsHandler(EvilEyeBase):
 
             # Save clean images without any debug overlays
             if image_type == 'preview':
-                # Create clean preview without bounding box
-                # Use .copy() for numpy arrays instead of deepcopy - much more efficient
-                preview = cv2.resize(
+                preview_width = int(self.db_params.get('preview_width', 300))
+                preview_height = int(self.db_params.get('preview_height', 150))
+                preview = ImageStorageService.resize_preserving_aspect(
                     image.image.copy(),
-                    (self.db_params.get('preview_width', 300), self.db_params.get('preview_height', 150)),
-                    cv2.INTER_NEAREST,
+                    preview_width,
+                    preview_height,
                 )
                 saved = cv2.imwrite(full_img_path, preview)
             else:

@@ -20,21 +20,23 @@ class WebAuthConfig:
 
 
 ROLE_PERMISSIONS: dict[str, set[str]] = {
-    "user": {"live:view", "runtime:view"},
-    "power_user": {"live:view", "runtime:view", "journal:view", "history:view"},
+    "user": {"live:view", "journal:view"},
+    "power_user": {"live:view", "journal:view", "history:view", "logs:view"},
     "admin": {
         "live:view",
+        "journal:view",
+        "logs:view",
         "runtime:view",
         "runtime:control",
-        "journal:view",
         "history:view",
         "history:edit",
         "config:view",
         "config:edit",
         "system:admin",
+        "users:manage",
     },
     # Backward compatibility with previous naming.
-    "viewer": {"live:view", "runtime:view"},
+    "viewer": {"live:view", "journal:view"},
 }
 
 
@@ -76,11 +78,31 @@ def permissions_for_role(role: str) -> list[str]:
 
 
 def load_web_auth_config() -> WebAuthConfig:
+    from evileye.api.core.web_auth_bootstrap import ensure_default_admin_credentials
+
+    ensure_default_admin_credentials()
     creds = _load_credentials()
     section = creds.get("web_auth") if isinstance(creds, dict) else {}
     if not isinstance(section, dict):
         section = {}
     users = _normalize_users(section.get("users"))
+    try:
+        from evileye.api.core.user_store import get_user_store
+
+        for record in get_user_store().list_users():
+            if record.get("status") != "approved":
+                continue
+            email = str(record.get("email") or "").strip()
+            if not email:
+                continue
+            users[email] = {
+                "username": email,
+                "role": normalize_role(str(record.get("role") or "user")),
+                "disabled": False,
+                "password_hash": record.get("password_hash"),
+            }
+    except Exception:
+        pass
     enabled = bool(section.get("enabled", bool(users)))
     session_secret = str(
         section.get("session_secret")
@@ -133,14 +155,21 @@ def verify_password(password: str, encoded: str) -> bool:
 
 def authenticate_user(username: str, password: str, auth: WebAuthConfig) -> Optional[dict[str, Any]]:
     user = auth.users.get(username)
-    if not user or user.get("disabled"):
-        return None
-    password_hash = user.get("password_hash")
-    plain_password = user.get("password")
-    if password_hash and verify_password(password, str(password_hash)):
-        return user
-    if plain_password is not None and hmac.compare_digest(str(plain_password), password):
-        return user
+    if user and not user.get("disabled"):
+        password_hash = user.get("password_hash")
+        plain_password = user.get("password")
+        if password_hash and verify_password(password, str(password_hash)):
+            return user
+        if plain_password is not None and hmac.compare_digest(str(plain_password), password):
+            return user
+    try:
+        from evileye.api.core.user_store import get_user_store
+
+        store_user = get_user_store().authenticate(username, password)
+        if store_user is not None:
+            return store_user
+    except Exception:
+        pass
     return None
 
 
@@ -189,7 +218,9 @@ def required_permissions_for_request(path: str, method: str) -> set[str]:
     if path.startswith("/api/v1/journals/config-history"):
         return {"history:view"} if method == "GET" else {"history:edit"}
     if path.startswith("/api/v1/logs"):
-        return {"journal:view"}
+        return {"logs:view"}
+    if path.startswith("/api/v1/users"):
+        return {"users:manage"}
     if path.startswith("/api/v1/journals/"):
         return {"journal:view"}
     if path.startswith("/api/v1/state/"):

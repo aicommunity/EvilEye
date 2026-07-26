@@ -28,6 +28,16 @@ class ImageStorageService:
         self.preview_size = (preview_width, preview_height)
         self.logger = logger or get_module_logger("image_storage_service")
 
+    @staticmethod
+    def resize_preserving_aspect(image_array, max_width: int, max_height: int):
+        ih, iw = image_array.shape[:2]
+        if iw > 0 and ih > 0:
+            scale = min(max_width / iw, max_height / ih)
+            new_w = max(1, int(iw * scale))
+            new_h = max(1, int(ih * scale))
+            return cv2.resize(image_array, (new_w, new_h), cv2.INTER_NEAREST)
+        return cv2.resize(image_array, (max_width, max_height), cv2.INTER_NEAREST)
+
     def save_image(
             self,
             preview_path: str,
@@ -73,8 +83,9 @@ class ImageStorageService:
         # Сохраняем полный кадр (без изменений)
         frame_saved = cv2.imwrite(frame_save_dir, image.image)
 
-        # Создаем и сохраняем превью
-        preview = cv2.resize(image.image.copy(), self.preview_size, cv2.INTER_NEAREST)
+        # Создаем и сохраняем превью с сохранением пропорций
+        preview = self.resize_preserving_aspect(image.image.copy(), self.preview_width, self.preview_height)
+        preview_h, preview_w = preview.shape[:2]
 
         if draw_boxes and box is not None:
             # Проверяем тип box
@@ -86,12 +97,12 @@ class ImageStorageService:
                 if zone_coords is not None:
                     # Для зон используем специальную функцию отрисовки
                     preview = utils.draw_preview_boxes_zones(
-                        preview, self.preview_width, self.preview_height, box, zone_coords
+                        preview, preview_w, preview_h, box, zone_coords
                     )
                 else:
                     # Обычная отрисовка bounding box
                     preview = utils.draw_preview_boxes(
-                        preview, self.preview_width, self.preview_height, box
+                        preview, preview_w, preview_h, box
                     )
 
         preview_saved = cv2.imwrite(preview_save_dir, preview)
