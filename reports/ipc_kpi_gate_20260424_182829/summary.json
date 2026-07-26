@@ -1,0 +1,64 @@
+{
+  "rows": [
+    {
+      "config": "configs/single_video_multiprocess.json",
+      "log_path": "reports/ipc_kpi_gate_20260424_182829/single_video_multiprocess.log",
+      "exit_code": 0,
+      "timed_out": false,
+      "metrics": {
+        "path": "reports/ipc_kpi_gate_20260424_182829/single_video_multiprocess.log",
+        "warnings": 4,
+        "errors": 0,
+        "tracebacks": 0,
+        "restart_events": 1,
+        "restart_suppressed": 0,
+        "stop_timeouts": 0,
+        "force_kills": 0,
+        "p95_pipeline_ms": 2.5,
+        "pipeline_hz_est": 400.0,
+        "pipeline_samples": 9,
+        "avg_capture_fps": 0.0,
+        "capture_fps_samples": 0,
+        "max_rss_mb": 0.0
+      },
+      "gate_ok": true,
+      "reasons": []
+    },
+    {
+      "config": "configs/poly-videos-gst.json",
+      "log_path": "reports/ipc_kpi_gate_20260424_182829/poly-videos-gst.log",
+      "exit_code": 124,
+      "timed_out": true,
+      "metrics": {
+        "path": "reports/ipc_kpi_gate_20260424_182829/poly-videos-gst.log",
+        "warnings": 5,
+        "errors": 0,
+        "tracebacks": 0,
+        "restart_events": 0,
+        "restart_suppressed": 0,
+        "stop_timeouts": 0,
+        "force_kills": 0,
+        "p95_pipeline_ms": 91.4,
+        "pipeline_hz_est": 10.940919037199125,
+        "pipeline_samples": 23,
+        "avg_capture_fps": 0.0,
+        "capture_fps_samples": 0,
+        "max_rss_mb": 217.7760772705078
+      },
+      "gate_ok": true,
+      "reasons": []
+    }
+  ],
+  "thresholds": {
+    "max_errors": 0,
+    "max_tracebacks": 0,
+    "max_stop_timeouts": 0,
+    "max_force_kills": 0,
+    "max_restarts": 20,
+    "max_p95_pipeline_ms": 350.0,
+    "max_rss_mb": 4096.0,
+    "min_pipeline_samples": 1,
+    "timeout_sec": 45
+  },
+  "profile": "configs/kpi_gate_profile.json"
+}

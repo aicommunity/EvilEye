@@ -1,0 +1,17 @@
+# Fast subset: pre-commit run -c .pre-commit-config-lite.yaml
+# Use when full config (mypy/pytest/etc.) is too slow or unavailable.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+  - repo: local
+    hooks:
+      - id: validate-configs
+        name: Validate JSON configs
+        entry: python scripts/validate_json_configs.py
+        language: system
+        pass_filenames: false
+        always_run: true

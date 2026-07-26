@@ -5,6 +5,7 @@ try:
     )
     from PyQt6.QtGui import QIcon, QAction
     from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
+
     pyqt_version = 6
 except ImportError:
     from PyQt5.QtWidgets import (
@@ -13,6 +14,7 @@ except ImportError:
     )
     from PyQt5.QtGui import QIcon
     from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt
+
     pyqt_version = 5
 
 import os
@@ -38,7 +40,7 @@ class ROIEditorWindow(QWidget):
 
         self.setWindowTitle("ROI Editor")
         self.resize(1200, 800)
-        
+
         # Устанавливаем флаги для независимого окна
         self.setWindowFlags(Qt.WindowType.Window)
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
@@ -52,7 +54,7 @@ class ROIEditorWindow(QWidget):
         self._create_actions()
         self._create_toolbar()
         self._setup_ui()
-    
+
     def set_params(self, params):
         """Установить параметры (вызывается после controller.init())"""
         self.params = params
@@ -75,13 +77,14 @@ class ROIEditorWindow(QWidget):
         # Правая панель - управление
         right_panel = QVBoxLayout()
 
-        #drawing_group = QGroupBox("Drawing Settings")
-        #drawing_layout = QFormLayout(drawing_group)
-        #right_panel.addWidget(drawing_group)
+        # drawing_group = QGroupBox("Drawing Settings")
+        # drawing_layout = QFormLayout(drawing_group)
+        # right_panel.addWidget(drawing_group)
 
         roi_group = QGroupBox("ROI Controls")
         roi_layout = QVBoxLayout(roi_group)
-        help_label = QLabel("Instructions:\n• Click and drag to create an ROI\n• Click an ROI to select it\n• Select an ROI in the list to edit it")
+        help_label = QLabel(
+            "Instructions:\n• Click and drag to create an ROI\n• Click an ROI to select it\n• Select an ROI in the list to edit it")
         help_label.setWordWrap(True)
         roi_layout.addWidget(help_label)
 
@@ -242,12 +245,12 @@ class ROIEditorWindow(QWidget):
             self.logger.info(f"Set roi_data with {len(self.roi_canvas.roi_data)} entries")
             setattr(self.roi_canvas, '_loading_from_config', True)
             for i, entry in enumerate(self.roi_canvas.roi_data):
-                self.logger.info(f"Adding ROI {i+1}/{len(self.roi_canvas.roi_data)}: {entry['coords']}")
+                self.logger.info(f"Adding ROI {i + 1}/{len(self.roi_canvas.roi_data)}: {entry['coords']}")
                 # Временно отключаем обновление сцены для каждого ROI
                 roi_item = self.roi_canvas._create_roi_item(entry["coords"], entry.get("color", (255, 0, 0)))
                 if roi_item:
                     self.roi_canvas.rois.append(roi_item)
-                self.logger.info(f"ROI {i+1} added successfully")
+                self.logger.info(f"ROI {i + 1} added successfully")
             setattr(self.roi_canvas, '_loading_from_config', False)
             # Обновляем сцену один раз в конце
             self.roi_canvas.scene.update()
@@ -474,7 +477,7 @@ class ROIEditorWindow(QWidget):
         self.roi_list.clear()
         for i, roi in enumerate(self.roi_canvas.roi_data):
             coords = roi.get('coords', [0, 0, 0, 0])
-            item = QListWidgetItem(f"ROI_{i+1}: [{coords[0]}, {coords[1]}, {coords[2]}, {coords[3]}]")
+            item = QListWidgetItem(f"ROI_{i + 1}: [{coords[0]}, {coords[1]}, {coords[2]}, {coords[3]}]")
             self.roi_list.addItem(item)
 
     def _emit_rois_updated(self):
@@ -520,10 +523,12 @@ class ROIEditorWindow(QWidget):
             if res == yes:
                 rois = self.roi_canvas.get_rois()
                 rois_xyxy = [entry["coords"] for entry in rois]
-                self.roi_editor_closed.emit(rois_xyxy, int(self.current_source_id or 0), int(self.current_detector_index or -1), True)
+                self.roi_editor_closed.emit(rois_xyxy, int(self.current_source_id or 0),
+                                            int(self.current_detector_index or -1), True)
                 event.accept()
             elif res == no:
-                self.roi_editor_closed.emit([], int(self.current_source_id or 0), int(self.current_detector_index or -1), False)
+                self.roi_editor_closed.emit([], int(self.current_source_id or 0),
+                                            int(self.current_detector_index or -1), False)
                 event.accept()
             else:
                 event.ignore()
@@ -531,7 +536,6 @@ class ROIEditorWindow(QWidget):
         else:
             rois = self.roi_canvas.get_rois()
             rois_xyxy = [entry["coords"] for entry in rois]
-            self.roi_editor_closed.emit(rois_xyxy, int(self.current_source_id or 0), int(self.current_detector_index or -1), False)
+            self.roi_editor_closed.emit(rois_xyxy, int(self.current_source_id or 0),
+                                        int(self.current_detector_index or -1), False)
             event.accept()
-
-

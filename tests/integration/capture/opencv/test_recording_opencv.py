@@ -55,6 +55,7 @@ def test_opencv_recording_basic(tmp_path: Path, ensure_test_videos):
         desired_fps=15,
         record={
             "enabled": True,
+            "continuous_recording_enabled": True,
             "container": "mp4",
             "segment_length_sec": 300,
             "retention_days": 3,
@@ -65,6 +66,8 @@ def test_opencv_recording_basic(tmp_path: Path, ensure_test_videos):
         },
     )
     assert cap.init() is True
+    assert cap.recorder_manager is not None, "RecorderManager should be created during init"
+    assert cap.recorder_manager.recorder is None, "Recorder must not start before capture.start()"
 
     cap.start()
     # Wait a bit for threads to start and recorder to initialize
@@ -96,30 +99,8 @@ def test_opencv_recording_basic(tmp_path: Path, ensure_test_videos):
     # Note: check_and_delete_small_files has min_age_seconds=30, so files won't be deleted immediately
     time.sleep(1.0)
 
-    # Verify a file was written into daily subfolder
-    # Recording creates structure: out_dir/Streams/YYYY-MM-DD/CameraName/
-    # Check for Streams directory
     streams_dir = tmp_path / "Streams"
-    if not streams_dir.exists():
-        # Fallback: check direct subdirectories (old structure)
-        date_dirs = list(tmp_path.glob("*/"))
-        assert len(date_dirs) > 0, f"Daily folder not created in {tmp_path}"
-    else:
-        # New structure: Streams/YYYY-MM-DD/CameraName/
-        date_dirs = list(streams_dir.glob("*/"))
-        assert len(date_dirs) > 0, f"Date folder not created in {streams_dir}"
-    
-    # Check for files in all date directories
-    files = []
-    for date_dir in date_dirs:
-        files.extend(list(date_dir.glob("*.mp4")))
-        files.extend(list(date_dir.glob("*.mkv")))  # Also check for mkv if mp4 codec failed
-    
-    # Also check in subdirectories (camera folders)
-    for date_dir in date_dirs:
-        camera_dirs = list(date_dir.glob("*/"))
-        for camera_dir in camera_dirs:
-            files.extend(list(camera_dir.glob("*.mp4")))
-            files.extend(list(camera_dir.glob("*.mkv")))
-    
-    assert len(files) >= 1, f"No recording files created. Checked: {tmp_path}, streams_dir: {streams_dir}, date_dirs: {date_dirs}, files: {files}"
+    assert streams_dir.exists(), f"Streams hierarchy was not created under: {tmp_path}"
+    files = list(streams_dir.rglob("*.mp4")) + list(streams_dir.rglob("*.mkv"))
+    assert len(files) >= 1, f"No recording files created in Streams hierarchy under: {streams_dir}"
+    assert not list(tmp_path.glob("*.mp4")), "Recorder must not write video files directly into root out_dir"

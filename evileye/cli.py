@@ -11,6 +11,7 @@ import os
 import shutil
 import subprocess
 import logging
+import signal
 from pathlib import Path
 from typing import Optional, Tuple
 from datetime import datetime, timedelta
@@ -24,6 +25,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 from evileye.utils.utils import normalize_config_path
 from evileye.core.logging_config import setup_evileye_logging, log_system_info
 from evileye.core.logger import get_module_logger
+from evileye.core.config_validator import ConfigValidator
 
 
 def _get_scheduled_restart_defaults() -> dict:
@@ -93,10 +95,97 @@ def _get_next_interval(now: datetime, interval_minutes: int) -> datetime:
     return now + timedelta(minutes=interval_minutes)
 
 
+def _scheduler_stop_grace_sec() -> float:
+    try:
+        return max(30.0, float(os.getenv("EVILEYE_SCHEDULER_STOP_GRACE_SEC", "120") or "120"))
+    except (TypeError, ValueError):
+        return 120.0
+
+
+def _scheduler_gpu_settle_sec() -> float:
+    try:
+        return max(0.0, float(os.getenv("EVILEYE_SCHEDULER_GPU_SETTLE_SEC", "8") or "8"))
+    except (TypeError, ValueError):
+        return 8.0
+
+
+def _scheduler_prepare_next_launch(logger: logging.Logger) -> None:
+    """Cleanup orphaned MP workers and wait for GPU memory to settle before relaunch."""
+    try:
+        from evileye.core.mp_session_registry import cleanup_stale_sessions
+
+        cleaned = cleanup_stale_sessions()
+        if cleaned:
+            logger.info(
+                "[scheduler] Cleaned up %d stale MP worker process(es) before launch",
+                cleaned,
+            )
+    except Exception as exc:
+        logger.warning("[scheduler] Stale session cleanup failed: %s", exc)
+
+    settle = _scheduler_gpu_settle_sec()
+    if settle > 0:
+        logger.info(
+            "[scheduler] Waiting %.1fs for GPU memory to settle before launch",
+            settle,
+        )
+        time.sleep(settle)
+
+
+def _scheduler_terminate_child(proc: subprocess.Popen, logger: logging.Logger) -> None:
+    """Terminate the scheduled child process and its process group."""
+    pid = proc.pid
+    grace_sec = _scheduler_stop_grace_sec()
+    try:
+        pgid = os.getpgid(pid)
+    except Exception:
+        pgid = pid
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except Exception:
+        try:
+            proc.terminate()
+        except Exception as exc:
+            logger.error("[scheduler] Error terminating process %s: %s", pid, exc, exc_info=True)
+            return
+    try:
+        proc.wait(timeout=grace_sec)
+        logger.info("[scheduler] Process %s terminated gracefully", pid)
+        return
+    except subprocess.TimeoutExpired:
+        logger.warning(
+            "[scheduler] Process %s did not exit after SIGTERM within %.0fs, killing process group",
+            pid,
+            grace_sec,
+        )
+    except Exception as exc:
+        logger.warning(
+            "[scheduler] Error waiting for process %s after terminate: %s, killing",
+            pid,
+            exc,
+        )
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception as exc:
+            logger.error("[scheduler] Failed to kill process %s: %s", pid, exc)
+            return
+    try:
+        proc.wait(timeout=10)
+        logger.info("[scheduler] Process %s killed and terminated", pid)
+    except subprocess.TimeoutExpired:
+        logger.error(
+            "[scheduler] Process %s did not exit after SIGKILL within 10s, but continuing anyway",
+            pid,
+        )
+
+
 def _run_with_scheduler(
-    base_cmd: list,
-    config_path: Path,
-    logger: logging.Logger,
+        base_cmd: list,
+        config_path: Path,
+        logger: logging.Logger,
 ) -> None:
     """Run process.py in a loop according to scheduled_restart section in config."""
     sched_cfg = _load_scheduled_restart_config(config_path, logger)
@@ -122,6 +211,8 @@ def _run_with_scheduler(
     prev_iteration_end_time = None
     while True:
         iteration += 1
+        if iteration > 1:
+            _scheduler_prepare_next_launch(logger)
         iteration_start_time = datetime.now()
         if prev_iteration_end_time is not None:
             logger.info(
@@ -142,7 +233,12 @@ def _run_with_scheduler(
             # Устанавливаем переменную окружения для определения запуска через CLI
             env = os.environ.copy()
             env['EVILEYE_CLI_LAUNCHED'] = '1'
-            proc = subprocess.Popen(base_cmd, cwd=os.getcwd(), env=env)
+            proc = subprocess.Popen(
+                base_cmd,
+                cwd=os.getcwd(),
+                env=env,
+                start_new_session=True,
+            )
         except Exception as e:
             logger.error(f"[scheduler] Failed to start process: {e}", exc_info=True)
             console.print(f"[red]Failed to start process: {e}[/red]")
@@ -158,7 +254,7 @@ def _run_with_scheduler(
 
         logger.info(f"[scheduler] Next launch scheduled at {next_run.isoformat()}")
         console.print(f"[blue][scheduler] Next launch at {next_run.isoformat()}[/blue]")
-        
+
         # Логируем информацию о времени до следующего запуска
         time_until_next = (next_run - start_time).total_seconds()
         hours_until_next = time_until_next / 3600.0
@@ -209,7 +305,7 @@ def _run_with_scheduler(
                         f"[scheduler] Iteration {iteration} finished with return code={retcode} "
                         f"(duration={duration:.1f}s)"
                     )
-                    
+
                     # Return code 2 = memory leak restart requested
                     if retcode == 2:
                         logger.info(
@@ -222,16 +318,30 @@ def _run_with_scheduler(
                         # Continue to next iteration immediately (skip wait logic)
                         continue_scheduler = True
                         break
-                    
-                    # Если процесс завершился сам ДО наступления времени next_run,
-                    # считаем это штатным/ручным завершением и выходим из планировщика,
-                    # чтобы не перезапускать приложение против воли пользователя.
-                    if now < next_run:
+
+                    # Graceful exit (code 0) before next_run = user/manual shutdown.
+                    if retcode == 0 and now < next_run:
                         logger.info(
                             "[scheduler] Process finished before next scheduled time — "
                             "stopping scheduler loop (respecting manual/normal shutdown)"
                         )
                         continue_scheduler = False
+                        break
+
+                    # Unexpected crash (SIGKILL, SIGSEGV, OOM, etc.) — auto-restart.
+                    if retcode != 0 and now < next_run:
+                        logger.warning(
+                            "[scheduler] Unexpected child death (return code=%s) before next "
+                            "scheduled time — auto-restarting iteration",
+                            retcode,
+                        )
+                        console.print(
+                            f"[yellow][scheduler] Unexpected exit (code={retcode}): "
+                            f"relaunching next iteration[/yellow]"
+                        )
+                        continue_scheduler = True
+                        break
+
                     break
 
                 if now >= next_run:
@@ -244,39 +354,10 @@ def _run_with_scheduler(
                         f"[yellow][scheduler] Stopping current run (pid={proc.pid}) for scheduled restart[/yellow]"
                     )
                     try:
-                        proc.terminate()
-                        try:
-                            proc.wait(timeout=30)
-                            logger.info(f"[scheduler] Process {proc.pid} terminated gracefully")
-                        except subprocess.TimeoutExpired:
-                            logger.warning(
-                                f"[scheduler] Process {proc.pid} did not exit after SIGTERM within 30s, killing"
-                            )
-                            proc.kill()
-                            # Ждём завершения после kill
-                            try:
-                                proc.wait(timeout=10)
-                                logger.info(f"[scheduler] Process {proc.pid} killed and terminated")
-                            except subprocess.TimeoutExpired:
-                                logger.error(
-                                    f"[scheduler] Process {proc.pid} did not exit after SIGKILL within 10s, "
-                                    f"but continuing anyway"
-                                )
-                        except Exception as e:
-                            logger.warning(
-                                f"[scheduler] Error waiting for process {proc.pid} after terminate: {e}, killing"
-                            )
-                            try:
-                                proc.kill()
-                                proc.wait(timeout=10)
-                                logger.info(f"[scheduler] Process {proc.pid} killed after error")
-                            except Exception as e2:
-                                logger.error(
-                                    f"[scheduler] Failed to kill process {proc.pid}: {e2}"
-                                )
+                        _scheduler_terminate_child(proc, logger)
                     except Exception as e:
                         logger.error(f"[scheduler] Error terminating process {proc.pid}: {e}", exc_info=True)
-                    
+
                     # Финальная проверка, что процесс действительно завершился
                     final_retcode = proc.poll()
                     if final_retcode is None:
@@ -288,7 +369,7 @@ def _run_with_scheduler(
                         logger.info(
                             f"[scheduler] Process {proc.pid} confirmed terminated with return code {final_retcode}"
                         )
-                    
+
                     # Логирование после завершения процесса по расписанию
                     termination_time = datetime.now()
                     logger.info(
@@ -309,13 +390,12 @@ def _run_with_scheduler(
             logger.info("[scheduler] Interrupted by user, terminating child and stopping loop")
             if proc.poll() is None:
                 try:
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=10)
-                    except Exception:
-                        proc.kill()
+                    _scheduler_terminate_child(proc, logger)
                 except Exception:
-                    pass
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
             raise typer.Exit(0)
 
         # Если процесс завершился сам до наступления следующего планового запуска —
@@ -336,12 +416,12 @@ def _run_with_scheduler(
             )
             # Переходим к следующей итерации цикла while True без ожидания
             continue
-        
+
         # Если процесс завершился сам (не по расписанию), вычисляем следующее время запуска
         # и ждём до этого времени перед запуском следующей итерации
         now = datetime.now()
         prev_iteration_end_time = now  # Сохраняем время завершения итерации
-        
+
         # Вычисляем следующее время запуска для следующей итерации
         if mode == "interval":
             next_run = _get_next_interval(now, interval_minutes)
@@ -374,7 +454,7 @@ def _run_with_scheduler(
                 f"[blue][scheduler] Waiting {sleep_seconds:.1f}s until next launch at "
                 f"{next_run.isoformat()}[/blue]"
             )
-            
+
             # Детальное логирование перед началом ожидания
             logger.info(
                 f"[scheduler] Starting wait loop: current_time={now.isoformat()}, "
@@ -384,7 +464,7 @@ def _run_with_scheduler(
             logger.info(
                 f"[scheduler] Wait will be split into {num_intervals} interval(s) of up to 60 seconds each"
             )
-            
+
             try:
                 # Разбиваем длительное ожидание на интервалы по 60 секунд для лучшей отзывчивости
                 # и возможности корректно обработать сигналы
@@ -410,7 +490,7 @@ def _run_with_scheduler(
                             f"[scheduler] Wait interval {interval_count} completed: "
                             f"all wait time elapsed, ready for next launch"
                         )
-                
+
                 # Логирование после завершения ожидания
                 wait_end_time = datetime.now()
                 logger.info(
@@ -450,11 +530,15 @@ def run(
         config: Optional[Path] = typer.Argument(None, help="Configuration file path"),
         video: Optional[str] = typer.Option(None, "--video", help="Video file to process"),
         gui: bool = typer.Option(True, "--gui/--no-gui", help="Launch with gui interface"),
-        autoclose: bool = typer.Option(False, "--autoclose/--no-autoclose", help="Automatic close application when video ends"),
+        autoclose: bool = typer.Option(False, "--autoclose/--no-autoclose",
+                                       help="Automatic close application when video ends"),
         verbose: bool = typer.Option(False, "--verbose", help="Enable verbose logging"),
 ) -> None:
     """
-    Launch EvilEye 
+    Launch EvilEye system.
+
+    This is the primary operational mode: the runtime owns the lifecycle
+    of the system and may start the web server module from configuration.
 
     Example:
         evileye run configs/test_sources_detectors_trackers_mc.json
@@ -535,26 +619,34 @@ def run(
         console.print("[yellow]Launch interrupted by user[/yellow]")
         raise typer.Exit(0)
 
+
 @app.command("server")
 def start_api(
         host: str = typer.Option("127.0.0.1", "--host", help="Bind host"),
-        port: int = typer.Option(8080, "--port", help="Bind port"),
+        port: int = typer.Option(8181, "--port", help="Bind port"),
         reload: bool = typer.Option(True, "--reload/--no-reload", help="Auto-reload on code changes"),
         workers: int = typer.Option(1, "--workers", help="Number of worker processes"),
         verbose: bool = typer.Option(False, "--verbose", help="Enable verbose logging"),
         log_level: str = typer.Option("info", "--log-level", help="Logging level"),
-        config: Optional[str] = typer.Option(None, "--config", help="Auto-run selected config after server starts (name or file path)")
+        config: Optional[str] = typer.Option(None, "--config",
+                                             help="Auto-run selected config after server starts (name or file path)"),
+        ssl_certfile: Optional[str] = typer.Option(None, "--ssl-certfile", help="TLS certificate file (PEM)"),
+        ssl_keyfile: Optional[str] = typer.Option(None, "--ssl-keyfile", help="TLS private key file (PEM)")
 
 ) -> None:
     """
     Start EvilEye FastAPI web server.
+
+    This is a service/administrative mode. For the primary operational
+    scenario prefer `evileye run`, where the system is started first and
+    the web server works as its module.
 
     Examples:
         evileye server --host 0.0.0.0 --port 8000
         evileye server --config poly-videos.json
         evileye server --config ./configs/poly-videos.json
     """
-    
+
     import time
     import urllib.request
     import urllib.error
@@ -566,12 +658,20 @@ def start_api(
     # Use server.py instead of process.py for API server
     cmd = [sys.executable, str(Path(__file__).parent / "server.py")]
     cmd.extend(["--host", host, "--port", str(port), "--log-level", log_level])
-    
+
     if not reload:
         cmd.append("--no-reload")
+    if workers != 1:
+        cmd.extend(["--workers", str(workers)])
+    if verbose:
+        cmd.append("--verbose")
 
     if config:
         cmd.extend(["--config", config])
+    if ssl_certfile:
+        cmd.extend(["--ssl-certfile", ssl_certfile])
+    if ssl_keyfile:
+        cmd.extend(["--ssl-keyfile", ssl_keyfile])
 
     try:
         logger.info(f"Starting web server (server.py): {' '.join(cmd)}")
@@ -586,14 +686,15 @@ def start_api(
         console.print("[yellow]Web server interrupted by user[/yellow]")
         raise typer.Exit(0)
 
+
 @app.command()
 def validate(
-    config: Path = typer.Argument(
-        ...,
-        help="Path to configuration JSON file",
-        file_okay=True,
-        dir_okay=False,
-    ),
+        config: Path = typer.Argument(
+            ...,
+            help="Path to configuration JSON file",
+            file_okay=True,
+            dir_okay=False,
+        ),
 ) -> None:
     """
     Validate EvilEye configuration file.
@@ -605,17 +706,26 @@ def validate(
     try:
         # Normalize config path
         normalized_config = Path(normalize_config_path(config))
-        
+
         if not normalized_config.exists():
             console.print(f"[red]Configuration file not found: {normalized_config}[/red]")
             raise typer.Exit(1)
-        
+
         with open(normalized_config, 'r') as f:
             pipeline_config = json.load(f)
-        
+
+        # Базовая валидация структуры
         validate_config(pipeline_config)
-        console.print(f"[green]Configuration {normalized_config} is valid![/green]")
-        
+
+        # Расширенная валидация через ConfigValidator
+        validator = ConfigValidator()
+        is_valid, error_msg = validator.validate_full_config(pipeline_config)
+        if not is_valid:
+            console.print(f"[yellow]Configuration validation warning: {error_msg}[/yellow]")
+            console.print("[yellow]Continuing with potentially invalid configuration...[/yellow]")
+        else:
+            console.print(f"[green]Configuration {normalized_config} is valid![/green]")
+
     except Exception as e:
         console.print(f"[red]Configuration validation failed: {e}[/red]")
         raise typer.Exit(1)
@@ -627,52 +737,136 @@ def list_configs() -> None:
     List available configuration files.
     """
     config_dir = Path("configs")
-    
+
     if not config_dir.exists():
         console.print("[red]Configs directory not found[/red]")
         raise typer.Exit(1)
-    
+
     config_files = list(config_dir.glob("*.json"))
-    
+
     if not config_files:
         console.print("[yellow]No configuration files found[/yellow]")
         return
-    
+
     table = Table(title="Available Configurations")
     table.add_column("Name", style="cyan")
     table.add_column("Size", style="magenta")
     table.add_column("Description", style="green")
-    
+
     for config_file in sorted(config_files):
         size = config_file.stat().st_size
         description = get_config_description(config_file)
-        
+
         table.add_row(
             config_file.name,
             f"{size} bytes",
             description,
         )
-    
+
     console.print(table)
+
+
+def _monitor_source_dir() -> Path:
+    """Locate packaged or repo-checkout monitor assets for site deploy."""
+    candidates = [
+        Path(__file__).parent / "deploy_monitor",
+        Path(__file__).resolve().parents[1] / "deploy" / "monitor",
+    ]
+    for candidate in candidates:
+        if (candidate / "scripts" / "install_timer.sh").is_file():
+            return candidate
+    raise FileNotFoundError(
+        "Monitor assets not found. Expected evileye/deploy_monitor or deploy/monitor "
+        "with scripts/install_timer.sh"
+    )
+
+
+def _deploy_monitor_assets(site_dir: Path) -> None:
+    """
+    Copy watchdog/monitor scripts into <site>/monitor/.
+
+    Does not enable systemd timers or start EvilEye — only files and empty runtime dirs.
+    Re-running updates scripts/systemd from the package without wiping incidents/logs.
+    """
+    source = _monitor_source_dir()
+    monitor_dir = site_dir / "monitor"
+    scripts_dst = monitor_dir / "scripts"
+    systemd_dst = monitor_dir / "systemd"
+
+    scripts_dst.mkdir(parents=True, exist_ok=True)
+    systemd_dst.mkdir(parents=True, exist_ok=True)
+
+    copied_scripts = 0
+    for src in sorted((source / "scripts").glob("*")):
+        if not src.is_file():
+            continue
+        shutil.copy2(src, scripts_dst / src.name)
+        # Ensure shell scripts are executable on Unix.
+        if src.suffix == ".sh" or src.name.endswith(".sh"):
+            mode = (scripts_dst / src.name).stat().st_mode
+            (scripts_dst / src.name).chmod(mode | 0o111)
+        copied_scripts += 1
+
+    copied_units = 0
+    systemd_src = source / "systemd"
+    if systemd_src.is_dir():
+        for src in sorted(systemd_src.glob("*")):
+            if not src.is_file():
+                continue
+            shutil.copy2(src, systemd_dst / src.name)
+            copied_units += 1
+
+    readme_src = source / "README.md"
+    if readme_src.is_file():
+        shutil.copy2(readme_src, monitor_dir / "README.md")
+
+    # Runtime directories (empty placeholders; never start services here).
+    for name in ("incidents", "reports", "logs"):
+        # logs live at site root; incidents/reports under monitor/
+        if name == "logs":
+            (site_dir / "logs").mkdir(parents=True, exist_ok=True)
+        else:
+            (monitor_dir / name).mkdir(parents=True, exist_ok=True)
+
+    hint = monitor_dir / "INSTALL_HINT.txt"
+    hint.write_text(
+        "Monitor scripts were deployed by `evileye deploy`.\n"
+        "They are NOT started automatically.\n\n"
+        "To enable the user systemd watchdog on this machine:\n"
+        f"  DEPLOY_DIR={site_dir} {scripts_dst / 'install_timer.sh'}\n\n"
+        "Manual health check:\n"
+        f"  DEPLOY_DIR={site_dir} {scripts_dst / 'health_check.sh'}\n",
+        encoding="utf-8",
+    )
+
+    console.print(
+        f"[green]Deployed monitor assets "
+        f"({copied_scripts} scripts, {copied_units} systemd templates) → {monitor_dir}[/green]"
+    )
+    console.print(
+        "[blue]Note:[/blue] watchdog timers were [bold]not[/bold] enabled; "
+        f"run install_timer.sh when ready (see {hint.name})."
+    )
 
 
 @app.command()
 def deploy() -> None:
     """
-    Deploy EvilEye configuration files to current directory.
-    
+    Deploy EvilEye site files to the current directory.
+
     This command:
-    1. Copies credentials_proto.json to credentials.json (if credentials.json doesn't exist)
-    2. Creates configs folder if it doesn't exist
+    1. Copies credentials_proto.json to credentials.json (if missing)
+    2. Creates configs/ and logs/ folders if missing
+    3. Deploys monitor/watchdog scripts and systemd templates (does not start services)
     """
-    
+
     current_dir = Path.cwd()
     console.print(f"[blue]Deploying EvilEye files to: {current_dir}[/blue]")
-    
+
     # Step 1: Copy credentials_proto.json to credentials.json
     credentials_proto = Path(__file__).parent / "credentials_proto.json"
     credentials_target = current_dir / "credentials.json"
-    
+
     if credentials_target.exists():
         console.print("[yellow]credentials.json already exists, skipping...[/yellow]")
     else:
@@ -686,7 +880,7 @@ def deploy() -> None:
         else:
             console.print("[red]credentials_proto.json not found in package[/red]")
             raise typer.Exit(1)
-    
+
     # Step 2: Create configs folder
     configs_dir = current_dir / "configs"
     if configs_dir.exists():
@@ -698,9 +892,22 @@ def deploy() -> None:
         except Exception as e:
             console.print(f"[red]Error creating configs folder: {e}[/red]")
             raise typer.Exit(1)
-    
-    console.print("[green]Deployment completed successfully![/green]")
 
+    # Step 3: Monitor / watchdog assets (files only — no systemd enable, no process start)
+    try:
+        _deploy_monitor_assets(current_dir)
+    except FileNotFoundError as e:
+        console.print(f"[red]Error deploying monitor assets: {e}[/red]")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error deploying monitor assets: {e}[/red]")
+        raise typer.Exit(1)
+
+    console.print("[green]Deployment completed successfully![/green]")
+    console.print(
+        "[dim]Next: create a config (`evileye create ...`), then optionally "
+        "enable watchdog via monitor/scripts/install_timer.sh[/dim]"
+    )
 
 @app.command()
 def deploy_samples() -> None:
@@ -715,10 +922,10 @@ def deploy_samples() -> None:
     """
     current_dir = Path.cwd()
     console.print(f"[blue]Deploying EvilEye sample configurations to: {current_dir}[/blue]")
-    
+
     # First run regular deploy
     deploy()
-    
+
     # Create videos directory
     videos_dir = current_dir / "videos"
     if not videos_dir.exists():
@@ -726,34 +933,34 @@ def deploy_samples() -> None:
         console.print("[green]Created videos folder[/green]")
     else:
         console.print("[yellow]videos folder already exists, skipping...[/yellow]")
-    
+
     # Download sample videos
     console.print("\n[blue]Downloading sample videos...[/blue]")
     try:
         from evileye.utils.download_samples import download_sample_videos
         video_results = download_sample_videos(str(videos_dir), parallel=False)
-        
-        successful_videos = sum(1 for r in video_results.values() 
-                              if "downloaded" in r["status"] or r["status"] == "exists")
+
+        successful_videos = sum(1 for r in video_results.values()
+                                if "downloaded" in r["status"] or r["status"] == "exists")
         total_videos = len(video_results)
-        
+
         if successful_videos > 0:
             console.print(f"[green]Downloaded {successful_videos}/{total_videos} sample videos[/green]")
         else:
             console.print("[yellow]No videos downloaded, but continuing with sample configs...[/yellow]")
-            
+
     except Exception as e:
         console.print(f"[yellow]Video download failed: {e}[/yellow]")
         console.print("[blue]Continuing with sample configs (you can add videos manually)...[/blue]")
-    
+
     # Copy sample configurations
     console.print("\n[blue]Copying sample configurations...[/blue]")
     samples_dir = Path(__file__).parent / "samples_configs"
     configs_dir = current_dir / "configs"
-    
+
     sample_configs = [
         "single_video.json",
-        "single_video_split.json", 
+        "single_video_split.json",
         "single_ip_camera.json",
         "multi_videos.json",
         "pipeline_capture.json",
@@ -766,19 +973,19 @@ def deploy_samples() -> None:
         "image_sequence_gstreamer_jpg.json",
         "image_sequence_gstreamer_folder.json"
     ]
-    
+
     copied_count = 0
     for config_name in sample_configs:
         source_path = samples_dir / config_name
         dest_path = configs_dir / config_name
-        
+
         if source_path.exists():
             shutil.copy2(source_path, dest_path)
             console.print(f"[green]Copied {config_name}[/green]")
             copied_count += 1
         else:
             console.print(f"[yellow]Sample config {config_name} not found[/yellow]")
-    
+
     # Create README for samples
     readme_content = """# EvilEye Sample Configurations
 
@@ -901,20 +1108,20 @@ evileye-create my_config --sources 2 --pipeline PipelineSurveillance
 
 For more information, see the main README.md file.
 """
-    
+
     readme_path = configs_dir / "README_SAMPLES.md"
     with open(readme_path, 'w') as f:
         f.write(readme_content)
-    
+
     console.print(f"[green]Copied {copied_count} sample configurations[/green]")
     console.print("[green]Created README_SAMPLES.md[/green]")
-    
+
     console.print("\n[green]Sample deployment completed successfully![/green]")
     console.print("\n[blue]Available sample configurations:[/blue]")
     for config_name in sample_configs:
         if (configs_dir / config_name).exists():
             console.print(f"  [yellow]- {config_name}[/yellow]")
-    
+
     console.print("\n[blue]Try running a sample:[/blue]")
     console.print("  [yellow]evileye run configs/single_video.json[/yellow]")
     console.print("\n[blue]Downloaded video files:[/blue]")
@@ -927,16 +1134,16 @@ For more information, see the main README.md file.
 
 @app.command()
 def create(
-    config_name: str = typer.Argument(None, help="Configuration name"),
-    sources: int = typer.Option(0, "--sources", help="Number of sources"),
-    pipeline: str = typer.Option("PipelineSurveillance", "--pipeline", help="Pipeline class"),
-    source_type: str = typer.Option("video_file", "--source-type", help="Source type"),
-    output_dir: str = typer.Option("configs", "--output-dir", help="Output directory"),
-    force: bool = typer.Option(False, "--force", help="Overwrite existing file"),
-    list_pipelines: bool = typer.Option(False, "--list-pipelines", help="List available pipelines"),
-    detector_model: Optional[str] = typer.Option(None, "--detector-model", help="Detector model path"),
-    tracker_type: Optional[str] = typer.Option(None, "--tracker-type", help="Tracker type"),
-    db_enabled: Optional[bool] = typer.Option(None, "--db/--no-db", help="Enable/disable database"),
+        config_name: str = typer.Argument(None, help="Configuration name"),
+        sources: int = typer.Option(0, "--sources", help="Number of sources"),
+        pipeline: str = typer.Option("PipelineSurveillance", "--pipeline", help="Pipeline class"),
+        source_type: str = typer.Option("video_file", "--source-type", help="Source type"),
+        output_dir: str = typer.Option("configs", "--output-dir", help="Output directory"),
+        force: bool = typer.Option(False, "--force", help="Overwrite existing file"),
+        list_pipelines: bool = typer.Option(False, "--list-pipelines", help="List available pipelines"),
+        detector_model: Optional[str] = typer.Option(None, "--detector-model", help="Detector model path"),
+        tracker_type: Optional[str] = typer.Option(None, "--tracker-type", help="Tracker type"),
+        db_enabled: Optional[bool] = typer.Option(None, "--db/--no-db", help="Enable/disable database"),
 ) -> None:
     """
     Create new EvilEye configuration file.
@@ -951,64 +1158,65 @@ def create(
     import json
     from pathlib import Path
     from evileye.controller.controller import Controller
-    
+
     # Handle list pipelines
     if list_pipelines:
         try:
             controller_instance = Controller()
             pipeline_classes = controller_instance.get_available_pipeline_classes()
-            
+
             if not pipeline_classes:
                 console.print("[yellow]No pipeline classes found.[/yellow]")
                 return
-            
+
             table = Table(title="Available Pipeline Classes")
             table.add_column("Index", style="cyan")
             table.add_column("Class Name", style="green")
-            
+
             for i, class_name in enumerate(pipeline_classes, 1):
                 table.add_row(str(i), class_name)
-            
+
             console.print(table)
             console.print(f"\n[blue]Total: {len(pipeline_classes)} pipeline class(es)[/blue]")
-            console.print("[blue]Use --pipeline <class_name> to specify a pipeline when creating a configuration.[/blue]")
+            console.print(
+                "[blue]Use --pipeline <class_name> to specify a pipeline when creating a configuration.[/blue]")
             return
-            
+
         except Exception as e:
             console.print(f"[red]Error listing pipeline classes: {e}[/red]")
             raise typer.Exit(1)
-    
+
     # Validate config_name is provided when not listing pipelines
     if not config_name:
         console.print("[red]Configuration name is required![/red]")
         console.print("[yellow]Usage: evileye create <config_name>[/yellow]")
         console.print("[yellow]Use --help for more information.[/yellow]")
         raise typer.Exit(1)
-    
+
     # Ensure output directory exists
     os.makedirs(output_dir, exist_ok=True)
-    
+
     # Determine output file path
     if not config_name.endswith('.json'):
         config_name += '.json'
-    
+
     output_path = os.path.join(output_dir, config_name)
-    
+
     # Check if file already exists
     if os.path.exists(output_path) and not force:
         console.print(f"[red]Configuration file '{output_path}' already exists![/red]")
         console.print("[yellow]Use --force to overwrite or choose a different name.[/yellow]")
         raise typer.Exit(1)
-    
+
     # Build optional parameters
     detector_params = {}
     if detector_model:
         detector_params['model_path'] = detector_model
-    
+
     tracker_params = {}
     if tracker_type:
         tracker_params['tracker_type'] = tracker_type
-    
+
     database_params = {}
     if db_enabled is not None:
         # Only pass safe database parameters (no credentials)
@@ -1017,14 +1225,14 @@ def create(
             "preview_width": 300,
             "preview_height": 150
         }
-    
+
     # Create configuration
     console.print(f"[blue]Creating configuration:[/blue]")
     console.print(f"   Pipeline: {pipeline}")
     console.print(f"   Sources: {sources}")
     console.print(f"   Source type: {source_type}")
     console.print(f"   Output: {output_path}")
-    
+
     try:
         controller_instance = Controller()
         config_data = controller_instance.create_config(
@@ -1035,15 +1243,15 @@ def create(
             tracker_params=tracker_params if tracker_params else None,
             database_params=database_params if database_params else None
         )
-        
+
         # Write configuration to file
         with open(output_path, 'w') as f:
             json.dump(config_data, f, indent=4)
-        
+
         console.print(f"[green]Configuration created successfully![/green]")
         console.print(f"   File: {output_path}")
         console.print(f"   Size: {os.path.getsize(output_path)} bytes")
-        
+
     except Exception as e:
         console.print(f"[red]Error creating configuration: {e}[/red]")
         raise typer.Exit(1)
@@ -1055,15 +1263,15 @@ def info() -> None:
     Display EvilEye system information.
     """
     from . import __version__
-    
+
     table = Table(title="EvilEye System Information")
     table.add_column("Property", style="cyan")
     table.add_column("Value", style="green")
-    
+
     table.add_row("Version", __version__)
     table.add_row("Python", sys.version)
     table.add_row("Platform", sys.platform)
-    
+
     # Check for GPU support
     try:
         import torch
@@ -1073,41 +1281,41 @@ def info() -> None:
             gpu_info = "Not available"
     except ImportError:
         gpu_info = "PyTorch not installed"
-    
+
     table.add_row("GPU Support", gpu_info)
-    
+
     # Check for OpenCV
     try:
         import cv2
         opencv_version = cv2.__version__
     except ImportError:
         opencv_version = "Not installed"
-    
+
     table.add_row("OpenCV", opencv_version)
-    
+
     console.print(table)
 
 
 def validate_config(config: dict) -> None:
     """Validate pipeline configuration"""
     required_sections = ["pipeline"]
-    
+
     for section in required_sections:
         if section not in config:
             raise ValueError(f"Missing required section: {section}")
-    
+
     pipeline_config = config.get("pipeline", {})
     required_pipeline_sections = ["sources"]
-    
+
     for section in required_pipeline_sections:
         if section not in pipeline_config:
             raise ValueError(f"Missing required pipeline section: {section}")
-    
+
     # Validate sources
     sources = pipeline_config.get("sources", [])
     if not sources:
         raise ValueError("At least one source must be configured")
-    
+
     for i, source in enumerate(sources):
         if "source" not in source:
             raise ValueError(f"Source {i}: missing 'source' field")
@@ -1120,16 +1328,16 @@ def get_config_description(config_file: Path) -> str:
     try:
         with open(config_file, 'r') as f:
             config = json.load(f)
-        
+
         pipeline_config = config.get("pipeline", {})
         sources = pipeline_config.get("sources", [])
-        
+
         if not sources:
             return "No sources configured"
-        
+
         source_types = [source.get("source", "unknown") for source in sources]
         return f"{len(sources)} source(s): {', '.join(source_types)}"
-        
+
     except Exception:
         return "Invalid configuration"
 

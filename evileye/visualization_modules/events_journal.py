@@ -11,6 +11,7 @@ try:
     from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor, QBrush, QPolygonF
     from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QModelIndex, QSize
     from PyQt6.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
+
     pyqt_version = 6
 except ImportError:
     from PyQt5.QtCore import QDate, QDateTime, QPointF
@@ -21,6 +22,7 @@ except ImportError:
     from PyQt5.QtGui import QPixmap, QPainter, QPen, QColor, QBrush, QPolygonF
     from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt, QTimer, QModelIndex, QSize
     from PyQt5.QtSql import QSqlQueryModel, QSqlDatabase, QSqlQuery
+
     pyqt_version = 5
 
 from .table_updater_view import TableUpdater
@@ -30,7 +32,8 @@ import logging
 
 
 class ImageDelegate(QStyledItemDelegate):
-    def __init__(self, parent=None, image_dir=None, db_connection_name='obj_conn', logger_name: str | None = None, parent_logger: logging.Logger | None = None):
+    def __init__(self, parent=None, image_dir=None, db_connection_name='obj_conn', logger_name: str | None = None,
+                 parent_logger: logging.Logger | None = None):
         super().__init__(parent)
         base_name = "evileye.image_delegate"
         full_name = f"{base_name}.{logger_name}" if logger_name else base_name
@@ -41,15 +44,15 @@ class ImageDelegate(QStyledItemDelegate):
     def paint(self, painter, option, index):
         if not index.isValid():
             return
-            
+
         path = index.data(Qt.ItemDataRole.DisplayRole)
         if not path:
             return
-            
+
         full_path = os.path.join(self.image_dir, path)
         if not os.path.exists(full_path):
             return
-            
+
         # Load image
         pixmap = QPixmap(full_path)
         if pixmap.isNull():
@@ -61,7 +64,7 @@ class ImageDelegate(QStyledItemDelegate):
         img_h = pixmap.height()
         if img_w <= 0 or img_h <= 0:
             return
-            
+
         cell_w = cell_rect.width()
         cell_h = cell_rect.height()
         scale = min(cell_w / img_w, cell_h / img_h)
@@ -69,24 +72,24 @@ class ImageDelegate(QStyledItemDelegate):
         draw_h = int(img_h * scale)
         draw_x = cell_rect.x() + (cell_w - draw_w) // 2
         draw_y = cell_rect.y() + (cell_h - draw_h) // 2
-        
+
         # Draw image
         painter.drawPixmap(draw_x, draw_y, draw_w, draw_h, pixmap)
-        
+
         # For preview images, coordinates are normalized relative to the original image size
         # but we need to scale them to the preview image size
         # Preview images are typically 320x240 or 300x150, but original images are much larger
         # So we need to use the preview image dimensions for coordinate conversion
-        
+
         # Try to get bounding box from database for this image
         try:
             from PyQt6.QtSql import QSqlDatabase, QSqlQuery
         except ImportError:
             from PyQt5.QtSql import QSqlDatabase, QSqlQuery
-            
+
         box = None
         zone_coords = None
-        
+
         # Query database for bounding box based on event type and column
         query = QSqlQuery(QSqlDatabase.database(self._db_connection_name))
         # Determine event type from model (column 1 holds 'Event') and current column (5 Preview, 6 Lost preview)
@@ -152,7 +155,8 @@ class ImageDelegate(QStyledItemDelegate):
                                 if len(parts) == 2:
                                     zone_coords.append((float(parts[0]), float(parts[1])))
                         elif isinstance(value1, (list, tuple)):
-                            zone_coords = [(float(p[0]), float(p[1])) for p in value1 if isinstance(p, (list, tuple)) and len(p) == 2]
+                            zone_coords = [(float(p[0]), float(p[1])) for p in value1 if
+                                           isinstance(p, (list, tuple)) and len(p) == 2]
                         elif hasattr(value1, 'toString'):
                             s = str(value1.toString()).strip('{}')
                             points_str = [p.strip('{} ') for p in s.split('},')]
@@ -163,22 +167,22 @@ class ImageDelegate(QStyledItemDelegate):
                                     zone_coords.append((float(parts[0]), float(parts[1])))
                     except Exception:
                         zone_coords = None
-        
+
         # Draw bounding box if available
         if box and len(box) == 4:
             painter.setPen(QPen(QColor(0, 255, 0), 2))  # Green for bbox
             # Use the same logic as in objects journal ImageWindow
             # Coordinates are in format [x1, y1, x2, y2] (top-left and bottom-right)
             x1, y1, x2, y2 = box
-            
+
             # Scale coordinates to draw area (same as ImageWindow logic)
             x = draw_x + int(x1 * draw_w)
             y = draw_y + int(y1 * draw_h)
             w = int((x2 - x1) * draw_w)
             h = int((y2 - y1) * draw_h)
-            
+
             painter.drawRect(x, y, w, h)
-        
+
         # Draw zone if available
         if zone_coords:
             painter.setPen(QPen(QColor(255, 0, 0), 2))  # Red for zone
@@ -186,11 +190,11 @@ class ImageDelegate(QStyledItemDelegate):
             polygon = QPolygonF()
             for point in zone_coords:
                 px, py = point
-                
+
                 # Use the same logic as bounding box - scale to draw area
                 x = draw_x + int(px * draw_w)
                 y = draw_y + int(py * draw_h)
-                
+
                 polygon.append(QPointF(x, y))
             painter.drawPolygon(polygon)
 
@@ -255,7 +259,8 @@ class EventsJournal(QWidget):
     preview_width = 300
     preview_height = 150
 
-    def __init__(self, table_name='objects', parent=None, logger_name: str | None = None, parent_logger: logging.Logger | None = None):
+    def __init__(self, table_name='objects', parent=None, logger_name: str | None = None,
+                 parent_logger: logging.Logger | None = None):
         super().__init__(parent)
         base_name = "evileye.events_journal"
         full_name = f"{base_name}.{logger_name}" if logger_name else base_name
@@ -291,56 +296,57 @@ class EventsJournal(QWidget):
         self.data_for_update = []
         self.last_update_time = None
         self.update_rate = 10
-        self.current_start_time = datetime.datetime.combine(datetime.datetime.now()-datetime.timedelta(days=1), datetime.time.min)
+        self.current_start_time = datetime.datetime.combine(datetime.datetime.now() - datetime.timedelta(days=1),
+                                                            datetime.time.min)
         self.current_end_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.max)
         self.start_time_updated = False
         self.finish_time_updated = False
         self.block_updates = False
         self.image_win = None
         self.filter_displayed = False
-        
+
         # Initialize data loading state
         self._data_loaded = False
         self.source_name_id_address = {}
         self.table = None
         self.model = None
         self._data_loader = None
-        
+
         # Show placeholder state
         self._init_ui_empty()
-        
+
         self.retrieve_data_signal.connect(self._retrieve_data)
-    
+
     def _init_ui_empty(self):
         """Инициализация пустого UI с placeholder"""
         placeholder_label = QLabel("Events journal\n\nData will be loaded when controller is initialized.")
         placeholder_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         placeholder_label.setStyleSheet("font-size: 14px; padding: 20px; color: gray;")
-        
+
         empty_layout = QVBoxLayout()
         empty_layout.addWidget(placeholder_label)
         self.setLayout(empty_layout)
-    
+
     def set_data(self, journal_adapters, db_controller, params, database_params, table_params):
         """Установить данные из controller (вызывается после controller.init())"""
         if not journal_adapters or not db_controller:
             return
-            
+
         self.journal_adapters = journal_adapters
         self.db_controller = db_controller
         self.params = params
         self.database_params = database_params
         self.db_table_params = table_params
-        
+
         # Сопоставляет имена событий с соответствующими им адаптерами
         self.events_adapters = {adapter.get_event_name(): adapter for adapter in self.journal_adapters}
         # Сопоставляет имена событий с именами таблиц БД
         self.events_tables = {adapter.get_event_name(): adapter.get_table_name() for adapter in self.journal_adapters}
-        
+
         # Используем утилиту для обеспечения полноты database_params
         from evileye.utils.database_config_utils import ensure_database_config_complete
         self.database_params = ensure_database_config_complete(self.database_params)
-        
+
         # Получаем значения с fallback на значения по умолчанию
         db_section = self.database_params.get('database', {})
         self.db_params = (
@@ -352,10 +358,10 @@ class EventsJournal(QWidget):
             db_section.get('image_dir', 'EvilEyeData')
         )
         self.username, self.password, self.db_name, self.host, self.port, self.image_dir = self.db_params
-        
+
         # Show loading state
         self._show_loading_state()
-        
+
         # Phase 2: Start data loading in background thread
         # Передаем уже дополненный database_params
         self._data_loader = EventsJournalDataLoader(
@@ -372,7 +378,7 @@ class EventsJournal(QWidget):
         # Получаем существующий layout или создаем новый
         current_layout = self.layout()
         self.logger.debug(f"Current layout from self.layout(): {current_layout}")
-        
+
         if not current_layout:
             # Если layout не существует, создаем новый
             self.logger.debug("No layout found, creating new QVBoxLayout")
@@ -400,25 +406,25 @@ class EventsJournal(QWidget):
                             nested_widget.deleteLater()
                     nested_layout.setParent(None)
                     nested_layout.deleteLater()
-        
+
         # Сохраняем ссылку на layout для использования в _initialize_with_data
         self._current_layout = current_layout
         self.logger.debug(f"Saved _current_layout: {self._current_layout}, id: {id(self._current_layout)}")
-        
+
         self.loading_label = QLabel("Loading events journal data...\nPlease wait...")
         self.loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.loading_label.setStyleSheet("font-size: 14px; padding: 20px;")
-        
+
         # Добавляем loading_label в существующий layout (не создаем новый)
         current_layout.addWidget(self.loading_label)
         self.logger.debug("_show_loading_state completed")
-    
+
     @pyqtSlot(str)
     def _update_loading_progress(self, message):
         """Update loading progress message"""
         if hasattr(self, 'loading_label'):
             self.loading_label.setText(f"Loading events journal data...\n{message}")
-    
+
     @pyqtSlot(dict)
     def _on_data_loaded(self, data):
         """Handle data loaded signal from background thread"""
@@ -428,17 +434,17 @@ class EventsJournal(QWidget):
             # Логируем ошибку вместо показа диалога
             # Keep loading state on error
             return
-        
+
         # Store loaded data
         self.source_name_id_address = data['source_name_id_address']
-        
+
         # Connect to database in main GUI thread (Qt requirement)
         self._db_connection_name = 'events_conn'
         if not self._connect_to_db():
             # Логируем ошибку вместо показа диалога (уже залогировано в _connect_to_db)
             self.logger.error("Failed to connect to database for events journal")
             return
-        
+
         # Initialize widget with loaded data
         # Use QTimer to defer initialization to next event loop iteration
         # This ensures widget is fully added to parent before we modify its layout
@@ -448,21 +454,21 @@ class EventsJournal(QWidget):
             QTimer.singleShot(100, self._initialize_with_data)
         else:
             QTimer.singleShot(0, self._initialize_with_data)
-        
+
         self._data_loaded = True
         self.logger.info("Events journal data loaded successfully")
-        
+
         # Force widget update to ensure it's visible
         self.show()
         self.update()
         QApplication.processEvents()
-    
+
     def _connect_to_db(self):
         """Connect to database in main GUI thread"""
         # Check if connection already exists
         if self._db_connection_name in QSqlDatabase.connectionNames():
             return True
-            
+
         db = QSqlDatabase.addDatabase("QPSQL", self._db_connection_name)
         db.setHostName(self.host)
         db.setDatabaseName(self.db_name)
@@ -475,22 +481,22 @@ class EventsJournal(QWidget):
             # Логируем ошибку вместо показа диалога
             return False
         return True
-    
+
     def _initialize_with_data(self):
         """Initialize widget with loaded data"""
         try:
             self.logger.info("_initialize_with_data started")
-            
+
             # Setup filter (requires source_name_id_address)
             self.logger.debug("Setting up filter...")
             self._setup_filter()
             self.logger.debug("Filter setup completed")
-            
+
             # Setup time layout (doesn't require data, but needs filter)
             self.logger.debug("Setting up time layout...")
             self._setup_time_layout()
             self.logger.debug("Time layout setup completed")
-            
+
             # Create empty table first (without model) to show UI immediately
             self.logger.debug("Creating table view...")
             self.table = QTableView()
@@ -506,26 +512,28 @@ class EventsJournal(QWidget):
             h_header.setDefaultSectionSize(EventsJournal.preview_width)
             v_header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
 
-            self.image_delegate = ImageDelegate(None, image_dir=self.image_dir, db_connection_name=self._db_connection_name, logger_name="image_delegate", parent_logger=self.logger)
+            self.image_delegate = ImageDelegate(None, image_dir=self.image_dir,
+                                                db_connection_name=self._db_connection_name,
+                                                logger_name="image_delegate", parent_logger=self.logger)
             self.date_delegate = DateTimeDelegate(None)
             self.table.setItemDelegateForColumn(0, self.date_delegate)  # Time
             self.table.setItemDelegateForColumn(4, self.date_delegate)  # Time lost
             self.table.setItemDelegateForColumn(5, self.image_delegate)  # Preview
             self.table.setItemDelegateForColumn(6, self.image_delegate)  # Lost preview
             self.logger.debug("Table view created")
-            
+
             # Replace loading layout with actual content
             if hasattr(self, 'loading_label'):
                 self.loading_label.hide()
                 self.loading_label.setParent(None)
                 self.loading_label.deleteLater()
                 delattr(self, 'loading_label')
-            
+
             # Получаем layout - используем сохраненную ссылку
             self.logger.debug("Getting layout...")
             current_layout = getattr(self, '_current_layout', None)
             self.logger.debug(f"_current_layout from getattr: {current_layout}, type: {type(current_layout)}")
-            
+
             # Проверяем, что layout валиден (не None и не удален)
             if current_layout is None:
                 self.logger.warning("_current_layout is None, trying self.layout()")
@@ -536,7 +544,7 @@ class EventsJournal(QWidget):
                 self.logger.warning("_current_layout is not a valid layout object, trying self.layout()")
                 current_layout = self.layout()
                 self.logger.debug(f"Got layout from self.layout(): {current_layout}")
-            
+
             # Если layout все еще не найден, создаем новый
             if current_layout is None:
                 self.logger.warning("No layout found after all checks, creating new layout as fallback")
@@ -546,7 +554,7 @@ class EventsJournal(QWidget):
                 except ImportError:
                     from PyQt5.QtWidgets import QApplication
                 QApplication.processEvents()
-                
+
                 # Проверяем еще раз после processEvents
                 current_layout = self.layout()
                 if current_layout is None:
@@ -559,11 +567,11 @@ class EventsJournal(QWidget):
                     else:
                         # Layout появился между проверками, используем его
                         current_layout = self.layout()
-            
+
             # Обновляем сохраненную ссылку
             self._current_layout = current_layout
             self.logger.debug("Layout obtained successfully")
-            
+
             # Remove all items from existing layout
             self.logger.debug("Clearing existing layout items...")
             while current_layout.count():
@@ -586,18 +594,18 @@ class EventsJournal(QWidget):
                     nested_layout.setParent(None)
                     nested_layout.deleteLater()
             self.logger.debug("Layout cleared")
-            
+
             # Reuse existing layout (NEVER call setLayout() here - layout is already set)
             self.logger.debug("Adding time layout and table to layout...")
             current_layout.addLayout(self.time_layout)
             current_layout.addWidget(self.table)
             self.layout = current_layout
             self.logger.debug("Layout updated with new content")
-            
+
             # Connect table signals
             self.logger.debug("Connecting table signals...")
             self.table.doubleClicked.connect(self._display_image)
-            
+
             # Setup model synchronously (as in working commit dcc28d3c)
             # Create empty model first, data will be loaded in showEvent via _retrieve_data()
             self.logger.debug("Creating empty model...")
@@ -612,15 +620,15 @@ class EventsJournal(QWidget):
             self.logger.debug("Setting empty model to table...")
             self.table.setModel(self.model)
             self.logger.debug("Empty model set to table successfully")
-            
+
             # Add automatic data refresh
             self.logger.debug("Setting up refresh timer...")
             self.refresh_timer = QTimer()
             self.refresh_timer.timeout.connect(self._auto_refresh_data)
             self.refresh_timer.start(5000)  # Refresh every 5 seconds
-            
+
             self.logger.info("_initialize_with_data completed successfully")
-            
+
         except Exception as e:
             self.logger.error(f"Error in _initialize_with_data: {e}", exc_info=True)
             # Try to show error state
@@ -635,7 +643,7 @@ class EventsJournal(QWidget):
                     self._current_layout.addWidget(error_label)
             except Exception as e2:
                 self.logger.error(f"Failed to show error state: {e2}", exc_info=True)
-    
+
     def _setup_table(self):
         self._setup_model()
 
@@ -654,7 +662,8 @@ class EventsJournal(QWidget):
         h_header.setDefaultSectionSize(EventsJournal.preview_width)
         v_header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
 
-        self.image_delegate = ImageDelegate(None, image_dir=self.image_dir, db_connection_name=self._db_connection_name, logger_name="image_delegate", parent_logger=self.logger)
+        self.image_delegate = ImageDelegate(None, image_dir=self.image_dir, db_connection_name=self._db_connection_name,
+                                            logger_name="image_delegate", parent_logger=self.logger)
         self.date_delegate = DateTimeDelegate(None)
         self.table.setItemDelegateForColumn(0, self.date_delegate)  # Time
         self.table.setItemDelegateForColumn(4, self.date_delegate)  # Time lost
@@ -664,7 +673,7 @@ class EventsJournal(QWidget):
     def _setup_model(self):
         if not self.journal_adapters:
             return
-            
+
         self.model = QSqlQueryModel()
 
         query_string = 'SELECT * FROM ('
@@ -673,7 +682,7 @@ class EventsJournal(QWidget):
             query_string += adapter_query + ' UNION '
         query_string = query_string.removesuffix(' UNION ')
         query_string += ') AS temp ORDER BY time_stamp DESC;'
-        
+
         query = QSqlQuery(QSqlDatabase.database(self._db_connection_name))
         if query.prepare(query_string):
             if query.exec():
@@ -707,7 +716,7 @@ class EventsJournal(QWidget):
             self.camera_filter_layout.addWidget(self.filters)
             self.camera_filter_layout.addStretch(1)
             self.logger.debug("_setup_filter completed successfully")
-            
+
         except Exception as e:
             self.logger.error(f"Error in _setup_filter: {e}", exc_info=True)
             raise
@@ -757,9 +766,10 @@ class EventsJournal(QWidget):
             self.retrieve_data_signal.emit()
             self.table.resizeRowsToContents()
         show_event.accept()
-#        self.start_time_update()
-#        self.finish_time_update()
-#        self._filter_by_time()
+
+    #        self.start_time_update()
+    #        self.finish_time_update()
+    #        self._filter_by_time()
 
     @pyqtSlot(QModelIndex)
     def _display_image(self, index):
@@ -838,7 +848,8 @@ class EventsJournal(QWidget):
                         if tmp:
                             zone_coords = tmp
                     elif isinstance(value1, (list, tuple)):
-                        zone_coords = [(float(p[0]), float(p[1])) for p in value1 if isinstance(p, (list, tuple)) and len(p) == 2]
+                        zone_coords = [(float(p[0]), float(p[1])) for p in value1 if
+                                       isinstance(p, (list, tuple)) and len(p) == 2]
                     elif hasattr(value1, 'toString'):
                         s = str(value1.toString()).strip('{}')
                         pts = [p.strip('{} ') for p in s.split('},')]
@@ -920,7 +931,8 @@ class EventsJournal(QWidget):
 
         fields = self.db_table_params.keys()
         if camera_name == 'All':
-            if (self.current_start_time == datetime.datetime.combine(datetime.datetime.now()-datetime.timedelta(days=1), datetime.time.min) and
+            if (self.current_start_time == datetime.datetime.combine(
+                    datetime.datetime.now() - datetime.timedelta(days=1), datetime.time.min) and
                     self.current_end_time == datetime.datetime.combine(datetime.datetime.now(), datetime.time.max)):
                 self.block_updates = False
             self._filter_records(self.current_start_time, self.current_end_time)
@@ -978,11 +990,12 @@ class EventsJournal(QWidget):
                 query_string += adapter_query + ' UNION '
             query_string = query_string.removesuffix(' UNION ')
             query_string += ') AS temp WHERE time_stamp BETWEEN :start AND :finish ORDER BY time_stamp DESC;'
-            
+
             # Set time range
-            self.current_start_time = datetime.datetime.combine(datetime.datetime.now()-datetime.timedelta(days=1), datetime.time.min)
+            self.current_start_time = datetime.datetime.combine(datetime.datetime.now() - datetime.timedelta(days=1),
+                                                                datetime.time.min)
             self.current_end_time = datetime.datetime.combine(datetime.datetime.now(), datetime.time.max)
-            
+
             # Update filter controls
             self.start_time.setDateTime(
                 QDateTime.fromString(self.current_start_time.strftime("%H:%M:%S %d-%m-%Y"), "hh:mm:ss dd-MM-yyyy"))
@@ -994,12 +1007,12 @@ class EventsJournal(QWidget):
             query.prepare(query_string)
             query.bindValue(":start", self.current_start_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
             query.bindValue(":finish", self.current_end_time.strftime('%Y-%m-%d %H:%M:%S.%f'))
-            
+
             if query.exec():
                 self.model.setQuery(query)
             else:
                 self.logger.error(f"Events query failed: {query.lastError().text()}")
-                
+
         except Exception as e:
             self.logger.error(f"Retrieve data error: {e}")
 
@@ -1026,7 +1039,6 @@ class EventsJournal(QWidget):
             self.refresh_timer.stop()
         if hasattr(self, '_db_connection_name') and self._db_connection_name:
             QSqlDatabase.removeDatabase(self._db_connection_name)
-
 
     # def _update_job_first_last_records(self):
     #     job_id = self.db_controller.get_job_id()

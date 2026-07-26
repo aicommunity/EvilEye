@@ -9,9 +9,11 @@ from typing import Optional, Dict
 
 try:
     from PyQt6.QtWidgets import QWidget
+
     pyqt_version = 6
 except ImportError:
     from PyQt5.QtWidgets import QWidget
+
     pyqt_version = 5
 
 # Add parent directory to path for imports
@@ -24,7 +26,7 @@ import logging
 
 class UnifiedJournalBase(QWidget):
     """Базовый класс для унифицированных журналов с общими методами"""
-    
+
     def __init__(self, data_source: EventJournalDataSource, base_dir: str = None,
                  parent=None, logger_name: str | None = None, parent_logger: logging.Logger | None = None):
         """Инициализация базового журнала
@@ -37,9 +39,9 @@ class UnifiedJournalBase(QWidget):
             parent_logger: Родительский логгер
         """
         super().__init__(parent)
-        
+
         self.data_source = data_source
-        
+
         # Получить base_dir из data_source если не указан
         if base_dir:
             self.base_dir = base_dir
@@ -50,10 +52,10 @@ class UnifiedJournalBase(QWidget):
             else:
                 base_dir_attr = getattr(data_source, 'base_dir', None)
                 self.base_dir = base_dir_attr if base_dir_attr else ''
-        
+
         # Кэш для разрешенных путей к изображениям
         self._image_path_cache = {}
-        
+
         # Инициализировать логгер
         if parent_logger:
             self.logger = parent_logger
@@ -61,7 +63,7 @@ class UnifiedJournalBase(QWidget):
             self.logger = logging.getLogger(logger_name)
         else:
             self.logger = logging.getLogger(self.__class__.__name__)
-    
+
     def _resolve_image_path(self, img_path: str, event_data: Optional[dict] = None) -> Optional[str]:
         """Разрешить путь к изображению в полный абсолютный путь
         
@@ -76,7 +78,7 @@ class UnifiedJournalBase(QWidget):
         return JournalPathResolver.resolve_image_path(
             img_path, self.base_dir, event_data, journal_type, self._image_path_cache
         )
-    
+
     def _resolve_frame_path(self, preview_path: str, event_data: Optional[dict] = None) -> Optional[str]:
         """Разрешить путь к frame изображению из preview пути
         
@@ -89,7 +91,7 @@ class UnifiedJournalBase(QWidget):
         """
         journal_type = 'objects' if 'objects' in self.__class__.__name__.lower() else 'events'
         return JournalPathResolver.resolve_frame_path(preview_path, journal_type)
-    
+
     def _normalize_bbox(self, box, img_path: str = '') -> Optional[list]:
         """Нормализовать координаты bounding box в формат [x1, y1, x2, y2] в диапазоне [0,1]
         

@@ -7,7 +7,7 @@ from typing import Optional, Tuple, List, Dict
 
 class EventMetadataExtractor:
     """Класс для извлечения метаданных событий из различных источников"""
-    
+
     @staticmethod
     def get_bbox_and_zone(event_data: dict, is_lost: bool = False) -> Tuple[Optional[List[float]], Optional[List]]:
         """Извлечь bounding box и zone coordinates из данных события
@@ -27,52 +27,52 @@ class EventMetadataExtractor:
         """
         if not event_data:
             return None, None
-        
+
         event_type = event_data.get('event_type', '')
         box = None
         zone_coords = None
-        
+
         # Обработать разные типы событий
         if event_type in ('zone_entered', 'zone_left'):
             # ZoneEvent: использовать box_entered/box_left или bounding_box/lost_bounding_box
             if is_lost:
                 # Попробовать разные варианты полей
-                box = (event_data.get('box_left') or 
-                      event_data.get('lost_bounding_box') or 
-                      event_data.get('bounding_box'))
+                box = (event_data.get('box_left') or
+                       event_data.get('lost_bounding_box') or
+                       event_data.get('bounding_box'))
             else:
-                box = (event_data.get('box_entered') or 
-                      event_data.get('bounding_box'))
-            
+                box = (event_data.get('box_entered') or
+                       event_data.get('bounding_box'))
+
             zone_coords = event_data.get('zone_coords')
-            
+
         elif event_type in ('attr_found', 'attr_lost'):
             # AttributeEvent: использовать box_found/box_finished или bounding_box/lost_bounding_box
             if is_lost:
-                box = (event_data.get('box_finished') or 
-                      event_data.get('lost_bounding_box') or 
-                      event_data.get('bounding_box'))
+                box = (event_data.get('box_finished') or
+                       event_data.get('lost_bounding_box') or
+                       event_data.get('bounding_box'))
             else:
-                box = (event_data.get('box_found') or 
-                      event_data.get('bounding_box'))
-            
+                box = (event_data.get('box_found') or
+                       event_data.get('bounding_box'))
+
         elif event_type in ('found', 'lost', 'ObjectEvent'):
             # ObjectEvent: использовать bounding_box
             box = event_data.get('bounding_box') or event_data.get('box')
-            
+
         else:
             # Fallback: попробовать общие поля
             if is_lost:
-                box = (event_data.get('lost_bounding_box') or 
-                      event_data.get('bounding_box') or 
-                      event_data.get('box'))
+                box = (event_data.get('lost_bounding_box') or
+                       event_data.get('bounding_box') or
+                       event_data.get('box'))
             else:
                 box = event_data.get('bounding_box') or event_data.get('box')
-            
+
             zone_coords = event_data.get('zone_coords')
-        
+
         return box, zone_coords
-    
+
     @staticmethod
     def normalize_bbox_for_display(box, img_w: int, img_h: int) -> Optional[List[float]]:
         """Нормализовать bounding box для отображения с учетом размеров изображения
@@ -87,7 +87,7 @@ class EventMetadataExtractor:
         """
         if not box or img_w <= 0 or img_h <= 0:
             return None
-        
+
         try:
             # Обработать dict формат
             if isinstance(box, dict):
@@ -95,29 +95,33 @@ class EventMetadataExtractor:
                 y = float(box.get('y', 0))
                 w = float(box.get('width', 0))
                 h = float(box.get('height', 0))
-                
+
                 # Если координаты уже нормализованы
                 if max(x, y, w, h) <= 1.0:
                     return [x, y, x + w, y + h]
                 else:
                     # Нормализовать
                     return [x / img_w, y / img_h, (x + w) / img_w, (y + h) / img_h]
-            
+
             # Обработать list/tuple формат
             elif isinstance(box, (list, tuple)) and len(box) == 4:
                 a, b, c, d = [float(x) for x in box]
-                
-                # Если уже нормализовано [x1, y1, x2, y2]
+
                 if max(a, b, c, d) <= 1.0:
-                    return [a, b, c, d]
-                else:
-                    # Предполагаем [x, y, w, h] в пикселях
-                    return [a / img_w, b / img_h, (a + c) / img_w, (b + d) / img_h]
+                    if c >= a and d >= b:
+                        return [a, b, c, d]
+                    return [a, b, a + c, b + d]
+
+                x, y, w, h = a, b, c, d
+                if w > 0 and h > 0 and w < img_w * 2 and h < img_h * 2:
+                    return [x / img_w, y / img_h, (x + w) / img_w, (y + h) / img_h]
+                x1, y1, x2, y2 = a, b, c, d
+                return [x1 / img_w, y1 / img_h, x2 / img_w, y2 / img_h]
         except Exception:
             pass
-        
+
         return None
-    
+
     @staticmethod
     def normalize_zone_coords(zone_coords, img_w: int, img_h: int) -> Optional[List[Tuple[float, float]]]:
         """Нормализовать координаты зоны для отображения
@@ -132,32 +136,32 @@ class EventMetadataExtractor:
         """
         if not zone_coords or img_w <= 0 or img_h <= 0:
             return None
-        
+
         try:
             # Если строка, распарсить
             if isinstance(zone_coords, str):
                 zone_coords = EventMetadataExtractor._parse_zone_coords_string(zone_coords)
-            
+
             # Если список кортежей
             if isinstance(zone_coords, (list, tuple)):
                 normalized = []
                 for coord in zone_coords:
                     if isinstance(coord, (list, tuple)) and len(coord) == 2:
                         px, py = float(coord[0]), float(coord[1])
-                        
+
                         # Если координаты уже нормализованы
                         if px <= 1.0 and py <= 1.0:
                             normalized.append((px, py))
                         else:
                             # Нормализовать
                             normalized.append((px / img_w, py / img_h))
-                
+
                 return normalized if normalized else None
         except Exception:
             pass
-        
+
         return None
-    
+
     @staticmethod
     def _parse_zone_coords_string(zone_str: str) -> Optional[List[Tuple[float, float]]]:
         """Распарсить строку координат зоны из БД формата"""

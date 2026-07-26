@@ -1,9 +1,11 @@
 import os
-import json
 import datetime
+from .json_event_io import append_json_record
+from .event_image_paths import ensure_event_image_dirs
 import copy
 import cv2
 from .db_adapter import DatabaseAdapterBase
+from .image_storage_service import ImageStorageService
 
 
 class JsonAdapterZoneEvents(DatabaseAdapterBase):
@@ -29,9 +31,15 @@ class JsonAdapterZoneEvents(DatabaseAdapterBase):
 
     def init_impl(self):
         os.makedirs(self.base_dir, exist_ok=True)
+        # Keep preview dimensions consistent with legacy JSON adapters (320x240)
+        self._image_storage = ImageStorageService(self.image_dir, preview_width=320, preview_height=240, logger=None)
 
     def start(self):
         self.run_flag = True
+
+    def _process_queue_item(self, item):
+        """JSON адаптер не использует очередь; метод требуется базовым классом."""
+        return
 
     def stop(self):
         self.run_flag = False
@@ -53,14 +61,6 @@ class JsonAdapterZoneEvents(DatabaseAdapterBase):
         file_name = 'zone_events_left.json' if is_update else 'zone_events_entered.json'
         file_path = os.path.join(metadata_dir, file_name)
 
-        records = []
-        if os.path.isfile(file_path):
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    records = json.load(f) or []
-            except Exception:
-                records = []
-
         ts = (event.time_left or event.time_entered)
         preview_rel, frame_rel = self._save_images(day_dir, event, is_update)
 
@@ -69,9 +69,9 @@ class JsonAdapterZoneEvents(DatabaseAdapterBase):
         img = event.img_left if is_update else event.img_entered
         if box and img is not None and hasattr(img, 'image'):
             ih, iw = img.image.shape[:2]
-            bx, by, bw, bh = box
+            x1, y1, x2, y2 = box
             if iw and ih:
-                box = [bx/iw, by/ih, bw/iw, bh/ih]
+                box = [x1 / iw, y1 / ih, x2 / iw, y2 / ih]
 
         rec = {
             'event_id': event.event_id,
@@ -84,37 +84,30 @@ class JsonAdapterZoneEvents(DatabaseAdapterBase):
             'preview_path': preview_rel,
             'frame_path': frame_rel,
         }
-        records.append(rec)
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(records, f, ensure_ascii=False, indent=2)
+        append_json_record(file_path, rec)
 
     def _save_images(self, day_dir: str, event, is_update: bool):
         # Новые каталоги: Events/.../Images/FoundFrames/FoundPreviews/LostFrames/LostPreviews
         ts = (event.time_left if is_update else event.time_entered)
         ts_str = ts.strftime('%Y-%m-%d_%H-%M-%S-%f') if is_update else ts.strftime('%Y-%m-%d_%H-%M-%S.%f')
-        images_dir = os.path.join(day_dir, 'Images')
-        if is_update:
-            # Lost event (zone_left)
-            previews_dir = os.path.join(images_dir, 'LostPreviews')
-            frames_dir = os.path.join(images_dir, 'LostFrames')
-        else:
-            # Found event (zone_entered)
-            previews_dir = os.path.join(images_dir, 'FoundPreviews')
-            frames_dir = os.path.join(images_dir, 'FoundFrames')
-        os.makedirs(previews_dir, exist_ok=True)
-        os.makedirs(frames_dir, exist_ok=True)
+        previews_dir, frames_dir = ensure_event_image_dirs(day_dir, is_lost=is_update)
 
         image = event.img_left if is_update else event.img_entered
         if image is None or not hasattr(image, 'image'):
             return '', ''
 
-        preview = cv2.resize(copy.deepcopy(image.image), (320, 240), cv2.INTER_NEAREST)
         preview_name = f'{ts_str}_src{event.source_id}_zone{event.zone.get_zone_id()}_preview.jpeg'
         frame_name = f'{ts_str}_src{event.source_id}_zone{event.zone.get_zone_id()}_frame.jpeg'
-        cv2.imwrite(os.path.join(previews_dir, preview_name), preview)
-        cv2.imwrite(os.path.join(frames_dir, frame_name), image.image)
-        preview_rel = os.path.relpath(os.path.join(previews_dir, preview_name), self.image_dir)
-        frame_rel = os.path.relpath(os.path.join(frames_dir, frame_name), self.image_dir)
+        preview_abs = os.path.join(previews_dir, preview_name)
+        frame_abs = os.path.join(frames_dir, frame_name)
+
+        preview_rel = os.path.relpath(preview_abs, self.image_dir)
+        frame_rel = os.path.relpath(frame_abs, self.image_dir)
+
+        if getattr(self, "_image_storage", None):
+            self._image_storage.save_image_simple(preview_rel, frame_rel, image)
+        else:
+            preview = ImageStorageService.resize_preserving_aspect(image.image.copy(), 320, 240)
+            cv2.imwrite(preview_abs, preview)
+            cv2.imwrite(frame_abs, image.image)
         return preview_rel, frame_rel
-
-

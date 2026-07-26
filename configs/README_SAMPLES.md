@@ -4,12 +4,26 @@ This directory contains sample configurations for EvilEye system.
 
 ## Available Samples:
 
-### 🎬 Video Processing
+### Video Processing
 - **single_video.json** - Single video file processing (planes_sample.mp4)
 - **single_video_split.json** - Single video with 2-way split processing (sample_split.mp4)
 - **multi_videos.json** - Multiple video files with multi-camera tracking (6p-c0.avi, 6p-c1.avi)
+- **single_video_gstreamer.json** - Single video file processing with GStreamer backend (planes_sample.mp4)
 
-### 📹 IP Camera Processing  
+### GStreamer Backend Examples
+- **ip_camera_gstreamer.json** - IP camera stream processing with GStreamer backend (RTSP)
+- **usb_camera_gstreamer.json** - USB camera processing with GStreamer backend (/dev/video0)
+- **image_sequence_gstreamer_jpg.json** - JPEG image sequence processing with GStreamer backend
+- **image_sequence_gstreamer_folder.json** - All images in folder processing with GStreamer backend
+
+### RT-DETR Detector Examples
+- **single_video_rtdetr.json** - Single video with RT-DETR detector (planes_sample.mp4)
+- **multi_videos_rtdetr.json** - Multiple videos with RT-DETR detector (6p-c0.avi, 6p-c1.avi)
+
+### RF-DETR Detector Examples
+- **single_video_rfdetr.json** - Single video with RF-DETR detector (planes_sample.mp4)
+
+### IP Camera Processing  
 - **single_ip_camera.json** - Single IP camera stream processing
 
 ## Video Files:
@@ -19,6 +33,20 @@ The following video files are downloaded to `videos/` directory:
 - **sample_split.mp4** - Video with two camera views for split processing
 - **6p-c0.avi** - Multi-camera tracking video (camera 0)
 - **6p-c1.avi** - Multi-camera tracking video (camera 1)
+
+## Thread mode (no multiprocessing)
+
+For the main poly setups, thread-mode copies use suffix `-thread.json`
+(`execution_mode: thread` on sources, detectors, and trackers):
+
+| Multiprocess (default) | Thread mode |
+|------------------------|-------------|
+| `poly-videos-gst.json` | `poly-videos-gst-thread.json` |
+| `poly-videos.json` | `poly-videos-thread.json` |
+| `poly-cameras-gstreamer.json` | `poly-cameras-gstreamer-thread.json` |
+| `poly-cameras.json` | `poly-cameras-thread.json` |
+
+PyCharm run configs: `process-poly-*-thread` in `.idea/runConfigurations/`.
 
 ## Usage:
 
@@ -34,6 +62,20 @@ evileye run configs/multi_videos.json
 
 # Run IP camera example
 evileye run configs/single_ip_camera.json
+
+# Run RT-DETR examples
+evileye run configs/single_video_rtdetr.json
+evileye run configs/multi_videos_rtdetr.json
+
+# Run RF-DETR example
+evileye run configs/single_video_rfdetr.json
+
+# Run GStreamer examples
+evileye run configs/single_video_gstreamer.json
+evileye run configs/ip_camera_gstreamer.json
+evileye run configs/usb_camera_gstreamer.json
+evileye run configs/image_sequence_gstreamer_jpg.json
+evileye run configs/image_sequence_gstreamer_folder.json
 ```
 
 ## Configuration Features:
@@ -60,6 +102,19 @@ evileye run configs/single_ip_camera.json
 - IP camera stream processing
 - Real-time object detection
 - Enhanced text rendering
+
+### RT-DETR Detectors
+- **single_video_rtdetr.json** - Single video with RT-DETR detector
+- **multi_videos_rtdetr.json** - Multiple videos with RT-DETR detector
+- Uses Ultralytics RT-DETR model (rtdetr-l.pt)
+- Real-time detection transformer architecture
+- High accuracy object detection
+
+### RF-DETR Detector
+- **single_video_rfdetr.json** - Single video with RF-DETR detector
+- Uses Roboflow RF-DETR model (rfdetr-nano)
+- Transformer-based real-time detection
+- Optimized for speed and accuracy
 
 ## Notes:
 

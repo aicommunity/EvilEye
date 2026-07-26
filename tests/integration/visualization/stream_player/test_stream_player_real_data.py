@@ -34,6 +34,11 @@ from evileye.visualization_modules.stream_player_components import (
     VideoGridWidget, TimelineWidget, CameraSelectorWidget
 )
 
+pytestmark = pytest.mark.skipif(
+    os.environ.get("EVILEYE_RUN_REAL_DATA_TESTS", "").strip().lower() not in {"1", "true", "yes", "on"},
+    reason="Real-data stream player tests are disabled by default (set EVILEYE_RUN_REAL_DATA_TESTS=1 to enable).",
+)
+
 
 @pytest.fixture(scope="session")
 def qapp():
@@ -41,7 +46,6 @@ def qapp():
     if not QApplication.instance():
         app = QApplication(sys.argv)
         yield app
-        app.quit()
     else:
         yield QApplication.instance()
 
@@ -69,9 +73,17 @@ def real_config():
 
 
 @pytest.fixture
-def real_streams_date():
-    """Фикстура для реальной даты потоков"""
-    return "2026-01-06"
+def real_streams_date(real_base_dir):
+    """Фикстура для реальной даты потоков (выбирает существующую)."""
+    streams_root = Path(real_base_dir) / "Streams"
+    if not streams_root.exists():
+        pytest.skip(f"Streams root does not exist: {streams_root}")
+    date_dirs = [p for p in streams_root.iterdir() if p.is_dir()]
+    if not date_dirs:
+        pytest.skip(f"No date folders in: {streams_root}")
+    # Prefer newest by folder name (YYYY-MM-DD), fallback to mtime
+    date_dirs_sorted = sorted(date_dirs, key=lambda p: (p.name, p.stat().st_mtime), reverse=True)
+    return date_dirs_sorted[0].name
 
 
 @pytest.fixture

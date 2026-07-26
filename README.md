@@ -35,7 +35,7 @@ cd EvilEye
 pip install -e "."
 
 # Fix entry points
-python fix_entry_points.py
+python scripts/setup/fix_entry_points.py
 
 Next you can use the 'evileye' command to work, or if the command does not work:
 python3 -m evileye.cli_wrapper
@@ -128,16 +128,13 @@ The `credentials.json` file contains database and camera access credentials:
     }
   },
   "database": {
-    "user_name": "postgres",
-    "password": "your_db_password",
-    "database_name": "evil_eye_db",
-    "host_name": "localhost",
-    "port": 5432,
-    "default_database_name": "postgres",
-    "default_password": "your_default_password",
-    "default_user_name": "postgres",
-    "default_host_name": "localhost",
-    "default_port": 5432
+    "admin_user_name": "postgres",
+    "admin_password": "your_db_password"
+  },
+  "web_auth": {
+    "enabled": false,
+    "username": "admin",
+    "password": "change_me"
   }
 }
 ```
@@ -509,7 +506,7 @@ evileye create my_config --sources 2 --source-type video_file
 evileye run configs/my_config.json
 
 # Start FastAPI web server
-evileye server --host 0.0.0.0 --port 8080
+evileye server --host 0.0.0.0 --port 8181
 
 # Validate configuration file
 evileye validate configs/my_config.json
@@ -591,7 +588,7 @@ evileye-launch configs/my_config.json
 FastAPI web server for remote access and API integration:
 
 ```bash
-# Start web server with default settings (127.0.0.1:8080)
+# Start web server with default settings (127.0.0.1:8181)
 evileye server
 
 # Start on specific host and port
@@ -609,22 +606,28 @@ evileye server --log-level debug
 
 **Options:**
 - `--host HOST` - Bind host (default: 127.0.0.1)
-- `--port PORT` - Bind port (default: 8080)
-- `--reload` / `--no-reload` - Auto-reload on code changes (default: enabled)
-- `--workers N` - Number of worker processes (default: 1)
+- `--port PORT` - Bind port (default: 8181)
+- `--reload` / `--no-reload` - Request reload (currently not supported when passing the app instance; server logs a warning and runs without reload)
+- `--workers N` - Worker count (values other than `1` are ignored; API uses in-process shared state)
 - `--config CONFIG` - Auto-run selected config after server starts
 - `--log-level LEVEL` - Logging level (default: info)
 - `--verbose` - Enable verbose logging
 
 **API Documentation:**
-- Interactive API docs: `http://localhost:8080/docs`
-- ReDoc documentation: `http://localhost:8080/redoc`
-- OpenAPI schema: `http://localhost:8080/openapi.json`
+- Interactive API docs: `http://localhost:8181/docs`
+- ReDoc documentation: `http://localhost:8181/redoc`
+- OpenAPI schema: `http://localhost:8181/openapi.json`
+
+**Веб-интерфейс (frontend):** лёгкое SPA на TypeScript доступно по адресу `http://localhost:8181/` после однократной сборки:
+```bash
+cd evileye/api/frontend && npm install && npm run build
+```
+Подробности в `evileye/api/frontend/README.md`.
 
 **Alternative entry point:**
 ```bash
 # Use evileye-srv as alternative entry point
-evileye-srv --host 0.0.0.0 --port 8080
+evileye-srv --host 0.0.0.0 --port 8181
 ```
 
 ### Configuration Creator (`evileye create`)
@@ -772,36 +775,32 @@ evileye run configs/automated_config.json
 evileye-process --config configs/headless_config.json --no-gui
 
 # Use web server for API integration
-evileye server --host 0.0.0.0 --port 8080 --config configs/api_config.json
+evileye server --host 0.0.0.0 --port 8181 --config configs/api_config.json
 ```
 
 ## Development
 
 ### Project Structure
 
+См. полное описание в [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Кратко:
+
 ```
-evileye/
-├── core/                    # Core pipeline components
-│   ├── pipeline.py         # Base pipeline class
-│   ├── processor_base.py   # Base processor class
-│   └── ...
-├── pipelines/              # Pipeline implementations
-│   └── pipeline_surveillance.py
-├── object_detector/        # Object detection modules
-├── object_tracker/         # Object tracking modules
-├── object_multi_camera_tracker/  # Multi-camera tracking
-├── events_detectors/       # Event detection
-├── database_controller/    # Database integration
-├── visualization_modules/  # Main application GUI components
-├── configs/               # Configuration files
-├── tests/                 # Test suite
-├── evileye/               # Package entry points
-│   ├── cli.py            # Command-line interface
-│   ├── launch.py         # Configuration GUI launcher
-│   └── __init__.py       # Package initialization
-├── pyproject.toml        # Project configuration
-├── Makefile              # Development commands
-└── README.md             # This file
+EvilEye/                      # repository root
+├── evileye/                  # Python package
+│   ├── core/                 # pipeline_base, processors, MP, frame transport
+│   ├── pipelines/            # PipelineSurveillance, PipelineCapture, …
+│   ├── controller/           # Controller + services
+│   ├── object_detector/      # YOLO / RT-DETR / RF-DETR
+│   ├── capture/              # OpenCV / GStreamer sources
+│   ├── api/                  # FastAPI + frontend
+│   ├── visualization_modules/
+│   ├── cli.py, process.py, server.py, launch.py
+│   └── samples_configs/      # sample JSON (deploy-samples)
+├── configs/                  # working configs (not inside package)
+├── tests/                    # unit + integration
+├── docs/                     # architecture and guides
+├── TECH_DEBT.md              # technical debt ledger
+└── pyproject.toml
 ```
 
 ## Architecture
@@ -864,7 +863,7 @@ evileye create --list-pipelines
 
 #### Creating Custom Pipelines
 
-Create custom pipelines by extending the base `Pipeline` class and placing them in a local `pipelines/` folder:
+Create custom pipelines by extending `PipelineProcessors` (or `PipelineBase` for simpler flows) and placing them in a local `pipelines/` folder:
 
 ```python
 from evileye.core.pipeline_processors import PipelineProcessors
@@ -889,14 +888,23 @@ For more details on creating pipelines, see [Pipeline Architecture Guide](docs/P
 Detailed documentation is located in the [docs/](docs/) folder:
 
 - **[Main Documentation Index](docs/README.md)** - Navigation for all documentation
-- **[System Architecture](docs/ARCHITECTURE.md)** - Complete architecture description at 7 levels of abstraction with diagrams
+- **[System Architecture](docs/ARCHITECTURE.md)** - Updated architecture for `mt_refactoring2`
+- **[Pipeline Architecture](docs/PIPELINE_ARCHITECTURE.md)** - End-to-end contracts and processing stages
+- **[Multiprocessing](docs/MULTIPROCESSING.md)** - `MpControl`/`MpWorker` lifecycle and restart policies
+- **[Thread vs MP contracts](docs/thread_vs_mp_contracts.md)** - `execution_mode`, `MpAsyncBridge`, COUP/DUP registry
+- **[Dual-mode developer guide](docs/developing_dual_mode_modules.md)** - Adding new thread/process modules
+- **[Doc audit matrix](docs/DOC_AUDIT_MATRIX.md)** - Documentation freshness tracker
+- **[Post-refactor gate](reports/mp_refactor_gate/e2e_gate_summary.md)** - E2E/soak after R0–R6
+- **[Configuration Guide](docs/CONFIGURATION_GUIDE.md)** - Current config map and migration notes
+- **[Branch Change Report](docs/MT_REFACTORING2_CHANGES.md)** - Detailed changes in `mt_refactoring2` vs `mt_refactoring`
 
 ### Main Documentation Sections
 
 #### Architecture and Design
 
-- **[System Architecture](docs/ARCHITECTURE.md)** - Detailed architecture description at all levels (CLI, Controller, Pipeline, Video, Objects, Events, Database) with interactive Mermaid diagrams and static UML diagrams
-- **[Pipeline Architecture](docs/PIPELINE_ARCHITECTURE.md)** - Pipeline architecture description, base classes, and ways to create custom pipelines
+- **[System Architecture](docs/ARCHITECTURE.md)** - Current layered architecture and runtime orchestration
+- **[Pipeline Architecture](docs/PIPELINE_ARCHITECTURE.md)** - DTO contracts and stage-by-stage data-flow
+- **[Multiprocessing](docs/MULTIPROCESSING.md)** - Process mode model, worker lifecycle, and KPI context
 - **[GUI Refactoring Guide](docs/GUI_REFACTORING_GUIDE.md)** - GUI system architecture, components, and best practices
 
 #### Installation and Setup
@@ -939,7 +947,7 @@ Historical development reports are located in the [reports/](reports/) folder.
 - Follow PEP 8 guidelines
 - Use type hints
 - Write docstrings for all functions and classes
-- Run `make quality` before submitting PRs
+- Run `make lint` and `make test` before submitting PRs
 
 ## License
 

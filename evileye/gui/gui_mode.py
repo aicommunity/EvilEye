@@ -31,7 +31,7 @@ def determine_gui_mode(config: dict, cli_gui: Optional[bool] = None) -> GUIMode:
     4. Default: VISIBLE
     """
     controller_config = config.get("controller", {})
-    
+
     # Priority 1: CLI argument
     if cli_gui is not None:
         if not cli_gui:
@@ -41,7 +41,7 @@ def determine_gui_mode(config: dict, cli_gui: Optional[bool] = None) -> GUIMode:
         if gui_mode_str == "hidden":
             return GUIMode.HIDDEN
         return GUIMode.VISIBLE
-    
+
     # Priority 2: Explicit gui_mode in config
     gui_mode_str = controller_config.get("gui_mode")
     if gui_mode_str:
@@ -49,15 +49,15 @@ def determine_gui_mode(config: dict, cli_gui: Optional[bool] = None) -> GUIMode:
             return GUIMode(gui_mode_str.lower())
         except ValueError:
             pass
-    
+
     # Priority 3: Legacy config (gui_enabled + show_main_gui)
     gui_enabled = controller_config.get("gui_enabled", True)
     if not gui_enabled:
         return GUIMode.HEADLESS
-    
+
     show_main_gui = controller_config.get("show_main_gui", True)
     if not show_main_gui:
         return GUIMode.HIDDEN
-    
+
     # Default: visible GUI
     return GUIMode.VISIBLE

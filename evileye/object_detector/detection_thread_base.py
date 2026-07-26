@@ -1,135 +1,251 @@
+from __future__ import annotations
+
 from abc import abstractmethod
 from queue import Queue
 import threading
 import time
 from time import sleep
-from .object_detection_base import DetectionResultList
-from .object_detection_base import DetectionResult
-from ..capture.video_capture_base import CaptureImage
-from timeit import default_timer as timer
+from typing import Optional
 import logging
+import weakref
+import atexit
 
-# Import utils later to avoid circular imports
-utils = None
-
-def get_utils():
-    global utils
-    if utils is None:
-        from evileye.utils import utils as utils_module
-        utils = utils_module
-    return utils
+from ..capture.video_capture_base import CaptureImage
+from .object_detection_base import DetectionResult, DetectionResultList
+from ..core.mp_queue_config import detector_thread_queue_size
+from .constants import PROCESSING_SLEEP_INTERVAL
 
 
 class DetectionThreadBase:
-    id_cnt = 0  # Переменная для присвоения каждому детектору своего идентификатора
+    """
+    Base class for detection threads.
+    Handles image processing, prediction, and result extraction.
+    """
 
-    def __init__(self, stride: int, classes: list, source_ids: list, roi: list, inf_params: dict, queue_out: Queue, logger_name: str | None = None, parent_logger: logging.Logger | None = None):
+    _instances: "weakref.WeakSet[DetectionThreadBase]" = weakref.WeakSet()
+
+    def __init__(
+            self,
+            stride: int,
+            classes: list,
+            source_ids: list,
+            roi: list,
+            inf_params: dict,
+            queue_out: Queue,
+            logger_name: Optional[str] = None,
+            parent_logger: Optional[logging.Logger] = None,
+    ):
         super().__init__()
         base_name = "evileye.detection_thread"
         full_name = f"{base_name}.{logger_name}" if logger_name else base_name
         self.logger = parent_logger or logging.getLogger(full_name)
 
-        self.prev_time = 0  # Для параметра скважности, заданного временем; отсчет времени
-        self.stride = stride  # Параметр скважности
-        self.stride_cnt = self.stride  # Счетчик для кадров, которые необходимо пропустить
+        self.prev_time = 0  # For time-based stride parameter; time tracking
+        self.stride = stride  # Frame stride parameter
+        self.stride_cnt = self.stride  # Counter for frames to skip
         self.classes = classes
         self.roi = roi  # [[]]
         self.inf_params = inf_params
         self.run_flag = False
-        self.queue_in = Queue(maxsize=2)
+        self.queue_in = Queue(maxsize=detector_thread_queue_size())
         self.queue_out = queue_out
         self.source_ids = source_ids
-        self.processing_thread = threading.Thread(target=self._process_impl)
-        self.roi_coords_per_camera = {source_id: roi_coords for source_id, roi_coords in zip(self.source_ids, self.roi)}
-        self.model_class_mapping = None
+        self.processing_thread = threading.Thread(target=self._process_impl, daemon=True)
+        self.roi_coords_per_camera = {
+            source_id: roi_coords for source_id, roi_coords in zip(self.source_ids, self.roi)
+        }
+        self.model_class_mapping: Optional[dict] = None
+        try:
+            DetectionThreadBase._instances.add(self)
+        except Exception:
+            pass
 
-    def start(self):
+    @classmethod
+    def shutdown_all(cls) -> None:
+        """Best-effort stop of all detection threads (used in tests)."""
+        try:
+            items = list(cls._instances)
+        except Exception:
+            return
+        for t in items:
+            try:
+                t.stop()
+            except Exception:
+                pass
+
+    def start(self) -> None:
+        """Start the detection thread."""
         self.run_flag = True
         self.processing_thread.start()
 
-    def stop(self):
+    def stop(self) -> None:
+        """Stop the detection thread."""
         self.run_flag = False
         if self.processing_thread.is_alive():
             self.processing_thread.join()
-        self.logger.info('Detection thread stopped')
+        self.logger.info("Detection thread stopped")
 
-    def put(self, image: CaptureImage, force=False):
+    def put(self, image: CaptureImage, force: bool = False) -> tuple[bool, list]:
+        """
+        Put image into thread queue for processing.
+        Returns (success, dropped_id) tuple.
+        """
         dropped_id = []
         if not self.run_flag:
-            self.logger.warning(f"Detection thread not started. Put ignored for {image.source_id}:{image.frame_id}")
-        if self.queue_in.full():
+            self.logger.warning(
+                f"Detection thread not started. Put ignored for {image.source_id}:{image.frame_id}"
+            )
+            return False, dropped_id
+
+        try:
+            self.queue_in.put_nowait(image)
+            return True, dropped_id
+        except Exception:
+            # Queue is full
             if force:
-                dropped_image = self.queue_in.get()
-                dropped_id.append(dropped_image.source_id)
-                dropped_id.append(dropped_image.frame_id)
-            else:
-                dropped_id.append(image.source_id)
-                dropped_id.append(image.frame_id)
-                return False, dropped_id
-        self.queue_in.put(image)
-        return True, dropped_id
+                try:
+                    dropped_image = self.queue_in.get_nowait()
+                    dropped_id.extend([dropped_image.source_id, dropped_image.frame_id])
+                    self.queue_in.put_nowait(image)
+                    return True, dropped_id
+                except Exception:
+                    dropped_id.extend([image.source_id, image.frame_id])
+                    return False, dropped_id
+            dropped_id.extend([image.source_id, image.frame_id])
+            return False, dropped_id
 
-    def get_model_class_mapping(self) -> dict|None:
+    def get_model_class_mapping(self) -> Optional[dict]:
+        """Get model class mapping dictionary."""
         return self.model_class_mapping
-    
-    def _update_model_class_mapping_from_model(self):
-        """Update model_class_mapping from loaded model (to be implemented in subclasses)"""
-        pass
 
-    def _process_impl(self):
+    def _update_model_class_mapping_from_model(self) -> None:
+        """Update model_class_mapping from loaded model (implemented in subclasses)."""
+        return None
+
+    def _process_impl(self) -> None:
+        """Main processing loop for detection thread."""
         while self.run_flag:
+            if not self.run_flag:
+                break
             self.init_detection_implementation()
             try:
-                if not self.queue_in.empty():
-                    image = self.queue_in.get()
-                else:
-                    image = None
-            except ValueError as ex:
-                self.logger.error(f"Exception in detection thread: _process_impl: {ex}")
+                image = self.queue_in.get(timeout=PROCESSING_SLEEP_INTERVAL)
+            except Exception:
+                image = None
 
+            if not self.run_flag:
                 break
+
             if not image:
-                sleep(0.01)
+                sleep(PROCESSING_SLEEP_INTERVAL)
                 continue
 
-            if not self.roi[0]:
-                split_image = [[image, [0, 0]]]
-            else:
-                coords = self.roi_coords_per_camera[image.source_id]
-                utils_module = get_utils()
-                split_image = utils_module.create_roi(image, coords)
-            detection_result_list = self.process_stride(split_image)
-            if detection_result_list:
-                self.queue_out.put([detection_result_list, image])
-            # finish_it = timer()
-            # self.logger.debug(f'TIME: {finish_it - start_it}')
+            from .detection_preprocess import split_capture_for_detection
 
-    def process_stride(self, split_image):
+            split_image = split_capture_for_detection(
+                image, self.roi, self.roi_coords_per_camera
+            )
+
+            detection_result_list = self.process_stride(split_image)
+            if detection_result_list is not None:
+                try:
+                    self.queue_out.put_nowait([detection_result_list, image])
+                except Exception:
+                    # Keep the newest results: drop oldest and push latest.
+                    # This prevents long-lived backlog when downstream is slower.
+                    try:
+                        _ = self.queue_out.get_nowait()
+                        self.queue_out.put_nowait([detection_result_list, image])
+                    except Exception:
+                        self.logger.warning(
+                            f"Output queue full, dropping detection result for {image.source_id}:{image.frame_id}"
+                        )
+
+    def process_stride(self, split_image: list) -> Optional[DetectionResultList]:
+        """
+        Process images with stride and return detection results.
+        """
+        if not split_image:
+            # Can happen transiently when a source is restarting/looping and ROI splitter returns nothing.
+            return None
+        try:
+            first = split_image[0][0] if split_image and split_image[0] else None
+        except Exception:
+            first = None
+        if first is None:
+            return None
+
+        images = [img[0].image for img in split_image]
+        predict_results = self._run_prediction(images, len(split_image))
+        return self._detection_result_from_predict(split_image, predict_results)
+
+    def _detection_result_from_predict(
+        self, split_image: list, predict_results: list | None
+    ) -> Optional[DetectionResultList]:
+        """Build DetectionResultList from model outputs (shared by thread and MP drain)."""
+        if not split_image:
+            return None
+        try:
+            first = split_image[0][0] if split_image and split_image[0] else None
+        except Exception:
+            first = None
+        if first is None:
+            return None
+
+        # Important contract: emit a result per input frame (even if empty).
+        if not predict_results:
+            detection_result_list = DetectionResultList()
+            detection_result_list.source_id = first.source_id
+            detection_result_list.time_stamp = time.time()
+            detection_result_list.frame_id = first.frame_id
+            return detection_result_list
+
+        bboxes_coords, confidences, class_ids = self._extract_bboxes_from_results(
+            predict_results, split_image
+        )
+        if not bboxes_coords:
+            detection_result_list = DetectionResultList()
+            detection_result_list.source_id = first.source_id
+            detection_result_list.time_stamp = time.time()
+            detection_result_list.frame_id = first.frame_id
+            return detection_result_list
+
+        bboxes_coords, confidences, class_ids = self._post_process_detections(
+            bboxes_coords, confidences, class_ids
+        )
+        if not bboxes_coords:
+            detection_result_list = DetectionResultList()
+            detection_result_list.source_id = first.source_id
+            detection_result_list.time_stamp = time.time()
+            detection_result_list.frame_id = first.frame_id
+            return detection_result_list
+
+        return self._create_detection_result_list(
+            split_image, bboxes_coords, confidences, class_ids
+        )
+
+    def _run_prediction(self, images: list, expected_count: int) -> list:
+        """Run model prediction on images."""
+        try:
+            predict_results = self.predict(images)
+        except Exception as e:
+            self.logger.error(f"Error during prediction: {e}")
+            self.logger.debug("Prediction error details", exc_info=True)
+            return [None] * expected_count
+
+        if predict_results is None:
+            return [None] * expected_count
+        if not isinstance(predict_results, list):
+            return [predict_results]
+        return predict_results
+
+    def _extract_bboxes_from_results(
+            self, predict_results: list, split_image: list
+    ) -> tuple[list, list, list]:
+        """Extract bounding boxes from prediction results."""
         bboxes_coords = []
         confidences = []
         class_ids = []
-        detection_result_list = DetectionResultList()
-
-        images = []
-        for img in split_image:
-            images.append(img[0].image)
-        
-        # Pass sensible classes to model (IDs only) to avoid Ultralytics errors
-        classes_arg = self._get_classes_arg_for_model()
-        try:
-            predict_results = self.predict(images) if classes_arg is None else self.predict(images)
-        except Exception as e:
-            self.logger.error(f"Error during prediction in process_stride: {e}")
-            self.logger.debug("Prediction error in process_stride", exc_info=True)
-            predict_results = [None] * len(split_image)
-
-        # Обработка результатов предсказания с проверкой на None
-        if predict_results is None:
-            self.logger.debug("Predict results is None, returning empty detection result list")
-            predict_results = [None] * len(split_image)
-        elif not isinstance(predict_results, list):
-            self.logger.warning(f"Unexpected predict_results type: {type(predict_results)}, treating as single result")
-            predict_results = [predict_results]
 
         for i in range(len(split_image)):
             try:
@@ -141,15 +257,31 @@ class DetectionThreadBase:
             except Exception as e:
                 self.logger.warning(f"Error processing bboxes for split image {i}: {e}")
                 self.logger.debug("Bbox processing error", exc_info=True)
-                # Продолжаем обработку остальных изображений
 
-        utils_module = get_utils()
-        bboxes_coords, confidences, class_ids = utils_module.merge_roi_boxes(self.roi[0], bboxes_coords, confidences, class_ids)  # Объединение рамок из разных ROI
-        bboxes_coords, confidences, class_ids = utils_module.non_max_sup(bboxes_coords, confidences, class_ids)
+        return bboxes_coords, confidences, class_ids
 
-        # Centralized filtering by classes (IDs or names via model_class_mapping)
-        bboxes_coords, confidences, class_ids = self._filter_detections(bboxes_coords, confidences, class_ids)
+    def _post_process_detections(
+            self, bboxes_coords: list, confidences: list, class_ids: list
+    ) -> tuple[list, list, list]:
+        """Post-process detections: merge ROI boxes, apply NMS, filter by classes."""
+        from ..utils import utils
 
+        bboxes_coords, confidences, class_ids = utils.merge_roi_boxes(
+            self.roi[0], bboxes_coords, confidences, class_ids
+        )
+        bboxes_coords, confidences, class_ids = utils.non_max_sup(
+            bboxes_coords, confidences, class_ids
+        )
+        bboxes_coords, confidences, class_ids = self._filter_detections(
+            bboxes_coords, confidences, class_ids
+        )
+        return bboxes_coords, confidences, class_ids
+
+    def _create_detection_result_list(
+            self, split_image: list, bboxes_coords: list, confidences: list, class_ids: list
+    ) -> DetectionResultList:
+        """Create DetectionResultList from processed detections."""
+        detection_result_list = DetectionResultList()
         detection_result_list.source_id = split_image[0][0].source_id
         detection_result_list.time_stamp = time.time()
         detection_result_list.frame_id = split_image[0][0].frame_id
@@ -160,60 +292,76 @@ class DetectionThreadBase:
             detection_result.class_id = int(class_id)
             detection_result.confidence = conf
             detection_result_list.detections.append(detection_result)
+
         return detection_result_list
 
-    def _get_classes_arg_for_model(self):
-        """Return list of class IDs to pass into model or None if not applicable.
+    def _get_classes_arg_for_model(self) -> Optional[list[int]]:
+        """
+        Return list of class IDs to pass into model or None if not applicable.
         Avoid passing string names into Ultralytics models.
         """
         try:
-            if isinstance(self.classes, list) and self.classes and all(isinstance(c, int) for c in self.classes):
+            if isinstance(self.classes, list) and self.classes and all(
+                    isinstance(c, int) for c in self.classes
+            ):
                 return self.classes
-            # If classes are names, we don't pass them to model to avoid errors
             return None
         except Exception:
             return None
 
-    def _filter_detections(self, bboxes_coords, confidences, class_ids):
-        """Apply class filtering by IDs or names using model_class_mapping.
-        - If self.classes is list[int]: filter by IDs
-        - If self.classes is list[str] and model_class_mapping is available: map names->IDs and filter
-        - Otherwise: no filtering
+    def _filter_detections(
+            self, bboxes_coords: list, confidences: list, class_ids: list
+    ) -> tuple[list, list, list]:
+        """
+        Apply class filtering by IDs or names using model_class_mapping.
         """
         try:
             if not isinstance(self.classes, list) or not self.classes:
                 return bboxes_coords, confidences, class_ids
 
-            # Filter by IDs directly
             if all(isinstance(c, int) for c in self.classes):
                 desired_ids = set(self.classes)
-            # Filter by names via mapping
-            elif all(isinstance(c, str) for c in self.classes) and isinstance(self.model_class_mapping, dict) and self.model_class_mapping:
-                desired_ids = {cid for name, cid in self.model_class_mapping.items() if name in self.classes}
+            elif (
+                    all(isinstance(c, str) for c in self.classes)
+                    and isinstance(self.model_class_mapping, dict)
+                    and self.model_class_mapping
+            ):
+                desired_ids = {
+                    cid for name, cid in self.model_class_mapping.items() if name in self.classes
+                }
                 if not desired_ids:
                     return [], [], []
             else:
                 return bboxes_coords, confidences, class_ids
 
-            fb, fc, fi = [], [], []
+            filtered_bboxes, filtered_confs, filtered_ids = [], [], []
             for b, c, i in zip(bboxes_coords, confidences, class_ids):
                 cid = int(i)
                 if cid in desired_ids:
-                    fb.append(b)
-                    fc.append(c)
-                    fi.append(cid)
-            return fb, fc, fi
+                    filtered_bboxes.append(b)
+                    filtered_confs.append(c)
+                    filtered_ids.append(cid)
+            return filtered_bboxes, filtered_confs, filtered_ids
         except Exception:
             return bboxes_coords, confidences, class_ids
 
     @abstractmethod
-    def init_detection_implementation(self):
-        pass
+    def init_detection_implementation(self) -> None:
+        """Initialize detection model implementation."""
+        raise NotImplementedError
 
     @abstractmethod
-    def predict(self, images: list):
-        pass
+    def predict(self, images: list) -> list:
+        """Run prediction on images."""
+        raise NotImplementedError
 
     @abstractmethod
-    def get_bboxes(self, result, roi):
-        pass
+    def get_bboxes(self, result, roi: list) -> tuple[list, list, list]:
+        """Extract bboxes from prediction result."""
+        raise NotImplementedError
+
+
+try:
+    atexit.register(DetectionThreadBase.shutdown_all)
+except Exception:
+    pass

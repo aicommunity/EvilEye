@@ -1,0 +1,85 @@
+{
+  "base_config": "configs/multi_videos.json",
+  "generated_at": "2026-06-02T00:00:21",
+  "max_cameras": 4,
+  "devices": [
+    "cuda:0",
+    "cpu"
+  ],
+  "scenarios": [
+    "detection",
+    "tracking",
+    "full"
+  ],
+  "layouts": [
+    "process_detector"
+  ],
+  "runs": [
+    {
+      "device": "cuda:0",
+      "device_label": "GPU",
+      "scenario": "detection",
+      "scenario_label": "захват + обнаружение",
+      "layout": "process_detector",
+      "layout_label": "в отдельном процессе только обнаружение",
+      "manifest": "reports/linux_perf_matrix/configs/cuda_0/detection/process_detector/manifest.json",
+      "result_dir": "reports/linux_perf_matrix/results/cuda_0/detection/process_detector"
+    },
+    {
+      "device": "cuda:0",
+      "device_label": "GPU",
+      "scenario": "tracking",
+      "scenario_label": "захват + обнаружение + отслеживание",
+      "layout": "process_detector",
+      "layout_label": "в отдельном процессе только обнаружение",
+      "manifest": "reports/linux_perf_matrix/configs/cuda_0/tracking/process_detector/manifest.json",
+      "result_dir": "reports/linux_perf_matrix/results/cuda_0/tracking/process_detector"
+    },
+    {
+      "device": "cuda:0",
+      "device_label": "GPU",
+      "scenario": "full",
+      "scenario_label": "полный пайплайн",
+      "layout": "process_detector",
+      "layout_label": "в отдельном процессе только обнаружение",
+      "manifest": "reports/linux_perf_matrix/configs/cuda_0/full/process_detector/manifest.json",
+      "result_dir": "reports/linux_perf_matrix/results/cuda_0/full/process_detector"
+    },
+    {
+      "device": "cpu",
+      "device_label": "CPU",
+      "scenario": "detection",
+      "scenario_label": "захват + обнаружение",
+      "layout": "process_detector",
+      "layout_label": "в отдельном процессе только обнаружение",
+      "manifest": "reports/linux_perf_matrix/configs/cpu/detection/process_detector/manifest.json",
+      "result_dir": "reports/linux_perf_matrix/results/cpu/detection/process_detector"
+    },
+    {
+      "device": "cpu",
+      "device_label": "CPU",
+      "scenario": "tracking",
+      "scenario_label": "захват + обнаружение + отслеживание",
+      "layout": "process_detector",
+      "layout_label": "в отдельном процессе только обнаружение",
+      "manifest": "reports/linux_perf_matrix/configs/cpu/tracking/process_detector/manifest.json",
+      "result_dir": "reports/linux_perf_matrix/results/cpu/tracking/process_detector"
+    },
+    {
+      "device": "cpu",
+      "device_label": "CPU",
+      "scenario": "full",
+      "scenario_label": "полный пайплайн",
+      "layout": "process_detector",
+      "layout_label": "в отдельном процессе только обнаружение",
+      "manifest": "reports/linux_perf_matrix/configs/cpu/full/process_detector/manifest.json",
+      "result_dir": "reports/linux_perf_matrix/results/cpu/full/process_detector"
+    }
+  ],
+  "missing_video_paths": [],
+  "notes": [
+    "Каждый manifest содержит парное сравнение thread/process для одной схемы multiprocessing.",
+    "Запись видео, база данных, storage monitor и GUI отключаются в сгенерированных runtime-конфигах.",
+    "Сценарий visualization оставляет только захват и headless-визуализацию; FPS визуализации также измеряется в остальных сценариях."
+  ]
+}

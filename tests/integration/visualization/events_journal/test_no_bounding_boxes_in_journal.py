@@ -2,17 +2,10 @@
 
 import sys
 import os
-from evileye.core.logging_config import setup_evileye_logging
-from evileye.core.logger import get_module_logger
-
-# Инициализация логирования для тестов
-logger = setup_evileye_logging(log_level="INFO", log_to_console=True, log_to_file=True)
-test_logger = get_module_logger("test")
-
-def test_no_bounding_boxes_in_journal(qapp):
+def test_no_bounding_boxes_in_journal(journal_test_logger, qapp):
     """Test that bounding boxes are not displayed in the journal table"""
     
-    test_logger.info("=== Test No Bounding Boxes in Journal ===")
+    journal_test_logger.info("=== Test No Bounding Boxes in Journal ===")
     
     try:
         from evileye.visualization_modules.events_journal_json import EventsJournalJson
@@ -41,7 +34,7 @@ def test_no_bounding_boxes_in_journal(qapp):
         os.makedirs(os.path.dirname(preview_path), exist_ok=True)
         cv2.imwrite(preview_path, test_image)
         
-        test_logger.info(f"✅ Created test preview image: {preview_path}")
+        journal_test_logger.info(f"✅ Created test preview image: {preview_path}")
         
         # Create test JSON data
         test_json_path = os.path.join(test_images_dir, 'objects_found.json')
@@ -77,34 +70,34 @@ def test_no_bounding_boxes_in_journal(qapp):
         with open(test_json_path, 'w') as f:
             json.dump(test_data, f, indent=2)
         
-        test_logger.info(f"✅ Created test JSON data: {test_json_path}")
+        journal_test_logger.info(f"✅ Created test JSON data: {test_json_path}")
         
         # Create EventsJournalJson widget
         journal = EventsJournalJson(base_dir)
         journal.show()
         
-        test_logger.info("✅ Created EventsJournalJson widget")
+        journal_test_logger.info("✅ Created EventsJournalJson widget")
         
         # Check that the table loads data
         if journal.table.rowCount() > 0:
-            test_logger.info(f"✅ Table loaded {journal.table.rowCount()} rows")
+            journal_test_logger.info(f"✅ Table loaded {journal.table.rowCount()} rows")
             
             # Check that preview column has image path
             preview_item = journal.table.item(0, 4)  # Preview column
             if preview_item and preview_item.text():
-                test_logger.info(f"✅ Preview column contains image path: {preview_item.text()}")
+                journal_test_logger.info(f"✅ Preview column contains image path: {preview_item.text()}")
                 
                 # Check that no bounding box data is stored
                 from PyQt6.QtCore import Qt
                 bbox_data = preview_item.data(Qt.ItemDataRole.UserRole)
                 if bbox_data is None:
-                    test_logger.info("✅ No bounding box data stored in table item")
+                    journal_test_logger.info("✅ No bounding box data stored in table item")
                 else:
-                    test_logger.error(f"❌ Bounding box data still stored: {bbox_data}")
+                    journal_test_logger.error(f"❌ Bounding box data still stored: {bbox_data}")
             else:
-                test_logger.info("❌ Preview column is empty")
+                journal_test_logger.info("❌ Preview column is empty")
         else:
-            test_logger.info("❌ Table is empty")
+            journal_test_logger.info("❌ Table is empty")
         
         # Автоматически закрываем окно через 200ms
         try:
@@ -153,13 +146,13 @@ def test_no_bounding_boxes_in_journal(qapp):
         except Exception:
             pass
         
-        test_logger.info("\n✅ No bounding boxes in journal test completed")
-        test_logger.info("\n📋 Summary:")
-        test_logger.info("   ✅ Preview images are displayed without bounding boxes")
-        test_logger.info("   ✅ No bounding box data stored in table items")
-        test_logger.info("   ✅ Journal shows clean preview images")
+        journal_test_logger.info("\n✅ No bounding boxes in journal test completed")
+        journal_test_logger.info("\n📋 Summary:")
+        journal_test_logger.info("   ✅ Preview images are displayed without bounding boxes")
+        journal_test_logger.info("   ✅ No bounding box data stored in table items")
+        journal_test_logger.info("   ✅ Journal shows clean preview images")
         
     except Exception as e:
-        test_logger.error(f"❌ Error: {e}")
+        journal_test_logger.error(f"❌ Error: {e}")
         import traceback
         traceback.print_exc()

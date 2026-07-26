@@ -3,10 +3,21 @@ import json
 import signal
 import subprocess
 import threading
+import time
+import uuid
 from pathlib import Path
 from typing import Dict, Optional
 
+from evileye.api.core.runtime_registry import (
+    allocate_pipeline_id,
+    delete_runtime_record,
+    load_runtime_record,
+    mark_runtime_stopped,
+    register_runtime,
+)
+from evileye.api.security import load_web_auth_config
 from evileye.core.logger import get_module_logger
+from evileye.core.runtime_services import get_frame_broker
 
 
 class ConfigRunState:
@@ -26,6 +37,81 @@ class ConfigRunItem:
         self.pid: Optional[int] = None
         self.state: str = ConfigRunState.CREATED
         self.error: Optional[str] = None
+        self.session_id: Optional[str] = None
+        self._proc: subprocess.Popen | None = None
+
+
+class _FramePoller:
+    """Background thread that reads frame files written by child processes
+    and publishes them to the FrameBroker so streaming endpoints work."""
+
+    def __init__(self, logger):
+        self._lock = threading.Lock()
+        self._watched: Dict[int, Path] = {}
+        self._mtimes: Dict[int, float] = {}
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._loop, daemon=True, name="frame-poller")
+        self._logger = logger
+        self._thread.start()
+
+    def watch(self, rid: int, frame_dir: Path) -> None:
+        with self._lock:
+            self._watched[rid] = frame_dir / "latest.jpg"
+            self._mtimes[rid] = 0.0
+        self._logger.info(f"Frame poller watching rid={rid} at {frame_dir}")
+
+    def unwatch(self, rid: int) -> None:
+        with self._lock:
+            self._watched.pop(rid, None)
+            self._mtimes.pop(rid, None)
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=3.0)
+
+    def _loop(self) -> None:
+        broker = get_frame_broker()
+        first_frame_logged: dict = {}
+        miss_counter: dict = {}
+        while not self._stop.is_set():
+            with self._lock:
+                items = list(self._watched.items())
+            for rid, fpath in items:
+                try:
+                    if not fpath.exists():
+                        cnt = miss_counter.get(rid, 0) + 1
+                        miss_counter[rid] = cnt
+                        if cnt == 250:
+                            self._logger.warning(
+                                "Frame file %s still missing after ~10s", fpath
+                            )
+                        continue
+                    mtime = fpath.stat().st_mtime
+                    prev = self._mtimes.get(rid, 0.0)
+                    if mtime <= prev:
+                        continue
+                    data = fpath.read_bytes()
+                    if data:
+                        broker.publish_jpeg(
+                            str(rid),
+                            data,
+                            metadata={
+                                "timestamp": time.time(),
+                                "content_type": "image/jpeg",
+                                "transport": "file_ipc",
+                            },
+                        )
+                        with self._lock:
+                            self._mtimes[rid] = mtime
+                        if rid not in first_frame_logged:
+                            first_frame_logged[rid] = True
+                            self._logger.info(
+                                "First frame read for rid=%s (%d bytes, mtime=%.3f)",
+                                rid, len(data), mtime,
+                            )
+                except Exception as e:
+                    self._logger.warning("FramePoller error for rid=%s: %s", rid, e)
+            self._stop.wait(0.04)
 
 
 class ConfigRunManager:
@@ -37,6 +123,75 @@ class ConfigRunManager:
         self._shutdown_called = False
         self.logger = get_module_logger("api.config_run_manager")
 
+    @staticmethod
+    def _stop_grace_sec() -> float:
+        try:
+            return max(1.0, float(os.getenv("EVILEYE_RUN_STOP_GRACE_SEC", "60")))
+        except ValueError:
+            return 60.0
+
+    def _terminate_process_tree(self, pid: int, *, grace_sec: float) -> bool:
+        if not pid:
+            return True
+        try:
+            pgid = os.getpgid(pid)
+        except ProcessLookupError:
+            return True
+        except Exception:
+            pgid = pid
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+        except ProcessLookupError:
+            return True
+        except Exception:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except Exception:
+                return False
+
+        deadline = time.monotonic() + grace_sec
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                return True
+            time.sleep(0.2)
+
+        try:
+            import psutil  # type: ignore
+
+            parent = psutil.Process(pid)
+            children = parent.children(recursive=True)
+            for child in children:
+                try:
+                    child.kill()
+                except Exception:
+                    pass
+            try:
+                parent.kill()
+            except Exception:
+                pass
+            return True
+        except Exception:
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except Exception:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except Exception:
+                    return False
+            return True
+
+    def _cleanup_run_session(self, item: ConfigRunItem) -> None:
+        if not item.session_id:
+            return
+        try:
+            from evileye.core.mp_session_registry import cleanup_session_by_id
+
+            cleanup_session_by_id(item.session_id)
+        except Exception as exc:
+            self.logger.warning("MP session cleanup failed for run %s: %s", item.id, exc)
+
     def _describe_locked(self, item: ConfigRunItem) -> Dict:
         return {
             "id": item.id,
@@ -45,17 +200,45 @@ class ConfigRunManager:
             "pid": item.pid,
             "state": item.state,
             "error": item.error,
+            "session_id": item.session_id,
         }
+
+    def _refresh_item_state_locked(self, item: ConfigRunItem) -> None:
+        pid = item.pid
+        if not pid or item.state not in (
+                ConfigRunState.STARTING,
+                ConfigRunState.RUNNING,
+                ConfigRunState.STOPPING,
+        ):
+            return
+        try:
+            os.kill(pid, 0)
+            return
+        except OSError:
+            item.pid = None
+            item.state = ConfigRunState.STOPPED
+            item.error = None
+        try:
+            mark_runtime_stopped(item.id)
+        except Exception:
+            pass
 
     def list(self) -> Dict[int, Dict]:
         with self._lock:
+            for item in self._items.values():
+                self._refresh_item_state_locked(item)
             return {rid: self._describe_locked(it) for rid, it in self._items.items()}
+
+    def next_run_id(self) -> int:
+        with self._lock:
+            return allocate_pipeline_id(self._items.keys())
 
     def describe(self, rid: int) -> Dict:
         with self._lock:
             item = self._items.get(rid)
             if item is None:
                 raise KeyError("Config run not found")
+            self._refresh_item_state_locked(item)
             return self._describe_locked(item)
 
     def _ensure_configs_dir(self) -> Path:
@@ -73,7 +256,8 @@ class ConfigRunManager:
             json.dump(body, f, ensure_ascii=False, indent=2)
         return target
 
-    def create(self, rid: int, name: Optional[str], *, config_name: Optional[str] = None, config_body: Optional[dict] = None) -> Dict:
+    def create(self, rid: int, name: Optional[str], *, config_name: Optional[str] = None,
+               config_body: Optional[dict] = None) -> Dict:
         with self._lock:
             if rid in self._items:
                 raise ValueError("Config run already exists")
@@ -96,25 +280,55 @@ class ConfigRunManager:
         with self._lock:
             item = self._items.get(rid)
             if item is None:
-                raise KeyError("Config run not found")
+                runtime = load_runtime_record(rid)
+                if runtime is None:
+                    raise KeyError("Config run not found")
+                if runtime.get("state") == ConfigRunState.RUNNING:
+                    raise RuntimeError("Stop config run before delete")
+                delete_runtime_record(rid)
+                return {"id": rid, "status": "deleted"}
             if item.state == ConfigRunState.RUNNING:
                 raise RuntimeError("Stop config run before delete")
             self._items.pop(rid)
+            delete_runtime_record(rid)
             self.logger.info(f"ConfigRun '{rid}' deleted")
             return {"id": rid, "status": "deleted"}
 
-    def start(self, rid: int) -> Dict:
+    def start(self, rid: int, *, api_base_url: str | None = None) -> Dict:
         with self._lock:
             item = self._items.get(rid)
             if item is None:
-                raise KeyError("Config run not found")
+                runtime = load_runtime_record(rid)
+                if runtime and runtime.get("config_path"):
+                    item = ConfigRunItem(
+                        rid,
+                        runtime.get("name") or Path(runtime["config_path"]).stem,
+                        Path(runtime["config_path"]),
+                    )
+                    self._items[rid] = item
+                else:
+                    raise KeyError("Config run not found")
 
         if item.state in (ConfigRunState.RUNNING, ConfigRunState.STARTING):
             return self.describe(rid)
 
         try:
             item.state = ConfigRunState.STARTING
-            # Spawn separate python process to run config headless (no GUI)
+            auth = load_web_auth_config()
+
+            session_id = uuid.uuid4().hex
+            env = {
+                **os.environ,
+                "EVILEYE_PIPELINE_ID": str(rid),
+                "EVILEYE_PIPELINE_NAME": item.name,
+                "EVILEYE_MANAGED_RUN": "1",
+                "EVILEYE_SESSION_ID": session_id,
+                "PYTHONUNBUFFERED": "1",
+            }
+            if api_base_url:
+                env["EVILEYE_WEB_API_BASE"] = api_base_url
+            if auth.internal_token:
+                env["EVILEYE_INTERNAL_TOKEN"] = auth.internal_token
             cmd = [
                 os.sys.executable,
                 str(Path(__file__).resolve().parents[2] / "process.py"),
@@ -123,13 +337,33 @@ class ConfigRunManager:
                 "--no-autoclose",
             ]
             self.logger.info(f"Starting config run '{rid}': {' '.join(cmd)}")
-            proc = subprocess.Popen(cmd, cwd=str(Path.cwd()))
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(Path.cwd()),
+                env=env,
+                start_new_session=True,
+            )
+            item._proc = proc
             item.pid = proc.pid
+            item.session_id = session_id
             item.state = ConfigRunState.RUNNING
+            item.error = None
+            register_runtime(
+                rid=rid,
+                pid=proc.pid,
+                config_path=str(item.config_path),
+                name=item.name,
+                frame_dir=None,
+                source="web",
+                managed=True,
+                state="running",
+                session_id=session_id,
+            )
             self.logger.info(f"ConfigRun '{rid}' running with pid {item.pid}")
         except Exception as e:
             item.state = ConfigRunState.ERROR
             item.error = str(e)
+            mark_runtime_stopped(rid, error=str(e))
             self.logger.error(f"ConfigRun '{rid}' failed to start: {e}")
 
         return self.describe(rid)
@@ -138,40 +372,57 @@ class ConfigRunManager:
         with self._lock:
             item = self._items.get(rid)
             if item is None:
-                raise KeyError("Config run not found")
+                runtime = load_runtime_record(rid)
+                if runtime is None:
+                    raise KeyError("Config run not found")
+                pid = runtime.get("pid")
+                session_id = runtime.get("session_id")
+                if not pid:
+                    return runtime
+                try:
+                    self._terminate_process_tree(int(pid), grace_sec=self._stop_grace_sec())
+                except Exception as e:
+                    mark_runtime_stopped(rid, error=str(e))
+                    raise
+                if session_id:
+                    try:
+                        from evileye.core.mp_session_registry import cleanup_session_by_id
+
+                        cleanup_session_by_id(str(session_id))
+                    except Exception:
+                        pass
+                mark_runtime_stopped(rid)
+                runtime = load_runtime_record(rid)
+                if runtime is None:
+                    raise KeyError("Config run not found")
+                return runtime
 
         if item.pid is None or item.state not in (ConfigRunState.STARTING, ConfigRunState.RUNNING):
             item.state = ConfigRunState.STOPPED
+            mark_runtime_stopped(rid)
             return self.describe(rid)
 
         try:
             item.state = ConfigRunState.STOPPING
             self.logger.info(f"Stopping config run '{rid}', pid={item.pid}")
-            os.kill(item.pid, signal.SIGTERM)
-            # Wait a bit, escalate if needed
-            for _ in range(10):
+            pid = item.pid
+            if pid is not None:
+                self._terminate_process_tree(int(pid), grace_sec=self._stop_grace_sec())
+            if item._proc is not None:
                 try:
-                    os.kill(item.pid, 0)
-                except OSError:
-                    item.pid = None
-                    item.state = ConfigRunState.STOPPED
-                    break
-                else:
-                    import time
-                    time.sleep(0.2)
-            if item.state != ConfigRunState.STOPPED and item.pid is not None:
-                self.logger.warning(f"Force killing config run '{rid}', pid={item.pid}")
-                try:
-                    os.kill(item.pid, signal.SIGKILL)
+                    item._proc.wait(timeout=1.0)
                 except Exception:
                     pass
-                item.pid = None
-                item.state = ConfigRunState.STOPPED
+                item._proc = None
+            item.pid = None
+            item.state = ConfigRunState.STOPPED
+            self._cleanup_run_session(item)
         except Exception as e:
             item.state = ConfigRunState.ERROR
             item.error = str(e)
             self.logger.error(f"ConfigRun '{rid}' failed to stop: {e}")
 
+        mark_runtime_stopped(rid, error=item.error if item.state == ConfigRunState.ERROR else None)
         return self.describe(rid)
 
     def shutdown(self) -> None:
@@ -190,5 +441,3 @@ class ConfigRunManager:
             except Exception as e:
                 self.logger.error(f"Error stopping config run '{rid}': {e}")
         self.logger.info("ConfigRunManager shutdown completed")
-
-

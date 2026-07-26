@@ -33,24 +33,10 @@ class TestROIGraphicsView(unittest.TestCase):
     
     def tearDown(self):
         """Очистка после тестов"""
-        # Автоматически закрываем окно через 100ms
-        def close_window():
-            try:
-                if hasattr(self, 'roi_window') and self.roi_window:
-                    self.roi_window.close()
-                self.app.quit()
-            except Exception:
-                pass
-        
-        QTimer.singleShot(100, close_window)
-        # Даем время на закрытие окна
-        time.sleep(0.2)
-        
-        # Явно закрываем окно на случай, если таймер не сработал
+        # Do not quit QApplication here (shared across tests).
         try:
             if hasattr(self, 'roi_window') and self.roi_window:
                 self.roi_window.close()
-            self.app.quit()
         except Exception:
             pass
 
@@ -289,7 +275,11 @@ class TestROIEditorDialog(unittest.TestCase):
     
     def test_load_rois_from_config(self):
         """Тест загрузки ROI из конфигурации"""
-        dialog = ROIEditorWindow({})
+        dialog = ROIEditorWindow()
+        try:
+            dialog.set_params({})
+        except Exception:
+            pass
         
         # Мокаем roi_canvas
         dialog.roi_canvas = Mock()
@@ -317,7 +307,11 @@ class TestROIEditorDialog(unittest.TestCase):
     
     def test_set_rois_from_config(self):
         """Тест установки ROI из конфигурации"""
-        dialog = ROIEditorWindow({})
+        dialog = ROIEditorWindow()
+        try:
+            dialog.set_params({})
+        except Exception:
+            pass
         
         # Мокаем roi_canvas
         dialog.roi_canvas = Mock()

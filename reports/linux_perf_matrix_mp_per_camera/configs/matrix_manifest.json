@@ -1,0 +1,67 @@
+{
+  "base_config": "configs/multi_videos.json",
+  "generated_at": "2026-06-03T22:24:09",
+  "results_root": "reports/linux_perf_matrix_mp_per_camera/results",
+  "shared_detector_pool": false,
+  "max_cameras": 4,
+  "devices": [
+    "cuda:0",
+    "cpu"
+  ],
+  "scenarios": [
+    "tracking",
+    "full"
+  ],
+  "layouts": [
+    "process_full"
+  ],
+  "runs": [
+    {
+      "device": "cuda:0",
+      "device_label": "GPU",
+      "scenario": "tracking",
+      "scenario_label": "захват + обнаружение + отслеживание",
+      "layout": "process_full",
+      "layout_label": "захват, обнаружение и отслеживание в отдельных процессах (по одному процессу на камеру)",
+      "manifest": "reports/linux_perf_matrix_mp_per_camera/configs/cuda_0/tracking/process_full/manifest.json",
+      "result_dir": "reports/linux_perf_matrix_mp_per_camera/results/cuda_0/tracking/process_full"
+    },
+    {
+      "device": "cuda:0",
+      "device_label": "GPU",
+      "scenario": "full",
+      "scenario_label": "полный пайплайн",
+      "layout": "process_full",
+      "layout_label": "захват, обнаружение и отслеживание в отдельных процессах (по одному процессу на камеру)",
+      "manifest": "reports/linux_perf_matrix_mp_per_camera/configs/cuda_0/full/process_full/manifest.json",
+      "result_dir": "reports/linux_perf_matrix_mp_per_camera/results/cuda_0/full/process_full"
+    },
+    {
+      "device": "cpu",
+      "device_label": "CPU",
+      "scenario": "tracking",
+      "scenario_label": "захват + обнаружение + отслеживание",
+      "layout": "process_full",
+      "layout_label": "захват, обнаружение и отслеживание в отдельных процессах (по одному процессу на камеру)",
+      "manifest": "reports/linux_perf_matrix_mp_per_camera/configs/cpu/tracking/process_full/manifest.json",
+      "result_dir": "reports/linux_perf_matrix_mp_per_camera/results/cpu/tracking/process_full"
+    },
+    {
+      "device": "cpu",
+      "device_label": "CPU",
+      "scenario": "full",
+      "scenario_label": "полный пайплайн",
+      "layout": "process_full",
+      "layout_label": "захват, обнаружение и отслеживание в отдельных процессах (по одному процессу на камеру)",
+      "manifest": "reports/linux_perf_matrix_mp_per_camera/configs/cpu/full/process_full/manifest.json",
+      "result_dir": "reports/linux_perf_matrix_mp_per_camera/results/cpu/full/process_full"
+    }
+  ],
+  "missing_video_paths": [],
+  "notes": [
+    "Каждый manifest содержит парное сравнение thread/process для одной схемы multiprocessing.",
+    "Запись видео, база данных, storage monitor и GUI отключаются в сгенерированных runtime-конфигах.",
+    "Сценарий visualization оставляет только захват и headless-визуализацию; FPS визуализации также измеряется в остальных сценариях.",
+    "Для process_full при --no-shared-detector-pool на каждую камеру создаются отдельные entries sources/detectors/trackers."
+  ]
+}

@@ -1,0 +1,8 @@
+[Unit]
+Description=EvilEye morning monitoring report
+
+[Service]
+Type=oneshot
+KillMode=process
+ExecStart=/path/to/site/monitor/scripts/morning_report.sh
+WorkingDirectory=/path/to/site

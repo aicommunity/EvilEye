@@ -26,8 +26,3 @@ class EventJournalDataSource(Protocol):
 
     def close(self) -> None:
         ...
-
-
-
-
-

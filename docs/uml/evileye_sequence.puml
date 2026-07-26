@@ -1,0 +1,34 @@
+@startuml
+!theme plain
+title EvilEye mt_refactoring2 - Frame Processing Sequence
+
+actor User
+participant Controller
+participant PipelineSurveillance as Pipeline
+participant ProcessorStep as Step
+participant MpControl as MpControl
+participant MpWorkerDetector as DetectorWorker
+participant MpWorkerTracker as TrackerWorker
+participant ObjectsHandler
+participant StreamingService
+
+User -> Controller : run(config)
+Controller -> Pipeline : init_and_start()
+Pipeline -> Step : process_frame()
+
+Step -> MpControl : put(FrameTransport)
+MpControl -> DetectorWorker : detect(InferenceInput)
+DetectorWorker --> MpControl : InferenceDTO
+MpControl -> TrackerWorker : track(InferenceDTO)
+TrackerWorker --> MpControl : TrackingDTO
+MpControl --> Step : TrackingDTO
+
+Step -> ObjectsHandler : update_objects(TrackingDTOWithAttributes)
+ObjectsHandler --> Controller : ObjectResultBatch
+Controller -> StreamingService : publish_latest_frame()
+
+User -> Controller : stop()
+Controller -> Pipeline : stop()
+Controller -> MpControl : graceful_shutdown()
+
+@enduml

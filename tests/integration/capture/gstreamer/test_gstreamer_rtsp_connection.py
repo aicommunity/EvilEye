@@ -331,6 +331,7 @@ def test_rtsp_connection_with_recording():
         # Set recording parameters
         recording_params = RecordingParams(
             enabled=True,
+            continuous_recording_enabled=True,
             container="mp4",
             segment_length_sec=300,
             retention_days=3,

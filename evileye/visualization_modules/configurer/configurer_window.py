@@ -8,7 +8,6 @@ from .jobs_history_journal import JobsHistory
 from .db_connection_window import DatabaseConnectionWindow
 from ...core.logger import get_module_logger
 from ..base_window import BaseMainWindow
-from PyQt6.QtWidgets import QDialog
 from ..dialogs import SaveConfirmationDialog, SaveAsDialog
 
 try:
@@ -18,10 +17,11 @@ try:
     from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
     from PyQt6.QtSql import QSqlDatabase
     from PyQt6.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QLineEdit, QScrollArea, QMessageBox,
-    QSizePolicy, QToolBar, QComboBox, QFormLayout, QSpacerItem, QTextEdit,
-    QMenu, QMainWindow, QApplication, QCheckBox, QPushButton, QTabWidget
+        QWidget, QLabel, QVBoxLayout, QHBoxLayout, QLineEdit, QScrollArea, QMessageBox,
+        QSizePolicy, QToolBar, QComboBox, QFormLayout, QSpacerItem, QTextEdit,
+        QMenu, QMainWindow, QApplication, QCheckBox, QPushButton, QTabWidget, QDialog
     )
+
     pyqt_version = 6
 except ImportError:
     from PyQt5 import QtGui
@@ -30,12 +30,12 @@ except ImportError:
     from PyQt5.QtCore import pyqtSignal, pyqtSlot, Qt
     from PyQt5.QtSql import QSqlDatabase
     from PyQt5.QtWidgets import (
-    QWidget, QLabel, QVBoxLayout, QHBoxLayout, QLineEdit, QScrollArea, QMessageBox,
-    QSizePolicy, QToolBar, QComboBox, QFormLayout, QSpacerItem, QTextEdit,
-    QMenu, QMainWindow, QApplication, QCheckBox, QPushButton, QTabWidget
+        QWidget, QLabel, QVBoxLayout, QHBoxLayout, QLineEdit, QScrollArea, QMessageBox,
+        QSizePolicy, QToolBar, QComboBox, QFormLayout, QSpacerItem, QTextEdit,
+        QMenu, QMainWindow, QApplication, QCheckBox, QPushButton, QTabWidget, QDialog
     )
-    pyqt_version = 5
 
+    pyqt_version = 5
 
 from ...utils import utils
 from .configurer_tabs import src_tab, detector_tab, handler_tab, visualizer_tab, database_tab, tracker_tab, events_tab
@@ -75,26 +75,27 @@ class ConfigurerMainWindow(QDialog):
     def __init__(self, config_file_name, win_width, win_height, parent=None):
         # Инициализируем базовый класс
         super().__init__(parent)
-        
+
         self.logger = get_module_logger("configurer_window")
         self.config_file_name = config_file_name
         self.setWindowTitle("EvilEye Configurer")
         self.resize(win_width, win_height)
-        
+
         # Устанавливаем модальность
         self.setModal(True)
-        
+
         # Добавляем атрибуты, которые использовались из BaseMainWindow
         self.has_unsaved_changes = False
         self.config_history_manager = None
 
         self.is_db_connected = False
+        self.db_controller = None  # Инициализация для избежания hasattr проверок
 
         file_path = self.config_file_name  # 'configurer/initial_config.json'
         full_path = os.path.join(utils.get_project_root(), file_path)
         with open(full_path, 'r+') as params_file:
             config_params = json.load(params_file)
-        
+
         # Больше не распаковываем секции пайплайна на корневой уровень
 
         with open(os.path.join(utils.get_project_root(), "database_config.json"), 'r+') as database_config_file:
@@ -125,13 +126,24 @@ class ConfigurerMainWindow(QDialog):
         database_creds["admin_user_name"] = database_creds.get("admin_user_name", "postgres")
         database_creds["admin_password"] = database_creds.get("admin_password", "")
 
-        self.database_config["database"]["user_name"] = self.database_config["database"].get("user_name", database_creds["user_name"])
-        self.database_config["database"]["password"] = self.database_config["database"].get("password", database_creds["password"])
-        self.database_config["database"]["database_name"] = self.database_config["database"].get("database_name", database_creds["database_name"])
-        self.database_config["database"]["host_name"] = self.database_config["database"].get("host_name", database_creds["host_name"])
+        self.database_config["database"]["user_name"] = self.database_config["database"].get("user_name",
+                                                                                             database_creds[
+                                                                                                 "user_name"])
+        self.database_config["database"]["password"] = self.database_config["database"].get("password",
+                                                                                            database_creds["password"])
+        self.database_config["database"]["database_name"] = self.database_config["database"].get("database_name",
+                                                                                                 database_creds[
+                                                                                                     "database_name"])
+        self.database_config["database"]["host_name"] = self.database_config["database"].get("host_name",
+                                                                                             database_creds[
+                                                                                                 "host_name"])
         self.database_config["database"]["port"] = self.database_config["database"].get("port", database_creds["port"])
-        self.database_config["database"]["admin_user_name"] = self.database_config["database"].get("admin_user_name", database_creds["admin_user_name"])
-        self.database_config["database"]["admin_password"] = self.database_config["database"].get("admin_password", database_creds["admin_password"])
+        self.database_config["database"]["admin_user_name"] = self.database_config["database"].get("admin_user_name",
+                                                                                                   database_creds[
+                                                                                                       "admin_user_name"])
+        self.database_config["database"]["admin_password"] = self.database_config["database"].get("admin_password",
+                                                                                                  database_creds[
+                                                                                                      "admin_password"])
 
         self.params = config_params
         self.default_src_params = self.params['sources'][0]
@@ -169,39 +181,39 @@ class ConfigurerMainWindow(QDialog):
         self._create_actions()
         self._connect_actions()
         self.run_flag = False
-        
+
         # Создаем основной layout для QDialog
         main_layout = QVBoxLayout()
-        
+
         # Добавляем меню-кнопки
         menu_layout = self._create_menu_bar()
         main_layout.addLayout(menu_layout)
-        
+
         # Создаем scroll area для вкладок
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setWidget(self.tabs)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        
+
         # Добавляем scroll area с вкладками
         main_layout.addWidget(self.scroll_area)
-        
+
         # Устанавливаем layout для диалога
         self.setLayout(main_layout)
-        
+
         # Устанавливаем минимальные размеры окна
         self.setMinimumSize(800, 600)
         self.resize(1200, 800)
-        
+
         self._connect_to_db()
 
         self.result_filename = None
         multiprocessing.set_start_method('spawn')
-        
+
         # Инициализация отслеживания изменений
         self._init_change_tracking()
-        
+
         # Подключение сигналов для отслеживания изменений
         self._connect_change_tracking_signals()
 
@@ -236,21 +248,21 @@ class ConfigurerMainWindow(QDialog):
         # Для QDialog создаем меню как обычные кнопки в layout
         # Вместо menuBar создаем горизонтальный layout с кнопками
         menu_layout = QHBoxLayout()
-        
+
         # Создаем кнопки вместо меню
         self.open_history_btn = QPushButton('Open History', self)
         self.load_from_history_btn = QPushButton('Load from History', self)
         self.save_btn = QPushButton('Save', self)
         self.save_as_btn = QPushButton('Save As', self)
         self.run_btn = QPushButton('Run', self)
-        
+
         # Подключаем сигналы
         self.open_history_btn.clicked.connect(self._open_history)
         self.load_from_history_btn.clicked.connect(self._load_from_history)
         self.save_btn.clicked.connect(self._save_config)
         self.save_as_btn.clicked.connect(self._save_config_as)
         self.run_btn.clicked.connect(self._run_app)
-        
+
         # Добавляем кнопки в layout
         menu_layout.addWidget(self.open_history_btn)
         menu_layout.addWidget(self.load_from_history_btn)
@@ -258,9 +270,8 @@ class ConfigurerMainWindow(QDialog):
         menu_layout.addWidget(self.save_as_btn)
         menu_layout.addWidget(self.run_btn)
         menu_layout.addStretch()
-        
-        return menu_layout
 
+        return menu_layout
 
     def _create_actions(self):  # Создание кнопок-действий
         self.save_params = QAction('&Save parameters', self)
@@ -292,11 +303,11 @@ class ConfigurerMainWindow(QDialog):
         import subprocess
         import sys
         from pathlib import Path
-        
+
         # Получаем путь к process.py
         project_root = Path(__file__).parent.parent.parent.parent
         process_script = project_root / "evileye" / "process.py"
-        
+
         if process_script.exists():
             cmd = [sys.executable, str(process_script), "--config", self.result_filename, "--gui"]
             self.new_process = subprocess.Popen(cmd, cwd=project_root)
@@ -350,9 +361,9 @@ class ConfigurerMainWindow(QDialog):
             if not self.jobs_history:
                 self.jobs_history = JobsHistory()
                 self.jobs_history.setVisible(False)
-                
+
                 # Интегрируем с ConfigHistoryManager, если доступен
-                if hasattr(self, 'db_controller') and self.db_controller:
+                if self.db_controller:
                     try:
                         from ...database.config_history_manager import ConfigHistoryManager
                         config_history_manager = ConfigHistoryManager(self.db_controller)
@@ -374,21 +385,21 @@ class ConfigurerMainWindow(QDialog):
         """Загрузить конфигурацию из истории"""
         try:
             # Проверяем доступность базы данных
-            if not hasattr(self, 'db_controller') or not self.db_controller:
+            if not self.db_controller:
                 QMessageBox.warning(
                     self,
                     "База данных недоступна",
                     "Для загрузки конфигурации из истории необходимо подключение к базе данных."
                 )
                 return
-            
+
             # Создаем ConfigHistoryManager
             from ...database.config_history_manager import ConfigHistoryManager
             config_history_manager = ConfigHistoryManager(self.db_controller)
-            
+
             # Получаем список уникальных конфигураций
             unique_configs = config_history_manager.get_unique_configurations(limit=20)
-            
+
             if not unique_configs:
                 QMessageBox.information(
                     self,
@@ -397,19 +408,19 @@ class ConfigurerMainWindow(QDialog):
                     "Запустите приложение хотя бы один раз для создания истории."
                 )
                 return
-            
+
             # Создаем диалог выбора конфигурации
             from ...dialogs import ConfigRestoreDialog
-            
+
             # Показываем диалог для выбора конфигурации
             # Используем первую конфигурацию как пример
             selected_config = unique_configs[0]
-            
+
             # Создаем диалог восстановления
             dialog = ConfigRestoreDialog(selected_config, self)
             dialog.config_restored.connect(self._on_config_loaded_from_history)
             dialog.exec()
-            
+
         except Exception as e:
             self.logger.error(f"Error loading from history: {e}")
             QMessageBox.critical(
@@ -417,14 +428,14 @@ class ConfigurerMainWindow(QDialog):
                 "Ошибка",
                 f"Не удалось загрузить конфигурацию из истории:\n{str(e)}"
             )
-    
+
     @pyqtSlot(dict)
     def _on_config_loaded_from_history(self, restore_data: dict):
         """Обработчик загрузки конфигурации из истории"""
         try:
             config_info = restore_data.get('config_info', {})
             configuration_data = config_info.get('configuration_info', {})
-            
+
             if not configuration_data:
                 QMessageBox.warning(
                     self,
@@ -432,10 +443,10 @@ class ConfigurerMainWindow(QDialog):
                     "Не удалось получить данные конфигурации из истории."
                 )
                 return
-            
+
             # Загружаем конфигурацию в текущие вкладки
             self._load_configuration_data(configuration_data)
-            
+
             # Показываем уведомление об успешной загрузке
             QMessageBox.information(
                 self,
@@ -445,11 +456,11 @@ class ConfigurerMainWindow(QDialog):
                 f"Дата создания: {config_info.get('creation_time', 'N/A')}\n\n"
                 f"Не забудьте сохранить изменения, если они нужны."
             )
-            
+
             # Отмечаем, что есть несохраненные изменения
             self.has_unsaved_changes = True
             self._update_window_title()
-            
+
         except Exception as e:
             self.logger.error(f"Error processing loaded config: {e}")
             QMessageBox.critical(
@@ -457,34 +468,34 @@ class ConfigurerMainWindow(QDialog):
                 "Ошибка",
                 f"Не удалось обработать загруженную конфигурацию:\n{str(e)}"
             )
-    
+
     def _load_configuration_data(self, config_data: dict):
         """Загрузить данные конфигурации в вкладки"""
         try:
             # Загружаем данные в соответствующие вкладки
             if 'sources' in config_data:
                 self.tab_params['sources'].set_params(config_data['sources'])
-            
+
             if 'detectors' in config_data:
                 self.tab_params['detectors'].set_params(config_data['detectors'])
-            
+
             if 'trackers' in config_data:
                 self.tab_params['trackers'].set_params(config_data['trackers'])
-            
+
             if 'handlers' in config_data:
                 self.tab_params['handlers'].set_params(config_data['handlers'])
-            
+
             if 'visualizers' in config_data:
                 self.tab_params['visualizers'].set_params(config_data['visualizers'])
-            
+
             if 'events' in config_data:
                 self.tab_params['events'].set_params(config_data['events'])
-            
+
             if 'events_detectors' in config_data:
                 self.tab_params['events_detectors'].set_params(config_data['events_detectors'])
-            
+
             self.logger.info("Configuration data loaded into tabs")
-            
+
         except Exception as e:
             self.logger.error(f"Error loading configuration data: {e}")
             raise
@@ -555,53 +566,53 @@ class ConfigurerMainWindow(QDialog):
         # Проверяем, есть ли несохраненные изменения
         if self.has_unsaved_changes:
             reply = QMessageBox.question(
-                self, 
+                self,
                 'Несохраненные изменения',
                 'У вас есть несохраненные изменения. Хотите сохранить их перед закрытием?',
-                QMessageBox.StandardButton.Save | 
-                QMessageBox.StandardButton.Discard | 
+                QMessageBox.StandardButton.Save |
+                QMessageBox.StandardButton.Discard |
                 QMessageBox.StandardButton.Cancel,
                 QMessageBox.StandardButton.Save
             )
-            
+
             if reply == QMessageBox.StandardButton.Cancel:
                 event.ignore()
                 return
             elif reply == QMessageBox.StandardButton.Save:
                 # Сохраняем конфигурацию
                 self._save_config()
-        
+
         # Закрываем вкладки
         for tab_idx in range(self.tabs.count()):
             tab = self.tabs.widget(tab_idx)
             tab.close()
-        
+
         # Очищаем подключение к базе данных
         self.logger.info('DB jobs_conn removed')
         QSqlDatabase.removeDatabase('jobs_conn')
-        
+
         # Испускаем сигнал закрытия окна
         self.window_closed.emit()
-        
+
         # НЕ закрываем все окна приложения!
         event.accept()
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         super().resizeEvent(event)
-    
+
     # === Новые методы для отслеживания изменений и улучшенного сохранения ===
-    
+
     def _init_change_tracking(self) -> None:
         """Инициализация отслеживания изменений"""
         self._original_config = copy.deepcopy(self.config_result)
         self._has_unsaved_changes = False
-        
+
         # Сохраняем оригинальные значения для сравнения
         self._original_tab_data = {}
         for tab_name, tab_widget in self.tab_params.items():
             if hasattr(tab_widget, 'get_params'):
                 self._original_tab_data[tab_name] = tab_widget.get_params()
-    
+
     def _connect_change_tracking_signals(self) -> None:
         """Подключение сигналов для отслеживания изменений"""
         # Подключаем сигналы изменения вкладок
@@ -614,33 +625,33 @@ class ConfigurerMainWindow(QDialog):
             elif hasattr(tab_widget, 'textChanged'):
                 # Для текстовых полей
                 tab_widget.textChanged.connect(self._on_tab_params_changed)
-    
+
     @pyqtSlot()
     def _on_tab_params_changed(self) -> None:
         """Обработчик изменения параметров вкладки"""
         self._check_for_changes()
-    
+
     def _check_for_changes(self) -> None:
         """Проверка наличия изменений в конфигурации"""
         try:
             # Получаем текущие параметры
             current_config = self._get_current_config()
-            
+
             # Сравниваем с оригинальной конфигурацией
             has_changes = current_config != self._original_config
-            
+
             if has_changes != self._has_unsaved_changes:
                 self._has_unsaved_changes = has_changes
                 self.has_unsaved_changes = has_changes
-                
+
                 if has_changes:
                     self.logger.debug("Configuration changes detected")
                 else:
                     self.logger.debug("Configuration changes resolved")
-                    
+
         except Exception as e:
             self.logger.error(f"Error checking for changes: {e}")
-    
+
     def _get_current_config(self) -> Dict[str, Any]:
         """Получить текущую конфигурацию из всех вкладок"""
         try:
@@ -649,7 +660,7 @@ class ConfigurerMainWindow(QDialog):
         except Exception as e:
             self.logger.error(f"Error getting current config: {e}")
             return {}
-    
+
     @pyqtSlot()
     def _save_config(self) -> None:
         """Сохранить конфигурацию в текущий файл"""
@@ -657,15 +668,15 @@ class ConfigurerMainWindow(QDialog):
             # Если нет текущего файла, показываем диалог "Сохранить как"
             self._save_config_as()
             return
-        
+
         try:
             # Получаем текущую конфигурацию
             current_config = self._get_current_config()
-            
+
             # Валидируем конфигурацию
             if not self._validate_config(current_config):
                 return
-            
+
             # Путь сохранения
             full_path = os.path.join(utils.get_project_root(), self.config_file_name)
 
@@ -688,49 +699,49 @@ class ConfigurerMainWindow(QDialog):
                 # Fallback: локальная запись, если контроллер недоступен
                 with open(full_path, 'w', encoding='utf-8') as file:
                     json.dump(current_config, file, indent=4, ensure_ascii=False)
-            
+
             # Обновляем оригинальную конфигурацию
             self._original_config = copy.deepcopy(current_config)
             self._has_unsaved_changes = False
             self.has_unsaved_changes = False
-            
+
             # Показываем уведомление об успешном сохранении
             QMessageBox.information(
-                self, 
-                "Сохранение", 
+                self,
+                "Сохранение",
                 f"Конфигурация успешно сохранена в:\n{full_path}"
             )
-            
+
             # Испускаем сигнал об изменении конфигурации
             self.config_changed.emit(self.config_file_name)
-            
+
             self.logger.info(f"Configuration saved to: {full_path}")
-            
+
         except Exception as e:
             self.logger.error(f"Error saving configuration: {e}")
             QMessageBox.critical(
-                self, 
-                "Ошибка сохранения", 
+                self,
+                "Ошибка сохранения",
                 f"Не удалось сохранить конфигурацию:\n{str(e)}"
             )
-    
+
     @pyqtSlot()
     def _save_config_as(self) -> None:
         """Сохранить конфигурацию под новым именем"""
         try:
             # Показываем диалог выбора файла
             file_path = SaveAsDialog.show_dialog(self.config_file_name, self)
-            
+
             if not file_path:
                 return  # Пользователь отменил
-            
+
             # Получаем текущую конфигурацию
             current_config = self._get_current_config()
-            
+
             # Валидируем конфигурацию
             if not self._validate_config(current_config):
                 return
-            
+
             # Централизованное сохранение через контроллер, если доступен
             controller = getattr(getattr(self, 'parent', None), 'controller', None)
             if controller and hasattr(controller, 'save_config'):
@@ -748,39 +759,39 @@ class ConfigurerMainWindow(QDialog):
                 # Fallback: локальная запись
                 with open(file_path, 'w', encoding='utf-8') as file:
                     json.dump(current_config, file, indent=4, ensure_ascii=False)
-            
+
             # Обновляем текущий файл конфигурации
             self.config_file_name = file_path
             self.config_file = file_path
-            
+
             # Обновляем оригинальную конфигурацию
             self._original_config = copy.deepcopy(current_config)
             self._has_unsaved_changes = False
             self.has_unsaved_changes = False
-            
+
             # Обновляем заголовок окна
             self.setWindowTitle(f"EvilEye Configurer - {Path(file_path).name}")
-            
+
             # Показываем уведомление об успешном сохранении
             QMessageBox.information(
-                self, 
-                "Сохранение", 
+                self,
+                "Сохранение",
                 f"Конфигурация успешно сохранена в:\n{file_path}"
             )
-            
+
             # Испускаем сигнал об изменении конфигурации
             self.config_changed.emit(self.config_file_name)
-            
+
             self.logger.info(f"Configuration saved as: {file_path}")
-            
+
         except Exception as e:
             self.logger.error(f"Error saving configuration as: {e}")
             QMessageBox.critical(
-                self, 
-                "Ошибка сохранения", 
+                self,
+                "Ошибка сохранения",
                 f"Не удалось сохранить конфигурацию:\n{str(e)}"
             )
-    
+
     def _validate_config(self, config: Dict[str, Any]) -> bool:
         """Валидация конфигурации перед сохранением"""
         try:
@@ -789,37 +800,37 @@ class ConfigurerMainWindow(QDialog):
             for section in required_sections:
                 if section not in config:
                     QMessageBox.warning(
-                        self, 
-                        "Ошибка валидации", 
+                        self,
+                        "Ошибка валидации",
                         f"Отсутствует обязательная секция: {section}"
                     )
                     return False
-            
+
             # Проверяем источники
             sources = config.get('sources', [])
             if not sources:
                 QMessageBox.warning(
-                    self, 
-                    "Ошибка валидации", 
+                    self,
+                    "Ошибка валидации",
                     "Необходимо настроить хотя бы один источник"
                 )
                 return False
-            
+
             # Дополнительные проверки можно добавить здесь
-            
+
             return True
-            
+
         except Exception as e:
             self.logger.error(f"Error validating config: {e}")
             QMessageBox.critical(
-                self, 
-                "Ошибка валидации", 
+                self,
+                "Ошибка валидации",
                 f"Ошибка при валидации конфигурации:\n{str(e)}"
             )
             return False
-    
+
     # === Реализация абстрактных методов BaseMainWindow ===
-    
+
     def get_config_data(self) -> Optional[Dict[str, Any]]:
         """Получить данные конфигурации для сохранения"""
         try:
@@ -827,32 +838,32 @@ class ConfigurerMainWindow(QDialog):
         except Exception as e:
             self.logger.error(f"Error getting config data: {e}")
             return None
-    
+
     def apply_config_data(self, config_data: Dict[str, Any]) -> bool:
         """Применить данные конфигурации"""
         try:
             # Обновляем параметры
             self.params = copy.deepcopy(config_data)
             self.config_result = copy.deepcopy(config_data)
-            
+
             # Обновляем вкладки
             for tab_name, tab_widget in self.tab_params.items():
                 if hasattr(tab_widget, 'set_params'):
                     section_data = config_data.get(tab_name, {})
                     tab_widget.set_params(section_data)
-            
+
             # Обновляем оригинальную конфигурацию
             self._original_config = copy.deepcopy(config_data)
             self._has_unsaved_changes = False
             self.has_unsaved_changes = False
-            
+
             self.logger.info("Configuration data applied successfully")
             return True
-            
+
         except Exception as e:
             self.logger.error(f"Error applying config data: {e}")
             return False
-    
+
     def on_config_changed(self, config_file: str) -> None:
         """Обработчик изменения конфигурации"""
         if config_file == self.config_file_name:

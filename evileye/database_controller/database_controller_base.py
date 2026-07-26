@@ -2,9 +2,13 @@ from abc import ABC, abstractmethod
 from ..core.base_class import EvilEyeBase
 import threading
 from queue import Queue
+import weakref
+import atexit
 
 
 class DatabaseControllerBase(EvilEyeBase):
+    _instances: "weakref.WeakSet[DatabaseControllerBase]" = weakref.WeakSet()
+
     def __init__(self, controller_type):
         super().__init__()
         self.host_name = "localhost"
@@ -15,11 +19,28 @@ class DatabaseControllerBase(EvilEyeBase):
         self.logger.info(f"Controller type: {controller_type}")
         self.run_flag = False
         if self.controller_type == 'Writer':
-            self.query_thread = threading.Thread(target=self._insert_impl)
+            self.query_thread = threading.Thread(target=self._insert_impl, daemon=True)
         else:
             self.query_thread = None
         self.queue_in = Queue()
         self.queue_out = Queue()
+        try:
+            DatabaseControllerBase._instances.add(self)
+        except Exception:
+            pass
+
+    @classmethod
+    def shutdown_all(cls) -> None:
+        """Best-effort stop for any background DB writer threads (used in tests)."""
+        try:
+            items = list(cls._instances)
+        except Exception:
+            return
+        for db in items:
+            try:
+                db.stop()
+            except Exception:
+                pass
 
     def connect(self):
         if self.get_init_flag():
@@ -74,3 +95,9 @@ class DatabaseControllerBase(EvilEyeBase):
     @abstractmethod
     def _insert_impl(self):
         pass
+
+
+try:
+    atexit.register(DatabaseControllerBase.shutdown_all)
+except Exception:
+    pass

@@ -19,11 +19,11 @@ class AttributeState:
     enter_count: int = 0
     enter_ts: Optional[float] = None
     last_seen_ts: Optional[float] = None
-    
+
     # Новые поля для улучшенной логики состояний
     total_found_time_ms: int = 0  # Суммарное время обнаружения
-    total_lost_time_ms: int = 0   # Суммарное время потери
-    found_ratio: float = 0.0      # Отношение времени обнаружения к общему времени
+    total_lost_time_ms: int = 0  # Суммарное время потери
+    found_ratio: float = 0.0  # Отношение времени обнаружения к общему времени
 
     def reset_presence(self):
         self.frames_present = 0
@@ -33,5 +33,3 @@ class AttributeState:
         self.total_found_time_ms = 0
         self.total_lost_time_ms = 0
         self.found_ratio = 0.0
-
-

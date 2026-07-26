@@ -106,6 +106,8 @@ def test_zone_events_real_db_insert_update():
             db.connect()
         except Exception as e:
             pytest.skip(f"Database not available: {e}")
+        if not db.is_connected():
+            pytest.skip("Database not available: connection failed (db.is_connected() is False)")
 
         adapter_conf = adapters.get('DatabaseAdapterZoneEvents', {'table_name': 'zone_events', 'event_name': 'ZoneEvent'})
         adapter = DatabaseAdapterZoneEvents(db)

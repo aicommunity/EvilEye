@@ -10,6 +10,14 @@
 
 1. **Копирует `credentials_proto.json` в `credentials.json`** (только если `credentials.json` не существует)
 2. **Создает папку `configs`** (только если она не существует)
+3. **Разворачивает `monitor/`** — скрипты watchdog и шаблоны systemd (без запуска сервисов)
+4. **Создает `logs/`**, а также `monitor/incidents/` и `monitor/reports/`
+
+Команда **не** включает systemd timers и **не** запускает EvilEye. Для активации watchdog отдельно:
+
+```bash
+DEPLOY_DIR=$PWD ./monitor/scripts/install_timer.sh
+```
 
 ## Использование
 
@@ -40,9 +48,9 @@ evileye deploy
 Deploying EvilEye files to: /path/to/current/directory
 Copied credentials_proto.json to credentials.json
 Created configs folder
+Deployed monitor assets (... scripts, ... systemd templates) → .../monitor
+Note: watchdog timers were not enabled; run install_timer.sh when ready
 Deployment completed successfully!
-You can now create configurations with:
-  evileye create my_config --sources 1
 ```
 
 ### Повторный запуск (файлы уже существуют)
@@ -50,9 +58,8 @@ You can now create configurations with:
 Deploying EvilEye files to: /path/to/current/directory
 credentials.json already exists, skipping...
 configs folder already exists, skipping...
+Deployed monitor assets (... ) → .../monitor   # scripts/systemd обновляются
 Deployment completed successfully!
-You can now create configurations with:
-  evileye create my_config --sources 1
 ```
 
 ## Создаваемые файлы
@@ -69,22 +76,34 @@ You can now create configurations with:
     }
   },
   "database": {
-    "user_name": "postgres",
-    "password": "",
-    "database_name": "evil_eye_db",
-    "host_name": "localhost",
-    "port": 5432,
-    "default_database_name": "postgres",
-    "default_password": "",
-    "default_user_name": "postgres",
-    "default_host_name": "localhost",
-    "default_port": 5432
+    "admin_user_name": "postgres",
+    "admin_password": "your_db_password"
+  },
+  "web_auth": {
+    "enabled": false,
+    "username": "admin",
+    "password": "change-me"
   }
 }
 ```
 
+См. также шаблон [`evileye/credentials_proto.json`](../evileye/credentials_proto.json) и [`docs/CONFIGURATION_GUIDE.md`](CONFIGURATION_GUIDE.md).
+
 ### `configs/`
 Пустая директория для хранения конфигурационных файлов.
+
+### `logs/`
+Директория для логов сессий `*_evileye_main.log`.
+
+### `monitor/`
+Скрипты и шаблоны для бесперебойной работы (watchdog):
+
+- `scripts/` — `health_check.sh`, `restart_evileye.sh`, `install_timer.sh`, …
+- `systemd/` — шаблоны user units (`KillMode=process`)
+- `incidents/`, `reports/` — runtime-каталоги (пустые при deploy)
+- `INSTALL_HINT.txt` — как включить timer вручную
+
+Исходники в репозитории: [`deploy/monitor/`](../deploy/monitor/), в пакете: `evileye/deploy_monitor/`.
 
 ## Рабочий процесс
 
@@ -98,7 +117,12 @@ You can now create configurations with:
    evileye create my_config --sources 2 --source-type video_file
    ```
 
-3. **Запуск системы:**
+3. **(Опционально) включить watchdog:**
+   ```bash
+   DEPLOY_DIR=$PWD ./monitor/scripts/install_timer.sh
+   ```
+
+4. **Запуск системы:**
    ```bash
    evileye run configs/my_config.json
    ```

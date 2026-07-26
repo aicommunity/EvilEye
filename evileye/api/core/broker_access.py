@@ -1,15 +1,8 @@
-from typing import Optional
-from .frame_broker import FrameBroker
+"""Compatibility shim for frame broker access.
 
-""" Module for accessing the frame broker, singleton """
+Prefer ``evileye.core.runtime_services.get_frame_broker``.
+"""
 
-_broker: Optional[FrameBroker] = None
+from evileye.core.runtime_services import get_frame_broker as get_broker
 
-
-def get_broker() -> FrameBroker:
-    global _broker
-    if _broker is None:
-        _broker = FrameBroker()
-    return _broker
-
-
+__all__ = ["get_broker"]

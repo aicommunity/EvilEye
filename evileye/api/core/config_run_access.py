@@ -9,5 +9,3 @@ def get_config_run_manager() -> ConfigRunManager:
     if _manager is None:
         _manager = ConfigRunManager()
     return _manager
-
-

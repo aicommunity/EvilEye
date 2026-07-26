@@ -15,7 +15,8 @@ import logging
 
 
 class JsonJournalWindow(QWidget):
-    def __init__(self, main_window, close_app: bool = False, logger_name: str | None = None, parent_logger: logging.Logger | None = None):
+    def __init__(self, main_window, close_app: bool = False, logger_name: str | None = None,
+                 parent_logger: logging.Logger | None = None):
         super().__init__()
         base_name = "evileye.json_journal"
         full_name = f"{base_name}.{logger_name}" if logger_name else base_name
@@ -24,7 +25,7 @@ class JsonJournalWindow(QWidget):
         self.params = {}
         self.images_dir = None
         self.close_app = close_app
-        
+
         # Инициализация пустого UI
         self.vis_params = {}
         self.obj_journal_enabled = True
@@ -39,29 +40,29 @@ class JsonJournalWindow(QWidget):
         self.layout = QVBoxLayout()
         self.layout.addWidget(self.tabs)
         self.setLayout(self.layout)
-    
+
     def set_images_dir(self, images_dir, params):
         """Установить images_dir и params (вызывается после controller.init())"""
         self.images_dir = images_dir
         self.params = params
-        
+
         # Get visualizer params
         self.vis_params = self.params.get('visualizer', {})
         self.obj_journal_enabled = self.vis_params.get('objects_journal_enabled', True)
-        
+
         # Очищаем существующие вкладки
         while self.tabs.count() > 0:
             widget = self.tabs.widget(0)
             self.tabs.removeTab(0)
             if widget:
                 widget.deleteLater()
-        
+
         # Add Objects journal tab (if enabled)
         if self.obj_journal_enabled:
             try:
                 # Create JsonLabelJournalDataSource for objects
                 objects_ds = JsonLabelJournalDataSource(self.images_dir, params=self.params)
-                
+
                 # Create UnifiedObjectsJournal
                 objects_journal = UnifiedObjectsJournal(
                     objects_ds,
@@ -75,12 +76,12 @@ class JsonJournalWindow(QWidget):
                 self.logger.error(f"Failed to create Objects journal: {e}")
                 import traceback
                 self.logger.error(f"Traceback: {traceback.format_exc()}")
-        
+
         # Add Events journal tab
         try:
             # Create JsonLabelJournalDataSource for events
             events_ds = JsonLabelJournalDataSource(self.images_dir, params=self.params)
-            
+
             # Create UnifiedEventsJournal
             events_journal_widget = UnifiedEventsJournal(
                 events_ds,
@@ -139,7 +140,7 @@ class JsonJournalWindow(QWidget):
                     base_dir=self.images_dir,
                     parent=self,
                     logger_name="unified_objects_journal_json",
-                        parent_logger=self.logger
+                    parent_logger=self.logger
                 )
                 self.tabs.addTab(objects_journal, 'Objects journal')
             except Exception as e:
@@ -152,7 +153,7 @@ class JsonJournalWindow(QWidget):
                 base_dir=self.images_dir,
                 parent=self,
                 logger_name="unified_events_journal_json",
-                    parent_logger=self.logger
+                parent_logger=self.logger
             )
             self.tabs.addTab(events_journal, 'Events journal')
         except Exception as e:

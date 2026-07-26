@@ -14,7 +14,31 @@
 
 - **[Архитектура системы](ARCHITECTURE.md)** - Полное описание архитектуры на 7 уровнях абстракции (CLI, Controller, Pipeline, Video, Objects, Events, Database) с интерактивными Mermaid диаграммами и статическими UML диаграммами
 - **[Архитектура Pipeline](PIPELINE_ARCHITECTURE.md)** - Описание архитектуры pipeline, базовых классов и способов создания собственных pipeline
+- **[Мультипроцессность](MULTIPROCESSING.md)** - Запуск компонентов в отдельных OS-процессах, конфигурация `execution_mode`, диаграммы, FAQ
+
+### Thread vs multiprocess (разработка)
+
+Рекомендуемый порядок чтения: **контракты → dual-mode гайд → MULTIPROCESSING**.
+
+- **[Контракты и аудит](thread_vs_mp_contracts.md)** - сравнение thread/process; реестры COUP/DUP; §15 модульный индекс MP
+- **[Разработка dual-mode модулей](developing_dual_mode_modules.md)** - decision tree, шаблоны, чеклист PR
+- **[Мультипроцессность](MULTIPROCESSING.md)** - ops, env, FAQ
+- **[Уровни буферов capture](capture_buffer_levels.md)** - triple-buffer / drop policy
+- **[План рефакторинга](thread_vs_mp_refactoring_plan.md)** - Implemented vs backlog (R0–R6)
+- **[Упрощение интеграции](module_integration_simplification.md)** - S1–S7 статусы
+- **[Индекс модулей кода](CODE_MODULE_INDEX.md)** - карта `evileye/*`
+- **[Матрица аудита документации](DOC_AUDIT_MATRIX.md)** - статус актуальности docs
+- **[Post-refactor gate](../reports/mp_refactor_gate/e2e_gate_summary.md)** - E2E/soak после R0–R6
 - **[Руководство по рефакторингу GUI](GUI_REFACTORING_GUIDE.md)** - Архитектура GUI системы, компоненты и лучшие практики
+- **[Руководство по Dependency Injection](DEPENDENCY_INJECTION_GUIDE.md)** - Подробное описание механизма Dependency Injection, DIContainer и DependencyRegistry с примерами использования
+
+### Что нового по мультипроцессному режиму
+
+- Поддерживается гибридная схема: часть компонентов может работать в `thread`, часть в `process`.
+- Основная настройка выполняется через параметр `execution_mode` в секциях детекции, трекинга и атрибутов.
+- Добавлены актуальные сценарии запуска (`evileye run` как основной operational path и `evileye server` как service mode).
+- Расширены материалы по life-cycle процессов, graceful shutdown и автоперезапуску воркеров.
+- Детальное описание и примеры конфигураций см. в [MULTIPROCESSING.md](MULTIPROCESSING.md).
 
 ### Функциональность
 
@@ -42,8 +66,8 @@
 
 1. Изучите [архитектуру системы](ARCHITECTURE.md) для понимания общей структуры на всех уровнях
 2. Изучите [архитектуру Pipeline](PIPELINE_ARCHITECTURE.md) для деталей реализации pipeline
-3. Просмотрите [архитектуру системы](ARCHITECTURE.md) для понимания структуры системы на всех уровнях
-4. Ознакомьтесь с [руководством по рефакторингу GUI](GUI_REFACTORING_GUIDE.md)
+3. Ознакомьтесь с [руководством по рефакторингу GUI](GUI_REFACTORING_GUIDE.md)
+4. Изучите [руководство по Dependency Injection](DEPENDENCY_INJECTION_GUIDE.md) для понимания механизма управления зависимостями
 
 ### Для интеграторов
 

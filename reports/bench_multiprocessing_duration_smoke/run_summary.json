@@ -1,0 +1,23 @@
+{
+  "started_at": "2026-05-13T14:56:30",
+  "manifest": "reports/bench_multiprocessing/configs/manifest.json",
+  "timeout_sec": 60,
+  "duration_sec": 20,
+  "autoclose": false,
+  "sample_interval_sec": 2.0,
+  "runs": [
+    {
+      "camera_count": 1,
+      "mode": "thread",
+      "config": "reports/bench_multiprocessing/configs/bench_01cam_thread.json",
+      "log": "reports/bench_multiprocessing_duration_smoke/logs/01cam_thread.log",
+      "samples": "reports/bench_multiprocessing_duration_smoke/samples/01cam_thread.csv",
+      "exit_code": 124,
+      "timed_out": false,
+      "stopped_by_duration": true,
+      "terminate_ok": false,
+      "elapsed_sec": 20.026
+    }
+  ],
+  "finished_at": "2026-05-13T14:56:50"
+}

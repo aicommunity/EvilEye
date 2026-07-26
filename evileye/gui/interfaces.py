@@ -8,11 +8,11 @@ from typing import Any, Dict, List, Optional
 
 class IVisualizationProvider(ABC):
     """Interface for visualization components."""
-    
+
     @abstractmethod
-    def update(self, processing_frames: Dict[int, Any], 
+    def update(self, processing_frames: Dict[int, Any],
                source_last_processed_frame_id: Dict[int, int],
-               objects: List[Any], 
+               objects: List[Any],
                dropped_frames: Dict[int, int],
                debug_info: Dict[str, Any]) -> None:
         """
@@ -26,22 +26,22 @@ class IVisualizationProvider(ABC):
             debug_info: Debug information dictionary
         """
         pass
-    
+
     @abstractmethod
     def start(self) -> None:
         """Start visualization."""
         pass
-    
+
     @abstractmethod
     def stop(self) -> None:
         """Stop visualization."""
         pass
-    
+
     @abstractmethod
     def set_params(self, **params) -> None:
         """Set visualization parameters."""
         pass
-    
+
     @abstractmethod
     def get_params(self) -> Dict[str, Any]:
         """Get current visualization parameters."""
@@ -50,7 +50,7 @@ class IVisualizationProvider(ABC):
 
 class IProgressReporter(ABC):
     """Interface for progress reporting."""
-    
+
     @abstractmethod
     def report_progress(self, value: int, stage_text: str) -> None:
         """
@@ -65,7 +65,7 @@ class IProgressReporter(ABC):
 
 class IGUIEventHandler(ABC):
     """Interface for handling GUI events."""
-    
+
     @abstractmethod
     def handle_event(self, event_type: str, event_data: Dict[str, Any]) -> None:
         """

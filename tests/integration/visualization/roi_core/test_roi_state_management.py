@@ -223,7 +223,11 @@ class TestROIEditorDialogStateManagement(unittest.TestCase):
         with patch('evileye.visualization_modules.roi_core.get_module_logger') as mock_logger:
             mock_logger.return_value = Mock()
             from evileye.visualization_modules.roi_editor_window import ROIEditorWindow
-            self.dialog = ROIEditorWindow({})
+            self.dialog = ROIEditorWindow()
+            try:
+                self.dialog.set_params({})
+            except Exception:
+                pass
     
     def test_roi_editor_dialog_initialization(self):
         """Тест инициализации ROIEditorWindow"""

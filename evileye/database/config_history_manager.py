@@ -23,7 +23,7 @@ class ConfigHistoryManager:
     Предоставляет удобный API для работы с историей конфигураций,
     используя существующую структуру базы данных EvilEye.
     """
-    
+
     def __init__(self, db_controller: DatabaseControllerPg):
         """
         Инициализация менеджера истории конфигураций.
@@ -33,17 +33,17 @@ class ConfigHistoryManager:
         """
         self.logger = get_module_logger("config_history_manager")
         self.db_controller = db_controller
-        
+
         # Проверяем подключение к базе данных
         if not self.db_controller.is_connected():
             self.logger.warning("DatabaseController is not connected. Attempting to connect.")
             self.db_controller.connect()
-        
+
         if not self.db_controller.is_connected():
             raise ConnectionError("Failed to connect to the database.")
-        
+
         self.logger.info("ConfigHistoryManager initialized with connected DatabaseController.")
-    
+
     def _ensure_connected(self):
         """Проверяет подключение к базе данных и переподключается при необходимости."""
         if not self.db_controller.is_connected():
@@ -51,12 +51,12 @@ class ConfigHistoryManager:
             self.db_controller.connect()
             if not self.db_controller.is_connected():
                 raise ConnectionError("Failed to reconnect to the database.")
-        
-    def get_config_history(self, 
-                          start_date: Optional[datetime] = None,
-                          end_date: Optional[datetime] = None,
-                          project_id: Optional[int] = None,
-                          limit: int = 100) -> List[Dict[str, Any]]:
+
+    def get_config_history(self,
+                           start_date: Optional[datetime] = None,
+                           end_date: Optional[datetime] = None,
+                           project_id: Optional[int] = None,
+                           limit: int = 100) -> List[Dict[str, Any]]:
         """
         Получить историю конфигураций с фильтрацией.
         
@@ -76,37 +76,37 @@ class ConfigHistoryManager:
                 "FROM jobs j",
                 "WHERE j.configuration_info IS NOT NULL"
             ]
-            
+
             params = []
             param_count = 0
-            
+
             if start_date:
                 param_count += 1
                 query_parts.append(f"AND j.creation_time >= %s")
                 params.append(start_date)
-                
+
             if end_date:
                 param_count += 1
                 query_parts.append(f"AND j.creation_time <= %s")
                 params.append(end_date)
-                
+
             if project_id is not None:
                 param_count += 1
                 query_parts.append(f"AND j.project_id = %s")
                 params.append(project_id)
-                
+
             query_parts.append("ORDER BY j.creation_time DESC")
             query_parts.append(f"LIMIT %s")
             params.append(limit)
-            
+
             query = " ".join(query_parts)
-            
+
             records = self.db_controller.query(query, params)
-            
+
             result = []
             for record in records:
                 job_id, proj_id, config_id, creation_time, finish_time, is_terminated, config_info = record
-                
+
                 # Определяем статус
                 status = "Running"
                 if is_terminated:
@@ -116,7 +116,7 @@ class ConfigHistoryManager:
                         status = "Terminated"
                 elif finish_time:
                     status = "Completed"
-                
+
                 result.append({
                     'job_id': job_id,
                     'project_id': proj_id,
@@ -126,14 +126,14 @@ class ConfigHistoryManager:
                     'status': status,
                     'configuration_info': config_info if config_info else None
                 })
-                
+
             self.logger.info(f"Retrieved {len(result)} configuration history records")
             return result
-            
+
         except Exception as e:
             self.logger.error(f"Error retrieving config history: {e}")
             return []
-    
+
     def get_unique_configurations(self, limit: int = 50) -> List[Dict[str, Any]]:
         """
         Получить список уникальных конфигураций.
@@ -146,7 +146,7 @@ class ConfigHistoryManager:
         """
         try:
             self._ensure_connected()
-            
+
             query = """
                 SELECT DISTINCT ON (j.configuration_id) 
                     j.configuration_id,
@@ -162,13 +162,13 @@ class ConfigHistoryManager:
                 ORDER BY j.configuration_id, j.creation_time DESC
                 LIMIT %s
             """
-            
+
             records = self.db_controller.query(query, (limit,))
-            
+
             result = []
             for record in records:
                 config_id, job_id, proj_id, creation_time, finish_time, is_terminated, config_info, usage_count = record
-                
+
                 # Определяем статус
                 status = "Running"
                 if is_terminated:
@@ -178,7 +178,7 @@ class ConfigHistoryManager:
                         status = "Terminated"
                 elif finish_time:
                     status = "Completed"
-                
+
                 result.append({
                     'configuration_id': config_id,
                     'job_id': job_id,
@@ -189,14 +189,14 @@ class ConfigHistoryManager:
                     'usage_count': usage_count,
                     'configuration_info': config_info if config_info else None
                 })
-                
+
             self.logger.info(f"Retrieved {len(result)} unique configurations")
             return result
-            
+
         except Exception as e:
             self.logger.error(f"Error retrieving unique configurations: {e}")
             return []
-    
+
     def get_config_by_job_id(self, job_id: int) -> Optional[Dict[str, Any]]:
         """
         Получить конфигурацию по ID задания.
@@ -209,23 +209,23 @@ class ConfigHistoryManager:
         """
         try:
             self._ensure_connected()
-            
+
             query = """
                 SELECT j.job_id, j.project_id, j.configuration_id, j.creation_time,
                        j.finish_time, j.is_terminated, j.configuration_info
                 FROM jobs j
                 WHERE j.job_id = %s AND j.configuration_info IS NOT NULL
             """
-            
+
             records = self.db_controller.query(query, (job_id,))
-            
+
             if not records:
                 self.logger.warning(f"No configuration found for job_id: {job_id}")
                 return None
-                
+
             record = records[0]
             job_id, proj_id, config_id, creation_time, finish_time, is_terminated, config_info = record
-            
+
             # Определяем статус
             status = "Running"
             if is_terminated:
@@ -235,7 +235,7 @@ class ConfigHistoryManager:
                     status = "Terminated"
             elif finish_time:
                 status = "Completed"
-            
+
             result = {
                 'job_id': job_id,
                 'project_id': proj_id,
@@ -245,14 +245,14 @@ class ConfigHistoryManager:
                 'status': status,
                 'configuration_info': json.loads(config_info) if config_info else None
             }
-            
+
             self.logger.info(f"Retrieved configuration for job_id: {job_id}")
             return result
-            
+
         except Exception as e:
             self.logger.error(f"Error retrieving config for job_id {job_id}: {e}")
             return None
-    
+
     def compare_configurations(self, job_id1: int, job_id2: int) -> Dict[str, Any]:
         """
         Сравнить две конфигурации.
@@ -267,20 +267,20 @@ class ConfigHistoryManager:
         try:
             config1 = self.get_config_by_job_id(job_id1)
             config2 = self.get_config_by_job_id(job_id2)
-            
+
             if not config1 or not config2:
                 return {
                     'error': 'One or both configurations not found',
                     'config1_found': config1 is not None,
                     'config2_found': config2 is not None
                 }
-            
+
             info1 = config1.get('configuration_info', {})
             info2 = config2.get('configuration_info', {})
-            
+
             # Простое сравнение JSON структур
             differences = self._find_json_differences(info1, info2)
-            
+
             result = {
                 'job_id1': job_id1,
                 'job_id2': job_id2,
@@ -289,14 +289,14 @@ class ConfigHistoryManager:
                 'differences': differences,
                 'identical': len(differences) == 0
             }
-            
+
             self.logger.info(f"Compared configurations {job_id1} and {job_id2}, found {len(differences)} differences")
             return result
-            
+
         except Exception as e:
             self.logger.error(f"Error comparing configurations {job_id1} and {job_id2}: {e}")
             return {'error': str(e)}
-    
+
     def restore_configuration(self, job_id: int, target_path: str, create_backup: bool = True) -> Dict[str, Any]:
         """
         Восстановить конфигурацию из истории.
@@ -316,16 +316,16 @@ class ConfigHistoryManager:
                     'success': False,
                     'error': f'Configuration not found for job_id: {job_id}'
                 }
-            
+
             config_info = config.get('configuration_info')
             if not config_info:
                 return {
                     'success': False,
                     'error': 'No configuration data found'
                 }
-            
+
             target_path = Path(target_path)
-            
+
             # Создаем резервную копию, если файл существует
             backup_path = None
             if create_backup and target_path.exists():
@@ -333,11 +333,11 @@ class ConfigHistoryManager:
                 backup_path = target_path.with_suffix(f"{target_path.suffix}.backup.{timestamp}")
                 shutil.copy2(target_path, backup_path)
                 self.logger.info(f"Created backup: {backup_path}")
-            
+
             # Записываем восстановленную конфигурацию
             with open(target_path, 'w', encoding='utf-8') as f:
                 json.dump(config_info, f, indent=4, ensure_ascii=False)
-            
+
             result = {
                 'success': True,
                 'job_id': job_id,
@@ -346,22 +346,22 @@ class ConfigHistoryManager:
                 'creation_time': config['creation_time'],
                 'status': config['status']
             }
-            
+
             self.logger.info(f"Successfully restored configuration from job_id {job_id} to {target_path}")
             return result
-            
+
         except Exception as e:
             self.logger.error(f"Error restoring configuration from job_id {job_id}: {e}")
             return {
                 'success': False,
                 'error': str(e)
             }
-    
-    def export_config_history(self, 
-                             output_path: str,
-                             start_date: Optional[datetime] = None,
-                             end_date: Optional[datetime] = None,
-                             project_id: Optional[int] = None) -> Dict[str, Any]:
+
+    def export_config_history(self,
+                              output_path: str,
+                              start_date: Optional[datetime] = None,
+                              end_date: Optional[datetime] = None,
+                              project_id: Optional[int] = None) -> Dict[str, Any]:
         """
         Экспортировать историю конфигураций в файл.
         
@@ -376,7 +376,7 @@ class ConfigHistoryManager:
         """
         try:
             history = self.get_config_history(start_date, end_date, project_id, limit=1000)
-            
+
             export_data = {
                 'export_timestamp': datetime.now().isoformat(),
                 'filters': {
@@ -387,27 +387,27 @@ class ConfigHistoryManager:
                 'total_records': len(history),
                 'configurations': history
             }
-            
+
             output_path = Path(output_path)
             with open(output_path, 'w', encoding='utf-8') as f:
                 json.dump(export_data, f, indent=2, ensure_ascii=False, default=str)
-            
+
             result = {
                 'success': True,
                 'output_path': str(output_path),
                 'total_records': len(history)
             }
-            
+
             self.logger.info(f"Successfully exported {len(history)} configuration records to {output_path}")
             return result
-            
+
         except Exception as e:
             self.logger.error(f"Error exporting config history: {e}")
             return {
                 'success': False,
                 'error': str(e)
             }
-    
+
     def _find_json_differences(self, obj1: Any, obj2: Any, path: str = "") -> List[Dict[str, Any]]:
         """
         Найти различия между двумя JSON объектами.
@@ -421,7 +421,7 @@ class ConfigHistoryManager:
             Список различий
         """
         differences = []
-        
+
         if type(obj1) != type(obj2):
             differences.append({
                 'path': path,
@@ -430,7 +430,7 @@ class ConfigHistoryManager:
                 'value2': str(type(obj2))
             })
             return differences
-        
+
         if isinstance(obj1, dict):
             all_keys = set(obj1.keys()) | set(obj2.keys())
             for key in all_keys:
@@ -449,7 +449,7 @@ class ConfigHistoryManager:
                     })
                 else:
                     differences.extend(self._find_json_differences(obj1[key], obj2[key], new_path))
-        
+
         elif isinstance(obj1, list):
             max_len = max(len(obj1), len(obj2))
             for i in range(max_len):
@@ -468,7 +468,7 @@ class ConfigHistoryManager:
                     })
                 else:
                     differences.extend(self._find_json_differences(obj1[i], obj2[i], new_path))
-        
+
         else:
             if obj1 != obj2:
                 differences.append({
@@ -477,7 +477,7 @@ class ConfigHistoryManager:
                     'value1': obj1,
                     'value2': obj2
                 })
-        
+
         return differences
 
     def get_projects_list(self) -> List[Dict[str, Any]]:
@@ -489,7 +489,7 @@ class ConfigHistoryManager:
         """
         try:
             self._ensure_connected()
-            
+
             query = """
                 SELECT DISTINCT project_id, 
                        COUNT(*) as job_count,
@@ -500,20 +500,20 @@ class ConfigHistoryManager:
                 GROUP BY project_id
                 ORDER BY project_id
             """
-            
+
             result = self.db_controller.execute_query(query)
-            
+
             projects = []
             for row in result:
                 project_id = row[0]
                 job_count = row[1]
                 first_job = row[2]
                 last_job = row[3]
-                
+
                 # Получаем название проекта (если есть отдельная таблица projects)
                 project_name = f"Project {project_id}"
                 project_description = f"Project with {job_count} jobs"
-                
+
                 projects.append({
                     'project_id': project_id,
                     'project_name': project_name,
@@ -522,10 +522,10 @@ class ConfigHistoryManager:
                     'first_job': first_job,
                     'last_job': last_job
                 })
-            
+
             self.logger.info(f"Retrieved {len(projects)} projects")
             return projects
-            
+
         except Exception as e:
             self.logger.error(f"Error getting projects list: {e}")
             return []
@@ -543,23 +543,23 @@ class ConfigHistoryManager:
         """
         try:
             self._ensure_connected()
-            
+
             # Генерируем новый project_id
             query = "SELECT COALESCE(MAX(project_id), 0) + 1 FROM jobs"
             result = self.db_controller.execute_query(query)
             new_project_id = result[0][0] if result else 1
-            
+
             # Если есть отдельная таблица projects, создаем запись там
             # Пока что просто возвращаем новый ID
             self.logger.info(f"Created new project: {project_name} (ID: {new_project_id})")
-            
+
             return {
                 'success': True,
                 'project_id': new_project_id,
                 'project_name': project_name,
                 'message': f"Project '{project_name}' created successfully"
             }
-            
+
         except Exception as e:
             self.logger.error(f"Error creating project: {e}")
             return {
@@ -581,29 +581,29 @@ class ConfigHistoryManager:
         """
         try:
             self._ensure_connected()
-            
+
             # Проверяем существование проекта
             query = "SELECT COUNT(*) FROM jobs WHERE project_id = %s"
             result = self.db_controller.execute_query(query, (project_id,))
             project_exists = result[0][0] > 0 if result else False
-            
+
             if not project_exists:
                 return {
                     'success': False,
                     'error': f"Project with ID {project_id} not found"
                 }
-            
+
             # Если есть отдельная таблица projects, обновляем там
             # Пока что просто логируем
             self.logger.info(f"Updated project {project_id}: {project_name}")
-            
+
             return {
                 'success': True,
                 'project_id': project_id,
                 'project_name': project_name,
                 'message': f"Project {project_id} updated successfully"
             }
-            
+
         except Exception as e:
             self.logger.error(f"Error updating project: {e}")
             return {
@@ -623,31 +623,31 @@ class ConfigHistoryManager:
         """
         try:
             self._ensure_connected()
-            
+
             # Проверяем существование проекта
             query = "SELECT COUNT(*) FROM jobs WHERE project_id = %s"
             result = self.db_controller.execute_query(query, (project_id,))
             job_count = result[0][0] if result else 0
-            
+
             if job_count == 0:
                 return {
                     'success': False,
                     'error': f"Project with ID {project_id} not found"
                 }
-            
+
             # Обновляем все задачи проекта, устанавливая project_id = NULL
             update_query = "UPDATE jobs SET project_id = NULL WHERE project_id = %s"
             self.db_controller.execute_query(update_query, (project_id,))
-            
+
             self.logger.info(f"Deleted project {project_id}, updated {job_count} jobs")
-            
+
             return {
                 'success': True,
                 'project_id': project_id,
                 'updated_jobs': job_count,
                 'message': f"Project {project_id} deleted, {job_count} jobs updated"
             }
-            
+
         except Exception as e:
             self.logger.error(f"Error deleting project: {e}")
             return {
@@ -667,7 +667,7 @@ class ConfigHistoryManager:
         """
         try:
             self._ensure_connected()
-            
+
             query = """
                 SELECT project_id,
                        COUNT(*) as job_count,
@@ -678,12 +678,12 @@ class ConfigHistoryManager:
                 WHERE project_id = %s
                 GROUP BY project_id
             """
-            
+
             result = self.db_controller.execute_query(query, (project_id,))
-            
+
             if not result:
                 return None
-            
+
             row = result[0]
             return {
                 'project_id': row[0],
@@ -694,7 +694,7 @@ class ConfigHistoryManager:
                 'last_job': row[3],
                 'avg_duration_hours': float(row[4]) if row[4] else 0
             }
-            
+
         except Exception as e:
             self.logger.error(f"Error getting project info: {e}")
             return None
@@ -712,7 +712,7 @@ class ConfigHistoryManager:
         """
         try:
             self._ensure_connected()
-            
+
             # Базовая статистика
             base_query = """
                 SELECT 
@@ -729,12 +729,12 @@ class ConfigHistoryManager:
                 FROM jobs 
                 WHERE project_id = %s
             """
-            
+
             result = self.db_controller.execute_query(base_query, (project_id,))
-            
+
             if not result:
                 return None
-            
+
             row = result[0]
             stats = {
                 'total_jobs': row[0] or 0,
@@ -748,7 +748,7 @@ class ConfigHistoryManager:
                 'first_job_date': row[8],
                 'last_job_date': row[9]
             }
-            
+
             # Детальная статистика
             if detailed:
                 detailed_query = """
@@ -760,9 +760,9 @@ class ConfigHistoryManager:
                     FROM jobs 
                     WHERE project_id = %s AND frames_processed IS NOT NULL
                 """
-                
+
                 detailed_result = self.db_controller.execute_query(detailed_query, (project_id,))
-                
+
                 if detailed_result and detailed_result[0][0] is not None:
                     detailed_row = detailed_result[0]
                     stats.update({
@@ -771,7 +771,7 @@ class ConfigHistoryManager:
                         'total_events': detailed_row[2] or 0,
                         'avg_fps': float(detailed_row[3]) if detailed_row[3] else 0
                     })
-                
+
                 # Период активности
                 if stats['first_job_date'] and stats['last_job_date']:
                     first_date = stats['first_job_date']
@@ -780,14 +780,14 @@ class ConfigHistoryManager:
                         first_date = datetime.fromisoformat(first_date.replace('Z', '+00:00'))
                     if isinstance(last_date, str):
                         last_date = datetime.fromisoformat(last_date.replace('Z', '+00:00'))
-                    
+
                     period = last_date - first_date
                     stats['activity_period'] = f"{period.days} days, {period.seconds // 3600} hours"
                 else:
                     stats['activity_period'] = "Unknown"
-            
+
             return stats
-            
+
         except Exception as e:
             self.logger.error(f"Error getting project statistics: {e}")
             return None
@@ -805,7 +805,7 @@ class ConfigHistoryManager:
         try:
             errors = []
             warnings = []
-            
+
             # Проверяем обязательные поля
             required_fields = ['sources', 'detectors', 'trackers']
             for field in required_fields:
@@ -813,7 +813,7 @@ class ConfigHistoryManager:
                     errors.append(f"Missing required field: {field}")
                 elif not config[field]:
                     warnings.append(f"Empty {field} configuration")
-            
+
             # Проверяем источники
             if 'sources' in config:
                 sources = config['sources']
@@ -822,17 +822,17 @@ class ConfigHistoryManager:
                         if not isinstance(source_config, dict):
                             errors.append(f"Invalid source configuration for {source_id}")
                             continue
-                        
+
                         # Проверяем обязательные поля источника
                         if 'source_address' not in source_config:
                             errors.append(f"Source {source_id} missing source_address")
-                        
+
                         # Проверяем существование файлов
                         if 'source_address' in source_config:
                             source_path = source_config['source_address']
                             if source_path.startswith('/') and not os.path.exists(source_path):
                                 warnings.append(f"Source file not found: {source_path}")
-            
+
             # Проверяем детекторы
             if 'detectors' in config:
                 detectors = config['detectors']
@@ -841,13 +841,13 @@ class ConfigHistoryManager:
                         if not isinstance(detector_config, dict):
                             errors.append(f"Invalid detector configuration for {detector_id}")
                             continue
-                        
+
                         # Проверяем путь к модели
                         if 'model_path' in detector_config:
                             model_path = detector_config['model_path']
                             if not os.path.exists(model_path):
                                 warnings.append(f"Detector model not found: {model_path}")
-            
+
             # Проверяем трекеры
             if 'trackers' in config:
                 trackers = config['trackers']
@@ -856,7 +856,7 @@ class ConfigHistoryManager:
                         if not isinstance(tracker_config, dict):
                             errors.append(f"Invalid tracker configuration for {tracker_id}")
                             continue
-            
+
             return {
                 'valid': len(errors) == 0,
                 'errors': errors,
@@ -864,7 +864,7 @@ class ConfigHistoryManager:
                 'error_count': len(errors),
                 'warning_count': len(warnings)
             }
-            
+
         except Exception as e:
             self.logger.error(f"Error validating config: {e}")
             return {
@@ -887,7 +887,7 @@ class ConfigHistoryManager:
         """
         try:
             self._ensure_connected()
-            
+
             query = """
                 SELECT 
                     configuration_id,
@@ -903,12 +903,12 @@ class ConfigHistoryManager:
                 WHERE configuration_id = %s
                 GROUP BY configuration_id
             """
-            
+
             result = self.db_controller.execute_query(query, (config_id,))
-            
+
             if not result:
                 return None
-            
+
             row = result[0]
             return {
                 'configuration_id': row[0],
@@ -921,7 +921,7 @@ class ConfigHistoryManager:
                 'total_objects': row[7] or 0,
                 'total_events': row[8] or 0
             }
-            
+
         except Exception as e:
             self.logger.error(f"Error getting config stats: {e}")
             return None

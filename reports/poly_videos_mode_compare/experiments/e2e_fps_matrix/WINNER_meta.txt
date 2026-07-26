@@ -1,0 +1,6 @@
+{
+  "exp": "F2",
+  "note": "eligible",
+  "base_score": 31.662346816378744,
+  "disqualified": []
+}

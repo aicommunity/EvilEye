@@ -66,5 +66,3 @@ class SystemEventsDetector(EventsDetector):
     def default(self):
         # Значения по умолчанию отсутствуют
         pass
-
-

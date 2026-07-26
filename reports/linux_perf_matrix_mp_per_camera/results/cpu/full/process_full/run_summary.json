@@ -1,0 +1,107 @@
+{
+  "started_at": "2026-06-03T23:48:05",
+  "manifest": "reports/linux_perf_matrix_mp_per_camera/configs/cpu/full/process_full/manifest.json",
+  "timeout_sec": 900,
+  "duration_sec": 180,
+  "autoclose": false,
+  "sample_interval_sec": 2.0,
+  "runs": [
+    {
+      "camera_count": 1,
+      "mode": "thread",
+      "config": "reports/linux_perf_matrix_mp_per_camera/configs/cpu/full/process_full/bench_01cam_thread.json",
+      "log": "reports/linux_perf_matrix_mp_per_camera/results/cpu/full/process_full/logs/01cam_thread.log",
+      "samples": "reports/linux_perf_matrix_mp_per_camera/results/cpu/full/process_full/samples/01cam_thread.csv",
+      "exit_code": 0,
+      "timed_out": false,
+      "stopped_by_duration": true,
+      "terminate_ok": true,
+      "elapsed_sec": 193.37
+    },
+    {
+      "camera_count": 1,
+      "mode": "process",
+      "config": "reports/linux_perf_matrix_mp_per_camera/configs/cpu/full/process_full/bench_01cam_process.json",
+      "log": "reports/linux_perf_matrix_mp_per_camera/results/cpu/full/process_full/logs/01cam_process.log",
+      "samples": "reports/linux_perf_matrix_mp_per_camera/results/cpu/full/process_full/samples/01cam_process.csv",
+      "exit_code": 0,
+      "timed_out": false,
+      "stopped_by_duration": true,
+      "terminate_ok": true,
+      "elapsed_sec": 189.649
+    },
+    {
+      "camera_count": 2,
+      "mode": "thread",
+      "config": "reports/linux_perf_matrix_mp_per_camera/configs/cpu/full/process_full/bench_02cam_thread.json",
+      "log": "reports/linux_perf_matrix_mp_per_camera/results/cpu/full/process_full/logs/02cam_thread.log",
+      "samples": "reports/linux_perf_matrix_mp_per_camera/results/cpu/full/process_full/samples/02cam_thread.csv",
+      "exit_code": 0,
+      "timed_out": false,
+      "stopped_by_duration": true,
+      "terminate_ok": true,
+      "elapsed_sec": 199.634
+    },
+    {
+      "camera_count": 2,
+      "mode": "process",
+      "config": "reports/linux_perf_matrix_mp_per_camera/configs/cpu/full/process_full/bench_02cam_process.json",
+      "log": "reports/linux_perf_matrix_mp_per_camera/results/cpu/full/process_full/logs/02cam_process.log",
+      "samples": "reports/linux_perf_matrix_mp_per_camera/results/cpu/full/process_full/samples/02cam_process.csv",
+      "exit_code": 0,
+      "timed_out": false,
+      "stopped_by_duration": true,
+      "terminate_ok": true,
+      "elapsed_sec": 191.924
+    },
+    {
+      "camera_count": 3,
+      "mode": "thread",
+      "config": "reports/linux_perf_matrix_mp_per_camera/configs/cpu/full/process_full/bench_03cam_thread.json",
+      "log": "reports/linux_perf_matrix_mp_per_camera/results/cpu/full/process_full/logs/03cam_thread.log",
+      "samples": "reports/linux_perf_matrix_mp_per_camera/results/cpu/full/process_full/samples/03cam_thread.csv",
+      "exit_code": 0,
+      "timed_out": false,
+      "stopped_by_duration": true,
+      "terminate_ok": true,
+      "elapsed_sec": 198.095
+    },
+    {
+      "camera_count": 3,
+      "mode": "process",
+      "config": "reports/linux_perf_matrix_mp_per_camera/configs/cpu/full/process_full/bench_03cam_process.json",
+      "log": "reports/linux_perf_matrix_mp_per_camera/results/cpu/full/process_full/logs/03cam_process.log",
+      "samples": "reports/linux_perf_matrix_mp_per_camera/results/cpu/full/process_full/samples/03cam_process.csv",
+      "exit_code": 0,
+      "timed_out": false,
+      "stopped_by_duration": true,
+      "terminate_ok": true,
+      "elapsed_sec": 193.777
+    },
+    {
+      "camera_count": 4,
+      "mode": "thread",
+      "config": "reports/linux_perf_matrix_mp_per_camera/configs/cpu/full/process_full/bench_04cam_thread.json",
+      "log": "reports/linux_perf_matrix_mp_per_camera/results/cpu/full/process_full/logs/04cam_thread.log",
+      "samples": "reports/linux_perf_matrix_mp_per_camera/results/cpu/full/process_full/samples/04cam_thread.csv",
+      "exit_code": 0,
+      "timed_out": false,
+      "stopped_by_duration": true,
+      "terminate_ok": true,
+      "elapsed_sec": 200.253
+    },
+    {
+      "camera_count": 4,
+      "mode": "process",
+      "config": "reports/linux_perf_matrix_mp_per_camera/configs/cpu/full/process_full/bench_04cam_process.json",
+      "log": "reports/linux_perf_matrix_mp_per_camera/results/cpu/full/process_full/logs/04cam_process.log",
+      "samples": "reports/linux_perf_matrix_mp_per_camera/results/cpu/full/process_full/samples/04cam_process.csv",
+      "exit_code": 0,
+      "timed_out": false,
+      "stopped_by_duration": true,
+      "terminate_ok": true,
+      "elapsed_sec": 195.291
+    }
+  ],
+  "finished_at": "2026-06-04T00:14:07"
+}

@@ -11,6 +11,7 @@ try:
     )
     from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor, QBrush, QPolygonF
     from PyQt6.QtCore import QSize, QTimer, QPointF
+
     pyqt_version = 6
 except ImportError:
     from PyQt5.QtCore import Qt, pyqtSlot
@@ -20,6 +21,7 @@ except ImportError:
     )
     from PyQt5.QtGui import QPixmap, QPainter, QPen, QColor, QBrush, QPolygonF
     from PyQt5.QtCore import QSize, QTimer, QPointF
+
     pyqt_version = 5
 
 from .journal_data_source_json import JsonLabelJournalDataSource
@@ -28,7 +30,8 @@ import logging
 
 
 class ImageDelegate(QStyledItemDelegate):
-    def __init__(self, parent=None, base_dir=None, logger_name: str | None = None, parent_logger: logging.Logger | None = None):
+    def __init__(self, parent=None, base_dir=None, logger_name: str | None = None,
+                 parent_logger: logging.Logger | None = None):
         super().__init__(parent)
         base_name = "evileye.image_delegate"
         full_name = f"{base_name}.{logger_name}" if logger_name else base_name
@@ -40,37 +43,37 @@ class ImageDelegate(QStyledItemDelegate):
     def paint(self, painter, option, index):
         if not index.isValid():
             return
-            
+
         # Get event data from the row
         table = self.parent()
         if not table:
             return
-            
+
         row = index.row()
         if row >= table.rowCount():
             return
-            
+
         # Get image filename from the row (Preview or Lost preview column)
         img_filename_item = table.item(row, index.column())  # Use current column
-        
+
         if not img_filename_item:
             return
-            
+
         img_path = img_filename_item.text()
-        
+
         # If no image path, just return (empty cell)
         if not img_path:
             return
-        
+
         # Use image path directly from JSON
         if not img_path:
             return
-            
+
         if not os.path.exists(img_path):
             # Debug: print missing image path
             self.logger.warning(f"Image not found: {img_path}")
             return
-            
+
         # Load image
         pixmap = QPixmap(img_path)
         if pixmap.isNull():
@@ -89,7 +92,7 @@ class ImageDelegate(QStyledItemDelegate):
         # Try to draw overlay box/zone for preview using target_rect as base
         ev_item = table.item(row, 5) if index.column() == 5 else table.item(row, 6)
         ev = ev_item.data(Qt.ItemDataRole.UserRole) if ev_item else None
-        
+
         if ev:
             # Box - handle both dict and list formats
             box = ev.get('bounding_box') or ev.get('box')
@@ -120,23 +123,32 @@ class ImageDelegate(QStyledItemDelegate):
                         candidates = []
                         if cur_path:
                             # New structure: FoundPreviews/FoundFrames/LostPreviews/LostFrames
-                            candidates.append(cur_path.replace('FoundPreviews', 'FoundFrames').replace('_preview.', '_frame.'))
-                            candidates.append(cur_path.replace('LostPreviews', 'LostFrames').replace('_preview.', '_frame.'))
+                            candidates.append(
+                                cur_path.replace('FoundPreviews', 'FoundFrames').replace('_preview.', '_frame.'))
+                            candidates.append(
+                                cur_path.replace('LostPreviews', 'LostFrames').replace('_preview.', '_frame.'))
                             # Legacy support
                             candidates.append(cur_path.replace('previews', 'frames').replace('_preview.', '_frame.'))
-                            candidates.append(cur_path.replace('/found_previews/', '/found_frames/').replace('_preview.', '_frame.'))
-                            candidates.append(cur_path.replace('/lost_previews/', '/lost_frames/').replace('_preview.', '_frame.'))
+                            candidates.append(
+                                cur_path.replace('/found_previews/', '/found_frames/').replace('_preview.', '_frame.'))
+                            candidates.append(
+                                cur_path.replace('/lost_previews/', '/lost_frames/').replace('_preview.', '_frame.'))
                         # Also try constructing from event date_folder
-                        ev = table.item(row, 5).data(Qt.ItemDataRole.UserRole) if index.column() == 5 else table.item(row, 6).data(Qt.ItemDataRole.UserRole)
+                        ev = table.item(row, 5).data(Qt.ItemDataRole.UserRole) if index.column() == 5 else table.item(
+                            row, 6).data(Qt.ItemDataRole.UserRole)
                         if ev:
                             date_folder = ev.get('date_folder', '')
                             base_name = os.path.basename(cur_path).replace('_preview.', '_frame.')
                             # New structure: Events/YYYY-MM-DD/Images/FoundFrames or LostFrames
-                            candidates.append(os.path.join(self.base_dir, 'Events', date_folder, 'Images', 'FoundFrames', base_name))
-                            candidates.append(os.path.join(self.base_dir, 'Events', date_folder, 'Images', 'LostFrames', base_name))
+                            candidates.append(
+                                os.path.join(self.base_dir, 'Events', date_folder, 'Images', 'FoundFrames', base_name))
+                            candidates.append(
+                                os.path.join(self.base_dir, 'Events', date_folder, 'Images', 'LostFrames', base_name))
                             # Legacy support
-                            candidates.append(os.path.join(self.base_dir, 'images', date_folder, 'found_frames', base_name))
-                            candidates.append(os.path.join(self.base_dir, 'images', date_folder, 'lost_frames', base_name))
+                            candidates.append(
+                                os.path.join(self.base_dir, 'images', date_folder, 'found_frames', base_name))
+                            candidates.append(
+                                os.path.join(self.base_dir, 'images', date_folder, 'lost_frames', base_name))
                         for cand in candidates:
                             if cand and os.path.exists(cand):
                                 frame_path = cand
@@ -166,13 +178,13 @@ class ImageDelegate(QStyledItemDelegate):
                 else:
                     # Already normalized
                     x1_norm, y1_norm, x2_norm, y2_norm = x1, y1, x2, y2
-                
+
                 # Scale to draw area (full cell stretch)
                 x = draw_x + int(x1_norm * draw_w)
                 y = draw_y + int(y1_norm * draw_h)
                 w = int((x2_norm - x1_norm) * draw_w)
                 h = int((y2_norm - y1_norm) * draw_h)
-                
+
                 painter.drawRect(x, y, w, h)
             # Zone - use same logic as DB journal
             zc = ev.get('zone_coords')
@@ -228,7 +240,7 @@ class ImageWindow(QLabel):
         self.setFixedSize(900, 600)
         self.image_path = image_path
         self.zone_coords = zone_coords
-        
+
         # Load image
         pixmap = QPixmap(image_path)
         if pixmap.isNull():
@@ -243,7 +255,7 @@ class ImageWindow(QLabel):
             self.layout.addWidget(self.label)
             self.setLayout(self.layout)
             return
-            
+
         # Compute target rect in window
         win_w, win_h = self.width(), self.height()
         img_w, img_h = pixmap.width(), pixmap.height()
@@ -266,23 +278,35 @@ class ImageWindow(QLabel):
                 pen = QPen(QColor(0, 255, 0), 2)
                 painter.setPen(pen)
                 # Поддержка dict {'x','y','width','height'}, [x,y,w,h] и [x1,y1,x2,y2]
-                x1=y1=x2=y2=None
+                x1 = y1 = x2 = y2 = None
                 if isinstance(box, dict):
-                    bx = box.get('x', 0); by = box.get('y', 0); bw = box.get('width', 0); bh = box.get('height', 0)
+                    bx = box.get('x', 0);
+                    by = box.get('y', 0);
+                    bw = box.get('width', 0);
+                    bh = box.get('height', 0)
                     if max(bx, by, bw, bh) <= 1.0:
-                        x1 = bx; y1 = by; x2 = bx + bw; y2 = by + bh
+                        x1 = bx;
+                        y1 = by;
+                        x2 = bx + bw;
+                        y2 = by + bh
                     else:
                         # абсолютные пиксели → нормализуем от размера исходного pixmap
-                        x1 = bx / img_w; y1 = by / img_h; x2 = (bx + bw) / img_w; y2 = (by + bh) / img_h
+                        x1 = bx / img_w;
+                        y1 = by / img_h;
+                        x2 = (bx + bw) / img_w;
+                        y2 = (by + bh) / img_h
                 elif isinstance(box, (list, tuple)) and len(box) == 4:
-                    a,b,c,d = box
-                    if max(a,b,c,d) <= 1.0:
+                    a, b, c, d = box
+                    if max(a, b, c, d) <= 1.0:
                         # это [x1,y1,x2,y2] в нормализованных координатах
-                        x1,y1,x2,y2 = a,b,c,d
+                        x1, y1, x2, y2 = a, b, c, d
                     else:
                         # это [x,y,w,h] в пикселях
-                        x1 = a / img_w; y1 = b / img_h; x2 = (a + c) / img_w; y2 = (b + d) / img_h
-                if None not in (x1,y1,x2,y2):
+                        x1 = a / img_w;
+                        y1 = b / img_h;
+                        x2 = (a + c) / img_w;
+                        y2 = (b + d) / img_h
+                if None not in (x1, y1, x2, y2):
                     x = draw_x + int(x1 * draw_w)
                     y = draw_y + int(y1 * draw_h)
                     w = int((x2 - x1) * draw_w)
@@ -299,16 +323,16 @@ class ImageWindow(QLabel):
                         pts.append((int(px), int(py)))
                 for i in range(len(pts)):
                     x1, y1 = pts[i]
-                    x2, y2 = pts[(i+1) % len(pts)]
+                    x2, y2 = pts[(i + 1) % len(pts)]
                     painter.drawLine(x1, y1, x2, y2)
         finally:
             if painter.isActive():
                 painter.end()
-        
+
         # Create label and set pixmap
         self.label = QLabel()
         self.label.setPixmap(canvas)
-        
+
         # Setup layout
         self.layout = QVBoxLayout()
         self.layout.addWidget(self.label)
@@ -320,7 +344,8 @@ class ImageWindow(QLabel):
 
 
 class EventsJournalJson(QWidget):
-    def __init__(self, base_dir: str, parent=None, logger_name: str | None = None, parent_logger: logging.Logger | None = None):
+    def __init__(self, base_dir: str, parent=None, logger_name: str | None = None,
+                 parent_logger: logging.Logger | None = None):
         super().__init__(parent)
         base_name = "evileye.events_journal_json"
         full_name = f"{base_name}.{logger_name}" if logger_name else base_name
@@ -332,12 +357,12 @@ class EventsJournalJson(QWidget):
         self.page = 0
         self.page_size = 50
         self.filters: Dict = {}
-        
+
         # Store last data hash for efficient updates
         self.last_data_hash = None
         self.is_visible = False
         self._is_closing = False  # Flag to prevent operations during closing
-        
+
         # Real-time update timer
         self.update_timer = QTimer()
         self.update_timer.timeout.connect(self._check_for_updates)
@@ -362,7 +387,9 @@ class EventsJournalJson(QWidget):
 
         self.cmb_type = QComboBox()
         # Добавляем типы для атрибутных/зон/FOV событий, чтобы их можно было явно отфильтровать
-        self.cmb_type.addItems(['All', 'found', 'lost', 'attr_found', 'attr_lost', 'zone_entered', 'zone_left', 'fov_found', 'fov_lost', 'cam'])
+        self.cmb_type.addItems(
+            ['All', 'found', 'lost', 'attr_found', 'attr_lost', 'zone_entered', 'zone_left', 'fov_found', 'fov_lost',
+             'cam'])
         self.cmb_type.currentTextChanged.connect(self._on_filter_changed)
         toolbar.addWidget(self.cmb_type)
 
@@ -370,7 +397,8 @@ class EventsJournalJson(QWidget):
 
         # Use objects journal structure: Time, Event, Information, Source, Time lost, Preview, Lost preview
         self.table = QTableWidget(0, 7)
-        self.table.setHorizontalHeaderLabels(['Time', 'Event', 'Information', 'Source', 'Time lost', 'Preview', 'Lost preview'])
+        self.table.setHorizontalHeaderLabels(
+            ['Time', 'Event', 'Information', 'Source', 'Time lost', 'Preview', 'Lost preview'])
         h = self.table.horizontalHeader()
         v = self.table.verticalHeader()
         h.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)  # Time
@@ -393,7 +421,8 @@ class EventsJournalJson(QWidget):
         self.layout.addWidget(self.table)
 
         # Set up image delegate for image columns (Preview and Lost preview)
-        self.image_delegate = ImageDelegate(self.table, self.base_dir, logger_name="image_delegate", parent_logger=self.logger)
+        self.image_delegate = ImageDelegate(self.table, self.base_dir, logger_name="image_delegate",
+                                            parent_logger=self.logger)
         self.table.setItemDelegateForColumn(5, self.image_delegate)  # Preview
         self.table.setItemDelegateForColumn(6, self.image_delegate)  # Lost preview
 
@@ -404,24 +433,24 @@ class EventsJournalJson(QWidget):
 
         # Connect double click signal - use cellDoubleClicked for QTableWidget
         self.table.cellDoubleClicked.connect(self._display_image)
-        
+
         # Store image window reference
         self.image_win = None
 
         self.setLayout(self.layout)
-        
+
         # Enable automatic updates
         self.table.setUpdatesEnabled(True)
-        
+
         # Connect show event to force update
         # Note: showEvent will be overridden in the class definition
-        
+
         # Connect visibility change event (only if signal exists)
         try:
             self.visibilityChanged.connect(self._on_visibility_changed)
         except AttributeError:
             self.logger.warning("visibilityChanged signal unavailable, skipping visibility tracking")
-        
+
         # Connect focus change event for better responsiveness
         try:
             self.windowActivated.connect(self._on_window_activated)
@@ -467,11 +496,11 @@ class EventsJournalJson(QWidget):
                 return
             if not hasattr(self, 'ds') or self.ds is None:
                 return
-            
+
             # Get current data hash
             filters = {k: v for k, v in self.filters.items() if v}
             current_data = self.ds.fetch(self.page, self.page_size, filters, [])
-            
+
             # Create a hash based on data count and latest timestamp
             if current_data:
                 latest_ts = max(ev.get('ts', '') for ev in current_data)
@@ -479,15 +508,15 @@ class EventsJournalJson(QWidget):
                 current_hash = hash(f"{data_count}_{latest_ts}")
             else:
                 current_hash = hash("empty")
-            
+
             # Always reload for visible windows, or if data changed
             if current_hash != self.last_data_hash or self.is_visible:
                 if current_hash != self.last_data_hash:
-                    #self.logger.debug(f"🔄 Data changed! Hash: {self.last_data_hash} -> {current_hash}")
+                    # self.logger.debug(f"🔄 Data changed! Hash: {self.last_data_hash} -> {current_hash}")
                     self.last_data_hash = current_hash
-                #else:
+                # else:
                 #    self.logger.debug(f"🔄 Forcing update for visible window. Hash: {current_hash}")
-                
+
                 self._reload_table()
                 # Force widget repaint only if widget still exists
                 if hasattr(self, 'table') and self.table is not None:
@@ -506,15 +535,15 @@ class EventsJournalJson(QWidget):
                 return
             if not hasattr(self, 'ds') or self.ds is None:
                 return
-            
+
             filters = {k: v for k, v in self.filters.items() if v}
             # Use empty sort list to avoid sorting errors with None values
             rows = self.ds.fetch(self.page, self.page_size, filters, [])
             # Показываем события детекторов и системные: attr_*, zone_*, fov_*, cam, sys
             rows = [ev for ev in rows if (
-                (et := ev.get('event_type', '')) and (
+                    (et := ev.get('event_type', '')) and (
                     et.startswith('attr') or et.startswith('zone') or et.startswith('fov') or et == 'cam' or et == 'sys'
-                )
+            )
             )]
             # Короткая сводка по типам для диагностики (в логи)
             try:
@@ -525,13 +554,13 @@ class EventsJournalJson(QWidget):
                 self.logger.info(f"JSON events summary: {counts}")
             except Exception:
                 pass
-            
+
             # Group paired events to show both Preview and Lost preview in one row
             grouped = {}
             cam_events = []
             sys_events = []
             for ev in rows:
-                et = ev.get('event_type','')
+                et = ev.get('event_type', '')
                 if et.startswith('attr'):
                     key = ('attr', ev.get('object_id'))
                 elif et.startswith('zone'):
@@ -547,9 +576,9 @@ class EventsJournalJson(QWidget):
                 else:
                     continue
                 bucket = grouped.setdefault(key, {'found': None, 'lost': None})
-                if et in ('attr_found','zone_entered','fov_found'):
+                if et in ('attr_found', 'zone_entered', 'fov_found'):
                     bucket['found'] = ev
-                elif et in ('attr_lost','zone_left','fov_lost'):
+                elif et in ('attr_lost', 'zone_left', 'fov_lost'):
                     bucket['lost'] = ev
 
             table_rows = []
@@ -562,10 +591,10 @@ class EventsJournalJson(QWidget):
                     continue
                 if kind == 'attr':
                     event_name = 'AttributeEvent'
-                    info = f"AttributeEvent name={base.get('event_name','')}; obj={base.get('object_id')}; class={base.get('class_name', base.get('class_id',''))}; attrs={base.get('attrs', [])}"
+                    info = f"AttributeEvent name={base.get('event_name', '')}; obj={base.get('object_id')}; class={base.get('class_name', base.get('class_id', ''))}; attrs={base.get('attrs', [])}"
                 elif kind == 'zone':
                     event_name = 'ZoneEvent'
-                    info = f"ZoneEvent obj={base.get('object_id')} zone={base.get('zone_id','')}"
+                    info = f"ZoneEvent obj={base.get('object_id')} zone={base.get('zone_id', '')}"
                 else:
                     event_name = 'FOVEvent'
                     info = f"FOVEvent obj={base.get('object_id')}"
@@ -574,10 +603,10 @@ class EventsJournalJson(QWidget):
                     'source': base.get('source_name') or str(base.get('source_id', '')),
                     'event': event_name,
                     'information': info,
-                    'time': (found_ev.get('ts') if found_ev else base.get('ts','')),
+                    'time': (found_ev.get('ts') if found_ev else base.get('ts', '')),
                     'time_lost': (lost_ev.get('ts') if lost_ev else ''),
-                    'preview': (found_ev.get('image_filename','') if found_ev else ''),
-                    'lost_preview': (lost_ev.get('image_filename','') if lost_ev else ''),
+                    'preview': (found_ev.get('image_filename', '') if found_ev else ''),
+                    'lost_preview': (lost_ev.get('image_filename', '') if lost_ev else ''),
                     'found_event': found_ev,
                     'lost_event': lost_ev
                 }
@@ -589,7 +618,7 @@ class EventsJournalJson(QWidget):
                     'source': ev.get('camera_full_address', ''),
                     'event': 'CameraEvent',
                     'information': f"Camera {ev.get('camera_full_address')} status={ev.get('connection_status')}",
-                    'time': ev.get('ts',''),
+                    'time': ev.get('ts', ''),
                     'time_lost': '',
                     'preview': '',
                     'lost_preview': '',
@@ -602,8 +631,8 @@ class EventsJournalJson(QWidget):
                 table_rows.append({
                     'source': 'System',
                     'event': 'SystemEvent',
-                    'information': f"System {ev.get('system_event','')}",
-                    'time': ev.get('ts',''),
+                    'information': f"System {ev.get('system_event', '')}",
+                    'time': ev.get('ts', ''),
                     'time_lost': '',
                     'preview': '',
                     'lost_preview': '',
@@ -616,24 +645,24 @@ class EventsJournalJson(QWidget):
                 table_rows.sort(key=lambda r: (r.get('time') or ''), reverse=True)
             except Exception:
                 pass
-            
+
             self.table.setRowCount(len(table_rows))
             for r, row_data in enumerate(table_rows):
                 # Time column (0)
                 self.table.setItem(r, 0, QTableWidgetItem(str(row_data['time'])))
-                
+
                 # Event column (1)
                 self.table.setItem(r, 1, QTableWidgetItem(row_data['event']))
-                
+
                 # Information column (2)
                 self.table.setItem(r, 2, QTableWidgetItem(row_data['information']))
-                
+
                 # Source column (3)
                 self.table.setItem(r, 3, QTableWidgetItem(str(row_data.get('source', ''))))
-                
+
                 # Time lost column (4)
                 self.table.setItem(r, 4, QTableWidgetItem(str(row_data['time_lost'])))
-                
+
                 # Preview column (found image)
                 if row_data['preview']:
                     found_event = row_data.get('found_event')
@@ -656,7 +685,7 @@ class EventsJournalJson(QWidget):
                     if found_event:
                         item.setData(Qt.ItemDataRole.UserRole, found_event)
                     self.table.setItem(r, 5, item)
-                
+
                 # Lost preview column
                 if row_data['lost_preview']:
                     lost_event = row_data.get('lost_event')
@@ -679,17 +708,17 @@ class EventsJournalJson(QWidget):
                     if lost_event:
                         item.setData(Qt.ItemDataRole.UserRole, lost_event)
                     self.table.setItem(r, 6, item)
-                
+
                 # Set row height for image display
                 self.table.setRowHeight(r, 150)
-            
+
             # Force widget update to ensure changes are visible
             # Only update if widget still exists and is not closing
             if not self._is_closing and hasattr(self, 'table') and self.table is not None:
                 try:
                     self.table.viewport().update()
                     self.table.update()
-                    
+
                     # Force repaint
                     self.table.repaint()
                     # Don't call processEvents() here as it can cause segfault
@@ -697,24 +726,24 @@ class EventsJournalJson(QWidget):
                 except (RuntimeError, AttributeError):
                     # Widget may have been destroyed
                     pass
-            
+
         except Exception as e:
             self.logger.error(f"Table data loading error: {e}")
-    
+
     def _on_visibility_changed(self, visible):
         """Handle visibility change to force update when window becomes visible"""
         self.is_visible = visible
         if visible:
             self.logger.info("Window became visible, forced update...")
             self._reload_table()
-    
+
     def force_update(self):
         """Force immediate update of the journal"""
         self.logger.info("Forced update requested...")
         self._reload_table()
         self.table.viewport().update()
         self.table.repaint()
-    
+
     def _on_window_activated(self):
         """Handle window activation to force update"""
         self.logger.info("Window activated, forced update...")
@@ -740,7 +769,7 @@ class EventsJournalJson(QWidget):
     def closeEvent(self, event):
         # Устанавливаем флаг закрытия перед остановкой таймера
         self._is_closing = True
-        
+
         # Останавливаем таймер перед закрытием
         if hasattr(self, 'update_timer'):
             self.update_timer.stop()
@@ -774,11 +803,11 @@ class EventsJournalJson(QWidget):
         # Get event data from the row
         found_event = None
         lost_event = None
-        
+
         # Try to get event data from table items (stored in UserRole)
         found_item = self.table.item(row, 5)  # Preview column
-        lost_item = self.table.item(row, 6)    # Lost preview column
-        
+        lost_item = self.table.item(row, 6)  # Lost preview column
+
         if found_item:
             found_event = found_item.data(Qt.ItemDataRole.UserRole)
         if lost_item:
@@ -819,7 +848,7 @@ class EventsJournalJson(QWidget):
             if 'preview' in filename:
                 # Replace 'preview' with 'frame' in filename
                 new_filename = filename.replace('preview', 'frame')
-                
+
                 # Convert directory path: new structure FoundPreviews->FoundFrames, LostPreviews->LostFrames
                 if 'FoundPreviews' in dir_path:
                     new_dir_path = dir_path.replace('FoundPreviews', 'FoundFrames')
@@ -861,5 +890,3 @@ class EventsJournalJson(QWidget):
         # Create and show image window
         self.image_win = ImageWindow(image_path, box, zone_coords)
         self.image_win.show()
-
-

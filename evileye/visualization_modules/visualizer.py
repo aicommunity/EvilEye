@@ -1,13 +1,24 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from .video_thread import VideoThread
 from ..core.base_class import EvilEyeBase
+from ..core.interfaces import IVisualizer
 import copy
 from ..capture.video_capture_base import CaptureImage
-from ..objects_handler.objects_handler import ObjectResultList
 from timeit import default_timer as timer
 from pympler import asizeof
+import os
+
+if TYPE_CHECKING:
+    # Импорт только для type checking, чтобы избежать циклических зависимостей
+    from ..objects_handler.object_result import ObjectResultList
+else:
+    # Для runtime используем строковую аннотацию или Any
+    from typing import Any
+
+    ObjectResultList = Any  # Fallback для runtime
 
 
 class Visualizer(EvilEyeBase):
@@ -16,20 +27,24 @@ class Visualizer(EvilEyeBase):
         self.pyqt_slots = pyqt_slots
         self.pyqt_signals = pyqt_signals
         self.visual_threads: list[VideoThread] = []
+        self.visual_threads_by_source: dict[int, VideoThread] = {}
+        self.source_index_map: dict[int, int] = {}
         self.source_ids = []
-        self.source_id_name_table = dict()
-        self.source_video_duration = dict()
+        # Внутренние структуры, доступ к которым теперь осуществляется через методы
+        self._source_id_name_table: dict[int, str] = {}
+        self._source_video_duration: dict[int, float] = {}
         self.fps = []
         self.font_params = []
         self.num_height = 1
         self.num_width = 1
         self.show_debug_info = False
         self.processing_frames: dict[int, list[CaptureImage]] = {}
-        self.objects: list[ObjectResultList] = []
+        self.objects: list[
+            "ObjectResultList"] = []  # Используем строковую аннотацию для избежания циклических зависимостей
         self.last_displayed_frame = dict()
         self.visual_buffer_num_frames = 50
         self.text_config = {}  # Text configuration for rendering
-        self.class_mapping = {}  # Class mapping for displaying class names
+        self._class_mapping: dict[str, int] = {}  # Class mapping for displaying class names
         self.memory_consumption_detail = dict()
         # Centralized active events per source: { source_id: set((source_id, object_id, event_name)) }
         self.active_events: dict[int, set[tuple[int, int, str]]] = {}
@@ -38,7 +53,17 @@ class Visualizer(EvilEyeBase):
         self.signal_color = (255, 0, 0)
         # Zones display toggle
         self.display_zones = False
+        self.track_frame_match_window = 1
 
+        # Perf diagnostics (disabled by default). Enable with env EVILEYE_PERF_DIAG=1
+        self._perf_diag_env = os.getenv("EVILEYE_PERF_DIAG", "").strip().lower() in {"1", "true", "yes", "on"}
+        self._perf_diag_every = int(os.getenv("EVILEYE_PERF_DIAG_EVERY", "60") or "60")
+        self._perf_diag_counter = 0
+        self._diag_total_input_frames = 0
+        self._diag_skip_duplicate = 0
+        self._diag_skip_no_exact_objects = 0
+        self._diag_skip_invalid_source = 0
+        self._diag_sent_to_thread = 0
 
     def default(self):
         pass
@@ -57,14 +82,17 @@ class Visualizer(EvilEyeBase):
                 except Exception:
                     pass
             self.visual_threads = []
-        
+            self.visual_threads_by_source = {}
+            self.source_index_map = {}
+
         # Check if source_ids are set
         if not self.source_ids:
             self.logger.warning("Cannot initialize visualizer: source_ids is empty")
             return False
-        
+
         self.logger.info(f"Initializing visualizer with {len(self.source_ids)} source(s): {self.source_ids}")
-        
+        self.source_index_map = {source_id: idx for idx, source_id in enumerate(self.source_ids)}
+
         for i in range(len(self.source_ids)):
             logger_name = f"src{self.source_ids[i]}"
             try:
@@ -72,17 +100,17 @@ class Visualizer(EvilEyeBase):
                 fps_value = self.fps[i] if self.fps and i < len(self.fps) else 30
                 # Get font_params for this source (with fallback)
                 font_params_value = self.font_params[i] if self.font_params and i < len(self.font_params) else None
-                
+
                 self.visual_threads.append(VideoThread(
-                    self.source_ids[i], 
+                    self.source_ids[i],
                     fps_value,
-                    self.num_height, 
-                    self.num_width, 
+                    self.num_height,
+                    self.num_width,
                     self.show_debug_info,
                     font_params_value,
-                    text_config=self.text_config, 
+                    text_config=self.text_config,
                     class_mapping=self.class_mapping,
-                    logger_name=logger_name, 
+                    logger_name=logger_name,
                     parent_logger=self.logger
                 ))
                 # give thread access to visualizer for active events
@@ -93,7 +121,8 @@ class Visualizer(EvilEyeBase):
                 self.visual_threads[-1].update_image_signal.connect(
                     self.pyqt_slots['update_image'])  # Сигнал из потока для обновления label на новое изображение
                 self.visual_threads[-1].update_original_cv_image_signal.connect(
-                    self.pyqt_slots['update_original_cv_image'])  # Сигнал с оригинальным OpenCV изображением для ROI Editor
+                    self.pyqt_slots[
+                        'update_original_cv_image'])  # Сигнал с оригинальным OpenCV изображением для ROI Editor
                 self.visual_threads[-1].clean_image_available_signal.connect(
                     self.pyqt_slots['clean_image_available'])  # Сигнал с чистым OpenCV изображением для ROI Editor
                 self.visual_threads[-1].add_zone_signal.connect(self.pyqt_slots['open_zone_win'])
@@ -101,10 +130,11 @@ class Visualizer(EvilEyeBase):
                 self.pyqt_signals['display_zones_signal'].connect(self.visual_threads[-1].display_zones)
                 self.pyqt_signals['add_zone_signal'].connect(self.visual_threads[-1].add_zone_clicked)
                 self.pyqt_signals['add_roi_signal'].connect(self.visual_threads[-1].add_roi_clicked)
+                self.visual_threads_by_source[self.source_ids[i]] = self.visual_threads[-1]
             except Exception as e:
                 self.logger.error(f"Error creating video thread for source {self.source_ids[i]}: {e}", exc_info=True)
                 return False
-        
+
         self.logger.info(f"Visualizer initialized with {len(self.visual_threads)} video thread(s)")
         return True
 
@@ -112,6 +142,8 @@ class Visualizer(EvilEyeBase):
         for thr in self.visual_threads:
             thr.stop_thread()
         self.visual_threads = []
+        self.visual_threads_by_source = {}
+        self.source_index_map = {}
 
     def connect_to_signal(self, pyqt_signal):
         for i in range(len(self.source_ids)):  # Сигнал из потока для обновления label на новое изображение
@@ -132,6 +164,7 @@ class Visualizer(EvilEyeBase):
         self.signal_enabled = self.params.get('event_signal_enabled', False)
         self.signal_color = tuple(self.params.get('event_signal_color', [255, 0, 0]))
         self.display_zones = self.params.get('display_zones', False)
+        self.track_frame_match_window = int(self.params.get("track_frame_match_window", 1) or 1)
 
     def get_params_impl(self):
         params = dict()
@@ -144,6 +177,7 @@ class Visualizer(EvilEyeBase):
         params['visual_buffer_num_frames'] = self.visual_buffer_num_frames
         params['text_config'] = self.text_config
         params['display_zones'] = self.display_zones
+        params['track_frame_match_window'] = self.track_frame_match_window
         return params
 
     def start(self):
@@ -162,6 +196,55 @@ class Visualizer(EvilEyeBase):
         for j in range(len(self.visual_threads)):
             self.visual_threads[j].set_main_widget_size(width, height)
 
+    # === Методы для инкапсуляции метаданных источников и отображения ===
+
+    @property
+    def source_id_name_table(self) -> dict[int, str]:
+        """Таблица соответствия ID источников и их имен (только для чтения)."""
+        return self._source_id_name_table
+
+    @source_id_name_table.setter
+    def source_id_name_table(self, value: dict[int, str]) -> None:
+        """Сеттер для обратной совместимости."""
+        self._source_id_name_table = dict(value or {})
+
+    def set_source_metadata(
+            self,
+            id_name_table: dict[int, str] | None = None,
+            video_duration: dict[int, float] | None = None,
+            class_mapping: dict[str, int] | None = None,
+    ) -> None:
+        """Обновить метаданные источников и маппинг классов.
+
+        Используется контроллером и другими компонентами вместо прямой записи в атрибуты.
+        """
+        if id_name_table is not None:
+            self._source_id_name_table = dict(id_name_table)
+        if video_duration is not None:
+            self._source_video_duration = dict(video_duration)
+        if class_mapping is not None:
+            self._class_mapping = dict(class_mapping)
+
+    @property
+    def source_video_duration(self) -> dict[int, float]:
+        """Длительность видео по источникам (только для чтения)."""
+        return self._source_video_duration
+
+    @source_video_duration.setter
+    def source_video_duration(self, value: dict[int, float]) -> None:
+        """Сеттер для обратной совместимости."""
+        self._source_video_duration = dict(value or {})
+
+    @property
+    def class_mapping(self) -> dict[str, int]:
+        """Маппинг классов для отображения (только для чтения)."""
+        return self._class_mapping
+
+    @class_mapping.setter
+    def class_mapping(self, value: dict[str, int]) -> None:
+        """Сеттер для обратной совместимости кода, использующего прямую установку."""
+        self._class_mapping = dict(value or {})
+
     # ==== Online event signalization API for Controller/MainWindow ====
     def set_signal_params(self, enabled: bool, color_rgb: tuple[int, int, int]):
         self.signal_enabled = enabled
@@ -169,7 +252,8 @@ class Visualizer(EvilEyeBase):
         for thr in self.visual_threads:
             thr.set_signal_params(enabled, color_rgb)
 
-    def set_event_state(self, source_id: int, object_id: int, event_name: str, is_on: bool, bbox_px: list | None = None):
+    def set_event_state(self, source_id: int, object_id: int, event_name: str, is_on: bool,
+                        bbox_px: list | None = None):
         if source_id not in self.active_events:
             self.active_events[source_id] = set()
         key = (source_id, object_id, event_name)
@@ -178,11 +262,48 @@ class Visualizer(EvilEyeBase):
         else:
             if key in self.active_events[source_id]:
                 self.active_events[source_id].remove(key)
-        
+
         # Do not directly touch threads here; they will read on next frame
 
     def get_active_events(self, source_id: int) -> set[tuple[int, int, str]]:
         return set(self.active_events.get(source_id, set()))
+
+    def get_latest_clean_frames(self) -> list[CaptureImage]:
+        """Return the latest clean GUI frames per source for external preview consumers."""
+        frames: list[CaptureImage] = []
+        for thr in self.visual_threads:
+            try:
+                image = thr.get_clean_image()
+            except Exception:
+                image = None
+            if image is None:
+                continue
+            frame = CaptureImage()
+            frame.source_id = thr.source_id
+            frame.frame_id = self.last_displayed_frame.get(thr.source_id)
+            frame.image = image
+            frames.append(frame)
+        return frames
+
+    def get_runtime_stats(self) -> dict:
+        per_source_buf = {sid: len(self.processing_frames.get(sid, [])) for sid in self.source_ids}
+        per_thread_q = {}
+        per_thread_perf = {}
+        for thr in self.visual_threads:
+            try:
+                per_thread_q[thr.source_id] = thr.queue.qsize()
+            except Exception:
+                per_thread_q[thr.source_id] = -1
+            try:
+                per_thread_perf[thr.source_id] = thr.get_runtime_stats()
+            except Exception:
+                per_thread_perf[thr.source_id] = {}
+        return {
+            "per_source_buf": per_source_buf,
+            "per_thread_q": per_thread_q,
+            "per_thread_perf": per_thread_perf,
+            "last_displayed_frame": dict(self.last_displayed_frame),
+        }
 
     def calc_memory_consumption(self):
         super().calc_memory_consumption()
@@ -197,9 +318,15 @@ class Visualizer(EvilEyeBase):
         debug_info['memory_consumption_detail'] = self.memory_consumption_detail
 
     def update(self, processing_frames: list[CaptureImage], source_last_processed_frame_id: dict,
-               objects: list[ObjectResultList], dropped_frames: list,  debug_info: dict):
+               objects: list["ObjectResultList"], dropped_frames: list, debug_info: dict):
         start_update = timer()
+        perf_diag_enabled = self._perf_diag_env
         remove_processed_idx = dict()
+        if perf_diag_enabled:
+            try:
+                self._diag_total_input_frames += len(processing_frames) if processing_frames else 0
+            except Exception:
+                pass
         for frame in processing_frames:
             if not frame.source_id in self.processing_frames.keys():
                 self.processing_frames[frame.source_id] = []
@@ -221,50 +348,70 @@ class Visualizer(EvilEyeBase):
             if source_id not in remove_processed_idx.keys():
                 remove_processed_idx[source_id] = []
 
-            #for i in range(len(proc_frames)):
+            # for i in range(len(proc_frames)):
             for i in reversed(range(len(proc_frames))):
                 start_proc_frame = timer()
                 frame = proc_frames[i]
 
                 if frame.frame_id is not None and self.last_displayed_frame.get(source_id, 0) >= frame.frame_id:
+                    if perf_diag_enabled:
+                        self._diag_skip_duplicate += 1
                     remove_processed_idx[source_id].append(i)
                     continue
 
                 if source_id in processed_sources:
                     continue
 
-    #            for data in dropped_frames:
-    #                if source_id == data[0] and frame.frame_id == data[1]:
-    #                    remove_processed_idx[source_id].append(i)
-    #                    break
+                #            for data in dropped_frames:
+                #                if source_id == data[0] and frame.frame_id == data[1]:
+                #                    remove_processed_idx[source_id].append(i)
+                #                    break
 
-    #            if frame.frame_id > source_last_processed_frame_id[source_id]:
-    #                continue
+                #            if frame.frame_id > source_last_processed_frame_id[source_id]:
+                #                continue
 
                 start_find_objects = timer()
                 if source_id is None or source_id not in self.source_ids:
+                    if perf_diag_enabled:
+                        self._diag_skip_invalid_source += 1
                     continue
-                source_index = self.source_ids.index(source_id)
-                #objs = objects[source_index].objects
+                source_index = self.source_index_map.get(source_id)
+                if source_index is None:
+                    if perf_diag_enabled:
+                        self._diag_skip_invalid_source += 1
+                    continue
+                # objs = objects[source_index].objects
                 objs = objects[source_index].find_objects_by_frame_id(frame.frame_id, use_history=False)
+                if len(objs) == 0 and self.track_frame_match_window > 0:
+                    try:
+                        objs = objects[source_index].find_objects_near_frame_id(
+                            frame.frame_id,
+                            max_delta=self.track_frame_match_window,
+                            use_history=True,
+                        )
+                    except Exception:
+                        objs = []
 
-                #self.logger.debug(f"source={source_id} num_objs={len(objs)}")
+                # self.logger.debug(f"source={source_id} num_objs={len(objs)}")
                 # self.logger.debug(f"Found {len(objs)} objects for visualization for source_id={frame.source_id} frame_id={frame.frame_id}")
 
                 if len(objs) == 0 and objects[source_index].get_num_objects() > 0:
+                    if perf_diag_enabled:
+                        self._diag_skip_no_exact_objects += 1
                     # remove_processed_idx[source_id].append(i)
                     continue
 
                 start_append_data = timer()
-                for j in range(len(self.visual_threads)):
-                    if self.visual_threads[j].source_id == source_id:
-                        data = (frame, objs, self.source_id_name_table[source_id],
-                                self.source_video_duration.get(source_id, None), debug_info)
-                        self.visual_threads[j].append_data(data)
-                        self.last_displayed_frame[source_id] = frame.frame_id
-                        processed_sources.append(source_id)
-                        remove_processed_idx[source_id].append(i)
-                        break
+                thread = self.visual_threads_by_source.get(source_id)
+                if thread is not None:
+                    data = (frame, objs, self.source_id_name_table[source_id],
+                            self.source_video_duration.get(source_id, None), debug_info)
+                    thread.append_data(data)
+                    if perf_diag_enabled:
+                        self._diag_sent_to_thread += 1
+                    self.last_displayed_frame[source_id] = frame.frame_id
+                    processed_sources.append(source_id)
+                    remove_processed_idx[source_id].append(i)
                 end_proc_frame = timer()
                 # self.logger.debug(f"Time frame: proc_frame[{end_proc_frame - start_proc_frame}], find_objects[{start_append_data - start_find_objects}, append[{end_proc_frame - start_find_objects}] secs")
 
@@ -284,8 +431,8 @@ class Visualizer(EvilEyeBase):
             end_update = timer()
             # self.logger.debug(f"Time: update=[{end_update-start_update}] secs")
 
-            #self.logger.debug(f"{datetime.now()}: Visual Queue size: {len(self.processing_frames)}. Processed sources: {processed_sources}")
-        
+            # self.logger.debug(f"{datetime.now()}: Visual Queue size: {len(self.processing_frames)}. Processed sources: {processed_sources}")
+
         # Cleanup: remove frames for sources that are no longer active
         active_source_ids = set(self.source_ids)
         sources_to_remove = []
@@ -295,3 +442,32 @@ class Visualizer(EvilEyeBase):
         for source_id in sources_to_remove:
             del self.processing_frames[source_id]
             self.logger.debug(f"Cleared processing_frames for removed source {source_id}")
+
+        if perf_diag_enabled:
+            self._perf_diag_counter += 1
+            every = max(1, int(self._perf_diag_every or 60))
+            if (self._perf_diag_counter % every) == 0:
+                try:
+                    per_source_buf = {sid: len(self.processing_frames.get(sid, [])) for sid in self.source_ids}
+                    per_thread_q = {}
+                    for thr in self.visual_threads:
+                        try:
+                            per_thread_q[thr.source_id] = thr.queue.qsize()
+                        except Exception:
+                            per_thread_q[thr.source_id] = -1
+                    self.logger.info(
+                        "PerfDiag(Visualizer): updates=%d, in_frames=%d, update_ms=%.1f, per_source_buf=%s, video_thread_q=%s, displayed=%s, sent=%d, skip_dup=%d, skip_obj_miss=%d, skip_src=%d, total_in=%d",
+                        self._perf_diag_counter,
+                        (len(processing_frames) if processing_frames else 0),
+                        (timer() - start_update) * 1000.0,
+                        per_source_buf,
+                        per_thread_q,
+                        dict(self.last_displayed_frame),
+                        self._diag_sent_to_thread,
+                        self._diag_skip_duplicate,
+                        self._diag_skip_no_exact_objects,
+                        self._diag_skip_invalid_source,
+                        self._diag_total_input_frames,
+                    )
+                except Exception:
+                    pass

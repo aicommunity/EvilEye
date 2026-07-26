@@ -74,6 +74,106 @@ evileye deploy-samples
 }
 ```
 
+### Секция web_auth
+
+Для веб-интерфейса и web API можно включить cookie-based аутентификацию. Пользователи хранятся в `credentials.json`, чтобы не попадать в обычные CRUD-конфиги веб-интерфейса.
+
+```json
+{
+  "web_auth": {
+    "enabled": true,
+    "session_secret": "change-me",
+    "secure_cookies": false,
+    "internal_token": "",
+    "users": [
+      {
+        "username": "admin",
+        "password": "change-me",
+        "password_hash": "",
+        "role": "admin",
+        "disabled": false
+      },
+      {
+        "username": "operator",
+        "password": "operator-pass",
+        "password_hash": "",
+        "role": "user",
+        "disabled": false
+      },
+      {
+        "username": "analyst",
+        "password": "analyst-pass",
+        "password_hash": "",
+        "role": "power_user",
+        "disabled": false
+      }
+    ]
+  }
+}
+```
+
+**Параметры**:
+
+| Параметр | Тип | Описание |
+|----------|-----|----------|
+| `enabled` | boolean | Включить проверку пользователей для `/api/v1/*` |
+| `session_secret` | string | Ключ подписи session cookie |
+| `secure_cookies` | boolean | Выставлять cookie только по HTTPS |
+| `internal_token` | string | Отдельный токен для внутренних endpoint'ов `/api/v1/internal/*` |
+| `users` | array | Список пользователей веб-интерфейса |
+| `users[].username` | string | Имя пользователя |
+| `users[].password` | string | Временный открытый пароль для bootstrap-сценариев |
+| `users[].password_hash` | string | Предпочтительный формат: `pbkdf2_sha256$iterations$salt$hash` |
+| `users[].role` | string | Роль: `user`, `power_user` или `admin` |
+| `users[].disabled` | boolean | Отключение пользователя без удаления |
+
+**Рекомендации**:
+
+1. Для production используйте `password_hash`, а не открытый `password`.
+2. Для HTTPS включайте `secure_cookies=true`.
+3. Для внутренних вызовов между процессами задавайте `internal_token`.
+4. `user` подходит для live-мониторинга камер.
+5. `power_user` предназначен для просмотра предметных журналов системы и технических логов.
+6. `admin` предназначен для настройки и управления системой.
+
+### Server module и схемы запуска
+
+Секция `web_auth.internal_token` используется не только для защиты внутренних endpoint'ов,
+но и для обмена данными между runtime и server module в многопроцессных сценариях.
+
+Актуальные схемы того, кто кого запускает и как передаются preview-кадры, приведены в
+документе [`MULTIPROCESSING.md`](MULTIPROCESSING.md), раздел
+`Веб-сервер: актуальные схемы запуска`.
+
+Кратко:
+
+- `evileye run` + `server.enabled: true` — основной сценарий, где система владеет runtime, а server module работает как её web/API-слой;
+- `evileye server` — служебный server-first сценарий, где runtime запускается через REST API;
+- если server уже запущен отдельно, runtime не поднимает второй web-server, а отправляет preview в существующий server module через внутренний API.
+
+### Журналы и логи в web/API
+
+В терминах EvilEye это разные сущности:
+
+- `журналы` — предметные данные системы, например журналы событий и объектов, которые читаются через БД и domain services;
+- `логи` — технические текстовые логи процессов сервера и runtime, используемые для диагностики и отладки.
+
+В web-ui и API эти сущности следует рассматривать и настраивать отдельно: доступ к журналам нужен для анализа результатов работы конфигурации, а доступ к логам — для эксплуатационной диагностики.
+
+### HTTPS для web API
+
+Веб-сервер поддерживает запуск с TLS напрямую через `uvicorn`:
+
+```bash
+evileye server --host 0.0.0.0 --port 8443 --ssl-certfile ./certs/server.crt --ssl-keyfile ./certs/server.key
+```
+
+При использовании HTTPS рекомендуется:
+
+1. Включить `web_auth.enabled=true`
+2. Задать `web_auth.secure_cookies=true`
+3. Ограничить `EVILEYE_CORS_ALLOW_ORIGINS` конкретными origin вместо `*`
+
 ### Секция sources
 
 Секция `sources` содержит учетные данные для IP камер. Каждый ключ соответствует URL камеры из конфигурации источника.
@@ -615,7 +715,7 @@ USB камера с GStreamer бэкендом.
 
 | Параметр | Тип | Описание | По умолчанию |
 |----------|-----|----------|--------------|
-| `type` | string | Тип детектора: `ObjectDetectorRtdetr`, `ObjectDetectorRfdetr` (для YOLO не требуется) | - |
+| `type` | string | `ObjectDetectorYolo` (YOLO, рекомендуется), `ObjectDetectorRtdetr`, `ObjectDetectorRfdetr`; **deprecated:** `ObjectDetectorYoloMp` | YOLO: often omitted (default factory) |
 | `model` | string | Путь к модели детектора | `models/yolo11n.pt` |
 | `source_ids` | array | Идентификаторы источников для обработки | - |
 | `classes` | array | Классы объектов COCO для детекции | `[0, 1, 24, 25, 63, 66, 67]` |
@@ -624,6 +724,14 @@ USB камера с GStreamer бэкендом.
 | `roi` | array | Области интереса (Regions of Interest) | `[[]]` |
 | `vid_stride` | int | Шаг обработки кадров | `1` |
 | `num_detection_threads` | int | Количество потоков для детекции | `1` |
+| `execution_mode` | string | `"thread"` — inference в процессе controller; `"process"` — child worker + feed/drain (`MpAsyncBridge`) | `"process"` (если ключ опущен, см. `DEFAULT_EXECUTION_MODE`) |
+
+**Primary path (YOLO MP):** `"type": "ObjectDetectorYolo"`, `"execution_mode": "process"`.  
+**Deprecated:** `"type": "ObjectDetectorYoloMp"` — legacy class; используйте `ObjectDetectorYolo` + `execution_mode`. Проверка: `python scripts/validate_config.py <config.json>`.
+
+При `execution_mode=thread` каждый поток детекции загружает **отдельную** копию весов в RAM/VRAM; при `process` — отдельный дочерний процесс на воркер (`YoloRuntime` только в child). Увеличение `num_detection_threads` умножает потребление памяти.
+
+См. [thread_vs_mp_contracts.md](thread_vs_mp_contracts.md), [MULTIPROCESSING.md](MULTIPROCESSING.md).
 
 **Примеры конфигураций детекторов**:
 
@@ -676,10 +784,13 @@ USB камера с GStreamer бэкендом.
 | `appearance_thresh` | float | Порог внешнего вида для re-identification | `0.25` |
 | `gmc_method` | string | Метод глобального движения камеры | `sparseOptFlow` |
 | `with_reid` | boolean | Использовать re-identification | `false` |
+| `execution_mode` | string | `"thread"` / `"process"` (BoT-SORT в child при process, см. contracts §11b) | `"process"` default |
 
 #### `mc_trackers`
 
 Конфигурация межкамерного трекинга для связывания объектов между разными камерами.
+
+**Важно:** `mc_trackers` **не** поддерживает `execution_mode: process` — только синхронный `sync_batch` в parent ([contracts §7](thread_vs_mp_contracts.md)). `validate_config.py` выдаёт предупреждение при попытке указать process.
 
 **Пример**:
 ```json
@@ -866,6 +977,54 @@ USB камера с GStreamer бэкендом.
 
 **Примечание**: Если секция `database` отсутствует или параметры некорректны, система автоматически переключится на JSON режим хранения данных.
 
+### Секция `database_adapters`
+
+Настройки адаптеров базы данных для различных типов данных (объекты, события). Адаптеры управляются централизованно через `DatabaseService` и запускаются/останавливаются единообразно.
+
+**Пример**:
+```json
+"database_adapters": {
+  "DatabaseAdapterObjects": {
+    "batch_size": 10,
+    "batch_timeout": 0.1
+  },
+  "DatabaseAdapterCamEvents": {
+    "batch_size": 10,
+    "batch_timeout": 0.1
+  },
+  "DatabaseAdapterFieldOfViewEvents": {
+    "batch_size": 10,
+    "batch_timeout": 0.1
+  },
+  "DatabaseAdapterZoneEvents": {
+    "batch_size": 10,
+    "batch_timeout": 0.1
+  },
+  "DatabaseAdapterAttributeEvents": {
+    "batch_size": 10,
+    "batch_timeout": 0.1
+  },
+  "DatabaseAdapterSystemEvents": {
+    "batch_size": 10,
+    "batch_timeout": 0.1
+  }
+}
+```
+
+**Параметры адаптеров**:
+
+| Параметр | Тип | Описание | По умолчанию |
+|----------|-----|----------|--------------|
+| `batch_size` | int | Размер батча для группировки запросов к БД | `10` |
+| `batch_timeout` | float | Максимальное время ожидания для формирования батча (секунды) | `0.1` |
+
+**Примечания**:
+- Батчинг позволяет группировать несколько запросов в один для повышения производительности
+- `batch_size=1` означает обработку запросов по одному (батчинг отключен)
+- `batch_timeout` определяет максимальное время ожидания перед отправкой неполного батча
+- Адаптеры автоматически создаются и управляются через `DatabaseService` при инициализации БД
+- При ошибках запуска адаптеров (например, `threads can only be started once`) подключение к БД может остаться активным, но адаптеры будут отключены
+
 Подробнее о настройке базы данных см. [DATABASE_SETUP_GUIDE.md](DATABASE_SETUP_GUIDE.md).
 
 ### Секция `visualizer`
@@ -972,6 +1131,10 @@ USB камера с GStreamer бэкендом.
 
 ## Валидация конфигураций
 
+Система EvilEye включает встроенный валидатор конфигураций (`ConfigValidator`), который проверяет корректность конфигурационных файлов перед запуском системы.
+
+### Использование валидации
+
 Для проверки корректности конфигурационного файла используйте:
 
 ```bash
@@ -980,9 +1143,76 @@ evileye validate configs/my_config.json
 
 Команда проверит:
 - Корректность JSON синтаксиса
-- Наличие обязательных секций
-- Корректность типов параметров
+- Наличие обязательных секций (`pipeline`, `database`, `controller`)
+- Корректность типов параметров (используя Pydantic модели, если доступен)
 - Существование указанных файлов и путей
+
+### Автоматическая валидация
+
+Валидация также выполняется автоматически:
+- **При запуске через CLI**: команда `evileye run` автоматически валидирует конфигурацию перед запуском
+- **При загрузке конфигурации**: `run_config_helper` валидирует конфигурацию при загрузке
+- **В GUI**: при сохранении конфигурации через Configurer выполняется базовая валидация
+
+### Типы проверок
+
+`ConfigValidator` выполняет следующие проверки:
+
+1. **Валидация секции `pipeline`**:
+   - Проверка наличия `pipeline_class`
+   - Проверка структуры `sources`, `detectors`, `trackers`
+   - Валидация типов данных через Pydantic модели (если доступен)
+
+2. **Валидация секции `database`**:
+   - Проверка обязательных полей (`database_name`, `host_name`, `port`)
+   - Валидация диапазона порта (1-65535)
+   - Проверка корректности типов данных
+
+3. **Валидация секции `controller`**:
+   - Проверка диапазона FPS (1-120)
+   - Валидация булевых флагов
+   - Проверка структуры `scheduled_restart`
+
+### Обработка ошибок
+
+При обнаружении ошибок валидации:
+- **В CLI**: выводится сообщение об ошибке с указанием проблемной секции и деталями
+- **При запуске**: система может отказаться от запуска или переключиться в fallback режим (например, JSON вместо БД)
+- **В GUI**: ошибки отображаются пользователю с возможностью исправления
+
+### Примеры ошибок валидации
+
+```bash
+# Ошибка: отсутствует обязательная секция
+$ evileye validate invalid.json
+Error: Pipeline config error: Field required [type=missing, input={}, input_type=dict]
+
+# Ошибка: некорректный тип данных
+$ evileye validate invalid.json
+Error: Database config error: Input should be a valid integer [type=int_parsing, input='invalid', input_type=str]
+```
+
+### Расширенная валидация
+
+При наличии библиотеки `pydantic` система использует расширенную валидацию с проверкой типов и диапазонов значений. Если `pydantic` недоступен, выполняется базовая проверка структуры конфигурации.
+
+Дополнительно для MP-рефакторинга: `python scripts/validate_config.py <path.json>` — legacy `ObjectDetectorYoloMp`, `mc_trackers` + process (см. [developing_dual_mode_modules.md](developing_dual_mode_modules.md)).
+
+### Зарегистрированные `type` (`@EvilEyeBase.register`)
+
+| type | Назначение |
+|------|------------|
+| ObjectDetectorYolo | YOLO детектор (primary) |
+| ObjectDetectorRtdetr | RT-DETR |
+| ObjectDetectorRfdetr | RF-DETR |
+| ObjectDetectorYoloMp | Legacy (deprecated) |
+| ObjectTrackingBotsort | Per-source tracker |
+| ObjectMultiCameraTracking | MC tracker (sync only) |
+| VideoCaptureGStreamer / VideoCaptureOpencv | Capture backends |
+| AttributeClassifier / AttributeDetector / RoiFeeder | Attributes pipeline |
+| PreprocessingPipeline | Preprocessing stage |
+
+Полный индекс кода: [CODE_MODULE_INDEX.md](CODE_MODULE_INDEX.md).
 
 ## Связанные документы
 
@@ -992,3 +1222,5 @@ evileye validate configs/my_config.json
 - [Text Rendering System](TEXT_RENDERING_SYSTEM.md) - Система рендеринга текста
 - [GStreamer Usage](VideoCaptureGStreamer_Usage.md) - Использование GStreamer
 - [System Architecture](ARCHITECTURE.md) - Полная архитектура системы
+- [Thread vs MP contracts](thread_vs_mp_contracts.md) - `execution_mode`, MP modules
+- [MULTIPROCESSING.md](MULTIPROCESSING.md) - env и ops

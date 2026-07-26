@@ -1,39 +1,65 @@
+import os
+from pathlib import Path
+
 from ..core.mp_worker import MpWorker
-from ultralytics import YOLO
+from ..core.frame_transport import SharedFrameTransport, materialize_payload_list
+from .yolo_runtime import YoloRuntime
+
 
 class MpWorkerYolo(MpWorker):
-    def __init__(self, input_queue, output_queue):
-        super().__init__(input_queue, output_queue)
+    def __init__(self, input_queue, output_queue, log_queue=None, stop_event=None):
+        super().__init__(input_queue, output_queue, log_queue=log_queue, stop_event=stop_event)
         self.model_name = ""
-        self.model = None
         self.classes = []
         self.inf_params = dict()
         self.is_init = False
+        self._frame_transport = SharedFrameTransport()
+        self._yolo = YoloRuntime(
+            logger=self.logger if hasattr(self, "logger") else None,
+        )
+
+    @property
+    def model(self):
+        return self._yolo.model
+
+    @model.setter
+    def model(self, value) -> None:
+        self._yolo.model = value
 
     def set_params(self, model_name, classes, inf_params):
         self.model_name = model_name
-        self.model = None
         self.classes = classes
         self.inf_params = inf_params
         self.is_init = True
+        self._yolo.configure(model_name, classes, inf_params)
+
+    def get_spawn_state(self):
+        return {
+            "model_name": self.model_name,
+            "classes": self.classes,
+            "inf_params": self.inf_params,
+        }
+
+    def apply_spawn_state(self, state):
+        self.set_params(
+            state.get("model_name", ""),
+            state.get("classes", []),
+            state.get("inf_params", {}),
+        )
 
     def init_worker(self):
-        self.model = YOLO(self.model_name)
-        # Try to fuse Conv+BN layers (optimization, not required)
-        try:
-            self.model.fuse()  # Fuse Conv+BN layers
-        except Exception as e:
-            # Fuse may fail with mixed precision models, continue without it
-            # Note: logger may not be available in multiprocessing context
-            pass
-        if self.inf_params.get('half', True):
-            self.model.half()
+        self._yolo.load()
 
     def worker_impl(self, data: list):
-        results = self.model.predict(data, classes=self.classes, verbose=False, **self.inf_params)
-        cpu_results = []
-        for res in results:
-            cpu_results.append(res.cpu())
+        self._yolo.classes = self.classes
+        self._yolo.inf_params = self.inf_params
+        model_input = self._materialize_input_data(data)
+        if any(item is None for item in model_input):
+            return [[] for _ in data]
+        return self._yolo.predict(model_input)
 
-        del results
-        return cpu_results
+    def _materialize_input_data(self, data: list):
+        return materialize_payload_list(data, self._frame_transport)
+
+    def cleanup(self):
+        self._yolo.release()

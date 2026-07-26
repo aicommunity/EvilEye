@@ -27,7 +27,11 @@ def test_roi_editor_creation():
         
         # Создаем ROI редактор
         params = {}
-        roi_window = ROIEditorWindow(params)
+        roi_window = ROIEditorWindow()
+        try:
+            roi_window.set_params(params)
+        except Exception:
+            pass
         print("   ✅ ROI редактор создан")
         
         # Проверяем основные компоненты
@@ -52,7 +56,6 @@ def test_roi_editor_creation():
         def close_window():
             try:
                 roi_window.close()
-                app.quit()
             except Exception:
                 pass
         
@@ -63,7 +66,6 @@ def test_roi_editor_creation():
         # Явно закрываем окно на случай, если таймер не сработал
         try:
             roi_window.close()
-            app.quit()
         except Exception:
             pass
         

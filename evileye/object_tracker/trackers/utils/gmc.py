@@ -180,11 +180,11 @@ class GMC:
 
         # Find the keypoints
         mask = np.zeros_like(frame)
-        mask[int(0.02 * height) : int(0.98 * height), int(0.02 * width) : int(0.98 * width)] = 255
+        mask[int(0.02 * height): int(0.98 * height), int(0.02 * width): int(0.98 * width)] = 255
         if detections is not None:
             for det in detections:
                 tlbr = (det[:4] / self.downscale).astype(np.int_)
-                mask[tlbr[1] : tlbr[3], tlbr[0] : tlbr[2]] = 0
+                mask[tlbr[1]: tlbr[3], tlbr[0]: tlbr[2]] = 0
 
         keypoints = self.detector.detect(frame, mask)
 
@@ -232,7 +232,7 @@ class GMC:
                 )
 
                 if (np.abs(spatialDistance[0]) < maxSpatialDistance[0]) and (
-                    np.abs(spatialDistance[1]) < maxSpatialDistance[1]
+                        np.abs(spatialDistance[1]) < maxSpatialDistance[1]
                 ):
                     spatialDistances.append(spatialDistance)
                     matches.append(m)
@@ -323,7 +323,7 @@ class GMC:
         # Normalize None to empty array for uniform handling
         if keypoints is None:
             keypoints = np.array([])
-        
+
         # Check if keypoints are valid (not empty)
         has_valid_keypoints = len(keypoints) > 0
 
@@ -344,7 +344,8 @@ class GMC:
             matchedKeypoints, status, _ = cv2.calcOpticalFlowPyrLK(self.prevFrame, frame, self.prevKeyPoints, None)
         else:
             # Invalid prevKeyPoints detected - reset state to allow recovery on next iteration
-            self.logger.warning(f"Invalid prevKeyPoints detected (None or empty), resetting state for recovery. prevKeyPoints={self.prevKeyPoints}")
+            self.logger.warning(
+                f"Invalid prevKeyPoints detected (None or empty), resetting state for recovery. prevKeyPoints={self.prevKeyPoints}")
             self.initializedFirstFrame = False
             # Try to initialize with current frame if it has valid keypoints
             if has_valid_keypoints:

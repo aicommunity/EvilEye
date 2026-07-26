@@ -39,7 +39,7 @@ class EventsProcessor(EvilEyeBase):
             if event_name not in self.events_adapters:
                 self.events_adapters[event_name] = []
             self.events_adapters[event_name].append(adapter)
-        
+
         # For table names, use first adapter's table name (DB adapters only)
         self.events_tables = {}
         for adapter in self.db_adapters:
@@ -60,7 +60,7 @@ class EventsProcessor(EvilEyeBase):
 
     def set_ui_callback(self, cb):
         self.ui_callback = cb
-    
+
     def set_event_recording_callback(self, cb):
         """Set callback for event-based recording.
         
@@ -78,14 +78,21 @@ class EventsProcessor(EvilEyeBase):
         # Return 0 if no database controller is available
         if self.db_controller is None:
             return 0
-            
+
         # Only use DB adapters for table names (filter out JSON adapters)
         table_names = [name for name in self.events_tables.values() if name]
         if not table_names:  # No tables available
             return 0
-            
+
+        # Delegate DB-specific aggregation to the DB layer (preferred).
+        try:
+            if hasattr(self.db_controller, "get_next_event_id"):
+                return self.db_controller.get_next_event_id(table_names)
+        except Exception:
+            pass
+
+        # Fallback: legacy behavior (keep for safety)
         subqueries = []
-        # Объединяем результаты из всех таблиц событий, выбираем максимальный id
         for i in range(len(table_names) - 1):
             subquery = sql.SQL('SELECT MAX(event_id) as event_id FROM {table} UNION').format(
                 table=sql.Identifier(table_names[i]))
@@ -98,7 +105,6 @@ class EventsProcessor(EvilEyeBase):
             subqueries=sql.SQL(' ').join(subqueries))
         record = self.db_controller.query(query)
 
-        # Check if record is None or empty
         if record is None or len(record) == 0 or len(record[0]) == 0 or record[0][0] is None:
             return 0
         return record[0][0] + 1
@@ -149,7 +155,7 @@ class EventsProcessor(EvilEyeBase):
     def process(self):
         filtered_long_term = {key: None for key in self.long_term_events}
         while self.run_flag:
-            #time.sleep(0.01)
+            # time.sleep(0.01)
             new_events = self.queue.get()
             if new_events is None:
                 continue
@@ -172,7 +178,8 @@ class EventsProcessor(EvilEyeBase):
                                         try:
                                             adapter.update(long_term[i])
                                         except Exception as e:
-                                            self.logger.error(f"Error updating event in adapter {adapter.__class__.__name__}: {e}")
+                                            self.logger.error(
+                                                f"Error updating event in adapter {adapter.__class__.__name__}: {e}")
                                 # Notify UI: event OFF (независимо от наличия адаптера)
                                 try:
                                     if self.ui_callback:
@@ -213,7 +220,7 @@ class EventsProcessor(EvilEyeBase):
                             event.set_id(self.id_counter)
                             self.id_counter += 1
                             self.long_term_events[events].append(event)
-                            
+
                             # Notify event recording: event ON (BEFORE saving to DB, so video path can be stored in event)
                             try:
                                 if self.event_recording_callback and not event.is_finished():
@@ -236,14 +243,15 @@ class EventsProcessor(EvilEyeBase):
                                     self.logger.debug(f"Error in event recording callback (ON): {e}")
                                 except Exception:
                                     pass
-                            
+
                             if event.get_name() in self.events_adapters:
                                 # Call insert on all adapters for this event name (after callback, so video path is available)
                                 for adapter in self.events_adapters[event.get_name()]:
                                     try:
                                         adapter.insert(event)
                                     except Exception as e:
-                                        self.logger.error(f"Error inserting event in adapter {adapter.__class__.__name__}: {e}")
+                                        self.logger.error(
+                                            f"Error inserting event in adapter {adapter.__class__.__name__}: {e}")
                             # UI: ON для нового долгосрочного события в уже активной группе
                             try:
                                 if self.ui_callback and not event.is_finished():
@@ -270,11 +278,13 @@ class EventsProcessor(EvilEyeBase):
                                         try:
                                             adapter.insert(event)
                                         except Exception as e:
-                                            self.logger.error(f"Error inserting event in adapter {adapter.__class__.__name__}: {e}")
+                                            self.logger.error(
+                                                f"Error inserting event in adapter {adapter.__class__.__name__}: {e}")
                                 # Для long_term события, пришедшего уже завершённым, не шлём ON, только OFF
                                 try:
                                     if self.ui_callback:
-                                        self.ui_callback(event.source_id, getattr(event, 'object_id', -1), getattr(event, 'matched_event_name', ''), False)
+                                        self.ui_callback(event.source_id, getattr(event, 'object_id', -1),
+                                                         getattr(event, 'matched_event_name', ''), False)
                                 except Exception:
                                     pass
                             else:
@@ -320,7 +330,8 @@ class EventsProcessor(EvilEyeBase):
                                     try:
                                         adapter.insert(event)
                                     except Exception as e:
-                                        self.logger.error(f"Error inserting event in adapter {adapter.__class__.__name__}: {e}")
+                                        self.logger.error(
+                                            f"Error inserting event in adapter {adapter.__class__.__name__}: {e}")
                             # Notify UI for non-long events: ON then OFF
                             try:
                                 if self.ui_callback and not event.is_long_term():
@@ -369,13 +380,15 @@ class EventsProcessor(EvilEyeBase):
                                     pass
                 # Удаляем завершенные долгосрочные события
                 if events in self.long_term_events:
-                    filtered_long_term[events] = [self.long_term_events[events][i] for i in range(len(self.long_term_events[events])) if i not in finished_idxs]
+                    filtered_long_term[events] = [self.long_term_events[events][i] for i in
+                                                  range(len(self.long_term_events[events])) if i not in finished_idxs]
                     self.long_term_events[events] = filtered_long_term[events]
 
             for events in self.finished_events:
                 start_index_for_remove = None
                 for i in reversed(range(len(self.finished_events[events]))):
-                    if (datetime.datetime.now() - self.finished_events[events][i].get_time_finished()).total_seconds() > self.lost_store_time_secs:
+                    if (datetime.datetime.now() - self.finished_events[events][
+                        i].get_time_finished()).total_seconds() > self.lost_store_time_secs:
                         start_index_for_remove = i
                         break
                 if start_index_for_remove is not None:

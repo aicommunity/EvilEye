@@ -16,7 +16,11 @@ class JournalAdapterSystemEvents(JournalAdapterBase):
         query = (
             'SELECT time_stamp, '
             "CAST('SystemEvent' AS text) AS type, "
-            "(CASE WHEN event_type = 'SystemStart' THEN 'System started' ELSE 'System stopped' END) AS information, "
+            "(CASE "
+            "WHEN event_type = 'SystemStart' THEN 'System started' "
+            "WHEN event_type = 'SystemStop' THEN 'System stopped' "
+            "WHEN event_type = 'CudaOutOfMemory' THEN 'CUDA out of memory: detection disabled' "
+            "ELSE COALESCE(event_type, 'System event') END) AS information, "
             "'System' AS source_name, "
             'NULL as time_lost, '
             'NULL AS preview_path, NULL AS lost_preview_path, '
@@ -26,5 +30,3 @@ class JournalAdapterSystemEvents(JournalAdapterBase):
             'NULL::integer AS source_id FROM system_events'
         )
         return query
-
-

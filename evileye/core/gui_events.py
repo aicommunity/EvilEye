@@ -27,7 +27,7 @@ class GUIEvent:
     event_type: GUIEventType
     data: Dict[str, Any]
     timestamp: Optional[float] = None
-    
+
     def __post_init__(self):
         if self.timestamp is None:
             import time
@@ -37,6 +37,7 @@ class GUIEvent:
 @dataclass
 class FrameProcessedEvent(GUIEvent):
     """Event emitted when a frame is processed."""
+
     def __init__(self, processing_frames: Dict[int, Any],
                  source_last_processed_frame_id: Dict[int, int],
                  objects: List[Any],
@@ -57,6 +58,7 @@ class FrameProcessedEvent(GUIEvent):
 @dataclass
 class ProgressUpdateEvent(GUIEvent):
     """Event emitted for progress updates."""
+
     def __init__(self, value: int, stage_text: str):
         super().__init__(
             event_type=GUIEventType.PROGRESS_UPDATE,
@@ -70,6 +72,7 @@ class ProgressUpdateEvent(GUIEvent):
 @dataclass
 class InitializationCompleteEvent(GUIEvent):
     """Event emitted when initialization is complete."""
+
     def __init__(self, controller_instance: Any):
         super().__init__(
             event_type=GUIEventType.INITIALIZATION_COMPLETE,
@@ -82,6 +85,7 @@ class InitializationCompleteEvent(GUIEvent):
 @dataclass
 class InitializationFailedEvent(GUIEvent):
     """Event emitted when initialization fails."""
+
     def __init__(self, error_message: str):
         super().__init__(
             event_type=GUIEventType.INITIALIZATION_FAILED,
@@ -93,16 +97,16 @@ class InitializationFailedEvent(GUIEvent):
 
 class GUIEventEmitter:
     """Simple event emitter for GUI events."""
-    
+
     def __init__(self):
         self._listeners: Dict[GUIEventType, List[callable]] = {}
-    
+
     def subscribe(self, event_type: GUIEventType, callback: callable) -> None:
         """Subscribe to an event type."""
         if event_type not in self._listeners:
             self._listeners[event_type] = []
         self._listeners[event_type].append(callback)
-    
+
     def unsubscribe(self, event_type: GUIEventType, callback: callable) -> None:
         """Unsubscribe from an event type."""
         if event_type in self._listeners:
@@ -110,7 +114,7 @@ class GUIEventEmitter:
                 self._listeners[event_type].remove(callback)
             except ValueError:
                 pass
-    
+
     def emit(self, event: GUIEvent) -> None:
         """Emit an event to all subscribers."""
         if event.event_type in self._listeners:
@@ -122,7 +126,7 @@ class GUIEventEmitter:
                     import logging
                     logger = logging.getLogger("gui_events")
                     logger.error(f"Error in event callback: {e}", exc_info=True)
-    
+
     def clear(self) -> None:
         """Clear all listeners."""
         self._listeners.clear()

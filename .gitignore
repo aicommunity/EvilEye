@@ -121,6 +121,9 @@ venv.bak/
 # Vscode settings
 .vscode
 
+# Node (frontend)
+evileye/api/frontend/node_modules/
+
 # mkdocs documentation
 /site
 
@@ -132,7 +135,6 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-results
 go_icp_implementation
 predator_data
 sdrsac_implementation
@@ -146,14 +148,20 @@ x64/
 *.bin
 *.pdb
 *.exe
-yolov8n.pt
-credentials.json
 
+# Local / runtime artifacts (do not commit)
+credentials.json
 EvilEyeData*/
 *.mp4
 *.avi
+*.avi.download
+*.download
+*.onnx
+*.pt
+# Runtime event/object image dumps (keep tracked sample sequence_*.jpg under images/)
+images/frames/
+images/previews/
 logs/
-images/
 mixed_images/
 models/
 *.json.backup
