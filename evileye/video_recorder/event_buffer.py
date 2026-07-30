@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 import time
 from collections import deque
@@ -23,34 +24,44 @@ class EventBuffer:
         
         Args:
             max_duration_seconds: Maximum duration to keep frames (should be >= event_pre_seconds + event_post_seconds)
-            fps: Frames per second (used for capacity estimation, None = auto-detect)
+            fps: Frames per second (used for capacity estimation, None = use EVILEYE_EVENT_BUFFER_FPS_MAX / 5)
         """
         self.logger = get_module_logger("event_buffer")
         self.max_duration_seconds = max_duration_seconds
         self.fps = fps
         self._last_added_ts: Optional[float] = None
         self._min_frame_interval_s: Optional[float] = None
+
+        effective_fps = self._resolve_effective_fps(fps)
+        self.fps = effective_fps
         try:
-            if fps and fps > 0:
-                self._min_frame_interval_s = 1.0 / float(fps)
+            if effective_fps and effective_fps > 0:
+                self._min_frame_interval_s = 1.0 / float(effective_fps)
         except Exception:
             self._min_frame_interval_s = None
 
-        # Circular buffer: deque of (frame: np.ndarray, timestamp: float)
-        self.buffer: deque[Tuple[np.ndarray, float]] = deque(maxlen=None)  # Will set maxlen dynamically
+        # Always bound the deque — unbounded growth was a RAM risk when fps was None.
+        estimated_capacity = max(1, int(float(effective_fps) * float(max_duration_seconds) * 1.2))
+        self.buffer: deque[Tuple[np.ndarray, float]] = deque(maxlen=estimated_capacity)
         self.lock = threading.Lock()
+        self.logger.debug(
+            "EventBuffer initialized with capacity ~%s frames (fps=%s, duration=%ss)",
+            estimated_capacity,
+            effective_fps,
+            max_duration_seconds,
+        )
 
-        # Estimate capacity based on FPS and duration
-        if fps and fps > 0:
-            estimated_capacity = int(fps * max_duration_seconds * 1.2)  # 20% margin
-            self.buffer = deque(maxlen=estimated_capacity)
-            self.logger.debug(
-                f"EventBuffer initialized with capacity ~{estimated_capacity} frames (fps={fps}, duration={max_duration_seconds}s)")
-        else:
-            # No FPS info, use dynamic sizing with cleanup
-            self.buffer = deque(maxlen=None)
-            self.logger.debug(f"EventBuffer initialized with dynamic capacity (duration={max_duration_seconds}s)")
-
+    @staticmethod
+    def _resolve_effective_fps(fps: Optional[float]) -> float:
+        try:
+            if fps is not None and float(fps) > 0:
+                return float(fps)
+        except (TypeError, ValueError):
+            pass
+        try:
+            return float(os.environ.get("EVILEYE_EVENT_BUFFER_FPS_MAX", "5") or 5.0)
+        except (TypeError, ValueError):
+            return 5.0
     def add_frame(self, frame: np.ndarray, timestamp: Optional[float] = None) -> None:
         """
         Add a frame to the buffer.

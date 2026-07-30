@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import os
 
-from ..object_detector.constants import (
-    DEFAULT_INPUT_QUEUE_SIZE,
-    DEFAULT_OUTPUT_QUEUE_SIZE,
-    DEFAULT_THREAD_QUEUE_SIZE,
-)
+# Keep local copies to avoid circular import with object_detector package init.
+DEFAULT_INPUT_QUEUE_SIZE = 10
+DEFAULT_OUTPUT_QUEUE_SIZE = 4
+DEFAULT_THREAD_QUEUE_SIZE = 2
 
 
 def env_scale() -> int:
@@ -60,7 +59,8 @@ def mp_pending_cap_detector(roi_count: int) -> int:
             return max(1, int(override))
         except (TypeError, ValueError):
             pass
-    return max(max(int(roi_count), 1), 2)
+    # Keep pending shallow: each job holds Frame + SHM until drain.
+    return max(int(roi_count), 1)
 
 
 def mp_pending_cap_tracker() -> int:
@@ -70,8 +70,8 @@ def mp_pending_cap_tracker() -> int:
             return max(1, int(override))
         except (TypeError, ValueError):
             pass
-    default = os.getenv("EVILEYE_MP_PENDING_CAP_TRACKER_DEFAULT", "4") or "4"
+    default = os.getenv("EVILEYE_MP_PENDING_CAP_TRACKER_DEFAULT", "2") or "2"
     try:
         return max(1, int(default))
     except (TypeError, ValueError):
-        return 4
+        return 2

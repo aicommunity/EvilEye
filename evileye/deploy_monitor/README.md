@@ -73,6 +73,24 @@ systemctl --user status evileye-watchdog.timer
    declaring Restart OK.
 3. Paths are env-driven (`DEPLOY_DIR`, `MONITOR_DIR`, `CONFIG_NAME`) — no hardcoded
    `/home/user/...` in the package scripts.
+4. **`health_check.sh`** appends a memory snapshot to `monitor/memory_journal.jsonl`
+   (RSS/PSS for parent, det-mp, tracker, host swap). Use it to distinguish leak vs
+   high steady-state after config changes.
+
+## Memory budget (≈62 GB hosts / poly-cameras)
+
+Dominant cost is **one full YOLO copy per `det-mp-*` process**. Prefer:
+
+| Knob | Recommended | Why |
+|---|---|---|
+| `pipeline.detectors[].num_detection_threads` | **1** | `3` ⇒ 15 YOLO processes (~2.3–2.5 GB RSS each) |
+| `botsort_cfg.with_reid` | **false** unless `tracker_onnx` is set | ReID without onnx path is unused in process mode |
+| `EVILEYE_MP_PENDING_CAP` / `EVILEYE_MP_PENDING_CAP_TRACKER` | 1–2 | Limits Frame+SHM held while jobs are in flight |
+| `EVILEYE_EVENT_BUFFER_FPS_MAX` | 5 (default) | Caps EventBuffer when `event_buffer_fps` is null |
+
+Do **not** raise `num_detection_threads` above 1 unless latency measurements prove a bottleneck **and** RAM/VRAM headroom exists. Prefer shared/fewer detector workers over per-ROI process multiplication.
+
+Target: EvilEye tree PSS **&lt; ~20 GB**, host swap used **&lt; ~5 GB** in steady state.
 
 ## Environment
 
@@ -82,3 +100,6 @@ systemctl --user status evileye-watchdog.timer
 | `MONITOR_DIR` | Runtime monitor state | parent of `scripts/` |
 | `CONFIG_NAME` | Config for `evileye run` | `poly-cameras-gst.json` |
 | `DISPLAY` / `XAUTHORITY` | GUI session for restarts | auto / `.display_env` |
+| `EVILEYE_MP_PENDING_CAP` | Detector pending job depth | `max(roi_count, 1)` |
+| `EVILEYE_MP_PENDING_CAP_TRACKER` | Tracker pending job depth | `2` |
+| `EVILEYE_EVENT_BUFFER_FPS_MAX` | EventBuffer fps when config fps is null | `5` |

@@ -218,12 +218,15 @@ class DetectionThreadYoloMp(DetectionThreadBase):
         )
         self._put_detection_output(detection_result_list, capture_image)
 
-    def _build_mp_payload(self, split_image: list) -> tuple[list, list[FrameHandle]]:
+    def _build_mp_payload(
+        self, split_image: list, capture_image=None
+    ) -> tuple[list, list[FrameHandle]]:
         handles: list[FrameHandle] = []
         payload: list = []
         now_ts = time.time()
         for idx, roi_entry in enumerate(split_image):
-            image = roi_entry[0].image
+            frame = roi_entry[0]
+            image = frame.image
             handle = self._frame_transport.alloc_frame(
                 image=image,
                 frame_id=idx,
@@ -231,6 +234,11 @@ class DetectionThreadYoloMp(DetectionThreadBase):
             )
             handles.append(handle)
             payload.append(handle)
+            # Release ROI crop bitmaps while pending in SHM. Never clear the original
+            # capture frame: empty-ROI path reuses it for tracker/GUI (Cam2/Cam5).
+            if capture_image is not None and frame is capture_image:
+                continue
+            frame.image = None
         return payload, handles
 
     def _enqueue_mp_det_job(
@@ -280,7 +288,7 @@ class DetectionThreadYoloMp(DetectionThreadBase):
                 self._put_empty_detection_for_capture(image)
                 continue
             try:
-                payload, handles = self._build_mp_payload(split_image)
+                payload, handles = self._build_mp_payload(split_image, capture_image=image)
                 self._enqueue_mp_det_job(split_image, image, payload, handles)
             except Exception as e:
                 if self.run_flag:
