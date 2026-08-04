@@ -62,24 +62,29 @@ export function PlaybackPage() {
 
   const loadSegments = async (camsOverride?: string[]) => {
     try {
-      const nextSelected = camsOverride ?? selected;
+      const MAX_PLAYBACK_CAMS = 4;
+      let nextSelected = camsOverride ?? selected;
+      if (nextSelected.length > MAX_PLAYBACK_CAMS) {
+        nextSelected = nextSelected.slice(0, MAX_PLAYBACK_CAMS);
+        setSelected(nextSelected);
+      }
       if (!nextSelected.length) {
         setSegmentsByCam({});
         setMarkers([]);
         setSegmentsLoaded(true);
         return;
       }
-      const segMap: Record<string, PlaybackSegment[]> = {};
+      const batch = await playbackApi.segmentsBatch(nextSelected, undefined, undefined, date);
+      const segMap: Record<string, PlaybackSegment[]> = { ...(batch.by_camera || {}) };
       for (const id of nextSelected) {
-        const seg = await playbackApi.segments(id, undefined, undefined, date);
-        segMap[id] = seg.items;
+        if (!segMap[id]) segMap[id] = [];
       }
       setSegmentsByCam(segMap);
       const allSegs = Object.values(segMap).flat();
       const from = allSegs.length ? Math.min(...allSegs.map((s) => s.start_ts)) : undefined;
       const to = allSegs.length ? Math.max(...allSegs.map((s) => s.end_ts)) : undefined;
       ctrl.setRange(from ?? null, to ?? null);
-      const ev = await playbackApi.events(from, to, nextSelected[0]);
+      const ev = await playbackApi.events(from, to, nextSelected[0], date);
       setMarkers(ev.items);
       setSegmentsLoaded(true);
     } catch (e) {
@@ -106,7 +111,11 @@ export function PlaybackPage() {
 
   const toggleCamera = (id: string) => {
     const on = selected.includes(id);
-    const next = on ? selected.filter((x) => x !== id) : [...selected, id];
+    const MAX_PLAYBACK_CAMS = 4;
+    let next = on ? selected.filter((x) => x !== id) : [...selected, id];
+    if (!on && next.length > MAX_PLAYBACK_CAMS) {
+      next = [...selected.slice(1), id].slice(0, MAX_PLAYBACK_CAMS);
+    }
     setSelected(next);
     if (segmentsLoaded) void loadSegments(next);
   };

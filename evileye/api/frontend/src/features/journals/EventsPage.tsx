@@ -59,7 +59,7 @@ export function EventsPage() {
   usePolling(() => {
     if (tab === 'history' || selected) return;
     void feed.poll();
-  }, 3000, tab !== 'history');
+  }, 12000, tab !== 'history', 400);
 
   const exportHref = journalsApi.exportUrl(tab === 'objects' ? 'objects' : 'events', 'csv', filters);
 
@@ -106,9 +106,12 @@ export function EventsPage() {
             {t('common.refresh')}
           </Button>
           {tab !== 'history' ? (
-            <a className="btn btn-outline btn-sm" href={exportHref}>
-              {t('common.exportCsv')}
-            </a>
+            <>
+              <a className="btn btn-outline btn-sm" href={exportHref} title={t('journals.exportTruncated')}>
+                {t('common.exportCsv')}
+              </a>
+              <span className="hint">{t('journals.exportTruncated')}</span>
+            </>
           ) : null}
         </div>
         {tab === 'history' ? (

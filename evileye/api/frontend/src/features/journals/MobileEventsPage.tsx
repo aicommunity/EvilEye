@@ -27,7 +27,7 @@ function MobileEventsInner() {
 
   usePolling(() => {
     if (!selected) void feed.poll();
-  }, 4000);
+  }, 15000);
 
   return (
     <div className="mobile-shell">

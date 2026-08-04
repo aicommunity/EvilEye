@@ -29,7 +29,7 @@ export function LivePage() {
     }
   }, [showError, t]);
 
-  usePolling(load, 5000);
+  usePolling(load, 5000, true, 0);
 
   const ordered = useMemo(() => {
     if (!order.length) return cameras;

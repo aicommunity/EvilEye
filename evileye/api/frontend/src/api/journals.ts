@@ -59,10 +59,12 @@ export function journalPreviewUrl(params: {
   date?: string | null;
   journalType: 'events' | 'objects';
   mode?: 'found' | 'lost';
+  w?: number;
 }): string {
   const p = new URLSearchParams({ path: params.path, journal_type: params.journalType });
   if (params.date) p.set('date', params.date);
   if (params.mode) p.set('mode', params.mode);
+  if (params.w) p.set('w', String(params.w));
   return `${API_BASE}/journals/preview?${p}`;
 }
 

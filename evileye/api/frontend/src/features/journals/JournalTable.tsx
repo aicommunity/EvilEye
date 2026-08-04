@@ -47,9 +47,12 @@ export function JournalTable({
                         date: row.date_folder,
                         journalType,
                         mode: mode as 'found' | 'lost',
+                        w: 96,
                       })}
                       alt=""
                       className="journal-thumb"
+                      loading="lazy"
+                      decoding="async"
                       style={{ maxWidth: 64, maxHeight: 48 }}
                     />
                   ) : (

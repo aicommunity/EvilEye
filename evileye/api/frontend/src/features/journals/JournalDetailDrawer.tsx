@@ -1,9 +1,15 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { journalFrameUrl, journalPreviewUrl, journalVideoUrl, type JournalGroupedRow } from '../../api';
+import {
+  journalFrameUrl,
+  journalsApi,
+  journalPreviewUrl,
+  journalVideoUrl,
+  type JournalGroupedRow,
+} from '../../api';
 import { Button } from '../../components/ui';
 import { useI18n } from '../../i18n';
-import { bboxSvg, letterboxRect, unixFromJournalTime, type JournalType } from './journalMath';
+import { bboxSvg, letterboxRect, rowKey, unixFromJournalTime, type JournalType } from './journalMath';
 
 export function JournalDetailDrawer({
   row,
@@ -15,16 +21,32 @@ export function JournalDetailDrawer({
   onClose: () => void;
 }) {
   const { t } = useI18n();
-  const mode: 'found' | 'lost' = row.has_found_preview || row.preview ? 'found' : 'lost';
-  const previewPath = mode === 'found' ? row.preview : row.lost_preview;
+  const [enriched, setEnriched] = useState<JournalGroupedRow>(row);
+  const [showVideo, setShowVideo] = useState(false);
+  const mode: 'found' | 'lost' = enriched.has_found_preview || enriched.preview ? 'found' : 'lost';
+  const previewPath = mode === 'found' ? enriched.preview : enriched.lost_preview;
   const videoPath =
-    mode === 'found' ? row.found_video_path : row.lost_video_path || row.stream_video_path;
-  const bbox = mode === 'found' ? row.bbox_found : row.bbox_lost;
-  const zone = mode === 'found' ? row.zone_coords : null;
-  const ts = unixFromJournalTime(row.time);
+    mode === 'found' ? enriched.found_video_path : enriched.lost_video_path || enriched.stream_video_path;
+  const bbox = mode === 'found' ? enriched.bbox_found : enriched.bbox_lost;
+  const zone = mode === 'found' ? enriched.zone_coords : null;
+  const ts = unixFromJournalTime(enriched.time);
   const wrapRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const [box, setBox] = useState({ left: 0, top: 0, width: 0, height: 0 });
+
+  useEffect(() => {
+    setEnriched(row);
+    setShowVideo(false);
+    const key = rowKey(row);
+    if (!key) return;
+    let cancelled = false;
+    void journalsApi.rowMeta(key, journalType).then((meta) => {
+      if (!cancelled && meta) setEnriched((prev) => ({ ...prev, ...meta }));
+    }).catch(() => null);
+    return () => {
+      cancelled = true;
+    };
+  }, [row, journalType]);
 
   useLayoutEffect(() => {
     const update = () => {
@@ -44,14 +66,14 @@ export function JournalDetailDrawer({
       <div className="modal-content journal-detail-content">
         <header className="journal-detail-header">
           <h3>
-            {String(row.event ?? t('journals.eventFallback'))} · {String(row.source ?? '')}
+            {String(enriched.event ?? t('journals.eventFallback'))} · {String(enriched.source ?? '')}
           </h3>
           <Button size="sm" variant="outline" onClick={onClose} aria-label={t('common.close')}>
             ×
           </Button>
         </header>
         <div id="journal-detail-body" className="modal-body">
-          <p className="hint">{String(row.information ?? '')}</p>
+          <p className="hint">{String(enriched.information ?? '')}</p>
           {previewPath ? (
             <div ref={wrapRef} className="journal-preview-wrap" style={{ position: 'relative', maxWidth: 640, minHeight: 200 }}>
               <img
@@ -59,7 +81,7 @@ export function JournalDetailDrawer({
                 className="journal-detail-media"
                 src={journalPreviewUrl({
                   path: String(previewPath),
-                  date: row.date_folder,
+                  date: enriched.date_folder,
                   journalType,
                   mode,
                 })}
@@ -93,7 +115,7 @@ export function JournalDetailDrawer({
               <a
                 href={journalFrameUrl({
                   path: String(previewPath),
-                  date: row.date_folder,
+                  date: enriched.date_folder,
                   journalType,
                   mode,
                 })}
@@ -105,13 +127,19 @@ export function JournalDetailDrawer({
             </p>
           ) : null}
           {videoPath ? (
-            <video controls src={journalVideoUrl({ path: String(videoPath) })} style={{ width: '100%', maxWidth: 640 }} />
+            showVideo ? (
+              <video controls autoPlay src={journalVideoUrl({ path: String(videoPath) })} style={{ width: '100%', maxWidth: 640 }} />
+            ) : (
+              <Button size="sm" variant="outline" onClick={() => setShowVideo(true)}>
+                {t('journals.playVideo')}
+              </Button>
+            )
           ) : null}
           <div className="toolbar" style={{ marginTop: '1rem' }}>
             {ts != null ? (
               <Link
                 className="btn btn-primary btn-sm"
-                to={`/playback?camera=${encodeURIComponent(String(row.source ?? ''))}&t=${ts}&row_key=${encodeURIComponent(String(row.row_key ?? ''))}`}
+                to={`/playback?camera=${encodeURIComponent(String(enriched.source ?? ''))}&t=${ts}&row_key=${encodeURIComponent(String(enriched.row_key ?? ''))}`}
               >
                 {t('journals.openPlayback')}
               </Link>

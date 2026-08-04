@@ -417,7 +417,10 @@ def load_objects_page(*, page: int, size: int, filters: Dict[str, Any], date: st
 
 
 def load_events_grouped_page(*, page: int, size: int, filters: Dict[str, Any], date: str | None = None) -> dict[str, Any]:
-    payload = load_events_page(page=page, size=size, filters=filters, date=date)
+    # Group-then-paginate: over-fetch raw rows, group, then slice grouped page.
+    need_groups = (page + 1) * size
+    raw_needed = min(max(need_groups * 3, size * 4, 120), 2000)
+    payload = load_events_page(page=0, size=raw_needed, filters=filters, date=date)
     if not payload.get("available"):
         return payload
     grouped = _enrich_rows(
@@ -426,12 +429,22 @@ def load_events_grouped_page(*, page: int, size: int, filters: Dict[str, Any], d
         list_mode=True,
         cache_rows=True,
     )
+    start = page * size
+    sliced = grouped[start : start + size]
+    raw_total = int(payload.get("total") or 0)
+    # If we scanned all raw rows, grouped length is authoritative; else estimate.
+    if raw_total <= raw_needed:
+        total_grouped = len(grouped)
+    else:
+        total_grouped = max(len(grouped), raw_total // 2)
+    has_more = (start + size) < total_grouped or raw_total > raw_needed
     result = {
         "available": True,
-        "items": grouped,
-        "total": payload.get("total", len(grouped)),
+        "items": sliced,
+        "total": total_grouped,
         "page": page,
         "size": size,
+        "has_more": has_more,
     }
     for key in ("mode", "reason", "message"):
         if key in payload:
@@ -440,7 +453,9 @@ def load_events_grouped_page(*, page: int, size: int, filters: Dict[str, Any], d
 
 
 def load_objects_grouped_page(*, page: int, size: int, filters: Dict[str, Any], date: str | None = None) -> dict[str, Any]:
-    payload = load_objects_page(page=page, size=size, filters=filters, date=date)
+    need_groups = (page + 1) * size
+    raw_needed = min(max(need_groups * 3, size * 4, 120), 2000)
+    payload = load_objects_page(page=0, size=raw_needed, filters=filters, date=date)
     if not payload.get("available"):
         return payload
     grouped = _enrich_rows(
@@ -449,12 +464,21 @@ def load_objects_grouped_page(*, page: int, size: int, filters: Dict[str, Any], 
         list_mode=True,
         cache_rows=True,
     )
+    start = page * size
+    sliced = grouped[start : start + size]
+    raw_total = int(payload.get("total") or 0)
+    if raw_total <= raw_needed:
+        total_grouped = len(grouped)
+    else:
+        total_grouped = max(len(grouped), raw_total // 2)
+    has_more = (start + size) < total_grouped or raw_total > raw_needed
     result = {
         "available": True,
-        "items": grouped,
-        "total": payload.get("total", len(grouped)),
+        "items": sliced,
+        "total": total_grouped,
         "page": page,
         "size": size,
+        "has_more": has_more,
     }
     for key in ("mode", "reason", "message"):
         if key in payload:

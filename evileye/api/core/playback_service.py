@@ -4,7 +4,7 @@ from __future__ import annotations
 import glob
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -21,22 +21,36 @@ def _secure_under(base: Path, candidate: Path) -> Path:
     return resolved
 
 
+_DURATION_CACHE: dict[str, tuple[float, float]] = {}
+
+
 def _video_duration_sec(path: str) -> float | None:
-    """Best-effort duration via OpenCV (same approach as StreamPlayerWindow)."""
+    """Best-effort duration; prefer cache, OpenCV last resort."""
+    try:
+        st = os.stat(path)
+        cached = _DURATION_CACHE.get(path)
+        if cached and cached[0] == st.st_mtime:
+            return cached[1]
+    except OSError:
+        st = None
+
+    duration: float | None = None
     try:
         import cv2  # type: ignore
 
         cap = cv2.VideoCapture(path)
-        if not cap.isOpened():
-            return None
-        fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
-        frames = float(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0.0)
-        cap.release()
-        if fps > 0 and frames > 0:
-            return max(0.1, frames / fps)
+        if cap.isOpened():
+            fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+            frames = float(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0.0)
+            cap.release()
+            if fps > 0 and frames > 0:
+                duration = max(0.1, frames / fps)
     except Exception:
-        return None
-    return None
+        duration = None
+
+    if duration is not None and st is not None:
+        _DURATION_CACHE[path] = (st.st_mtime, duration)
+    return duration
 
 
 def _parse_segment_times(path: str) -> tuple[float, float] | None:
@@ -68,6 +82,10 @@ def _date_dirs(base: Path, date: Optional[str]) -> list[Path]:
     if not base.exists():
         return []
     return sorted([p for p in base.iterdir() if p.is_dir()], reverse=True)[:14]
+
+
+def _date_str_from_ts(ts: float) -> str:
+    return datetime.fromtimestamp(ts, tz=timezone.utc).astimezone().strftime("%Y-%m-%d")
 
 
 def resolve_camera_folder(date_dir: Path, camera: str) -> Optional[Path]:
@@ -160,22 +178,63 @@ def load_segments(
     return items
 
 
+def load_segments_batch(
+    cameras: list[str],
+    from_ts: Optional[float] = None,
+    to_ts: Optional[float] = None,
+    date: Optional[str] = None,
+) -> dict[str, list[dict[str, Any]]]:
+    return {
+        cam: load_segments(cam, from_ts, to_ts, date=date)
+        for cam in cameras
+        if cam
+    }
+
+
 def load_event_markers(
     from_ts: Optional[float] = None,
     to_ts: Optional[float] = None,
     camera: Optional[str] = None,
+    *,
+    date: Optional[str] = None,
+    limit: int = 500,
 ) -> list[dict[str, Any]]:
     base = data_dir() / "Events"
     if not base.exists():
         return []
+
+    date_dirs: list[Path] = []
+    if date:
+        date_dirs = _date_dirs(base, date)
+    elif from_ts is not None or to_ts is not None:
+        start = from_ts if from_ts is not None else (to_ts or 0) - 86400
+        end = to_ts if to_ts is not None else (from_ts or 0) + 86400
+        if end < start:
+            start, end = end, start
+        # Walk day folders covering the range (inclusive)
+        day = datetime.fromtimestamp(start).date()
+        end_day = datetime.fromtimestamp(end).date()
+        while day <= end_day:
+            d = base / day.isoformat()
+            if d.is_dir():
+                date_dirs.append(d)
+            day = day.fromordinal(day.toordinal() + 1)
+    else:
+        # Without scope: only most recent day folders
+        date_dirs = _date_dirs(base, None)[:3]
+
     markers: list[dict[str, Any]] = []
-    for date_dir in sorted(base.iterdir()):
+    cap = max(1, min(int(limit or 500), 2000))
+    for date_dir in date_dirs:
         if not date_dir.is_dir():
             continue
         for root, _dirs, files in os.walk(date_dir):
-            for name in files:
-                if not name.lower().endswith((".json", ".jpg", ".jpeg", ".png", ".mp4")):
-                    continue
+            # Prefer JSON metadata; fall back to images if no json in folder
+            json_files = [n for n in files if n.lower().endswith(".json")]
+            candidates = json_files or [
+                n for n in files if n.lower().endswith((".jpg", ".jpeg", ".png"))
+            ]
+            for name in candidates:
                 path = os.path.join(root, name)
                 try:
                     ts = os.path.getmtime(path)
@@ -195,8 +254,11 @@ def load_event_markers(
                         "row_key": path,
                     }
                 )
+                if len(markers) >= cap:
+                    markers.sort(key=lambda m: m["ts"])
+                    return markers[:cap]
     markers.sort(key=lambda m: m["ts"])
-    return markers[:2000]
+    return markers[:cap]
 
 
 def resolve_media_path(path: str) -> Path:
