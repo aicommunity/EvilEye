@@ -20,6 +20,22 @@
                 "source": "VideoFile",
                 "camera": "/home/user/Videos/Test3Cam/1/139932-video_trim.mp4",
                 "type": "VideoCaptureGStreamer",
+                "record": {
+                    "enabled": true,
+                    "continuous_recording_enabled": true,
+                    "event_recording_enabled": true,
+                    "event_pre_seconds": 10,
+                    "event_post_seconds": 10,
+                    "event_buffer_fps": null,
+                    "enabled_sources": [],
+                    "container": "mp4",
+                    "segment_length_sec": 300,
+                    "retention_days": 3,
+                    "min_free_space_pct": 80,
+                    "min_file_size_kb": 50,
+                    "filename_tmpl": "{source_name}_{start_time}_{seq}.{ext}",
+                    "out_dir": "/home/user/EvilEye/EvilEyeData"
+                },
                 "apiPreference": "CAP_GSTREAMER",
                 "gstreamer_available": true
             },
@@ -54,6 +70,22 @@
                 "source": "VideoFile",
                 "camera": "/home/user/Videos/Test3Cam/2/139931-video_trim.mp4",
                 "type": "VideoCaptureGStreamer",
+                "record": {
+                    "enabled": true,
+                    "continuous_recording_enabled": true,
+                    "event_recording_enabled": true,
+                    "event_pre_seconds": 10,
+                    "event_post_seconds": 10,
+                    "event_buffer_fps": null,
+                    "enabled_sources": [],
+                    "container": "mp4",
+                    "segment_length_sec": 300,
+                    "retention_days": 3,
+                    "min_free_space_pct": 80,
+                    "min_file_size_kb": 50,
+                    "filename_tmpl": "{source_name}_{start_time}_{seq}.{ext}",
+                    "out_dir": "/home/user/EvilEye/EvilEyeData"
+                },
                 "apiPreference": "CAP_GSTREAMER",
                 "gstreamer_available": true
             },
@@ -88,6 +120,22 @@
                 "source": "VideoFile",
                 "camera": "/home/user/Videos/Test3Cam/3/139930-video_trim.mp4",
                 "type": "VideoCaptureGStreamer",
+                "record": {
+                    "enabled": true,
+                    "continuous_recording_enabled": true,
+                    "event_recording_enabled": true,
+                    "event_pre_seconds": 10,
+                    "event_post_seconds": 10,
+                    "event_buffer_fps": null,
+                    "enabled_sources": [],
+                    "container": "mp4",
+                    "segment_length_sec": 300,
+                    "retention_days": 3,
+                    "min_free_space_pct": 80,
+                    "min_file_size_kb": 50,
+                    "filename_tmpl": "{source_name}_{start_time}_{seq}.{ext}",
+                    "out_dir": "/home/user/EvilEye/EvilEyeData"
+                },
                 "apiPreference": "CAP_GSTREAMER",
                 "gstreamer_available": true
             }
