@@ -53,8 +53,14 @@ export function LogsPage() {
     setView({ name, content: t('logs.connecting'), live: true });
     es.onmessage = (ev) => {
       try {
-        const data = JSON.parse(ev.data) as { content?: string; name?: string };
-        setView({ name: data.name ?? name, content: data.content ?? '', live: true });
+        const data = JSON.parse(ev.data) as { content?: string; append?: string; name?: string };
+        setView((prev) => {
+          const nextName = data.name ?? name;
+          if (data.append != null && prev && prev.name === nextName && prev.content !== t('logs.connecting')) {
+            return { name: nextName, content: prev.content + data.append, live: true };
+          }
+          return { name: nextName, content: data.content ?? data.append ?? '', live: true };
+        });
       } catch {
         /* ignore */
       }

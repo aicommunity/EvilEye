@@ -41,9 +41,19 @@ npx playwright test tests/e2e/web_smoke.spec.ts
 - Journals export: `/api/v1/journals/export`
 - Logs SSE: `/api/v1/logs/{filename}/stream`
 
-Mobile: `/m/live` — one camera carousel; `/m/events` — event feed (not desktop grid wrappers).
+Mobile: `/m/live` — one camera carousel (snapshot by default; MJPEG only in fullscreen); `/m/events` — event feed (not desktop grid wrappers).
 
-Env: `EVILEYE_MAX_MJPEG_CLIENTS` (default 8), `EVILEYE_DATA_DIR` (default `EvilEyeData`).
+Env: `EVILEYE_MAX_MJPEG_CLIENTS` (default 8), `EVILEYE_DATA_DIR` (default `EvilEyeData`), `EVILEYE_MJPEG_IDLE_SEC` (default 8).
+
+## Performance notes
+
+- **Live camera health:** `GET /api/v1/state/cameras` includes `is_working`, `last_frame_age_sec`, `reconnecting`. Tiles stop snapshot polling and show “no signal” when stale.
+- **MJPEG refcount:** each stream connection acquires a broker ref; soft `stream:stop` is a no-op (disconnect releases). Idle without frames closes the multipart stream.
+- **Demand-driven encode:** preview JPEG encode runs only with local MJPEG or preview demand (not merely because the web server/relay is alive). Config: `server.preview_encode_workers` (default 2 when `server.enabled`), `server.preview_max_edge` (default 960).
+- **Playback:** heavy discovery runs in `asyncio.to_thread`; duration cache; batch `?cameras=a,b`; UI clock throttled ~200ms; max 4 cams; timeline markers clustered.
+- **Journals:** poll ~12s (15s mobile) and pause when the tab is hidden; thumbs use `?w=96`; grouped pages are group-then-paginate; export may set `X-Export-Truncated: 1`.
+- **WS metadata:** pushes on change or at most ~2 Hz; client reconnects with backoff.
+- **Logs SSE:** seeds with a tail, then follows by byte offset.
 
 ## Disk layout (playback)
 

@@ -6,7 +6,7 @@ import json
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
-from evileye.api.core.log_service import list_log_files, read_log_file
+from evileye.api.core.log_service import list_log_files, read_log_file, read_log_tail_from_offset
 
 router = APIRouter(prefix="/api/v1/logs", tags=["logs"])
 
@@ -22,23 +22,36 @@ async def runtime_log_stream(
     tail: int = Query(200, ge=10, le=5000),
     interval: float = Query(2.0, ge=0.5, le=30.0),
 ):
-    """SSE tail of a log file."""
+    """SSE tail of a log file using byte-offset reads."""
 
     async def gen():
-        last = ""
+        # Seed with last N lines once, then stream by byte offset.
+        try:
+            seed = read_log_file(filename, tail=tail)
+        except ValueError as exc:
+            yield f"event: error\ndata: {json.dumps({'detail': str(exc)})}\n\n"
+            return
+        except FileNotFoundError:
+            yield f"event: error\ndata: {json.dumps({'detail': 'not found'})}\n\n"
+            return
+
+        content = seed.get("content") or ""
+        offset = int(seed.get("size_bytes") or 0)
+        yield f"data: {json.dumps({'name': seed['name'], 'content': content, 'updated_at': seed['updated_at']})}\n\n"
+
         while True:
             try:
-                payload = read_log_file(filename, tail=tail)
+                payload = read_log_tail_from_offset(filename, offset=offset)
             except ValueError as exc:
                 yield f"event: error\ndata: {json.dumps({'detail': str(exc)})}\n\n"
                 break
             except FileNotFoundError:
                 yield f"event: error\ndata: {json.dumps({'detail': 'not found'})}\n\n"
                 break
-            content = payload.get("content") or ""
-            if content != last:
-                last = content
-                yield f"data: {json.dumps({'name': payload['name'], 'content': content, 'updated_at': payload['updated_at']})}\n\n"
+            chunk = payload.get("chunk") or ""
+            offset = int(payload.get("next_offset") or offset)
+            if chunk:
+                yield f"data: {json.dumps({'name': payload['name'], 'append': chunk, 'content': chunk, 'updated_at': payload['updated_at']})}\n\n"
             else:
                 yield ": keepalive\n\n"
             await asyncio.sleep(interval)

@@ -1,4 +1,5 @@
 import os
+import threading
 from pathlib import Path
 from fastapi import FastAPI, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,6 +9,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 from evileye.core.logger import get_module_logger
+from evileye.core.runtime_services import get_frame_broker
 from evileye.api.routes.auth import router as auth_router
 from evileye.api.routes.configs import router as configs_router
 from evileye.api.routes.config_editors import router as config_editors_router
@@ -63,6 +65,17 @@ async def lifespan(_app: FastAPI):
     logger.info("FastAPI lifespan startup")
     ensure_default_admin_credentials()
     _app.state.web_auth = load_web_auth_config()
+    cleanup_stop = threading.Event()
+
+    def _broker_cleanup_loop():
+        while not cleanup_stop.wait(5.0):
+            try:
+                get_frame_broker().purge_stale_frames(30.0)
+            except Exception:
+                continue
+
+    cleanup_thread = threading.Thread(target=_broker_cleanup_loop, daemon=True, name="FrameBrokerCleanup")
+    cleanup_thread.start()
     try:
         from evileye.core.mp_session_registry import cleanup_stale_sessions
 
@@ -75,6 +88,7 @@ async def lifespan(_app: FastAPI):
     try:
         yield
     finally:
+        cleanup_stop.set()
         logger.info("FastAPI lifespan shutdown")
         try:
             get_config_run_manager().shutdown()

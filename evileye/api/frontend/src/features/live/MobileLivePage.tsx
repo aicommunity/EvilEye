@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { stateApi, streamMjpgUrl, type StateCamera } from '../../api';
+import { stateApi, streamSnapshotUrl, type StateCamera } from '../../api';
 import { AuthProvider } from '../../auth/AuthContext';
 import { ToastProvider } from '../../components/ui/Toast';
 import { Badge, Button } from '../../components/ui';
@@ -23,18 +23,30 @@ function MobileLiveInner() {
   const [cameras, setCameras] = useState<StateCamera[]>([]);
   const [idx, setIdx] = useState(0);
   const [fullscreen, setFullscreen] = useState(false);
+  const [snapTs, setSnapTs] = useState(Date.now());
 
   const load = useCallback(async () => {
     const res = await stateApi.cameras('current');
     setCameras(res.items ?? []);
   }, []);
 
-  usePolling(load, 5000);
+  usePolling(load, 5000, true, 200);
   useEffect(() => {
     if (idx >= cameras.length) setIdx(0);
   }, [cameras, idx]);
 
+  useEffect(() => {
+    if (fullscreen) return;
+    const id = window.setInterval(() => setSnapTs(Date.now()), 750);
+    return () => window.clearInterval(id);
+  }, [fullscreen, idx]);
+
   const cam = cameras[idx];
+  const healthy =
+    cam &&
+    cam.run_state === 'running' &&
+    cam.is_working !== false &&
+    cam.preview_available !== false;
 
   return (
     <div className="mobile-shell">
@@ -62,13 +74,15 @@ function MobileLiveInner() {
             <span className="run-name">{cam.source_name}</span>
             <Badge state={cam.run_state}>{cam.run_state}</Badge>
           </div>
-          {cam.run_state === 'running' ? (
+          {healthy ? (
             <img
               className="camera-preview"
               style={{ width: '100%', minHeight: 220, objectFit: 'contain', background: '#000' }}
-              src={streamMjpgUrl(cam.run_id, 8, cam.source_id)}
+              src={`${streamSnapshotUrl(cam.run_id, cam.source_id)}${streamSnapshotUrl(cam.run_id, cam.source_id).includes('?') ? '&' : '?'}t=${snapTs}`}
               alt={cam.source_name}
             />
+          ) : cam.run_state === 'running' ? (
+            <div className="camera-preview-empty">{t('live.camera.noSignal')}</div>
           ) : (
             <div className="camera-preview-empty">{t('mobile.stopped')}</div>
           )}
