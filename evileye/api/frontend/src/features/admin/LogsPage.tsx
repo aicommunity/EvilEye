@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { logsApi, ApiError } from '../../api';
 import { Button, Modal } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
+import { useI18n } from '../../i18n';
 
 function formatBytes(size: number): string {
   if (size < 1024) return `${size} B`;
@@ -11,6 +12,7 @@ function formatBytes(size: number): string {
 
 export function LogsPage() {
   const { showError } = useToast();
+  const { t } = useI18n();
   const [files, setFiles] = useState<Array<{ name: string; updated_at: number; size_bytes: number }>>([]);
   const [view, setView] = useState<{ name: string; content: string; live: boolean } | null>(null);
   const esRef = useRef<EventSource | null>(null);
@@ -20,7 +22,7 @@ export function LogsPage() {
       const res = await logsApi.list();
       setFiles(res.files ?? []);
     } catch (e) {
-      showError(e instanceof Error ? e.message : 'Ошибка логов');
+      showError(e instanceof Error ? e.message : t('logs.title'));
     }
   }, [showError]);
 
@@ -48,7 +50,7 @@ export function LogsPage() {
     esRef.current?.close();
     const es = new EventSource(logsApi.streamUrl(name, 400));
     esRef.current = es;
-    setView({ name, content: 'Подключение…', live: true });
+    setView({ name, content: t('logs.connecting'), live: true });
     es.onmessage = (ev) => {
       try {
         const data = JSON.parse(ev.data) as { content?: string; name?: string };
@@ -58,7 +60,7 @@ export function LogsPage() {
       }
     };
     es.onerror = () => {
-      showError('SSE логов прерван');
+      showError(t('logs.sseError'));
       es.close();
     };
   };
@@ -67,20 +69,20 @@ export function LogsPage() {
     <section className="panel active">
       <div className="card">
         <div className="toolbar">
-          <h2 style={{ margin: 0 }}>Логи</h2>
+          <h2 style={{ margin: 0 }}>{t('logs.title')}</h2>
           <Button variant="outline" onClick={() => void load()}>
-            Обновить
+            {t('logs.refresh')}
           </Button>
         </div>
         {!files.length ? (
-          <p className="empty">Технические логи недоступны.</p>
+          <p className="empty">{t('logs.empty')}</p>
         ) : (
           <table className="journal-table log-files-table">
             <thead>
               <tr>
-                <th>Файл</th>
-                <th>Размер</th>
-                <th>Обновлён</th>
+                <th>{t('logs.file')}</th>
+                <th>{t('logs.size')}</th>
+                <th>{t('logs.updated')}</th>
                 <th />
               </tr>
             </thead>
@@ -94,7 +96,7 @@ export function LogsPage() {
                   <td>{new Date(f.updated_at * 1000).toLocaleString('ru-RU')}</td>
                   <td>
                     <Button size="sm" variant="outline" onClick={() => openLive(f.name)}>
-                      Live
+                      {t('logs.follow')}
                     </Button>
                   </td>
                 </tr>
@@ -105,7 +107,7 @@ export function LogsPage() {
       </div>
       <Modal
         open={Boolean(view)}
-        title={view ? `${view.name}${view.live ? ' (live)' : ''}` : 'Лог'}
+        title={view ? `${view.name}${view.live ? ` (${t('logs.following')})` : ''}` : t('logs.title')}
         onClose={() => {
           esRef.current?.close();
           esRef.current = null;
