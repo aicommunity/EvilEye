@@ -1,4 +1,5 @@
 import asyncio
+import os
 import time
 from fastapi import APIRouter, HTTPException, Response, Query, Request
 from fastapi.responses import StreamingResponse
@@ -11,6 +12,31 @@ from evileye.api.core.server_state import get_run_summary
 from evileye.core.runtime_services import get_frame_broker
 
 router = APIRouter(prefix="/api/v1", tags=["streaming"])
+
+_mjpeg_clients_lock = threading.Lock()
+_mjpeg_clients = 0
+
+
+def _max_mjpeg_clients() -> int:
+    try:
+        return max(1, int(os.getenv("EVILEYE_MAX_MJPEG_CLIENTS", "8")))
+    except Exception:
+        return 8
+
+
+def _acquire_mjpeg_slot() -> bool:
+    global _mjpeg_clients
+    with _mjpeg_clients_lock:
+        if _mjpeg_clients >= _max_mjpeg_clients():
+            return False
+        _mjpeg_clients += 1
+        return True
+
+
+def _release_mjpeg_slot() -> None:
+    global _mjpeg_clients
+    with _mjpeg_clients_lock:
+        _mjpeg_clients = max(0, _mjpeg_clients - 1)
 
 
 def _touch_preview_demand(request: Request, rid: int, source_id: int | None = None) -> None:
@@ -161,6 +187,7 @@ async def _mjpeg_generator(
                 await asyncio.sleep(min(check_interval, delay - elapsed))
                 elapsed += check_interval
     finally:
+        _release_mjpeg_slot()
         try:
             get_frame_broker().stop_stream(stream_key)
         except Exception:
@@ -186,6 +213,11 @@ async def _mjpeg_stream_impl(
         raise HTTPException(
             status_code=409,
             detail="Web stream is unavailable for this run. Preview relay is not delivering frames.",
+        )
+    if not _acquire_mjpeg_slot():
+        raise HTTPException(
+            status_code=503,
+            detail=f"Too many MJPEG clients (limit={_max_mjpeg_clients()})",
         )
     run_id_str = str(run_info["id"])
     stream_key = f"{run_id_str}:{source_id}" if source_id is not None else run_id_str

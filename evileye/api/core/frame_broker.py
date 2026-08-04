@@ -29,6 +29,7 @@ class FrameBroker:
         self._active_streams: Dict[str, threading.Event] = {}
         self._max_frame_age_seconds = 30.0
         self._max_frames_per_pipeline = 10
+        self._subscribers: Dict[str, list] = {}
 
         # IPC support: when set, a background thread reads from this queue
         self._ipc_queue: Optional[mp.Queue] = None
@@ -118,15 +119,27 @@ class FrameBroker:
             *,
             metadata: Optional[dict[str, Any]] = None,
     ) -> None:
+        meta = dict(metadata or {})
         with self._lock:
             self._frames[pipeline_id] = FramePayload(
                 data=payload,
                 timestamp=time.time(),
-                metadata=dict(metadata or {}),
+                metadata=meta,
             )
             self._stats["published_payloads"] += 1
             self._stats["last_payload_bytes"] = len(payload) if payload is not None else 0
             self._cleanup_old_frames()
+            subscribers = list(self._subscribers.get(pipeline_id, []))
+        for queue in subscribers:
+            try:
+                while queue.full():
+                    try:
+                        queue.get_nowait()
+                    except Exception:
+                        break
+                queue.put_nowait(dict(meta))
+            except Exception:
+                continue
         self.logger.debug(f"Published frame for pipeline '{pipeline_id}'")
 
     def get_runtime_stats(self) -> dict:
@@ -150,6 +163,28 @@ class FrameBroker:
     def latest_jpeg(self, pipeline_id: str) -> Optional[bytes]:
         payload = self.latest_payload(pipeline_id)
         return payload.data if payload else None
+
+    def latest_metadata(self, pipeline_id: str) -> Optional[dict[str, Any]]:
+        payload = self.latest_payload(pipeline_id)
+        if not payload:
+            return None
+        return dict(payload.metadata or {})
+
+    def subscribe(self, pipeline_id: str):
+        import queue as queue_mod
+
+        q: queue_mod.Queue = queue_mod.Queue(maxsize=8)
+        with self._lock:
+            self._subscribers.setdefault(pipeline_id, []).append(q)
+        return q
+
+    def unsubscribe(self, pipeline_id: str, q) -> None:
+        with self._lock:
+            subs = self._subscribers.get(pipeline_id) or []
+            if q in subs:
+                subs.remove(q)
+            if not subs and pipeline_id in self._subscribers:
+                del self._subscribers[pipeline_id]
 
     def latest_payload(self, pipeline_id: str) -> Optional[FramePayload]:
         with self._lock:

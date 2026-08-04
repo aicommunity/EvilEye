@@ -171,3 +171,39 @@ async def journal_video(path: str = Query(..., min_length=1)):
 @router.get("/config-history")
 async def journal_config_history(limit: int = Query(50, ge=1, le=200)) -> dict:
     return load_config_history(limit=limit)
+
+
+@router.get("/export")
+async def journal_export(
+    type: str = Query("events"),
+    format: str = Query("json"),
+    source_name: str | None = None,
+    event_type: str | None = None,
+    date: str | None = None,
+    page: int = Query(0, ge=0),
+    size: int = Query(200, ge=1, le=1000),
+):
+    from fastapi.responses import PlainTextResponse, JSONResponse
+
+    if type not in {"events", "objects"}:
+        raise HTTPException(status_code=400, detail="type must be events|objects")
+    if format not in {"json", "csv"}:
+        raise HTTPException(status_code=400, detail="format must be json|csv")
+    filters = _filters(source_name, event_type)
+    if type == "objects":
+        data = load_objects_grouped_page(page=page, size=size, filters=filters, date=date)
+    else:
+        data = load_events_grouped_page(page=page, size=size, filters=filters, date=date)
+    items = data.get("items") or []
+    if format == "json":
+        return JSONResponse(items)
+    import csv
+    import io
+
+    buf = io.StringIO()
+    fields = ["time", "event", "information", "source", "time_lost", "row_key"]
+    writer = csv.DictWriter(buf, fieldnames=fields, extrasaction="ignore")
+    writer.writeheader()
+    for row in items:
+        writer.writerow({k: row.get(k, "") for k in fields})
+    return PlainTextResponse(buf.getvalue(), media_type="text/csv")

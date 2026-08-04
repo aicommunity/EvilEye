@@ -1,21 +1,23 @@
 import os
 from pathlib import Path
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.sessions import SessionMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 from evileye.core.logger import get_module_logger
 from evileye.api.routes.auth import router as auth_router
 from evileye.api.routes.configs import router as configs_router
+from evileye.api.routes.config_editors import router as config_editors_router
 from evileye.api.routes.journals import router as journals_router
 from evileye.api.routes.logs import router as logs_router
 from evileye.api.routes.users import router as users_router
-# from evileye.api.routes.pipelines import router as pipelines_router  # DEPRECATED
 from evileye.api.routes.state import router as state_router
 from evileye.api.routes.streaming import router as streaming_router
-# from evileye.api.routes.events import router as events_router  # DEPRECATED
+from evileye.api.routes.realtime import router as realtime_router
+from evileye.api.routes.playback import router as playback_router
 from evileye.api.routes.internal import router as internal_router
 from evileye.api.core.config_run_access import get_config_run_manager
 from evileye.api.core.web_auth_bootstrap import ensure_default_admin_credentials
@@ -123,19 +125,42 @@ def create_app() -> FastAPI:
     app.include_router(journals_router)
     app.include_router(logs_router)
     app.include_router(users_router)
+    app.include_router(config_editors_router)
     app.include_router(configs_router)
-    # app.include_router(pipelines_router)  # DEPRECATED: use /api/v1/configs/runs
     app.include_router(streaming_router)
-    # app.include_router(events_router)  # DEPRECATED: requires in-process Controller access
+    app.include_router(realtime_router)
+    app.include_router(playback_router)
     app.include_router(internal_router)
-    logger.info("Routers registered: auth, state, journals, logs, configs, streaming, internal")
+    logger.info(
+        "Routers registered: auth, state, journals, logs, users, config_editors, configs, streaming, realtime, playback, internal"
+    )
 
     static_dir = Path(__file__).parent / "static"
     if static_dir.exists():
-        app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="frontend")
-        logger.info("Frontend static files mounted at /")
+        assets_dir = static_dir / "assets"
+        if assets_dir.exists():
+            app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+
+        @app.get("/{full_path:path}")
+        async def spa_or_static(full_path: str, request: Request):
+            if full_path.startswith("api/") or full_path in {"ready"}:
+                return Response('{"detail":"Not Found"}', status_code=404, media_type="application/json")
+            candidate = (static_dir / full_path).resolve()
+            try:
+                candidate.relative_to(static_dir.resolve())
+            except ValueError:
+                return Response("Forbidden", status_code=403)
+            if full_path and candidate.is_file():
+                return FileResponse(candidate)
+            index = static_dir / "index.html"
+            if index.exists():
+                return FileResponse(index)
+            return Response("Frontend not built", status_code=404)
+
+        logger.info("Frontend static files + SPA fallback mounted")
     else:
         logger.warning(
-            "Frontend not built: static dir missing. Run: cd evileye/api/frontend && npm install && npm run build")
+            "Frontend not built: static dir missing. Run: cd evileye/api/frontend && npm install && npm run build"
+        )
 
     return app

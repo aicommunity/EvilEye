@@ -275,9 +275,13 @@ class StreamingService:
     def _publish_jpeg(self, pipeline_id: str, jpeg_bytes: bytes, job: StreamFrameJob) -> None:
         metadata = {
             "timestamp": job.created_at,
+            "ts": job.created_at,
             "source_id": job.source_id,
             "frame_id": job.frame_id,
             "content_type": "image/jpeg",
+            "objects": list(getattr(job, "objects", None) or []),
+            "zones": list(getattr(job, "zones", None) or []),
+            "signalization": bool(getattr(job, "signalization", False)),
         }
         broker = get_frame_broker()
         broker.publish_jpeg(pipeline_id, jpeg_bytes, metadata=metadata)
