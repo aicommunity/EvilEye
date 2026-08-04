@@ -1,7 +1,8 @@
+import { useLayoutEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { journalFrameUrl, journalPreviewUrl, journalVideoUrl, type JournalGroupedRow } from '../../api';
 import { Button } from '../../components/ui';
-import { bboxSvg, unixFromJournalTime, type JournalType } from './journalMath';
+import { bboxSvg, letterboxRect, unixFromJournalTime, type JournalType } from './journalMath';
 
 export function JournalDetailDrawer({
   row,
@@ -19,6 +20,21 @@ export function JournalDetailDrawer({
   const bbox = mode === 'found' ? row.bbox_found : row.bbox_lost;
   const zone = mode === 'found' ? row.zone_coords : null;
   const ts = unixFromJournalTime(row.time);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
+  const [box, setBox] = useState({ left: 0, top: 0, width: 0, height: 0 });
+
+  useLayoutEffect(() => {
+    const update = () => {
+      const wrap = wrapRef.current;
+      const img = imgRef.current;
+      if (!wrap || !img || !img.naturalWidth) return;
+      setBox(letterboxRect(wrap.clientWidth, wrap.clientHeight, img.naturalWidth, img.naturalHeight));
+    };
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, [previewPath]);
 
   return (
     <div className="modal open journal-detail-modal" role="dialog">
@@ -35,8 +51,9 @@ export function JournalDetailDrawer({
         <div id="journal-detail-body" className="modal-body">
           <p className="hint">{String(row.information ?? '')}</p>
           {previewPath ? (
-            <div className="journal-preview-wrap" style={{ position: 'relative', maxWidth: 640 }}>
+            <div ref={wrapRef} className="journal-preview-wrap" style={{ position: 'relative', maxWidth: 640, minHeight: 200 }}>
               <img
+                ref={imgRef}
                 className="journal-detail-media"
                 src={journalPreviewUrl({
                   path: String(previewPath),
@@ -45,13 +62,26 @@ export function JournalDetailDrawer({
                   mode,
                 })}
                 alt="preview"
-                style={{ width: '100%' }}
+                style={{ width: '100%', display: 'block' }}
+                onLoad={() => {
+                  const wrap = wrapRef.current;
+                  const img = imgRef.current;
+                  if (!wrap || !img) return;
+                  setBox(letterboxRect(wrap.clientWidth, wrap.clientHeight, img.naturalWidth, img.naturalHeight));
+                }}
               />
               <svg
                 className="journal-preview-overlay"
                 viewBox="0 0 100 100"
                 preserveAspectRatio="none"
-                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
+                style={{
+                  position: 'absolute',
+                  left: box.left,
+                  top: box.top,
+                  width: box.width || '100%',
+                  height: box.height || '100%',
+                  pointerEvents: 'none',
+                }}
                 dangerouslySetInnerHTML={{ __html: bboxSvg(bbox as number[] | null, zone as number[][] | null) }}
               />
             </div>

@@ -73,6 +73,26 @@ export function bboxSvg(
   return parts.join('');
 }
 
+export function letterboxRect(
+  containerW: number,
+  containerH: number,
+  naturalW: number,
+  naturalH: number,
+): { left: number; top: number; width: number; height: number } {
+  if (!containerW || !containerH || !naturalW || !naturalH) {
+    return { left: 0, top: 0, width: containerW, height: containerH };
+  }
+  const scale = Math.min(containerW / naturalW, containerH / naturalH);
+  const width = naturalW * scale;
+  const height = naturalH * scale;
+  return {
+    left: (containerW - width) / 2,
+    top: (containerH - height) / 2,
+    width,
+    height,
+  };
+}
+
 export function unixFromJournalTime(value: unknown): number | null {
   const raw = String(value ?? '').trim();
   if (!raw) return null;
