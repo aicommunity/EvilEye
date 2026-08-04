@@ -80,6 +80,9 @@ const en: Dict = {
       stopped: 'Run stopped',
       openStream: 'Open stream',
       runLabel: 'Run #{{id}} · source #{{sid}}',
+      noSignal: 'No signal',
+      reconnecting: 'Reconnecting…',
+      stale: 'Stale preview',
     },
     stream: {
       title: 'Video stream',
@@ -120,6 +123,8 @@ const en: Dict = {
     fullFrame: 'Full frame',
     openPlayback: 'Open in Playback',
     preview: 'Preview',
+    playVideo: 'Play video',
+    exportTruncated: 'Export may be truncated to the current page window.',
   },
   playback: {
     title: 'Playback',

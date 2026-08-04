@@ -120,6 +120,9 @@ def _log_files() -> list[Path]:
     return sorted(logs_dir.glob("*.log"), key=lambda item: item.stat().st_mtime, reverse=True)
 
 
+_CAMERA_STALE_SEC = 5.0
+
+
 def _preview_frame_available(run_id: int | None, source_id: int | None = None) -> bool:
     if run_id is None:
         return False
@@ -131,6 +134,65 @@ def _preview_frame_available(run_id: int | None, source_id: int | None = None) -
         return bool(broker.latest_jpeg(run_key))
     except Exception:
         return False
+
+
+def _frame_age_sec(run_id: int | None, source_id: int | None = None) -> float | None:
+    if run_id is None:
+        return None
+    try:
+        return get_frame_broker().get_frame_age_sec(str(run_id), source_id)
+    except Exception:
+        return None
+
+
+def _source_is_working_from_snapshot(
+    snapshot: dict[str, Any] | None,
+    source_id: int | None,
+) -> bool | None:
+    """Return is_working from runtime snapshot when available; None if unknown."""
+    if not isinstance(snapshot, dict) or source_id is None:
+        return None
+    sources = snapshot.get("sources")
+    if not isinstance(sources, list):
+        return None
+    for entry in sources:
+        if not isinstance(entry, dict):
+            continue
+        ids = entry.get("source_ids") or []
+        try:
+            if int(source_id) in {int(x) for x in ids}:
+                if "is_working" in entry:
+                    return bool(entry.get("is_working"))
+                return None
+        except Exception:
+            continue
+    return None
+
+
+def _camera_health(
+    run: dict[str, Any],
+    source_id: int | None,
+    *,
+    stale_sec: float = _CAMERA_STALE_SEC,
+) -> tuple[bool, float | None, bool, bool]:
+    """Return (preview_available, last_frame_age_sec, is_working, reconnecting)."""
+    rid = run.get("id")
+    age = _frame_age_sec(rid, source_id)
+    preview = bool(run.get("state") == "running" and _preview_frame_available(rid, source_id))
+    snap = run.get("runtime_snapshot") if isinstance(run.get("runtime_snapshot"), dict) else None
+    snap_working = _source_is_working_from_snapshot(snap, source_id)
+    if snap_working is not None:
+        is_working = bool(snap_working) and preview and (age is None or age < stale_sec)
+    elif age is not None:
+        is_working = preview and age < stale_sec
+    else:
+        is_working = False
+    reconnecting = bool(
+        run.get("state") == "running"
+        and not is_working
+        and (snap_working is False or (age is not None and age >= stale_sec) or not preview)
+    )
+    return preview, age, is_working, reconnecting
 
 
 def _read_log_tail(path: Path, *, lines: int = 120) -> list[str]:
@@ -243,20 +305,22 @@ def list_camera_summaries(*, scope: str = "current") -> list[Dict[str, Any]]:
         if not run:
             continue
         for source in run.get("sources", []):
+            sid = source.get("source_id")
+            preview, age, is_working, reconnecting = _camera_health(run, sid)
             cameras.append(
                 {
                     "run_id": run["id"],
                     "run_name": run.get("name"),
                     "run_state": run.get("state"),
                     "pipeline_class": run.get("pipeline_class"),
-                    "source_id": source.get("source_id"),
+                    "source_id": sid,
                     "source_name": source.get("source_name"),
                     "source_type": source.get("source_type"),
                     "address": source.get("address"),
-                    "preview_available": bool(
-                        run.get("state") == "running"
-                        and _preview_frame_available(run.get("id"), source.get("source_id"))
-                    ),
+                    "preview_available": preview,
+                    "is_working": is_working,
+                    "last_frame_age_sec": age,
+                    "reconnecting": reconnecting,
                     "alive": bool(run.get("alive")),
                 }
             )

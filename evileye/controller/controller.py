@@ -1189,6 +1189,7 @@ class Controller(ControllerProcessingMixin):
         relay_base_url = os.environ.get("EVILEYE_WEB_API_BASE")
         relay_token = os.environ.get("EVILEYE_INTERNAL_TOKEN") or load_web_auth_config().internal_token
         if self._streaming_service is not None:
+            default_workers = 2 if bool(server_cfg.get("enabled")) else 1
             self._streaming_service.configure(
                 pipeline_id=self.stream_pipeline_id,
                 publish_fps=self._stream_publish_fps,
@@ -1197,7 +1198,8 @@ class Controller(ControllerProcessingMixin):
                 relay_token=relay_token,
                 encoder_backend=server_cfg.get("preview_encoder", "auto"),
                 jpeg_quality=server_cfg.get("preview_jpeg_quality", 85),
-                num_workers=server_cfg.get("preview_encode_workers", 1),
+                num_workers=server_cfg.get("preview_encode_workers", default_workers),
+                preview_max_edge=int(server_cfg.get("preview_max_edge", 960) or 960),
             )
         self._preview_zones_by_source = self._extract_preview_zones()
         if self._preview_render_service is not None:

@@ -80,6 +80,9 @@ const ru: Dict = {
       stopped: 'Запуск остановлен',
       openStream: 'Открыть поток',
       runLabel: 'Запуск #{{id}} · source #{{sid}}',
+      noSignal: 'Нет сигнала',
+      reconnecting: 'Переподключение…',
+      stale: 'Устаревшее превью',
     },
     stream: {
       title: 'Видеопоток',
@@ -120,6 +123,8 @@ const ru: Dict = {
     fullFrame: 'Полный кадр',
     openPlayback: 'Открыть в Записях',
     preview: 'Превью',
+    playVideo: 'Воспроизвести видео',
+    exportTruncated: 'Экспорт может быть обрезан до текущего окна страницы.',
   },
   playback: {
     title: 'Записи',

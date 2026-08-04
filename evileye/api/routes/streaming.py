@@ -162,17 +162,24 @@ async def snapshot_legacy(request: Request, rid: int, source_id: int | None = Qu
 
 
 async def _mjpeg_generator(
-        run_info: dict, fps: int, stop_event: threading.Event, source_id: int | None = None,
+        run_info: dict,
+        fps: int,
+        stop_event: threading.Event,
+        source_id: int | None = None,
+        *,
+        stream_key: str,
+        idle_sec: float = 8.0,
 ) -> AsyncGenerator[bytes, None]:
-    run_id_str = str(run_info["id"])
-    stream_key = f"{run_id_str}:{source_id}" if source_id is not None else run_id_str
     boundary = b"--frame"
     delay = 1.0 / max(1, fps)
+    no_frame_since = time.monotonic()
+    broker = get_frame_broker()
 
     try:
         while not stop_event.is_set():
             data = _load_latest_frame(run_info, source_id=source_id)
             if data:
+                no_frame_since = time.monotonic()
                 yield (
                         boundary
                         + b"\r\n"
@@ -180,8 +187,10 @@ async def _mjpeg_generator(
                         + data
                         + b"\r\n"
                 )
+            elif time.monotonic() - no_frame_since > idle_sec:
+                break
 
-            elapsed = 0
+            elapsed = 0.0
             check_interval = 0.1
             while elapsed < delay and not stop_event.is_set():
                 await asyncio.sleep(min(check_interval, delay - elapsed))
@@ -189,7 +198,7 @@ async def _mjpeg_generator(
     finally:
         _release_mjpeg_slot()
         try:
-            get_frame_broker().stop_stream(stream_key)
+            broker.release_stream(stream_key)
         except Exception:
             pass
 
@@ -221,10 +230,13 @@ async def _mjpeg_stream_impl(
         )
     run_id_str = str(run_info["id"])
     stream_key = f"{run_id_str}:{source_id}" if source_id is not None else run_id_str
-    stop_event = get_frame_broker().start_stream(stream_key)
+    stop_event = get_frame_broker().acquire_stream(stream_key)
+    idle_sec = float(os.getenv("EVILEYE_MJPEG_IDLE_SEC", "8") or 8)
 
     return StreamingResponse(
-        _mjpeg_generator(run_info, fps, stop_event, source_id=source_id),
+        _mjpeg_generator(
+            run_info, fps, stop_event, source_id=source_id, stream_key=stream_key, idle_sec=idle_sec,
+        ),
         media_type="multipart/x-mixed-replace; boundary=frame",
         headers={
             "X-Accel-Buffering": "no",
@@ -255,21 +267,28 @@ async def mjpeg_stream_legacy(
     return await _mjpeg_stream_impl(request, rid, source_id=source_id, fps=fps)
 
 
-async def _stop_stream_impl(rid: int, source_id: int | None = None):
+async def _stop_stream_impl(rid: int, source_id: int | None = None, force: bool = False):
     """
-    Stop the active MJPEG stream for the given run.
+    Soft stop is a no-op: each MJPEG generator releases its own ref on disconnect.
+    force=true hard-stops all consumers for the stream key.
     """
     run_info = _resolve_run(rid)
     run_id_str = str(run_info["id"])
     stream_key = f"{run_id_str}:{source_id}" if source_id is not None else run_id_str
-    stopped = get_frame_broker().stop_stream(stream_key)
-
+    if not force:
+        return {
+            "run_id": rid,
+            "pipeline_id": rid,
+            "status": "noop",
+            "message": "Soft stop is a no-op; MJPEG disconnect releases the consumer ref",
+        }
+    stopped = get_frame_broker().release_stream(stream_key, force=True)
     if stopped:
         return {
             "run_id": rid,
             "pipeline_id": rid,
             "status": "stopped",
-            "message": f"Stream for run '{rid}' has been stopped",
+            "message": f"Stream for run '{rid}' has been force-stopped",
         }
     return {
         "run_id": rid,
@@ -280,13 +299,21 @@ async def _stop_stream_impl(rid: int, source_id: int | None = None):
 
 
 @router.post("/runs/{rid}/stream:stop")
-async def stop_stream(rid: int, source_id: int | None = Query(None)):
-    return await _stop_stream_impl(rid, source_id=source_id)
+async def stop_stream(
+    rid: int,
+    source_id: int | None = Query(None),
+    force: bool = Query(False),
+):
+    return await _stop_stream_impl(rid, source_id=source_id, force=force)
 
 
 @router.post("/pipelines/{rid}/stream:stop", deprecated=True)
-async def stop_stream_legacy(rid: int, source_id: int | None = Query(None)):
-    return await _stop_stream_impl(rid, source_id=source_id)
+async def stop_stream_legacy(
+    rid: int,
+    source_id: int | None = Query(None),
+    force: bool = Query(False),
+):
+    return await _stop_stream_impl(rid, source_id=source_id, force=force)
 
 
 async def _stream_status_impl(request: Request, rid: int, source_id: int | None = None):

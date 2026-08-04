@@ -40,6 +40,9 @@ export interface StateCamera {
   source_type?: string | null;
   address?: string | null;
   preview_available: boolean;
+  is_working?: boolean;
+  last_frame_age_sec?: number | null;
+  reconnecting?: boolean;
   alive: boolean;
 }
 
