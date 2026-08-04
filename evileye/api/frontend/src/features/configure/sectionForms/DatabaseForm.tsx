@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../../../components/ui';
+import { FormActions, FormField, FormGrid } from '../formLayout';
 
 type DbCfg = {
   enabled?: boolean;
@@ -8,6 +9,7 @@ type DbCfg = {
   database?: string;
   user?: string;
   password?: string;
+  image_dir?: string;
   [key: string]: unknown;
 };
 
@@ -19,68 +21,77 @@ export function DatabaseForm({
   data,
   readOnly,
   onSave,
+  onChange,
 }: {
   data: unknown;
   readOnly: boolean;
   onSave: (data: unknown) => Promise<void>;
+  onChange?: (data: unknown) => void;
 }) {
   const [obj, setObj] = useState<DbCfg>(() => asObj(data));
   useEffect(() => setObj(asObj(data)), [data]);
 
+  const update = (next: DbCfg) => {
+    setObj(next);
+    onChange?.(next);
+  };
+
   return (
     <div>
       <p className="hint">PostgreSQL connection parameters.</p>
-      <div className="toolbar" style={{ flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
-        <label>
+      <FormGrid>
+        <FormField label="enabled">
           <input
             type="checkbox"
             disabled={readOnly}
             checked={Boolean(obj.enabled)}
-            onChange={(e) => setObj({ ...obj, enabled: e.target.checked })}
-          />{' '}
-          enabled
-        </label>
-        <label>
-          host{' '}
-          <input disabled={readOnly} value={String(obj.host ?? '')} onChange={(e) => setObj({ ...obj, host: e.target.value })} />
-        </label>
-        <label>
-          port{' '}
+            onChange={(e) => update({ ...obj, enabled: e.target.checked })}
+          />
+        </FormField>
+        <FormField label="host">
+          <input disabled={readOnly} value={String(obj.host ?? '')} onChange={(e) => update({ ...obj, host: e.target.value })} />
+        </FormField>
+        <FormField label="port">
           <input
             type="number"
             disabled={readOnly}
             value={obj.port ?? ''}
-            onChange={(e) => setObj({ ...obj, port: e.target.value === '' ? undefined : Number(e.target.value) })}
-            style={{ width: 80 }}
+            onChange={(e) => update({ ...obj, port: e.target.value === '' ? undefined : Number(e.target.value) })}
           />
-        </label>
-        <label>
-          database{' '}
+        </FormField>
+        <FormField label="database">
           <input
             disabled={readOnly}
             value={String(obj.database ?? '')}
-            onChange={(e) => setObj({ ...obj, database: e.target.value })}
+            onChange={(e) => update({ ...obj, database: e.target.value })}
           />
-        </label>
-        <label>
-          user{' '}
-          <input disabled={readOnly} value={String(obj.user ?? '')} onChange={(e) => setObj({ ...obj, user: e.target.value })} />
-        </label>
-        <label>
-          password{' '}
+        </FormField>
+        <FormField label="user">
+          <input disabled={readOnly} value={String(obj.user ?? '')} onChange={(e) => update({ ...obj, user: e.target.value })} />
+        </FormField>
+        <FormField label="password">
           <input
             type="password"
             disabled={readOnly}
             value={String(obj.password ?? '')}
-            onChange={(e) => setObj({ ...obj, password: e.target.value })}
+            onChange={(e) => update({ ...obj, password: e.target.value })}
           />
-        </label>
-      </div>
-      {!readOnly ? (
-        <Button variant="primary" onClick={() => void onSave(obj)}>
-          Сохранить database
-        </Button>
-      ) : null}
+        </FormField>
+        <FormField label="image_dir">
+          <input
+            disabled={readOnly}
+            value={String(obj.image_dir ?? '')}
+            onChange={(e) => update({ ...obj, image_dir: e.target.value })}
+          />
+        </FormField>
+      </FormGrid>
+      <FormActions>
+        {!readOnly ? (
+          <Button variant="primary" onClick={() => void onSave(obj)}>
+            Сохранить database
+          </Button>
+        ) : null}
+      </FormActions>
     </div>
   );
 }

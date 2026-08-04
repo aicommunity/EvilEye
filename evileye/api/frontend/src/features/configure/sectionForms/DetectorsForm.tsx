@@ -17,14 +17,20 @@ export function DetectorsForm({
   data,
   readOnly,
   onSave,
+  onChange,
 }: {
   data: unknown;
   readOnly: boolean;
   onSave: (data: unknown) => Promise<void>;
+  onChange?: (data: unknown) => void;
 }) {
   const [rows, setRows] = useState<DetectorRow[]>(() => asRows(data));
 
   useEffect(() => setRows(asRows(data)), [data]);
+  const updateRows = (next: DetectorRow[]) => {
+    setRows(next);
+    onChange?.(next);
+  };
 
   return (
     <div>
@@ -39,7 +45,7 @@ export function DetectorsForm({
               onChange={(e) => {
                 const next = [...rows];
                 next[i] = { ...row, model: e.target.value };
-                setRows(next);
+                updateRows(next);
               }}
               style={{ minWidth: 180 }}
             />
@@ -56,7 +62,7 @@ export function DetectorsForm({
               onChange={(e) => {
                 const next = [...rows];
                 next[i] = { ...row, conf: e.target.value === '' ? undefined : Number(e.target.value) };
-                setRows(next);
+                updateRows(next);
               }}
               style={{ width: 80 }}
             />
@@ -75,7 +81,7 @@ export function DetectorsForm({
                   .filter((n) => !Number.isNaN(n));
                 const next = [...rows];
                 next[i] = { ...row, source_ids: ids };
-                setRows(next);
+                updateRows(next);
               }}
               placeholder="0,1"
               style={{ width: 100 }}
@@ -96,13 +102,13 @@ export function DetectorsForm({
                     .filter(Boolean)
                     .map((v) => (/^\d+$/.test(v) ? Number(v) : v)),
                 };
-                setRows(next);
+                updateRows(next);
               }}
               style={{ minWidth: 120 }}
             />
           </label>
           {!readOnly ? (
-            <Button size="sm" variant="outline" onClick={() => setRows(rows.filter((_, j) => j !== i))}>
+            <Button size="sm" variant="outline" onClick={() => updateRows(rows.filter((_, j) => j !== i))}>
               −
             </Button>
           ) : null}
@@ -111,7 +117,7 @@ export function DetectorsForm({
       <div className="toolbar">
         {!readOnly ? (
           <>
-            <Button size="sm" variant="outline" onClick={() => setRows([...rows, { model: '', conf: 0.25, source_ids: [] }])}>
+            <Button size="sm" variant="outline" onClick={() => updateRows([...rows, { model: '', conf: 0.25, source_ids: [] }])}>
               + детектор
             </Button>
             <Button variant="primary" onClick={() => void onSave(rows)}>

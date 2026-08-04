@@ -17,13 +17,19 @@ export function EventsForm({
   data,
   readOnly,
   onSave,
+  onChange,
 }: {
   data: unknown;
   readOnly: boolean;
   onSave: (data: unknown) => Promise<void>;
+  onChange?: (data: unknown) => void;
 }) {
   const [rows, setRows] = useState<EventRow[]>(() => asRows(data));
   useEffect(() => setRows(asRows(data)), [data]);
+  const updateRows = (next: EventRow[]) => {
+    setRows(next);
+    onChange?.(next);
+  };
 
   return (
     <div>
@@ -38,7 +44,7 @@ export function EventsForm({
               onChange={(e) => {
                 const next = [...rows];
                 next[i] = { ...row, name: e.target.value };
-                setRows(next);
+                updateRows(next);
               }}
             />
           </label>
@@ -50,7 +56,7 @@ export function EventsForm({
               onChange={(e) => {
                 const next = [...rows];
                 next[i] = { ...row, type: e.target.value };
-                setRows(next);
+                updateRows(next);
               }}
             />
           </label>
@@ -68,13 +74,13 @@ export function EventsForm({
                   .filter((n) => !Number.isNaN(n));
                 const next = [...rows];
                 next[i] = { ...row, source_ids: ids };
-                setRows(next);
+                updateRows(next);
               }}
               style={{ width: 100 }}
             />
           </label>
           {!readOnly ? (
-            <Button size="sm" variant="outline" onClick={() => setRows(rows.filter((_, j) => j !== i))}>
+            <Button size="sm" variant="outline" onClick={() => updateRows(rows.filter((_, j) => j !== i))}>
               −
             </Button>
           ) : null}
@@ -83,7 +89,7 @@ export function EventsForm({
       <div className="toolbar">
         {!readOnly ? (
           <>
-            <Button size="sm" variant="outline" onClick={() => setRows([...rows, { name: 'event', type: 'zone' }])}>
+            <Button size="sm" variant="outline" onClick={() => updateRows([...rows, { name: 'event', type: 'zone' }])}>
               + event
             </Button>
             <Button variant="primary" onClick={() => void onSave(Array.isArray(data) || !data ? rows : rows[0] ?? {})}>

@@ -19,13 +19,19 @@ export function HandlerForm({
   data,
   readOnly,
   onSave,
+  onChange,
 }: {
   data: unknown;
   readOnly: boolean;
   onSave: (data: unknown) => Promise<void>;
+  onChange?: (data: unknown) => void;
 }) {
   const [obj, setObj] = useState<HandlerCfg>(() => asObj(data));
   useEffect(() => setObj(asObj(data)), [data]);
+  const update = (next: HandlerCfg) => {
+    setObj(next);
+    onChange?.(next);
+  };
 
   return (
     <div>
@@ -36,7 +42,7 @@ export function HandlerForm({
             type="checkbox"
             disabled={readOnly}
             checked={Boolean(obj.enabled ?? true)}
-            onChange={(e) => setObj({ ...obj, enabled: e.target.checked })}
+            onChange={(e) => update({ ...obj, enabled: e.target.checked })}
           />{' '}
           enabled
         </label>
@@ -45,7 +51,7 @@ export function HandlerForm({
             type="checkbox"
             disabled={readOnly}
             checked={Boolean(obj.save_images)}
-            onChange={(e) => setObj({ ...obj, save_images: e.target.checked })}
+            onChange={(e) => update({ ...obj, save_images: e.target.checked })}
           />{' '}
           save_images
         </label>
@@ -54,7 +60,7 @@ export function HandlerForm({
             type="checkbox"
             disabled={readOnly}
             checked={Boolean(obj.save_videos)}
-            onChange={(e) => setObj({ ...obj, save_videos: e.target.checked })}
+            onChange={(e) => update({ ...obj, save_videos: e.target.checked })}
           />{' '}
           save_videos
         </label>
@@ -65,7 +71,7 @@ export function HandlerForm({
             disabled={readOnly}
             value={obj.retention_days ?? ''}
             onChange={(e) =>
-              setObj({ ...obj, retention_days: e.target.value === '' ? undefined : Number(e.target.value) })
+              update({ ...obj, retention_days: e.target.value === '' ? undefined : Number(e.target.value) })
             }
             style={{ width: 80 }}
           />

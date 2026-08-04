@@ -18,13 +18,19 @@ export function TrackersForm({
   data,
   readOnly,
   onSave,
+  onChange,
 }: {
   data: unknown;
   readOnly: boolean;
   onSave: (data: unknown) => Promise<void>;
+  onChange?: (data: unknown) => void;
 }) {
   const [rows, setRows] = useState<TrackerRow[]>(() => asRows(data));
   useEffect(() => setRows(asRows(data)), [data]);
+  const updateRows = (next: TrackerRow[]) => {
+    setRows(next);
+    onChange?.(next);
+  };
 
   return (
     <div>
@@ -39,7 +45,7 @@ export function TrackersForm({
               onChange={(e) => {
                 const next = [...rows];
                 next[i] = { ...row, name: e.target.value };
-                setRows(next);
+                updateRows(next);
               }}
             />
           </label>
@@ -52,7 +58,7 @@ export function TrackersForm({
               onChange={(e) => {
                 const next = [...rows];
                 next[i] = { ...row, max_age: e.target.value === '' ? undefined : Number(e.target.value) };
-                setRows(next);
+                updateRows(next);
               }}
               style={{ width: 80 }}
             />
@@ -66,7 +72,7 @@ export function TrackersForm({
               onChange={(e) => {
                 const next = [...rows];
                 next[i] = { ...row, min_hits: e.target.value === '' ? undefined : Number(e.target.value) };
-                setRows(next);
+                updateRows(next);
               }}
               style={{ width: 80 }}
             />
@@ -81,13 +87,13 @@ export function TrackersForm({
               onChange={(e) => {
                 const next = [...rows];
                 next[i] = { ...row, iou_threshold: e.target.value === '' ? undefined : Number(e.target.value) };
-                setRows(next);
+                updateRows(next);
               }}
               style={{ width: 80 }}
             />
           </label>
           {!readOnly ? (
-            <Button size="sm" variant="outline" onClick={() => setRows(rows.filter((_, j) => j !== i))}>
+            <Button size="sm" variant="outline" onClick={() => updateRows(rows.filter((_, j) => j !== i))}>
               −
             </Button>
           ) : null}
@@ -96,7 +102,7 @@ export function TrackersForm({
       <div className="toolbar">
         {!readOnly ? (
           <>
-            <Button size="sm" variant="outline" onClick={() => setRows([...rows, { name: 'tracker', max_age: 30 }])}>
+            <Button size="sm" variant="outline" onClick={() => updateRows([...rows, { name: 'tracker', max_age: 30 }])}>
               + tracker
             </Button>
             <Button variant="primary" onClick={() => void onSave(Array.isArray(data) ? rows : rows[0] ?? {})}>

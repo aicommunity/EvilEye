@@ -1,0 +1,298 @@
+import { useEffect, useMemo, useState } from 'react';
+import {
+  configGet,
+  configUpdate,
+  configListSections,
+  configGetSection,
+  configPutSection,
+  configValidate,
+  type StudioTab,
+  ApiError,
+} from '../../api';
+import { Button } from '../../components/ui';
+import { useToast } from '../../components/ui/Toast';
+import { useAuth } from '../../auth/AuthContext';
+import { SourcesForm } from './sectionForms/SourcesForm';
+import { RecordForm } from './sectionForms/RecordForm';
+import { DetectorsForm } from './sectionForms/DetectorsForm';
+import { TrackersForm } from './sectionForms/TrackersForm';
+import { McTrackersForm } from './sectionForms/McTrackersForm';
+import { EventsDetectorsForm } from './sectionForms/EventsDetectorsForm';
+import { EventsProcessorForm } from './sectionForms/EventsProcessorForm';
+import { HandlerForm } from './sectionForms/HandlerForm';
+import { DatabaseForm } from './sectionForms/DatabaseForm';
+import { DatabaseAdaptersForm } from './sectionForms/DatabaseAdaptersForm';
+import { VisualizerForm } from './sectionForms/VisualizerForm';
+import { ControllerForm } from './sectionForms/ControllerForm';
+import { ServerForm } from './sectionForms/ServerForm';
+import { StorageMonitorForm } from './sectionForms/StorageMonitorForm';
+import { GenericSectionForm } from './sectionForms/GenericSectionForm';
+import { JsonAdvancedTab } from './JsonAdvancedTab';
+import { ConfigHistoryPanel } from './ConfigHistoryPanel';
+import { RoiCanvas } from './RoiCanvas';
+import { ZoneCanvas } from './ZoneCanvas';
+import { ClassMappingEditor } from './ClassMappingEditor';
+import { configBasename, stableStringify, tabsFromLegacySections } from './studioTabs';
+import { useI18n } from '../../i18n';
+
+const TAB_LABELS: Record<string, string> = {
+  sources: 'Sources',
+  record: 'Record',
+  preprocess: 'Preprocess',
+  detectors: 'Detectors',
+  trackers: 'Trackers',
+  mc_trackers: 'MC Trackers',
+  events_detectors: 'Events',
+  events_processor: 'Events processor',
+  objects_handler: 'Handler',
+  database: 'Database',
+  database_adapters: 'DB adapters',
+  storage_monitor: 'Storage',
+  visualizer: 'Visualizer',
+  controller: 'Controller',
+  server: 'Server',
+  roi: 'ROI',
+  zones: 'Zones',
+  classes: 'Classes',
+  json: 'JSON',
+  history: 'History',
+};
+
+export type ConfigStudioProps = {
+  mode: 'current' | 'file';
+  configName: string | null;
+  currentBadge?: boolean;
+  allowConfigHistory?: boolean;
+  readOnly?: boolean;
+};
+
+export function ConfigStudio({
+  mode,
+  configName,
+  currentBadge,
+  allowConfigHistory = false,
+  readOnly: readOnlyProp,
+}: ConfigStudioProps) {
+  const { hasPermission } = useAuth();
+  const { showError, showSuccess } = useToast();
+  const { t } = useI18n();
+  const canEdit = readOnlyProp === true ? false : hasPermission('config:edit');
+
+  const [tabs, setTabs] = useState<StudioTab[]>([]);
+  const [activeId, setActiveId] = useState('sources');
+  const [sectionData, setSectionData] = useState<unknown>(null);
+  const [baselineJson, setBaselineJson] = useState('');
+  const [dirty, setDirty] = useState(false);
+  const [fullJson, setFullJson] = useState('{}');
+  const [sourceId, setSourceId] = useState(0);
+
+  const name = configName;
+  const activeTab = useMemo(() => tabs.find((t) => t.id === activeId), [tabs, activeId]);
+  const activePath = activeTab?.path ?? activeId;
+
+  const specialIds = useMemo(() => {
+    const extra = ['roi', 'zones', 'classes', 'json'];
+    if (allowConfigHistory) extra.push('history');
+    return extra;
+  }, [allowConfigHistory]);
+
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!dirty) return;
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [dirty]);
+
+  useEffect(() => {
+    if (!name) {
+      setTabs([]);
+      setSectionData(null);
+      setDirty(false);
+      return;
+    }
+    void (async () => {
+      try {
+        const secs = await configListSections(name);
+        const nextTabs = secs.tabs?.length ? secs.tabs : tabsFromLegacySections(secs.sections);
+        setTabs(nextTabs);
+        setActiveId((prev) => {
+          if (nextTabs.some((t) => t.id === prev) || specialIds.includes(prev)) return prev;
+          return nextTabs[0]?.id ?? 'json';
+        });
+        const body = await configGet(name);
+        setFullJson(JSON.stringify(body, null, 2));
+        setDirty(false);
+      } catch (e) {
+        showError(e instanceof Error ? e.message : 'Ошибка');
+      }
+    })();
+  }, [name, showError, specialIds]);
+
+  useEffect(() => {
+    if (!name || !activeId || specialIds.includes(activeId)) return;
+    const path = tabs.find((t) => t.id === activeId)?.path ?? activeId;
+    void configGetSection(name, path)
+      .then((data) => {
+        setSectionData(data);
+        setBaselineJson(stableStringify(data));
+        setDirty(false);
+      })
+      .catch((e) => showError(e instanceof ApiError ? e.message : 'Ошибка секции'));
+  }, [name, activeId, tabs, showError, specialIds]);
+
+  const markDirtyFromDraft = (draft: unknown) => {
+    setDirty(stableStringify(draft) !== baselineJson);
+  };
+
+  const saveSection = async (data: unknown) => {
+    if (!canEdit || !name) return;
+    try {
+      await configPutSection(name, activePath, data);
+      showSuccess(t('configure.sectionSaved'));
+      setSectionData(data);
+      setBaselineJson(stableStringify(data));
+      setDirty(false);
+    } catch (e) {
+      showError(e instanceof Error ? e.message : t('configure.saveFail'));
+    }
+  };
+
+  const switchTab = (s: string) => {
+    if (dirty && !window.confirm(t('configure.dirtyConfirm'))) return;
+    setActiveId(s);
+    setDirty(false);
+  };
+
+  const formProps = {
+    data: sectionData,
+    readOnly: !canEdit,
+    onSave: saveSection,
+    onChange: markDirtyFromDraft,
+  };
+
+  const renderSectionForm = () => {
+    switch (activeId) {
+      case 'sources':
+        return <SourcesForm {...formProps} />;
+      case 'record':
+        return <RecordForm {...formProps} />;
+      case 'detectors':
+        return <DetectorsForm {...formProps} />;
+      case 'trackers':
+        return <TrackersForm {...formProps} />;
+      case 'mc_trackers':
+        return <McTrackersForm {...formProps} />;
+      case 'events_detectors':
+      case 'events':
+        return <EventsDetectorsForm {...formProps} />;
+      case 'events_processor':
+        return <EventsProcessorForm {...formProps} />;
+      case 'objects_handler':
+        return <HandlerForm {...formProps} />;
+      case 'database':
+        return <DatabaseForm {...formProps} />;
+      case 'database_adapters':
+        return <DatabaseAdaptersForm {...formProps} />;
+      case 'storage_monitor':
+        return <StorageMonitorForm {...formProps} />;
+      case 'visualizer':
+        return <VisualizerForm {...formProps} />;
+      case 'controller':
+        return <ControllerForm {...formProps} />;
+      case 'server':
+        return <ServerForm {...formProps} />;
+      default:
+        return <GenericSectionForm section={activeId} {...formProps} />;
+    }
+  };
+
+  if (!name) {
+    return (
+      <section className="panel active">
+        <div className="card">
+          <h2>{t('configure.title')}</h2>
+          <p className="empty">
+            {mode === 'current'
+              ? t('configure.noActiveRun')
+              : t('configure.noConfig')}
+          </p>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="panel active">
+      <div className="card">
+        <h2>
+          {t('configure.title')}{' '}
+          {currentBadge || mode === 'current' ? (
+            <span className="config-active-badge">{t('configure.activeConfig', { name: configBasename(name) ?? name })}</span>
+          ) : (
+            <span className="hint">· {name}</span>
+          )}
+          {dirty ? <span className="hint"> · {t('configure.dirty')}</span> : null}
+        </h2>
+        <p className="hint">
+          {mode === 'current'
+            ? t('configure.hintCurrent')
+            : t('configure.hintFile')}
+        </p>
+        <div className="toolbar">
+          <Button
+            variant="outline"
+            onClick={() =>
+              void configValidate(name)
+                .then((r) => {
+                  if (r.ok) showSuccess(t('configure.valid'));
+                  else showError(r.errors.join('; ') || t('configure.validationErrors'));
+                })
+                .catch((e) => showError(e.message))
+            }
+          >
+            {t('configure.validate')}
+          </Button>
+        </div>
+        <div className="journal-tabs config-studio-tabs">
+          {[...tabs.map((tab) => tab.id), ...specialIds].map((s) => (
+            <button
+              key={s}
+              type="button"
+              className={`journal-tab${activeId === s ? ' active' : ''}`}
+              onClick={() => switchTab(s)}
+            >
+              {t(`studio.tab.${s}`) !== `studio.tab.${s}` ? t(`studio.tab.${s}`) : (TAB_LABELS[s] ?? s)}
+            </button>
+          ))}
+        </div>
+        {activeId === 'json' ? (
+          <JsonAdvancedTab
+            value={fullJson}
+            readOnly={!canEdit}
+            onSave={async (text) => {
+              await configUpdate(name, JSON.parse(text));
+              setFullJson(text);
+              setBaselineJson(text);
+              setDirty(false);
+              showSuccess(t('configure.jsonSaved'));
+            }}
+            onChange={(text) => setDirty(text !== fullJson)}
+          />
+        ) : activeId === 'history' ? (
+          <ConfigHistoryPanel configName={name} />
+        ) : activeId === 'roi' ? (
+          <RoiCanvas configName={name} sourceId={sourceId} onSourceIdChange={setSourceId} readOnly={!canEdit} />
+        ) : activeId === 'zones' ? (
+          <ZoneCanvas configName={name} sourceId={sourceId} onSourceIdChange={setSourceId} readOnly={!canEdit} />
+        ) : activeId === 'classes' ? (
+          <ClassMappingEditor configName={name} readOnly={!canEdit} />
+        ) : (
+          renderSectionForm()
+        )}
+      </div>
+    </section>
+  );
+}

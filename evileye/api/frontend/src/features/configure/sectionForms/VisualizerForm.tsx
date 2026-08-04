@@ -19,13 +19,19 @@ export function VisualizerForm({
   data,
   readOnly,
   onSave,
+  onChange,
 }: {
   data: unknown;
   readOnly: boolean;
   onSave: (data: unknown) => Promise<void>;
+  onChange?: (data: unknown) => void;
 }) {
   const [obj, setObj] = useState<VisCfg>(() => asObj(data));
   useEffect(() => setObj(asObj(data)), [data]);
+  const update = (next: VisCfg) => {
+    setObj(next);
+    onChange?.(next);
+  };
   const fps = obj.fps ?? obj.display_fps;
 
   return (
@@ -37,7 +43,7 @@ export function VisualizerForm({
             type="checkbox"
             disabled={readOnly}
             checked={Boolean(obj.enabled ?? true)}
-            onChange={(e) => setObj({ ...obj, enabled: e.target.checked })}
+            onChange={(e) => update({ ...obj, enabled: e.target.checked })}
           />{' '}
           enabled
         </label>
@@ -47,7 +53,7 @@ export function VisualizerForm({
             type="number"
             disabled={readOnly}
             value={fps ?? ''}
-            onChange={(e) => setObj({ ...obj, fps: e.target.value === '' ? undefined : Number(e.target.value) })}
+            onChange={(e) => update({ ...obj, fps: e.target.value === '' ? undefined : Number(e.target.value) })}
             style={{ width: 80 }}
           />
         </label>
@@ -56,7 +62,7 @@ export function VisualizerForm({
             type="checkbox"
             disabled={readOnly}
             checked={Boolean(obj.show_boxes ?? true)}
-            onChange={(e) => setObj({ ...obj, show_boxes: e.target.checked })}
+            onChange={(e) => update({ ...obj, show_boxes: e.target.checked })}
           />{' '}
           show_boxes
         </label>
@@ -65,7 +71,7 @@ export function VisualizerForm({
             type="checkbox"
             disabled={readOnly}
             checked={Boolean(obj.show_zones ?? true)}
-            onChange={(e) => setObj({ ...obj, show_zones: e.target.checked })}
+            onChange={(e) => update({ ...obj, show_zones: e.target.checked })}
           />{' '}
           show_zones
         </label>
@@ -74,7 +80,7 @@ export function VisualizerForm({
             type="checkbox"
             disabled={readOnly}
             checked={Boolean(obj.event_signal_enabled)}
-            onChange={(e) => setObj({ ...obj, event_signal_enabled: e.target.checked })}
+            onChange={(e) => update({ ...obj, event_signal_enabled: e.target.checked })}
           />{' '}
           event_signal
         </label>

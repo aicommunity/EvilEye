@@ -451,10 +451,83 @@ body {
   font-weight: 600;
 }
 
-.journal-tabs {
+.journal-tabs,
+.config-studio-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
   margin-bottom: 1rem;
+}
+
+.config-studio-json textarea {
+  width: 100%;
+  min-height: min(60vh, 640px);
+  resize: vertical;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  box-sizing: border-box;
+}
+
+.config-form-grid {
+  display: grid;
+  grid-template-columns: minmax(140px, 200px) 1fr;
+  gap: 0.65rem 1rem;
+  align-items: center;
+  max-width: 960px;
+  margin-bottom: 1rem;
+}
+
+.config-form-grid .full-width {
+  grid-column: 1 / -1;
+}
+
+.config-form-grid label {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+
+.config-form-grid input[type='text'],
+.config-form-grid input[type='number'],
+.config-form-grid input[type='password'],
+.config-form-grid input:not([type]) {
+  width: 100%;
+  font: inherit;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  box-sizing: border-box;
+}
+
+.config-form-actions {
+  margin-top: 0.5rem;
+}
+
+.config-source-block {
+  margin-bottom: 1.25rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.config-active-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-left: 0.5rem;
+  padding: 0.15rem 0.65rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  vertical-align: middle;
 }
 
 .journal-tab {
@@ -1314,6 +1387,23 @@ body {
 .nav-link:hover { background: var(--bg-card-hover); color: var(--text); }
 .nav-link.active { background: rgba(59,130,246,0.15); color: var(--text); font-weight: 600; }
 .sidebar-footer { border-top: 1px solid var(--border); padding-top: 0.75rem; font-size: 0.85rem; color: var(--text-muted); }
+
+.lang-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.65rem;
+}
+
+.lang-switch select {
+  font: inherit;
+  padding: 0.25rem 0.4rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
 .app-main { padding: 1.5rem; max-width: 1400px; width: 100%; }
 .app-main .panel { display: block; }
 .app-main .panel.active { display: block; }

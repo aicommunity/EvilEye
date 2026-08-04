@@ -7,11 +7,13 @@ export function GenericSectionForm({
   data,
   readOnly,
   onSave,
+  onChange,
 }: {
   section: string;
   data: unknown;
   readOnly: boolean;
   onSave: (data: unknown) => Promise<void>;
+  onChange?: (data: unknown) => void;
 }) {
   const [mode, setMode] = useState<'fields' | 'json'>('fields');
   const [obj, setObj] = useState<Record<string, unknown>>({});
@@ -39,7 +41,10 @@ export function GenericSectionForm({
         <textarea
           rows={16}
           value={jsonText}
-          onChange={(e) => setJsonText(e.target.value)}
+          onChange={(e) => {
+            setJsonText(e.target.value);
+            try { onChange?.(JSON.parse(e.target.value || '{}')); } catch { /* ignore */ }
+          }}
           readOnly={readOnly}
         />
         <div className="toolbar">
@@ -69,7 +74,7 @@ export function GenericSectionForm({
               type="checkbox"
               disabled={readOnly}
               checked={Boolean(value)}
-              onChange={(e) => setObj({ ...obj, [key]: e.target.checked })}
+              onChange={(e) => { const next = { ...obj, [key]: e.target.checked }; setObj(next); onChange?.(next); }}
             />
           ) : (
             <input
@@ -79,9 +84,11 @@ export function GenericSectionForm({
               onChange={(e) => {
                 const raw = e.target.value;
                 if (typeof value === 'number') {
-                  setObj({ ...obj, [key]: raw === '' ? 0 : Number(raw) });
+                  const next = { ...obj, [key]: raw === '' ? 0 : Number(raw) };
+                  setObj(next); onChange?.(next);
                 } else {
-                  setObj({ ...obj, [key]: raw });
+                  const next = { ...obj, [key]: raw };
+                  setObj(next); onChange?.(next);
                 }
               }}
               style={{ minWidth: 220 }}

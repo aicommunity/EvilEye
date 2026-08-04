@@ -11,20 +11,19 @@ export function JsonAdvancedTab({
   value: string;
   readOnly: boolean;
   onSave: (text: string) => Promise<void>;
-  onChange?: () => void;
+  onChange?: (text: string) => void;
 }) {
   const [text, setText] = useState(value);
   const { showError } = useToast();
   useEffect(() => setText(value), [value]);
   return (
-    <div>
+    <div className="config-studio-json">
       <textarea
-        rows={20}
         value={text}
         readOnly={readOnly}
         onChange={(e) => {
           setText(e.target.value);
-          onChange?.();
+          onChange?.(e.target.value);
         }}
       />
       {!readOnly ? (

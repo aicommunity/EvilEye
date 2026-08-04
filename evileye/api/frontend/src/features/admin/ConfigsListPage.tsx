@@ -4,13 +4,15 @@ import { configsList, configGet, configCreate, configUpdate, configDelete, ApiEr
 import { Button, Modal } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
 import { useAuth } from '../../auth/AuthContext';
+import { useI18n } from '../../i18n';
 
 export function ConfigsListPage() {
   const { hasPermission } = useAuth();
   const { showError, showSuccess } = useToast();
+  const { t } = useI18n();
   const [names, setNames] = useState<string[]>([]);
   const [search, setSearch] = useState('');
-  const [modal, setModal] = useState<{ mode: 'view' | 'edit' | 'create'; name?: string } | null>(null);
+  const [modal, setModal] = useState<{ mode: 'raw' | 'create'; name?: string } | null>(null);
   const [nameInput, setNameInput] = useState('');
   const [body, setBody] = useState('{}');
 
@@ -26,16 +28,11 @@ export function ConfigsListPage() {
     void load();
   }, [load]);
 
-  const open = async (mode: 'view' | 'edit' | 'create', name?: string) => {
-    setModal({ mode, name });
-    if (mode === 'create') {
-      setNameInput('');
-      setBody('{}');
-      return;
-    }
-    setNameInput(name ?? '');
+  const openRaw = async (name: string) => {
+    setModal({ mode: 'raw', name });
+    setNameInput(name);
     try {
-      const data = await configGet(name!);
+      const data = await configGet(name);
       setBody(JSON.stringify(data, null, 2));
     } catch (e) {
       showError(e instanceof ApiError ? e.message : 'Не удалось загрузить');
@@ -47,47 +44,49 @@ export function ConfigsListPage() {
   return (
     <section className="panel active">
       <div className="card">
-        <h2>Настройки</h2>
-        <p className="hint">JSON-конфиги. Для форм и ROI/Zone — раздел Configure.</p>
+        <h2>{t('configs.title')}</h2>
+        <p className="hint">{t('configs.hint')}</p>
         <div className="toolbar">
-          <input className="search-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Поиск…" />
+          <input className="search-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t('configs.search')} />
           {hasPermission('config:edit') ? (
-            <Button variant="primary" onClick={() => void open('create')}>
-              Создать
+            <Button
+              variant="primary"
+              onClick={() => {
+                setModal({ mode: 'create' });
+                setNameInput('');
+                setBody('{}');
+              }}
+            >
+              {t('configs.create')}
             </Button>
           ) : null}
-          <Link className="btn btn-outline" to="/configure">
-            Config Studio
-          </Link>
         </div>
         <ul className="configs-list">
           {filtered.map((n) => (
             <li key={n} className="config-item">
               <span className="config-name">{n}</span>
               <div className="config-actions">
-                <Button size="sm" variant="outline" onClick={() => void open('view', n)}>
-                  Просмотр
+                <Link className="btn btn-sm btn-outline" to={`/admin/configs/${encodeURIComponent(n)}`}>
+                  {t('configs.studio')}
+                </Link>
+                <Button size="sm" variant="outline" onClick={() => void openRaw(n)}>
+                  {t('configs.raw')}
                 </Button>
                 {hasPermission('config:edit') ? (
-                  <>
-                    <Button size="sm" variant="outline" onClick={() => void open('edit', n)}>
-                      Изменить
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="danger"
-                      onClick={() =>
-                        void configDelete(n)
-                          .then(() => {
-                            showSuccess('Удалён');
-                            return load();
-                          })
-                          .catch((e) => showError(e.message))
-                      }
-                    >
-                      Удалить
-                    </Button>
-                  </>
+                  <Button
+                    size="sm"
+                    variant="danger"
+                    onClick={() =>
+                      void configDelete(n)
+                        .then(() => {
+                          showSuccess(t('configs.deleted'));
+                          return load();
+                        })
+                        .catch((e) => showError(e.message))
+                    }
+                  >
+                    Удалить
+                  </Button>
                 ) : null}
               </div>
             </li>
@@ -96,10 +95,10 @@ export function ConfigsListPage() {
       </div>
       <Modal
         open={Boolean(modal)}
-        title={modal?.mode === 'create' ? 'Новый конфиг' : `${modal?.mode}: ${modal?.name}`}
+        title={modal?.mode === 'create' ? t('configs.newTitle') : `Raw: ${modal?.name}`}
         onClose={() => setModal(null)}
         footer={
-          modal?.mode !== 'view' ? (
+          hasPermission('config:edit') ? (
             <Button
               variant="primary"
               onClick={() => {
@@ -112,7 +111,7 @@ export function ConfigsListPage() {
                     } else if (modal?.name) {
                       await configUpdate(modal.name, parsed);
                     }
-                    showSuccess('Сохранено');
+                    showSuccess(t('configs.saved'));
                     setModal(null);
                     await load();
                   } catch (e) {
@@ -128,12 +127,12 @@ export function ConfigsListPage() {
       >
         {modal?.mode === 'create' ? (
           <>
-            <label>Имя файла</label>
+            <label>{t('configs.fileName')}</label>
             <input value={nameInput} onChange={(e) => setNameInput(e.target.value)} />
           </>
         ) : null}
         <label>JSON</label>
-        <textarea rows={14} value={body} readOnly={modal?.mode === 'view'} onChange={(e) => setBody(e.target.value)} />
+        <textarea rows={14} value={body} onChange={(e) => setBody(e.target.value)} />
       </Modal>
     </section>
   );
