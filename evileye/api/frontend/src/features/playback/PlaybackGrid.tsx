@@ -1,5 +1,11 @@
 import { useEffect, useRef } from 'react';
 
+export type PlaybackMediaSlot = {
+  url: string | null;
+  startTs: number;
+  endTs: number;
+};
+
 export function PlaybackGrid({
   cameras,
   mediaByCam,
@@ -8,7 +14,7 @@ export function PlaybackGrid({
   speed,
 }: {
   cameras: string[];
-  mediaByCam: Record<string, string | null>;
+  mediaByCam: Record<string, PlaybackMediaSlot | null>;
   positionSec: number;
   playing: boolean;
   speed: number;
@@ -17,7 +23,14 @@ export function PlaybackGrid({
   return (
     <div className="camera-group-grid" style={{ gridTemplateColumns: `repeat(${Math.min(cameras.length, 2)}, 1fr)` }}>
       {cameras.map((id) => (
-        <PlaybackCell key={id} id={id} src={mediaByCam[id]} positionSec={positionSec} playing={playing} speed={speed} />
+        <PlaybackCell
+          key={id}
+          id={id}
+          slot={mediaByCam[id]}
+          positionSec={positionSec}
+          playing={playing}
+          speed={speed}
+        />
       ))}
     </div>
   );
@@ -25,28 +38,32 @@ export function PlaybackGrid({
 
 function PlaybackCell({
   id,
-  src,
+  slot,
   positionSec,
   playing,
   speed,
 }: {
   id: string;
-  src: string | null;
+  slot: PlaybackMediaSlot | null | undefined;
   positionSec: number;
   playing: boolean;
   speed: number;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
+  const src = slot?.url ?? null;
 
   useEffect(() => {
     const v = ref.current;
-    if (!v || !src) return;
-    // Best-effort sync: treat positionSec as absolute unix; video is relative — use modulo of duration if available
-    if (v.duration && Number.isFinite(v.duration)) {
-      const local = positionSec % v.duration;
-      if (Math.abs(v.currentTime - local) > 0.5) v.currentTime = local;
+    if (!v || !src || !slot) return;
+    const local = Math.max(0, positionSec - slot.startTs);
+    if (Math.abs(v.currentTime - local) > 0.4) {
+      try {
+        v.currentTime = local;
+      } catch {
+        /* ignore seek race */
+      }
     }
-  }, [positionSec, src]);
+  }, [positionSec, src, slot]);
 
   useEffect(() => {
     const v = ref.current;
@@ -54,14 +71,18 @@ function PlaybackCell({
     v.playbackRate = speed;
     if (playing) void v.play().catch(() => null);
     else v.pause();
-  }, [playing, speed]);
+  }, [playing, speed, src]);
 
   return (
     <article className="camera-card">
       <div className="camera-card-head">
         <span className="run-name">{id}</span>
       </div>
-      {src ? <video ref={ref} src={src} controls style={{ width: '100%' }} /> : <div className="camera-preview-empty">Нет сегмента</div>}
+      {src ? (
+        <video ref={ref} src={src} controls style={{ width: '100%' }} />
+      ) : (
+        <div className="camera-preview-empty">Нет сегмента</div>
+      )}
     </article>
   );
 }

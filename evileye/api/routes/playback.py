@@ -21,8 +21,9 @@ async def playback_segments(
     camera: str = Query(...),
     from_ts: Optional[float] = Query(None, alias="from"),
     to_ts: Optional[float] = Query(None, alias="to"),
+    date: Optional[str] = None,
 ) -> dict:
-    return {"items": svc.load_segments(camera, from_ts, to_ts)}
+    return {"items": svc.load_segments(camera, from_ts, to_ts, date=date)}
 
 
 @router.get("/events")

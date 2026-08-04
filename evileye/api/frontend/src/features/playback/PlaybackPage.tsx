@@ -4,7 +4,7 @@ import { playbackApi, type PlaybackCamera, type PlaybackEventMarker, type Playba
 import { Button } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
 import { Timeline } from './Timeline';
-import { PlaybackGrid } from './PlaybackGrid';
+import { PlaybackGrid, type PlaybackMediaSlot } from './PlaybackGrid';
 import { usePlaybackController } from './usePlaybackController';
 
 function today(): string {
@@ -26,15 +26,17 @@ export function PlaybackPage() {
   const initialT = Number(params.get('t') || 0) || null;
   const ctrl = usePlaybackController(initialT);
 
-  const load = async () => {
+  const load = async (camsOverride?: string[]) => {
     try {
       const camRes = await playbackApi.cameras(date);
       setCameras(camRes.items);
-      const nextSelected = selected.length ? selected : camRes.items.slice(0, 2).map((c) => c.id);
+      const nextSelected =
+        camsOverride ?? (selected.length ? selected : camRes.items.slice(0, 2).map((c) => c.id));
       setSelected(nextSelected);
       const segMap: Record<string, PlaybackSegment[]> = {};
       for (const id of nextSelected) {
-        const seg = await playbackApi.segments(id);
+        const seg = await playbackApi.segments(id, undefined, undefined, date);
+        // Prefer date-scoped discovery via cameras already filtered by date
         segMap[id] = seg.items;
       }
       setSegmentsByCam(segMap);
@@ -42,7 +44,7 @@ export function PlaybackPage() {
       const from = allSegs.length ? Math.min(...allSegs.map((s) => s.start_ts)) : undefined;
       const to = allSegs.length ? Math.max(...allSegs.map((s) => s.end_ts)) : undefined;
       ctrl.setRange(from ?? null, to ?? null);
-      const ev = await playbackApi.events(from, to);
+      const ev = await playbackApi.events(from, to, nextSelected[0]);
       setMarkers(ev.items);
     } catch (e) {
       showError(e instanceof Error ? e.message : 'Playback недоступен');
@@ -50,11 +52,18 @@ export function PlaybackPage() {
   };
 
   const mediaByCam = useMemo(() => {
-    const result: Record<string, string | null> = {};
+    const result: Record<string, PlaybackMediaSlot | null> = {};
     for (const id of selected) {
       const segs = segmentsByCam[id] ?? [];
-      const active = segs.find((s) => ctrl.positionSec >= s.start_ts && ctrl.positionSec <= s.end_ts) ?? segs[0];
-      result[id] = active ? playbackApi.mediaUrl(active.path) : null;
+      const active =
+        segs.find((s) => ctrl.positionSec >= s.start_ts && ctrl.positionSec <= s.end_ts) ?? segs[0];
+      result[id] = active
+        ? {
+            url: playbackApi.mediaUrl(active.path),
+            startTs: active.start_ts,
+            endTs: active.end_ts,
+          }
+        : null;
     }
     return result;
   }, [selected, segmentsByCam, ctrl.positionSec]);
@@ -63,7 +72,7 @@ export function PlaybackPage() {
     <section className="panel active">
       <div className="card">
         <h2>Playback</h2>
-        <p className="hint">Таймлайн записей Streams с маркерами событий</p>
+        <p className="hint">Таймлайн записей Streams с маркерами событий · sync ≥2 камер</p>
         <div className="toolbar">
           <input type="date" className="search-input" value={date} onChange={(e) => setDate(e.target.value)} />
           <Button variant="primary" onClick={() => void load()}>
@@ -86,9 +95,11 @@ export function PlaybackPage() {
                 key={c.id}
                 size="sm"
                 variant={on ? 'primary' : 'outline'}
-                onClick={() =>
-                  setSelected((prev) => (on ? prev.filter((x) => x !== c.id) : [...prev, c.id]))
-                }
+                onClick={() => {
+                  const next = on ? selected.filter((x) => x !== c.id) : [...selected, c.id];
+                  setSelected(next);
+                  void load(next);
+                }}
               >
                 {c.name}
               </Button>
@@ -102,7 +113,13 @@ export function PlaybackPage() {
           markers={markers}
           onSeek={ctrl.seek}
         />
-        <PlaybackGrid cameras={selected} mediaByCam={mediaByCam} positionSec={ctrl.positionSec} playing={ctrl.playing} speed={ctrl.speed} />
+        <PlaybackGrid
+          cameras={selected}
+          mediaByCam={mediaByCam}
+          positionSec={ctrl.positionSec}
+          playing={ctrl.playing}
+          speed={ctrl.speed}
+        />
       </div>
     </section>
   );

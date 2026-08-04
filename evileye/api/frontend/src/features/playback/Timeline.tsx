@@ -1,4 +1,5 @@
 import type { PlaybackEventMarker } from '../../api';
+import { EventMarkers } from './EventMarkers';
 
 export function Timeline({
   from,
@@ -48,25 +49,7 @@ export function Timeline({
           borderRadius: 8,
         }}
       />
-      {markers.map((m, i) => {
-        const left = ((m.ts - from) / span) * 100;
-        if (left < 0 || left > 100) return null;
-        return (
-          <span
-            key={i}
-            title={`${m.type} @ ${new Date(m.ts * 1000).toLocaleString('ru-RU')}`}
-            style={{
-              position: 'absolute',
-              left: `${left}%`,
-              top: 4,
-              width: 4,
-              height: 40,
-              background: '#ef4444',
-              transform: 'translateX(-50%)',
-            }}
-          />
-        );
-      })}
+      <EventMarkers markers={markers} from={from} to={to} onSelect={(m) => onSeek(m.ts)} />
     </div>
   );
 }

@@ -6,10 +6,11 @@ export const playbackApi = {
     const qs = date ? `?date=${encodeURIComponent(date)}` : '';
     return request(`/playback/cameras${qs}`);
   },
-  segments(camera: string, from?: number, to?: number): Promise<{ items: PlaybackSegment[] }> {
+  segments(camera: string, from?: number, to?: number, date?: string): Promise<{ items: PlaybackSegment[] }> {
     const p = new URLSearchParams({ camera });
     if (from != null) p.set('from', String(from));
     if (to != null) p.set('to', String(to));
+    if (date) p.set('date', date);
     return request(`/playback/segments?${p}`);
   },
   events(from?: number, to?: number, camera?: string): Promise<{ items: PlaybackEventMarker[] }> {
