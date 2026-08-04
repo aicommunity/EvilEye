@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../../../components/ui';
+import { useI18n } from '../../../i18n';
 
 type HandlerCfg = {
   enabled?: boolean;
@@ -26,6 +27,7 @@ export function HandlerForm({
   onSave: (data: unknown) => Promise<void>;
   onChange?: (data: unknown) => void;
 }) {
+  const { t } = useI18n();
   const [obj, setObj] = useState<HandlerCfg>(() => asObj(data));
   useEffect(() => setObj(asObj(data)), [data]);
   const update = (next: HandlerCfg) => {
@@ -35,7 +37,7 @@ export function HandlerForm({
 
   return (
     <div>
-      <p className="hint">Objects handler: сохранение кадров/видео и retention.</p>
+      <p className="hint">{t('configure.forms.hintHandler')}</p>
       <div className="toolbar" style={{ flexWrap: 'wrap', gap: 12 }}>
         <label>
           <input
@@ -79,7 +81,7 @@ export function HandlerForm({
       </div>
       {!readOnly ? (
         <Button variant="primary" onClick={() => void onSave(Array.isArray(data) ? [obj] : obj)}>
-          Сохранить handler
+          {t('configure.forms.saveSection', { section: 'handler' })}
         </Button>
       ) : null}
     </div>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../../../components/ui';
+import { useI18n } from '../../../i18n';
 
 /** Field editor for dict/list sections with common scalar keys. */
 export function GenericSectionForm({
@@ -15,6 +16,7 @@ export function GenericSectionForm({
   onSave: (data: unknown) => Promise<void>;
   onChange?: (data: unknown) => void;
 }) {
+  const { t } = useI18n();
   const [mode, setMode] = useState<'fields' | 'json'>('fields');
   const [obj, setObj] = useState<Record<string, unknown>>({});
   const [jsonText, setJsonText] = useState('{}');
@@ -37,7 +39,7 @@ export function GenericSectionForm({
   if (mode === 'json' || !scalarEntries.length) {
     return (
       <div>
-        <p className="hint">Секция «{section}» — JSON.</p>
+        <p className="hint">{t('configure.forms.hintGenericJson', { section })}</p>
         <textarea
           rows={16}
           value={jsonText}
@@ -50,12 +52,12 @@ export function GenericSectionForm({
         <div className="toolbar">
           {scalarEntries.length ? (
             <Button size="sm" variant="outline" onClick={() => setMode('fields')}>
-              Поля
+            {t('configure.forms.fields')}
             </Button>
           ) : null}
           {!readOnly ? (
             <Button variant="primary" onClick={() => void onSave(JSON.parse(jsonText || '{}'))}>
-              Сохранить {section}
+              {t('configure.forms.saveSection', { section })}
             </Button>
           ) : null}
         </div>
@@ -65,7 +67,7 @@ export function GenericSectionForm({
 
   return (
     <div>
-      <p className="hint">Секция «{section}» — основные поля.</p>
+      <p className="hint">{t('configure.forms.hintGenericFields', { section })}</p>
       {scalarEntries.map(([key, value]) => (
         <div key={key} className="toolbar" style={{ marginBottom: 6 }}>
           <label style={{ minWidth: 140 }}>{key}</label>
@@ -102,7 +104,7 @@ export function GenericSectionForm({
         </Button>
         {!readOnly ? (
           <Button variant="primary" onClick={() => void onSave(obj)}>
-            Сохранить {section}
+            {t('configure.forms.saveSection', { section })}
           </Button>
         ) : null}
       </div>

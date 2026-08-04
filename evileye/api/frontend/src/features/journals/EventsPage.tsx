@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { journalsApi, type JournalGroupedRow } from '../../api';
 import { Button } from '../../components/ui';
+import { useI18n } from '../../i18n';
 import { JournalDetailDrawer } from './JournalDetailDrawer';
 import { JournalTable } from './JournalTable';
 import { useJournalFeed } from './useJournalFeed';
@@ -13,6 +14,7 @@ function today(): string {
 }
 
 export function EventsPage() {
+  const { t } = useI18n();
   const [tab, setTab] = useState<JournalType | 'history'>('events');
   const [date, setDate] = useState(today());
   const [eventType, setEventType] = useState('');
@@ -45,14 +47,14 @@ export function EventsPage() {
     if (tab !== 'history') return;
     void journalsApi.configHistory().then((h) => {
       if (!h.available) {
-        setHistoryMsg(String(h.message ?? 'История недоступна'));
+        setHistoryMsg(String(h.message ?? t('journals.historyUnavailable')));
         setHistoryItems([]);
         return;
       }
       setHistoryMsg(null);
       setHistoryItems(h.items);
     });
-  }, [tab]);
+  }, [tab, t]);
 
   usePolling(() => {
     if (tab === 'history' || selected) return;
@@ -64,35 +66,35 @@ export function EventsPage() {
   return (
     <section className="panel active">
       <div className="card journal-card">
-        <h2>Журналы</h2>
-        <p className="hint">События, объекты и история конфигураций</p>
+        <h2>{t('journals.title')}</h2>
+        <p className="hint">{t('journals.hint')}</p>
         <div className="journal-tabs">
           <button type="button" className={`journal-tab${tab === 'events' ? ' active' : ''}`} onClick={() => setTab('events')}>
-            События
+            {t('journals.tabEvents')}
           </button>
           <button type="button" className={`journal-tab${tab === 'objects' ? ' active' : ''}`} onClick={() => setTab('objects')}>
-            Объекты
+            {t('journals.tabObjects')}
           </button>
           <button type="button" className={`journal-tab${tab === 'history' ? ' active' : ''}`} onClick={() => setTab('history')}>
-            История конфигураций
+            {t('journals.tabHistory')}
           </button>
         </div>
         <div className="journal-toolbar toolbar">
           <input type="date" className="search-input" value={date} onChange={(e) => setDate(e.target.value)} />
           <Button size="sm" variant="outline" onClick={() => setDate('')}>
-            Все даты
+            {t('journals.allDates')}
           </Button>
           <select className="search-input" value={eventType} onChange={(e) => setEventType(e.target.value)}>
-            <option value="">Все типы</option>
-            {eventTypes.map((t) => (
-              <option key={t} value={t}>
-                {t}
+            <option value="">{t('journals.allTypes')}</option>
+            {eventTypes.map((et) => (
+              <option key={et} value={et}>
+                {et}
               </option>
             ))}
           </select>
           {tab === 'objects' ? (
             <select className="search-input" value={source} onChange={(e) => setSource(e.target.value)}>
-              <option value="">Все источники</option>
+              <option value="">{t('journals.allSources')}</option>
               {sources.map((s) => (
                 <option key={s} value={s}>
                   {s}
@@ -101,11 +103,11 @@ export function EventsPage() {
             </select>
           ) : null}
           <Button variant="outline" onClick={() => void feed.reload()}>
-            Обновить
+            {t('common.refresh')}
           </Button>
           {tab !== 'history' ? (
             <a className="btn btn-outline btn-sm" href={exportHref}>
-              Export CSV
+              {t('common.exportCsv')}
             </a>
           ) : null}
         </div>
@@ -116,11 +118,11 @@ export function EventsPage() {
             <table className="journal-table">
               <thead>
                 <tr>
-                  <th>Job</th>
-                  <th>Project</th>
-                  <th>Config</th>
-                  <th>Status</th>
-                  <th>Created</th>
+                  <th>{t('journals.colJob')}</th>
+                  <th>{t('journals.colProject')}</th>
+                  <th>{t('journals.colConfig')}</th>
+                  <th>{t('journals.colStatus')}</th>
+                  <th>{t('journals.colCreated')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -143,11 +145,11 @@ export function EventsPage() {
               rows={feed.rows}
               journalType={tab}
               onSelect={setSelected}
-              emptyText={tab === 'events' ? 'События не найдены.' : 'Объекты не найдены.'}
+              emptyText={tab === 'events' ? t('journals.emptyEvents') : t('journals.emptyObjects')}
             />
             {feed.hasMore ? (
               <Button size="sm" variant="outline" disabled={feed.loading} onClick={() => feed.loadMore()}>
-                Загрузить ещё
+                {t('common.loadMore')}
               </Button>
             ) : null}
           </>

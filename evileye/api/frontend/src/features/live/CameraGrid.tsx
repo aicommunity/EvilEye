@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { StateCamera } from '../../api';
+import { useI18n } from '../../i18n';
 import { CameraTile } from './CameraTile';
 
 export function CameraGrid({
@@ -13,6 +14,7 @@ export function CameraGrid({
   onOpenStream: (rid: number, sid: number | null) => void;
   onReorder: (keys: string[]) => void;
 }) {
+  const { t } = useI18n();
   const [focused, setFocused] = useState<string | null>(null);
   const [visible, setVisible] = useState<Set<string>>(new Set());
   const dragKey = useRef<string | null>(null);
@@ -43,7 +45,7 @@ export function CameraGrid({
   }, []);
 
   if (!cameras.length) {
-    return <p className="empty">Камеры текущего запуска недоступны.</p>;
+    return <p className="empty">{t('live.camera.unavailable')}</p>;
   }
 
   const keyOf = (c: StateCamera) => `${c.run_id}:${c.source_id}`;

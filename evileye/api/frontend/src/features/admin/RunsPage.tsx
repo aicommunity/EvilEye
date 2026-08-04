@@ -4,23 +4,23 @@ import { Badge, Button, Modal } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
 import { useI18n } from '../../i18n';
 
-function formatUptime(sec: number | null | undefined): string {
-  if (sec == null || Number.isNaN(sec)) return '—';
-  const s = Math.floor(sec);
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const r = s % 60;
-  if (h > 0) return `${h}ч ${m}м`;
-  if (m > 0) return `${m}м ${r}с`;
-  return `${r}с`;
-}
-
 export function RunsPage() {
   const { showError } = useToast();
   const { t } = useI18n();
   const [items, setItems] = useState<StateRun[]>([]);
   const [current, setCurrent] = useState<StateRun | null>(null);
   const [detail, setDetail] = useState<StateRun | null>(null);
+
+  const formatUptime = (sec: number | null | undefined): string => {
+    if (sec == null || Number.isNaN(sec)) return '—';
+    const s = Math.floor(sec);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const r = s % 60;
+    if (h > 0) return t('runs.uptime.h', { h, m });
+    if (m > 0) return t('runs.uptime.m', { m, s: r });
+    return t('runs.uptime.s', { s: r });
+  };
 
   const load = useCallback(async () => {
     try {
@@ -33,7 +33,7 @@ export function RunsPage() {
     } catch (e) {
       showError(e instanceof Error ? e.message : t('runs.loadError'));
     }
-  }, [showError]);
+  }, [showError, t]);
 
   useEffect(() => {
     void load();
@@ -55,13 +55,13 @@ export function RunsPage() {
           <table className="journal-table">
             <thead>
               <tr>
-                <th>ID</th>
-                <th>Имя</th>
-                <th>Статус</th>
-                <th>Конфиг</th>
-                <th>Pipeline</th>
-                <th>PID</th>
-                <th>Uptime</th>
+                <th>{t('runs.columns.id')}</th>
+                <th>{t('runs.columns.name')}</th>
+                <th>{t('runs.columns.status')}</th>
+                <th>{t('runs.columns.config')}</th>
+                <th>{t('runs.columns.pipeline')}</th>
+                <th>{t('runs.columns.pid')}</th>
+                <th>{t('runs.columns.uptime')}</th>
                 <th />
               </tr>
             </thead>
@@ -93,25 +93,25 @@ export function RunsPage() {
         {detail ? (
           <>
             <p>
-              <strong>ID</strong> {detail.id}
+              <strong>{t('runs.columns.id')}</strong> {detail.id}
             </p>
             <p>
-              <strong>Имя</strong> {detail.name ?? '—'}
+              <strong>{t('runs.columns.name')}</strong> {detail.name ?? '—'}
             </p>
             <p>
-              <strong>Статус</strong> {detail.state}
+              <strong>{t('runs.columns.status')}</strong> {detail.state}
             </p>
             <p>
-              <strong>Конфиг</strong> {detail.config_path}
+              <strong>{t('runs.columns.config')}</strong> {detail.config_path}
             </p>
             <p>
-              <strong>Pipeline</strong> {detail.pipeline_class ?? '—'}
+              <strong>{t('runs.columns.pipeline')}</strong> {detail.pipeline_class ?? '—'}
             </p>
             <p>
-              <strong>PID</strong> {detail.pid ?? '—'}
+              <strong>{t('runs.columns.pid')}</strong> {detail.pid ?? '—'}
             </p>
             <p>
-              <strong>Uptime</strong> {formatUptime(detail.uptime_seconds)}
+              <strong>{t('runs.columns.uptime')}</strong> {formatUptime(detail.uptime_seconds)}
             </p>
             {detail.error ? <p className="run-error">{detail.error}</p> : null}
           </>

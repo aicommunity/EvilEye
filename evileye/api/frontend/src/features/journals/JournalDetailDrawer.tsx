@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { journalFrameUrl, journalPreviewUrl, journalVideoUrl, type JournalGroupedRow } from '../../api';
 import { Button } from '../../components/ui';
+import { useI18n } from '../../i18n';
 import { bboxSvg, letterboxRect, unixFromJournalTime, type JournalType } from './journalMath';
 
 export function JournalDetailDrawer({
@@ -13,6 +14,7 @@ export function JournalDetailDrawer({
   journalType: JournalType;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const mode: 'found' | 'lost' = row.has_found_preview || row.preview ? 'found' : 'lost';
   const previewPath = mode === 'found' ? row.preview : row.lost_preview;
   const videoPath =
@@ -42,9 +44,9 @@ export function JournalDetailDrawer({
       <div className="modal-content journal-detail-content">
         <header className="journal-detail-header">
           <h3>
-            {String(row.event ?? 'Событие')} · {String(row.source ?? '')}
+            {String(row.event ?? t('journals.eventFallback'))} · {String(row.source ?? '')}
           </h3>
-          <Button size="sm" variant="outline" onClick={onClose}>
+          <Button size="sm" variant="outline" onClick={onClose} aria-label={t('common.close')}>
             ×
           </Button>
         </header>
@@ -61,7 +63,7 @@ export function JournalDetailDrawer({
                   journalType,
                   mode,
                 })}
-                alt="preview"
+                alt={t('journals.preview')}
                 style={{ width: '100%', display: 'block' }}
                 onLoad={() => {
                   const wrap = wrapRef.current;
@@ -98,7 +100,7 @@ export function JournalDetailDrawer({
                 target="_blank"
                 rel="noreferrer"
               >
-                Полный кадр
+                {t('journals.fullFrame')}
               </a>
             </p>
           ) : null}
@@ -111,7 +113,7 @@ export function JournalDetailDrawer({
                 className="btn btn-primary btn-sm"
                 to={`/playback?camera=${encodeURIComponent(String(row.source ?? ''))}&t=${ts}&row_key=${encodeURIComponent(String(row.row_key ?? ''))}`}
               >
-                Открыть в Playback
+                {t('journals.openPlayback')}
               </Link>
             ) : null}
           </div>

@@ -67,7 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const register = useCallback(async (email: string, password: string) => {
     const result = await authApi.register(email, password);
-    return result.message || 'Регистрация отправлена';
+    return result.message || '';
   }, []);
 
   const logout = useCallback(async () => {

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { editorsApi, stateApi, streamSnapshotUrl } from '../../api';
 import { Button } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
+import { useI18n } from '../../i18n';
 
 export function RoiCanvas({
   configName,
@@ -15,6 +16,7 @@ export function RoiCanvas({
   readOnly: boolean;
 }) {
   const { showError, showSuccess } = useToast();
+  const { t } = useI18n();
   const [rois, setRois] = useState<number[][]>([]);
   const [drawing, setDrawing] = useState<number[] | null>(null);
   const [bgUrl, setBgUrl] = useState<string | null>(null);
@@ -66,11 +68,11 @@ export function RoiCanvas({
             onClick={() =>
               void editorsApi
                 .putRoi(configName, sourceId, rois)
-                .then((r) => showSuccess(r.restart_required ? 'Сохранено (нужен restart)' : 'Сохранено'))
+                .then((r) => showSuccess(r.restart_required ? t('common.savedRestart') : t('common.saved')))
                 .catch((e) => showError(e.message))
             }
           >
-            Сохранить ROI
+            {t('configure.editors.saveRoi')}
           </Button>
         ) : null}
       </div>
@@ -122,9 +124,9 @@ export function RoiCanvas({
           })}
         </svg>
       </div>
-      <p className="hint">{bgUrl ? 'Фон: live snapshot' : 'Нет running-камеры — placeholder фон'}</p>
+      <p className="hint">{bgUrl ? t('configure.editors.bgLive') : t('configure.editors.bgPlaceholder')}</p>
       <Button size="sm" variant="outline" disabled={readOnly} onClick={() => setRois([])}>
-        Очистить
+        {t('configure.editors.clear')}
       </Button>
     </div>
   );

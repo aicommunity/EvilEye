@@ -46,7 +46,7 @@ export function AuthModal({ open }: { open: boolean }) {
     setBusy(true);
     try {
       const msg = await register(email.trim(), password);
-      showSuccess(msg);
+      showSuccess(msg || t('auth.registerSubmitted'));
       setMode('login');
     } catch (e) {
       showError(e instanceof ApiError ? e.message : t('auth.registerFail'));
@@ -94,7 +94,7 @@ export function AuthModal({ open }: { open: boolean }) {
             </>
           ) : (
             <>
-              <p className="hint">{t('auth.register')}</p>
+              <p className="hint">{t('auth.hintRegister')}</p>
               <label>{t('auth.email')}</label>
               <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
               <label>{t('auth.password')}</label>

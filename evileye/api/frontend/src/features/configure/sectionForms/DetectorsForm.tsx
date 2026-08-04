@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../../../components/ui';
+import { useI18n } from '../../../i18n';
 
 type DetectorRow = {
   model?: string;
@@ -24,6 +25,7 @@ export function DetectorsForm({
   onSave: (data: unknown) => Promise<void>;
   onChange?: (data: unknown) => void;
 }) {
+  const { t } = useI18n();
   const [rows, setRows] = useState<DetectorRow[]>(() => asRows(data));
 
   useEffect(() => setRows(asRows(data)), [data]);
@@ -34,7 +36,7 @@ export function DetectorsForm({
 
   return (
     <div>
-      <p className="hint">Детекторы: model, classes, source_ids, conf. ROI — вкладка ROI.</p>
+      <p className="hint">{t('configure.forms.hintDetectors')}</p>
       {rows.map((row, i) => (
         <div key={i} className="toolbar" style={{ flexWrap: 'wrap', marginBottom: 8, gap: 8 }}>
           <label>
@@ -118,10 +120,10 @@ export function DetectorsForm({
         {!readOnly ? (
           <>
             <Button size="sm" variant="outline" onClick={() => updateRows([...rows, { model: '', conf: 0.25, source_ids: [] }])}>
-              + детектор
+              {t('configure.forms.addDetector')}
             </Button>
             <Button variant="primary" onClick={() => void onSave(rows)}>
-              Сохранить detectors
+              {t('configure.forms.saveSection', { section: 'detectors' })}
             </Button>
           </>
         ) : null}

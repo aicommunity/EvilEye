@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { streamSnapshotUrl, type StateCamera, type StreamMetadata } from '../../api';
 import { Badge, Button } from '../../components/ui';
 import { OverlayCanvas } from './OverlayCanvas';
+import { useI18n } from '../../i18n';
 import { useRunMetadataWs } from './useRunMetadataWs';
 
 export function CameraTile({
@@ -21,6 +22,7 @@ export function CameraTile({
   onDragStart?: () => void;
   onDrop?: () => void;
 }) {
+  const { t } = useI18n();
   const canPreview = camera.run_state === 'running';
   const [snapTs, setSnapTs] = useState(Date.now());
   const meta = useRunMetadataWs(
@@ -54,23 +56,23 @@ export function CameraTile({
         <Badge state={camera.run_state}>{camera.run_state}</Badge>
       </div>
       <p className="hint">
-        Run #{camera.run_id} · source #{camera.source_id ?? '—'}
+        {t('live.camera.runLabel', { id: camera.run_id, sid: camera.source_id ?? '—' })}
       </p>
       {canPreview ? (
         <div className="camera-preview-wrap" style={{ position: 'relative' }}>
           {imgSrc ? (
             <img src={imgSrc} alt={camera.source_name} className="camera-preview" />
           ) : (
-            <div className="camera-preview camera-preview-empty">Вне зоны видимости</div>
+            <div className="camera-preview camera-preview-empty">{t('live.camera.outOfView')}</div>
           )}
           {useMjpeg ? <OverlayCanvas meta={meta as StreamMetadata | null} /> : null}
         </div>
       ) : (
-        <div className="camera-preview camera-preview-empty">Запуск остановлен</div>
+        <div className="camera-preview camera-preview-empty">{t('live.camera.stopped')}</div>
       )}
       <div className="camera-actions">
         <Button size="sm" variant="outline" disabled={!canPreview} onClick={onOpen}>
-          Открыть поток
+          {t('live.camera.openStream')}
         </Button>
       </div>
     </article>

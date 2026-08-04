@@ -2,9 +2,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { usersApi } from '../../api';
 import { Button } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
+import { useI18n } from '../../i18n';
 
 export function UsersPage() {
   const { showError, showSuccess } = useToast();
+  const { t } = useI18n();
   const [items, setItems] = useState<Array<{ email: string; role: string; status: string }>>([]);
 
   const load = useCallback(async () => {
@@ -12,9 +14,9 @@ export function UsersPage() {
       const data = await usersApi.list();
       setItems(data.items ?? []);
     } catch (e) {
-      showError(e instanceof Error ? e.message : 'Ошибка');
+      showError(e instanceof Error ? e.message : t('common.error'));
     }
-  }, [showError]);
+  }, [showError, t]);
 
   useEffect(() => {
     void load();
@@ -24,21 +26,21 @@ export function UsersPage() {
     <section className="panel active">
       <div className="card">
         <div className="toolbar">
-          <h2 style={{ margin: 0 }}>Пользователи</h2>
+          <h2 style={{ margin: 0 }}>{t('users.title')}</h2>
           <Button variant="outline" onClick={() => void load()}>
-            Обновить
+            {t('users.refresh')}
           </Button>
         </div>
         {!items.length ? (
-          <p className="empty">Пользователей пока нет.</p>
+          <p className="empty">{t('users.empty')}</p>
         ) : (
           <table className="journal-table">
             <thead>
               <tr>
                 <th>Email</th>
-                <th>Роль</th>
-                <th>Статус</th>
-                <th>Действия</th>
+                <th>{t('users.role')}</th>
+                <th>{t('users.status')}</th>
+                <th>{t('users.actions')}</th>
               </tr>
             </thead>
             <tbody>
@@ -55,24 +57,24 @@ export function UsersPage() {
                           variant="success"
                           onClick={() =>
                             void usersApi.approve(u.email).then(() => {
-                              showSuccess('Подтверждён');
+                              showSuccess(t('users.approved'));
                               return load();
                             })
                           }
                         >
-                          Approve
+                          {t('users.approve')}
                         </Button>{' '}
                         <Button
                           size="sm"
                           variant="danger"
                           onClick={() =>
                             void usersApi.reject(u.email).then(() => {
-                              showSuccess('Отклонён');
+                              showSuccess(t('users.rejected'));
                               return load();
                             })
                           }
                         >
-                          Reject
+                          {t('users.reject')}
                         </Button>
                       </>
                     ) : (

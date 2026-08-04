@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../../../components/ui';
+import { useI18n } from '../../../i18n';
 import { FormActions, FormField, FormGrid } from '../formLayout';
 
 type SourceRow = {
@@ -40,6 +41,7 @@ export function SourcesForm({
   onSave: (data: unknown) => Promise<void>;
   onChange?: (data: unknown) => void;
 }) {
+  const { t } = useI18n();
   const [rows, setRows] = useState<SourceRow[]>(() => asRows(data));
   const [advanced, setAdvanced] = useState(false);
   const [jsonText, setJsonText] = useState('[]');
@@ -58,7 +60,7 @@ export function SourcesForm({
   if (advanced) {
     return (
       <div className="config-studio-json">
-        <p className="hint">Advanced JSON для sources.</p>
+        <p className="hint">{t('configure.forms.hintSourcesJson')}</p>
         <textarea
           value={jsonText}
           readOnly={readOnly}
@@ -73,11 +75,11 @@ export function SourcesForm({
         />
         <FormActions>
           <Button size="sm" variant="outline" onClick={() => setAdvanced(false)}>
-            Поля
+            {t('configure.forms.fields')}
           </Button>
           {!readOnly ? (
             <Button variant="primary" onClick={() => void onSave(JSON.parse(jsonText || '[]'))}>
-              Сохранить
+              {t('configure.forms.save')}
             </Button>
           ) : null}
         </FormActions>
@@ -87,7 +89,7 @@ export function SourcesForm({
 
   return (
     <div>
-      <p className="hint">Источники видеопотока (pipeline.sources / sources).</p>
+      <p className="hint">{t('configure.forms.hintSources')}</p>
       {rows.map((row, i) => (
         <div key={i} className="config-source-block">
           <FormGrid>
@@ -221,7 +223,7 @@ export function SourcesForm({
           </FormGrid>
           {!readOnly ? (
             <Button size="sm" variant="outline" onClick={() => updateRows(rows.filter((_, j) => j !== i))}>
-              Удалить источник
+              {t('configure.forms.removeSource')}
             </Button>
           ) : null}
         </div>
@@ -230,10 +232,10 @@ export function SourcesForm({
         {!readOnly ? (
           <>
             <Button size="sm" variant="outline" onClick={() => updateRows([...rows, { source: '', type: 'video_file' }])}>
-              + источник
+              {t('configure.forms.addSource')}
             </Button>
             <Button variant="primary" onClick={() => void onSave(rows)}>
-              Сохранить sources
+              {t('configure.forms.saveSection', { section: 'sources' })}
             </Button>
           </>
         ) : null}

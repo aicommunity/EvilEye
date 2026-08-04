@@ -6,6 +6,7 @@ import { ToastProvider } from '../../components/ui/Toast';
 import { Badge, Button } from '../../components/ui';
 import { usePolling } from '../../hooks/usePolling';
 import { StreamOverlay } from '../../components/StreamOverlay';
+import { useI18n } from '../../i18n';
 
 export function MobileLivePage() {
   return (
@@ -18,6 +19,7 @@ export function MobileLivePage() {
 }
 
 function MobileLiveInner() {
+  const { t, lang, setLang } = useI18n();
   const [cameras, setCameras] = useState<StateCamera[]>([]);
   const [idx, setIdx] = useState(0);
   const [fullscreen, setFullscreen] = useState(false);
@@ -39,11 +41,21 @@ function MobileLiveInner() {
       <header className="mobile-header">
         <strong>EvilEye</strong>
         <nav>
-          <Link to="/m/live">Live</Link> · <Link to="/m/events">Events</Link> · <Link to="/live">Desktop</Link>
+          <Link to="/m/live">{t('mobile.navLive')}</Link> · <Link to="/m/events">{t('mobile.navEvents')}</Link> ·{' '}
+          <Link to="/live">{t('mobile.navDesktop')}</Link>
         </nav>
+        <select
+          aria-label={t('common.language')}
+          value={lang}
+          onChange={(e) => setLang(e.target.value === 'en' ? 'en' : 'ru')}
+          style={{ marginLeft: 8 }}
+        >
+          <option value="ru">RU</option>
+          <option value="en">EN</option>
+        </select>
       </header>
       {!cam ? (
-        <p className="empty">Нет камер</p>
+        <p className="empty">{t('mobile.noCameras')}</p>
       ) : (
         <article className="camera-card">
           <div className="camera-card-head">
@@ -58,7 +70,7 @@ function MobileLiveInner() {
               alt={cam.source_name}
             />
           ) : (
-            <div className="camera-preview-empty">Остановлен</div>
+            <div className="camera-preview-empty">{t('mobile.stopped')}</div>
           )}
           <div className="toolbar" style={{ marginTop: 12, gap: 8 }}>
             <Button
@@ -89,7 +101,7 @@ function MobileLiveInner() {
               disabled={cam.run_state !== 'running'}
               onClick={() => setFullscreen(true)}
             >
-              Полный экран
+              {t('mobile.fullscreen')}
             </Button>
           </div>
         </article>

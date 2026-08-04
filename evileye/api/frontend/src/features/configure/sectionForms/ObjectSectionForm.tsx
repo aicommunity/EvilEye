@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../../../components/ui';
+import { useI18n } from '../../../i18n';
 import { FormActions, FormField, FormGrid } from '../formLayout';
 
 type FieldDef =
@@ -28,6 +29,7 @@ export function ObjectSectionForm({
   onSave: (data: unknown) => Promise<void>;
   onChange?: (data: unknown) => void;
 }) {
+  const { t } = useI18n();
   const [obj, setObj] = useState(() => asObj(data));
   const [jsonMode, setJsonMode] = useState(false);
   const [jsonText, setJsonText] = useState('{}');
@@ -46,7 +48,7 @@ export function ObjectSectionForm({
   if (jsonMode) {
     return (
       <div className="config-studio-json">
-        <p className="hint">{title} — JSON</p>
+        <p className="hint">{title} — {t('common.json')}</p>
         <textarea
           value={jsonText}
           readOnly={readOnly}
@@ -61,11 +63,11 @@ export function ObjectSectionForm({
         />
         <FormActions>
           <Button size="sm" variant="outline" onClick={() => setJsonMode(false)}>
-            Поля
+            {t('configure.forms.fields')}
           </Button>
           {!readOnly ? (
             <Button variant="primary" onClick={() => void onSave(JSON.parse(jsonText || '{}'))}>
-              Сохранить
+              {t('configure.forms.save')}
             </Button>
           ) : null}
         </FormActions>
@@ -139,7 +141,7 @@ export function ObjectSectionForm({
         </Button>
         {!readOnly ? (
           <Button variant="primary" onClick={() => void onSave(obj)}>
-            Сохранить
+            {t('configure.forms.save')}
           </Button>
         ) : null}
       </FormActions>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
+import { useI18n } from '../../i18n';
 
 export function JsonAdvancedTab({
   value,
@@ -15,6 +16,7 @@ export function JsonAdvancedTab({
 }) {
   const [text, setText] = useState(value);
   const { showError } = useToast();
+  const { t } = useI18n();
   useEffect(() => setText(value), [value]);
   return (
     <div className="config-studio-json">
@@ -30,10 +32,10 @@ export function JsonAdvancedTab({
         <Button
           variant="primary"
           onClick={() =>
-            void onSave(text).catch((e) => showError(e instanceof Error ? e.message : 'Ошибка'))
+            void onSave(text).catch((e) => showError(e instanceof Error ? e.message : t('common.error')))
           }
         >
-          Сохранить JSON
+          {t('configure.saveJson')}
         </Button>
       ) : null}
     </div>

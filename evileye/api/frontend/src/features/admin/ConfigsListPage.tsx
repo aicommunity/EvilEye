@@ -20,7 +20,7 @@ export function ConfigsListPage() {
     try {
       setNames(await configsList());
     } catch (e) {
-      showError(e instanceof Error ? e.message : 'Ошибка');
+      showError(e instanceof Error ? e.message : t('common.error'));
     }
   }, [showError]);
 
@@ -35,7 +35,7 @@ export function ConfigsListPage() {
       const data = await configGet(name);
       setBody(JSON.stringify(data, null, 2));
     } catch (e) {
-      showError(e instanceof ApiError ? e.message : 'Не удалось загрузить');
+      showError(e instanceof ApiError ? e.message : t('common.loadFail'));
     }
   };
 
@@ -85,7 +85,7 @@ export function ConfigsListPage() {
                         .catch((e) => showError(e.message))
                     }
                   >
-                    Удалить
+                    {t('configs.delete')}
                   </Button>
                 ) : null}
               </div>
@@ -95,7 +95,7 @@ export function ConfigsListPage() {
       </div>
       <Modal
         open={Boolean(modal)}
-        title={modal?.mode === 'create' ? t('configs.newTitle') : `Raw: ${modal?.name}`}
+        title={modal?.mode === 'create' ? t('configs.newTitle') : t('configs.rawTitle', { name: modal?.name ?? '' })}
         onClose={() => setModal(null)}
         footer={
           hasPermission('config:edit') ? (
@@ -115,12 +115,12 @@ export function ConfigsListPage() {
                     setModal(null);
                     await load();
                   } catch (e) {
-                    showError(e instanceof Error ? e.message : 'Ошибка сохранения');
+                    showError(e instanceof Error ? e.message : t('common.saveFail'));
                   }
                 })();
               }}
             >
-              Сохранить
+              {t('configs.save')}
             </Button>
           ) : null
         }
@@ -131,7 +131,7 @@ export function ConfigsListPage() {
             <input value={nameInput} onChange={(e) => setNameInput(e.target.value)} />
           </>
         ) : null}
-        <label>JSON</label>
+        <label>{t('common.json')}</label>
         <textarea rows={14} value={body} onChange={(e) => setBody(e.target.value)} />
       </Modal>
     </section>

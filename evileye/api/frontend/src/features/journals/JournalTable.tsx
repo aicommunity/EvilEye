@@ -1,4 +1,5 @@
 import { journalPreviewUrl, type JournalGroupedRow } from '../../api';
+import { useI18n } from '../../i18n';
 import { formatJournalTime, rowKey, type JournalType } from './journalMath';
 
 export function JournalTable({
@@ -12,18 +13,19 @@ export function JournalTable({
   onSelect: (row: JournalGroupedRow) => void;
   emptyText: string;
 }) {
+  const { t, localeTag } = useI18n();
   if (!rows.length) return <p className="empty">{emptyText}</p>;
   return (
     <div className="journal-table-wrap">
       <table className="journal-table">
         <thead>
           <tr>
-            <th>Время</th>
-            <th>Событие</th>
-            <th>Информация</th>
-            <th>Источник</th>
-            <th>Потерян</th>
-            <th>Preview</th>
+            <th>{t('journals.colTime')}</th>
+            <th>{t('journals.colEvent')}</th>
+            <th>{t('journals.colInfo')}</th>
+            <th>{t('journals.colSource')}</th>
+            <th>{t('journals.colLost')}</th>
+            <th>{t('journals.preview')}</th>
           </tr>
         </thead>
         <tbody>
@@ -32,11 +34,11 @@ export function JournalTable({
             const mode = row.preview ? 'found' : 'lost';
             return (
               <tr key={rowKey(row)} className="journal-row" onClick={() => onSelect(row)} style={{ cursor: 'pointer' }}>
-                <td>{formatJournalTime(row.time)}</td>
+                <td>{formatJournalTime(row.time, localeTag)}</td>
                 <td>{String(row.event ?? '—')}</td>
                 <td>{String(row.information ?? '—')}</td>
                 <td>{String(row.source ?? '—')}</td>
-                <td>{formatJournalTime(row.time_lost)}</td>
+                <td>{formatJournalTime(row.time_lost, localeTag)}</td>
                 <td>
                   {previewPath ? (
                     <img

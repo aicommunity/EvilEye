@@ -1,5 +1,6 @@
 import { Navigate } from 'react-router-dom';
 import { useAuth } from './AuthContext';
+import { useI18n } from '../i18n';
 import type { ReactNode } from 'react';
 
 export function RequirePermission({
@@ -12,7 +13,8 @@ export function RequirePermission({
   fallback?: string;
 }) {
   const { loading, hasPermission } = useAuth();
-  if (loading) return <p className="hint">Загрузка…</p>;
+  const { t } = useI18n();
+  if (loading) return <p className="hint">{t('common.loading')}</p>;
   if (!hasPermission(permission)) return <Navigate to={fallback} replace />;
   return <>{children}</>;
 }

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../../../components/ui';
+import { useI18n } from '../../../i18n';
 
 type EventRow = {
   name?: string;
@@ -24,6 +25,7 @@ export function EventsForm({
   onSave: (data: unknown) => Promise<void>;
   onChange?: (data: unknown) => void;
 }) {
+  const { t } = useI18n();
   const [rows, setRows] = useState<EventRow[]>(() => asRows(data));
   useEffect(() => setRows(asRows(data)), [data]);
   const updateRows = (next: EventRow[]) => {
@@ -33,7 +35,7 @@ export function EventsForm({
 
   return (
     <div>
-      <p className="hint">Детекторы событий. Зоны рисуйте на вкладке Zones.</p>
+      <p className="hint">{t('configure.forms.hintEvents')}</p>
       {rows.map((row, i) => (
         <div key={i} className="toolbar" style={{ flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
           <label>
@@ -90,10 +92,10 @@ export function EventsForm({
         {!readOnly ? (
           <>
             <Button size="sm" variant="outline" onClick={() => updateRows([...rows, { name: 'event', type: 'zone' }])}>
-              + event
+              {t('configure.forms.addEvent')}
             </Button>
             <Button variant="primary" onClick={() => void onSave(Array.isArray(data) || !data ? rows : rows[0] ?? {})}>
-              Сохранить events
+              {t('configure.forms.saveSection', { section: 'events' })}
             </Button>
           </>
         ) : null}

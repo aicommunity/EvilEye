@@ -1,4 +1,5 @@
 import type { PlaybackEventMarker } from '../../api';
+import { useI18n } from '../../i18n';
 import { EventMarkers } from './EventMarkers';
 
 export function Timeline({
@@ -14,8 +15,9 @@ export function Timeline({
   markers: PlaybackEventMarker[];
   onSeek: (sec: number) => void;
 }) {
+  const { t } = useI18n();
   if (from == null || to == null || to <= from) {
-    return <p className="hint">Загрузите сегменты для отображения таймлайна.</p>;
+    return <p className="hint">{t('playback.timelineEmpty')}</p>;
   }
   const span = to - from;
   const pct = ((position - from) / span) * 100;

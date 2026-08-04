@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../../../components/ui';
+import { useI18n } from '../../../i18n';
 
 type TrackerRow = {
   name?: string;
@@ -25,6 +26,7 @@ export function TrackersForm({
   onSave: (data: unknown) => Promise<void>;
   onChange?: (data: unknown) => void;
 }) {
+  const { t } = useI18n();
   const [rows, setRows] = useState<TrackerRow[]>(() => asRows(data));
   useEffect(() => setRows(asRows(data)), [data]);
   const updateRows = (next: TrackerRow[]) => {
@@ -34,7 +36,7 @@ export function TrackersForm({
 
   return (
     <div>
-      <p className="hint">Трекеры: max_age, min_hits, iou_threshold, source_ids.</p>
+      <p className="hint">{t('configure.forms.hintTrackers')}</p>
       {rows.map((row, i) => (
         <div key={i} className="toolbar" style={{ flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
           <label>
@@ -103,10 +105,10 @@ export function TrackersForm({
         {!readOnly ? (
           <>
             <Button size="sm" variant="outline" onClick={() => updateRows([...rows, { name: 'tracker', max_age: 30 }])}>
-              + tracker
+              {t('configure.forms.addTracker')}
             </Button>
             <Button variant="primary" onClick={() => void onSave(Array.isArray(data) ? rows : rows[0] ?? {})}>
-              Сохранить trackers
+              {t('configure.forms.saveSection', { section: 'trackers' })}
             </Button>
           </>
         ) : null}

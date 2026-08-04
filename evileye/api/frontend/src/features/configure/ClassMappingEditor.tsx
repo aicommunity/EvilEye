@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react';
 import { editorsApi } from '../../api';
 import { Button } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
+import { useI18n } from '../../i18n';
 
 export function ClassMappingEditor({ configName, readOnly }: { configName: string; readOnly: boolean }) {
   const { showError, showSuccess } = useToast();
+  const { t } = useI18n();
   const [text, setText] = useState('{}');
 
   useEffect(() => {
@@ -16,7 +18,7 @@ export function ClassMappingEditor({ configName, readOnly }: { configName: strin
 
   return (
     <div>
-      <p className="hint">Словарь class_id → имя</p>
+      <p className="hint">{t('configure.editors.classHint')}</p>
       <textarea rows={12} value={text} readOnly={readOnly} onChange={(e) => setText(e.target.value)} />
       {!readOnly ? (
         <Button
@@ -24,11 +26,11 @@ export function ClassMappingEditor({ configName, readOnly }: { configName: strin
           onClick={() =>
             void editorsApi
               .putClassMapping(configName, JSON.parse(text || '{}'))
-              .then((r) => showSuccess(r.restart_required ? 'Сохранено (нужен restart)' : 'Сохранено'))
+              .then((r) => showSuccess(r.restart_required ? t('common.savedRestart') : t('common.saved')))
               .catch((e) => showError(e.message))
           }
         >
-          Сохранить mapping
+          {t('configure.editors.saveMapping')}
         </Button>
       ) : null}
     </div>

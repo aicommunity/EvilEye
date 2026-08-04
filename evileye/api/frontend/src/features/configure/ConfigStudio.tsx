@@ -35,29 +35,6 @@ import { ClassMappingEditor } from './ClassMappingEditor';
 import { configBasename, stableStringify, tabsFromLegacySections } from './studioTabs';
 import { useI18n } from '../../i18n';
 
-const TAB_LABELS: Record<string, string> = {
-  sources: 'Sources',
-  record: 'Record',
-  preprocess: 'Preprocess',
-  detectors: 'Detectors',
-  trackers: 'Trackers',
-  mc_trackers: 'MC Trackers',
-  events_detectors: 'Events',
-  events_processor: 'Events processor',
-  objects_handler: 'Handler',
-  database: 'Database',
-  database_adapters: 'DB adapters',
-  storage_monitor: 'Storage',
-  visualizer: 'Visualizer',
-  controller: 'Controller',
-  server: 'Server',
-  roi: 'ROI',
-  zones: 'Zones',
-  classes: 'Classes',
-  json: 'JSON',
-  history: 'History',
-};
-
 export type ConfigStudioProps = {
   mode: 'current' | 'file';
   configName: string | null;
@@ -126,7 +103,7 @@ export function ConfigStudio({
         setFullJson(JSON.stringify(body, null, 2));
         setDirty(false);
       } catch (e) {
-        showError(e instanceof Error ? e.message : 'Ошибка');
+        showError(e instanceof Error ? e.message : t('common.error'));
       }
     })();
   }, [name, showError, specialIds]);
@@ -140,7 +117,7 @@ export function ConfigStudio({
         setBaselineJson(stableStringify(data));
         setDirty(false);
       })
-      .catch((e) => showError(e instanceof ApiError ? e.message : 'Ошибка секции'));
+      .catch((e) => showError(e instanceof ApiError ? e.message : t('common.sectionError')));
   }, [name, activeId, tabs, showError, specialIds]);
 
   const markDirtyFromDraft = (draft: unknown) => {
@@ -264,7 +241,11 @@ export function ConfigStudio({
               className={`journal-tab${activeId === s ? ' active' : ''}`}
               onClick={() => switchTab(s)}
             >
-              {t(`studio.tab.${s}`) !== `studio.tab.${s}` ? t(`studio.tab.${s}`) : (TAB_LABELS[s] ?? s)}
+              {(() => {
+                const key = `studio.tab.${s}`;
+                const label = t(key);
+                return label === key ? s : label;
+              })()}
             </button>
           ))}
         </div>

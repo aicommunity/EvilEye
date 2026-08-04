@@ -12,7 +12,7 @@ function formatBytes(size: number): string {
 
 export function LogsPage() {
   const { showError } = useToast();
-  const { t } = useI18n();
+  const { t, formatDateTime } = useI18n();
   const [files, setFiles] = useState<Array<{ name: string; updated_at: number; size_bytes: number }>>([]);
   const [view, setView] = useState<{ name: string; content: string; live: boolean } | null>(null);
   const esRef = useRef<EventSource | null>(null);
@@ -43,7 +43,7 @@ export function LogsPage() {
     void logsApi
       .read(name, 500)
       .then((p) => setView({ name: p.name, content: p.content, live: false }))
-      .catch((e) => showError(e instanceof ApiError ? e.message : 'Ошибка'));
+      .catch((e) => showError(e instanceof ApiError ? e.message : t('common.error')));
   };
 
   const openLive = (name: string) => {
@@ -93,7 +93,7 @@ export function LogsPage() {
                     {f.name}
                   </td>
                   <td>{formatBytes(f.size_bytes)}</td>
-                  <td>{new Date(f.updated_at * 1000).toLocaleString('ru-RU')}</td>
+                  <td>{formatDateTime(f.updated_at)}</td>
                   <td>
                     <Button size="sm" variant="outline" onClick={() => openLive(f.name)}>
                       {t('logs.follow')}

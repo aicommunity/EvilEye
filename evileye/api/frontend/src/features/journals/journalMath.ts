@@ -6,7 +6,7 @@ export function rowKey(row: JournalGroupedRow): string {
   return String(row.row_key ?? `${row.time}|${row.event}|${row.information}`);
 }
 
-export function formatJournalTime(value: unknown): string {
+export function formatJournalTime(value: unknown, localeTag = 'ru-RU'): string {
   const raw = String(value ?? '').trim();
   if (!raw) return '—';
   const parsed = raw.includes('T') ? raw : raw.replace(' ', 'T');
@@ -14,7 +14,7 @@ export function formatJournalTime(value: unknown): string {
   if (Number.isNaN(date.getTime())) {
     return raw.replace('T', ' ').replace(/\.\d+/, '').slice(0, 19);
   }
-  return date.toLocaleString('ru-RU', {
+  return date.toLocaleString(localeTag, {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',

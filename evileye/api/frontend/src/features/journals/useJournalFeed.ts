@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { journalsApi, type JournalGroupedRow } from '../../api';
+import { useI18n } from '../../i18n';
 import { mergePrependRows, type JournalType } from './journalMath';
 
 export function useJournalFeed(tab: JournalType, filters: { source_name?: string; event_type?: string; date?: string }) {
+  const { t } = useI18n();
   const [rows, setRows] = useState<JournalGroupedRow[]>([]);
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(true);
@@ -20,7 +22,7 @@ export function useJournalFeed(tab: JournalType, filters: { source_name?: string
             : await journalsApi.objectsGrouped(nextPage, 30, filters);
         if (!res.available) {
           setRows([]);
-          setMessage(String(res.message ?? 'Журнал недоступен.'));
+          setMessage(String(res.message ?? t('journals.unavailable')));
           setHasMore(false);
           return;
         }
@@ -32,7 +34,7 @@ export function useJournalFeed(tab: JournalType, filters: { source_name?: string
         setLoading(false);
       }
     },
-    [tab, filters, page],
+    [tab, filters, page, t],
   );
 
   const reload = useCallback(async () => {
@@ -45,7 +47,7 @@ export function useJournalFeed(tab: JournalType, filters: { source_name?: string
           : await journalsApi.objectsGrouped(0, 30, filters);
       if (!res.available) {
         setRows([]);
-        setMessage(String(res.message ?? 'Журнал недоступен.'));
+        setMessage(String(res.message ?? t('journals.unavailable')));
         setHasMore(false);
         return;
       }
@@ -56,7 +58,7 @@ export function useJournalFeed(tab: JournalType, filters: { source_name?: string
     } finally {
       setLoading(false);
     }
-  }, [tab, filters]);
+  }, [tab, filters, t]);
 
   const poll = useCallback(async () => {
     try {

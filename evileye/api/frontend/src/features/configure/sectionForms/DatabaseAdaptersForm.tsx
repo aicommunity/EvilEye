@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../../../components/ui';
+import { useI18n } from '../../../i18n';
 import { FormActions, FormField, FormGrid } from '../formLayout';
 
 function asObj(data: unknown): Record<string, unknown> {
@@ -18,6 +19,7 @@ export function DatabaseAdaptersForm({
   onSave: (data: unknown) => Promise<void>;
   onChange?: (data: unknown) => void;
 }) {
+  const { t } = useI18n();
   const [obj, setObj] = useState(() => asObj(data));
   const [jsonMode, setJsonMode] = useState(false);
   const [jsonText, setJsonText] = useState('{}');
@@ -49,11 +51,11 @@ export function DatabaseAdaptersForm({
         />
         <FormActions>
           <Button size="sm" variant="outline" onClick={() => setJsonMode(false)}>
-            Поля
+            {t('configure.forms.fields')}
           </Button>
           {!readOnly ? (
             <Button variant="primary" onClick={() => void onSave(JSON.parse(jsonText || '{}'))}>
-              Сохранить
+              {t('configure.forms.save')}
             </Button>
           ) : null}
         </FormActions>
@@ -65,7 +67,7 @@ export function DatabaseAdaptersForm({
 
   return (
     <div>
-      <p className="hint">Database adapters — enable toggles per adapter.</p>
+      <p className="hint">{t('configure.forms.hintAdapters')}</p>
       <FormGrid>
         {entries.map(([key, value]) => {
           const enabled =
@@ -96,7 +98,7 @@ export function DatabaseAdaptersForm({
         </Button>
         {!readOnly ? (
           <Button variant="primary" onClick={() => void onSave(obj)}>
-            Сохранить
+            {t('configure.forms.save')}
           </Button>
         ) : null}
       </FormActions>

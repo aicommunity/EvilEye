@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../../../components/ui';
+import { useI18n } from '../../../i18n';
 import { FormActions, FormField, FormGrid } from '../formLayout';
 
 type DbCfg = {
@@ -28,6 +29,7 @@ export function DatabaseForm({
   onSave: (data: unknown) => Promise<void>;
   onChange?: (data: unknown) => void;
 }) {
+  const { t } = useI18n();
   const [obj, setObj] = useState<DbCfg>(() => asObj(data));
   useEffect(() => setObj(asObj(data)), [data]);
 
@@ -38,7 +40,7 @@ export function DatabaseForm({
 
   return (
     <div>
-      <p className="hint">PostgreSQL connection parameters.</p>
+      <p className="hint">{t('configure.forms.hintDatabase')}</p>
       <FormGrid>
         <FormField label="enabled">
           <input
@@ -88,7 +90,7 @@ export function DatabaseForm({
       <FormActions>
         {!readOnly ? (
           <Button variant="primary" onClick={() => void onSave(obj)}>
-            Сохранить database
+            {t('configure.forms.saveSection', { section: 'database' })}
           </Button>
         ) : null}
       </FormActions>

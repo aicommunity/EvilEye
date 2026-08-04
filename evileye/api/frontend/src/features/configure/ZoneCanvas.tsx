@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { editorsApi, stateApi, streamSnapshotUrl, type ZoneItem } from '../../api';
 import { Button } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
+import { useI18n } from '../../i18n';
 
 export function ZoneCanvas({
   configName,
@@ -15,6 +16,7 @@ export function ZoneCanvas({
   readOnly: boolean;
 }) {
   const { showError, showSuccess } = useToast();
+  const { t } = useI18n();
   const [zones, setZones] = useState<ZoneItem[]>([]);
   const [mode, setMode] = useState<'rect' | 'polygon'>('rect');
   const [draft, setDraft] = useState<[number, number][]>([]);
@@ -73,11 +75,11 @@ export function ZoneCanvas({
             onClick={() =>
               void editorsApi
                 .putZones(configName, sourceId, zones)
-                .then((r) => showSuccess(r.restart_required ? 'Сохранено (нужен restart)' : 'Сохранено'))
+                .then((r) => showSuccess(r.restart_required ? t('common.savedRestart') : t('common.saved')))
                 .catch((e) => showError(e.message))
             }
           >
-            Сохранить zones
+            {t('configure.editors.saveZones')}
           </Button>
         ) : null}
       </div>
@@ -144,8 +146,8 @@ export function ZoneCanvas({
         </svg>
       </div>
       <p className="hint">
-        {bgUrl ? 'Фон: live snapshot. ' : 'Нет running-камеры — placeholder. '}
-        Rect: два клика. Polygon: клики + double-click.
+        {bgUrl ? t('configure.editors.zoneHintLive') : t('configure.editors.zoneHintPlaceholder')}
+        {t('configure.editors.zoneHintDraw')}
       </p>
     </div>
   );

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { useI18n } from '../../i18n';
 
 export type PlaybackMediaSlot = {
   url: string | null;
@@ -19,7 +20,8 @@ export function PlaybackGrid({
   playing: boolean;
   speed: number;
 }) {
-  if (!cameras.length) return <p className="empty">Выберите камеры.</p>;
+  const { t } = useI18n();
+  if (!cameras.length) return <p className="empty">{t('playback.selectCameras')}</p>;
   return (
     <div className="camera-group-grid" style={{ gridTemplateColumns: `repeat(${Math.min(cameras.length, 2)}, 1fr)` }}>
       {cameras.map((id) => (
@@ -49,6 +51,7 @@ function PlaybackCell({
   playing: boolean;
   speed: number;
 }) {
+  const { t } = useI18n();
   const ref = useRef<HTMLVideoElement>(null);
   const src = slot?.url ?? null;
 
@@ -81,7 +84,7 @@ function PlaybackCell({
       {src ? (
         <video ref={ref} src={src} controls style={{ width: '100%' }} />
       ) : (
-        <div className="camera-preview-empty">Нет сегмента</div>
+        <div className="camera-preview-empty">{t('playback.noSegment')}</div>
       )}
     </article>
   );

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../../../components/ui';
+import { useI18n } from '../../../i18n';
 
 type VisCfg = {
   enabled?: boolean;
@@ -26,6 +27,7 @@ export function VisualizerForm({
   onSave: (data: unknown) => Promise<void>;
   onChange?: (data: unknown) => void;
 }) {
+  const { t } = useI18n();
   const [obj, setObj] = useState<VisCfg>(() => asObj(data));
   useEffect(() => setObj(asObj(data)), [data]);
   const update = (next: VisCfg) => {
@@ -36,7 +38,7 @@ export function VisualizerForm({
 
   return (
     <div>
-      <p className="hint">Visualizer / preview overlays и signalization.</p>
+      <p className="hint">{t('configure.forms.hintVisualizer')}</p>
       <div className="toolbar" style={{ flexWrap: 'wrap', gap: 12, marginBottom: 8 }}>
         <label>
           <input
@@ -87,7 +89,7 @@ export function VisualizerForm({
       </div>
       {!readOnly ? (
         <Button variant="primary" onClick={() => void onSave(obj)}>
-          Сохранить visualizer
+          {t('configure.forms.saveSection', { section: 'visualizer' })}
         </Button>
       ) : null}
     </div>

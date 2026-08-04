@@ -1,4 +1,5 @@
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
+import { useI18n } from '../../i18n';
 
 export function Button({
   variant = 'outline',
@@ -55,6 +56,7 @@ export function Modal({
   footer?: ReactNode;
   wide?: boolean;
 }) {
+  const { t } = useI18n();
   if (!open) return null;
   return (
     <div className="modal open" role="dialog" aria-modal="true">
@@ -62,7 +64,7 @@ export function Modal({
       <div className={`modal-content ${wide ? 'modal-content-wide' : ''}`}>
         <div className="modal-header">
           <h2>{title}</h2>
-          <Button variant="outline" onClick={onClose} aria-label="Закрыть">
+          <Button variant="outline" onClick={onClose} aria-label={t('common.close')}>
             &times;
           </Button>
         </div>
