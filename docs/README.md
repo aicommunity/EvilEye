@@ -30,6 +30,7 @@
 - **[Матрица аудита документации](DOC_AUDIT_MATRIX.md)** - статус актуальности docs
 - **[Post-refactor gate](../reports/mp_refactor_gate/e2e_gate_summary.md)** - E2E/soak после R0–R6
 - **[Руководство по рефакторингу GUI](GUI_REFACTORING_GUIDE.md)** - Архитектура GUI системы, компоненты и лучшие практики
+- **[Web UI](WEB_UI_GUIDE.md)** - React SPA, маршруты, сборка, API streaming/playback/editors
 - **[Руководство по Dependency Injection](DEPENDENCY_INJECTION_GUIDE.md)** - Подробное описание механизма Dependency Injection, DIContainer и DependencyRegistry с примерами использования
 
 ### Что нового по мультипроцессному режиму
