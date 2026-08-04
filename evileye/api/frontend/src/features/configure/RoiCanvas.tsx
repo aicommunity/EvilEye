@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { editorsApi } from '../../api';
+import { editorsApi, stateApi, streamSnapshotUrl } from '../../api';
 import { Button } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
 
@@ -17,6 +17,7 @@ export function RoiCanvas({
   const { showError, showSuccess } = useToast();
   const [rois, setRois] = useState<number[][]>([]);
   const [drawing, setDrawing] = useState<number[] | null>(null);
+  const [bgUrl, setBgUrl] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -25,6 +26,27 @@ export function RoiCanvas({
       .then((r) => setRois(r.rois ?? []))
       .catch((e) => showError(e.message));
   }, [configName, sourceId, showError]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void stateApi
+      .cameras('current')
+      .then((res) => {
+        if (cancelled) return;
+        const cams = res.items ?? [];
+        const match = cams.find((c) => c.source_id === sourceId && c.run_state === 'running');
+        if (match) {
+          const base = streamSnapshotUrl(match.run_id, sourceId);
+          setBgUrl(`${base}${base.includes('?') ? '&' : '?'}t=${Date.now()}`);
+        } else setBgUrl(null);
+      })
+      .catch(() => {
+        if (!cancelled) setBgUrl(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sourceId]);
 
   const toNorm = (e: React.MouseEvent) => {
     const rect = wrapRef.current!.getBoundingClientRect();
@@ -54,7 +76,18 @@ export function RoiCanvas({
       </div>
       <div
         ref={wrapRef}
-        style={{ position: 'relative', width: '100%', maxWidth: 640, aspectRatio: '16/9', background: '#111', border: '1px solid var(--border)' }}
+        style={{
+          position: 'relative',
+          width: '100%',
+          maxWidth: 640,
+          aspectRatio: '16/9',
+          background: '#111',
+          border: '1px solid var(--border)',
+          backgroundImage: bgUrl ? `url(${bgUrl})` : undefined,
+          backgroundSize: 'contain',
+          backgroundRepeat: 'no-repeat',
+          backgroundPosition: 'center',
+        }}
         onMouseDown={(e) => {
           if (readOnly) return;
           const [x, y] = toNorm(e);
@@ -89,6 +122,7 @@ export function RoiCanvas({
           })}
         </svg>
       </div>
+      <p className="hint">{bgUrl ? 'Фон: live snapshot' : 'Нет running-камеры — placeholder фон'}</p>
       <Button size="sm" variant="outline" disabled={readOnly} onClick={() => setRois([])}>
         Очистить
       </Button>

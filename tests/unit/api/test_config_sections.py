@@ -12,6 +12,12 @@ def test_validate_config_errors():
     assert result["errors"]
 
 
+def test_validate_conf_range():
+    result = validate_config({"detectors": [{"model": "m.pt", "conf": 1.5}]})
+    assert result["ok"] is False
+    assert any("conf" in e for e in result["errors"])
+
+
 def test_list_sections():
     secs = list_sections({"sources": [], "detectors": [], "custom": {}})
     assert "sources" in secs

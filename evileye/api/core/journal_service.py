@@ -652,3 +652,28 @@ def load_config_history(*, limit: int) -> dict[str, Any]:
             if config_path in json.dumps(item.get("configuration_info") or {}, ensure_ascii=False)
         ]
     return {"available": True, "items": items, "mode": "database", "reason": "ok"}
+
+
+def compare_config_history(job_id1: int, job_id2: int) -> dict[str, Any]:
+    controller = _db_controller()
+    if controller is None:
+        return {"available": False, "error": "Database unavailable"}
+    manager = ConfigHistoryManager(controller)
+    return manager.compare_configurations(job_id1, job_id2)
+
+
+def restore_config_history(job_id: int, target_name: str) -> dict[str, Any]:
+    safe = Path(target_name).name
+    if safe != target_name or ".." in target_name:
+        raise ValueError("Invalid target config name")
+    target = Path("configs") / safe
+    if not target.parent.exists():
+        raise FileNotFoundError("configs directory not found")
+    controller = _db_controller()
+    if controller is None:
+        raise ValueError("Database unavailable for restore")
+    manager = ConfigHistoryManager(controller)
+    result = manager.restore_configuration(job_id, str(target), create_backup=True)
+    if not result.get("success"):
+        raise ValueError(result.get("error") or "Restore failed")
+    return result

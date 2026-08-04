@@ -24,6 +24,15 @@ export const journalsApi = {
       `/journals/config-history?limit=${limit}`,
     );
   },
+  compareHistory(a: number, b: number) {
+    return request<Record<string, unknown>>(`/journals/config-history/compare?a=${a}&b=${b}`);
+  },
+  restoreHistory(jobId: number, targetName: string) {
+    return request<Record<string, unknown>>(
+      `/journals/config-history/${jobId}/restore?target_name=${encodeURIComponent(targetName)}`,
+      { method: 'POST' },
+    );
+  },
   rowMeta(rowKeyValue: string, journalType: 'events' | 'objects'): Promise<Partial<JournalGroupedRow>> {
     const p = new URLSearchParams({ row_key: rowKeyValue, journal_type: journalType });
     return request(`/journals/row-meta?${p}`);

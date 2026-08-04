@@ -6,6 +6,7 @@ import mimetypes
 from evileye.api.core.journal_service import (
     JournalPathForbidden,
     JournalPathNotFound,
+    compare_config_history,
     load_config_history,
     load_events_grouped_page,
     load_events_page,
@@ -18,6 +19,7 @@ from evileye.api.core.journal_service import (
     resolve_journal_preview_path,
     resolve_journal_video_path,
     resolve_secured_journal_file,
+    restore_config_history,
 )
 
 router = APIRouter(prefix="/api/v1/journals", tags=["journals"])
@@ -171,6 +173,24 @@ async def journal_video(path: str = Query(..., min_length=1)):
 @router.get("/config-history")
 async def journal_config_history(limit: int = Query(50, ge=1, le=200)) -> dict:
     return load_config_history(limit=limit)
+
+
+@router.get("/config-history/compare")
+async def journal_config_history_compare(
+    a: int = Query(..., ge=1),
+    b: int = Query(..., ge=1),
+) -> dict:
+    return compare_config_history(a, b)
+
+
+@router.post("/config-history/{job_id}/restore")
+async def journal_config_history_restore(job_id: int, target_name: str = Query(...)) -> dict:
+    try:
+        return restore_config_history(job_id, target_name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/export")

@@ -132,7 +132,7 @@ export function ConfigurePage() {
             }}
           />
         ) : active === 'history' ? (
-          <ConfigHistoryPanel />
+          <ConfigHistoryPanel configName={name} />
         ) : active === 'roi' ? (
           <RoiCanvas configName={name} sourceId={sourceId} onSourceIdChange={setSourceId} readOnly={!canEdit} />
         ) : active === 'zones' ? (
