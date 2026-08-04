@@ -270,3 +270,103 @@ def list_sections(body: dict[str, Any]) -> list[str]:
         if key not in found and isinstance(body.get(key), (dict, list)):
             found.append(key)
     return found
+
+
+# Studio tabs: preferred path first, then fallbacks for legacy flat configs.
+STUDIO_TAB_SPECS: list[tuple[str, list[str]]] = [
+    ("sources", ["pipeline.sources", "sources"]),
+    ("record", ["record"]),
+    ("preprocess", ["pipeline.preprocess", "preprocess"]),
+    ("detectors", ["pipeline.detectors", "detectors"]),
+    ("trackers", ["pipeline.trackers", "trackers"]),
+    ("mc_trackers", ["pipeline.mc_trackers", "mc_trackers"]),
+    ("events_detectors", ["events_detectors", "events"]),
+    ("events_processor", ["events_processor"]),
+    ("objects_handler", ["objects_handler"]),
+    ("visualizer", ["visualizer"]),
+    ("controller", ["controller"]),
+    ("server", ["server"]),
+    ("database", ["database"]),
+    ("database_adapters", ["database_adapters"]),
+    ("storage_monitor", ["storage_monitor"]),
+]
+
+
+def split_path(path: str) -> list[str]:
+    if not path or not isinstance(path, str):
+        raise ValueError("path must be a non-empty string")
+    if ".." in path or "/" in path or "\\" in path:
+        raise ValueError(f"invalid path: {path}")
+    parts = path.split(".")
+    if not parts or any(not p for p in parts):
+        raise ValueError(f"invalid path: {path}")
+    for part in parts:
+        if not all(c.isalnum() or c == "_" for c in part):
+            raise ValueError(f"invalid path segment: {part}")
+    return parts
+
+
+def get_by_path(body: dict[str, Any], path: str) -> Any:
+    cur: Any = body
+    for part in split_path(path):
+        if not isinstance(cur, dict) or part not in cur:
+            raise KeyError(path)
+        cur = cur[part]
+    return cur
+
+
+def path_exists(body: dict[str, Any], path: str) -> bool:
+    try:
+        get_by_path(body, path)
+        return True
+    except (KeyError, ValueError):
+        return False
+
+
+def set_by_path(body: dict[str, Any], path: str, value: Any) -> None:
+    parts = split_path(path)
+    cur: Any = body
+    for part in parts[:-1]:
+        nxt = cur.get(part) if isinstance(cur, dict) else None
+        if not isinstance(nxt, dict):
+            nxt = {}
+            if not isinstance(cur, dict):
+                raise ValueError(f"cannot set path under non-object: {path}")
+            cur[part] = nxt
+        cur = nxt
+    if not isinstance(cur, dict):
+        raise ValueError(f"cannot set path under non-object: {path}")
+    cur[parts[-1]] = value
+
+
+def resolve_section_path(body: dict[str, Any], candidates: list[str]) -> str | None:
+    for candidate in candidates:
+        if path_exists(body, candidate):
+            return candidate
+    return None
+
+
+def list_studio_tabs(body: dict[str, Any]) -> list[dict[str, str]]:
+    """Ordered studio tabs that exist in the config body."""
+    tabs: list[dict[str, str]] = []
+    claimed_top: set[str] = set()
+    claimed_paths: set[str] = set()
+    for tab_id, candidates in STUDIO_TAB_SPECS:
+        resolved = resolve_section_path(body, candidates)
+        if resolved is None:
+            continue
+        tabs.append({"id": tab_id, "path": resolved, "label_key": f"studio.tab.{tab_id}"})
+        claimed_paths.add(resolved)
+        claimed_top.add(resolved.split(".", 1)[0])
+        claimed_top.add(tab_id)
+
+    for key, value in body.items():
+        if key in claimed_top or key in claimed_paths:
+            continue
+        if not isinstance(value, (dict, list)):
+            continue
+        # Skip opaque pipeline bag once children are exposed as tabs
+        if key == "pipeline":
+            continue
+        tabs.append({"id": key, "path": key, "label_key": f"studio.tab.{key}"})
+    return tabs

@@ -8,8 +8,15 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from evileye.api.core.config_validation import list_sections, validate_config
-
+from evileye.api.core.config_validation import (
+    get_by_path,
+    list_sections,
+    list_studio_tabs,
+    path_exists,
+    set_by_path,
+    split_path,
+    validate_config,
+)
 router = APIRouter(prefix="/api/v1/configs", tags=["config-editors"])
 
 
@@ -59,21 +66,43 @@ class ClassMappingUpdate(BaseModel):
 @router.get("/{name}/sections")
 async def get_sections(name: str) -> dict:
     body = _load(name)
-    return {"sections": list_sections(body)}
+    return {"sections": list_sections(body), "tabs": list_studio_tabs(body)}
+
+
+def _resolve_section_key(body: dict[str, Any], section: str) -> str:
+    """Accept top-level keys or dotted paths (e.g. pipeline.sources)."""
+    try:
+        split_path(section)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if path_exists(body, section):
+        return section
+    if "." not in section and section in body:
+        return section
+    raise HTTPException(status_code=404, detail=f"Section '{section}' not found")
 
 
 @router.get("/{name}/sections/{section}")
 async def get_section(name: str, section: str) -> Any:
     body = _load(name)
-    if section not in body:
-        raise HTTPException(status_code=404, detail=f"Section '{section}' not found")
-    return body[section]
+    key = _resolve_section_key(body, section)
+    try:
+        return get_by_path(body, key) if "." in key else body[key]
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Section '{section}' not found") from exc
 
 
 @router.put("/{name}/sections/{section}")
 async def put_section(name: str, section: str, payload: SectionUpdate) -> dict:
     body = _load(name)
-    body[section] = payload.body
+    try:
+        split_path(section)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if "." in section:
+        set_by_path(body, section, payload.body)
+    else:
+        body[section] = payload.body
     _save(name, body)
     return {"name": name, "section": section, "status": "updated"}
 
@@ -86,6 +115,9 @@ async def validate_named_config(name: str) -> dict:
 
 def _detector_for_source(body: dict[str, Any], source_id: int) -> dict[str, Any] | None:
     detectors = body.get("detectors")
+    if not isinstance(detectors, list):
+        pipe = body.get("pipeline")
+        detectors = pipe.get("detectors") if isinstance(pipe, dict) else None
     if not isinstance(detectors, list):
         return None
     for det in detectors:
