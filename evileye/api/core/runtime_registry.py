@@ -19,6 +19,8 @@ RUNTIME_ROOT = Path(tempfile.gettempdir()) / "evileye_runtime"
 REGISTRY_DIR = RUNTIME_ROOT / "pipelines"
 SNAPSHOT_DIR = RUNTIME_ROOT / "snapshots"
 LOCK_FILE = RUNTIME_ROOT / ".lock"
+_corrupt_record_logged: set[int] = set()
+_corrupt_snapshot_logged: set[int] = set()
 
 
 def _ensure_dirs() -> None:
@@ -34,6 +36,28 @@ def _record_path(rid: int) -> Path:
 def _snapshot_path(rid: int) -> Path:
     _ensure_dirs()
     return SNAPSHOT_DIR / f"{int(rid)}.json"
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write ``text`` to ``path`` via temp file + ``os.replace`` (atomic on POSIX)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(path.parent),
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, path)
+    except Exception:
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 
 def _is_pid_alive(pid: Optional[int]) -> bool:
@@ -160,8 +184,16 @@ def load_runtime_record(rid: int, *, refresh_state: bool = True) -> Optional[Dic
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
-        logger.warning("Failed to read runtime record %s: %s", path, exc)
+        rid_int = int(rid)
+        if rid_int not in _corrupt_record_logged:
+            logger.warning("Failed to read runtime record %s: %s", path, exc)
+            _corrupt_record_logged.add(rid_int)
+        try:
+            path.unlink(missing_ok=True)
+        except Exception:
+            pass
         return None
+    _corrupt_record_logged.discard(int(rid))
     if refresh_state:
         data = refresh_runtime_record(data)
     return data
@@ -187,10 +219,10 @@ def save_runtime_record(record: Dict) -> Dict:
     normalized = refresh_runtime_record(record)
     normalized["id"] = int(normalized["id"])
     normalized.setdefault("updated_at", time.time())
-    _record_path(normalized["id"]).write_text(
-        json.dumps(normalized, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    payload = json.dumps(normalized, ensure_ascii=False, indent=2)
+    with _registry_lock():
+        _atomic_write_text(_record_path(normalized["id"]), payload)
+    _corrupt_record_logged.discard(normalized["id"])
     return normalized
 
 
@@ -199,10 +231,10 @@ def save_runtime_snapshot(rid: int, snapshot: Dict) -> Dict:
     normalized = dict(snapshot)
     normalized["id"] = int(rid)
     normalized["updated_at"] = time.time()
-    _snapshot_path(rid).write_text(
-        json.dumps(normalized, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    payload = json.dumps(normalized, ensure_ascii=False, indent=2)
+    with _registry_lock():
+        _atomic_write_text(_snapshot_path(rid), payload)
+    _corrupt_snapshot_logged.discard(int(rid))
     return normalized
 
 
@@ -213,8 +245,16 @@ def load_runtime_snapshot(rid: int) -> Optional[Dict]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except Exception as exc:
-        logger.warning("Failed to read runtime snapshot %s: %s", path, exc)
+        rid_int = int(rid)
+        if rid_int not in _corrupt_snapshot_logged:
+            logger.warning("Failed to read runtime snapshot %s: %s", path, exc)
+            _corrupt_snapshot_logged.add(rid_int)
+        try:
+            path.unlink(missing_ok=True)
+        except Exception:
+            pass
         return None
+    _corrupt_snapshot_logged.discard(int(rid))
     data["id"] = int(rid)
     return data
 
