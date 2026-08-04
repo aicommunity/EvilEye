@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { StateCamera } from '../../api';
 import { CameraTile } from './CameraTile';
 
@@ -14,7 +14,33 @@ export function CameraGrid({
   onReorder: (keys: string[]) => void;
 }) {
   const [focused, setFocused] = useState<string | null>(null);
+  const [visible, setVisible] = useState<Set<string>>(new Set());
   const dragKey = useRef<string | null>(null);
+  const observerRef = useRef<IntersectionObserver | null>(null);
+  const elByKey = useRef<Map<string, HTMLElement>>(new Map());
+
+  useEffect(() => {
+    observerRef.current = new IntersectionObserver(
+      (entries) => {
+        setVisible((prev) => {
+          const next = new Set(prev);
+          for (const entry of entries) {
+            const key = (entry.target as HTMLElement).dataset.camKey;
+            if (!key) continue;
+            if (entry.isIntersecting) next.add(key);
+            else next.delete(key);
+          }
+          return next;
+        });
+      },
+      { threshold: 0.25, rootMargin: '40px' },
+    );
+    elByKey.current.forEach((el) => observerRef.current?.observe(el));
+    return () => {
+      observerRef.current?.disconnect();
+      observerRef.current = null;
+    };
+  }, []);
 
   if (!cameras.length) {
     return <p className="empty">Камеры текущего запуска недоступны.</p>;
@@ -26,16 +52,31 @@ export function CameraGrid({
     <div className="camera-group-grid" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
       {cameras.map((camera) => {
         const key = keyOf(camera);
-        const useMjpeg = focused === key;
+        const isFocused = focused === key;
+        const isVisible = visible.has(key) || isFocused;
         return (
           <div
             key={key}
+            data-cam-key={key}
+            ref={(el) => {
+              const obs = observerRef.current;
+              const prev = elByKey.current.get(key);
+              if (prev && obs) obs.unobserve(prev);
+              if (el) {
+                el.dataset.camKey = key;
+                elByKey.current.set(key, el);
+                obs?.observe(el);
+              } else {
+                elByKey.current.delete(key);
+              }
+            }}
             onClick={() => setFocused(key)}
-            style={{ outline: focused === key ? '2px solid var(--accent)' : undefined, borderRadius: 8 }}
+            style={{ outline: isFocused ? '2px solid var(--accent)' : undefined, borderRadius: 8 }}
           >
             <CameraTile
               camera={camera}
-              useMjpeg={useMjpeg}
+              useMjpeg={isFocused}
+              active={isVisible}
               onOpen={() => onOpenStream(camera.run_id, camera.source_id)}
               draggable
               onDragStart={() => {

@@ -7,6 +7,7 @@ import { useRunMetadataWs } from './useRunMetadataWs';
 export function CameraTile({
   camera,
   useMjpeg,
+  active = true,
   onOpen,
   draggable,
   onDragStart,
@@ -14,6 +15,7 @@ export function CameraTile({
 }: {
   camera: StateCamera;
   useMjpeg: boolean;
+  active?: boolean;
   onOpen: () => void;
   draggable?: boolean;
   onDragStart?: () => void;
@@ -22,21 +24,22 @@ export function CameraTile({
   const canPreview = camera.run_state === 'running';
   const [snapTs, setSnapTs] = useState(Date.now());
   const meta = useRunMetadataWs(
-    canPreview && useMjpeg ? camera.run_id : null,
+    canPreview && useMjpeg && active ? camera.run_id : null,
     camera.source_id,
   );
 
   useEffect(() => {
-    if (!canPreview || useMjpeg) return;
+    if (!canPreview || useMjpeg || !active) return;
     const id = window.setInterval(() => setSnapTs(Date.now()), 1000);
     return () => window.clearInterval(id);
-  }, [canPreview, useMjpeg]);
+  }, [canPreview, useMjpeg, active]);
 
-  const imgSrc = canPreview
-    ? useMjpeg
-      ? `/api/v1/runs/${camera.run_id}/stream.mjpg?fps=8${camera.source_id != null ? `&source_id=${camera.source_id}` : ''}`
-      : `${streamSnapshotUrl(camera.run_id, camera.source_id)}${streamSnapshotUrl(camera.run_id, camera.source_id).includes('?') ? '&' : '?'}t=${snapTs}`
-    : '';
+  const imgSrc =
+    canPreview && active
+      ? useMjpeg
+        ? `/api/v1/runs/${camera.run_id}/stream.mjpg?fps=8${camera.source_id != null ? `&source_id=${camera.source_id}` : ''}`
+        : `${streamSnapshotUrl(camera.run_id, camera.source_id)}${streamSnapshotUrl(camera.run_id, camera.source_id).includes('?') ? '&' : '?'}t=${snapTs}`
+      : '';
 
   return (
     <article
@@ -55,8 +58,12 @@ export function CameraTile({
       </p>
       {canPreview ? (
         <div className="camera-preview-wrap" style={{ position: 'relative' }}>
-          <img src={imgSrc} alt={camera.source_name} className="camera-preview" />
-          <OverlayCanvas meta={meta as StreamMetadata | null} />
+          {imgSrc ? (
+            <img src={imgSrc} alt={camera.source_name} className="camera-preview" />
+          ) : (
+            <div className="camera-preview camera-preview-empty">Вне зоны видимости</div>
+          )}
+          {useMjpeg ? <OverlayCanvas meta={meta as StreamMetadata | null} /> : null}
         </div>
       ) : (
         <div className="camera-preview camera-preview-empty">Запуск остановлен</div>

@@ -29,7 +29,65 @@ class PreviewRenderContext:
     zones: list[Any] = field(default_factory=list)
 
 
-def clone_capture_image(frame: CaptureImage) -> CaptureImage:
+def serialize_preview_metadata(context: PreviewRenderContext, image_shape=None) -> dict[str, Any]:
+    """Build WS overlay payload (normalized 0..1 coords) from preview context."""
+    h = w = None
+    if image_shape is not None and len(image_shape) >= 2:
+        h, w = int(image_shape[0]), int(image_shape[1])
+
+    objects: list[dict[str, Any]] = []
+    for obj in context.track_info or []:
+        try:
+            track = getattr(obj, "track", None)
+            bbox = getattr(track, "bounding_box", None) if track is not None else None
+            if bbox is None:
+                bbox = getattr(obj, "bounding_box", None)
+            if not bbox or len(bbox) < 4:
+                continue
+            x1, y1, x2, y2 = [float(v) for v in bbox[:4]]
+            if w and h and max(x1, y1, x2, y2) > 1.5:
+                x1, x2 = x1 / w, x2 / w
+                y1, y2 = y1 / h, y2 / h
+            class_id = getattr(obj, "class_id", None)
+            class_name = None
+            if context.class_mapping and class_id is not None:
+                try:
+                    reverse = {cid: name for name, cid in context.class_mapping.items()}
+                    class_name = reverse.get(class_id)
+                except Exception:
+                    class_name = None
+            conf = getattr(track, "confidence", None) if track is not None else None
+            track_id = getattr(track, "track_id", None) if track is not None else getattr(obj, "object_id", None)
+            objects.append(
+                {
+                    "track_id": track_id,
+                    "class_id": class_id,
+                    "class_name": class_name,
+                    "conf": float(conf) if conf is not None else None,
+                    "bbox": [x1, y1, x2, y2],
+                }
+            )
+        except Exception:
+            continue
+
+    zones: list[dict[str, Any]] = []
+    for zone in context.zones or []:
+        try:
+            zone_type, zone_coords, _extra = zone
+            points = []
+            for px, py in zone_coords or []:
+                points.append([float(px), float(py)])
+            if points:
+                zones.append({"name": str(zone_type), "points": points})
+        except Exception:
+            continue
+
+    return {
+        "objects": objects,
+        "zones": zones,
+        "signalization": bool(context.event_signal_enabled and context.active_event_labels),
+    }
+
     cloned = CaptureImage()
     cloned.source_id = getattr(frame, "source_id", None)
     cloned.time_stamp = getattr(frame, "time_stamp", None)

@@ -21,6 +21,9 @@ class StreamFrameJob:
     source_id: Optional[int]
     frame_id: Optional[int]
     created_at: float
+    objects: list[dict[str, Any]] | None = None
+    zones: list[dict[str, Any]] | None = None
+    signalization: bool = False
 
 
 class FrameRelayClient:
@@ -113,7 +116,14 @@ class StreamingService:
             self._frame_relay = FrameRelayClient(relay_base_url, token=relay_token) if relay_base_url else None
             self._condition.notify_all()
 
-    def submit_frame(self, frame) -> bool:
+    def submit_frame(
+        self,
+        frame,
+        *,
+        objects: list[dict[str, Any]] | None = None,
+        zones: list[dict[str, Any]] | None = None,
+        signalization: bool = False,
+    ) -> bool:
         image = getattr(frame, "image", None)
         if image is None:
             return False
@@ -133,12 +143,20 @@ class StreamingService:
             except Exception:
                 image_for_encode = image
 
+        # Prefer explicit args; fall back to attributes attached on the frame.
+        objects_meta = objects if objects is not None else getattr(frame, "_stream_objects", None)
+        zones_meta = zones if zones is not None else getattr(frame, "_stream_zones", None)
+        signal_meta = signalization or bool(getattr(frame, "_stream_signalization", False))
+
         job = StreamFrameJob(
             pipeline_id=self._pipeline_id,
             image=image_for_encode,
             source_id=getattr(frame, "source_id", None),
             frame_id=getattr(frame, "frame_id", None),
             created_at=time.time(),
+            objects=list(objects_meta or []),
+            zones=list(zones_meta or []),
+            signalization=bool(signal_meta),
         )
         with self._condition:
             self._pending_jobs[self._job_key(job)] = job
@@ -279,9 +297,9 @@ class StreamingService:
             "source_id": job.source_id,
             "frame_id": job.frame_id,
             "content_type": "image/jpeg",
-            "objects": list(getattr(job, "objects", None) or []),
-            "zones": list(getattr(job, "zones", None) or []),
-            "signalization": bool(getattr(job, "signalization", False)),
+            "objects": list(job.objects or []),
+            "zones": list(job.zones or []),
+            "signalization": bool(job.signalization),
         }
         broker = get_frame_broker()
         broker.publish_jpeg(pipeline_id, jpeg_bytes, metadata=metadata)

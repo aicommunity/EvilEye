@@ -5,7 +5,11 @@ from dataclasses import dataclass
 from typing import Optional
 
 from evileye.core.logger import get_module_logger
-from evileye.visualization_modules.preview_render import PreviewRenderContext, render_preview_frame
+from evileye.visualization_modules.preview_render import (
+    PreviewRenderContext,
+    render_preview_frame,
+    serialize_preview_metadata,
+)
 
 
 @dataclass
@@ -123,7 +127,15 @@ class PreviewRenderService:
                 self._stats["rendered"] += 1
                 self._stats["last_render_ms"] = (time.perf_counter() - started) * 1000.0
                 if rendered is not None and self._streaming_service is not None:
-                    self._streaming_service.submit_frame(rendered)
+                    image = getattr(rendered, "image", None)
+                    shape = getattr(image, "shape", None)
+                    meta = serialize_preview_metadata(job.context, shape)
+                    self._streaming_service.submit_frame(
+                        rendered,
+                        objects=meta.get("objects"),
+                        zones=meta.get("zones"),
+                        signalization=bool(meta.get("signalization")),
+                    )
             except Exception as exc:
                 self._stats["render_errors"] += 1
                 self.logger.debug("Async preview render failed: %s", exc, exc_info=True)
