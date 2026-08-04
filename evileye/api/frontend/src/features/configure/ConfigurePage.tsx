@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useBlocker, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import {
   configsList,
   configGet,
@@ -51,14 +51,8 @@ export function ConfigurePage() {
   const [dirty, setDirty] = useState(false);
   const canEdit = hasPermission('config:edit');
 
-  const blocker = useBlocker(dirty);
-  useEffect(() => {
-    if (blocker.state !== 'blocked') return;
-    const ok = window.confirm('Есть несохранённые изменения. Уйти со страницы?');
-    if (ok) blocker.proceed();
-    else blocker.reset();
-  }, [blocker]);
-
+  // Note: react-router useBlocker requires a data router; we use BrowserRouter,
+  // so rely on beforeunload + explicit confirms for dirty navigation.
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
       if (!dirty) return;
