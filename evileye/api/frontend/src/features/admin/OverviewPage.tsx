@@ -30,11 +30,21 @@ export function OverviewPage() {
         </div>
         <div className="metric-grid">
           <MetricCard label="Статус" value={data?.server.status ?? '—'} />
-          <MetricCard label="Активные запуски" value={data?.server.active_runs_total ?? '—'} />
-          <MetricCard label="Камеры" value={data?.server.cameras_total ?? '—'} />
-          <MetricCard label="Web preview" value={data?.server.web_previews_available ?? '—'} />
-          <MetricCard label="События" value={stats?.available ? String(stats.events_total ?? 0) : 'БД недоступна'} />
-          <MetricCard label="Объекты" value={stats?.available ? String(stats.objects_total ?? 0) : '—'} />
+          <Link to="/admin/runs" style={{ textDecoration: 'none', color: 'inherit' }}>
+            <MetricCard label="Активные запуски" value={data?.server.active_runs_total ?? '—'} />
+          </Link>
+          <Link to="/live" style={{ textDecoration: 'none', color: 'inherit' }}>
+            <MetricCard label="Камеры" value={data?.server.cameras_total ?? '—'} />
+          </Link>
+          <Link to="/live" style={{ textDecoration: 'none', color: 'inherit' }}>
+            <MetricCard label="Web preview" value={data?.server.web_previews_available ?? '—'} />
+          </Link>
+          <Link to="/events" style={{ textDecoration: 'none', color: 'inherit' }}>
+            <MetricCard label="События" value={stats?.available ? String(stats.events_total ?? 0) : 'БД недоступна'} />
+          </Link>
+          <Link to="/events" style={{ textDecoration: 'none', color: 'inherit' }}>
+            <MetricCard label="Объекты" value={stats?.available ? String(stats.objects_total ?? 0) : '—'} />
+          </Link>
         </div>
         <h3 className="section-title">Текущий запуск</h3>
         {!data?.current_run ? (

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useBlocker, useParams } from 'react-router-dom';
 import {
   configsList,
   configGet,
@@ -15,6 +15,11 @@ import { useToast } from '../../components/ui/Toast';
 import { useAuth } from '../../auth/AuthContext';
 import { SourcesForm } from './sectionForms/SourcesForm';
 import { DetectorsForm } from './sectionForms/DetectorsForm';
+import { TrackersForm } from './sectionForms/TrackersForm';
+import { EventsForm } from './sectionForms/EventsForm';
+import { HandlerForm } from './sectionForms/HandlerForm';
+import { DatabaseForm } from './sectionForms/DatabaseForm';
+import { VisualizerForm } from './sectionForms/VisualizerForm';
 import { GenericSectionForm } from './sectionForms/GenericSectionForm';
 import { JsonAdvancedTab } from './JsonAdvancedTab';
 import { ConfigHistoryPanel } from './ConfigHistoryPanel';
@@ -43,7 +48,26 @@ export function ConfigurePage() {
   const [sectionData, setSectionData] = useState<unknown>(null);
   const [fullJson, setFullJson] = useState('{}');
   const [sourceId, setSourceId] = useState(0);
+  const [dirty, setDirty] = useState(false);
   const canEdit = hasPermission('config:edit');
+
+  const blocker = useBlocker(dirty);
+  useEffect(() => {
+    if (blocker.state !== 'blocked') return;
+    const ok = window.confirm('Есть несохранённые изменения. Уйти со страницы?');
+    if (ok) blocker.proceed();
+    else blocker.reset();
+  }, [blocker]);
+
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!dirty) return;
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [dirty]);
 
   useEffect(() => {
     void configsList()
@@ -63,6 +87,7 @@ export function ConfigurePage() {
         if (secs.sections.length && !secs.sections.includes(active)) setActive(secs.sections[0]);
         const body = await configGet(name);
         setFullJson(JSON.stringify(body, null, 2));
+        setDirty(false);
       } catch (e) {
         showError(e instanceof Error ? e.message : 'Ошибка');
       }
@@ -72,7 +97,10 @@ export function ConfigurePage() {
   useEffect(() => {
     if (!name || !active || active === 'json' || active === 'history' || active === 'roi' || active === 'zones' || active === 'classes') return;
     void configGetSection(name, active)
-      .then(setSectionData)
+      .then((data) => {
+        setSectionData(data);
+        setDirty(false);
+      })
       .catch((e) => showError(e instanceof ApiError ? e.message : 'Ошибка секции'));
   }, [name, active, showError]);
 
@@ -82,18 +110,50 @@ export function ConfigurePage() {
       await configPutSection(name, active, data);
       showSuccess('Секция сохранена');
       setSectionData(data);
+      setDirty(false);
     } catch (e) {
       showError(e instanceof Error ? e.message : 'Ошибка сохранения');
     }
   };
 
+  const switchTab = (s: string) => {
+    if (dirty && !window.confirm('Есть несохранённые изменения. Сменить вкладку?')) return;
+    setActive(s);
+    setDirty(false);
+  };
+
+  const renderSectionForm = () => {
+    const common = {
+      data: sectionData,
+      readOnly: !canEdit,
+      onSave: async (data: unknown) => {
+        await saveSection(data);
+      },
+    };
+    if (active === 'sources') return <SourcesForm {...common} />;
+    if (active === 'detectors') return <DetectorsForm {...common} />;
+    if (active === 'trackers') return <TrackersForm {...common} />;
+    if (active === 'events_detectors' || active === 'events') return <EventsForm {...common} />;
+    if (active === 'objects_handler') return <HandlerForm {...common} />;
+    if (active === 'database') return <DatabaseForm {...common} />;
+    if (active === 'visualizer') return <VisualizerForm {...common} />;
+    return <GenericSectionForm section={active} {...common} />;
+  };
+
   return (
     <section className="panel active">
       <div className="card">
-        <h2>Config Studio</h2>
+        <h2>Config Studio {dirty ? <span className="hint">· несохранённые изменения</span> : null}</h2>
         <p className="hint">Формы секций, ROI/Zone canvas, class mapping. JSON — advanced.</p>
         <div className="toolbar">
-          <select value={name} onChange={(e) => setName(e.target.value)}>
+          <select
+            value={name}
+            onChange={(e) => {
+              if (dirty && !window.confirm('Есть несохранённые изменения. Сменить конфиг?')) return;
+              setName(e.target.value);
+              setDirty(false);
+            }}
+          >
             {names.map((n) => (
               <option key={n} value={n}>
                 {n}
@@ -116,7 +176,7 @@ export function ConfigurePage() {
         </div>
         <div className="journal-tabs">
           {[...sections, 'roi', 'zones', 'classes', 'json', 'history'].map((s) => (
-            <button key={s} type="button" className={`journal-tab${active === s ? ' active' : ''}`} onClick={() => setActive(s)}>
+            <button key={s} type="button" className={`journal-tab${active === s ? ' active' : ''}`} onClick={() => switchTab(s)}>
               {SECTION_LABELS[s] ?? s}
             </button>
           ))}
@@ -128,8 +188,10 @@ export function ConfigurePage() {
             onSave={async (text) => {
               await configUpdate(name, JSON.parse(text));
               setFullJson(text);
+              setDirty(false);
               showSuccess('JSON сохранён');
             }}
+            onChange={() => setDirty(true)}
           />
         ) : active === 'history' ? (
           <ConfigHistoryPanel configName={name} />
@@ -139,12 +201,10 @@ export function ConfigurePage() {
           <ZoneCanvas configName={name} sourceId={sourceId} onSourceIdChange={setSourceId} readOnly={!canEdit} />
         ) : active === 'classes' ? (
           <ClassMappingEditor configName={name} readOnly={!canEdit} />
-        ) : active === 'sources' ? (
-          <SourcesForm data={sectionData} readOnly={!canEdit} onSave={saveSection} />
-        ) : active === 'detectors' ? (
-          <DetectorsForm data={sectionData} readOnly={!canEdit} onSave={saveSection} />
         ) : (
-          <GenericSectionForm section={active} data={sectionData} readOnly={!canEdit} onSave={saveSection} />
+          <div onInput={() => setDirty(true)} onChange={() => setDirty(true)}>
+            {renderSectionForm()}
+          </div>
         )}
       </div>
     </section>

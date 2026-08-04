@@ -10,7 +10,13 @@ export function ConfigHistoryPanel({ configName }: { configName?: string }) {
   const [items, setItems] = useState<Record<string, unknown>[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
   const [selected, setSelected] = useState<number[]>([]);
-  const [diff, setDiff] = useState<string | null>(null);
+  const [compare, setCompare] = useState<{
+    left: string;
+    right: string;
+    differences: unknown;
+    jobA: number;
+    jobB: number;
+  } | null>(null);
   const canRestore = hasPermission('history:edit') || hasPermission('config:edit');
 
   const reload = () => {
@@ -48,8 +54,17 @@ export function ConfigHistoryPanel({ configName }: { configName?: string }) {
             void journalsApi
               .compareHistory(selected[0], selected[1])
               .then((r) => {
-                if (r.error) showError(String(r.error));
-                else setDiff(JSON.stringify(r.differences ?? r, null, 2));
+                if (r.error) {
+                  showError(String(r.error));
+                  return;
+                }
+                setCompare({
+                  jobA: selected[0],
+                  jobB: selected[1],
+                  left: JSON.stringify(r.left ?? {}, null, 2),
+                  right: JSON.stringify(r.right ?? {}, null, 2),
+                  differences: r.differences ?? [],
+                });
               })
               .catch((e) => showError(e.message))
           }
@@ -59,11 +74,33 @@ export function ConfigHistoryPanel({ configName }: { configName?: string }) {
         <Button size="sm" variant="outline" onClick={reload}>
           Обновить
         </Button>
+        {compare ? (
+          <Button size="sm" variant="outline" onClick={() => setCompare(null)}>
+            Скрыть diff
+          </Button>
+        ) : null}
       </div>
-      {diff ? (
-        <pre className="log-view-pre" style={{ maxHeight: 240, overflow: 'auto' }}>
-          {diff}
-        </pre>
+      {compare ? (
+        <div>
+          <p className="hint">
+            Job #{compare.jobA} vs #{compare.jobB} · differences:{' '}
+            {Array.isArray(compare.differences) ? compare.differences.length : '—'}
+          </p>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <pre className="log-view-pre" style={{ maxHeight: 320, overflow: 'auto' }}>
+              {compare.left}
+            </pre>
+            <pre className="log-view-pre" style={{ maxHeight: 320, overflow: 'auto' }}>
+              {compare.right}
+            </pre>
+          </div>
+          <details style={{ marginTop: 8 }}>
+            <summary>Список отличий</summary>
+            <pre className="log-view-pre" style={{ maxHeight: 160, overflow: 'auto' }}>
+              {JSON.stringify(compare.differences, null, 2)}
+            </pre>
+          </details>
+        </div>
       ) : null}
       <table className="journal-table">
         <thead>

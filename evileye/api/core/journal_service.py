@@ -659,7 +659,13 @@ def compare_config_history(job_id1: int, job_id2: int) -> dict[str, Any]:
     if controller is None:
         return {"available": False, "error": "Database unavailable"}
     manager = ConfigHistoryManager(controller)
-    return manager.compare_configurations(job_id1, job_id2)
+    result = manager.compare_configurations(job_id1, job_id2)
+    c1 = manager.get_config_by_job_id(job_id1)
+    c2 = manager.get_config_by_job_id(job_id2)
+    result["left"] = (c1 or {}).get("configuration_info")
+    result["right"] = (c2 or {}).get("configuration_info")
+    result["available"] = True
+    return result
 
 
 def restore_config_history(job_id: int, target_name: str) -> dict[str, Any]:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 import time
 import urllib.error
@@ -33,13 +34,43 @@ class FrameRelayClient:
         self.timeout_sec = max(0.1, float(timeout_sec))
         self.logger = get_module_logger("frame_relay")
 
-    def publish_jpeg(self, pipeline_id: str, jpeg_bytes: bytes, *, source_id: int | None = None) -> bool:
+    def publish_jpeg(
+        self,
+        pipeline_id: str,
+        jpeg_bytes: bytes,
+        *,
+        source_id: int | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> bool:
         query = f"?source_id={source_id}" if source_id is not None else ""
         url = f"{self.base_url}/internal/frames/{pipeline_id}{query}"
-        headers = {"Content-Type": "image/jpeg"}
+        headers: dict[str, str] = {}
         if self.token:
             headers["X-EvilEye-Internal-Token"] = self.token
-        request = urllib.request.Request(url, data=jpeg_bytes, headers=headers, method="POST")
+
+        if metadata:
+            boundary = "----EvilEyeFrameBoundary"
+            meta_bytes = json.dumps(metadata, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            chunks = [
+                f"--{boundary}\r\nContent-Disposition: form-data; name=\"metadata\"\r\n"
+                f"Content-Type: application/json\r\n\r\n".encode("utf-8"),
+                meta_bytes,
+                b"\r\n",
+                (
+                    f"--{boundary}\r\nContent-Disposition: form-data; name=\"frame\"; "
+                    f"filename=\"frame.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n"
+                ).encode("utf-8"),
+                jpeg_bytes,
+                b"\r\n",
+                f"--{boundary}--\r\n".encode("utf-8"),
+            ]
+            data = b"".join(chunks)
+            headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
+        else:
+            data = jpeg_bytes
+            headers["Content-Type"] = "image/jpeg"
+
+        request = urllib.request.Request(url, data=data, headers=headers, method="POST")
         try:
             with urllib.request.urlopen(request, timeout=self.timeout_sec) as response:
                 return 200 <= getattr(response, "status", 200) < 300
@@ -311,4 +342,9 @@ class StreamingService:
             except Exception:
                 pass
         if self._frame_relay is not None:
-            self._frame_relay.publish_jpeg(pipeline_id, jpeg_bytes, source_id=job.source_id)
+            self._frame_relay.publish_jpeg(
+                pipeline_id,
+                jpeg_bytes,
+                source_id=job.source_id,
+                metadata=metadata,
+            )

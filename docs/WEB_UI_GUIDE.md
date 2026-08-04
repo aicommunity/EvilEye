@@ -25,11 +25,14 @@ npx playwright test tests/e2e/web_smoke.spec.ts
 ## Key APIs
 
 - Streaming: `/api/v1/runs/{rid}/snapshot|stream.mjpg|stream:status|metadata`, WS `/api/v1/runs/{rid}/ws`
+- Internal relay: `POST /api/v1/internal/frames/{rid}` accepts JPEG or multipart (`metadata` JSON + `frame`) with objects/zones
 - Playback: `/api/v1/playback/cameras|segments|events|media` (`EVILEYE_DATA_DIR/Streams/{date}/…`)
 - Config editors: `/api/v1/configs/{name}/sections|validate|…/roi|zones|class-mapping`
-- Config history: `GET …/journals/config-history`, `GET …/compare?a=&b=`, `POST …/{job_id}/restore?target_name=`
+- Config history: `GET …/journals/config-history`, `GET …/compare?a=&b=` (side-by-side left/right), `POST …/{job_id}/restore?target_name=`
 - Journals export: `/api/v1/journals/export`
 - Logs SSE: `/api/v1/logs/{filename}/stream`
+
+Mobile: `/m/live` — one camera carousel; `/m/events` — event feed (not desktop grid wrappers).
 
 Env: `EVILEYE_MAX_MJPEG_CLIENTS` (default 8), `EVILEYE_DATA_DIR` (default `EvilEyeData`).
 

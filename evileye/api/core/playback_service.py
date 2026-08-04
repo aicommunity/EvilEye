@@ -21,6 +21,24 @@ def _secure_under(base: Path, candidate: Path) -> Path:
     return resolved
 
 
+def _video_duration_sec(path: str) -> float | None:
+    """Best-effort duration via OpenCV (same approach as StreamPlayerWindow)."""
+    try:
+        import cv2  # type: ignore
+
+        cap = cv2.VideoCapture(path)
+        if not cap.isOpened():
+            return None
+        fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+        frames = float(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0.0)
+        cap.release()
+        if fps > 0 and frames > 0:
+            return max(0.1, frames / fps)
+    except Exception:
+        return None
+    return None
+
+
 def _parse_segment_times(path: str) -> tuple[float, float] | None:
     """Parse start/end from filename; Qt-like Cam2_YYYYMMDD_HHMMSS_... or YYYYMMDD_HHMMSS."""
     name = Path(path).stem
@@ -28,15 +46,14 @@ def _parse_segment_times(path: str) -> tuple[float, float] | None:
     if m:
         try:
             start = datetime.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M%S").timestamp()
-            # Prefer duration from next underscore index if present; default 60s
-            duration = 60.0
-            # Optional: trailing _N_MMMMM may encode index; keep fixed window
+            duration = _video_duration_sec(path) or 60.0
             return start, start + duration
         except Exception:
             pass
     try:
         mtime = os.path.getmtime(path)
-        return mtime - 60.0, mtime
+        duration = _video_duration_sec(path) or 60.0
+        return mtime - duration, mtime
     except Exception:
         return None
 
