@@ -52,6 +52,20 @@ export const journalsApi = {
     if (filters?.date) p.set('date', filters.date);
     return `${API_BASE}/journals/export?${p}`;
   },
+  async exportDownload(
+    type: 'events' | 'objects',
+    format: 'csv' | 'json',
+    filters?: { source_name?: string; event_type?: string; date?: string },
+  ): Promise<{ blob: Blob; truncated: boolean; filename: string }> {
+    const full = this.exportUrl(type, format, filters);
+    const res = await fetch(full, { credentials: 'same-origin' });
+    if (!res.ok) {
+      throw new Error(res.statusText || 'Export failed');
+    }
+    const truncated = res.headers.get('X-Export-Truncated') === '1';
+    const blob = await res.blob();
+    return { blob, truncated, filename: `${type}.${format}` };
+  },
 };
 
 export function journalPreviewUrl(params: {

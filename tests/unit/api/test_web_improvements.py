@@ -54,7 +54,8 @@ def test_streaming_guard_multi_source(tmp_path, monkeypatch):
     assert exc.value.status_code == 400
 
 
-def test_streaming_has_consumers_when_server_process_alive():
+def test_streaming_has_consumers_only_with_demand_or_local_stream():
+    """Alive server alone must not force preview encode (demand-driven)."""
     service = StreamingService()
 
     class _ServerProcessManager:
@@ -65,7 +66,19 @@ def test_streaming_has_consumers_when_server_process_alive():
             return False
 
     service.configure(pipeline_id="1", publish_fps=10.0, server_process_manager=_ServerProcessManager())
+    assert service.has_consumers(source_id=0) is False
+
+    class _DemandManager(_ServerProcessManager):
+        def has_preview_demand(self, pipeline_key):
+            return True
+
+    service.configure(pipeline_id="1", publish_fps=10.0, server_process_manager=_DemandManager())
     assert service.has_consumers(source_id=0) is True
+
+
+def test_streaming_has_consumers_when_server_process_alive():
+    # Backward-compatible alias name kept for discovery; behaviour is demand-driven.
+    test_streaming_has_consumers_only_with_demand_or_local_stream()
 
 
 def test_web_auth_bootstrap_creates_admin(tmp_path, monkeypatch):

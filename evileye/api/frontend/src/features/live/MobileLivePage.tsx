@@ -4,7 +4,7 @@ import { stateApi, streamSnapshotUrl, type StateCamera } from '../../api';
 import { AuthProvider } from '../../auth/AuthContext';
 import { ToastProvider } from '../../components/ui/Toast';
 import { Badge, Button } from '../../components/ui';
-import { usePolling } from '../../hooks/usePolling';
+import { useVisibilityPolling } from '../../hooks/useVisibilityPolling';
 import { StreamOverlay } from '../../components/StreamOverlay';
 import { useI18n } from '../../i18n';
 
@@ -30,7 +30,7 @@ function MobileLiveInner() {
     setCameras(res.items ?? []);
   }, []);
 
-  usePolling(load, 5000, true, 200);
+  useVisibilityPolling(load, 5000, true, 200);
   useEffect(() => {
     if (idx >= cameras.length) setIdx(0);
   }, [cameras, idx]);

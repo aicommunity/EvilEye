@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { stateApi, journalsApi, type StateCamera } from '../../api';
 import { Button } from '../../components/ui';
 import { StreamOverlay } from '../../components/StreamOverlay';
-import { usePolling } from '../../hooks/usePolling';
+import { useVisibilityPolling } from '../../hooks/useVisibilityPolling';
 import { useToast } from '../../components/ui/Toast';
 import { ApiError } from '../../api';
 import { useI18n } from '../../i18n';
@@ -29,7 +29,7 @@ export function LivePage() {
     }
   }, [showError, t]);
 
-  usePolling(load, 5000, true, 0);
+  useVisibilityPolling(load, 5000, true, 0);
 
   const ordered = useMemo(() => {
     if (!order.length) return cameras;

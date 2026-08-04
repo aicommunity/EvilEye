@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { journalsApi, type JournalGroupedRow } from '../../api';
 import { Button } from '../../components/ui';
+import { useToast } from '../../components/ui/Toast';
 import { useI18n } from '../../i18n';
 import { JournalDetailDrawer } from './JournalDetailDrawer';
 import { JournalTable } from './JournalTable';
 import { useJournalFeed } from './useJournalFeed';
 import type { JournalType } from './journalMath';
-import { usePolling } from '../../hooks/usePolling';
+import { useVisibilityPolling } from '../../hooks/useVisibilityPolling';
 
 function today(): string {
   const now = new Date();
@@ -15,6 +16,7 @@ function today(): string {
 
 export function EventsPage() {
   const { t } = useI18n();
+  const { showError } = useToast();
   const [tab, setTab] = useState<JournalType | 'history'>('events');
   const [date, setDate] = useState(today());
   const [eventType, setEventType] = useState('');
@@ -24,6 +26,8 @@ export function EventsPage() {
   const [selected, setSelected] = useState<JournalGroupedRow | null>(null);
   const [historyItems, setHistoryItems] = useState<Record<string, unknown>[]>([]);
   const [historyMsg, setHistoryMsg] = useState<string | null>(null);
+  const [exportTruncated, setExportTruncated] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const filters = useMemo(
     () => ({
@@ -56,12 +60,33 @@ export function EventsPage() {
     });
   }, [tab, t]);
 
-  usePolling(() => {
+  useVisibilityPolling(() => {
     if (tab === 'history' || selected) return;
     void feed.poll();
   }, 12000, tab !== 'history', 400);
 
-  const exportHref = journalsApi.exportUrl(tab === 'objects' ? 'objects' : 'events', 'csv', filters);
+  const onExport = async () => {
+    setExporting(true);
+    setExportTruncated(false);
+    try {
+      const { blob, truncated, filename } = await journalsApi.exportDownload(
+        tab === 'objects' ? 'objects' : 'events',
+        'csv',
+        filters,
+      );
+      setExportTruncated(truncated);
+      const href = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = href;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(href);
+    } catch (e) {
+      showError(e instanceof Error ? e.message : t('common.error'));
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <section className="panel active">
@@ -107,10 +132,10 @@ export function EventsPage() {
           </Button>
           {tab !== 'history' ? (
             <>
-              <a className="btn btn-outline btn-sm" href={exportHref} title={t('journals.exportTruncated')}>
+              <Button variant="outline" size="sm" disabled={exporting} onClick={() => void onExport()}>
                 {t('common.exportCsv')}
-              </a>
-              <span className="hint">{t('journals.exportTruncated')}</span>
+              </Button>
+              {exportTruncated ? <span className="hint">{t('journals.exportTruncated')}</span> : null}
             </>
           ) : null}
         </div>

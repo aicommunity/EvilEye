@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { playbackApi, type PlaybackCamera, type PlaybackEventMarker, type PlaybackSegment } from '../../api';
 import { Button } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
 import { useI18n } from '../../i18n';
 import { Timeline } from './Timeline';
-import { PlaybackGrid, type PlaybackMediaSlot } from './PlaybackGrid';
+import { PlaybackGrid } from './PlaybackGrid';
 import { usePlaybackController } from './usePlaybackController';
 
 function today(): string {
@@ -92,23 +92,6 @@ export function PlaybackPage() {
     }
   };
 
-  const mediaByCam = useMemo(() => {
-    const result: Record<string, PlaybackMediaSlot | null> = {};
-    for (const id of selected) {
-      const segs = segmentsByCam[id] ?? [];
-      const active =
-        segs.find((s) => ctrl.positionSec >= s.start_ts && ctrl.positionSec <= s.end_ts) ?? segs[0];
-      result[id] = active
-        ? {
-            url: playbackApi.mediaUrl(active.path),
-            startTs: active.start_ts,
-            endTs: active.end_ts,
-          }
-        : null;
-    }
-    return result;
-  }, [selected, segmentsByCam, ctrl.positionSec]);
-
   const toggleCamera = (id: string) => {
     const on = selected.includes(id);
     const MAX_PLAYBACK_CAMS = 4;
@@ -169,8 +152,8 @@ export function PlaybackPage() {
         ) : (
           <PlaybackGrid
             cameras={selected}
-            mediaByCam={mediaByCam}
-            positionSec={ctrl.positionSec}
+            segmentsByCam={segmentsByCam}
+            getPosition={ctrl.getPosition}
             playing={ctrl.playing}
             speed={ctrl.speed}
           />

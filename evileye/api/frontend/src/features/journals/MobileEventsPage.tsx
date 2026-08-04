@@ -8,7 +8,7 @@ import { useI18n } from '../../i18n';
 import { JournalDetailDrawer } from './JournalDetailDrawer';
 import { useJournalFeed } from './useJournalFeed';
 import { formatJournalTime } from './journalMath';
-import { usePolling } from '../../hooks/usePolling';
+import { useVisibilityPolling } from '../../hooks/useVisibilityPolling';
 
 export function MobileEventsPage() {
   return (
@@ -25,7 +25,7 @@ function MobileEventsInner() {
   const feed = useJournalFeed('events', {});
   const [selected, setSelected] = useState<JournalGroupedRow | null>(null);
 
-  usePolling(() => {
+  useVisibilityPolling(() => {
     if (!selected) void feed.poll();
   }, 15000);
 

@@ -123,6 +123,7 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["X-Export-Truncated"],
     )
     logger.info("CORS middleware configured")
 
