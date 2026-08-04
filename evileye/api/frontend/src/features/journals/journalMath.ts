@@ -1,0 +1,82 @@
+export type JournalType = 'events' | 'objects';
+
+import type { JournalGroupedRow } from '../../api';
+
+export function rowKey(row: JournalGroupedRow): string {
+  return String(row.row_key ?? `${row.time}|${row.event}|${row.information}`);
+}
+
+export function formatJournalTime(value: unknown): string {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '—';
+  const parsed = raw.includes('T') ? raw : raw.replace(' ', 'T');
+  const date = new Date(parsed);
+  if (Number.isNaN(date.getTime())) {
+    return raw.replace('T', ' ').replace(/\.\d+/, '').slice(0, 19);
+  }
+  return date.toLocaleString('ru-RU', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+}
+
+function journalTimeSortKey(value: unknown): number {
+  const raw = String(value ?? '').trim();
+  if (!raw) return 0;
+  const parsed = raw.includes('T') ? raw : raw.replace(' ', 'T');
+  const ms = Date.parse(parsed);
+  return Number.isNaN(ms) ? 0 : ms;
+}
+
+export function sortJournalRowsDesc(rows: JournalGroupedRow[]): JournalGroupedRow[] {
+  return [...rows].sort((a, b) => journalTimeSortKey(b.time) - journalTimeSortKey(a.time));
+}
+
+export function mergePrependRows(
+  existing: JournalGroupedRow[],
+  incoming: JournalGroupedRow[],
+): { rows: JournalGroupedRow[]; added: number } {
+  if (!incoming.length) return { rows: existing, added: 0 };
+  const compareLen = Math.max(1, incoming.length);
+  const existingKeys = new Set(existing.slice(0, compareLen).map(rowKey));
+  const fresh: JournalGroupedRow[] = [];
+  for (const row of incoming) {
+    const key = rowKey(row);
+    if (existingKeys.has(key)) break;
+    fresh.push(row);
+  }
+  if (!fresh.length) return { rows: existing, added: 0 };
+  const merged = sortJournalRowsDesc([...fresh, ...existing]).slice(0, 500);
+  return { rows: merged, added: fresh.length };
+}
+
+export function bboxSvg(
+  bbox: number[] | null | undefined,
+  zone: number[][] | null | undefined,
+): string {
+  const parts: string[] = [];
+  if (bbox && bbox.length === 4) {
+    const [x1, y1, x2, y2] = bbox;
+    parts.push(
+      `<rect x="${x1 * 100}%" y="${y1 * 100}%" width="${(x2 - x1) * 100}%" height="${(y2 - y1) * 100}%" fill="none" stroke="#22c55e" stroke-width="2"/>`,
+    );
+  }
+  if (zone && zone.length >= 3) {
+    const points = zone.map(([x, y]) => `${x * 100},${y * 100}`).join(' ');
+    parts.push(`<polygon points="${points}" fill="rgba(59,130,246,0.15)" stroke="#3b82f6" stroke-width="2"/>`);
+  }
+  return parts.join('');
+}
+
+export function unixFromJournalTime(value: unknown): number | null {
+  const raw = String(value ?? '').trim();
+  if (!raw) return null;
+  const parsed = raw.includes('T') ? raw : raw.replace(' ', 'T');
+  const ms = Date.parse(parsed);
+  return Number.isNaN(ms) ? null : Math.floor(ms / 1000);
+}

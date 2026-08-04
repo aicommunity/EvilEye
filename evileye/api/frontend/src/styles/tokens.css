@@ -1,0 +1,18 @@
+:root {
+  --bg: #0d0f12;
+  --bg-card: #15181d;
+  --bg-card-hover: #1a1e24;
+  --border: #2a2e36;
+  --text: #e6e8ec;
+  --text-muted: #8b909a;
+  --accent: #3b82f6;
+  --accent-hover: #2563eb;
+  --success: #22c55e;
+  --danger: #ef4444;
+  --radius: 12px;
+  --radius-sm: 8px;
+  --font-sans: 'Outfit', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+  --shadow: 0 4px 24px rgba(0, 0, 0, 0.25);
+  --shadow-sm: 0 2px 12px rgba(0, 0, 0, 0.15);
+}

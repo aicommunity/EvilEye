@@ -1,6 +1,6 @@
-# EvilEye Frontend
+# EvilEye Frontend (React)
 
-Lightweight TypeScript SPA for the EvilEye REST API.
+Vite + React + TypeScript SPA for the EvilEye REST API.
 
 ## Build
 
@@ -10,8 +10,12 @@ npm install
 npm run build
 ```
 
-Output is written to `evileye/api/static/`. The FastAPI app serves these files at `/` when the server runs.
+Output is written to `evileye/api/static/`. FastAPI serves the SPA with client-side routing fallback.
 
 ## Dev
 
-- `npm run watch` — recompile TypeScript on change (then copy `index.html` and `styles/main.css` to `../static` manually if needed).
+```bash
+npm run dev
+```
+
+Proxies `/api` and `/ready` to `http://127.0.0.1:8181`.

@@ -1284,3 +1284,52 @@ body {
 .overview-run-detail p {
   margin: 0.35rem 0;
 }
+
+/* === App shell (React SPA) === */
+.app-shell {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  min-height: 100vh;
+}
+.sidebar {
+  background: var(--bg-card);
+  border-right: 1px solid var(--border);
+  padding: 1.25rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
+.sidebar-brand .logo { font-size: 1.4rem; }
+.sidebar-nav { display: flex; flex-direction: column; gap: 0.25rem; flex: 1; overflow: auto; }
+.nav-link {
+  display: block;
+  padding: 0.55rem 0.75rem;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  text-decoration: none;
+}
+.nav-link:hover { background: var(--bg-card-hover); color: var(--text); }
+.nav-link.active { background: rgba(59,130,246,0.15); color: var(--text); font-weight: 600; }
+.sidebar-footer { border-top: 1px solid var(--border); padding-top: 0.75rem; font-size: 0.85rem; color: var(--text-muted); }
+.app-main { padding: 1.5rem; max-width: 1400px; width: 100%; }
+.app-main .panel { display: block; }
+.app-main .panel.active { display: block; }
+.mobile-shell { padding: 0.75rem; }
+.mobile-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+.mobile-header a { color: var(--accent); text-decoration: none; min-height: 44px; display: inline-flex; align-items: center; }
+.camera-preview-wrap { position: relative; }
+@media (max-width: 900px) {
+  .app-shell { grid-template-columns: 1fr; }
+  .sidebar { position: static; height: auto; }
+}
