@@ -163,7 +163,7 @@ class VideoCaptureOpencv(VideoCaptureBase):
 
         else:
             error_msg = f"Could not connect to sources: {self.source_names}"
-            hint = self.get_ip_camera_init_hint()
+            hint = self.get_ip_camera_init_hint(error_msg)
             if hint:
                 error_msg = f"{error_msg}. Hint: {hint}"
             self.logger.error(error_msg)

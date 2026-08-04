@@ -8,12 +8,16 @@ autonomously until stopped.
 """
 from __future__ import annotations
 
+import sys
 import time
 from queue import Empty, Full
 
 from ..core.mp_worker import MpWorker
 from ..core.processor_base import EXEC_MODE_THREAD
 from ..core.frame_transport import SharedFrameTransport
+
+# Exit code listed in capture MpControl no_restart_exit_codes — stops restart storms.
+CAPTURE_INIT_FAIL_EXIT_CODE = 2
 
 
 class MpWorkerCapture(MpWorker):
@@ -142,11 +146,11 @@ class MpWorkerCapture(MpWorker):
             self.init_worker()
         except Exception as e:
             self.logger.error("Capture worker init failed: %s", e, exc_info=True)
-            return
+            sys.exit(CAPTURE_INIT_FAIL_EXIT_CODE)
 
         if self._capture is None:
             self.logger.error("Capture object is None after init — exiting")
-            return
+            sys.exit(CAPTURE_INIT_FAIL_EXIT_CODE)
 
         self.logger.info("Capture worker ready, entering frame loop")
 

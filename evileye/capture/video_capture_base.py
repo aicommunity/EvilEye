@@ -345,10 +345,13 @@ class VideoCaptureBase(EvilEyeBase):
         """Initialise MpControl + MpWorkerCapture for process-based capture."""
         from ..core.mp_control import MpControl, parse_mp_restart_policy
         from .mp_worker_capture import MpWorkerCapture
+        # Capture init failures use exit code 2; never restart-loop by default.
         restart_on_exit, no_restart_exit_codes = parse_mp_restart_policy(
             self.params,
             default_restart_on_exit=False,
+            default_no_restart_exit_codes={2, -15},
         )
+        no_restart_exit_codes.add(2)
 
         self._mp_control = MpControl(
             max_input_size=4,
@@ -593,10 +596,48 @@ class VideoCaptureBase(EvilEyeBase):
             netloc=f"{processed_username}:{processed_password}@{url_parsed_info.hostname}")
         return reconstructed_url.geturl()
 
-    def get_ip_camera_init_hint(self) -> str:
-        """Return a human-readable hint for common RTSP configuration mistakes."""
+    def get_ip_camera_init_hint(self, last_error: Exception | str | None = None) -> str:
+        """Return a human-readable hint for common RTSP configuration mistakes.
+
+        Hints are attached only when the failure looks RTSP/GStreamer-related,
+        so filesystem/import bugs are not misdiagnosed as bad camera URLs.
+        """
         if self.source_type != CaptureDeviceType.IpCamera:
             return ""
+
+        if last_error is not None:
+            err_name = type(last_error).__name__ if isinstance(last_error, BaseException) else ""
+            err_text = f"{err_name}: {last_error}".lower()
+            non_rtsp_markers = (
+                "permission denied",
+                "not defined",
+                "not writable",
+                "recordingfilesystem",
+                "no such file",
+                "read-only",
+                "disk quota",
+                "nameerror",
+                "filesystem",
+            )
+            if any(tok in err_text for tok in non_rtsp_markers):
+                return ""
+            rtsp_markers = (
+                "rtsp",
+                "gst",
+                "pipeline",
+                "candidate",
+                "appsink",
+                "unauthorized",
+                "401",
+                "403",
+                "timeout",
+                "connection refused",
+                "connection reset",
+                "not-negotiated",
+                "could not connect",
+            )
+            if not any(tok in err_text for tok in rtsp_markers):
+                return ""
 
         hints: list[str] = []
         try:
