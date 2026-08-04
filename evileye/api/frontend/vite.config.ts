@@ -14,4 +14,8 @@ export default defineConfig({
       '/ready': 'http://127.0.0.1:8181',
     },
   },
+  test: {
+    environment: 'node',
+    include: ['src/**/*.test.ts'],
+  },
 });

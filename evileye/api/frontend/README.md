@@ -19,3 +19,9 @@ npm run dev
 ```
 
 Proxies `/api` and `/ready` to `http://127.0.0.1:8181`.
+
+## Test
+
+```bash
+npm test
+```

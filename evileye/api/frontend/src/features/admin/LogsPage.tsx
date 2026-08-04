@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { logsApi, ApiError } from '../../api';
 import { Button, Modal } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
@@ -12,7 +12,8 @@ function formatBytes(size: number): string {
 export function LogsPage() {
   const { showError } = useToast();
   const [files, setFiles] = useState<Array<{ name: string; updated_at: number; size_bytes: number }>>([]);
-  const [view, setView] = useState<{ name: string; content: string } | null>(null);
+  const [view, setView] = useState<{ name: string; content: string; live: boolean } | null>(null);
+  const esRef = useRef<EventSource | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -26,6 +27,41 @@ export function LogsPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    return () => {
+      esRef.current?.close();
+      esRef.current = null;
+    };
+  }, []);
+
+  const openStatic = (name: string) => {
+    esRef.current?.close();
+    esRef.current = null;
+    void logsApi
+      .read(name, 500)
+      .then((p) => setView({ name: p.name, content: p.content, live: false }))
+      .catch((e) => showError(e instanceof ApiError ? e.message : 'Ошибка'));
+  };
+
+  const openLive = (name: string) => {
+    esRef.current?.close();
+    const es = new EventSource(logsApi.streamUrl(name, 400));
+    esRef.current = es;
+    setView({ name, content: 'Подключение…', live: true });
+    es.onmessage = (ev) => {
+      try {
+        const data = JSON.parse(ev.data) as { content?: string; name?: string };
+        setView({ name: data.name ?? name, content: data.content ?? '', live: true });
+      } catch {
+        /* ignore */
+      }
+    };
+    es.onerror = () => {
+      showError('SSE логов прерван');
+      es.close();
+    };
+  };
 
   return (
     <section className="panel active">
@@ -45,30 +81,38 @@ export function LogsPage() {
                 <th>Файл</th>
                 <th>Размер</th>
                 <th>Обновлён</th>
+                <th />
               </tr>
             </thead>
             <tbody>
               {files.map((f) => (
-                <tr
-                  key={f.name}
-                  className="log-file-row"
-                  onClick={() =>
-                    void logsApi
-                      .read(f.name)
-                      .then((p) => setView({ name: p.name, content: p.content }))
-                      .catch((e) => showError(e instanceof ApiError ? e.message : 'Ошибка'))
-                  }
-                >
-                  <td>{f.name}</td>
+                <tr key={f.name} className="log-file-row">
+                  <td onClick={() => openStatic(f.name)} style={{ cursor: 'pointer' }}>
+                    {f.name}
+                  </td>
                   <td>{formatBytes(f.size_bytes)}</td>
                   <td>{new Date(f.updated_at * 1000).toLocaleString('ru-RU')}</td>
+                  <td>
+                    <Button size="sm" variant="outline" onClick={() => openLive(f.name)}>
+                      Live
+                    </Button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
       </div>
-      <Modal open={Boolean(view)} title={view?.name ?? 'Лог'} onClose={() => setView(null)} wide>
+      <Modal
+        open={Boolean(view)}
+        title={view ? `${view.name}${view.live ? ' (live)' : ''}` : 'Лог'}
+        onClose={() => {
+          esRef.current?.close();
+          esRef.current = null;
+          setView(null);
+        }}
+        wide
+      >
         <pre className="log-view-pre">{view?.content}</pre>
       </Modal>
     </section>

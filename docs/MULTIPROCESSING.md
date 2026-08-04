@@ -217,6 +217,15 @@ evileye-launch configs/single_video_multiprocess.json
 - web-ui показывает состояние уже работающей системы;
 - последние preview-кадры передаются только в память сервера, без записи на диск.
 
+#### Web UI: metadata WebSocket и playback
+
+React SPA (`evileye/api/frontend`) поверх того же FastAPI:
+
+- **Live overlays:** runtime публикует JPEG + metadata (`objects`/`zones`/`signalization`) в FrameBroker; браузер подписан на `WS /api/v1/runs/{rid}/ws` (без копирования JPEG в WS).
+- **MJPEG limits:** `EVILEYE_MAX_MJPEG_CLIENTS`; UI открывает MJPEG только для focused tile, visible tiles — snapshot poll.
+- **Playback:** индекс `EvilEyeData/Streams` через `/api/v1/playback/*` (discover/split folders, segments, event markers, ranged media). Не требует runtime — только файлы на диске.
+- Подробнее: [`WEB_UI_GUIDE.md`](WEB_UI_GUIDE.md).
+
 ### Пример: полный запуск с мультипроцессностью
 
 ```bash
