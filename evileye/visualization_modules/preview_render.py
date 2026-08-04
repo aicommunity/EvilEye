@@ -88,6 +88,8 @@ def serialize_preview_metadata(context: PreviewRenderContext, image_shape=None) 
         "signalization": bool(context.event_signal_enabled and context.active_event_labels),
     }
 
+
+def clone_capture_image(frame: CaptureImage) -> CaptureImage:
     cloned = CaptureImage()
     cloned.source_id = getattr(frame, "source_id", None)
     cloned.time_stamp = getattr(frame, "time_stamp", None)

@@ -138,4 +138,4 @@ class PreviewRenderService:
                     )
             except Exception as exc:
                 self._stats["render_errors"] += 1
-                self.logger.debug("Async preview render failed: %s", exc, exc_info=True)
+                self.logger.warning("Async preview render failed: %s", exc, exc_info=True)
