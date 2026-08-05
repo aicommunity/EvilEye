@@ -110,15 +110,27 @@ export function ConfigStudio({
 
   useEffect(() => {
     if (!name || !activeId || specialIds.includes(activeId)) return;
-    const path = tabs.find((t) => t.id === activeId)?.path ?? activeId;
+    // Wait until studio tabs are resolved so we use pipeline.sources (etc.), not bare "sources".
+    if (!tabs.length) return;
+    const tab = tabs.find((t) => t.id === activeId);
+    if (!tab) return;
+    const path = tab.path;
+    let cancelled = false;
     void configGetSection(name, path)
       .then((data) => {
+        if (cancelled) return;
         setSectionData(data);
         setBaselineJson(stableStringify(data));
         setDirty(false);
       })
-      .catch((e) => showError(e instanceof ApiError ? e.message : t('common.sectionError')));
-  }, [name, activeId, tabs, showError, specialIds]);
+      .catch((e) => {
+        if (cancelled) return;
+        showError(e instanceof ApiError ? e.message : t('common.sectionError'));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [name, activeId, tabs, showError, specialIds, t]);
 
   const markDirtyFromDraft = (draft: unknown) => {
     setDirty(stableStringify(draft) !== baselineJson);

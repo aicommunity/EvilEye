@@ -70,7 +70,9 @@ async def get_sections(name: str) -> dict:
 
 
 def _resolve_section_key(body: dict[str, Any], section: str) -> str:
-    """Accept top-level keys or dotted paths (e.g. pipeline.sources)."""
+    """Accept top-level keys, dotted paths, or studio tab ids (e.g. sources → pipeline.sources)."""
+    from evileye.api.core.config_validation import STUDIO_TAB_SPECS, resolve_section_path
+
     try:
         split_path(section)
     except ValueError as exc:
@@ -79,6 +81,11 @@ def _resolve_section_key(body: dict[str, Any], section: str) -> str:
         return section
     if "." not in section and section in body:
         return section
+    for tab_id, candidates in STUDIO_TAB_SPECS:
+        if section == tab_id or section in candidates:
+            resolved = resolve_section_path(body, candidates)
+            if resolved:
+                return resolved
     raise HTTPException(status_code=404, detail=f"Section '{section}' not found")
 
 
@@ -96,15 +103,20 @@ async def get_section(name: str, section: str) -> Any:
 async def put_section(name: str, section: str, payload: SectionUpdate) -> dict:
     body = _load(name)
     try:
-        split_path(section)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if "." in section:
-        set_by_path(body, section, payload.body)
+        key = _resolve_section_key(body, section)
+    except HTTPException:
+        # Allow creating a new top-level / dotted section that does not exist yet.
+        try:
+            split_path(section)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        key = section
+    if "." in key:
+        set_by_path(body, key, payload.body)
     else:
-        body[section] = payload.body
+        body[key] = payload.body
     _save(name, body)
-    return {"name": name, "section": section, "status": "updated"}
+    return {"name": name, "section": key, "status": "updated"}
 
 
 @router.post("/{name}/validate")
