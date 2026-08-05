@@ -111,9 +111,28 @@ def _ip_matches(ban_ip: str, client_ip: str) -> bool:
 class IpBanStore:
     def __init__(self, path: Path | None = None):
         self.path = path or DEFAULT_STORE
+        self._cache_mtime: float | None = None
+        self._cache_payload: dict[str, Any] | None = None
+
+    def _load_cached(self) -> dict[str, Any]:
+        path = self.path
+        try:
+            mtime = path.stat().st_mtime if path.exists() else -1.0
+        except OSError:
+            mtime = -1.0
+        if self._cache_payload is not None and self._cache_mtime == mtime:
+            return self._cache_payload
+        payload = _load_store(path)
+        self._cache_payload = payload
+        self._cache_mtime = mtime
+        return payload
+
+    def _invalidate_cache(self) -> None:
+        self._cache_mtime = None
+        self._cache_payload = None
 
     def list_bans(self, *, include_expired: bool = False) -> list[dict[str, Any]]:
-        payload = _load_store(self.path)
+        payload = self._load_cached()
         now = time.time()
         items = []
         for ban in payload.get("bans") or []:
@@ -186,6 +205,7 @@ class IpBanStore:
             return record
 
         record = _with_lock(self.path, mutate)
+        self._invalidate_cache()
         logger.warning(
             "ip_ban %s ip=%s reason=%s ttl=%s",
             source,
@@ -208,7 +228,10 @@ class IpBanStore:
             ]
             return len(payload["bans"]) < before
 
-        return bool(_with_lock(self.path, mutate))
+        removed = bool(_with_lock(self.path, mutate))
+        if removed:
+            self._invalidate_cache()
+        return removed
 
     def prune_expired(self) -> int:
         now = time.time()
@@ -220,7 +243,10 @@ class IpBanStore:
             ]
             return before - len(payload["bans"])
 
-        return int(_with_lock(self.path, mutate))
+        removed = int(_with_lock(self.path, mutate))
+        if removed:
+            self._invalidate_cache()
+        return removed
 
 
 _STORE: IpBanStore | None = None

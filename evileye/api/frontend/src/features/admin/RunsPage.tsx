@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { stateApi, type StateRun } from '../../api';
+import { stateApi, type StateRun, cacheGet, cacheSet, isAbortError } from '../../api';
 import { Badge, Button, Modal } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
 import { useI18n } from '../../i18n';
@@ -19,14 +19,36 @@ function archiveBadgeState(state: string | undefined): string {
   return String(state || '').trim() === 'error' ? 'error' : 'stopped';
 }
 
+const RUNS_CACHE_KEY = 'state:runs:all';
+const RUNS_TTL_MS = 15_000;
+
+type RunsPayload = { current_run?: StateRun | null; items?: StateRun[] };
+
+function splitRuns(data: RunsPayload): { cur: StateRun | null; rest: StateRun[] } {
+  const cur = data.current_run ?? null;
+  const items = data.items ?? [];
+  const curId = cur?.id;
+  const rest = items
+    .filter((r) => curId == null || r.id !== curId)
+    .sort((a, b) => {
+      const ua = Number(a.updated_at ?? 0);
+      const ub = Number(b.updated_at ?? 0);
+      if (ub !== ua) return ub - ua;
+      return Number(b.id ?? 0) - Number(a.id ?? 0);
+    });
+  return { cur, rest };
+}
+
 export function RunsPage() {
   const { showError } = useToast();
   const { t } = useI18n();
-  const [current, setCurrent] = useState<StateRun | null>(null);
-  const [archive, setArchive] = useState<StateRun[]>([]);
-  const [loading, setLoading] = useState(true);
+  const cached = cacheGet<RunsPayload>(RUNS_CACHE_KEY);
+  const initial = cached ? splitRuns(cached) : null;
+  const [current, setCurrent] = useState<StateRun | null>(() => initial?.cur ?? null);
+  const [archive, setArchive] = useState<StateRun[]>(() => initial?.rest ?? []);
+  const [loading, setLoading] = useState(() => !initial);
   const [detail, setDetail] = useState<{ run: StateRun; archive: boolean } | null>(null);
-  const hasDataRef = useRef(false);
+  const hasDataRef = useRef(Boolean(initial));
 
   const formatUptime = (sec: number | null | undefined): string => {
     if (sec == null || Number.isNaN(sec)) return '—';
@@ -39,36 +61,31 @@ export function RunsPage() {
     return t('runs.uptime.s', { s: r });
   };
 
-  const load = useCallback(async () => {
-    if (!hasDataRef.current) setLoading(true);
-    try {
-      const data = (await stateApi.runs('all')) as {
-        current_run?: StateRun | null;
-        items?: StateRun[];
-      };
-      const cur = data.current_run ?? null;
-      const items = data.items ?? [];
-      const curId = cur?.id;
-      const rest = items
-        .filter((r) => curId == null || r.id !== curId)
-        .sort((a, b) => {
-          const ua = Number(a.updated_at ?? 0);
-          const ub = Number(b.updated_at ?? 0);
-          if (ub !== ua) return ub - ua;
-          return Number(b.id ?? 0) - Number(a.id ?? 0);
-        });
-      setCurrent(cur);
-      setArchive(rest);
-      hasDataRef.current = Boolean(cur) || rest.length > 0;
-    } catch (e) {
-      showError(e instanceof Error ? e.message : t('runs.loadError'));
-    } finally {
-      setLoading(false);
-    }
-  }, [showError, t]);
+  const load = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!hasDataRef.current) setLoading(true);
+      try {
+        const data = (await stateApi.runs('all', { signal })) as RunsPayload;
+        if (signal?.aborted) return;
+        cacheSet(RUNS_CACHE_KEY, data, RUNS_TTL_MS);
+        const { cur, rest } = splitRuns(data);
+        setCurrent(cur);
+        setArchive(rest);
+        hasDataRef.current = Boolean(cur) || rest.length > 0;
+      } catch (e) {
+        if (isAbortError(e) || signal?.aborted) return;
+        showError(e instanceof Error ? e.message : t('runs.loadError'));
+      } finally {
+        if (!signal?.aborted) setLoading(false);
+      }
+    },
+    [showError, t],
+  );
 
   useEffect(() => {
-    void load();
+    const ac = new AbortController();
+    void load(ac.signal);
+    return () => ac.abort();
   }, [load]);
 
   const renderTable = (rows: StateRun[], opts: { archive: boolean; markCurrent?: boolean }): ReactNode => (

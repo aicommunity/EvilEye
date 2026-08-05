@@ -1,4 +1,4 @@
-import { API_BASE, request } from './client';
+import { API_BASE, request, type RequestOptions } from './client';
 import type { JournalFiltersMeta, JournalGroupedRow, JournalPage } from './types';
 
 export type JournalDateFilters = {
@@ -23,34 +23,41 @@ function journalQuery(page: number, size: number, filters?: JournalDateFilters) 
 }
 
 export const journalsApi = {
-  filtersMeta(): Promise<JournalFiltersMeta> {
-    return request('/journals/filters/meta');
+  filtersMeta(opts?: RequestOptions): Promise<JournalFiltersMeta> {
+    return request('/journals/filters/meta', opts);
   },
-  eventsGrouped(page = 0, size = 30, filters?: JournalDateFilters) {
-    return request<JournalPage<JournalGroupedRow>>(`/journals/events/grouped?${journalQuery(page, size, filters)}`);
+  eventsGrouped(page = 0, size = 30, filters?: JournalDateFilters, opts?: RequestOptions) {
+    return request<JournalPage<JournalGroupedRow>>(
+      `/journals/events/grouped?${journalQuery(page, size, filters)}`,
+      opts,
+    );
   },
-  objectsGrouped(page = 0, size = 30, filters?: JournalDateFilters) {
-    return request<JournalPage<JournalGroupedRow>>(`/journals/objects/grouped?${journalQuery(page, size, filters)}`);
+  objectsGrouped(page = 0, size = 30, filters?: JournalDateFilters, opts?: RequestOptions) {
+    return request<JournalPage<JournalGroupedRow>>(
+      `/journals/objects/grouped?${journalQuery(page, size, filters)}`,
+      opts,
+    );
   },
-  configHistory(limit = 30) {
+  configHistory(limit = 30, opts?: RequestOptions) {
     return request<{ available: boolean; items: Record<string, unknown>[]; message?: string; reason?: string }>(
       `/journals/config-history?limit=${limit}`,
+      opts,
     );
   },
-  compareHistory(a: number, b: number) {
-    return request<Record<string, unknown>>(`/journals/config-history/compare?a=${a}&b=${b}`);
+  compareHistory(a: number, b: number, opts?: RequestOptions) {
+    return request<Record<string, unknown>>(`/journals/config-history/compare?a=${a}&b=${b}`, opts);
   },
-  restoreHistory(jobId: number, targetName: string) {
+  restoreHistory(jobId: number, targetName: string, opts?: RequestOptions) {
     return request<Record<string, unknown>>(
       `/journals/config-history/${jobId}/restore?target_name=${encodeURIComponent(targetName)}`,
-      { method: 'POST' },
+      { method: 'POST', ...opts },
     );
   },
-  rowMeta(rowKeyValue: string, journalType: 'events' | 'objects'): Promise<Partial<JournalGroupedRow>> {
+  rowMeta(rowKeyValue: string, journalType: 'events' | 'objects', opts?: RequestOptions): Promise<Partial<JournalGroupedRow>> {
     const p = new URLSearchParams({ row_key: rowKeyValue, journal_type: journalType });
-    return request(`/journals/row-meta?${p}`);
+    return request(`/journals/row-meta?${p}`, opts);
   },
-  stats(filters?: { date?: string; date_from?: string; date_to?: string }) {
+  stats(filters?: { date?: string; date_from?: string; date_to?: string }, opts?: RequestOptions) {
     const p = new URLSearchParams();
     if (filters?.date) {
       p.set('date', filters.date);
@@ -61,6 +68,7 @@ export const journalsApi = {
     const qs = p.toString();
     return request<{ available: boolean; events_total?: number; objects_total?: number }>(
       `/journals/stats${qs ? `?${qs}` : ''}`,
+      opts,
     );
   },
   exportUrl(type: 'events' | 'objects', format: 'csv' | 'json', filters?: JournalDateFilters) {

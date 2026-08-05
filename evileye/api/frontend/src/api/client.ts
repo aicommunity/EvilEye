@@ -9,7 +9,9 @@ export class ApiError extends Error {
   }
 }
 
-export async function request<T>(path: string, options?: RequestInit): Promise<T> {
+export type RequestOptions = RequestInit & { signal?: AbortSignal };
+
+export async function request<T>(path: string, options?: RequestOptions): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     credentials: 'same-origin',
     ...options,

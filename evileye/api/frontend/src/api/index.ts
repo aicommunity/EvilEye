@@ -11,3 +11,4 @@ export * from './users';
 export * from './bans';
 export * from './playback';
 export * from './editors';
+export * from './dataCache';

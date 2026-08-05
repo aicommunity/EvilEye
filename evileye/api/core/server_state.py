@@ -7,7 +7,13 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
 from evileye.api.core.config_run_access import get_config_run_manager
-from evileye.api.core.runtime_registry import list_runtime_records, load_runtime_record, load_runtime_snapshot
+from evileye.api.core.runtime_registry import (
+    list_runtime_record_stubs,
+    list_runtime_records,
+    load_runtime_record,
+    load_runtime_snapshot,
+    maybe_discover_process_runtimes,
+)
 from evileye.core.runtime_services import get_frame_broker
 
 
@@ -20,6 +26,9 @@ class ConfigSummary:
     event_detector_names: list[str]
     database_enabled: bool
 
+
+_config_summary_cache: dict[str, tuple[float, ConfigSummary]] = {}
+_EMPTY_CONFIG_SUMMARY = ConfigSummary(None, [], 0, 0, [], False)
 
 def _load_json(path: Path) -> dict[str, Any]:
     try:
@@ -37,9 +46,18 @@ def _get_pipeline_section(config: dict[str, Any]) -> dict[str, Any]:
 
 def load_config_summary(config_path: Optional[str]) -> ConfigSummary:
     if not config_path:
-        return ConfigSummary(None, [], 0, 0, [], False)
+        return _EMPTY_CONFIG_SUMMARY
 
-    config = _load_json(Path(config_path))
+    path = Path(config_path)
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        mtime = 0.0
+    cached = _config_summary_cache.get(config_path)
+    if cached and cached[0] == mtime:
+        return cached[1]
+
+    config = _load_json(path)
     pipeline = _get_pipeline_section(config)
     sources = pipeline.get("sources") if isinstance(pipeline, dict) else None
     detectors = pipeline.get("detectors") if isinstance(pipeline, dict) else None
@@ -93,7 +111,7 @@ def load_config_summary(config_path: Optional[str]) -> ConfigSummary:
     if not isinstance(database, dict):
         database = {}
 
-    return ConfigSummary(
+    summary = ConfigSummary(
         pipeline_class=pipeline.get("pipeline_class") if isinstance(pipeline, dict) else None,
         source_items=source_items,
         detector_count=len(detectors or []),
@@ -101,10 +119,31 @@ def load_config_summary(config_path: Optional[str]) -> ConfigSummary:
         event_detector_names=sorted(event_detectors.keys()),
         database_enabled=bool(database),
     )
+    _config_summary_cache[config_path] = (mtime, summary)
+    return summary
 
 
-def _combined_runtime_records() -> Dict[int, Dict[str, Any]]:
-    items = list_runtime_records()
+def _merge_manager_into_stub(stub: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, Any]:
+    merged = {**stub, **item}
+    merged.setdefault("managed", True)
+    merged.setdefault("source", "web")
+    if "alive" not in item:
+        merged["alive"] = merged.get("state") in {"starting", "running"}
+    return merged
+
+
+def _combined_runtime_stubs(*, discover: bool = False) -> Dict[int, Dict[str, Any]]:
+    if discover:
+        maybe_discover_process_runtimes()
+    items = dict(list_runtime_record_stubs(discover=False))
+    for rid, item in get_config_run_manager().list().items():
+        existing = items.get(rid, {})
+        items[rid] = _merge_manager_into_stub(existing, item)
+    return dict(sorted(items.items(), key=lambda pair: pair[0]))
+
+
+def _combined_runtime_records(*, discover: bool = True) -> Dict[int, Dict[str, Any]]:
+    items = list_runtime_records(discover=discover)
     for rid, item in get_config_run_manager().list().items():
         existing = items.get(rid, {})
         merged = {**existing, **item}
@@ -257,7 +296,7 @@ def _run_summary(record: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def list_run_summaries() -> list[Dict[str, Any]]:
-    return [_run_summary(record) for record in _combined_runtime_records().values()]
+    return [_run_summary(record) for record in _combined_runtime_records(discover=True).values()]
 
 
 def get_run_summary(rid: int) -> Optional[Dict[str, Any]]:
@@ -274,6 +313,13 @@ def _current_run_candidate_key(run: Dict[str, Any]) -> tuple[int, int, float]:
     return (state_rank, 1 if bool(run.get("latest_frame_available")) else 0, updated_at)
 
 
+def _stub_candidate_key(stub: Dict[str, Any]) -> tuple[int, float, int]:
+    state = str(stub.get("state") or "")
+    state_rank = 2 if state == "running" else 1 if stub.get("alive") else 0
+    updated_at = float(stub.get("updated_at") or 0.0)
+    return (state_rank, updated_at, int(stub.get("id") or 0))
+
+
 def _is_run_active(run: Dict[str, Any]) -> bool:
     state = str(run.get("state") or "")
     if state == "stopping":
@@ -282,7 +328,14 @@ def _is_run_active(run: Dict[str, Any]) -> bool:
 
 
 def list_active_run_summaries() -> list[Dict[str, Any]]:
-    runs = [run for run in list_run_summaries() if _is_run_active(run)]
+    stubs = _combined_runtime_stubs(discover=True)
+    active_ids = [rid for rid, stub in stubs.items() if _is_run_active(stub)]
+    runs: list[Dict[str, Any]] = []
+    for rid in active_ids:
+        record = _combined_runtime_record(rid)
+        if record is None:
+            continue
+        runs.append(_run_summary(record))
     runs.sort(
         key=lambda item: (
             _current_run_candidate_key(item),
@@ -293,24 +346,48 @@ def list_active_run_summaries() -> list[Dict[str, Any]]:
     return runs
 
 
-def get_current_run_summary() -> Optional[Dict[str, Any]]:
-    runs = list_active_run_summaries() or list_run_summaries()
-    if not runs:
+def get_current_config_path() -> Optional[str]:
+    """Return config_path for the best current run without hydrating full summaries."""
+    stubs = _combined_runtime_stubs(discover=False)
+    if not stubs:
         return None
-    return max(runs, key=_current_run_candidate_key)
+    active = [stub for stub in stubs.values() if _is_run_active(stub)]
+    pool = active or list(stubs.values())
+    best = max(pool, key=_stub_candidate_key)
+    path = best.get("config_path")
+    return str(path) if path else None
+
+
+def get_current_run_summary() -> Optional[Dict[str, Any]]:
+    stubs = _combined_runtime_stubs(discover=True)
+    if not stubs:
+        return None
+    active = [stub for stub in stubs.values() if _is_run_active(stub)]
+    pool = active or list(stubs.values())
+    best = max(pool, key=_stub_candidate_key)
+    rid = int(best.get("id") or 0)
+    if not rid:
+        return None
+    record = _combined_runtime_record(rid)
+    if record is None:
+        return None
+    return _run_summary(record)
 
 
 def list_history_run_summaries(*, exclude_current: bool = True) -> list[Dict[str, Any]]:
-    runs = list_run_summaries()
+    stubs = _combined_runtime_stubs(discover=False)
     current = get_current_run_summary()
     current_id = current.get("id") if current else None
-    items = []
-    for run in runs:
-        if _is_run_active(run):
+    items: list[Dict[str, Any]] = []
+    for rid, stub in stubs.items():
+        if _is_run_active(stub):
             continue
-        if exclude_current and current_id is not None and run.get("id") == current_id:
+        if exclude_current and current_id is not None and rid == current_id:
             continue
-        items.append(run)
+        record = _combined_runtime_record(rid)
+        if record is None:
+            continue
+        items.append(_run_summary(record))
     items.sort(key=lambda item: float(item.get("updated_at") or 0.0), reverse=True)
     return items
 

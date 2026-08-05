@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { playbackApi, stateApi, type PlaybackCamera, type PlaybackEventMarker, type PlaybackSegment } from '../../api';
+import {
+  playbackApi,
+  stateApi,
+  type PlaybackCamera,
+  type PlaybackEventMarker,
+  type PlaybackSegment,
+  cacheGet,
+  cacheSet,
+  isAbortError,
+} from '../../api';
 import { Button } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
 import { useI18n } from '../../i18n';
@@ -25,12 +34,20 @@ function parseDeepLinkTime(raw: string | null): number | null {
   return Number.isFinite(parsed) ? parsed / 1000 : null;
 }
 
+const CAMERAS_TTL_MS = 30_000;
+const SEGMENTS_TTL_MS = 15_000;
+
+function camerasCacheKey(date: string, runId: number | null): string {
+  return `playback:cameras:${date}:${runId ?? 'none'}`;
+}
+
 export function PlaybackPage() {
   const [params] = useSearchParams();
   const { showError } = useToast();
   const { t } = useI18n();
   const [date, setDate] = useState(today());
   const [runId, setRunId] = useState<number | null>(null);
+  const [runReady, setRunReady] = useState(false);
   const [cameras, setCameras] = useState<PlaybackCamera[]>([]);
   const [camerasLoading, setCamerasLoading] = useState(false);
   const { cols, setCols, selectedIds, setSelectedIds, mode, setMode } = usePlaybackLayout();
@@ -46,19 +63,33 @@ export function PlaybackPage() {
   const loadTimerRef = useRef<number | null>(null);
   const selectedIdsRef = useRef(selectedIds);
   selectedIdsRef.current = selectedIds;
+  const camerasAbortRef = useRef<AbortController | null>(null);
+  const segmentsAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    void stateApi.runs('current').then((res) => {
-      const items = Array.isArray(res) ? res : res.items ?? [];
-      const running = items.find((r) => r.state === 'running') ?? items[0];
-      if (running?.id) setRunId(running.id);
-    }).catch(() => undefined);
+    const ac = new AbortController();
+    void stateApi
+      .runs('current', { signal: ac.signal })
+      .then((res) => {
+        if (ac.signal.aborted) return;
+        const items = Array.isArray(res) ? res : res.items ?? [];
+        const running = items.find((r) => r.state === 'running') ?? items[0];
+        if (running?.id) setRunId(running.id);
+      })
+      .catch((e) => {
+        if (isAbortError(e)) return;
+      })
+      .finally(() => {
+        if (!ac.signal.aborted) setRunReady(true);
+      });
+    return () => ac.abort();
   }, []);
 
   const softRefreshCameras = useCallback(
     async (nextDate: string) => {
       try {
         const camRes = await playbackApi.cameras(nextDate, runId);
+        cacheSet(camerasCacheKey(nextDate, runId), camRes, CAMERAS_TTL_MS);
         setCameras(camRes.items);
         const ids = new Set(camRes.items.map((c) => c.id));
         setSelectedIds((prev) => {
@@ -73,6 +104,7 @@ export function PlaybackPage() {
   );
 
   useEffect(() => {
+    if (!runReady) return;
     let cancelled = false;
     if (dateChangeSourceRef.current === 'viewport') {
       dateChangeSourceRef.current = 'user';
@@ -80,36 +112,51 @@ export function PlaybackPage() {
       void softRefreshCameras(date);
       return;
     }
+    camerasAbortRef.current?.abort();
+    const ac = new AbortController();
+    camerasAbortRef.current = ac;
     void (async () => {
-      setCamerasLoading(true);
+      const cacheKey = camerasCacheKey(date, runId);
+      const cached = cacheGet<{ items: PlaybackCamera[] }>(cacheKey);
+      if (cached?.items?.length) {
+        setCameras(cached.items);
+        setCamerasLoading(false);
+      } else {
+        setCamerasLoading(true);
+      }
       try {
-        const camRes = await playbackApi.cameras(date, runId);
-        if (cancelled) return;
+        const camRes = await playbackApi.cameras(date, runId, { signal: ac.signal });
+        if (cancelled || ac.signal.aborted) return;
+        cacheSet(cacheKey, camRes, CAMERAS_TTL_MS);
         setCameras(camRes.items);
         const ids = new Set(camRes.items.map((c) => c.id));
         setSelectedIds((prev) => {
           const kept = prev.filter((id) => ids.has(id));
           if (kept.length) return kept;
           if (urlCamera && ids.has(urlCamera)) return [urlCamera];
-          // Default: all cameras for the date (fit layout handles density).
           return camRes.items.map((c) => c.id);
         });
         setSegmentsByCam({});
         setMarkers([]);
         setSegmentsLoaded(false);
       } catch (e) {
-        if (!cancelled) showError(e instanceof Error ? e.message : t('playback.unavailable'));
+        if (isAbortError(e) || cancelled) return;
+        showError(e instanceof Error ? e.message : t('playback.unavailable'));
       } finally {
-        if (!cancelled) setCamerasLoading(false);
+        if (!cancelled && !ac.signal.aborted) setCamerasLoading(false);
       }
     })();
     return () => {
       cancelled = true;
+      ac.abort();
     };
-  }, [date, runId, showError, t, urlCamera, setSelectedIds, softRefreshCameras]);
+  }, [date, runId, runReady, showError, t, urlCamera, setSelectedIds, softRefreshCameras]);
 
   const loadSegments = useCallback(
     async (camsOverride?: string[], opts?: { from?: number; to?: number; merge?: boolean; date?: string }) => {
+      segmentsAbortRef.current?.abort();
+      const ac = new AbortController();
+      segmentsAbortRef.current = ac;
       try {
         const nextSelected = camsOverride ?? selectedIdsRef.current;
         if (!nextSelected.length) {
@@ -122,7 +169,22 @@ export function PlaybackPage() {
           return;
         }
         const useDate = opts?.merge ? undefined : (opts?.date ?? date);
-        const batch = await playbackApi.segmentsBatch(nextSelected, opts?.from, opts?.to, useDate);
+        const segKey = `playback:segments:${useDate ?? ''}:${opts?.from ?? ''}:${opts?.to ?? ''}:${nextSelected.join(',')}`;
+        const evKey = `playback:events:${useDate ?? ''}:${opts?.from ?? ''}:${opts?.to ?? ''}:${nextSelected.join(',')}`;
+
+        const [batch, ev] = await Promise.all([
+          playbackApi.segmentsBatch(nextSelected, opts?.from, opts?.to, useDate, { signal: ac.signal }),
+          playbackApi.events(opts?.from, opts?.to, undefined, opts?.merge ? undefined : useDate, nextSelected, {
+            signal: ac.signal,
+          }),
+        ]);
+        if (ac.signal.aborted) return;
+
+        if (!opts?.merge) {
+          cacheSet(segKey, batch, SEGMENTS_TTL_MS);
+          cacheSet(evKey, ev, SEGMENTS_TTL_MS);
+        }
+
         const incoming: Record<string, PlaybackSegment[]> = { ...(batch.by_camera || {}) };
         for (const id of nextSelected) {
           if (!incoming[id]) incoming[id] = [];
@@ -146,18 +208,9 @@ export function PlaybackPage() {
             { preservePosition: Boolean(opts?.merge) || initialT != null },
           );
         }
-        // Always establish a day (or data) window so the timeline chrome is visible
-        // even when there are no segments/events for the selected date.
         if (!opts?.merge) {
           viewport.resetToData(from ?? null, to ?? null, useDate ?? date);
         }
-        const ev = await playbackApi.events(
-          opts?.from ?? from,
-          opts?.to ?? to,
-          undefined,
-          opts?.merge ? undefined : useDate,
-          nextSelected,
-        );
         setMarkers((prev) => {
           if (!opts?.merge) return ev.items;
           const byKey = new Map<string, PlaybackEventMarker>();
@@ -168,12 +221,12 @@ export function PlaybackPage() {
         setSegmentsLoaded(true);
         if (!opts?.merge && initialT != null) ctrl.seek(initialT);
       } catch (e) {
+        if (isAbortError(e)) return;
         showError(e instanceof Error ? e.message : t('playback.unavailable'));
       }
     },
-    [date, initialT, setSelectedIds, showError, t, ctrl, viewport],
+    [date, initialT, showError, t, ctrl, viewport],
   );
-
   useEffect(() => {
     // Show calendar-day timeline immediately on date change (before segments return).
     viewport.resetToData(null, null, date);

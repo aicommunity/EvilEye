@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -9,7 +10,7 @@ from typing import Any, Dict, Optional
 from evileye.api.core.journal_adapters_factory import create_event_journal_adapters
 from evileye.api.core.journal_grouping import group_events_rows, group_objects_rows
 from evileye.api.core.journal_time import normalize_row_times
-from evileye.api.core.server_state import get_current_run_summary
+from evileye.api.core.server_state import get_current_config_path
 from evileye.database.config_history_manager import ConfigHistoryManager
 from evileye.database_controller.database_controller_pg import DatabaseControllerPg
 from evileye.visualization_modules.journal_data_source_db import DatabaseJournalDataSource
@@ -96,6 +97,8 @@ _grouped_row_cache: dict[str, dict[str, dict[str, Any]]] = {"events": {}, "objec
 _json_source_cache: dict[tuple[str, str | None], JsonLabelJournalDataSource] = {}
 _runtime_params_cache: tuple[str, float, dict[str, Any]] | None = None
 _image_base_dir_cache: tuple[str, float, str] | None = None
+_light_config_path_cache: tuple[float, str | None] | None = None
+_LIGHT_CONFIG_PATH_TTL_SEC = 5.0
 _path_resolve_cache: OrderedDict[tuple[str, ...], str | None] = OrderedDict()
 _PATH_RESOLVE_CACHE_MAX = 4096
 
@@ -138,31 +141,27 @@ def _config_mtime(config_path: str | None) -> float:
 
 
 def _current_config_path() -> str | None:
-    current_run = get_current_run_summary()
-    if not isinstance(current_run, dict):
-        return None
-    config_path = current_run.get("config_path")
-    return str(config_path) if config_path else None
+    """Resolve current config path without hydrating full run summaries."""
+    global _light_config_path_cache
+    now = time.time()
+    if _light_config_path_cache is not None:
+        cached_at, cached_path = _light_config_path_cache
+        if now - cached_at < _LIGHT_CONFIG_PATH_TTL_SEC:
+            return cached_path
+    path = get_current_config_path()
+    _light_config_path_cache = (now, path)
+    return path
 
 
 def _load_runtime_params_uncached() -> dict[str, Any]:
-    current_run = get_current_run_summary()
-    if not current_run:
+    config_path = _current_config_path()
+    if not config_path:
         return {}
-    snapshot = current_run.get("runtime_snapshot") if isinstance(current_run, dict) else None
-    if isinstance(snapshot, dict):
-        payload = snapshot.get("config")
-        if isinstance(payload, dict):
-            return payload
-    config_path = current_run.get("config_path")
-    if config_path:
-        try:
-            payload = json.loads(Path(config_path).read_text(encoding="utf-8"))
-        except Exception:
-            payload = None
-        if isinstance(payload, dict):
-            return payload
-    return {}
+    try:
+        payload = json.loads(Path(config_path).read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _runtime_params() -> dict[str, Any]:
@@ -274,7 +273,21 @@ def _enrich_rows(
     return enriched_rows
 
 
+_filters_meta_cache: tuple[float, dict[str, Any]] | None = None
+_FILTERS_META_TTL_SEC = 60.0
+_journal_stats_page_cache: dict[tuple[str | None, str | None, str | None], tuple[float, dict[str, Any]]] = {}
+_JOURNAL_STATS_PAGE_TTL_SEC = 20.0
+_FILTERS_META_MAX_DATES = 60
+
+
 def load_filters_meta() -> dict[str, Any]:
+    global _filters_meta_cache
+    now = time.time()
+    if _filters_meta_cache is not None:
+        cached_at, payload = _filters_meta_cache
+        if now - cached_at < _FILTERS_META_TTL_SEC:
+            return payload
+
     dates: list[str] = []
     try:
         controller = _db_controller()
@@ -287,7 +300,10 @@ def load_filters_meta() -> dict[str, Any]:
             dates = list(source.list_available_dates())
     except Exception:
         dates = []
-    return {
+    # Newest dates last in many adapters; keep the most recent N for UI dropdowns.
+    if len(dates) > _FILTERS_META_MAX_DATES:
+        dates = sorted(dates)[-_FILTERS_META_MAX_DATES:]
+    payload = {
         "dates": dates,
         "source_names": sorted(_current_source_names()),
         "event_types_events": [
@@ -296,6 +312,8 @@ def load_filters_meta() -> dict[str, Any]:
         ],
         "event_types_objects": ["found", "lost"],
     }
+    _filters_meta_cache = (now, payload)
+    return payload
 
 
 def _merge_current_filters(filters: Dict[str, Any]) -> Dict[str, Any]:
@@ -625,6 +643,14 @@ def load_journal_stats(
     if not has_explicit:
         date = datetime.date.today().isoformat()
 
+    cache_key = (date, date_from, date_to)
+    now = time.time()
+    cached = _journal_stats_page_cache.get(cache_key)
+    if cached is not None:
+        cached_at, payload = cached
+        if now - cached_at < _JOURNAL_STATS_PAGE_TTL_SEC:
+            return payload
+
     scope = resolve_date_scope(date=date, date_from=date_from, date_to=date_to)
     scoped_filters: dict[str, Any] = {}
     if scope["mode"] == "single":
@@ -648,11 +674,13 @@ def load_journal_stats(
         )
         events_filters = {**scoped_filters, "journal_kind": "events"}
         objects_filters = {**scoped_filters, "journal_kind": "objects"}
-        return {
+        payload = {
             "available": True,
             "events_total": int(events_source.get_total(events_filters)),
             "objects_total": int(objects_source.get_total(objects_filters)),
         }
+        _journal_stats_page_cache[cache_key] = (now, payload)
+        return payload
 
     if not _json_journal_available():
         return {"available": False}
@@ -661,11 +689,13 @@ def load_journal_stats(
     source.begin_request()
     events_total = source.get_total({**scoped_filters, "journal_kind": "events"})
     objects_total = source.get_total({**scoped_filters, "journal_kind": "objects"})
-    return {
+    payload = {
         "available": True,
         "events_total": int(events_total),
         "objects_total": int(objects_total),
     }
+    _journal_stats_page_cache[cache_key] = (now, payload)
+    return payload
 
 
 def load_row_meta(*, row_key_value: str, journal_type: str, meta_only: bool = True) -> dict[str, Any]:
@@ -816,8 +846,7 @@ def load_config_history(*, limit: int) -> dict[str, Any]:
         }
     manager = ConfigHistoryManager(controller)
     items = manager.get_config_history(limit=limit)
-    current_run = get_current_run_summary()
-    config_path = current_run.get("config_path") if current_run else None
+    config_path = _current_config_path()
     if config_path:
         items = [
             item for item in items

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { logsApi, ApiError } from '../../api';
+import { logsApi, ApiError, cacheGet, cacheSet, isAbortError } from '../../api';
 import { Button, Modal } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
 import { useI18n } from '../../i18n';
@@ -10,30 +10,46 @@ function formatBytes(size: number): string {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+const LOGS_CACHE_KEY = 'logs:list';
+const LOGS_TTL_MS = 15_000;
+
+type LogsList = { available: boolean; files: Array<{ name: string; updated_at: number; size_bytes: number }> };
+
 export function LogsPage() {
   const { showError } = useToast();
   const { t, formatDateTime } = useI18n();
-  const [files, setFiles] = useState<Array<{ name: string; updated_at: number; size_bytes: number }>>([]);
-  const [loading, setLoading] = useState(true);
+  const cached = cacheGet<LogsList>(LOGS_CACHE_KEY);
+  const [files, setFiles] = useState<Array<{ name: string; updated_at: number; size_bytes: number }>>(
+    () => cached?.files ?? [],
+  );
+  const [loading, setLoading] = useState(() => !cached?.files?.length);
   const filesRef = useRef(files);
   filesRef.current = files;
   const [view, setView] = useState<{ name: string; content: string; live: boolean } | null>(null);
   const esRef = useRef<EventSource | null>(null);
 
-  const load = useCallback(async () => {
-    if (!filesRef.current.length) setLoading(true);
-    try {
-      const res = await logsApi.list();
-      setFiles(res.files ?? []);
-    } catch (e) {
-      showError(e instanceof Error ? e.message : t('logs.title'));
-    } finally {
-      setLoading(false);
-    }
-  }, [showError, t]);
+  const load = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!filesRef.current.length && !cacheGet(LOGS_CACHE_KEY)) setLoading(true);
+      try {
+        const res = await logsApi.list(50, { signal });
+        if (signal?.aborted) return;
+        cacheSet(LOGS_CACHE_KEY, res, LOGS_TTL_MS);
+        setFiles(res.files ?? []);
+      } catch (e) {
+        if (isAbortError(e) || signal?.aborted) return;
+        showError(e instanceof Error ? e.message : t('logs.title'));
+      } finally {
+        if (!signal?.aborted) setLoading(false);
+      }
+    },
+    [showError, t],
+  );
 
   useEffect(() => {
-    void load();
+    const ac = new AbortController();
+    void load(ac.signal);
+    return () => ac.abort();
   }, [load]);
 
   useEffect(() => {

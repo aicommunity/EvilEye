@@ -169,6 +169,29 @@ async def lifespan(_app: FastAPI):
         logger.warning("MP stale session cleanup failed on startup: %s", exc)
 
     try:
+        from evileye.api.core.runtime_registry import prune_stale_runtime_records
+
+        pruned = prune_stale_runtime_records()
+        if pruned:
+            logger.info("Pruned %d stale runtime registry record(s) on startup", pruned)
+    except Exception as exc:
+        logger.warning("Runtime registry prune failed on startup: %s", exc)
+
+    def _registry_prune_loop():
+        while not cleanup_stop.wait(3600.0):
+            try:
+                from evileye.api.core.runtime_registry import prune_stale_runtime_records
+
+                prune_stale_runtime_records()
+            except Exception:
+                continue
+
+    registry_prune_thread = threading.Thread(
+        target=_registry_prune_loop, daemon=True, name="RuntimeRegistryPrune"
+    )
+    registry_prune_thread.start()
+
+    try:
         yield
     finally:
         cleanup_stop.set()
@@ -183,7 +206,6 @@ async def lifespan(_app: FastAPI):
             get_config_run_manager().shutdown()
         except Exception as e:
             logger.error(f"Error during ConfigRunManager shutdown: {e}")
-
 
 def _cors_origins(web_auth) -> list[str]:
     raw = os.getenv("EVILEYE_CORS_ALLOW_ORIGINS", "*")

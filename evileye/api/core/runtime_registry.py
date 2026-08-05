@@ -21,7 +21,23 @@ SNAPSHOT_DIR = RUNTIME_ROOT / "snapshots"
 LOCK_FILE = RUNTIME_ROOT / ".lock"
 _corrupt_record_logged: set[int] = set()
 _corrupt_snapshot_logged: set[int] = set()
-
+_last_discover_ts: float = 0.0
+_DISCOVER_MIN_INTERVAL_SEC = 5.0
+_STUB_FIELDS = (
+    "id",
+    "pid",
+    "state",
+    "alive",
+    "updated_at",
+    "stopped_at",
+    "started_at",
+    "config_path",
+    "name",
+    "source",
+    "managed",
+    "frame_dir",
+    "error",
+)
 
 def _ensure_dirs() -> None:
     REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
@@ -136,6 +152,7 @@ def _parse_process_cmdline(pid: int) -> Optional[dict]:
 
 
 def discover_process_runtimes() -> None:
+    global _last_discover_ts
     _ensure_dirs()
     known_by_pid: dict[int, int] = {}
     for path in REGISTRY_DIR.glob("*.json"):
@@ -175,7 +192,16 @@ def discover_process_runtimes() -> None:
             managed=bool(info.get("managed")),
             state="running",
         )
+    _last_discover_ts = time.time()
 
+
+def maybe_discover_process_runtimes(*, force: bool = False) -> None:
+    """Throttle /proc discovery so hot UI polls do not rescan every request."""
+    global _last_discover_ts
+    now = time.time()
+    if not force and (now - _last_discover_ts) < _DISCOVER_MIN_INTERVAL_SEC:
+        return
+    discover_process_runtimes()
 
 def load_runtime_record(rid: int, *, refresh_state: bool = True) -> Optional[Dict]:
     path = _record_path(rid)
@@ -331,9 +357,102 @@ def delete_runtime_record(rid: int) -> bool:
     return True
 
 
-def list_runtime_records(*, include_stopped: bool = True) -> Dict[int, Dict]:
+def _record_to_stub(record: Dict) -> Dict:
+    stub = {key: record.get(key) for key in _STUB_FIELDS}
+    stub["id"] = int(record.get("id") or 0)
+    stub["alive"] = bool(record.get("alive"))
+    stub["managed"] = bool(record.get("managed"))
+    return stub
+
+
+def list_runtime_record_stubs(*, discover: bool = False) -> Dict[int, Dict]:
+    """Light registry scan: id/pid/state/alive/paths only (no snapshots)."""
     _ensure_dirs()
-    discover_process_runtimes()
+    if discover:
+        maybe_discover_process_runtimes()
+    items: Dict[int, Dict] = {}
+    for path in REGISTRY_DIR.glob("*.json"):
+        try:
+            rid = int(path.stem)
+        except ValueError:
+            continue
+        record = load_runtime_record(rid, refresh_state=True)
+        if not record:
+            continue
+        items[rid] = _record_to_stub(record)
+    return dict(sorted(items.items(), key=lambda pair: pair[0]))
+
+
+def prune_stale_runtime_records(
+        *,
+        max_stopped_age_sec: float = 7 * 86400,
+        keep_recent_stopped: int = 50,
+        max_total_records: int = 200,
+) -> int:
+    """Delete dead/stopped registry entries to keep UI scans cheap.
+
+    Keeps all alive PIDs. Among stopped/dead records keeps the newest
+    ``keep_recent_stopped`` (and anything newer than ``max_stopped_age_sec``
+    until total exceeds ``max_total_records``).
+    """
+    _ensure_dirs()
+    now = time.time()
+    stubs: list[Dict] = []
+    for path in list(REGISTRY_DIR.glob("*.json")):
+        try:
+            rid = int(path.stem)
+        except ValueError:
+            continue
+        record = load_runtime_record(rid, refresh_state=True)
+        if not record:
+            continue
+        stubs.append(_record_to_stub(record))
+
+    alive = [s for s in stubs if s.get("alive") and _is_pid_alive(s.get("pid"))]
+    alive_ids = {int(s["id"]) for s in alive}
+    dead = [s for s in stubs if int(s.get("id") or 0) not in alive_ids]
+    def _recency(stub: Dict) -> float:
+        for key in ("stopped_at", "updated_at", "started_at"):
+            try:
+                return float(stub.get(key) or 0.0)
+            except (TypeError, ValueError):
+                continue
+        return 0.0
+
+    dead_sorted = sorted(dead, key=_recency, reverse=True)
+    keep_dead: list[Dict] = []
+    for stub in dead_sorted:
+        if len(keep_dead) >= max(0, int(keep_recent_stopped)):
+            break
+        age = now - _recency(stub)
+        if float(max_stopped_age_sec) > 0 and age > float(max_stopped_age_sec):
+            continue
+        keep_dead.append(stub)
+    while len(alive) + len(keep_dead) > max(1, int(max_total_records)) and keep_dead:
+        keep_dead.pop()
+
+    keep_ids = {int(s["id"]) for s in alive} | {int(s["id"]) for s in keep_dead}
+    pruned = 0
+    for stub in stubs:
+        rid = int(stub.get("id") or 0)
+        if rid in keep_ids:
+            continue
+        if delete_runtime_record(rid):
+            pruned += 1
+    if pruned:
+        logger.info(
+            "Pruned %d stale runtime registry record(s); kept alive=%d stopped=%d",
+            pruned,
+            len(alive),
+            len(keep_dead),
+        )
+    return pruned
+
+
+def list_runtime_records(*, include_stopped: bool = True, discover: bool = True) -> Dict[int, Dict]:
+    _ensure_dirs()
+    if discover:
+        maybe_discover_process_runtimes()
     items: Dict[int, Dict] = {}
     for path in sorted(REGISTRY_DIR.glob("*.json")):
         try:

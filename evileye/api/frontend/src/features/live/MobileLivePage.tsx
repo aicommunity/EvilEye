@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { stateApi, streamSnapshotUrl, streamStatus, type StateCamera } from '../../api';
+import { stateApi, streamSnapshotUrl, streamStatus, type StateCamera, cacheGet, cacheSet, isAbortError } from '../../api';
 import { Badge, Button } from '../../components/ui';
 import { useVisibilityPolling } from '../../hooks/useVisibilityPolling';
 import { StreamOverlay } from '../../components/StreamOverlay';
@@ -12,24 +12,35 @@ export function MobileLivePage() {
 
 function MobileLiveInner() {
   const { t, lang, setLang } = useI18n();
-  const [cameras, setCameras] = useState<StateCamera[]>([]);
-  const [camerasLoading, setCamerasLoading] = useState(true);
+  const cached = cacheGet<{ items: StateCamera[] }>('state:cameras:current');
+  const [cameras, setCameras] = useState<StateCamera[]>(() => cached?.items ?? []);
+  const [camerasLoading, setCamerasLoading] = useState(() => !(cached?.items?.length));
   const [idx, setIdx] = useState(0);
   const [fullscreen, setFullscreen] = useState(false);
   const [snapTs, setSnapTs] = useState(Date.now());
+  const abortRef = useRef<AbortController | null>(null);
 
   const load = useCallback(async () => {
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
     setCameras((prev) => {
       if (!prev.length) setCamerasLoading(true);
       return prev;
     });
     try {
-      const res = await stateApi.cameras('current');
+      const res = await stateApi.cameras('current', { signal: ac.signal });
+      if (ac.signal.aborted) return;
+      cacheSet('state:cameras:current', res, 8_000);
       setCameras(res.items ?? []);
+    } catch (e) {
+      if (isAbortError(e)) return;
     } finally {
-      setCamerasLoading(false);
+      if (!ac.signal.aborted) setCamerasLoading(false);
     }
   }, []);
+
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   useVisibilityPolling(load, 5000, true, 200);
   useEffect(() => {

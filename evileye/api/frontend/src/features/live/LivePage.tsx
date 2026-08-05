@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { stateApi, journalsApi, streamStatus, type StateCamera } from '../../api';
+import { stateApi, journalsApi, streamStatus, type StateCamera, cacheGet, cacheSet, isAbortError } from '../../api';
+import { ApiError } from '../../api';
 import { Button } from '../../components/ui';
 import { StreamOverlay } from '../../components/StreamOverlay';
 import { useVisibilityPolling } from '../../hooks/useVisibilityPolling';
 import { useToast } from '../../components/ui/Toast';
-import { ApiError } from '../../api';
 import { useI18n } from '../../i18n';
 import { CameraGrid } from './CameraGrid';
 import { ExpandedCameraView } from './ExpandedCameraView';
@@ -13,31 +13,57 @@ import { useLiveLayout } from './useLiveLayout';
 import { useLiveGridPreviewWs } from './useLiveGridPreviewWs';
 import { fitColsForCount } from '../layout/fitGrid';
 
+const CAMERAS_CACHE_KEY = 'state:cameras:current';
+const STATS_CACHE_KEY = 'journals:stats';
+const CAMERAS_TTL_MS = 8_000;
+const STATS_TTL_MS = 20_000;
+
 export function LivePage() {
   const { showError } = useToast();
   const { t } = useI18n();
-  const [cameras, setCameras] = useState<StateCamera[]>([]);
-  const [camerasLoading, setCamerasLoading] = useState(true);
+  const cachedCams = cacheGet<{ items: StateCamera[] }>(CAMERAS_CACHE_KEY);
+  const cachedStats = cacheGet<{ available: boolean; events_total?: number; objects_total?: number }>(STATS_CACHE_KEY);
+  const [cameras, setCameras] = useState<StateCamera[]>(() => cachedCams?.items ?? []);
+  const [camerasLoading, setCamerasLoading] = useState(() => !(cachedCams?.items?.length));
   const camerasRef = useRef(cameras);
   camerasRef.current = cameras;
-  const [stats, setStats] = useState<{ events?: number; objects?: number }>({});
+  const [stats, setStats] = useState<{ events?: number; objects?: number }>(() =>
+    cachedStats?.available
+      ? { events: cachedStats.events_total, objects: cachedStats.objects_total }
+      : {},
+  );
   const [stream, setStream] = useState<{ rid: number; sid: number | null } | null>(null);
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const { cols, setCols, order, setOrder, mode, setMode } = useLiveLayout();
+  const abortRef = useRef<AbortController | null>(null);
 
   const load = useCallback(async () => {
-    if (!camerasRef.current.length) setCamerasLoading(true);
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
+    if (!camerasRef.current.length && !cacheGet(CAMERAS_CACHE_KEY)) setCamerasLoading(true);
     try {
-      const [camRes, st] = await Promise.all([stateApi.cameras('current'), journalsApi.stats().catch(() => null)]);
+      const [camRes, st] = await Promise.all([
+        stateApi.cameras('current', { signal: ac.signal }),
+        journalsApi.stats(undefined, { signal: ac.signal }).catch(() => null),
+      ]);
+      if (ac.signal.aborted) return;
+      cacheSet(CAMERAS_CACHE_KEY, camRes, CAMERAS_TTL_MS);
       setCameras(camRes.items ?? []);
-      if (st?.available) setStats({ events: st.events_total, objects: st.objects_total });
+      if (st?.available) {
+        cacheSet(STATS_CACHE_KEY, st, STATS_TTL_MS);
+        setStats({ events: st.events_total, objects: st.objects_total });
+      }
     } catch (e) {
+      if (isAbortError(e) || ac.signal.aborted) return;
       if (e instanceof ApiError && e.status === 401) return;
       showError(e instanceof Error ? e.message : t('live.empty'));
     } finally {
-      setCamerasLoading(false);
+      if (!ac.signal.aborted) setCamerasLoading(false);
     }
   }, [showError, t]);
+
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   useVisibilityPolling(load, 5000, true, 0);
 

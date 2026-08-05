@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { journalsApi, type JournalGroupedRow } from '../../api';
+import { journalsApi, type JournalGroupedRow, cacheGet, cacheSet, isAbortError } from '../../api';
 import { Button } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
 import { useI18n } from '../../i18n';
@@ -23,6 +23,9 @@ function yesterday(): string {
   return formatLocalDate(d);
 }
 
+const META_CACHE_KEY = 'journals:meta';
+const META_TTL_MS = 60_000;
+
 export function EventsPage() {
   const { t, formatDateTime } = useI18n();
   const { showError } = useToast();
@@ -31,8 +34,15 @@ export function EventsPage() {
   const [dateTo, setDateTo] = useState(today());
   const [eventType, setEventType] = useState('');
   const [source, setSource] = useState('');
-  const [eventTypes, setEventTypes] = useState<string[]>([]);
-  const [sources, setSources] = useState<string[]>([]);
+  const cachedMeta = cacheGet<{
+    event_types_events: string[];
+    event_types_objects: string[];
+    source_names: string[];
+  }>(META_CACHE_KEY);
+  const [eventTypes, setEventTypes] = useState<string[]>(() =>
+    tab === 'objects' ? cachedMeta?.event_types_objects ?? [] : cachedMeta?.event_types_events ?? [],
+  );
+  const [sources, setSources] = useState<string[]>(() => cachedMeta?.source_names ?? []);
   const [selected, setSelected] = useState<JournalGroupedRow | null>(null);
   const [historyItems, setHistoryItems] = useState<Record<string, unknown>[]>([]);
   const [historyMsg, setHistoryMsg] = useState<string | null>(null);
@@ -53,18 +63,38 @@ export function EventsPage() {
   const feed = useJournalFeed(tab === 'history' ? 'events' : tab, filters);
 
   useEffect(() => {
-    void journalsApi.filtersMeta().then((meta) => {
+    const ac = new AbortController();
+    const apply = (meta: {
+      event_types_events: string[];
+      event_types_objects: string[];
+      source_names: string[];
+    }) => {
       setEventTypes(tab === 'objects' ? meta.event_types_objects : meta.event_types_events);
       setSources(meta.source_names);
-    });
+    };
+    const cached = cacheGet<typeof cachedMeta>(META_CACHE_KEY);
+    if (cached) apply(cached);
+    void journalsApi
+      .filtersMeta({ signal: ac.signal })
+      .then((meta) => {
+        if (ac.signal.aborted) return;
+        cacheSet(META_CACHE_KEY, meta, META_TTL_MS);
+        apply(meta);
+      })
+      .catch((e) => {
+        if (isAbortError(e)) return;
+      });
+    return () => ac.abort();
   }, [tab]);
 
   useEffect(() => {
     if (tab !== 'history') return;
+    const ac = new AbortController();
     setHistoryLoading(true);
     void journalsApi
-      .configHistory()
+      .configHistory(30, { signal: ac.signal })
       .then((h) => {
+        if (ac.signal.aborted) return;
         if (!h.available) {
           setHistoryMsg(String(h.message ?? t('journals.historyUnavailable')));
           setHistoryItems([]);
@@ -73,7 +103,10 @@ export function EventsPage() {
         setHistoryMsg(null);
         setHistoryItems(h.items);
       })
-      .finally(() => setHistoryLoading(false));
+      .finally(() => {
+        if (!ac.signal.aborted) setHistoryLoading(false);
+      });
+    return () => ac.abort();
   }, [tab, t]);
 
   useVisibilityPolling(() => {

@@ -113,22 +113,47 @@ def _secure_under(base: Path, candidate: Path) -> Path:
 
 _DEFAULT_SEGMENT_LENGTH_SEC = 300.0
 _DURATION_CACHE: dict[str, tuple[float, float]] = {}
+_SEGMENT_LENGTH_CACHE: tuple[str, float, float] | None = None
 
 
 def _configured_segment_length_sec() -> float:
-    """Recording segment length from current run config (fallback 300s)."""
+    """Recording segment length from current config file (fallback 300s).
+
+    Avoids get_current_run_summary() so segment indexing stays disk-cheap.
+    """
+    global _SEGMENT_LENGTH_CACHE
     try:
-        _, params = _load_current_run_config()
-        record = params.get("record") if isinstance(params, dict) else None
-        if isinstance(record, dict):
-            value = record.get("segment_length_sec")
-            if value is not None:
-                sec = float(value)
-                if sec > 0:
-                    return sec
+        from evileye.api.core.server_state import get_current_config_path
+
+        config_path = get_current_config_path() or ""
     except Exception:
-        pass
-    return _DEFAULT_SEGMENT_LENGTH_SEC
+        config_path = ""
+    mtime = 0.0
+    if config_path:
+        try:
+            mtime = os.path.getmtime(config_path)
+        except OSError:
+            mtime = 0.0
+    if (
+        _SEGMENT_LENGTH_CACHE
+        and _SEGMENT_LENGTH_CACHE[0] == config_path
+        and _SEGMENT_LENGTH_CACHE[1] == mtime
+    ):
+        return _SEGMENT_LENGTH_CACHE[2]
+
+    length = _DEFAULT_SEGMENT_LENGTH_SEC
+    if config_path:
+        try:
+            params = json.loads(Path(config_path).read_text(encoding="utf-8"))
+            record = params.get("record") if isinstance(params, dict) else None
+            if isinstance(record, dict) and record.get("segment_length_sec") is not None:
+                sec = float(record.get("segment_length_sec"))
+                if sec > 0:
+                    length = sec
+        except Exception:
+            pass
+    _SEGMENT_LENGTH_CACHE = (config_path, mtime, length)
+    return length
 
 
 def _segment_start_ts(path: str) -> float | None:
