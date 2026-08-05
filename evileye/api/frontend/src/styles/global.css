@@ -1473,6 +1473,43 @@ body {
   border-top: 1px solid var(--border);
 }
 
+.timeline-ticks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.timeline-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: color-mix(in srgb, var(--border) 80%, transparent);
+  transform: translateX(-0.5px);
+}
+
+.timeline-tick-label {
+  position: absolute;
+  bottom: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.timeline-tick-label--start {
+  left: 0;
+  transform: none;
+}
+
+.timeline-tick-label--end {
+  left: auto;
+  right: 0;
+  transform: none;
+}
+
 .split-playback-container {
   display: flex;
   align-items: center;
