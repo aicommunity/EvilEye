@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 
+const KEY_V3 = 'evileye.playback.layout.v3';
 const KEY_V2 = 'evileye.playback.layout.v2';
 const KEY_V1 = 'evileye.playback.layout.v1';
 
@@ -14,9 +15,9 @@ interface PlaybackLayoutState {
 
 function load(): PlaybackLayoutState {
   try {
-    const rawV2 = localStorage.getItem(KEY_V2);
-    if (rawV2) {
-      const parsed = JSON.parse(rawV2) as Partial<PlaybackLayoutState>;
+    const rawV3 = localStorage.getItem(KEY_V3);
+    if (rawV3) {
+      const parsed = JSON.parse(rawV3) as Partial<PlaybackLayoutState>;
       return {
         mode: parsed.mode === 'fixed' ? 'fixed' : 'fit',
         cols: Math.max(1, Math.min(4, parsed.cols || 2)),
@@ -24,13 +25,14 @@ function load(): PlaybackLayoutState {
         order: Array.isArray(parsed.order) ? parsed.order : [],
       };
     }
-    const rawV1 = localStorage.getItem(KEY_V1);
-    if (rawV1) {
-      const parsed = JSON.parse(rawV1) as Partial<PlaybackLayoutState>;
+    // Migrate v1/v2: keep mode/cols/order, drop selectedIds so all cams are selected by default.
+    const rawLegacy = localStorage.getItem(KEY_V2) || localStorage.getItem(KEY_V1);
+    if (rawLegacy) {
+      const parsed = JSON.parse(rawLegacy) as Partial<PlaybackLayoutState>;
       return {
-        mode: 'fit',
+        mode: parsed.mode === 'fixed' ? 'fixed' : 'fit',
         cols: Math.max(1, Math.min(4, parsed.cols || 2)),
-        selectedIds: Array.isArray(parsed.selectedIds) ? parsed.selectedIds : [],
+        selectedIds: [],
         order: Array.isArray(parsed.order) ? parsed.order : [],
       };
     }
@@ -48,7 +50,7 @@ export function usePlaybackLayout() {
   const [order, setOrderState] = useState<string[]>(initial.order);
 
   useEffect(() => {
-    localStorage.setItem(KEY_V2, JSON.stringify({ mode, cols, selectedIds, order }));
+    localStorage.setItem(KEY_V3, JSON.stringify({ mode, cols, selectedIds, order }));
   }, [mode, cols, selectedIds, order]);
 
   return {

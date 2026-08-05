@@ -12,8 +12,6 @@ import { useTimelineViewport } from './useTimelineViewport';
 import { fitColsForCount } from '../layout/fitGrid';
 import { localDateString, mergeSegments } from './timelineMath';
 
-const MAX_PLAYBACK_CAMS = 4;
-
 function today(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -65,7 +63,7 @@ export function PlaybackPage() {
         const ids = new Set(camRes.items.map((c) => c.id));
         setSelectedIds((prev) => {
           const kept = prev.filter((id) => ids.has(id));
-          return kept.length ? kept.slice(0, MAX_PLAYBACK_CAMS) : prev;
+          return kept.length ? kept : prev;
         });
       } catch {
         /* keep current cameras on soft refresh failure */
@@ -91,9 +89,10 @@ export function PlaybackPage() {
         const ids = new Set(camRes.items.map((c) => c.id));
         setSelectedIds((prev) => {
           const kept = prev.filter((id) => ids.has(id));
-          if (kept.length) return kept.slice(0, MAX_PLAYBACK_CAMS);
+          if (kept.length) return kept;
           if (urlCamera && ids.has(urlCamera)) return [urlCamera];
-          return camRes.items.slice(0, Math.min(2, camRes.items.length)).map((c) => c.id);
+          // Default: all cameras for the date (fit layout handles density).
+          return camRes.items.map((c) => c.id);
         });
         setSegmentsByCam({});
         setMarkers([]);
@@ -112,11 +111,7 @@ export function PlaybackPage() {
   const loadSegments = useCallback(
     async (camsOverride?: string[], opts?: { from?: number; to?: number; merge?: boolean; date?: string }) => {
       try {
-        let nextSelected = camsOverride ?? selectedIdsRef.current;
-        if (nextSelected.length > MAX_PLAYBACK_CAMS) {
-          nextSelected = nextSelected.slice(0, MAX_PLAYBACK_CAMS);
-          setSelectedIds(nextSelected);
-        }
+        const nextSelected = camsOverride ?? selectedIdsRef.current;
         if (!nextSelected.length) {
           setSegmentsByCam({});
           setMarkers([]);
@@ -215,16 +210,13 @@ export function PlaybackPage() {
 
   const toggleCamera = (id: string) => {
     const on = selectedIds.includes(id);
-    let next = on ? selectedIds.filter((x) => x !== id) : [...selectedIds, id];
-    if (!on && next.length > MAX_PLAYBACK_CAMS) {
-      next = [...selectedIds.slice(1), id].slice(0, MAX_PLAYBACK_CAMS);
-    }
+    const next = on ? selectedIds.filter((x) => x !== id) : [...selectedIds, id];
     setSelectedIds(next);
   };
 
   const cameraDefs = useMemo(() => Object.fromEntries(cameras.map((c) => [c.id, c])), [cameras]);
   const allSegments = useMemo(() => Object.values(segmentsByCam).flat(), [segmentsByCam]);
-  const effectiveCols = mode === 'fit' ? fitColsForCount(selectedIds.length, MAX_PLAYBACK_CAMS) : cols;
+  const effectiveCols = mode === 'fit' ? fitColsForCount(selectedIds.length) : cols;
 
   let gridEmpty: string | null = null;
   if (camerasLoading) gridEmpty = t('playback.loadingCamerasGrid');
@@ -257,7 +249,7 @@ export function PlaybackPage() {
               {t('layout.fixed')}
             </Button>
             {mode === 'fixed'
-              ? [1, 2, 4].map((n) => (
+              ? [1, 2, 3, 4].map((n) => (
                   <Button key={n} size="sm" variant={cols === n ? 'primary' : 'outline'} onClick={() => setCols(n)}>
                     {n}
                   </Button>
