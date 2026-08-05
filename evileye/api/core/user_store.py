@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-from evileye.api.security import hash_password, verify_password
+from evileye.api.security import hash_password, normalize_role, verify_password
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 DEFAULT_STORE = Path("web_users.json")
@@ -90,6 +90,32 @@ class UserStore:
                 "password_hash": hash_password(password),
                 "role": "user",
                 "status": "pending",
+                "created_at": time.time(),
+            }
+            users.append(record)
+            return record
+
+        return _with_lock(self.path, mutate)
+
+    def create_user(self, email: str, password: str, *, role: str = "user") -> dict[str, Any]:
+        """Admin-created user: immediately approved (no email invite)."""
+        normalized = email.strip().lower()
+        if not EMAIL_RE.match(normalized):
+            raise ValueError("Invalid email address")
+        if len(password) < 6:
+            raise ValueError("Password must be at least 6 characters")
+        resolved_role = normalize_role(role)
+
+        def mutate(payload: dict[str, Any]) -> dict[str, Any]:
+            users = payload["users"]
+            for item in users:
+                if str(item.get("email", "")).lower() == normalized:
+                    raise ValueError("Email already registered")
+            record = {
+                "email": normalized,
+                "password_hash": hash_password(password),
+                "role": resolved_role,
+                "status": "approved",
                 "created_at": time.time(),
             }
             users.append(record)

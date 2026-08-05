@@ -240,3 +240,50 @@ def test_auth_register_and_users_flow(tmp_path, monkeypatch):
     assert user_login.status_code == 200
     perms = set(user_login.json().get("permissions") or [])
     assert "logs:view" not in perms
+
+
+def test_admin_create_user_approved_and_login(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    creds_path = tmp_path / "credentials.json"
+    creds_path.write_text(json.dumps({"web_auth": {"enabled": True, "users": []}}), encoding="utf-8")
+    ensure_default_admin_credentials(creds_path)
+
+    app = create_app()
+    client = TestClient(app)
+
+    assert client.post("/api/v1/users", json={
+        "email": "new@example.com",
+        "password": "secret12",
+        "role": "user",
+    }).status_code in {401, 403}
+
+    assert client.post("/api/v1/auth/login", json={"username": "admin", "password": "admin"}).status_code == 200
+
+    created = client.post(
+        "/api/v1/users",
+        json={"email": "new@example.com", "password": "secret12", "role": "user"},
+    )
+    assert created.status_code == 200
+    body = created.json()
+    assert body["ok"] is True
+    assert body["user"]["status"] == "approved"
+    assert body["mail"]["sent"] is False
+
+    dup = client.post(
+        "/api/v1/users",
+        json={"email": "new@example.com", "password": "secret12", "role": "user"},
+    )
+    assert dup.status_code == 409
+
+    login = client.post("/api/v1/auth/login", json={"username": "new@example.com", "password": "secret12"})
+    assert login.status_code == 200
+
+
+def test_user_store_create_user_unit(tmp_path):
+    from evileye.api.core.user_store import UserStore
+
+    store = UserStore(tmp_path / "web_users.json")
+    record = store.create_user("ops@example.com", "secret12", role="admin")
+    assert record["status"] == "approved"
+    assert record["role"] == "admin"
+    assert store.authenticate("ops@example.com", "secret12") is not None
