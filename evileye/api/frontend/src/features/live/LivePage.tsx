@@ -43,7 +43,7 @@ export function LivePage() {
       }
     };
     tick();
-    const id = window.setInterval(tick, 3000);
+    const id = window.setInterval(tick, 15000);
     return () => window.clearInterval(id);
   }, [cameras]);
 

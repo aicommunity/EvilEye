@@ -15,7 +15,7 @@ export function CameraGrid({
   onReorder: (keys: string[]) => void;
 }) {
   const { t } = useI18n();
-  const [focused, setFocused] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
   const [visible, setVisible] = useState<Set<string>>(new Set());
   const dragKey = useRef<string | null>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
@@ -54,8 +54,8 @@ export function CameraGrid({
     <div className="camera-group-grid" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
       {cameras.map((camera) => {
         const key = keyOf(camera);
-        const isFocused = focused === key;
-        const isVisible = visible.has(key) || isFocused;
+        const isSelected = selected === key;
+        const isVisible = visible.has(key) || isSelected;
         return (
           <div
             key={key}
@@ -72,12 +72,12 @@ export function CameraGrid({
                 elByKey.current.delete(key);
               }
             }}
-            onClick={() => setFocused(key)}
-            style={{ outline: isFocused ? '2px solid var(--accent)' : undefined, borderRadius: 8 }}
+            onClick={() => setSelected(key)}
+            style={{ outline: isSelected ? '2px solid var(--accent)' : undefined, borderRadius: 8 }}
           >
             <CameraTile
               camera={camera}
-              useMjpeg={isFocused}
+              useMjpeg={false}
               active={isVisible}
               onOpen={() => onOpenStream(camera.run_id, camera.source_id)}
               draggable

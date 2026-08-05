@@ -14,7 +14,7 @@ export function streamMjpgUrl(rid: number, fps?: number, sourceId?: number | nul
   return qs ? `${u}?${qs}` : u;
 }
 
-export function streamStatus(rid: number, sourceId?: number | null) {
+export function streamStatus(rid: number, sourceId?: number | null, level: 'grid' | 'stream' = 'grid') {
   return request<{
     run_id: number;
     pipeline_id: number;
@@ -23,7 +23,10 @@ export function streamStatus(rid: number, sourceId?: number | null) {
     has_frame: boolean;
     web_stream_available: boolean;
     frame_dir_configured: boolean;
-  }>(`/runs/${rid}/stream:status${sourceId != null ? `?source_id=${sourceId}` : ''}`);
+  }>(`/runs/${rid}/stream:status`, {
+    method: 'POST',
+    body: JSON.stringify({ level, source_id: sourceId ?? null }),
+  });
 }
 
 export function streamStop(rid: number, sourceId?: number | null) {

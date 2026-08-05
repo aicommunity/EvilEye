@@ -7,7 +7,7 @@ import { useMjpegLifecycle } from '../../hooks/useMjpegLifecycle';
 import { useRunMetadataWs } from './useRunMetadataWs';
 
 const STALE_SEC = 5;
-const LIVE_SNAPSHOT_MS = 1000;
+const LIVE_SNAPSHOT_MS = 3000;
 const STALE_SNAPSHOT_BACKOFF_MS = [2000, 4000, 8000];
 const ERROR_BACKOFF_MS = [1000, 2000, 4000, 8000];
 const MJPEG_STALE_POLLS_BEFORE_DROP = 2;

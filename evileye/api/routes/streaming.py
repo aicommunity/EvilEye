@@ -152,13 +152,34 @@ async def _snapshot_impl(request: Request, rid: int, source_id: int | None = Non
     _touch_preview_demand(request, rid, source_id=source_id, level="grid")
     run_info = _resolve_run(rid)
     _require_source_id_if_multi(run_info, source_id)
-    data = _load_latest_frame(run_info, source_id=source_id)
-    if not data:
+    run_id_str = str(run_info["id"])
+    broker_key = f"{run_id_str}:{source_id}" if source_id is not None else run_id_str
+    broker = get_frame_broker()
+    payload = broker.latest_payload(broker_key)
+    if not payload and source_id is not None:
+        payload = broker.latest_payload(run_id_str)
+    if not payload or not payload.data:
         raise HTTPException(status_code=404, detail="No frame available")
+    data = payload.data
+    meta = payload.metadata or {}
+    etag = meta.get("etag")
+    if not etag:
+        import hashlib
+        etag = hashlib.md5(data).hexdigest()
+    if_none_match = request.headers.get("if-none-match")
+    if if_none_match and if_none_match.strip('"') == str(etag):
+        return Response(
+            status_code=304,
+            headers={
+                "ETag": f'"{etag}"',
+                "Cache-Control": "no-cache",
+            },
+        )
     return Response(
         content=data,
         media_type="image/jpeg",
         headers={
+            "ETag": f'"{etag}"',
             "Cache-Control": "no-cache, no-store, must-revalidate",
             "Pragma": "no-cache",
             "Expires": "0",

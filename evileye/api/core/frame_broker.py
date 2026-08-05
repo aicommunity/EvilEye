@@ -1,5 +1,6 @@
 import threading
 import multiprocessing as mp
+import hashlib
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Tuple
 import time
@@ -121,6 +122,9 @@ class FrameBroker:
             metadata: Optional[dict[str, Any]] = None,
     ) -> None:
         meta = dict(metadata or {})
+        if payload is not None:
+            meta.setdefault("etag", hashlib.md5(payload).hexdigest())
+        meta.setdefault("ts", time.time())
         with self._lock:
             self._frames[pipeline_id] = FramePayload(
                 data=payload,

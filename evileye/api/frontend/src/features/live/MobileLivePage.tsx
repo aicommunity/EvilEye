@@ -60,7 +60,7 @@ function MobileLiveInner() {
       void streamStatus(rid).catch(() => undefined);
     };
     tick();
-    const id = window.setInterval(tick, 3000);
+    const id = window.setInterval(tick, 15000);
     return () => window.clearInterval(id);
   }, [cam?.run_id, cam?.run_state]);
 
