@@ -3,7 +3,8 @@ import os
 import time
 from fastapi import APIRouter, HTTPException, Response, Query, Request
 from fastapi.responses import StreamingResponse
-from typing import AsyncGenerator
+from pydantic import BaseModel
+from typing import AsyncGenerator, Literal
 import threading
 
 from evileye.api.core.config_run_access import get_config_run_manager
@@ -39,18 +40,32 @@ def _release_mjpeg_slot() -> None:
         _mjpeg_clients = max(0, _mjpeg_clients - 1)
 
 
-def _touch_preview_demand(request: Request, rid: int, source_id: int | None = None) -> None:
+def _touch_preview_demand(
+    request: Request,
+    rid: int,
+    source_id: int | None = None,
+    *,
+    level: str = "grid",
+) -> None:
     queue = getattr(request.app.state, "preview_demand_queue", None)
     if queue is None:
         return
     touched_at = time.time()
+    normalized_level = (level or "grid").strip().lower()
+    if normalized_level not in {"grid", "stream"}:
+        normalized_level = "grid"
     try:
         key = f"{rid}:{source_id}" if source_id is not None else str(rid)
-        queue.put_nowait((key, touched_at))
+        queue.put_nowait((key, touched_at, normalized_level))
         if source_id is not None:
-            queue.put_nowait((str(rid), touched_at))
+            queue.put_nowait((str(rid), touched_at, normalized_level))
     except Exception:
         return
+
+
+class StreamStatusTouch(BaseModel):
+    level: Literal["grid", "stream"] = "grid"
+    source_id: int | None = None
 
 
 def _resolve_run(rid: int) -> dict:
@@ -134,7 +149,7 @@ async def _snapshot_impl(request: Request, rid: int, source_id: int | None = Non
     """
     Return the latest available JPEG snapshot for the given runtime.
     """
-    _touch_preview_demand(request, rid, source_id=source_id)
+    _touch_preview_demand(request, rid, source_id=source_id, level="grid")
     run_info = _resolve_run(rid)
     _require_source_id_if_multi(run_info, source_id)
     data = _load_latest_frame(run_info, source_id=source_id)
@@ -215,7 +230,7 @@ async def _mjpeg_stream_impl(
     Browsers and players render it as a video stream thanks to
     'multipart/x-mixed-replace' and boundary markers.
     """
-    _touch_preview_demand(request, rid, source_id=source_id)
+    _touch_preview_demand(request, rid, source_id=source_id, level="stream")
     run_info = _resolve_run(rid)
     _require_source_id_if_multi(run_info, source_id)
     if not _web_stream_available(run_info, source_id=source_id):
@@ -320,7 +335,7 @@ async def _stream_status_impl(request: Request, rid: int, source_id: int | None 
     """
     Get the status of the stream for the given run.
     """
-    _touch_preview_demand(request, rid, source_id=source_id)
+    _touch_preview_demand(request, rid, source_id=source_id, level="grid")
     run_info = _resolve_run(rid)
     _require_source_id_if_multi(run_info, source_id)
     return _stream_status_payload(rid, run_info, source_id=source_id)
@@ -329,6 +344,19 @@ async def _stream_status_impl(request: Request, rid: int, source_id: int | None 
 @router.get("/runs/{rid}/stream:status")
 async def stream_status(request: Request, rid: int, source_id: int | None = Query(None)):
     return await _stream_status_impl(request, rid, source_id=source_id)
+
+
+@router.post("/runs/{rid}/stream:status")
+async def stream_status_touch(request: Request, rid: int, body: StreamStatusTouch):
+    _touch_preview_demand(
+        request,
+        rid,
+        source_id=body.source_id,
+        level=body.level,
+    )
+    run_info = _resolve_run(rid)
+    _require_source_id_if_multi(run_info, body.source_id)
+    return _stream_status_payload(rid, run_info, source_id=body.source_id)
 
 
 @router.get("/pipelines/{rid}/stream:status", deprecated=True)

@@ -55,7 +55,7 @@ def test_streaming_guard_multi_source(tmp_path, monkeypatch):
 
 
 def test_streaming_has_consumers_with_demand_or_local_or_server():
-    """Demand or local stream forces full encode; alive server enables heartbeat consumers."""
+    """Grid/stream demand or local MJPEG enables consumers; alive server alone needs heartbeat env."""
     service = StreamingService()
 
     class _ServerProcessManager:
@@ -65,9 +65,11 @@ def test_streaming_has_consumers_with_demand_or_local_or_server():
         def has_preview_demand(self, pipeline_key):
             return False
 
+        def get_preview_demand_level(self, pipeline_key):
+            return "idle"
+
     service.configure(pipeline_id="1", publish_fps=10.0, server_process_manager=_ServerProcessManager())
-    # Heartbeat path: server alive alone is enough for has_consumers.
-    assert service.has_consumers(source_id=0) is True
+    assert service.has_consumers(source_id=0) is False
 
     class _DeadServer:
         def is_alive(self):
@@ -76,12 +78,21 @@ def test_streaming_has_consumers_with_demand_or_local_or_server():
         def has_preview_demand(self, pipeline_key):
             return False
 
+        def get_preview_demand_level(self, pipeline_key):
+            return "idle"
+
     service.configure(pipeline_id="1", publish_fps=10.0, server_process_manager=_DeadServer())
     assert service.has_consumers(source_id=0) is False
 
     class _DemandManager(_DeadServer):
+        def is_alive(self):
+            return True
+
         def has_preview_demand(self, pipeline_key):
             return True
+
+        def get_preview_demand_level(self, pipeline_key):
+            return "grid"
 
     service.configure(pipeline_id="1", publish_fps=10.0, server_process_manager=_DemandManager())
     assert service.has_consumers(source_id=0) is True
@@ -107,6 +118,10 @@ def test_streaming_should_publish_heartbeat_vs_full(monkeypatch):
         "_get_consumer_state",
         lambda _k: (False, False, True, False),
     )
+    assert service._should_publish("1:0") is False
+    assert calls == []
+
+    monkeypatch.setenv("EVILEYE_PREVIEW_HEARTBEAT_FPS", "1")
     assert service._should_publish("1:0") is True
     assert calls[-1] == 1.0
 
@@ -116,8 +131,9 @@ def test_streaming_should_publish_heartbeat_vs_full(monkeypatch):
         "_get_consumer_state",
         lambda _k: (False, True, True, False),
     )
+    monkeypatch.setattr(service, "_get_preview_demand_level", lambda _k: "stream")
     assert service._should_publish("1:0") is True
-    assert calls[-1] is None
+    assert calls[-1] == 10.0
 
     calls.clear()
     monkeypatch.setattr(

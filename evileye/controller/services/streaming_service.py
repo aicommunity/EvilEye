@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 import urllib.error
@@ -276,11 +277,15 @@ class StreamingService:
         throttle_key = f"{self._pipeline_id}:{source_id}" if source_id is not None else self._pipeline_id
         has_local_stream, has_server_preview_demand, has_server_process, has_relay = self._get_consumer_state(
             throttle_key)
-        # Encode when someone watches, or when the web server is alive (1 fps heartbeat
-        # keeps FrameBroker warm so Live/snapshots are not permanently "not ready").
-        if has_local_stream or has_server_preview_demand or has_server_process:
+        if has_local_stream:
             return True
+        if has_server_preview_demand:
+            level = self._get_preview_demand_level(throttle_key)
+            return self._fps_for_demand_level(level) > 0.0
         if has_relay and has_server_preview_demand:
+            return True
+        heartbeat_fps = self._get_heartbeat_fps()
+        if has_server_process and heartbeat_fps > 0.0:
             return True
         return False
 
@@ -345,18 +350,55 @@ class StreamingService:
         has_local_stream, has_server_preview_demand, has_server_process, has_relay = self._get_consumer_state(
             throttle_key)
 
-        if has_local_stream or has_server_preview_demand:
-            return self._throttle_ok(throttle_key)
+        if has_local_stream:
+            return self._throttle_ok(throttle_key, fps_override=self._publish_fps)
 
-        # Relay alone does not force encode; only with explicit demand.
+        if has_server_preview_demand:
+            level = self._get_preview_demand_level(throttle_key)
+            fps = self._fps_for_demand_level(level)
+            if fps <= 0.0:
+                return False
+            return self._throttle_ok(throttle_key, fps_override=fps)
+
         if has_relay and has_server_preview_demand:
-            return self._throttle_ok(throttle_key)
+            level = self._get_preview_demand_level(throttle_key)
+            fps = self._fps_for_demand_level(level)
+            if fps <= 0.0:
+                return False
+            return self._throttle_ok(throttle_key, fps_override=fps)
 
-        # Heartbeat: keep broker warm at 1 fps while the web server process is alive.
-        if has_server_process:
-            return self._throttle_ok(throttle_key, fps_override=1.0)
+        heartbeat_fps = self._get_heartbeat_fps()
+        if has_server_process and heartbeat_fps > 0.0:
+            return self._throttle_ok(throttle_key, fps_override=heartbeat_fps)
 
         return False
+
+    def _get_preview_demand_level(self, throttle_key: str) -> str:
+        if self._server_process_manager is None:
+            return "idle"
+        try:
+            return self._server_process_manager.get_preview_demand_level(throttle_key)
+        except Exception:
+            return "idle"
+
+    def _get_heartbeat_fps(self) -> float:
+        try:
+            return max(0.0, float(os.getenv("EVILEYE_PREVIEW_HEARTBEAT_FPS", "0")))
+        except Exception:
+            return 0.0
+
+    def _get_grid_fps(self) -> float:
+        try:
+            return max(0.0, float(os.getenv("EVILEYE_PREVIEW_GRID_FPS", "2.0")))
+        except Exception:
+            return 2.0
+
+    def _fps_for_demand_level(self, level: str) -> float:
+        if level == "stream":
+            return self._publish_fps
+        if level == "grid":
+            return self._get_grid_fps()
+        return 0.0
 
     def _get_consumer_state(self, throttle_key: str) -> tuple[bool, bool, bool, bool]:
         has_local_stream = False
