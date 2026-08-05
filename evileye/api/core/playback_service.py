@@ -111,52 +111,108 @@ def _secure_under(base: Path, candidate: Path) -> Path:
     return resolved
 
 
+_DEFAULT_SEGMENT_LENGTH_SEC = 300.0
 _DURATION_CACHE: dict[str, tuple[float, float]] = {}
 
 
+def _configured_segment_length_sec() -> float:
+    """Recording segment length from current run config (fallback 300s)."""
+    try:
+        _, params = _load_current_run_config()
+        record = params.get("record") if isinstance(params, dict) else None
+        if isinstance(record, dict):
+            value = record.get("segment_length_sec")
+            if value is not None:
+                sec = float(value)
+                if sec > 0:
+                    return sec
+    except Exception:
+        pass
+    return _DEFAULT_SEGMENT_LENGTH_SEC
+
+
+def _segment_start_ts(path: str) -> float | None:
+    """Parse segment start from filename (Cam2_YYYYMMDD_HHMMSS_... or YYYYMMDD_HHMMSS)."""
+    name = Path(path).stem
+    m = re.search(r"(\d{8})[_-](\d{6})", name)
+    if not m:
+        return None
+    try:
+        return datetime.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M%S").timestamp()
+    except Exception:
+        return None
+
+
 def _video_duration_sec(path: str) -> float | None:
-    """Best-effort duration; prefer cache, OpenCV last resort."""
+    """Best-effort duration without decoding: neighbor gap / mtime / config length.
+
+    OpenCV is intentionally avoided — opening every MP4 blocks the web API for seconds
+    and fails on in-progress splitmux files (moov not written yet).
+    """
     try:
         st = os.stat(path)
         cached = _DURATION_CACHE.get(path)
         if cached and cached[0] == st.st_mtime:
             return cached[1]
     except OSError:
-        st = None
+        return None
 
+    start = _segment_start_ts(path)
+    configured = _configured_segment_length_sec()
     duration: float | None = None
-    try:
-        import cv2  # type: ignore
+    if start is not None:
+        # Closed or in-progress file: wall clock since segment open is a good estimate.
+        age = max(0.1, st.st_mtime - start)
+        duration = min(age, configured * 1.5)
+    else:
+        duration = configured
 
-        cap = cv2.VideoCapture(path)
-        if cap.isOpened():
-            fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
-            frames = float(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0.0)
-            cap.release()
-            if fps > 0 and frames > 0:
-                duration = max(0.1, frames / fps)
-    except Exception:
-        duration = None
-
-    if duration is not None and st is not None:
-        _DURATION_CACHE[path] = (st.st_mtime, duration)
+    _DURATION_CACHE[path] = (st.st_mtime, duration)
     return duration
 
 
+def _assign_segment_ends(
+    starts: list[tuple[str, float]],
+    *,
+    configured_length: float,
+) -> list[tuple[str, float, float]]:
+    """Fill end timestamps from next-segment start (gap) or mtime/config for the last one."""
+    if not starts:
+        return []
+    ordered = sorted(starts, key=lambda item: (item[1], item[0]))
+    max_span = configured_length * 1.25
+    out: list[tuple[str, float, float]] = []
+    for idx, (path, start) in enumerate(ordered):
+        if idx + 1 < len(ordered):
+            gap = ordered[idx + 1][1] - start
+            if 0 < gap <= max_span:
+                end = ordered[idx + 1][1]
+            else:
+                # Restart/hole between files — do not paint downtime as one segment.
+                try:
+                    mtime = os.path.getmtime(path)
+                    end = max(start + 0.1, min(mtime, start + max_span))
+                except OSError:
+                    end = start + configured_length
+        else:
+            try:
+                mtime = os.path.getmtime(path)
+                end = max(start + 0.1, min(mtime, start + max_span))
+            except OSError:
+                end = start + configured_length
+        out.append((path, start, end))
+    return out
+
+
 def _parse_segment_times(path: str) -> tuple[float, float] | None:
-    """Parse start/end from filename; Qt-like Cam2_YYYYMMDD_HHMMSS_... or YYYYMMDD_HHMMSS."""
-    name = Path(path).stem
-    m = re.search(r"(\d{8})[_-](\d{6})", name)
-    if m:
-        try:
-            start = datetime.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M%S").timestamp()
-            duration = _video_duration_sec(path) or 60.0
-            return start, start + duration
-        except Exception:
-            pass
+    """Parse start/end for a single path (batch load prefers _assign_segment_ends)."""
+    start = _segment_start_ts(path)
+    if start is not None:
+        duration = _video_duration_sec(path) or _configured_segment_length_sec()
+        return start, start + duration
     try:
         mtime = os.path.getmtime(path)
-        duration = _video_duration_sec(path) or 60.0
+        duration = _video_duration_sec(path) or _configured_segment_length_sec()
         return mtime - duration, mtime
     except Exception:
         return None
@@ -361,8 +417,34 @@ def load_segments(
                 paths.extend(glob.glob(str(folder / f"{camera}_*.mp4")))
             else:
                 paths.extend(glob.glob(str(folder / "*.mp4")))
+
+    configured_length = _configured_segment_length_sec()
+    dated: list[tuple[str, float]] = []
+    undated: list[str] = []
+    for path in set(paths):
+        start = _segment_start_ts(path)
+        if start is not None:
+            dated.append((path, start))
+        else:
+            undated.append(path)
+
     items: list[dict[str, Any]] = []
-    for path in sorted(set(paths)):
+    for path, start_ts, end_ts in _assign_segment_ends(dated, configured_length=configured_length):
+        if from_ts is not None and end_ts < from_ts:
+            continue
+        if to_ts is not None and start_ts > to_ts:
+            continue
+        items.append(
+            {
+                "path": path,
+                "start_ts": start_ts,
+                "end_ts": end_ts,
+                "duration_ms": int(max(0.0, end_ts - start_ts) * 1000),
+                "camera": camera,
+            }
+        )
+
+    for path in undated:
         times = _parse_segment_times(path)
         if not times:
             continue
@@ -380,6 +462,8 @@ def load_segments(
                 "camera": camera,
             }
         )
+
+    items.sort(key=lambda row: (row["start_ts"], row["path"]))
     return items
 
 

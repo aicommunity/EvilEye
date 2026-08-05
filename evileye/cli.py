@@ -209,304 +209,324 @@ def _run_with_scheduler(
 
     iteration = 0
     prev_iteration_end_time = None
-    while True:
-        iteration += 1
-        if iteration > 1:
-            _scheduler_prepare_next_launch(logger)
-        iteration_start_time = datetime.now()
-        if prev_iteration_end_time is not None:
-            logger.info(
-                f"[scheduler] Starting iteration {iteration}: previous iteration ended at "
-                f"{prev_iteration_end_time.isoformat()}, starting at {iteration_start_time.isoformat()}, "
-                f"gap between iterations: {(iteration_start_time - prev_iteration_end_time).total_seconds():.1f}s"
-            )
-        else:
-            logger.info(
-                f"[scheduler] Starting iteration {iteration}: first iteration, starting at "
-                f"{iteration_start_time.isoformat()}"
-            )
-        logger.info(f"[scheduler] Iteration {iteration}: launching process: {' '.join(base_cmd)}")
-        console.print(f"[green][scheduler] Iteration {iteration}: launching[/green] {' '.join(base_cmd)}")
+    stop_requested = False
 
-        try:
-            # Запускаем дочерний процесс без блокирующего ожидания
-            # Устанавливаем переменную окружения для определения запуска через CLI
-            env = os.environ.copy()
-            env['EVILEYE_CLI_LAUNCHED'] = '1'
-            proc = subprocess.Popen(
-                base_cmd,
-                cwd=os.getcwd(),
-                env=env,
-                start_new_session=True,
-            )
-        except Exception as e:
-            logger.error(f"[scheduler] Failed to start process: {e}", exc_info=True)
-            console.print(f"[red]Failed to start process: {e}[/red]")
-            raise typer.Exit(1)
+    def _request_stop(signum, _frame) -> None:
+        nonlocal stop_requested
+        stop_requested = True
+        logger.info("[scheduler] Received signal %s, will stop scheduler loop", signum)
 
-        start_time = datetime.now()
+    prev_sigterm = signal.signal(signal.SIGTERM, _request_stop)
+    prev_sighup = signal.signal(signal.SIGHUP, _request_stop) if hasattr(signal, "SIGHUP") else None
 
-        # Время следующего запуска по расписанию
-        if mode == "interval":
-            next_run = _get_next_interval(start_time, interval_minutes)
-        else:
-            next_run = _get_next_daily_time(start_time, time_str)
+    try:
+        while True:
+            if stop_requested:
+                logger.info("[scheduler] Stop requested before next iteration, exiting")
+                break
 
-        logger.info(f"[scheduler] Next launch scheduled at {next_run.isoformat()}")
-        console.print(f"[blue][scheduler] Next launch at {next_run.isoformat()}[/blue]")
-
-        # Логируем информацию о времени до следующего запуска
-        time_until_next = (next_run - start_time).total_seconds()
-        hours_until_next = time_until_next / 3600.0
-        if hours_until_next > 12:
-            days_until_next = hours_until_next / 24.0
-            logger.info(
-                f"[scheduler] ===== NEXT SCHEDULED RESTART: {next_run.strftime('%Y-%m-%d %H:%M:%S')} "
-                f"({days_until_next:.1f} days / {hours_until_next:.1f} hours from now) ====="
-            )
-            console.print(
-                f"[green][scheduler] Next scheduled restart: {next_run.strftime('%Y-%m-%d %H:%M:%S')} "
-                f"({days_until_next:.1f} days / {hours_until_next:.1f} hours)[/green]"
-            )
-        elif hours_until_next > 1:
-            logger.info(
-                f"[scheduler] ===== NEXT SCHEDULED RESTART: {next_run.strftime('%Y-%m-%d %H:%M:%S')} "
-                f"({hours_until_next:.1f} hours from now) ====="
-            )
-            console.print(
-                f"[green][scheduler] Next scheduled restart: {next_run.strftime('%Y-%m-%d %H:%M:%S')} "
-                f"({hours_until_next:.1f} hours)[/green]"
-            )
-        else:
-            minutes_until_next = time_until_next / 60.0
-            logger.info(
-                f"[scheduler] ===== NEXT SCHEDULED RESTART: {next_run.strftime('%Y-%m-%d %H:%M:%S')} "
-                f"({minutes_until_next:.1f} minutes from now) ====="
-            )
-            console.print(
-                f"[green][scheduler] Next scheduled restart: {next_run.strftime('%Y-%m-%d %H:%M:%S')} "
-                f"({minutes_until_next:.1f} minutes)[/green]"
-            )
-
-        # Флаг: нужно ли продолжать внешний цикл (ещё один запуск) после этой итерации
-        continue_scheduler = True
-        # Флаг: был ли процесс завершен по расписанию (для немедленного перезапуска)
-        scheduled_termination = False
-
-        try:
-            # Цикл до естественного завершения процесса ИЛИ до наступления времени перезапуска
-            while True:
-                now = datetime.now()
-                retcode = proc.poll()
-
-                if retcode is not None:
-                    duration = (now - start_time).total_seconds()
-                    logger.info(
-                        f"[scheduler] Iteration {iteration} finished with return code={retcode} "
-                        f"(duration={duration:.1f}s)"
-                    )
-
-                    # Return code 2 = memory leak restart requested
-                    if retcode == 2:
-                        logger.info(
-                            "[scheduler] Memory leak detected: restarting immediately "
-                            "(skipping scheduled wait)"
-                        )
-                        console.print(
-                            "[yellow][scheduler] Memory leak restart: launching next iteration immediately[/yellow]"
-                        )
-                        # Continue to next iteration immediately (skip wait logic)
-                        continue_scheduler = True
-                        break
-
-                    # Graceful exit (code 0) before next_run = user/manual shutdown.
-                    if retcode == 0 and now < next_run:
-                        logger.info(
-                            "[scheduler] Process finished before next scheduled time — "
-                            "stopping scheduler loop (respecting manual/normal shutdown)"
-                        )
-                        continue_scheduler = False
-                        break
-
-                    # Unexpected crash (SIGKILL, SIGSEGV, OOM, etc.) — auto-restart.
-                    if retcode != 0 and now < next_run:
-                        logger.warning(
-                            "[scheduler] Unexpected child death (return code=%s) before next "
-                            "scheduled time — auto-restarting iteration",
-                            retcode,
-                        )
-                        console.print(
-                            f"[yellow][scheduler] Unexpected exit (code={retcode}): "
-                            f"relaunching next iteration[/yellow]"
-                        )
-                        continue_scheduler = True
-                        break
-
-                    break
-
-                if now >= next_run:
-                    # Наступило время планового перезапуска — аккуратно останавливаем текущий процесс
-                    logger.info(
-                        f"[scheduler] Time {now.isoformat()} reached, terminating process pid={proc.pid} "
-                        f"for scheduled restart"
-                    )
-                    console.print(
-                        f"[yellow][scheduler] Stopping current run (pid={proc.pid}) for scheduled restart[/yellow]"
-                    )
-                    try:
-                        _scheduler_terminate_child(proc, logger)
-                    except Exception as e:
-                        logger.error(f"[scheduler] Error terminating process {proc.pid}: {e}", exc_info=True)
-
-                    # Финальная проверка, что процесс действительно завершился
-                    final_retcode = proc.poll()
-                    if final_retcode is None:
-                        logger.error(
-                            f"[scheduler] Process {proc.pid} is still running after termination attempts, "
-                            f"but continuing to next iteration"
-                        )
-                    else:
-                        logger.info(
-                            f"[scheduler] Process {proc.pid} confirmed terminated with return code {final_retcode}"
-                        )
-
-                    # Логирование после завершения процесса по расписанию
-                    termination_time = datetime.now()
-                    logger.info(
-                        f"[scheduler] Process termination completed at {termination_time.isoformat()}, "
-                        f"continue_scheduler={continue_scheduler}, proceeding to next iteration immediately"
-                    )
-                    # После завершения по расписанию запускаем следующую итерацию немедленно
-                    # без ожидания до следующего дня
-                    continue_scheduler = True
-                    # Устанавливаем флаг, что процесс был завершен по расписанию
-                    # Это нужно для того, чтобы после завершения ожидания запустить новую итерацию
-                    scheduled_termination = True
-                    break
-
-                time.sleep(1.0)
-
-        except KeyboardInterrupt:
-            logger.info("[scheduler] Interrupted by user, terminating child and stopping loop")
-            if proc.poll() is None:
-                try:
-                    _scheduler_terminate_child(proc, logger)
-                except Exception:
-                    try:
-                        proc.kill()
-                    except Exception:
-                        pass
-            raise typer.Exit(0)
-
-        # Если процесс завершился сам до наступления следующего планового запуска —
-        # выходим из основного цикла и НЕ перезапускаем приложение снова.
-        if not continue_scheduler:
-            prev_iteration_end_time = datetime.now()
-            logger.info(
-                f"[scheduler] Iteration {iteration} ended normally, scheduler loop stopping. "
-                f"End time: {prev_iteration_end_time.isoformat()}"
-            )
-            break
-
-        # Если процесс был завершён по расписанию, запускаем следующую итерацию немедленно
-        # без ожидания до следующего дня
-        if scheduled_termination:
-            logger.info(
-                f"[scheduler] Process was terminated by schedule, launching next iteration immediately"
-            )
-            # Переходим к следующей итерации цикла while True без ожидания
-            continue
-
-        # Если процесс завершился сам (не по расписанию), вычисляем следующее время запуска
-        # и ждём до этого времени перед запуском следующей итерации
-        now = datetime.now()
-        prev_iteration_end_time = now  # Сохраняем время завершения итерации
-
-        # Вычисляем следующее время запуска для следующей итерации
-        if mode == "interval":
-            next_run = _get_next_interval(now, interval_minutes)
-        else:  # daily_time
-            # Для ежедневного перезапуска: если мы только что завершили процесс по расписанию,
-            # следующее время будет завтра в то же время.
-            next_run = _get_next_daily_time(now, time_str)
-            # Проверяем, не слишком ли далеко следующее время (больше 12 часов = завтра)
-            time_until_next = (next_run - now).total_seconds()
-            if time_until_next > 12 * 3600:  # Больше 12 часов = точно завтра
+            iteration += 1
+            if iteration > 1:
+                _scheduler_prepare_next_launch(logger)
+            iteration_start_time = datetime.now()
+            if prev_iteration_end_time is not None:
                 logger.info(
-                    f"[scheduler] Next scheduled time is tomorrow ({next_run.isoformat()}), "
-                    f"process was just terminated by schedule. "
-                    f"Will wait until tomorrow for next iteration."
+                    f"[scheduler] Starting iteration {iteration}: previous iteration ended at "
+                    f"{prev_iteration_end_time.isoformat()}, starting at {iteration_start_time.isoformat()}, "
+                    f"gap between iterations: {(iteration_start_time - prev_iteration_end_time).total_seconds():.1f}s"
                 )
             else:
                 logger.info(
-                    f"[scheduler] Next scheduled time is {next_run.isoformat()}, "
-                    f"waiting {time_until_next:.1f}s until next iteration"
+                    f"[scheduler] Starting iteration {iteration}: first iteration, starting at "
+                    f"{iteration_start_time.isoformat()}"
                 )
-
-        # Ждём до следующего времени запуска
-        sleep_seconds = max(0.0, (next_run - now).total_seconds())
-        if sleep_seconds > 0:
-            logger.info(
-                f"[scheduler] Waiting {sleep_seconds:.1f} seconds until next scheduled launch "
-                f"at {next_run.isoformat()}"
-            )
-            console.print(
-                f"[blue][scheduler] Waiting {sleep_seconds:.1f}s until next launch at "
-                f"{next_run.isoformat()}[/blue]"
-            )
-
-            # Детальное логирование перед началом ожидания
-            logger.info(
-                f"[scheduler] Starting wait loop: current_time={now.isoformat()}, "
-                f"next_run={next_run.isoformat()}, sleep_seconds={sleep_seconds:.1f}"
-            )
-            num_intervals = int(sleep_seconds / 60.0) + (1 if sleep_seconds % 60.0 > 0 else 0)
-            logger.info(
-                f"[scheduler] Wait will be split into {num_intervals} interval(s) of up to 60 seconds each"
-            )
+            logger.info(f"[scheduler] Iteration {iteration}: launching process: {' '.join(base_cmd)}")
+            console.print(f"[green][scheduler] Iteration {iteration}: launching[/green] {' '.join(base_cmd)}")
 
             try:
-                # Разбиваем длительное ожидание на интервалы по 60 секунд для лучшей отзывчивости
-                # и возможности корректно обработать сигналы
-                remaining_seconds = sleep_seconds
-                interval_count = 0
-                while remaining_seconds > 0:
-                    interval_count += 1
-                    sleep_interval = min(60.0, remaining_seconds)  # Спим максимум 60 секунд за раз
-                    logger.info(
-                        f"[scheduler] Wait interval {interval_count}: sleeping for {sleep_interval:.1f}s, "
-                        f"{remaining_seconds:.1f}s remaining until next launch"
-                    )
-                    time.sleep(sleep_interval)
-                    remaining_seconds -= sleep_interval
-                    # Логируем прогресс после каждого интервала
-                    if remaining_seconds > 0:
+                # Запускаем дочерний процесс без блокирующего ожидания
+                # Устанавливаем переменную окружения для определения запуска через CLI
+                env = os.environ.copy()
+                env['EVILEYE_CLI_LAUNCHED'] = '1'
+                proc = subprocess.Popen(
+                    base_cmd,
+                    cwd=os.getcwd(),
+                    env=env,
+                    start_new_session=True,
+                )
+            except Exception as e:
+                logger.error(f"[scheduler] Failed to start process: {e}", exc_info=True)
+                console.print(f"[red]Failed to start process: {e}[/red]")
+                raise typer.Exit(1)
+
+            start_time = datetime.now()
+
+            # Время следующего запуска по расписанию
+            if mode == "interval":
+                next_run = _get_next_interval(start_time, interval_minutes)
+            else:
+                next_run = _get_next_daily_time(start_time, time_str)
+
+            logger.info(f"[scheduler] Next launch scheduled at {next_run.isoformat()}")
+            console.print(f"[blue][scheduler] Next launch at {next_run.isoformat()}[/blue]")
+
+            # Логируем информацию о времени до следующего запуска
+            time_until_next = (next_run - start_time).total_seconds()
+            hours_until_next = time_until_next / 3600.0
+            if hours_until_next > 12:
+                days_until_next = hours_until_next / 24.0
+                logger.info(
+                    f"[scheduler] ===== NEXT SCHEDULED RESTART: {next_run.strftime('%Y-%m-%d %H:%M:%S')} "
+                    f"({days_until_next:.1f} days / {hours_until_next:.1f} hours from now) ====="
+                )
+                console.print(
+                    f"[green][scheduler] Next scheduled restart: {next_run.strftime('%Y-%m-%d %H:%M:%S')} "
+                    f"({days_until_next:.1f} days / {hours_until_next:.1f} hours)[/green]"
+                )
+            elif hours_until_next > 1:
+                logger.info(
+                    f"[scheduler] ===== NEXT SCHEDULED RESTART: {next_run.strftime('%Y-%m-%d %H:%M:%S')} "
+                    f"({hours_until_next:.1f} hours from now) ====="
+                )
+                console.print(
+                    f"[green][scheduler] Next scheduled restart: {next_run.strftime('%Y-%m-%d %H:%M:%S')} "
+                    f"({hours_until_next:.1f} hours)[/green]"
+                )
+            else:
+                minutes_until_next = time_until_next / 60.0
+                logger.info(
+                    f"[scheduler] ===== NEXT SCHEDULED RESTART: {next_run.strftime('%Y-%m-%d %H:%M:%S')} "
+                    f"({minutes_until_next:.1f} minutes from now) ====="
+                )
+                console.print(
+                    f"[green][scheduler] Next scheduled restart: {next_run.strftime('%Y-%m-%d %H:%M:%S')} "
+                    f"({minutes_until_next:.1f} minutes)[/green]"
+                )
+
+            # Флаг: нужно ли продолжать внешний цикл (ещё один запуск) после этой итерации
+            continue_scheduler = True
+            # Немедленный перезапуск без ожидания next_run (расписание / crash / memory leak)
+            immediate_restart = False
+
+            try:
+                # Цикл до естественного завершения процесса ИЛИ до наступления времени перезапуска
+                while True:
+                    if stop_requested:
+                        logger.info("[scheduler] Stop requested, terminating child and exiting loop")
+                        if proc.poll() is None:
+                            try:
+                                _scheduler_terminate_child(proc, logger)
+                            except Exception:
+                                try:
+                                    proc.kill()
+                                except Exception:
+                                    pass
+                        continue_scheduler = False
+                        break
+
+                    now = datetime.now()
+                    retcode = proc.poll()
+
+                    if retcode is not None:
+                        duration = (now - start_time).total_seconds()
                         logger.info(
-                            f"[scheduler] Wait interval {interval_count} completed: "
-                            f"{remaining_seconds:.1f}s remaining until next launch at {next_run.isoformat()}"
-                        )
-                    else:
-                        logger.info(
-                            f"[scheduler] Wait interval {interval_count} completed: "
-                            f"all wait time elapsed, ready for next launch"
+                            f"[scheduler] Iteration {iteration} finished with return code={retcode} "
+                            f"(duration={duration:.1f}s)"
                         )
 
-                # Логирование после завершения ожидания
-                wait_end_time = datetime.now()
-                logger.info(
-                    f"[scheduler] Wait loop completed: started at {now.isoformat()}, "
-                    f"ended at {wait_end_time.isoformat()}, total wait duration: "
-                    f"{(wait_end_time - now).total_seconds():.1f}s"
-                )
-                logger.info(
-                    f"[scheduler] Ready to start next iteration, next_run time: {next_run.isoformat()}"
-                )
-                # Сохраняем время завершения ожидания для следующей итерации
-                prev_iteration_end_time = wait_end_time
+                        # Return code 2 = memory leak restart requested
+                        if retcode == 2:
+                            logger.info(
+                                "[scheduler] Memory leak detected: restarting immediately "
+                                "(skipping scheduled wait)"
+                            )
+                            console.print(
+                                "[yellow][scheduler] Memory leak restart: launching next iteration immediately[/yellow]"
+                            )
+                            continue_scheduler = True
+                            immediate_restart = True
+                            break
+
+                        # Graceful exit (code 0) before next_run = user/manual shutdown.
+                        if retcode == 0 and now < next_run:
+                            logger.info(
+                                "[scheduler] Process finished before next scheduled time — "
+                                "stopping scheduler loop (respecting manual/normal shutdown)"
+                            )
+                            continue_scheduler = False
+                            break
+
+                        # Unexpected crash (SIGKILL, SIGSEGV, OOM, etc.) — auto-restart immediately.
+                        if retcode != 0 and now < next_run:
+                            logger.warning(
+                                "[scheduler] Unexpected child death (return code=%s) before next "
+                                "scheduled time — auto-restarting iteration immediately",
+                                retcode,
+                            )
+                            console.print(
+                                f"[yellow][scheduler] Unexpected exit (code={retcode}): "
+                                f"relaunching next iteration immediately[/yellow]"
+                            )
+                            continue_scheduler = True
+                            immediate_restart = True
+                            break
+
+                        break
+
+                    if now >= next_run:
+                        # Наступило время планового перезапуска — аккуратно останавливаем текущий процесс
+                        logger.info(
+                            f"[scheduler] Time {now.isoformat()} reached, terminating process pid={proc.pid} "
+                            f"for scheduled restart"
+                        )
+                        console.print(
+                            f"[yellow][scheduler] Stopping current run (pid={proc.pid}) for scheduled restart[/yellow]"
+                        )
+                        try:
+                            _scheduler_terminate_child(proc, logger)
+                        except Exception as e:
+                            logger.error(f"[scheduler] Error terminating process {proc.pid}: {e}", exc_info=True)
+
+                        # Финальная проверка, что процесс действительно завершился
+                        final_retcode = proc.poll()
+                        if final_retcode is None:
+                            logger.error(
+                                f"[scheduler] Process {proc.pid} is still running after termination attempts, "
+                                f"but continuing to next iteration"
+                            )
+                        else:
+                            logger.info(
+                                f"[scheduler] Process {proc.pid} confirmed terminated with return code {final_retcode}"
+                            )
+
+                        termination_time = datetime.now()
+                        logger.info(
+                            f"[scheduler] Process termination completed at {termination_time.isoformat()}, "
+                            f"continue_scheduler={continue_scheduler}, proceeding to next iteration immediately"
+                        )
+                        continue_scheduler = True
+                        immediate_restart = True
+                        break
+
+                    time.sleep(1.0)
+
             except KeyboardInterrupt:
-                logger.info("[scheduler] Interrupted during wait, stopping scheduler loop")
-                console.print("[yellow][scheduler] Interrupted during wait, stopping loop[/yellow]")
+                logger.info("[scheduler] Interrupted by user, terminating child and stopping loop")
+                if proc.poll() is None:
+                    try:
+                        _scheduler_terminate_child(proc, logger)
+                    except Exception:
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
                 raise typer.Exit(0)
+
+            # Если процесс завершился сам до наступления следующего планового запуска —
+            # выходим из основного цикла и НЕ перезапускаем приложение снова.
+            if not continue_scheduler:
+                prev_iteration_end_time = datetime.now()
+                logger.info(
+                    f"[scheduler] Iteration {iteration} ended normally, scheduler loop stopping. "
+                    f"End time: {prev_iteration_end_time.isoformat()}"
+                )
+                break
+
+            # Crash / memory-leak / scheduled stop: next iteration without waiting for next_run
+            if immediate_restart:
+                logger.info(
+                    "[scheduler] Immediate restart requested, launching next iteration without wait"
+                )
+                continue
+
+            # Если процесс завершился сам (не по расписанию), вычисляем следующее время запуска
+            # и ждём до этого времени перед запуском следующей итерации
+            now = datetime.now()
+            prev_iteration_end_time = now  # Сохраняем время завершения итерации
+
+            # Вычисляем следующее время запуска для следующей итерации
+            if mode == "interval":
+                next_run = _get_next_interval(now, interval_minutes)
+            else:  # daily_time
+                next_run = _get_next_daily_time(now, time_str)
+                time_until_next = (next_run - now).total_seconds()
+                if time_until_next > 12 * 3600:  # Больше 12 часов = точно завтра
+                    logger.info(
+                        f"[scheduler] Next scheduled time is tomorrow ({next_run.isoformat()}), "
+                        f"waiting until then for next iteration."
+                    )
+                else:
+                    logger.info(
+                        f"[scheduler] Next scheduled time is {next_run.isoformat()}, "
+                        f"waiting {time_until_next:.1f}s until next iteration"
+                    )
+
+            # Ждём до следующего времени запуска
+            sleep_seconds = max(0.0, (next_run - now).total_seconds())
+            if sleep_seconds > 0:
+                logger.info(
+                    f"[scheduler] Waiting {sleep_seconds:.1f} seconds until next scheduled launch "
+                    f"at {next_run.isoformat()}"
+                )
+                console.print(
+                    f"[blue][scheduler] Waiting {sleep_seconds:.1f}s until next launch at "
+                    f"{next_run.isoformat()}[/blue]"
+                )
+
+                logger.info(
+                    f"[scheduler] Starting wait loop: current_time={now.isoformat()}, "
+                    f"next_run={next_run.isoformat()}, sleep_seconds={sleep_seconds:.1f}"
+                )
+                num_intervals = int(sleep_seconds / 60.0) + (1 if sleep_seconds % 60.0 > 0 else 0)
+                logger.info(
+                    f"[scheduler] Wait will be split into {num_intervals} interval(s) of up to 60 seconds each"
+                )
+
+                try:
+                    remaining_seconds = sleep_seconds
+                    interval_count = 0
+                    while remaining_seconds > 0:
+                        if stop_requested:
+                            logger.info("[scheduler] Stop requested during wait, stopping scheduler loop")
+                            console.print("[yellow][scheduler] Stop requested during wait, stopping loop[/yellow]")
+                            return
+                        interval_count += 1
+                        sleep_interval = min(60.0, remaining_seconds)
+                        logger.info(
+                            f"[scheduler] Wait interval {interval_count}: sleeping for {sleep_interval:.1f}s, "
+                            f"{remaining_seconds:.1f}s remaining until next launch"
+                        )
+                        time.sleep(sleep_interval)
+                        remaining_seconds -= sleep_interval
+                        if remaining_seconds > 0:
+                            logger.info(
+                                f"[scheduler] Wait interval {interval_count} completed: "
+                                f"{remaining_seconds:.1f}s remaining until next launch at {next_run.isoformat()}"
+                            )
+                        else:
+                            logger.info(
+                                f"[scheduler] Wait interval {interval_count} completed: "
+                                f"all wait time elapsed, ready for next launch"
+                            )
+
+                    wait_end_time = datetime.now()
+                    logger.info(
+                        f"[scheduler] Wait loop completed: started at {now.isoformat()}, "
+                        f"ended at {wait_end_time.isoformat()}, total wait duration: "
+                        f"{(wait_end_time - now).total_seconds():.1f}s"
+                    )
+                    logger.info(
+                        f"[scheduler] Ready to start next iteration, next_run time: {next_run.isoformat()}"
+                    )
+                    prev_iteration_end_time = wait_end_time
+                except KeyboardInterrupt:
+                    logger.info("[scheduler] Interrupted during wait, stopping scheduler loop")
+                    console.print("[yellow][scheduler] Interrupted during wait, stopping loop[/yellow]")
+                    raise typer.Exit(0)
+    finally:
+        signal.signal(signal.SIGTERM, prev_sigterm)
+        if prev_sighup is not None:
+            signal.signal(signal.SIGHUP, prev_sighup)
 
 
 # Create CLI app

@@ -93,7 +93,7 @@ def test_load_segments_multi_day_from_to(tmp_path, monkeypatch):
         cam.mkdir(parents=True)
         (cam / f"{day.replace('-', '')}_{hh}.mp4").write_bytes(b"fake")
     monkeypatch.setenv("EVILEYE_DATA_DIR", str(root))
-    monkeypatch.setattr(svc, "_video_duration_sec", lambda _p: 60.0)
+    monkeypatch.setattr(svc, "_configured_segment_length_sec", lambda: 60.0)
 
     start = __import__("datetime").datetime(2026, 8, 4, 0, 0, 0).timestamp()
     end = __import__("datetime").datetime(2026, 8, 5, 23, 59, 59).timestamp()
@@ -102,3 +102,19 @@ def test_load_segments_multi_day_from_to(tmp_path, monkeypatch):
     days = {__import__("datetime").datetime.fromtimestamp(s["start_ts"]).strftime("%Y-%m-%d") for s in segments}
     assert "2026-08-04" in days
     assert "2026-08-05" in days
+
+
+def test_load_segments_uses_neighbor_gap_not_opencv(tmp_path, monkeypatch):
+    root = tmp_path / "EvilEyeData"
+    cam = root / "Streams" / "2026-08-05" / "Cam1"
+    cam.mkdir(parents=True)
+    (cam / "Cam1_20260805_010000_0_00000.mp4").write_bytes(b"fake")
+    (cam / "Cam1_20260805_013000_0_00001.mp4").write_bytes(b"fake")
+    monkeypatch.setenv("EVILEYE_DATA_DIR", str(root))
+    monkeypatch.setattr(svc, "_configured_segment_length_sec", lambda: 1800.0)
+
+    segs = svc.load_segments("Cam1", date="2026-08-05")
+    assert len(segs) == 2
+    # First segment ends when the next starts (30 minutes), no OpenCV needed.
+    assert abs(segs[0]["duration_ms"] - 30 * 60 * 1000) < 1000
+    assert segs[0]["end_ts"] == segs[1]["start_ts"]
