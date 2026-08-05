@@ -4,11 +4,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import time
 from typing import Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 
 from evileye.api.core.config_run_access import get_config_run_manager
+from evileye.api.core.live_preview_hub import get_live_preview_hub
 from evileye.api.core.runtime_registry import load_runtime_record
 from evileye.api.security import current_user, load_web_auth_config, permissions_for_role
 from evileye.core.runtime_services import get_frame_broker
@@ -16,6 +18,41 @@ from evileye.core.runtime_services import get_frame_broker
 router = APIRouter(prefix="/api/v1", tags=["realtime"])
 
 _WS_MIN_INTERVAL_SEC = 0.5
+
+
+def _touch_preview_demand_ws(websocket: WebSocket, rid: int, level: str = "grid") -> None:
+    queue = getattr(websocket.app.state, "preview_demand_queue", None)
+    if queue is None:
+        return
+    touched_at = time.time()
+    try:
+        queue.put_nowait((str(rid), touched_at, level))
+    except Exception:
+        pass
+
+
+async def _authorize_live_ws(websocket: WebSocket) -> bool:
+    auth = load_web_auth_config()
+    if not auth.enabled:
+        return True
+    user = None
+    try:
+        user = current_user(websocket)  # type: ignore[arg-type]
+    except Exception:
+        user = None
+    if user is None:
+        session = websocket.scope.get("session") or {}
+        raw = session.get("user") if isinstance(session, dict) else None
+        if isinstance(raw, dict):
+            user = raw
+    if user is None:
+        await websocket.close(code=4401)
+        return False
+    granted = set(user.get("permissions") or permissions_for_role(str(user.get("role") or "user")))
+    if "live:view" not in granted and "system:admin" not in granted:
+        await websocket.close(code=4403)
+        return False
+    return True
 
 
 def _resolve_run(rid: int) -> dict:
@@ -107,3 +144,53 @@ async def run_metadata_ws(websocket: WebSocket, rid: int, source_id: Optional[in
             pass
     finally:
         broker.unsubscribe(key, q)
+
+
+@router.websocket("/runs/{rid}/ws/live")
+async def live_grid_preview_ws(websocket: WebSocket, rid: int):
+    if not await _authorize_live_ws(websocket):
+        return
+    try:
+        run_info = _resolve_run(rid)
+    except KeyError:
+        await websocket.close(code=4404)
+        return
+    if run_info.get("state") != "running":
+        await websocket.close(code=4001)
+        return
+
+    hub = get_live_preview_hub()
+    if len(hub._clients) >= hub._max_clients:
+        await websocket.close(code=4429)
+        return
+
+    await websocket.accept()
+    _touch_preview_demand_ws(websocket, rid, "grid")
+    client = await hub.register(websocket, rid)
+    if client is None:
+        await websocket.close(code=4429)
+        return
+
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                msg = json.loads(raw)
+            except Exception:
+                continue
+            op = msg.get("op") or msg.get("subscribe")
+            if op == "subscribe" or msg.get("subscribe") is not None:
+                ids = msg.get("source_ids") or msg.get("subscribe") or []
+                if isinstance(ids, list):
+                    hub.set_client_sources(client, [int(x) for x in ids])
+            elif op == "ping":
+                await websocket.send_json({"op": "pong"})
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        try:
+            await websocket.close()
+        except Exception:
+            pass
+    finally:
+        hub.unregister(client)

@@ -10,6 +10,7 @@ import { CameraGrid } from './CameraGrid';
 import { ExpandedCameraView } from './ExpandedCameraView';
 import { LiveAlertsRail } from './LiveAlertsRail';
 import { useLiveLayout } from './useLiveLayout';
+import { useLiveGridPreviewWs } from './useLiveGridPreviewWs';
 
 export function LivePage() {
   const { showError } = useToast();
@@ -78,6 +79,18 @@ export function LivePage() {
     return () => window.removeEventListener('keydown', onKey);
   }, [expandedKey]);
 
+  const primaryRunId = useMemo(() => {
+    const ids = [...new Set(cameras.map((c) => c.run_id).filter((id) => Number.isFinite(id)))];
+    return ids.length === 1 ? ids[0] : ids[0] ?? null;
+  }, [cameras]);
+
+  const previewSourceIds = useMemo(
+    () => cameras.map((c) => c.source_id).filter((id): id is number => id != null),
+    [cameras],
+  );
+
+  const previewWs = useLiveGridPreviewWs(primaryRunId, previewSourceIds);
+
   return (
     <section className="panel active">
       <div className="card">
@@ -112,6 +125,8 @@ export function LivePage() {
             onOpenStream={(rid, sid) => setStream({ rid, sid })}
             onReorder={setOrder}
             onExpand={setExpandedKey}
+            getPreviewBlob={(sid) => previewWs.getBlobUrl(sid)}
+            previewWsActive={previewWs.connected}
           />
         )}
       </div>

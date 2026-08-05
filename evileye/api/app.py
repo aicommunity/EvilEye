@@ -1,5 +1,6 @@
 import os
 import threading
+import asyncio
 from pathlib import Path
 from fastapi import FastAPI, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -76,6 +77,15 @@ async def lifespan(_app: FastAPI):
 
     cleanup_thread = threading.Thread(target=_broker_cleanup_loop, daemon=True, name="FrameBrokerCleanup")
     cleanup_thread.start()
+
+    from evileye.api.core.live_preview_hub import get_live_preview_hub
+
+    hub = get_live_preview_hub()
+    loop = asyncio.get_running_loop()
+    hub.start(loop)
+    get_frame_broker().set_publish_listener(hub.on_broker_publish)
+    _app.state.live_preview_hub = hub
+
     try:
         from evileye.core.mp_session_registry import cleanup_stale_sessions
 
@@ -89,6 +99,12 @@ async def lifespan(_app: FastAPI):
         yield
     finally:
         cleanup_stop.set()
+        try:
+            from evileye.api.core.live_preview_hub import get_live_preview_hub
+
+            await get_live_preview_hub().stop()
+        except Exception:
+            pass
         logger.info("FastAPI lifespan shutdown")
         try:
             get_config_run_manager().shutdown()

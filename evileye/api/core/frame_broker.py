@@ -2,7 +2,7 @@ import threading
 import multiprocessing as mp
 import hashlib
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Callable
 import time
 from evileye.core.logger import get_module_logger
 
@@ -42,6 +42,10 @@ class FrameBroker:
             "ipc_received": 0,
             "last_payload_bytes": 0,
         }
+        self._publish_listener: Optional[Callable[[str, bytes, dict[str, Any]], None]] = None
+
+    def set_publish_listener(self, listener) -> None:
+        self._publish_listener = listener
 
     # -- IPC bridge ------------------------------------------------------
 
@@ -145,6 +149,11 @@ class FrameBroker:
                 queue.put_nowait(dict(meta))
             except Exception:
                 continue
+        if self._publish_listener is not None:
+            try:
+                self._publish_listener(pipeline_id, payload, meta)
+            except Exception:
+                pass
         self.logger.debug(f"Published frame for pipeline '{pipeline_id}'")
 
     def get_runtime_stats(self) -> dict:
