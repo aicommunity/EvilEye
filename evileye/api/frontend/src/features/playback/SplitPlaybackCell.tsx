@@ -5,6 +5,7 @@ export function SplitPlaybackCell({
   srcCoords,
   label,
   getPosition,
+  positionSec,
   playing,
   speed,
   startTs,
@@ -13,6 +14,7 @@ export function SplitPlaybackCell({
   srcCoords: [number, number, number, number];
   label: string;
   getPosition: () => number;
+  positionSec: number;
   playing: boolean;
   speed: number;
   startTs: number;
@@ -81,7 +83,9 @@ export function SplitPlaybackCell({
 
   useEffect(() => {
     let raf = 0;
+    let cancelled = false;
     const tick = () => {
+      if (cancelled) return;
       const video = videoRef.current;
       if (video && videoUrl) {
         const local = Math.max(0, getPositionRef.current() - startTs);
@@ -95,11 +99,12 @@ export function SplitPlaybackCell({
       }
       if (playing) raf = window.requestAnimationFrame(tick);
     };
-    if (playing) tick();
+    tick();
     return () => {
+      cancelled = true;
       if (raf) window.cancelAnimationFrame(raf);
     };
-  }, [playing, videoUrl, startTs]);
+  }, [playing, videoUrl, startTs, positionSec]);
 
   return (
     <article className="camera-card playback-cell">

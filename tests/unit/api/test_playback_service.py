@@ -45,3 +45,35 @@ def test_path_traversal_rejected(tmp_path, monkeypatch):
         assert False, "expected PermissionError"
     except PermissionError:
         pass
+
+
+def test_date_dirs_covering_range(tmp_path):
+    base = tmp_path / "Streams"
+    (base / "2026-08-04").mkdir(parents=True)
+    (base / "2026-08-05").mkdir(parents=True)
+    (base / "2026-08-06").mkdir(parents=True)
+    start = __import__("datetime").datetime(2026, 8, 4, 12, 0, 0).timestamp()
+    end = __import__("datetime").datetime(2026, 8, 5, 18, 0, 0).timestamp()
+    dirs = svc._date_dirs_covering(base, from_ts=start, to_ts=end)
+    names = {p.name for p in dirs}
+    assert "2026-08-04" in names
+    assert "2026-08-05" in names
+    assert "2026-08-06" not in names
+
+
+def test_load_segments_multi_day_from_to(tmp_path, monkeypatch):
+    root = tmp_path / "EvilEyeData"
+    for day, hh in [("2026-08-04", "120000"), ("2026-08-05", "130000")]:
+        cam = root / "Streams" / day / "cam0"
+        cam.mkdir(parents=True)
+        (cam / f"{day.replace('-', '')}_{hh}.mp4").write_bytes(b"fake")
+    monkeypatch.setenv("EVILEYE_DATA_DIR", str(root))
+    monkeypatch.setattr(svc, "_video_duration_sec", lambda _p: 60.0)
+
+    start = __import__("datetime").datetime(2026, 8, 4, 0, 0, 0).timestamp()
+    end = __import__("datetime").datetime(2026, 8, 5, 23, 59, 59).timestamp()
+    segments = svc.load_segments("cam0", from_ts=start, to_ts=end, date=None)
+    assert len(segments) >= 2
+    days = {__import__("datetime").datetime.fromtimestamp(s["start_ts"]).strftime("%Y-%m-%d") for s in segments}
+    assert "2026-08-04" in days
+    assert "2026-08-05" in days

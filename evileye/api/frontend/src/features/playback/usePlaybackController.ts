@@ -54,9 +54,13 @@ export function usePlaybackController(initialSec: number | null) {
     toSec,
     positionSec,
     getPosition: () => positionRef.current,
-    setRange: (from: number | null, to: number | null) => {
+    setRange: (from: number | null, to: number | null, opts?: { preservePosition?: boolean }) => {
       setFromSec(from);
       setToSec(to);
+      const preserve = opts?.preservePosition === true;
+      if (preserve) {
+        return;
+      }
       if (from != null && (initialSec == null || initialSec < from)) {
         positionRef.current = from;
         setPositionSec(from);

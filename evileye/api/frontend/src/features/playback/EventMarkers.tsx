@@ -64,8 +64,10 @@ export function EventMarkers({
           <div key={clusterKey} style={{ position: 'absolute', left: `${c.leftPct}%`, top: 4, transform: 'translateX(-50%)', zIndex: expanded ? 5 : 1 }}>
             <button
               type="button"
+              data-timeline-marker
               title={title}
               aria-label={`marker-cluster-${c.count}`}
+              onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
                 if (c.count > 1) {

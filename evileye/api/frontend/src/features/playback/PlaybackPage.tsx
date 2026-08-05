@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { playbackApi, stateApi, type PlaybackCamera, type PlaybackEventMarker, type PlaybackSegment } from '../../api';
 import { Button } from '../../components/ui';
@@ -8,6 +8,9 @@ import { Timeline } from './Timeline';
 import { PlaybackGrid } from './PlaybackGrid';
 import { usePlaybackController } from './usePlaybackController';
 import { usePlaybackLayout } from './usePlaybackLayout';
+import { useTimelineViewport } from './useTimelineViewport';
+import { fitColsForCount } from '../layout/fitGrid';
+import { localDateString, mergeSegments } from './timelineMath';
 
 const MAX_PLAYBACK_CAMS = 4;
 
@@ -32,13 +35,19 @@ export function PlaybackPage() {
   const [runId, setRunId] = useState<number | null>(null);
   const [cameras, setCameras] = useState<PlaybackCamera[]>([]);
   const [camerasLoading, setCamerasLoading] = useState(false);
-  const { cols, setCols, selectedIds, setSelectedIds } = usePlaybackLayout();
+  const { cols, setCols, selectedIds, setSelectedIds, mode, setMode } = usePlaybackLayout();
   const [segmentsByCam, setSegmentsByCam] = useState<Record<string, PlaybackSegment[]>>({});
   const [markers, setMarkers] = useState<PlaybackEventMarker[]>([]);
   const [segmentsLoaded, setSegmentsLoaded] = useState(false);
   const initialT = parseDeepLinkTime(params.get('t'));
   const ctrl = usePlaybackController(initialT);
+  const viewport = useTimelineViewport();
   const urlCamera = params.get('camera');
+  const dateChangeSourceRef = useRef<'user' | 'viewport'>('user');
+  const skipHardSegmentReloadRef = useRef(false);
+  const loadTimerRef = useRef<number | null>(null);
+  const selectedIdsRef = useRef(selectedIds);
+  selectedIdsRef.current = selectedIds;
 
   useEffect(() => {
     void stateApi.runs('current').then((res) => {
@@ -48,8 +57,31 @@ export function PlaybackPage() {
     }).catch(() => undefined);
   }, []);
 
+  const softRefreshCameras = useCallback(
+    async (nextDate: string) => {
+      try {
+        const camRes = await playbackApi.cameras(nextDate, runId);
+        setCameras(camRes.items);
+        const ids = new Set(camRes.items.map((c) => c.id));
+        setSelectedIds((prev) => {
+          const kept = prev.filter((id) => ids.has(id));
+          return kept.length ? kept.slice(0, MAX_PLAYBACK_CAMS) : prev;
+        });
+      } catch {
+        /* keep current cameras on soft refresh failure */
+      }
+    },
+    [runId, setSelectedIds],
+  );
+
   useEffect(() => {
     let cancelled = false;
+    if (dateChangeSourceRef.current === 'viewport') {
+      dateChangeSourceRef.current = 'user';
+      skipHardSegmentReloadRef.current = true;
+      void softRefreshCameras(date);
+      return;
+    }
     void (async () => {
       setCamerasLoading(true);
       try {
@@ -75,45 +107,111 @@ export function PlaybackPage() {
     return () => {
       cancelled = true;
     };
-  }, [date, runId, showError, t, urlCamera, setSelectedIds]);
+  }, [date, runId, showError, t, urlCamera, setSelectedIds, softRefreshCameras]);
 
-  const loadSegments = useCallback(async (camsOverride?: string[]) => {
-    try {
-      let nextSelected = camsOverride ?? selectedIds;
-      if (nextSelected.length > MAX_PLAYBACK_CAMS) {
-        nextSelected = nextSelected.slice(0, MAX_PLAYBACK_CAMS);
-        setSelectedIds(nextSelected);
-      }
-      if (!nextSelected.length) {
-        setSegmentsByCam({});
-        setMarkers([]);
+  const loadSegments = useCallback(
+    async (camsOverride?: string[], opts?: { from?: number; to?: number; merge?: boolean; date?: string }) => {
+      try {
+        let nextSelected = camsOverride ?? selectedIdsRef.current;
+        if (nextSelected.length > MAX_PLAYBACK_CAMS) {
+          nextSelected = nextSelected.slice(0, MAX_PLAYBACK_CAMS);
+          setSelectedIds(nextSelected);
+        }
+        if (!nextSelected.length) {
+          setSegmentsByCam({});
+          setMarkers([]);
+          setSegmentsLoaded(true);
+          return;
+        }
+        const useDate = opts?.merge ? undefined : (opts?.date ?? date);
+        const batch = await playbackApi.segmentsBatch(nextSelected, opts?.from, opts?.to, useDate);
+        const incoming: Record<string, PlaybackSegment[]> = { ...(batch.by_camera || {}) };
+        for (const id of nextSelected) {
+          if (!incoming[id]) incoming[id] = [];
+        }
+        setSegmentsByCam((prev) => {
+          if (!opts?.merge) return incoming;
+          const merged: Record<string, PlaybackSegment[]> = { ...prev };
+          for (const id of nextSelected) {
+            merged[id] = mergeSegments(prev[id] ?? [], incoming[id] ?? []);
+          }
+          return merged;
+        });
+        const allSegs = Object.values(incoming).flat();
+        const from = allSegs.length ? Math.min(...allSegs.map((s) => s.start_ts)) : opts?.from;
+        const to = allSegs.length ? Math.max(...allSegs.map((s) => s.end_ts)) : opts?.to;
+        if (from != null && to != null) {
+          viewport.expandLoaded(from, to);
+          ctrl.setRange(
+            opts?.merge ? Math.min(ctrl.fromSec ?? from, from) : from,
+            opts?.merge ? Math.max(ctrl.toSec ?? to, to) : to,
+            { preservePosition: Boolean(opts?.merge) || initialT != null },
+          );
+          if (!opts?.merge) {
+            viewport.resetToData(from, to, date);
+          }
+        }
+        const ev = await playbackApi.events(
+          opts?.from ?? from,
+          opts?.to ?? to,
+          undefined,
+          opts?.merge ? undefined : useDate,
+          nextSelected,
+        );
+        setMarkers((prev) => {
+          if (!opts?.merge) return ev.items;
+          const byKey = new Map<string, PlaybackEventMarker>();
+          for (const m of prev) byKey.set(`${m.ts}:${m.camera}:${m.type}`, m);
+          for (const m of ev.items) byKey.set(`${m.ts}:${m.camera}:${m.type}`, m);
+          return Array.from(byKey.values()).sort((a, b) => a.ts - b.ts);
+        });
         setSegmentsLoaded(true);
-        return;
+        if (!opts?.merge && initialT != null) ctrl.seek(initialT);
+      } catch (e) {
+        showError(e instanceof Error ? e.message : t('playback.unavailable'));
       }
-      const batch = await playbackApi.segmentsBatch(nextSelected, undefined, undefined, date);
-      const segMap: Record<string, PlaybackSegment[]> = { ...(batch.by_camera || {}) };
-      for (const id of nextSelected) {
-        if (!segMap[id]) segMap[id] = [];
-      }
-      setSegmentsByCam(segMap);
-      const allSegs = Object.values(segMap).flat();
-      const from = allSegs.length ? Math.min(...allSegs.map((s) => s.start_ts)) : undefined;
-      const to = allSegs.length ? Math.max(...allSegs.map((s) => s.end_ts)) : undefined;
-      ctrl.setRange(from ?? null, to ?? null);
-      const ev = await playbackApi.events(from, to, undefined, date, nextSelected);
-      setMarkers(ev.items);
-      setSegmentsLoaded(true);
-      if (initialT != null) ctrl.seek(initialT);
-    } catch (e) {
-      showError(e instanceof Error ? e.message : t('playback.unavailable'));
-    }
-  }, [date, initialT, selectedIds, setSelectedIds, showError, t, ctrl]);
+    },
+    [date, initialT, setSelectedIds, showError, t, ctrl, viewport],
+  );
 
   useEffect(() => {
     if (!selectedIds.length || camerasLoading) return;
+    if (skipHardSegmentReloadRef.current) {
+      skipHardSegmentReloadRef.current = false;
+      return;
+    }
     void loadSegments(selectedIds);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reload on date/selection only
   }, [date, selectedIds, camerasLoading]);
+
+  const ensureAdjacentLoad = useCallback(
+    (vf: number, vt: number) => {
+      const { needFrom, needTo, needed } = viewport.needsLoad(vf, vt);
+      if (!needed) return;
+      if (loadTimerRef.current) window.clearTimeout(loadTimerRef.current);
+      loadTimerRef.current = window.setTimeout(() => {
+        void loadSegments(selectedIdsRef.current, {
+          from: needFrom,
+          to: needTo,
+          merge: true,
+        });
+      }, 250);
+    },
+    [loadSegments, viewport],
+  );
+
+  const onViewChange = useCallback(
+    (vf: number, vt: number) => {
+      viewport.setView(vf, vt);
+      ensureAdjacentLoad(vf, vt);
+      const centerDate = localDateString((vf + vt) / 2);
+      if (centerDate !== date) {
+        dateChangeSourceRef.current = 'viewport';
+        setDate(centerDate);
+      }
+    },
+    [viewport, ensureAdjacentLoad, date],
+  );
 
   const toggleCamera = (id: string) => {
     const on = selectedIds.includes(id);
@@ -126,6 +224,7 @@ export function PlaybackPage() {
 
   const cameraDefs = useMemo(() => Object.fromEntries(cameras.map((c) => [c.id, c])), [cameras]);
   const allSegments = useMemo(() => Object.values(segmentsByCam).flat(), [segmentsByCam]);
+  const effectiveCols = mode === 'fit' ? fitColsForCount(selectedIds.length, MAX_PLAYBACK_CAMS) : cols;
 
   let gridEmpty: string | null = null;
   if (camerasLoading) gridEmpty = t('playback.loadingCamerasGrid');
@@ -134,7 +233,7 @@ export function PlaybackPage() {
   else if (!segmentsLoaded) gridEmpty = t('playback.loadingCamerasGrid');
 
   return (
-    <section className="panel active playback-page">
+    <section className={`panel active playback-page${mode === 'fit' ? ' playback-page--fit' : ''}`}>
       <div className="card playback-card">
         <div className="toolbar" style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}>
           <div>
@@ -142,12 +241,28 @@ export function PlaybackPage() {
             <p className="hint">{t('playback.hint')}</p>
           </div>
           <div className="toolbar">
-            <input type="date" className="search-input" value={date} onChange={(e) => setDate(e.target.value)} />
-            {[1, 2, 4].map((n) => (
-              <Button key={n} size="sm" variant={cols === n ? 'primary' : 'outline'} onClick={() => setCols(n)}>
-                {n}
-              </Button>
-            ))}
+            <input
+              type="date"
+              className="search-input"
+              value={date}
+              onChange={(e) => {
+                dateChangeSourceRef.current = 'user';
+                setDate(e.target.value);
+              }}
+            />
+            <Button size="sm" variant={mode === 'fit' ? 'primary' : 'outline'} onClick={() => setMode('fit')}>
+              {t('layout.fit')}
+            </Button>
+            <Button size="sm" variant={mode === 'fixed' ? 'primary' : 'outline'} onClick={() => setMode('fixed')}>
+              {t('layout.fixed')}
+            </Button>
+            {mode === 'fixed'
+              ? [1, 2, 4].map((n) => (
+                  <Button key={n} size="sm" variant={cols === n ? 'primary' : 'outline'} onClick={() => setCols(n)}>
+                    {n}
+                  </Button>
+                ))
+              : null}
             <Button size="sm" variant={ctrl.playing ? 'danger' : 'success'} onClick={() => ctrl.setPlaying(!ctrl.playing)}>
               {ctrl.playing ? t('playback.pause') : t('playback.play')}
             </Button>
@@ -177,22 +292,28 @@ export function PlaybackPage() {
             <PlaybackGrid
               cameras={selectedIds}
               cameraDefs={cameraDefs}
-              cols={cols}
+              cols={effectiveCols}
+              mode={mode}
               segmentsByCam={segmentsByCam}
               getPosition={ctrl.getPosition}
+              positionSec={ctrl.positionSec}
               playing={ctrl.playing}
               speed={ctrl.speed}
             />
           )}
         </div>
         <div className="playback-timeline-footer">
+          <p className="hint" style={{ margin: '0 0 6px' }}>
+            {t('playback.timelineHint')}
+          </p>
           <Timeline
-            from={ctrl.fromSec}
-            to={ctrl.toSec}
+            viewFrom={viewport.viewFrom}
+            viewTo={viewport.viewTo}
             position={ctrl.positionSec}
             markers={markers}
             segments={allSegments}
             onSeek={ctrl.seek}
+            onViewChange={onViewChange}
           />
         </div>
       </div>

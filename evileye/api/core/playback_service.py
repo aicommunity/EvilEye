@@ -84,6 +84,41 @@ def _date_dirs(base: Path, date: Optional[str]) -> list[Path]:
     return sorted([p for p in base.iterdir() if p.is_dir()], reverse=True)[:14]
 
 
+def _date_dirs_covering(
+    base: Path,
+    *,
+    date: Optional[str] = None,
+    from_ts: Optional[float] = None,
+    to_ts: Optional[float] = None,
+) -> list[Path]:
+    """Collect day folders covering from/to (and optional explicit date)."""
+    found: dict[str, Path] = {}
+
+    def _add(path: Path) -> None:
+        if path.is_dir():
+            found[path.name] = path
+
+    if from_ts is not None or to_ts is not None:
+        start = from_ts if from_ts is not None else (to_ts or 0) - 86400
+        end = to_ts if to_ts is not None else (from_ts or 0) + 86400
+        if end < start:
+            start, end = end, start
+        day = datetime.fromtimestamp(start).date()
+        end_day = datetime.fromtimestamp(end).date()
+        while day <= end_day:
+            _add(base / day.isoformat())
+            day = day.fromordinal(day.toordinal() + 1)
+
+    if date:
+        for p in _date_dirs(base, date):
+            _add(p)
+
+    if found:
+        return sorted(found.values(), key=lambda p: p.name)
+
+    return _date_dirs(base, date)
+
+
 def _date_str_from_ts(ts: float) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).astimezone().strftime("%Y-%m-%d")
 
@@ -224,7 +259,7 @@ def load_segments(
     if not base.exists():
         return []
     paths: list[str] = []
-    for date_dir in _date_dirs(base, date):
+    for date_dir in _date_dirs_covering(base, date=date, from_ts=from_ts, to_ts=to_ts):
         folder = resolve_camera_folder(date_dir, camera)
         if folder is None:
             continue

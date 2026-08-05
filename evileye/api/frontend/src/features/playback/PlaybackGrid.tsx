@@ -2,17 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import { playbackApi, type PlaybackCamera, type PlaybackSegment } from '../../api';
 import { useI18n } from '../../i18n';
 import { SplitPlaybackCell } from './SplitPlaybackCell';
+import { pickSegmentNear } from './timelineMath';
 
 export type PlaybackMediaSlot = {
   url: string | null;
   startTs: number;
   endTs: number;
 };
-
-function pickSegment(segs: PlaybackSegment[], positionSec: number): PlaybackSegment | null {
-  if (!segs.length) return null;
-  return segs.find((s) => positionSec >= s.start_ts && positionSec <= s.end_ts) ?? segs[0];
-}
 
 function nextSegment(segs: PlaybackSegment[], current: PlaybackSegment | null): PlaybackSegment | null {
   if (!current || !segs.length) return null;
@@ -27,21 +23,29 @@ export function PlaybackGrid({
   cols,
   segmentsByCam,
   getPosition,
+  positionSec,
   playing,
   speed,
+  mode = 'fixed',
 }: {
   cameras: string[];
   cameraDefs: Record<string, PlaybackCamera>;
   cols: number;
   segmentsByCam: Record<string, PlaybackSegment[]>;
   getPosition: () => number;
+  positionSec: number;
   playing: boolean;
   speed: number;
+  mode?: 'fit' | 'fixed';
 }) {
   const { t } = useI18n();
   if (!cameras.length) return <p className="empty">{t('playback.selectCameras')}</p>;
+  const fitClass = mode === 'fit' ? ' camera-group-grid--fit' : '';
   return (
-    <div className="camera-group-grid" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
+    <div
+      className={`camera-group-grid${fitClass}`}
+      style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
+    >
       {cameras.map((id) => (
         <PlaybackCell
           key={id}
@@ -49,6 +53,7 @@ export function PlaybackGrid({
           camera={cameraDefs[id]}
           segments={segmentsByCam[id] ?? []}
           getPosition={getPosition}
+          positionSec={positionSec}
           playing={playing}
           speed={speed}
         />
@@ -62,6 +67,7 @@ function PlaybackCell({
   camera,
   segments,
   getPosition,
+  positionSec,
   playing,
   speed,
 }: {
@@ -69,6 +75,7 @@ function PlaybackCell({
   camera?: PlaybackCamera;
   segments: PlaybackSegment[];
   getPosition: () => number;
+  positionSec: number;
   playing: boolean;
   speed: number;
 }) {
@@ -85,66 +92,65 @@ function PlaybackCell({
 
   const split = Boolean(camera?.split && camera?.src_coords && camera.src_coords.length === 4);
 
+  const applySync = () => {
+    const position = getPositionRef.current();
+    const segs = segmentsRef.current;
+    const seg = pickSegmentNear(segs, position);
+    const nxt = nextSegment(segs, seg);
+    const preload = preloadRef.current;
+
+    if (!seg) {
+      if (pathRef.current != null) {
+        pathRef.current = null;
+        slotRef.current = null;
+        setSlot(null);
+      }
+    } else if (seg.path !== pathRef.current) {
+      const nextSlot: PlaybackMediaSlot = {
+        url: playbackApi.mediaUrl(seg.path),
+        startTs: seg.start_ts,
+        endTs: seg.end_ts,
+      };
+      pathRef.current = seg.path;
+      slotRef.current = nextSlot;
+      setSlot(nextSlot);
+    }
+
+    if (preload) {
+      if (nxt) {
+        const nextUrl = playbackApi.mediaUrl(nxt.path);
+        if (preload.getAttribute('src') !== nextUrl) {
+          preload.setAttribute('src', nextUrl);
+          preload.preload = 'auto';
+          try {
+            preload.load();
+          } catch {
+            /* ignore */
+          }
+        }
+      } else if (preload.getAttribute('src')) {
+        preload.removeAttribute('src');
+      }
+    }
+
+    const v = ref.current;
+    const current = slotRef.current;
+    if (v && current) {
+      const local = Math.max(0, position - current.startTs);
+      if (Math.abs(v.currentTime - local) > 0.4) {
+        try {
+          v.currentTime = local;
+        } catch {
+          /* ignore seek race */
+        }
+      }
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
     let rafHandle = 0;
     let vfcHandle: number | null = null;
-
-    const applySync = () => {
-      if (cancelled) return;
-      const positionSec = getPositionRef.current();
-      const segs = segmentsRef.current;
-      const seg = pickSegment(segs, positionSec);
-      const nxt = nextSegment(segs, seg);
-      const preload = preloadRef.current;
-
-      if (!seg) {
-        if (pathRef.current != null) {
-          pathRef.current = null;
-          slotRef.current = null;
-          setSlot(null);
-        }
-      } else if (seg.path !== pathRef.current) {
-        const nextSlot: PlaybackMediaSlot = {
-          url: playbackApi.mediaUrl(seg.path),
-          startTs: seg.start_ts,
-          endTs: seg.end_ts,
-        };
-        pathRef.current = seg.path;
-        slotRef.current = nextSlot;
-        setSlot(nextSlot);
-      }
-
-      if (preload) {
-        if (nxt) {
-          const nextUrl = playbackApi.mediaUrl(nxt.path);
-          if (preload.getAttribute('src') !== nextUrl) {
-            preload.setAttribute('src', nextUrl);
-            preload.preload = 'auto';
-            try {
-              preload.load();
-            } catch {
-              /* ignore */
-            }
-          }
-        } else if (preload.getAttribute('src')) {
-          preload.removeAttribute('src');
-        }
-      }
-
-      const v = ref.current;
-      const current = slotRef.current;
-      if (v && current) {
-        const local = Math.max(0, positionSec - current.startTs);
-        if (Math.abs(v.currentTime - local) > 0.4) {
-          try {
-            v.currentTime = local;
-          } catch {
-            /* ignore seek race */
-          }
-        }
-      }
-    };
 
     const schedule = () => {
       if (cancelled) return;
@@ -177,7 +183,13 @@ function PlaybackCell({
       }
       if (rafHandle) window.cancelAnimationFrame(rafHandle);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- applySync closes over refs
   }, [playing, segments]);
+
+  useEffect(() => {
+    applySync();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [positionSec]);
 
   useEffect(() => {
     const v = ref.current;
@@ -194,6 +206,7 @@ function PlaybackCell({
         srcCoords={camera.src_coords}
         label={id}
         getPosition={getPosition}
+        positionSec={positionSec}
         playing={playing}
         speed={speed}
         startTs={slot.startTs}

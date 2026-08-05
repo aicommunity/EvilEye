@@ -16,6 +16,10 @@ const en: Dict = {
     logout: 'Log out',
     loading: 'Loading…',
   },
+  layout: {
+    fit: 'Fit',
+    fixed: 'Grid',
+  },
   auth: {
     title: 'Sign in to web UI',
     login: 'Sign in',
@@ -148,6 +152,7 @@ const en: Dict = {
     pressLoad: 'Press Load to open recordings.',
     unavailable: 'Playback unavailable',
     timelineEmpty: 'Load segments to show the timeline.',
+    timelineHint: 'Wheel zooms, drag pans, click seeks to a frame.',
     noSegment: 'No segment',
   },
   configure: {

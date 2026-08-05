@@ -431,6 +431,109 @@ body {
   gap: 1rem;
 }
 
+.camera-group-grid--fit {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  grid-auto-rows: minmax(0, 1fr);
+  align-content: stretch;
+}
+
+.camera-group-grid--fit > * {
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+}
+
+.camera-group-grid--fit .camera-card {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.camera-group-grid--fit .camera-card-grid .camera-card-media,
+.camera-group-grid--fit .camera-preview-wrap {
+  flex: 1;
+  min-height: 0;
+  aspect-ratio: auto;
+}
+
+.camera-group-grid--fit .camera-card-grid .camera-preview,
+.camera-group-grid--fit .camera-preview,
+.camera-group-grid--fit video,
+.camera-group-grid--fit img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  aspect-ratio: auto;
+}
+
+.camera-group-grid--fit .playback-cell {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.camera-group-grid--fit .playback-cell video {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  aspect-ratio: auto;
+}
+
+.camera-group-grid--fit .split-playback-container {
+  flex: 1;
+  min-height: 0;
+}
+
+.live-page-card {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100dvh - 4.5rem);
+  max-height: calc(100dvh - 4.5rem);
+}
+
+.live-grid-shell {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.live-grid-shell .camera-group-grid {
+  flex: 1;
+  min-height: 0;
+}
+
+.playback-page--fit .playback-card {
+  height: calc(100dvh - 4.5rem);
+  max-height: calc(100dvh - 4.5rem);
+  min-height: 0;
+}
+
+.playback-page--fit .playback-main {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.playback-page--fit .playback-main .camera-group-grid {
+  flex: 1;
+  min-height: 0;
+}
+
+.playback-page--fit .playback-timeline-footer {
+  flex-shrink: 0;
+  position: relative;
+}
+
 .journal-table {
   width: 100%;
   border-collapse: collapse;
@@ -1484,6 +1587,17 @@ body {
   padding-top: 0.75rem;
   background: var(--bg-card);
   border-top: 1px solid var(--border);
+}
+
+.playback-timeline {
+  touch-action: none;
+  overscroll-behavior: contain;
+  cursor: grab;
+  user-select: none;
+}
+
+.playback-timeline.is-panning {
+  cursor: grabbing;
 }
 
 .timeline-ticks {
