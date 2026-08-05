@@ -12,6 +12,7 @@ export function CameraGrid({
   onExpand,
   getPreviewBlob,
   previewWsActive = false,
+  loading = false,
 }: {
   cameras: StateCamera[];
   cols: number;
@@ -21,6 +22,7 @@ export function CameraGrid({
   onExpand?: (key: string) => void;
   getPreviewBlob?: (sourceId: number | null) => string | null | undefined;
   previewWsActive?: boolean;
+  loading?: boolean;
 }) {
   const { t } = useI18n();
   const [selected, setSelected] = useState<string | null>(null);
@@ -53,7 +55,9 @@ export function CameraGrid({
   }, []);
 
   if (!cameras.length) {
-    return <p className="empty">{t('live.camera.unavailable')}</p>;
+    return (
+      <p className="empty">{loading ? t('common.searching') : t('live.camera.unavailable')}</p>
+    );
   }
 
   const keyOf = (c: StateCamera) => `${c.run_id}:${c.source_id}`;

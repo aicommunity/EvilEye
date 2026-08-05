@@ -13,13 +13,22 @@ export function MobileLivePage() {
 function MobileLiveInner() {
   const { t, lang, setLang } = useI18n();
   const [cameras, setCameras] = useState<StateCamera[]>([]);
+  const [camerasLoading, setCamerasLoading] = useState(true);
   const [idx, setIdx] = useState(0);
   const [fullscreen, setFullscreen] = useState(false);
   const [snapTs, setSnapTs] = useState(Date.now());
 
   const load = useCallback(async () => {
-    const res = await stateApi.cameras('current');
-    setCameras(res.items ?? []);
+    setCameras((prev) => {
+      if (!prev.length) setCamerasLoading(true);
+      return prev;
+    });
+    try {
+      const res = await stateApi.cameras('current');
+      setCameras(res.items ?? []);
+    } finally {
+      setCamerasLoading(false);
+    }
   }, []);
 
   useVisibilityPolling(load, 5000, true, 200);
@@ -83,7 +92,7 @@ function MobileLiveInner() {
         </select>
       </header>
       {!cam ? (
-        <p className="empty">{t('mobile.noCameras')}</p>
+        <p className="empty">{camerasLoading ? t('common.searching') : t('mobile.noCameras')}</p>
       ) : (
         <article className="camera-card">
           <div className="camera-card-head">

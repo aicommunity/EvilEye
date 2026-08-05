@@ -14,17 +14,23 @@ export function LogsPage() {
   const { showError } = useToast();
   const { t, formatDateTime } = useI18n();
   const [files, setFiles] = useState<Array<{ name: string; updated_at: number; size_bytes: number }>>([]);
+  const [loading, setLoading] = useState(true);
+  const filesRef = useRef(files);
+  filesRef.current = files;
   const [view, setView] = useState<{ name: string; content: string; live: boolean } | null>(null);
   const esRef = useRef<EventSource | null>(null);
 
   const load = useCallback(async () => {
+    if (!filesRef.current.length) setLoading(true);
     try {
       const res = await logsApi.list();
       setFiles(res.files ?? []);
     } catch (e) {
       showError(e instanceof Error ? e.message : t('logs.title'));
+    } finally {
+      setLoading(false);
     }
-  }, [showError]);
+  }, [showError, t]);
 
   useEffect(() => {
     void load();
@@ -81,7 +87,7 @@ export function LogsPage() {
           </Button>
         </div>
         {!files.length ? (
-          <p className="empty">{t('logs.empty')}</p>
+          <p className="empty">{loading ? t('common.searching') : t('logs.empty')}</p>
         ) : (
           <table className="journal-table log-files-table">
             <thead>

@@ -49,6 +49,7 @@ const en: Dict = {
     loadMore: 'Load more',
     exportCsv: 'Export CSV',
     loading: 'Loading…',
+    searching: 'Searching…',
     all: 'All',
     actions: 'Actions',
     search: 'Search…',
@@ -304,7 +305,7 @@ const en: Dict = {
   logs: {
     title: 'Logs',
     refresh: 'Refresh',
-    empty: 'Technical logs unavailable.',
+    empty: 'No technical logs.',
     follow: 'Follow',
     following: 'following',
     file: 'File',

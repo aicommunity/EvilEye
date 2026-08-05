@@ -49,6 +49,7 @@ const ru: Dict = {
     loadMore: 'Загрузить ещё',
     exportCsv: 'Экспорт CSV',
     loading: 'Загрузка…',
+    searching: 'Идёт поиск…',
     all: 'Все',
     actions: 'Действия',
     search: 'Поиск…',
@@ -304,7 +305,7 @@ const ru: Dict = {
   logs: {
     title: 'Логи',
     refresh: 'Обновить',
-    empty: 'Технические логи недоступны.',
+    empty: 'Нет технических логов.',
     follow: 'Следить',
     following: 'следование',
     file: 'Файл',

@@ -9,7 +9,7 @@ export function useJournalFeed(tab: JournalType, filters: JournalDateFilters) {
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   const load = useCallback(
     async (append = false) => {

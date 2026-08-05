@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { stateApi, journalsApi, streamStatus, type StateCamera } from '../../api';
 import { Button } from '../../components/ui';
 import { StreamOverlay } from '../../components/StreamOverlay';
@@ -17,12 +17,16 @@ export function LivePage() {
   const { showError } = useToast();
   const { t } = useI18n();
   const [cameras, setCameras] = useState<StateCamera[]>([]);
+  const [camerasLoading, setCamerasLoading] = useState(true);
+  const camerasRef = useRef(cameras);
+  camerasRef.current = cameras;
   const [stats, setStats] = useState<{ events?: number; objects?: number }>({});
   const [stream, setStream] = useState<{ rid: number; sid: number | null } | null>(null);
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const { cols, setCols, order, setOrder, mode, setMode } = useLiveLayout();
 
   const load = useCallback(async () => {
+    if (!camerasRef.current.length) setCamerasLoading(true);
     try {
       const [camRes, st] = await Promise.all([stateApi.cameras('current'), journalsApi.stats().catch(() => null)]);
       setCameras(camRes.items ?? []);
@@ -30,6 +34,8 @@ export function LivePage() {
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) return;
       showError(e instanceof Error ? e.message : t('live.empty'));
+    } finally {
+      setCamerasLoading(false);
     }
   }, [showError, t]);
 
@@ -141,6 +147,7 @@ export function LivePage() {
               onExpand={setExpandedKey}
               getPreviewBlob={(sid) => previewWs.getBlobUrl(sid)}
               previewWsActive={previewWs.connected}
+              loading={camerasLoading}
             />
           </div>
         )}

@@ -36,6 +36,7 @@ export function EventsPage() {
   const [selected, setSelected] = useState<JournalGroupedRow | null>(null);
   const [historyItems, setHistoryItems] = useState<Record<string, unknown>[]>([]);
   const [historyMsg, setHistoryMsg] = useState<string | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [exportTruncated, setExportTruncated] = useState(false);
   const [exporting, setExporting] = useState(false);
 
@@ -60,15 +61,19 @@ export function EventsPage() {
 
   useEffect(() => {
     if (tab !== 'history') return;
-    void journalsApi.configHistory().then((h) => {
-      if (!h.available) {
-        setHistoryMsg(String(h.message ?? t('journals.historyUnavailable')));
-        setHistoryItems([]);
-        return;
-      }
-      setHistoryMsg(null);
-      setHistoryItems(h.items);
-    });
+    setHistoryLoading(true);
+    void journalsApi
+      .configHistory()
+      .then((h) => {
+        if (!h.available) {
+          setHistoryMsg(String(h.message ?? t('journals.historyUnavailable')));
+          setHistoryItems([]);
+          return;
+        }
+        setHistoryMsg(null);
+        setHistoryItems(h.items);
+      })
+      .finally(() => setHistoryLoading(false));
   }, [tab, t]);
 
   useVisibilityPolling(() => {
@@ -190,7 +195,9 @@ export function EventsPage() {
           ) : null}
         </div>
         {tab === 'history' ? (
-          historyMsg ? (
+          historyLoading && !historyItems.length && !historyMsg ? (
+            <p className="empty">{t('common.searching')}</p>
+          ) : historyMsg ? (
             <p className="empty">{historyMsg}</p>
           ) : (
             <table className="journal-table">
@@ -218,12 +225,18 @@ export function EventsPage() {
           )
         ) : (
           <>
-            {feed.message ? <p className="empty">{feed.message}</p> : null}
+            {!feed.loading && feed.message ? <p className="empty">{feed.message}</p> : null}
             <JournalTable
               rows={feed.rows}
               journalType={tab}
               onSelect={setSelected}
-              emptyText={tab === 'events' ? t('journals.emptyEvents') : t('journals.emptyObjects')}
+              emptyText={
+                feed.loading && !feed.rows.length
+                  ? t('common.searching')
+                  : tab === 'events'
+                    ? t('journals.emptyEvents')
+                    : t('journals.emptyObjects')
+              }
             />
             {feed.hasMore ? (
               <Button size="sm" variant="outline" disabled={feed.loading} onClick={() => feed.loadMore()}>

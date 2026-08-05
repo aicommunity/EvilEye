@@ -53,7 +53,7 @@ function MobileEventsInner() {
         </Button>
       </div>
       {!feed.rows.length ? (
-        <p className="empty">{t('mobile.noEvents')}</p>
+        <p className="empty">{feed.loading ? t('common.searching') : t('mobile.noEvents')}</p>
       ) : (
         <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
           {feed.rows.map((row) => (
