@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 
@@ -20,6 +21,30 @@ def test_discover_cameras_and_segments(tmp_path, monkeypatch):
 
     media = svc.resolve_media_path(str(seg))
     assert media.exists()
+
+
+def test_data_dir_falls_back_to_database_image_dir(tmp_path, monkeypatch):
+    """When EVILEYE_DATA_DIR is unset, use database.image_dir from current run config."""
+    root = tmp_path / "media_data"
+    cam = root / "Streams" / "2026-08-05" / "Cam1"
+    cam.mkdir(parents=True)
+    (cam / "Cam1_20260805_010000_0_00000.mp4").write_bytes(b"fake")
+    cfg = tmp_path / "poly.json"
+    cfg.write_text(
+        '{"database": {"image_dir": %s}, "pipeline": {"sources": []}}' % json.dumps(str(root)),
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("EVILEYE_DATA_DIR", raising=False)
+    monkeypatch.setattr(
+        svc,
+        "_load_current_run_config",
+        lambda: (str(cfg), {"database": {"image_dir": str(root)}}),
+    )
+    svc._data_dir_cache = None
+
+    assert svc.data_dir() == root.resolve()
+    cameras = svc.discover_cameras("2026-08-05")
+    assert any(c["id"] == "Cam1" for c in cameras)
 
 
 def test_composite_folder_resolution(tmp_path, monkeypatch):

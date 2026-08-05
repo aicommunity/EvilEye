@@ -191,12 +191,22 @@ def _image_base_dir() -> str:
     if _image_base_dir_cache and _image_base_dir_cache[0] == config_path and _image_base_dir_cache[1] == mtime:
         return _image_base_dir_cache[2]
     params = _runtime_params()
-    controller = params.get("controller") if isinstance(params, dict) else None
     image_dir = "EvilEyeData"
-    if isinstance(controller, dict):
-        configured = controller.get("image_dir")
+    database = params.get("database") if isinstance(params, dict) else None
+    if isinstance(database, dict):
+        configured = database.get("image_dir") or database.get("images_dir")
         if configured:
             image_dir = str(configured)
+    if image_dir == "EvilEyeData":
+        controller = params.get("controller") if isinstance(params, dict) else None
+        if isinstance(controller, dict):
+            configured = controller.get("image_dir")
+            if configured:
+                image_dir = str(configured)
+    if image_dir == "EvilEyeData":
+        record = params.get("record") if isinstance(params, dict) else None
+        if isinstance(record, dict) and record.get("out_dir"):
+            image_dir = str(record["out_dir"])
     _image_base_dir_cache = (config_path, mtime, image_dir)
     return image_dir
 

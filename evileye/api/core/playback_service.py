@@ -2,15 +2,105 @@
 from __future__ import annotations
 
 import glob
+import json
 import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+_data_dir_cache: tuple[str, float, str] | None = None
+
+
+def _config_mtime(config_path: str | None) -> float:
+    if not config_path:
+        return 0.0
+    try:
+        return os.path.getmtime(config_path)
+    except OSError:
+        return 0.0
+
+
+def _load_current_run_config() -> tuple[str, dict[str, Any]]:
+    """Return (config_path, params) for the current run, or ("", {})."""
+    try:
+        from evileye.api.core.server_state import get_current_run_summary
+    except Exception:
+        return "", {}
+    current = get_current_run_summary()
+    if not isinstance(current, dict):
+        return "", {}
+    snapshot = current.get("runtime_snapshot")
+    if isinstance(snapshot, dict):
+        payload = snapshot.get("config")
+        if isinstance(payload, dict):
+            return str(current.get("config_path") or ""), payload
+    config_path = current.get("config_path")
+    if not config_path:
+        return "", {}
+    try:
+        payload = json.loads(Path(str(config_path)).read_text(encoding="utf-8"))
+    except Exception:
+        return str(config_path), {}
+    return str(config_path), payload if isinstance(payload, dict) else {}
+
+
+def _configured_data_dir_from_params(params: dict[str, Any]) -> str | None:
+    """Prefer the same roots the recorder uses (database.image_dir / record.out_dir)."""
+    database = params.get("database")
+    if isinstance(database, dict):
+        for key in ("image_dir", "images_dir"):
+            value = database.get(key)
+            if value not in (None, ""):
+                return str(value)
+
+    record = params.get("record")
+    if isinstance(record, dict):
+        out_dir = record.get("out_dir")
+        if out_dir not in (None, ""):
+            return str(out_dir)
+
+    controller = params.get("controller")
+    if isinstance(controller, dict):
+        value = controller.get("image_dir")
+        if value not in (None, ""):
+            return str(value)
+
+    pipeline = params.get("pipeline") if isinstance(params.get("pipeline"), dict) else params
+    sources = pipeline.get("sources") if isinstance(pipeline, dict) else None
+    for source in sources or []:
+        if not isinstance(source, dict):
+            continue
+        src_record = source.get("record")
+        if isinstance(src_record, dict):
+            out_dir = src_record.get("out_dir")
+            if out_dir not in (None, ""):
+                return str(out_dir)
+    return None
+
+
+def _resolve_configured_data_dir() -> str | None:
+    global _data_dir_cache
+    config_path, params = _load_current_run_config()
+    mtime = _config_mtime(config_path or None)
+    if _data_dir_cache and _data_dir_cache[0] == config_path and _data_dir_cache[1] == mtime:
+        return _data_dir_cache[2] or None
+    configured = _configured_data_dir_from_params(params) if params else None
+    _data_dir_cache = (config_path, mtime, configured or "")
+    return configured
+
 
 def data_dir() -> Path:
-    return Path(os.getenv("EVILEYE_DATA_DIR", "EvilEyeData")).resolve()
+    """Root for Streams/Events media.
+
+    Preference: ``EVILEYE_DATA_DIR`` → current run ``database.image_dir`` /
+    ``record.out_dir`` → local ``EvilEyeData``.
+    """
+    env = os.getenv("EVILEYE_DATA_DIR")
+    if env not in (None, ""):
+        return Path(env).resolve()
+    configured = _resolve_configured_data_dir()
+    return Path(configured or "EvilEyeData").resolve()
 
 
 def _secure_under(base: Path, candidate: Path) -> Path:
