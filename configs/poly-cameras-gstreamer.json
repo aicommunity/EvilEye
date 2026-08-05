@@ -129,7 +129,7 @@
                 "source_ids": [
                     0
                 ],
-                "num_detection_threads": 3,
+                "num_detection_threads": 1,
                 "execution_mode": "process",
                 "model": "models/yolov8n.pt"
             },
@@ -150,7 +150,7 @@
                 "source_ids": [
                     1
                 ],
-                "num_detection_threads": 3,
+                "num_detection_threads": 1,
                 "execution_mode": "process",
                 "model": "models/yolov8n.pt"
             },
@@ -196,7 +196,7 @@
                 "source_ids": [
                     2
                 ],
-                "num_detection_threads": 3,
+                "num_detection_threads": 1,
                 "execution_mode": "process",
                 "model": "models/yolov8n.pt"
             },
@@ -236,7 +236,7 @@
                 "source_ids": [
                     3
                 ],
-                "num_detection_threads": 3,
+                "num_detection_threads": 1,
                 "execution_mode": "process",
                 "model": "models/yolov8n.pt"
             },
@@ -257,7 +257,7 @@
                 "source_ids": [
                     4
                 ],
-                "num_detection_threads": 3,
+                "num_detection_threads": 1,
                 "execution_mode": "process",
                 "model": "models/yolov8n.pt"
             }
@@ -279,7 +279,7 @@
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
                     "fuse_score": true,
-                    "with_reid": true
+                    "with_reid": false
                 }
             },
             {
@@ -298,7 +298,7 @@
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
                     "fuse_score": true,
-                    "with_reid": true
+                    "with_reid": false
                 }
             },
             {
@@ -317,7 +317,7 @@
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
                     "fuse_score": true,
-                    "with_reid": true
+                    "with_reid": false
                 }
             },
             {
@@ -336,7 +336,7 @@
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
                     "fuse_score": true,
-                    "with_reid": true
+                    "with_reid": false
                 }
             },
             {
@@ -355,7 +355,7 @@
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
                     "fuse_score": true,
-                    "with_reid": true
+                    "with_reid": false
                 }
             }
         ],

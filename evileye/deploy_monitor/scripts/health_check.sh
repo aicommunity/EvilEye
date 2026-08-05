@@ -153,6 +153,11 @@ ENTRY="$(append_journal "$STATUS" "$REASON_STR" "$CLI_PID" "$CHILD_PID" "$MAIN_L
 echo "$ENTRY" >>"$JOURNAL_FILE"
 update_state "$CLI_PID" "$CHILD_PID" "$MAIN_LOG" "$NEXT_RUN"
 
+# Memory telemetry (best-effort; never fail the health check).
+if [[ -x "$SCRIPT_DIR/collect_memory_snapshot.sh" ]]; then
+    "$SCRIPT_DIR/collect_memory_snapshot.sh" >>"$WATCHDOG_LOG" 2>&1 || true
+fi
+
 if $INCIDENT; then
     INCIDENT_ID="$(incident_id_now)"
     log_msg "INCIDENT detected: $REASON_STR"

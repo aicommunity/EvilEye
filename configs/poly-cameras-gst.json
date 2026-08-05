@@ -177,7 +177,11 @@
                 "num_detection_threads": 1,
                 "execution_mode": "process",
                 "model": "models/yolov8n.pt",
-                "type": "ObjectDetectorYolo"
+                "type": "ObjectDetectorYolo",
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "roi": [
@@ -199,7 +203,11 @@
                 "num_detection_threads": 1,
                 "execution_mode": "process",
                 "model": "models/yolov8n.pt",
-                "type": "ObjectDetectorYolo"
+                "type": "ObjectDetectorYolo",
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "roi": [
@@ -246,7 +254,11 @@
                 "num_detection_threads": 1,
                 "execution_mode": "process",
                 "model": "models/yolov8n.pt",
-                "type": "ObjectDetectorYolo"
+                "type": "ObjectDetectorYolo",
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "roi": [
@@ -287,7 +299,11 @@
                 "num_detection_threads": 1,
                 "execution_mode": "process",
                 "model": "models/yolov8n.pt",
-                "type": "ObjectDetectorYolo"
+                "type": "ObjectDetectorYolo",
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "roi": [
@@ -309,7 +325,11 @@
                 "num_detection_threads": 1,
                 "execution_mode": "process",
                 "model": "models/yolov8n.pt",
-                "type": "ObjectDetectorYolo"
+                "type": "ObjectDetectorYolo",
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             }
         ],
         "trackers": [
@@ -329,9 +349,14 @@
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
                     "fuse_score": true,
-                    "with_reid": true
+                    "with_reid": false
                 },
-                "type": "ObjectTrackingBotsort"
+                "type": "ObjectTrackingBotsort",
+                "execution_mode": "process",
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "source_ids": [
@@ -349,9 +374,14 @@
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
                     "fuse_score": true,
-                    "with_reid": true
+                    "with_reid": false
                 },
-                "type": "ObjectTrackingBotsort"
+                "type": "ObjectTrackingBotsort",
+                "execution_mode": "process",
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "source_ids": [
@@ -369,9 +399,14 @@
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
                     "fuse_score": true,
-                    "with_reid": true
+                    "with_reid": false
                 },
-                "type": "ObjectTrackingBotsort"
+                "type": "ObjectTrackingBotsort",
+                "execution_mode": "process",
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "source_ids": [
@@ -389,9 +424,14 @@
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
                     "fuse_score": true,
-                    "with_reid": true
+                    "with_reid": false
                 },
-                "type": "ObjectTrackingBotsort"
+                "type": "ObjectTrackingBotsort",
+                "execution_mode": "process",
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             },
             {
                 "source_ids": [
@@ -409,9 +449,14 @@
                     "track_low_thresh": 0.1,
                     "tracker_type": "botsort",
                     "fuse_score": true,
-                    "with_reid": true
+                    "with_reid": false
                 },
-                "type": "ObjectTrackingBotsort"
+                "type": "ObjectTrackingBotsort",
+                "execution_mode": "process",
+                "mp_restart_on_exit": true,
+                "mp_no_restart_exit_codes": [
+                    -15
+                ]
             }
         ],
         "mc_trackers": [
@@ -426,7 +471,8 @@
                 ],
                 "type": "ObjectMultiCameraTracking"
             }
-        ]
+        ],
+        "ipc_mode": "standard"
     },
     "events_detectors": {
         "CamEventsDetector": {},
