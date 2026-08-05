@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { stateApi, streamSnapshotUrl, type StateCamera } from '../../api';
+import { stateApi, streamSnapshotUrl, streamStatus, type StateCamera } from '../../api';
 import { AuthProvider } from '../../auth/AuthContext';
 import { ToastProvider } from '../../components/ui/Toast';
 import { Badge, Button } from '../../components/ui';
@@ -35,18 +35,42 @@ function MobileLiveInner() {
     if (idx >= cameras.length) setIdx(0);
   }, [cameras, idx]);
 
-  useEffect(() => {
-    if (fullscreen) return;
-    const id = window.setInterval(() => setSnapTs(Date.now()), 750);
-    return () => window.clearInterval(id);
-  }, [fullscreen, idx]);
-
   const cam = cameras[idx];
-  const healthy =
-    cam &&
-    cam.run_state === 'running' &&
-    cam.is_working !== false &&
-    cam.preview_available !== false;
+  const running = cam?.run_state === 'running';
+  const showSnapshot = Boolean(running);
+
+  useEffect(() => {
+    if (fullscreen || !showSnapshot) return;
+    const stale =
+      cam &&
+      (cam.preview_available === false ||
+        cam.is_working === false ||
+        cam.reconnecting === true ||
+        (cam.last_frame_age_sec != null && cam.last_frame_age_sec > 5));
+    const intervalMs = stale ? 2000 : 750;
+    const id = window.setInterval(() => setSnapTs(Date.now()), intervalMs);
+    return () => window.clearInterval(id);
+  }, [fullscreen, idx, showSnapshot, cam]);
+
+  useEffect(() => {
+    if (!cam || cam.run_state !== 'running') return;
+    const rid = cam.run_id;
+    const tick = () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      void streamStatus(rid).catch(() => undefined);
+    };
+    tick();
+    const id = window.setInterval(tick, 3000);
+    return () => window.clearInterval(id);
+  }, [cam?.run_id, cam?.run_state]);
+
+  const emptyLabel = !cam
+    ? null
+    : cam.reconnecting
+      ? t('live.camera.reconnecting')
+      : cam.run_state !== 'running'
+        ? t('mobile.stopped')
+        : t('live.camera.noPreview');
 
   return (
     <div className="mobile-shell">
@@ -72,19 +96,25 @@ function MobileLiveInner() {
         <article className="camera-card">
           <div className="camera-card-head">
             <span className="run-name">{cam.source_name}</span>
-            <Badge state={cam.run_state}>{cam.run_state}</Badge>
+            <Badge state={cam.run_state}>
+              {cam.reconnecting ? t('live.camera.reconnecting') : cam.run_state}
+            </Badge>
           </div>
-          {healthy ? (
+          {showSnapshot ? (
             <img
               className="camera-preview"
               style={{ width: '100%', minHeight: 220, objectFit: 'contain', background: '#000' }}
               src={`${streamSnapshotUrl(cam.run_id, cam.source_id)}${streamSnapshotUrl(cam.run_id, cam.source_id).includes('?') ? '&' : '?'}t=${snapTs}`}
               alt={cam.source_name}
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).style.opacity = '0.3';
+              }}
+              onLoad={(e) => {
+                (e.currentTarget as HTMLImageElement).style.opacity = '1';
+              }}
             />
-          ) : cam.run_state === 'running' ? (
-            <div className="camera-preview-empty">{t('live.camera.noSignal')}</div>
           ) : (
-            <div className="camera-preview-empty">{t('mobile.stopped')}</div>
+            <div className="camera-preview-empty">{emptyLabel}</div>
           )}
           <div className="toolbar" style={{ marginTop: 12, gap: 8 }}>
             <Button

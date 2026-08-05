@@ -83,6 +83,7 @@ const ru: Dict = {
       noSignal: 'Нет сигнала',
       reconnecting: 'Переподключение…',
       stale: 'Устаревшее превью',
+      noPreview: 'Нет превью',
     },
     stream: {
       title: 'Видеопоток',

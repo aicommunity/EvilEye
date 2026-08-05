@@ -83,6 +83,7 @@ const en: Dict = {
       noSignal: 'No signal',
       reconnecting: 'Reconnecting…',
       stale: 'Stale preview',
+      noPreview: 'No preview',
     },
     stream: {
       title: 'Video stream',

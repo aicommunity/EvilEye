@@ -7,17 +7,21 @@ import { useMjpegLifecycle } from '../../hooks/useMjpegLifecycle';
 import { useRunMetadataWs } from './useRunMetadataWs';
 
 const STALE_SEC = 5;
-const BACKOFF_STEPS_MS = [1000, 2000, 4000, 8000];
+const LIVE_SNAPSHOT_MS = 1000;
+const STALE_SNAPSHOT_BACKOFF_MS = [2000, 4000, 8000];
+const ERROR_BACKOFF_MS = [1000, 2000, 4000, 8000];
+const MJPEG_STALE_POLLS_BEFORE_DROP = 2;
 
-type PreviewMode = 'live' | 'snapshot' | 'stale' | 'error' | 'offline';
+export type PreviewMode = 'live' | 'snapshot' | 'stale' | 'error' | 'offline';
 
-function resolvePreviewMode(camera: StateCamera, previewError: boolean): PreviewMode {
+export function resolvePreviewMode(camera: StateCamera, previewError: boolean): PreviewMode {
   if (camera.run_state !== 'running') return 'offline';
   if (previewError) return 'error';
+  if (camera.reconnecting === true) return 'stale';
   const age = camera.last_frame_age_sec;
   const staleByAge = age != null && age > STALE_SEC;
-  if (camera.is_working === false || staleByAge || camera.preview_available === false) {
-    return camera.reconnecting ? 'stale' : 'stale';
+  if (camera.preview_available === false || staleByAge || camera.is_working === false) {
+    return 'stale';
   }
   return 'live';
 }
@@ -43,11 +47,46 @@ export function CameraTile({
   const [snapTs, setSnapTs] = useState(Date.now());
   const [previewError, setPreviewError] = useState(false);
   const [backoffStep, setBackoffStep] = useState(0);
+  const [staleSnapStep, setStaleSnapStep] = useState(0);
+  const [mjpegHold, setMjpegHold] = useState(false);
   const retryTimer = useRef<number | null>(null);
+  const staleMjpegPolls = useRef(0);
 
   const mode = useMemo(() => resolvePreviewMode(camera, previewError), [camera, previewError]);
-  const canStream = mode === 'live' && active;
-  const wantMjpeg = canStream && useMjpeg;
+  const running = camera.run_state === 'running';
+  const wantSnapshot = running && active && !useMjpeg;
+  const mjpegCandidate = mode === 'live' && active && useMjpeg && !previewError;
+
+  useEffect(() => {
+    setPreviewError(false);
+    setBackoffStep(0);
+    setStaleSnapStep(0);
+    staleMjpegPolls.current = 0;
+    setMjpegHold(false);
+  }, [camera.run_id, camera.source_id]);
+
+  // Hysteresis: open MJPEG immediately; require 2 consecutive non-candidate polls to drop.
+  // Unfocus (useMjpeg=false) drops immediately to avoid leaking the stream.
+  useEffect(() => {
+    if (!useMjpeg) {
+      staleMjpegPolls.current = 0;
+      setMjpegHold(false);
+      return;
+    }
+    if (mjpegCandidate) {
+      staleMjpegPolls.current = 0;
+      setMjpegHold(true);
+      return;
+    }
+    if (!mjpegHold) return;
+    staleMjpegPolls.current += 1;
+    if (staleMjpegPolls.current >= MJPEG_STALE_POLLS_BEFORE_DROP) {
+      setMjpegHold(false);
+      staleMjpegPolls.current = 0;
+    }
+  }, [mjpegCandidate, mjpegHold, useMjpeg, camera.preview_available, camera.is_working, camera.reconnecting, mode]);
+
+  const wantMjpeg = mjpegHold;
 
   useMjpegLifecycle(wantMjpeg ? camera.run_id : null, camera.source_id);
 
@@ -57,15 +96,19 @@ export function CameraTile({
   );
 
   useEffect(() => {
-    setPreviewError(false);
-    setBackoffStep(0);
-  }, [camera.run_id, camera.source_id, camera.is_working, camera.preview_available]);
-
-  useEffect(() => {
-    if (!canStream || useMjpeg || previewError) return;
-    const id = window.setInterval(() => setSnapTs(Date.now()), 1000);
+    if (!wantSnapshot) return;
+    const intervalMs =
+      mode === 'live'
+        ? LIVE_SNAPSHOT_MS
+        : STALE_SNAPSHOT_BACKOFF_MS[Math.min(staleSnapStep, STALE_SNAPSHOT_BACKOFF_MS.length - 1)];
+    const id = window.setInterval(() => {
+      setSnapTs(Date.now());
+      if (mode === 'stale' || mode === 'error') {
+        setStaleSnapStep((s) => Math.min(s + 1, STALE_SNAPSHOT_BACKOFF_MS.length - 1));
+      }
+    }, intervalMs);
     return () => window.clearInterval(id);
-  }, [canStream, useMjpeg, previewError]);
+  }, [wantSnapshot, mode, staleSnapStep]);
 
   useEffect(() => {
     return () => {
@@ -76,40 +119,48 @@ export function CameraTile({
   const onImgError = () => {
     setPreviewError(true);
     if (retryTimer.current != null) window.clearTimeout(retryTimer.current);
-    const delay = BACKOFF_STEPS_MS[Math.min(backoffStep, BACKOFF_STEPS_MS.length - 1)];
+    const delay = ERROR_BACKOFF_MS[Math.min(backoffStep, ERROR_BACKOFF_MS.length - 1)];
     retryTimer.current = window.setTimeout(() => {
       setPreviewError(false);
-      setBackoffStep((s) => Math.min(s + 1, BACKOFF_STEPS_MS.length - 1));
+      setBackoffStep((s) => Math.min(s + 1, ERROR_BACKOFF_MS.length - 1));
       setSnapTs(Date.now());
     }, delay);
   };
 
-  const imgSrc =
-    canStream
-      ? useMjpeg
-        ? `/api/v1/runs/${camera.run_id}/stream.mjpg?fps=8${camera.source_id != null ? `&source_id=${camera.source_id}` : ''}`
-        : `${streamSnapshotUrl(camera.run_id, camera.source_id)}${streamSnapshotUrl(camera.run_id, camera.source_id).includes('?') ? '&' : '?'}t=${snapTs}`
+  const onImgLoad = () => {
+    setPreviewError(false);
+    setBackoffStep(0);
+    setStaleSnapStep(0);
+  };
+
+  const snapBase = streamSnapshotUrl(camera.run_id, camera.source_id);
+  const imgSrc = wantMjpeg
+    ? `/api/v1/runs/${camera.run_id}/stream.mjpg?fps=8${camera.source_id != null ? `&source_id=${camera.source_id}` : ''}`
+    : wantSnapshot
+      ? `${snapBase}${snapBase.includes('?') ? '&' : '?'}t=${snapTs}`
       : '';
 
   const statusBadge =
     mode === 'offline'
       ? camera.run_state
-      : mode === 'error' || mode === 'stale'
-        ? camera.reconnecting
-          ? t('live.camera.reconnecting')
-          : t('live.camera.noSignal')
-        : camera.run_state;
+      : camera.reconnecting
+        ? t('live.camera.reconnecting')
+        : mode === 'error'
+          ? t('live.camera.noSignal')
+          : mode === 'stale'
+            ? t('live.camera.noPreview')
+            : camera.run_state;
 
   const emptyLabel =
     mode === 'offline'
       ? t('live.camera.stopped')
-      : mode === 'error'
-        ? t('live.camera.noSignal')
-        : mode === 'stale'
-          ? camera.reconnecting
-            ? t('live.camera.reconnecting')
-            : t('live.camera.stale')
-          : t('live.camera.outOfView');
+      : camera.reconnecting
+        ? t('live.camera.reconnecting')
+        : mode === 'error'
+          ? t('live.camera.noSignal')
+          : mode === 'stale'
+            ? t('live.camera.noPreview')
+            : t('live.camera.outOfView');
 
   return (
     <article
@@ -136,6 +187,7 @@ export function CameraTile({
               alt={camera.source_name}
               className="camera-preview"
               onError={onImgError}
+              onLoad={onImgLoad}
             />
           ) : (
             <div className="camera-preview camera-preview-empty">{emptyLabel}</div>

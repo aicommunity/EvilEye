@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useState } from 'react';
-import { stateApi, journalsApi, type StateCamera } from '../../api';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { stateApi, journalsApi, streamStatus, type StateCamera } from '../../api';
 import { Button } from '../../components/ui';
 import { StreamOverlay } from '../../components/StreamOverlay';
 import { useVisibilityPolling } from '../../hooks/useVisibilityPolling';
@@ -30,6 +30,22 @@ export function LivePage() {
   }, [showError, t]);
 
   useVisibilityPolling(load, 5000, true, 0);
+
+  // Keep preview demand warm while Live is open (root run_id keys; TTL is 20s server-side).
+  useEffect(() => {
+    const runIds = [...new Set(cameras.map((c) => c.run_id).filter((id) => Number.isFinite(id)))];
+    if (!runIds.length) return;
+
+    const tick = () => {
+      if (typeof document !== 'undefined' && document.hidden) return;
+      for (const rid of runIds) {
+        void streamStatus(rid).catch(() => undefined);
+      }
+    };
+    tick();
+    const id = window.setInterval(tick, 3000);
+    return () => window.clearInterval(id);
+  }, [cameras]);
 
   const ordered = useMemo(() => {
     if (!order.length) return cameras;
