@@ -21,7 +21,7 @@ router = APIRouter(prefix="/api/v1/users", tags=["users"])
 
 class CreateUserPayload(BaseModel):
     email: str = Field(..., min_length=3)
-    password: str = Field(..., min_length=10)
+    password: str = Field(..., min_length=8)
     role: str = Field(default="user")
 
 
@@ -29,7 +29,7 @@ class PatchUserPayload(BaseModel):
     role: Optional[Literal["user", "admin"]] = None
     disabled: Optional[bool] = None
     status: Optional[Literal["pending", "approved", "rejected", "disabled"]] = None
-    password: Optional[str] = Field(default=None, min_length=10)
+    password: Optional[str] = Field(default=None, min_length=8)
 
 
 def _reload_web_auth(request: Request) -> None:

@@ -36,7 +36,7 @@ export function AppShell() {
   }, []);
 
   const onChangePassword = async () => {
-    if (newPw.length < 10) {
+    if (newPw.length < 8) {
       showError(t('users.newPassword') + ' (≥10)');
       return;
     }
@@ -120,7 +120,7 @@ export function AppShell() {
                 type="password"
                 value={newPw}
                 onChange={(e) => setNewPw(e.target.value)}
-                minLength={10}
+                minLength={8}
                 autoComplete="new-password"
               />
             </label>
@@ -130,7 +130,7 @@ export function AppShell() {
                 type="password"
                 value={newPw2}
                 onChange={(e) => setNewPw2(e.target.value)}
-                minLength={10}
+                minLength={8}
                 autoComplete="new-password"
               />
             </label>
@@ -138,7 +138,7 @@ export function AppShell() {
               <Button variant="outline" disabled={pwSaving} onClick={() => setPwOpen(false)}>
                 {t('live.stream.close')}
               </Button>
-              <Button disabled={pwSaving || !currentPw || newPw.length < 10} onClick={() => void onChangePassword()}>
+              <Button disabled={pwSaving || !currentPw || newPw.length < 8} onClick={() => void onChangePassword()}>
                 {t('users.savePassword')}
               </Button>
             </div>

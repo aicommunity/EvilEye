@@ -4,6 +4,8 @@ import { Button } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
 import { useI18n } from '../../i18n';
 
+const MIN_PASSWORD_LEN = 8;
+
 function generatePassword(length = 14): string {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@$%';
   const bytes = new Uint8Array(length);
@@ -17,9 +19,12 @@ export function UsersPage() {
   const [items, setItems] = useState<UserRecord[]>([]);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showCreatePw, setShowCreatePw] = useState(false);
   const [role, setRole] = useState<'user' | 'admin'>('user');
   const [creating, setCreating] = useState(false);
   const [resetPw, setResetPw] = useState<Record<string, string>>({});
+  const [showResetPw, setShowResetPw] = useState<Record<string, boolean>>({});
+  const [savingPw, setSavingPw] = useState<Record<string, boolean>>({});
 
   const load = useCallback(async () => {
     try {
@@ -35,6 +40,10 @@ export function UsersPage() {
   }, [load]);
 
   const onCreate = async () => {
+    if (password.length < MIN_PASSWORD_LEN) {
+      showError(t('users.passwordTooShort'));
+      return;
+    }
     setCreating(true);
     try {
       await usersApi.create({ email: email.trim(), password, role });
@@ -42,6 +51,7 @@ export function UsersPage() {
       setEmail('');
       setPassword('');
       setRole('user');
+      setShowCreatePw(false);
       await load();
     } catch (e) {
       showError(e instanceof Error ? e.message : t('common.error'));
@@ -73,8 +83,28 @@ export function UsersPage() {
       await usersApi.patch(id, body);
       showSuccess(okMsg);
       await load();
+      return true;
     } catch (e) {
       showError(e instanceof Error ? e.message : t('common.error'));
+      return false;
+    }
+  };
+
+  const saveResetPassword = async (id: string, raw: string) => {
+    const pw = raw.trim();
+    if (pw.length < MIN_PASSWORD_LEN) {
+      showError(t('users.passwordTooShort'));
+      return;
+    }
+    setSavingPw((prev) => ({ ...prev, [id]: true }));
+    try {
+      const ok = await patchUser(id, { password: pw }, t('users.passwordUpdated'));
+      if (ok) {
+        setResetPw((prev) => ({ ...prev, [id]: '' }));
+        setShowResetPw((prev) => ({ ...prev, [id]: false }));
+      }
+    } finally {
+      setSavingPw((prev) => ({ ...prev, [id]: false }));
     }
   };
 
@@ -112,16 +142,35 @@ export function UsersPage() {
             <label className="users-create-field users-create-field--password">
               <span>{t('users.password')}</span>
               <div className="users-create-password-row">
-                <input
-                  className="search-input"
-                  type="text"
-                  required
-                  minLength={10}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  autoComplete="new-password"
-                />
-                <Button type="button" size="sm" variant="outline" onClick={() => setPassword(generatePassword())}>
+                <div className="users-pw-field">
+                  <input
+                    className="search-input"
+                    type={showCreatePw ? 'text' : 'password'}
+                    required
+                    minLength={MIN_PASSWORD_LEN}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    autoComplete="new-password"
+                  />
+                  <button
+                    type="button"
+                    className="users-pw-toggle"
+                    onClick={() => setShowCreatePw((v) => !v)}
+                    aria-label={showCreatePw ? t('users.hidePassword') : t('users.showPassword')}
+                    title={showCreatePw ? t('users.hidePassword') : t('users.showPassword')}
+                  >
+                    {showCreatePw ? t('users.hidePassword') : t('users.showPassword')}
+                  </button>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setPassword(generatePassword());
+                    setShowCreatePw(true);
+                  }}
+                >
                   {t('users.generatePassword')}
                 </Button>
               </div>
@@ -141,7 +190,7 @@ export function UsersPage() {
               <span className="users-create-label-spacer" aria-hidden>
                 &nbsp;
               </span>
-              <Button type="submit" disabled={creating || !email.trim() || password.length < 10}>
+              <Button type="submit" disabled={creating || !email.trim() || password.length < MIN_PASSWORD_LEN}>
                 {t('users.create')}
               </Button>
             </div>
@@ -168,6 +217,9 @@ export function UsersPage() {
                   const id = u.id || u.username;
                   const canApprove = u.source === 'store' && u.status === 'pending';
                   const isActive = !u.disabled && u.status === 'approved';
+                  const pwVisible = Boolean(showResetPw[id]);
+                  const pwValue = resetPw[id] ?? '';
+                  const pwBusy = Boolean(savingPw[id]);
                   return (
                     <tr key={`${u.source}:${id}`}>
                       <td>{u.username}</td>
@@ -196,7 +248,7 @@ export function UsersPage() {
                       <td>
                         <div className="users-row-actions">
                           {canApprove ? (
-                            <>
+                            <div className="users-row-actions-btns">
                               <Button
                                 size="sm"
                                 variant="success"
@@ -221,79 +273,99 @@ export function UsersPage() {
                               >
                                 {t('users.reject')}
                               </Button>
-                            </>
-                          ) : null}
-                          {!canApprove ? (
+                            </div>
+                          ) : (
                             <>
-                              <div className="users-create-password-row">
-                                <input
-                                  className="search-input"
-                                  type="text"
-                                  placeholder={t('users.resetPassword')}
-                                  minLength={10}
-                                  value={resetPw[id] ?? ''}
-                                  onChange={(e) => setResetPw((prev) => ({ ...prev, [id]: e.target.value }))}
-                                  autoComplete="new-password"
-                                />
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() =>
-                                    setResetPw((prev) => ({ ...prev, [id]: generatePassword() }))
-                                  }
-                                >
-                                  {t('users.generatePassword')}
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  disabled={(resetPw[id] ?? '').length < 10}
-                                  onClick={() =>
-                                    void patchUser(id, { password: resetPw[id] }, t('users.passwordUpdated')).then(
-                                      () => setResetPw((prev) => ({ ...prev, [id]: '' })),
-                                    )
-                                  }
-                                >
-                                  {t('users.savePassword')}
-                                </Button>
-                              </div>
-                              {u.disabled || u.status === 'disabled' || u.status === 'rejected' ? (
-                                <Button
-                                  size="sm"
-                                  variant="success"
-                                  onClick={() =>
-                                    void patchUser(id, { disabled: false, status: 'approved' }, t('users.enabled'))
-                                  }
-                                >
-                                  {t('users.enable')}
-                                </Button>
-                              ) : (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => void patchUser(id, { disabled: true }, t('users.disabledMsg'))}
-                                >
-                                  {t('users.disable')}
-                                </Button>
-                              )}
-                              <Button
-                                size="sm"
-                                variant="danger"
-                                onClick={() => {
-                                  if (!window.confirm(t('users.deleteConfirm', { name: u.username }))) return;
-                                  void usersApi
-                                    .remove(id)
-                                    .then(() => {
-                                      showSuccess(t('users.deleted'));
-                                      return load();
-                                    })
-                                    .catch((e) => showError(e instanceof Error ? e.message : t('common.error')));
+                              <form
+                                className="users-reset-pw"
+                                onSubmit={(e) => {
+                                  e.preventDefault();
+                                  const form = e.currentTarget;
+                                  const input = form.elements.namedItem('new-password') as HTMLInputElement | null;
+                                  // Read from DOM so Save works even if React state lagged behind typing/autofill.
+                                  const raw = input?.value ?? pwValue;
+                                  void saveResetPassword(id, raw);
                                 }}
                               >
-                                {t('users.delete')}
-                              </Button>
+                                <div className="users-pw-field">
+                                  <input
+                                    className="search-input users-reset-pw-input"
+                                    name="new-password"
+                                    type={pwVisible ? 'text' : 'password'}
+                                    placeholder={t('users.resetPassword')}
+                                    minLength={MIN_PASSWORD_LEN}
+                                    value={pwValue}
+                                    onChange={(e) => setResetPw((prev) => ({ ...prev, [id]: e.target.value }))}
+                                    autoComplete="new-password"
+                                  />
+                                  <button
+                                    type="button"
+                                    className="users-pw-toggle"
+                                    onClick={() =>
+                                      setShowResetPw((prev) => ({ ...prev, [id]: !prev[id] }))
+                                    }
+                                    aria-label={pwVisible ? t('users.hidePassword') : t('users.showPassword')}
+                                    title={pwVisible ? t('users.hidePassword') : t('users.showPassword')}
+                                  >
+                                    {pwVisible ? t('users.hidePassword') : t('users.showPassword')}
+                                  </button>
+                                </div>
+                                <div className="users-reset-pw-btns">
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => {
+                                      setResetPw((prev) => ({ ...prev, [id]: generatePassword() }));
+                                      setShowResetPw((prev) => ({ ...prev, [id]: true }));
+                                    }}
+                                  >
+                                    {t('users.generatePassword')}
+                                  </Button>
+                                  <Button type="submit" size="sm" disabled={pwBusy}>
+                                    {t('users.savePassword')}
+                                  </Button>
+                                </div>
+                              </form>
+                              <div className="users-row-actions-btns">
+                                {u.disabled || u.status === 'disabled' || u.status === 'rejected' ? (
+                                  <Button
+                                    size="sm"
+                                    variant="success"
+                                    onClick={() =>
+                                      void patchUser(id, { disabled: false, status: 'approved' }, t('users.enabled'))
+                                    }
+                                  >
+                                    {t('users.enable')}
+                                  </Button>
+                                ) : (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => void patchUser(id, { disabled: true }, t('users.disabledMsg'))}
+                                  >
+                                    {t('users.disable')}
+                                  </Button>
+                                )}
+                                <Button
+                                  size="sm"
+                                  variant="danger"
+                                  onClick={() => {
+                                    if (!window.confirm(t('users.deleteConfirm', { name: u.username }))) return;
+                                    void usersApi
+                                      .remove(id)
+                                      .then(() => {
+                                        showSuccess(t('users.deleted'));
+                                        return load();
+                                      })
+                                      .catch((e) => showError(e instanceof Error ? e.message : t('common.error')));
+                                  }}
+                                >
+                                  {t('users.delete')}
+                                </Button>
+                              </div>
                             </>
-                          ) : null}
+                          )}
                         </div>
                       </td>
                     </tr>

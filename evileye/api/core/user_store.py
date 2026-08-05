@@ -77,8 +77,8 @@ class UserStore:
         normalized = email.strip().lower()
         if not EMAIL_RE.match(normalized):
             raise ValueError("Invalid email address")
-        if len(password) < 10:
-            raise ValueError("Password must be at least 10 characters")
+        if len(password) < 8:
+            raise ValueError("Password must be at least 8 characters")
 
         def mutate(payload: dict[str, Any]) -> dict[str, Any]:
             users = payload["users"]
@@ -103,8 +103,8 @@ class UserStore:
         normalized = email.strip().lower()
         if not EMAIL_RE.match(normalized):
             raise ValueError("Invalid email address")
-        if len(password) < 10:
-            raise ValueError("Password must be at least 10 characters")
+        if len(password) < 8:
+            raise ValueError("Password must be at least 8 characters")
         resolved_role = normalize_role(role)
 
         def mutate(payload: dict[str, Any]) -> dict[str, Any]:
@@ -156,8 +156,8 @@ class UserStore:
 
     def set_password(self, email: str, new_password: str) -> dict[str, Any]:
         normalized = email.strip().lower()
-        if len(new_password) < 10:
-            raise ValueError("Password must be at least 10 characters")
+        if len(new_password) < 8:
+            raise ValueError("Password must be at least 8 characters")
 
         def mutate(payload: dict[str, Any]) -> dict[str, Any]:
             for item in payload["users"]:

@@ -5,6 +5,7 @@ export function Button({
   variant = 'outline',
   size = 'md',
   className = '',
+  type = 'button',
   children,
   ...rest
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -14,7 +15,7 @@ export function Button({
 }) {
   const sizeClass = size === 'sm' ? 'btn-sm' : '';
   return (
-    <button type="button" className={`btn btn-${variant} ${sizeClass} ${className}`.trim()} {...rest}>
+    <button type={type} className={`btn btn-${variant} ${sizeClass} ${className}`.trim()} {...rest}>
       {children}
     </button>
   );

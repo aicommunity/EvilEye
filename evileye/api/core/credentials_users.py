@@ -92,8 +92,8 @@ def update_credentials_user(
         raise KeyError("User not found")
     item = dict(users[idx])
     if password is not None:
-        if len(password) < 10:
-            raise ValueError("Password must be at least 10 characters")
+        if len(password) < 8:
+            raise ValueError("Password must be at least 8 characters")
         item["password_hash"] = hash_password(password)
         item.pop("password", None)
     if role is not None:

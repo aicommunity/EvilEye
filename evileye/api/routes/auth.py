@@ -20,12 +20,12 @@ class LoginPayload(BaseModel):
 
 class RegisterPayload(BaseModel):
     email: str = Field(..., min_length=3)
-    password: str = Field(..., min_length=10)
+    password: str = Field(..., min_length=8)
 
 
 class ChangePasswordPayload(BaseModel):
     current_password: str = Field(..., min_length=1)
-    new_password: str = Field(..., min_length=10)
+    new_password: str = Field(..., min_length=8)
 
 
 @router.post("/register")
