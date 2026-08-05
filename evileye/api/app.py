@@ -83,6 +83,12 @@ async def lifespan(_app: FastAPI):
     hub = get_live_preview_hub()
     loop = asyncio.get_running_loop()
     hub.start(loop)
+    try:
+        from evileye.api.routes.realtime import make_hub_demand_callback
+
+        hub.set_demand_callback(make_hub_demand_callback(_app))
+    except Exception:
+        pass
     get_frame_broker().set_publish_listener(hub.on_broker_publish)
     _app.state.live_preview_hub = hub
 

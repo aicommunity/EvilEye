@@ -41,13 +41,17 @@ def _release_mjpeg_slot() -> None:
 
 
 def _touch_preview_demand(
-    request: Request,
+    request: Request | None,
     rid: int,
     source_id: int | None = None,
     *,
     level: str = "grid",
+    force: bool = False,
+    demand_queue=None,
 ) -> None:
-    queue = getattr(request.app.state, "preview_demand_queue", None)
+    queue = demand_queue
+    if queue is None and request is not None:
+        queue = getattr(request.app.state, "preview_demand_queue", None)
     if queue is None:
         return
     touched_at = time.time()
@@ -56,9 +60,9 @@ def _touch_preview_demand(
         normalized_level = "grid"
     try:
         key = f"{rid}:{source_id}" if source_id is not None else str(rid)
-        queue.put_nowait((key, touched_at, normalized_level))
+        queue.put_nowait((key, touched_at, normalized_level, force))
         if source_id is not None:
-            queue.put_nowait((str(rid), touched_at, normalized_level))
+            queue.put_nowait((str(rid), touched_at, normalized_level, force))
     except Exception:
         return
 
@@ -205,6 +209,8 @@ async def _mjpeg_generator(
         *,
         stream_key: str,
         idle_sec: float = 8.0,
+        demand_queue=None,
+        rid: int | None = None,
 ) -> AsyncGenerator[bytes, None]:
     boundary = b"--frame"
     delay = 1.0 / max(1, fps)
@@ -237,6 +243,16 @@ async def _mjpeg_generator(
             broker.release_stream(stream_key)
         except Exception:
             pass
+        # Drop stream demand back to grid when MJPEG consumer disconnects.
+        if rid is not None:
+            _touch_preview_demand(
+                None,
+                rid,
+                source_id=source_id,
+                level="grid",
+                force=True,
+                demand_queue=demand_queue,
+            )
 
 
 async def _mjpeg_stream_impl(
@@ -268,10 +284,18 @@ async def _mjpeg_stream_impl(
     stream_key = f"{run_id_str}:{source_id}" if source_id is not None else run_id_str
     stop_event = get_frame_broker().acquire_stream(stream_key)
     idle_sec = float(os.getenv("EVILEYE_MJPEG_IDLE_SEC", "8") or 8)
+    demand_queue = getattr(request.app.state, "preview_demand_queue", None)
 
     return StreamingResponse(
         _mjpeg_generator(
-            run_info, fps, stop_event, source_id=source_id, stream_key=stream_key, idle_sec=idle_sec,
+            run_info,
+            fps,
+            stop_event,
+            source_id=source_id,
+            stream_key=stream_key,
+            idle_sec=idle_sec,
+            demand_queue=demand_queue,
+            rid=rid,
         ),
         media_type="multipart/x-mixed-replace; boundary=frame",
         headers={

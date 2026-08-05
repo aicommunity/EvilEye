@@ -5,7 +5,7 @@ import asyncio
 import hashlib
 import json
 import time
-from typing import Optional
+from typing import Optional, Callable
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 
@@ -20,15 +20,28 @@ router = APIRouter(prefix="/api/v1", tags=["realtime"])
 _WS_MIN_INTERVAL_SEC = 0.5
 
 
-def _touch_preview_demand_ws(websocket: WebSocket, rid: int, level: str = "grid") -> None:
+def _touch_preview_demand_ws(websocket: WebSocket, rid: int, level: str = "grid", *, force: bool = False) -> None:
     queue = getattr(websocket.app.state, "preview_demand_queue", None)
     if queue is None:
         return
     touched_at = time.time()
     try:
-        queue.put_nowait((str(rid), touched_at, level))
+        queue.put_nowait((str(rid), touched_at, level, force))
     except Exception:
         pass
+
+
+def make_hub_demand_callback(app) -> Callable[[int], None]:
+    def _cb(run_id: int) -> None:
+        queue = getattr(app.state, "preview_demand_queue", None)
+        if queue is None:
+            return
+        try:
+            queue.put_nowait((str(run_id), time.time(), "grid", False))
+        except Exception:
+            pass
+
+    return _cb
 
 
 async def _authorize_live_ws(websocket: WebSocket) -> bool:
@@ -184,6 +197,7 @@ async def live_grid_preview_ws(websocket: WebSocket, rid: int):
                 if isinstance(ids, list):
                     hub.set_client_sources(client, [int(x) for x in ids])
             elif op == "ping":
+                _touch_preview_demand_ws(websocket, rid, "grid")
                 await websocket.send_json({"op": "pong"})
     except WebSocketDisconnect:
         pass

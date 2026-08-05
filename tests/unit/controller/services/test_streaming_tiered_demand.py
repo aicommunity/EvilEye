@@ -34,6 +34,13 @@ def test_server_process_manager_grid_does_not_downgrade_stream():
     assert mgr.get_preview_demand_level("7:0") == "stream"
 
 
+def test_server_process_manager_force_downgrade_stream_to_grid():
+    mgr = ServerProcessManager()
+    mgr.touch_preview_demand("7:0", level="stream")
+    mgr.touch_preview_demand("7:0", level="grid", force=True)
+    assert mgr.get_preview_demand_level("7:0") == "grid"
+
+
 def test_server_process_manager_ttl_expires_to_idle():
     mgr = ServerProcessManager()
     mgr.touch_preview_demand("7:0", touched_at=time.time() - 30, level="grid")

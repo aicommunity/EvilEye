@@ -34,8 +34,21 @@ export function LivePage() {
 
   useVisibilityPolling(load, 5000, true, 0);
 
-  // Keep preview demand warm while Live is open (root run_id keys; TTL is 20s server-side).
+  const primaryRunId = useMemo(() => {
+    const ids = [...new Set(cameras.map((c) => c.run_id).filter((id) => Number.isFinite(id)))];
+    return ids.length === 1 ? ids[0] : ids[0] ?? null;
+  }, [cameras]);
+
+  const previewSourceIds = useMemo(
+    () => cameras.map((c) => c.source_id).filter((id): id is number => id != null),
+    [cameras],
+  );
+
+  const previewWs = useLiveGridPreviewWs(primaryRunId, previewSourceIds);
+
+  // Keep preview demand warm while Live is open (skip when grid WS already keeps demand).
   useEffect(() => {
+    if (previewWs.connected) return;
     const runIds = [...new Set(cameras.map((c) => c.run_id).filter((id) => Number.isFinite(id)))];
     if (!runIds.length) return;
 
@@ -48,7 +61,7 @@ export function LivePage() {
     tick();
     const id = window.setInterval(tick, 15000);
     return () => window.clearInterval(id);
-  }, [cameras]);
+  }, [cameras, previewWs.connected]);
 
   const ordered = useMemo(() => {
     if (!order.length) return cameras;
@@ -78,18 +91,6 @@ export function LivePage() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [expandedKey]);
-
-  const primaryRunId = useMemo(() => {
-    const ids = [...new Set(cameras.map((c) => c.run_id).filter((id) => Number.isFinite(id)))];
-    return ids.length === 1 ? ids[0] : ids[0] ?? null;
-  }, [cameras]);
-
-  const previewSourceIds = useMemo(
-    () => cameras.map((c) => c.source_id).filter((id): id is number => id != null),
-    [cameras],
-  );
-
-  const previewWs = useLiveGridPreviewWs(primaryRunId, previewSourceIds);
 
   return (
     <section className="panel active">

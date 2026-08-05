@@ -152,19 +152,28 @@ class ServerProcessManager:
                 if isinstance(item, tuple) and len(item) >= 2:
                     key, touched_at = item[0], item[1]
                     level = item[2] if len(item) >= 3 else "grid"
+                    force = bool(item[3]) if len(item) >= 4 else False
                     self.touch_preview_demand(
                         str(key),
                         touched_at=float(touched_at),
                         level=str(level),
+                        force=force,
                     )
             except Exception:
                 continue
 
-    def _merge_preview_demand(self, pipeline_key: str, touched_at: float, level: str) -> None:
+    def _merge_preview_demand(
+        self,
+        pipeline_key: str,
+        touched_at: float,
+        level: str,
+        *,
+        force: bool = False,
+    ) -> None:
         key = str(pipeline_key)
         normalized_level = _normalize_preview_level(level)
         existing = self._preview_demand.get(key)
-        if existing is None:
+        if existing is None or force:
             self._preview_demand[key] = (touched_at, normalized_level)
             return
         _, existing_level = existing
@@ -179,11 +188,13 @@ class ServerProcessManager:
         *,
         touched_at: float | None = None,
         level: str = "grid",
+        force: bool = False,
     ) -> None:
         self._merge_preview_demand(
             pipeline_key,
             float(touched_at or time.time()),
             level,
+            force=force,
         )
 
     def _demand_entry_level(self, key: str, *, ttl_sec: float, now: float) -> str | None:
