@@ -57,13 +57,25 @@ def load_config_summary(config_path: Optional[str]) -> ConfigSummary:
         source_type = source.get("type") or source.get("source")
         camera_address = source.get("camera") or source.get("video") or source.get("path")
         if source_ids and source_names:
+            split = bool(source.get("split"))
+            num_split = int(source.get("num_split") or len(source_names) or 0)
+            src_coords_list = source.get("src_coords") or []
+            parent_folder = "-".join(source_names[:num_split]) if split and num_split else None
             for idx, source_id in enumerate(source_ids):
+                src_coords = None
+                if split and idx < len(src_coords_list):
+                    raw = src_coords_list[idx]
+                    if isinstance(raw, (list, tuple)) and len(raw) >= 4:
+                        src_coords = [int(raw[0]), int(raw[1]), int(raw[2]), int(raw[3])]
                 source_items.append(
                     {
                         "source_id": source_id,
                         "source_name": source_names[idx] if idx < len(source_names) else f"Source {source_id}",
                         "source_type": source_type,
                         "address": camera_address,
+                        "split": split,
+                        "parent_source_name": parent_folder,
+                        "src_coords": src_coords,
                     }
                 )
         else:

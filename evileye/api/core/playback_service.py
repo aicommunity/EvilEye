@@ -138,6 +138,82 @@ def discover_cameras(date: Optional[str] = None) -> list[dict[str, Any]]:
     return sorted(cameras.values(), key=lambda x: x["id"])
 
 
+def _config_path_for_run(run_id: int | None) -> Optional[str]:
+    if run_id is None:
+        return None
+    try:
+        from evileye.api.core.server_state import get_run_summary
+
+        summary = get_run_summary(int(run_id))
+        if summary:
+            return summary.get("config_path")
+    except Exception:
+        pass
+    try:
+        from evileye.api.core.runtime_registry import load_runtime_record
+
+        record = load_runtime_record(int(run_id))
+        if record:
+            return record.get("config_path")
+    except Exception:
+        pass
+    return None
+
+
+def list_logical_cameras(run_id: int | None = None, date: Optional[str] = None) -> list[dict[str, Any]]:
+    """Logical cameras from run config (source_names), mapped to on-disk storage folders."""
+    from evileye.api.core.server_state import load_config_summary
+
+    config_path = _config_path_for_run(run_id)
+    summary = load_config_summary(config_path)
+    if not summary.source_items:
+        return discover_cameras(date)
+
+    base = data_dir() / "Streams"
+    date_dirs = _date_dirs(base, date)
+    cameras: list[dict[str, Any]] = []
+
+    for item in summary.source_items:
+        logical_id = str(item.get("source_name") or "")
+        if not logical_id:
+            continue
+        parent_folder = item.get("parent_source_name")
+        storage_folder = parent_folder or logical_id
+        split = bool(item.get("split"))
+        src_coords = item.get("src_coords")
+
+        folder_exists = False
+        segment_count = 0
+        for date_dir in date_dirs:
+            folder = resolve_camera_folder(date_dir, logical_id)
+            if folder is None:
+                continue
+            folder_exists = True
+            if folder == date_dir:
+                segment_count += len(glob.glob(str(date_dir / f"{logical_id}*.mp4")))
+            elif split and folder.name != logical_id:
+                segment_count += len(glob.glob(str(folder / f"{logical_id}_*.mp4")))
+            else:
+                segment_count += len(glob.glob(str(folder / "*.mp4")))
+
+        cameras.append(
+            {
+                "id": logical_id,
+                "name": logical_id,
+                "source_id": item.get("source_id"),
+                "storage_folder": storage_folder,
+                "parent_folder": parent_folder,
+                "split": split,
+                "src_coords": src_coords,
+                "folder": storage_folder,
+                "segment_count": segment_count,
+                "available": folder_exists or segment_count > 0,
+            }
+        )
+
+    return cameras
+
+
 def load_segments(
     camera: str,
     from_ts: Optional[float] = None,
@@ -155,7 +231,11 @@ def load_segments(
         if folder == date_dir:
             paths.extend(glob.glob(str(date_dir / f"{camera}*.mp4")))
         else:
-            paths.extend(glob.glob(str(folder / "*.mp4")))
+            folder_name = folder.name
+            if "-" in folder_name and camera != folder_name:
+                paths.extend(glob.glob(str(folder / f"{camera}_*.mp4")))
+            else:
+                paths.extend(glob.glob(str(folder / "*.mp4")))
     items: list[dict[str, Any]] = []
     for path in sorted(set(paths)):
         times = _parse_segment_times(path)

@@ -13,8 +13,14 @@ router = APIRouter(prefix="/api/v1/playback", tags=["playback"])
 
 
 @router.get("/cameras")
-async def playback_cameras(date: Optional[str] = None) -> dict:
-    items = await asyncio.to_thread(svc.discover_cameras, date)
+async def playback_cameras(
+    date: Optional[str] = None,
+    run_id: Optional[int] = Query(None),
+) -> dict:
+    if run_id is not None:
+        items = await asyncio.to_thread(svc.list_logical_cameras, run_id, date)
+    else:
+        items = await asyncio.to_thread(svc.discover_cameras, date)
     return {"items": items}
 
 
