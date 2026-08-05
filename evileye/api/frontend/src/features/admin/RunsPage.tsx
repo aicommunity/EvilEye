@@ -4,6 +4,13 @@ import { Badge, Button, Modal } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
 import { useI18n } from '../../i18n';
 
+function statusLabel(state: string | undefined, t: (key: string) => string): string {
+  const raw = String(state || '').trim() || 'unknown';
+  const key = `runs.state.${raw}`;
+  const translated = t(key);
+  return translated === key ? raw : translated;
+}
+
 export function RunsPage() {
   const { showError } = useToast();
   const { t } = useI18n();
@@ -71,8 +78,10 @@ export function RunsPage() {
                   <td>#{r.id}</td>
                   <td>{r.name ?? '—'}</td>
                   <td>
-                    <Badge state={r.state}>{r.state}</Badge>
-                    {current?.id === r.id ? <span className="config-active-badge"> {t('runs.current')}</span> : null}
+                    <div className="runs-status-cell">
+                      <Badge state={r.state}>{statusLabel(r.state, t)}</Badge>
+                      {current?.id === r.id ? <Badge state="running">{t('runs.current')}</Badge> : null}
+                    </div>
                   </td>
                   <td className="run-config">{r.config_path ?? '—'}</td>
                   <td>{r.pipeline_class ?? '—'}</td>
@@ -99,7 +108,7 @@ export function RunsPage() {
               <strong>{t('runs.columns.name')}</strong> {detail.name ?? '—'}
             </p>
             <p>
-              <strong>{t('runs.columns.status')}</strong> {detail.state}
+              <strong>{t('runs.columns.status')}</strong> {statusLabel(detail.state, t)}
             </p>
             <p>
               <strong>{t('runs.columns.config')}</strong> {detail.config_path}

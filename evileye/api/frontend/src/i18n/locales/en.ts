@@ -265,9 +265,17 @@ const en: Dict = {
     empty: 'No active runs.',
     refresh: 'Refresh',
     view: 'View',
-    current: 'current',
+    current: 'Current',
     detail: 'Run details',
     loadError: 'Failed to load runs',
+    state: {
+      running: 'Running',
+      stopped: 'Stopped',
+      starting: 'Starting',
+      pending: 'Pending',
+      error: 'Error',
+      unknown: 'Unknown',
+    },
     columns: {
       id: 'ID',
       name: 'Name',

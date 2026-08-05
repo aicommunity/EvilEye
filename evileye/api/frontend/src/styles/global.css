@@ -1055,6 +1055,19 @@ body {
   color: #f59e0b;
 }
 
+.badge-error {
+  background: rgba(239, 68, 68, 0.2);
+  color: var(--danger);
+}
+
+.runs-status-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  vertical-align: middle;
+}
+
 .run-actions {
   display: flex;
   gap: 0.5rem;

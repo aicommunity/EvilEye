@@ -265,9 +265,17 @@ const ru: Dict = {
     empty: 'Нет активных запусков.',
     refresh: 'Обновить',
     view: 'Просмотр',
-    current: 'текущий',
+    current: 'Текущий',
     detail: 'Подробности запуска',
     loadError: 'Ошибка загрузки запусков',
+    state: {
+      running: 'Работает',
+      stopped: 'Остановлен',
+      starting: 'Запуск…',
+      pending: 'Ожидание',
+      error: 'Ошибка',
+      unknown: 'Неизвестно',
+    },
     columns: {
       id: 'ID',
       name: 'Имя',
