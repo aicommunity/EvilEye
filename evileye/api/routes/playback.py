@@ -47,11 +47,19 @@ async def playback_events(
     from_ts: Optional[float] = Query(None, alias="from"),
     to_ts: Optional[float] = Query(None, alias="to"),
     camera: Optional[str] = None,
+    cameras: Optional[str] = Query(None, description="Comma-separated camera ids"),
     date: Optional[str] = None,
     limit: int = Query(500, ge=1, le=2000),
 ) -> dict:
+    cam_list = [c.strip() for c in (cameras or "").split(",") if c.strip()]
     items = await asyncio.to_thread(
-        svc.load_event_markers, from_ts, to_ts, camera, date=date, limit=limit,
+        svc.load_event_markers,
+        from_ts,
+        to_ts,
+        camera,
+        cam_list or None,
+        date=date,
+        limit=limit,
     )
     return {"items": items}
 

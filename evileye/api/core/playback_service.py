@@ -275,6 +275,7 @@ def load_event_markers(
     from_ts: Optional[float] = None,
     to_ts: Optional[float] = None,
     camera: Optional[str] = None,
+    cameras: Optional[list[str]] = None,
     *,
     date: Optional[str] = None,
     limit: int = 500,
@@ -305,6 +306,9 @@ def load_event_markers(
 
     markers: list[dict[str, Any]] = []
     cap = max(1, min(int(limit or 500), 2000))
+    camera_filters = [c for c in (cameras or []) if c]
+    if camera and not camera_filters:
+        camera_filters = [camera]
     for date_dir in date_dirs:
         if not date_dir.is_dir():
             continue
@@ -324,13 +328,14 @@ def load_event_markers(
                     continue
                 if to_ts is not None and ts > to_ts:
                     continue
-                if camera and camera not in path:
+                if camera_filters and not any(c in path for c in camera_filters):
                     continue
+                marker_camera = next((c for c in camera_filters if c in path), None) or Path(root).name
                 markers.append(
                     {
                         "ts": ts,
                         "type": Path(name).suffix.lstrip(".") or "event",
-                        "camera": camera or Path(root).name,
+                        "camera": marker_camera,
                         "row_key": path,
                     }
                 )

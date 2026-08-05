@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { playbackApi, type PlaybackSegment } from '../../api';
+import { playbackApi, type PlaybackCamera, type PlaybackSegment } from '../../api';
 import { useI18n } from '../../i18n';
+import { SplitPlaybackCell } from './SplitPlaybackCell';
 
 export type PlaybackMediaSlot = {
   url: string | null;
@@ -22,12 +23,16 @@ function nextSegment(segs: PlaybackSegment[], current: PlaybackSegment | null): 
 
 export function PlaybackGrid({
   cameras,
+  cameraDefs,
+  cols,
   segmentsByCam,
   getPosition,
   playing,
   speed,
 }: {
   cameras: string[];
+  cameraDefs: Record<string, PlaybackCamera>;
+  cols: number;
   segmentsByCam: Record<string, PlaybackSegment[]>;
   getPosition: () => number;
   playing: boolean;
@@ -36,11 +41,12 @@ export function PlaybackGrid({
   const { t } = useI18n();
   if (!cameras.length) return <p className="empty">{t('playback.selectCameras')}</p>;
   return (
-    <div className="camera-group-grid" style={{ gridTemplateColumns: `repeat(${Math.min(cameras.length, 2)}, 1fr)` }}>
+    <div className="camera-group-grid" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
       {cameras.map((id) => (
         <PlaybackCell
           key={id}
           id={id}
+          camera={cameraDefs[id]}
           segments={segmentsByCam[id] ?? []}
           getPosition={getPosition}
           playing={playing}
@@ -53,12 +59,14 @@ export function PlaybackGrid({
 
 function PlaybackCell({
   id,
+  camera,
   segments,
   getPosition,
   playing,
   speed,
 }: {
   id: string;
+  camera?: PlaybackCamera;
   segments: PlaybackSegment[];
   getPosition: () => number;
   playing: boolean;
@@ -74,6 +82,8 @@ function PlaybackCell({
   getPositionRef.current = getPosition;
   const segmentsRef = useRef(segments);
   segmentsRef.current = segments;
+
+  const split = Boolean(camera?.split && camera?.src_coords && camera.src_coords.length === 4);
 
   useEffect(() => {
     let cancelled = false;
@@ -177,14 +187,28 @@ function PlaybackCell({
     else v.pause();
   }, [playing, speed, slot?.url]);
 
+  if (split && slot?.url && camera?.src_coords) {
+    return (
+      <SplitPlaybackCell
+        videoUrl={slot.url}
+        srcCoords={camera.src_coords}
+        label={id}
+        getPosition={getPosition}
+        playing={playing}
+        speed={speed}
+        startTs={slot.startTs}
+      />
+    );
+  }
+
   return (
-    <article className="camera-card">
+    <article className="camera-card playback-cell">
       <div className="camera-card-head">
         <span className="run-name">{id}</span>
       </div>
       {slot?.url ? (
         <>
-          <video ref={ref} src={slot.url} controls style={{ width: '100%' }} />
+          <video ref={ref} src={slot.url} style={{ width: '100%' }} playsInline />
           <video ref={preloadRef} muted playsInline style={{ display: 'none' }} aria-hidden />
         </>
       ) : (

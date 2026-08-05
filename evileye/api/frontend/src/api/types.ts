@@ -137,6 +137,13 @@ export interface PlaybackCamera {
   id: string;
   name: string;
   folder: string;
+  source_id?: number | null;
+  storage_folder?: string;
+  parent_folder?: string | null;
+  split?: boolean;
+  src_coords?: [number, number, number, number] | null;
+  segment_count?: number;
+  available?: boolean;
 }
 
 export interface PlaybackSegment {

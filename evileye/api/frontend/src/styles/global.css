@@ -1454,6 +1454,39 @@ body {
   display: block;
 }
 
+.playback-page .playback-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 60vh;
+}
+
+.playback-main {
+  flex: 1;
+  min-height: 200px;
+}
+
+.playback-timeline-footer {
+  position: sticky;
+  bottom: 0;
+  padding-top: 0.75rem;
+  background: var(--bg-card);
+  border-top: 1px solid var(--border);
+}
+
+.split-playback-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+  min-height: 160px;
+}
+
+.playback-cell video {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #000;
+}
+
 .overview-run-detail p {
   margin: 0.35rem 0;
 }
