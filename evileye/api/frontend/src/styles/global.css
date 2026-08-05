@@ -304,6 +304,40 @@ body {
   flex: 0 0 auto;
 }
 
+.users-create-form .users-create-field > .search-input,
+.users-create-form .users-pw-field > .search-input,
+.users-create-form select.search-input {
+  box-sizing: border-box;
+  min-height: 2.5rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.9375rem;
+  line-height: 1.25;
+  color: var(--text);
+  font-family: inherit;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+}
+
+.users-create-form .users-pw-field > .search-input {
+  padding-right: 4.5rem;
+  width: 100%;
+}
+
+.users-create-form .users-create-password-row {
+  align-items: stretch;
+}
+
+.users-create-form .users-create-password-row .btn,
+.users-create-form .users-create-actions .btn {
+  box-sizing: border-box;
+  min-height: 2.5rem;
+  padding-top: 0;
+  padding-bottom: 0;
+  display: inline-flex;
+  align-items: center;
+}
+
 .users-create-label-spacer {
   display: block;
   line-height: 1.25;
