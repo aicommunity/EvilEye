@@ -295,7 +295,7 @@ export function PlaybackPage() {
           )}
         </div>
         <div className="playback-timeline-footer">
-          <p className="hint" style={{ margin: '0 0 6px' }}>
+          <p className="hint" style={{ margin: '0 0 2px', fontSize: '0.75rem' }}>
             {t('playback.timelineHint')}
           </p>
           <Timeline

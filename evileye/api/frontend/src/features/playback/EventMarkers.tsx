@@ -61,7 +61,7 @@ export function EventMarkers({
             : `${primary.type} · ${primary.camera} @ ${new Date(primary.ts * 1000).toLocaleString(localeTag)}`;
         const expanded = expandedKey === clusterKey;
         return (
-          <div key={clusterKey} style={{ position: 'absolute', left: `${c.leftPct}%`, top: 4, transform: 'translateX(-50%)', zIndex: expanded ? 5 : 1 }}>
+          <div key={clusterKey} style={{ position: 'absolute', left: `${c.leftPct}%`, top: 2, transform: 'translateX(-50%)', zIndex: expanded ? 5 : 1 }}>
             <button
               type="button"
               data-timeline-marker
@@ -77,14 +77,14 @@ export function EventMarkers({
                 onSelect?.(primary);
               }}
               style={{
-                minWidth: c.count > 1 ? 14 : 6,
-                height: 40,
+                minWidth: c.count > 1 ? 12 : 5,
+                height: 20,
                 padding: c.count > 1 ? '0 2px' : 0,
                 border: 'none',
                 background: c.type === 'mp4' ? '#f59e0b' : '#ef4444',
                 color: '#fff',
-                fontSize: 9,
-                lineHeight: '40px',
+                fontSize: 8,
+                lineHeight: '20px',
                 cursor: 'pointer',
                 borderRadius: 2,
               }}
@@ -96,7 +96,7 @@ export function EventMarkers({
                 role="listbox"
                 style={{
                   position: 'absolute',
-                  top: 44,
+                  top: 24,
                   left: '50%',
                   transform: 'translateX(-50%)',
                   margin: 0,

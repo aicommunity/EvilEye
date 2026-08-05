@@ -74,7 +74,7 @@ export function Timeline({
       className={`playback-timeline playback-timeline-segments${panning ? ' is-panning' : ''}`}
       style={{
         position: 'relative',
-        height: 148,
+        height: 74,
         margin: '0',
         background: 'var(--bg-card-hover)',
         borderRadius: 8,
@@ -163,8 +163,8 @@ export function Timeline({
               position: 'absolute',
               left: `${left}%`,
               width: `${Math.max(0.15, width)}%`,
-              top: '20%',
-              height: '52%',
+              top: '16%',
+              height: '48%',
               background: 'rgba(59, 130, 246, 0.45)',
               borderRadius: 4,
               border: '1px solid rgba(59, 130, 246, 0.7)',

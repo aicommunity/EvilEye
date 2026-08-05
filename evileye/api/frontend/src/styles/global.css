@@ -1662,7 +1662,7 @@ body {
 .playback-timeline-footer {
   position: sticky;
   bottom: 0;
-  padding-top: 0.75rem;
+  padding-top: 0.35rem;
   background: var(--bg-card);
   border-top: 1px solid var(--border);
 }
@@ -1696,10 +1696,10 @@ body {
 
 .timeline-tick-label {
   position: absolute;
-  bottom: 4px;
+  bottom: 2px;
   left: 50%;
   transform: translateX(-50%);
-  font-size: 0.65rem;
+  font-size: 0.58rem;
   color: var(--text-muted);
   white-space: nowrap;
 }
