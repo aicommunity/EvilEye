@@ -175,23 +175,31 @@ def _camera_health(
     *,
     stale_sec: float = _CAMERA_STALE_SEC,
 ) -> tuple[bool, float | None, bool, bool]:
-    """Return (preview_available, last_frame_age_sec, is_working, reconnecting)."""
+    """Return (preview_available, last_frame_age_sec, is_working, reconnecting).
+
+    ``is_working`` reflects capture health and does **not** require a JPEG in the
+    FrameBroker. ``reconnecting`` is true only when the runtime snapshot reports
+    ``is_working=False`` (real capture reconnect), not merely a missing preview.
+    """
     rid = run.get("id")
     age = _frame_age_sec(rid, source_id)
-    preview = bool(run.get("state") == "running" and _preview_frame_available(rid, source_id))
+    running = run.get("state") == "running"
+    preview = bool(running and _preview_frame_available(rid, source_id))
     snap = run.get("runtime_snapshot") if isinstance(run.get("runtime_snapshot"), dict) else None
     snap_working = _source_is_working_from_snapshot(snap, source_id)
-    if snap_working is not None:
-        is_working = bool(snap_working) and preview and (age is None or age < stale_sec)
-    elif age is not None:
-        is_working = preview and age < stale_sec
-    else:
+
+    if not running:
         is_working = False
-    reconnecting = bool(
-        run.get("state") == "running"
-        and not is_working
-        and (snap_working is False or (age is not None and age >= stale_sec) or not preview)
-    )
+    elif snap_working is not None:
+        is_working = bool(snap_working)
+    elif age is not None:
+        is_working = age < stale_sec
+    else:
+        # Unknown snapshot and no broker frames: optimistic True so empty broker
+        # does not mark every camera as reconnecting (cold-start / demand gap).
+        is_working = True
+
+    reconnecting = bool(running and snap_working is False)
     return preview, age, is_working, reconnecting
 
 
