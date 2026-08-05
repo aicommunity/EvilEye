@@ -1988,7 +1988,14 @@ class Controller(ControllerProcessingMixin):
 
                 # Check each detector
                 updated = False
+                process_mode_only = True
                 for detector in detectors:
+                    # Process-mode proxies load the model in a child; parent has no mapping.
+                    exec_mode = getattr(detector, "execution_mode", None) or getattr(
+                        detector, "_execution_mode", None
+                    )
+                    if str(exec_mode).lower() not in {"process", "mp", "multiprocessing"}:
+                        process_mode_only = False
                     mapping = detector.get_model_class_mapping()
                     # Проверяем наличие метода, так как не все детекторы могут его иметь
                     if mapping and hasattr(detector, '_check_and_update_classes_if_needed'):
@@ -1998,6 +2005,12 @@ class Controller(ControllerProcessingMixin):
                 if updated:
                     self.logger.info("Late model loading detected, classes updated")
                     break
+
+                if detectors and process_mode_only:
+                    self.logger.debug(
+                        "Model class late-update skipped: detectors run in process mode"
+                    )
+                    return
 
             if attempt >= max_attempts:
                 self.logger.warning("Model loading timeout, some classes may not update")

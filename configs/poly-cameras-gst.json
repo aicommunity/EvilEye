@@ -176,7 +176,8 @@
                 ],
                 "num_detection_threads": 1,
                 "execution_mode": "process",
-                "model": "models/yolov8n.pt"
+                "model": "models/yolov8n.pt",
+                "type": "ObjectDetectorYolo"
             },
             {
                 "roi": [
@@ -197,7 +198,8 @@
                 ],
                 "num_detection_threads": 1,
                 "execution_mode": "process",
-                "model": "models/yolov8n.pt"
+                "model": "models/yolov8n.pt",
+                "type": "ObjectDetectorYolo"
             },
             {
                 "roi": [
@@ -243,7 +245,8 @@
                 ],
                 "num_detection_threads": 1,
                 "execution_mode": "process",
-                "model": "models/yolov8n.pt"
+                "model": "models/yolov8n.pt",
+                "type": "ObjectDetectorYolo"
             },
             {
                 "roi": [
@@ -283,7 +286,8 @@
                 ],
                 "num_detection_threads": 1,
                 "execution_mode": "process",
-                "model": "models/yolov8n.pt"
+                "model": "models/yolov8n.pt",
+                "type": "ObjectDetectorYolo"
             },
             {
                 "roi": [
@@ -304,7 +308,8 @@
                 ],
                 "num_detection_threads": 1,
                 "execution_mode": "process",
-                "model": "models/yolov8n.pt"
+                "model": "models/yolov8n.pt",
+                "type": "ObjectDetectorYolo"
             }
         ],
         "trackers": [
@@ -325,7 +330,8 @@
                     "tracker_type": "botsort",
                     "fuse_score": true,
                     "with_reid": true
-                }
+                },
+                "type": "ObjectTrackingBotsort"
             },
             {
                 "source_ids": [
@@ -344,7 +350,8 @@
                     "tracker_type": "botsort",
                     "fuse_score": true,
                     "with_reid": true
-                }
+                },
+                "type": "ObjectTrackingBotsort"
             },
             {
                 "source_ids": [
@@ -363,7 +370,8 @@
                     "tracker_type": "botsort",
                     "fuse_score": true,
                     "with_reid": true
-                }
+                },
+                "type": "ObjectTrackingBotsort"
             },
             {
                 "source_ids": [
@@ -382,7 +390,8 @@
                     "tracker_type": "botsort",
                     "fuse_score": true,
                     "with_reid": true
-                }
+                },
+                "type": "ObjectTrackingBotsort"
             },
             {
                 "source_ids": [
@@ -401,7 +410,8 @@
                     "tracker_type": "botsort",
                     "fuse_score": true,
                     "with_reid": true
-                }
+                },
+                "type": "ObjectTrackingBotsort"
             }
         ],
         "mc_trackers": [
@@ -413,7 +423,8 @@
                     2,
                     3,
                     4
-                ]
+                ],
+                "type": "ObjectMultiCameraTracking"
             }
         ]
     },
