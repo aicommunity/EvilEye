@@ -47,6 +47,8 @@ class VideoCaptureOpencv(VideoCaptureBase):
 
         # Reconnect backoff: attempt counter for delay between restart attempts
         self._reconnect_attempt = 0
+        self._noframes_reset_last_ts = 0.0
+        self._reset_in_progress = False
 
     def _shutdown_requested(self) -> bool:
         return (not self.run_flag) or self.stop_event.is_set()
@@ -197,43 +199,50 @@ class VideoCaptureOpencv(VideoCaptureBase):
         with self.mutex:
             if self._shutdown_requested():
                 return
-            # For video files, when grab/retrieve stops working, we need to completely
-            # destroy and recreate the VideoCapture object, not just reopen it.
-            self.release()
-            # Completely destroy the old object
-            self.capture = None
-            # Add delay to allow OpenCV/FFmpeg to fully release resources
-            if self.stop_event.wait(0.2):
+            if self._reset_in_progress:
                 return
-            # Create a completely new VideoCapture object
-            self.capture = cv2.VideoCapture()
-            # Now initialize it
+            self._reset_in_progress = True
             try:
-                init_result = self.init()
-            except CaptureConnectionError:
-                init_result = False
-            timestamp = datetime.datetime.now()
-            if init_result and self.get_init_flag() and self.is_opened():
-                self.logger.info(
-                    f"Reconnected to a sources: {self.source_names} (is_inited={self.is_inited}, is_working={self.is_working})")
-                self.is_working = True
-                self.reconnects.append((self.params['camera'], timestamp, self.is_working))
-                # Update last_frame_time to give reset time to start producing frames
-                self.last_frame_time = datetime.datetime.now()
-                # release() above stopped OpenCVContinuousRecorder; restart like start() after loop reconnect
+                # For video files, when grab/retrieve stops working, we need to completely
+                # destroy and recreate the VideoCapture object, not just reopen it.
+                self.release()
+                # Completely destroy the old object
+                self.capture = None
+                # Add delay to allow OpenCV/FFmpeg to fully release resources
+                if self.stop_event.wait(0.2):
+                    return
+                # Create a completely new VideoCapture object
+                self.capture = cv2.VideoCapture()
+                # Now initialize it
                 try:
-                    if self.recording_params and self.recording_params.enabled and self.recording_params.continuous_recording_enabled:
-                        self._start_opencv_recording()
-                except Exception as rec_err:
+                    init_result = self.init()
+                except CaptureConnectionError:
+                    init_result = False
+                timestamp = datetime.datetime.now()
+                if init_result and self.get_init_flag() and self.is_opened():
+                    self.logger.info(
+                        f"Reconnected to a sources: {self.source_names} (is_inited={self.is_inited}, is_working={self.is_working})")
+                    self.is_working = True
+                    self.reconnects.append((self.params['camera'], timestamp, self.is_working))
+                    # Update last_frame_time to give reset time to start producing frames
+                    self.last_frame_time = datetime.datetime.now()
+                    self._noframes_reset_last_ts = time.time()
+                    # release() above stopped OpenCVContinuousRecorder; restart like start() after loop reconnect
+                    try:
+                        if self.recording_params and self.recording_params.enabled and self.recording_params.continuous_recording_enabled:
+                            self._start_opencv_recording()
+                    except Exception as rec_err:
+                        self.logger.warning(
+                            "Could not restart continuous recording after reconnect for %s: %s",
+                            self.source_names,
+                            rec_err,
+                        )
+                else:
                     self.logger.warning(
-                        "Could not restart continuous recording after reconnect for %s: %s",
-                        self.source_names,
-                        rec_err,
-                    )
-            else:
-                self.logger.warning(
-                    f"Could not reconnect to sources: {self.source_names} (init_result={init_result}, is_inited={self.is_inited}, is_opened={self.is_opened()})")
-                self.is_working = False
+                        f"Could not reconnect to sources: {self.source_names} (init_result={init_result}, is_inited={self.is_inited}, is_opened={self.is_opened()})")
+                    self.is_working = False
+            finally:
+                self._reset_in_progress = False
         # Уведомляем подписчиков вне мьютекса, чтобы не держать его долго
         for sub in self.subscribers:
             sub.update()
@@ -248,6 +257,35 @@ class VideoCaptureOpencv(VideoCaptureBase):
                     and (
                     datetime.datetime.now() - self.last_frame_time).total_seconds() > self.capture_config.frame_timeout_seconds
             ):
+                try:
+                    cfg = (self.params or {}).get('reconnect', {}) or {}
+                    cfg_nf = (self.params or {}).get('noframes_restart', {}) or {}
+                except Exception:
+                    cfg, cfg_nf = {}, {}
+                min_interval = float(
+                    cfg_nf.get(
+                        'min_interval_sec',
+                        cfg.get('min_interval_sec', CaptureConstants.NOFRAMES_RECONNECT_MIN_INTERVAL_SEC),
+                    )
+                )
+                from .reconnect_policy import allow_noframes_reconnect
+
+                now_ts = time.time()
+                if self._reset_in_progress:
+                    if self.stop_event.wait(CaptureConstants.RECONNECT_SLEEP_SHORT):
+                        break
+                    continue
+                if not allow_noframes_reconnect(self._noframes_reset_last_ts, now_ts, min_interval):
+                    self.logger.info(
+                        "Skipping OpenCV no-frames reset for %s: cooldown "
+                        "(last_success_ago=%.1fs < min_interval=%.1fs)",
+                        self.source_names,
+                        now_ts - float(self._noframes_reset_last_ts or 0.0),
+                        min_interval,
+                    )
+                    if self.stop_event.wait(CaptureConstants.RECONNECT_SLEEP_LONG):
+                        break
+                    continue
                 self.logger.warning(
                     f"No frames for {self.capture_config.frame_timeout_seconds}s from {self.source_names}, forcing reset"
                 )
@@ -266,10 +304,16 @@ class VideoCaptureOpencv(VideoCaptureBase):
                 initial_delay_sec = float(cfg.get('initial_delay_sec', CaptureConstants.RECONNECT_INITIAL_DELAY_SEC))
                 backoff_step_sec = float(cfg.get('backoff_step_sec', CaptureConstants.RECONNECT_BACKOFF_STEP_SEC))
                 max_delay_sec = float(cfg.get('max_delay_sec', CaptureConstants.RECONNECT_MAX_DELAY_SEC))
-                if self._reconnect_attempt == 0:
-                    wait_time = 0.0
-                else:
-                    wait_time = min(max_delay_sec, initial_delay_sec + (self._reconnect_attempt - 1) * backoff_step_sec)
+                min_first = float(cfg.get('min_first_backoff_sec', CaptureConstants.RECONNECT_MIN_FIRST_BACKOFF_SEC))
+                from .reconnect_policy import reconnect_wait_sec
+
+                wait_time = reconnect_wait_sec(
+                    self._reconnect_attempt,
+                    initial_delay_sec=initial_delay_sec,
+                    backoff_step_sec=backoff_step_sec,
+                    max_delay_sec=max_delay_sec,
+                    min_first_backoff_sec=0.0 if self._reconnect_attempt == 0 else min_first,
+                )
                 if wait_time > 0:
                     if self.stop_event.wait(wait_time):
                         break
@@ -282,6 +326,7 @@ class VideoCaptureOpencv(VideoCaptureBase):
                         self.logger.info(
                             f"Reconnected to a sources: {self.source_names} (is_inited={self.is_inited}, is_working={self.is_working})")
                         self.reconnects.append((self.params['camera'], timestamp, self.is_working))
+                        self._noframes_reset_last_ts = time.time()
                         for sub in self.subscribers:
                             sub.update()
                     else:
