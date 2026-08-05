@@ -321,6 +321,8 @@ const en: Dict = {
     approved: 'Approved',
     rejected: 'Rejected',
     create: 'Add user',
+    createSection: 'New user',
+    listSection: 'Users list',
     createHint: 'Email is not configured — share the password with the user manually.',
     password: 'Password',
     generatePassword: 'Generate',

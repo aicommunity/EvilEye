@@ -71,112 +71,124 @@ export function UsersPage() {
           </Button>
         </div>
 
-        <form
-          className="toolbar"
-          style={{ flexWrap: 'wrap', alignItems: 'flex-end', gap: 8, marginBottom: 12 }}
-          onSubmit={(e) => {
-            e.preventDefault();
-            void onCreate();
-          }}
-        >
-          <label className="hint" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {t('users.email')}
-            <input
-              className="search-input"
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              autoComplete="off"
-            />
-          </label>
-          <label className="hint" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {t('users.password')}
-            <input
-              className="search-input"
-              type="text"
-              required
-              minLength={6}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="new-password"
-            />
-          </label>
-          <Button type="button" size="sm" variant="outline" onClick={() => setPassword(generatePassword())}>
-            {t('users.generatePassword')}
-          </Button>
-          <label className="hint" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {t('users.roleHeader')}
-            <select
-              className="search-input"
-              value={role}
-              onChange={(e) => setRole(e.target.value === 'admin' ? 'admin' : 'user')}
-            >
-              <option value="user">{t('users.role.user')}</option>
-              <option value="admin">{t('users.role.admin')}</option>
-            </select>
-          </label>
-          <Button type="submit" disabled={creating || !email.trim() || password.length < 6}>
-            {t('users.create')}
-          </Button>
-        </form>
-        <p className="hint">{t('users.createHint')}</p>
+        <div className="users-create">
+          <h3 className="users-create-title">{t('users.createSection')}</h3>
+          <p className="hint users-create-hint">{t('users.createHint')}</p>
+          <form
+            className="users-create-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void onCreate();
+            }}
+          >
+            <label className="users-create-field">
+              <span>{t('users.email')}</span>
+              <input
+                className="search-input"
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                autoComplete="off"
+              />
+            </label>
+            <label className="users-create-field users-create-field--password">
+              <span>{t('users.password')}</span>
+              <div className="users-create-password-row">
+                <input
+                  className="search-input"
+                  type="text"
+                  required
+                  minLength={6}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="new-password"
+                />
+                <Button type="button" size="sm" variant="outline" onClick={() => setPassword(generatePassword())}>
+                  {t('users.generatePassword')}
+                </Button>
+              </div>
+            </label>
+            <label className="users-create-field">
+              <span>{t('users.roleHeader')}</span>
+              <select
+                className="search-input"
+                value={role}
+                onChange={(e) => setRole(e.target.value === 'admin' ? 'admin' : 'user')}
+              >
+                <option value="user">{t('users.role.user')}</option>
+                <option value="admin">{t('users.role.admin')}</option>
+              </select>
+            </label>
+            <div className="users-create-field users-create-actions">
+              <span className="users-create-label-spacer" aria-hidden>
+                &nbsp;
+              </span>
+              <Button type="submit" disabled={creating || !email.trim() || password.length < 6}>
+                {t('users.create')}
+              </Button>
+            </div>
+          </form>
+        </div>
 
-        {!items.length ? (
-          <p className="empty">{t('users.empty')}</p>
-        ) : (
-          <table className="journal-table">
-            <thead>
-              <tr>
-                <th>{t('users.email')}</th>
-                <th>{t('users.roleHeader')}</th>
-                <th>{t('users.statusHeader')}</th>
-                <th>{t('users.actions')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((u) => (
-                <tr key={u.email}>
-                  <td>{u.email}</td>
-                  <td>{roleLabel(u.role)}</td>
-                  <td>{statusLabel(u.status)}</td>
-                  <td>
-                    {u.status === 'pending' ? (
-                      <>
-                        <Button
-                          size="sm"
-                          variant="success"
-                          onClick={() =>
-                            void usersApi.approve(u.email).then(() => {
-                              showSuccess(t('users.approved'));
-                              return load();
-                            })
-                          }
-                        >
-                          {t('users.approve')}
-                        </Button>{' '}
-                        <Button
-                          size="sm"
-                          variant="danger"
-                          onClick={() =>
-                            void usersApi.reject(u.email).then(() => {
-                              showSuccess(t('users.rejected'));
-                              return load();
-                            })
-                          }
-                        >
-                          {t('users.reject')}
-                        </Button>
-                      </>
-                    ) : (
-                      '—'
-                    )}
-                  </td>
+        <div className="users-list">
+          <h3 className="users-list-title">{t('users.listSection')}</h3>
+          {!items.length ? (
+            <p className="empty">{t('users.empty')}</p>
+          ) : (
+            <table className="journal-table">
+              <thead>
+                <tr>
+                  <th>{t('users.email')}</th>
+                  <th>{t('users.roleHeader')}</th>
+                  <th>{t('users.statusHeader')}</th>
+                  <th>{t('users.actions')}</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+              </thead>
+              <tbody>
+                {items.map((u) => (
+                  <tr key={u.email}>
+                    <td>{u.email}</td>
+                    <td>{roleLabel(u.role)}</td>
+                    <td>{statusLabel(u.status)}</td>
+                    <td>
+                      {u.status === 'pending' ? (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="success"
+                            onClick={() =>
+                              void usersApi.approve(u.email).then(() => {
+                                showSuccess(t('users.approved'));
+                                return load();
+                              })
+                            }
+                          >
+                            {t('users.approve')}
+                          </Button>{' '}
+                          <Button
+                            size="sm"
+                            variant="danger"
+                            onClick={() =>
+                              void usersApi.reject(u.email).then(() => {
+                                showSuccess(t('users.rejected'));
+                                return load();
+                              })
+                            }
+                          >
+                            {t('users.reject')}
+                          </Button>
+                        </>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
       </div>
     </section>
   );

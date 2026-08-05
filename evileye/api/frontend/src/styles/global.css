@@ -198,6 +198,84 @@ body {
   color: var(--text-muted);
 }
 
+.users-create {
+  margin: 0 0 1.5rem;
+  padding: 1rem 1.15rem 1.15rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-card-hover) 85%, var(--accent) 4%);
+}
+
+.users-create-title,
+.users-list-title {
+  margin: 0 0 0.35rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.users-create-hint {
+  margin: 0 0 0.85rem;
+}
+
+.users-create-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+  align-items: flex-end;
+}
+
+.users-create-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  min-width: 0;
+}
+
+.users-create-field > .search-input,
+.users-create-password-row > .search-input {
+  flex: 1;
+  min-width: 160px;
+  font: inherit;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.users-create-field--password {
+  flex: 1 1 280px;
+  max-width: 420px;
+}
+
+.users-create-password-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.users-create-password-row .search-input {
+  min-width: 0;
+}
+
+.users-create-actions {
+  flex: 0 0 auto;
+}
+
+.users-create-label-spacer {
+  display: block;
+  line-height: 1.25;
+  height: 1.25em;
+  visibility: hidden;
+  user-select: none;
+}
+
+.users-list-title {
+  margin-bottom: 0.75rem;
+}
+
 .panel-summary {
   margin: 0 0 1rem;
   padding: 0.75rem 0.9rem;

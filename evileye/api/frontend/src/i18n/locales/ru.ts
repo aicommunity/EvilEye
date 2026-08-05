@@ -321,6 +321,8 @@ const ru: Dict = {
     approved: 'Подтверждён',
     rejected: 'Отклонён',
     create: 'Добавить пользователя',
+    createSection: 'Новый пользователь',
+    listSection: 'Список пользователей',
     createHint: 'Почта не настроена — передайте пароль пользователю вручную.',
     password: 'Пароль',
     generatePassword: 'Сгенерировать',
