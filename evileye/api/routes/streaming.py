@@ -267,14 +267,12 @@ async def _mjpeg_stream_impl(
     Browsers and players render it as a video stream thanks to
     'multipart/x-mixed-replace' and boundary markers.
     """
+    # Raise stream demand first so the publisher can start encoding even when
+    # the broker has no JPEG yet. Do not 409 on empty broker — the generator
+    # waits for the first frame up to EVILEYE_MJPEG_IDLE_SEC.
     _touch_preview_demand(request, rid, source_id=source_id, level="stream")
     run_info = _resolve_run(rid)
     _require_source_id_if_multi(run_info, source_id)
-    if not _web_stream_available(run_info, source_id=source_id):
-        raise HTTPException(
-            status_code=409,
-            detail="Web stream is unavailable for this run. Preview relay is not delivering frames.",
-        )
     if not _acquire_mjpeg_slot():
         raise HTTPException(
             status_code=503,

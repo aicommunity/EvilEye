@@ -136,8 +136,17 @@ evileye deploy-samples
 5. `power_user` предназначен для просмотра предметных журналов системы и технических логов.
 6. `admin` предназначен для настройки и управления системой.
 7. Не оставляйте дефолтный `session_secret` (`evileye-dev-session-secret` / `change-me`) — при обнаружении слабого значения сервер заменит его на криптостойкий.
-8. Первый bootstrap admin получает одноразовый случайный пароль (или `EVILEYE_BOOTSTRAP_ADMIN_PASSWORD`); пароль пишется только в лог запуска.
+8. Первый bootstrap admin получает одноразовый случайный пароль (или `EVILEYE_BOOTSTRAP_ADMIN_PASSWORD`); пароль пишется только в лог запуска. Смените его через UI (сайдбар → «Сменить пароль») или `POST /api/v1/auth/change-password` / `PATCH /api/v1/users/admin`.
 9. Production checklist: `enabled=true`, `secure_cookies=true`, HTTPS, явный `EVILEYE_CORS_ALLOW_ORIGINS`, заданный `internal_token`, секция `protection` для rate-limit/IP ban (см. ниже).
+
+**Два хранилища пользователей**:
+
+| Хранилище | Файл | Кто |
+|-----------|------|-----|
+| Bootstrap / ручной | `credentials.json` → `web_auth.users` | username (например `admin`) |
+| Регистрация / UI create | `web_users.json` | email + status pending/approved |
+
+Страница `/admin/users` и `GET /api/v1/users` показывают **оба** списка (`source: credentials|store`). Логин объединяет оба источника.
 
 ### Секция web_auth.protection
 

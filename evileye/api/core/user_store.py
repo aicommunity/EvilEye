@@ -90,6 +90,7 @@ class UserStore:
                 "password_hash": hash_password(password),
                 "role": "user",
                 "status": "pending",
+                "disabled": False,
                 "created_at": time.time(),
             }
             users.append(record)
@@ -116,6 +117,7 @@ class UserStore:
                 "password_hash": hash_password(password),
                 "role": resolved_role,
                 "status": "approved",
+                "disabled": False,
                 "created_at": time.time(),
             }
             users.append(record)
@@ -134,6 +136,7 @@ class UserStore:
             for item in payload["users"]:
                 if str(item.get("email", "")).lower() == normalized:
                     item["status"] = "approved"
+                    item["disabled"] = False
                     return item
             raise KeyError("User not found")
 
@@ -151,6 +154,71 @@ class UserStore:
 
         return _with_lock(self.path, mutate)
 
+    def set_password(self, email: str, new_password: str) -> dict[str, Any]:
+        normalized = email.strip().lower()
+        if len(new_password) < 10:
+            raise ValueError("Password must be at least 10 characters")
+
+        def mutate(payload: dict[str, Any]) -> dict[str, Any]:
+            for item in payload["users"]:
+                if str(item.get("email", "")).lower() == normalized:
+                    item["password_hash"] = hash_password(new_password)
+                    item.pop("password", None)
+                    return item
+            raise KeyError("User not found")
+
+        return _with_lock(self.path, mutate)
+
+    def update_user(
+        self,
+        email: str,
+        *,
+        role: str | None = None,
+        status: str | None = None,
+        disabled: bool | None = None,
+    ) -> dict[str, Any]:
+        normalized = email.strip().lower()
+        allowed_status = {"pending", "approved", "rejected", "disabled"}
+
+        def mutate(payload: dict[str, Any]) -> dict[str, Any]:
+            for item in payload["users"]:
+                if str(item.get("email", "")).lower() != normalized:
+                    continue
+                if role is not None:
+                    item["role"] = normalize_role(role)
+                if status is not None:
+                    value = str(status).strip().lower()
+                    if value not in allowed_status:
+                        raise ValueError("status must be pending|approved|rejected|disabled")
+                    item["status"] = value
+                    if value == "disabled":
+                        item["disabled"] = True
+                    elif value == "approved":
+                        item["disabled"] = False
+                if disabled is not None:
+                    item["disabled"] = bool(disabled)
+                    if disabled:
+                        item["status"] = "disabled"
+                    elif item.get("status") == "disabled":
+                        item["status"] = "approved"
+                return item
+            raise KeyError("User not found")
+
+        return _with_lock(self.path, mutate)
+
+    def delete_user(self, email: str) -> None:
+        normalized = email.strip().lower()
+
+        def mutate(payload: dict[str, Any]) -> None:
+            users = payload["users"]
+            for idx, item in enumerate(users):
+                if str(item.get("email", "")).lower() == normalized:
+                    users.pop(idx)
+                    return None
+            raise KeyError("User not found")
+
+        _with_lock(self.path, mutate)
+
     def get_user_record(self, email: str) -> Optional[dict[str, Any]]:
         normalized = email.strip().lower()
         for item in self.list_users():
@@ -161,6 +229,8 @@ class UserStore:
     def authenticate(self, email: str, password: str) -> Optional[dict[str, Any]]:
         record = self.get_user_record(email)
         if not record or record.get("status") != "approved":
+            return None
+        if bool(record.get("disabled", False)):
             return None
         password_hash = record.get("password_hash")
         if not password_hash or not verify_password(password, str(password_hash)):

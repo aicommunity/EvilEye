@@ -97,6 +97,8 @@ def load_web_auth_config() -> WebAuthConfig:
         for record in get_user_store().list_users():
             if record.get("status") != "approved":
                 continue
+            if bool(record.get("disabled", False)):
+                continue
             email = str(record.get("email") or "").strip()
             if not email:
                 continue

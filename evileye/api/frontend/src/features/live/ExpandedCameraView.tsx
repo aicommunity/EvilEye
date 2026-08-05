@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
-import { streamMjpgUrl, type StateCamera, type StreamMetadata } from '../../api';
+import { type StateCamera, type StreamMetadata } from '../../api';
 import { Button } from '../../components/ui';
-import { useMjpegLifecycle } from '../../hooks/useMjpegLifecycle';
+import { useMjpegStream } from '../../hooks/useMjpegStream';
 import { useI18n } from '../../i18n';
 import { OverlayCanvas } from './OverlayCanvas';
 import { useRunMetadataWs } from './useRunMetadataWs';
@@ -15,11 +15,12 @@ export function ExpandedCameraView({
 }) {
   const { t } = useI18n();
   const running = camera.run_state === 'running';
-  const src = running
-    ? streamMjpgUrl(camera.run_id, 8, camera.source_id ?? null)
-    : '';
-
-  useMjpegLifecycle(running ? camera.run_id : null, camera.source_id ?? null);
+  const { phase, src, error, retry, onImgError, onImgLoad, attempt } = useMjpegStream({
+    rid: running ? camera.run_id : null,
+    sourceId: camera.source_id ?? null,
+    fps: 8,
+    enabled: running,
+  });
   const meta = useRunMetadataWs(running ? camera.run_id : null, camera.source_id ?? null);
 
   useEffect(() => {
@@ -29,6 +30,8 @@ export function ExpandedCameraView({
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
+
+  const showPlaceholder = !running || !src || phase === 'warming' || phase === 'error';
 
   return (
     <div className="expanded-camera-view">
@@ -42,13 +45,46 @@ export function ExpandedCameraView({
         </Button>
       </div>
       <div className="expanded-camera-media">
-        {src ? (
-          <>
-            <img src={src} alt={camera.source_name} className="expanded-camera-frame" />
-            <OverlayCanvas meta={meta as StreamMetadata | null} />
-          </>
+        {!running ? (
+          <div className="expanded-camera-placeholder">{t('live.camera.stopped')}</div>
         ) : (
-          <div className="camera-preview camera-preview-empty">{t('live.camera.stopped')}</div>
+          <>
+            {src ? (
+              <>
+                <img
+                  key={attempt}
+                  src={src}
+                  alt={camera.source_name}
+                  className="expanded-camera-frame"
+                  onError={onImgError}
+                  onLoad={onImgLoad}
+                />
+                <OverlayCanvas meta={meta as StreamMetadata | null} />
+              </>
+            ) : null}
+            {showPlaceholder && !src ? (
+              <div className="expanded-camera-placeholder">
+                {phase === 'error' || error ? (
+                  <>
+                    <p>{t('live.stream.streamError')}</p>
+                    <Button size="sm" variant="outline" onClick={retry}>
+                      {t('live.stream.retry')}
+                    </Button>
+                  </>
+                ) : (
+                  <p>{t('live.stream.connecting')}</p>
+                )}
+              </div>
+            ) : null}
+            {phase === 'error' && src ? (
+              <div className="expanded-camera-placeholder expanded-camera-placeholder--overlay">
+                <p>{t('live.stream.streamError')}</p>
+                <Button size="sm" variant="outline" onClick={retry}>
+                  {t('live.stream.retry')}
+                </Button>
+              </div>
+            ) : null}
+          </>
         )}
       </div>
     </div>

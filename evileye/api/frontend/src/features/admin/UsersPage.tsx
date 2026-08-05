@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { usersApi } from '../../api';
+import { usersApi, type UserRecord } from '../../api';
 import { Button } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
 import { useI18n } from '../../i18n';
@@ -14,11 +14,12 @@ function generatePassword(length = 14): string {
 export function UsersPage() {
   const { showError, showSuccess } = useToast();
   const { t } = useI18n();
-  const [items, setItems] = useState<Array<{ email: string; role: string; status: string }>>([]);
+  const [items, setItems] = useState<UserRecord[]>([]);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<'user' | 'admin'>('user');
   const [creating, setCreating] = useState(false);
+  const [resetPw, setResetPw] = useState<Record<string, string>>({});
 
   const load = useCallback(async () => {
     try {
@@ -61,6 +62,22 @@ export function UsersPage() {
     return translated === key ? value : translated;
   };
 
+  const sourceLabel = (value: string) => {
+    const key = `users.source.${value}`;
+    const translated = t(key);
+    return translated === key ? value : translated;
+  };
+
+  const patchUser = async (id: string, body: Parameters<typeof usersApi.patch>[1], okMsg: string) => {
+    try {
+      await usersApi.patch(id, body);
+      showSuccess(okMsg);
+      await load();
+    } catch (e) {
+      showError(e instanceof Error ? e.message : t('common.error'));
+    }
+  };
+
   return (
     <section className="panel active">
       <div className="card">
@@ -99,7 +116,7 @@ export function UsersPage() {
                   className="search-input"
                   type="text"
                   required
-                  minLength={6}
+                  minLength={10}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   autoComplete="new-password"
@@ -139,52 +156,149 @@ export function UsersPage() {
             <table className="journal-table">
               <thead>
                 <tr>
-                  <th>{t('users.email')}</th>
+                  <th>{t('users.identity')}</th>
+                  <th>{t('users.sourceHeader')}</th>
                   <th>{t('users.roleHeader')}</th>
                   <th>{t('users.statusHeader')}</th>
                   <th>{t('users.actions')}</th>
                 </tr>
               </thead>
               <tbody>
-                {items.map((u) => (
-                  <tr key={u.email}>
-                    <td>{u.email}</td>
-                    <td>{roleLabel(u.role)}</td>
-                    <td>{statusLabel(u.status)}</td>
-                    <td>
-                      {u.status === 'pending' ? (
-                        <>
-                          <Button
-                            size="sm"
-                            variant="success"
-                            onClick={() =>
-                              void usersApi.approve(u.email).then(() => {
-                                showSuccess(t('users.approved'));
-                                return load();
-                              })
+                {items.map((u) => {
+                  const id = u.id || u.username;
+                  const canApprove = u.source === 'store' && u.status === 'pending';
+                  const isActive = !u.disabled && u.status === 'approved';
+                  return (
+                    <tr key={`${u.source}:${id}`}>
+                      <td>{u.username}</td>
+                      <td>{sourceLabel(u.source)}</td>
+                      <td>
+                        {isActive || u.source === 'credentials' ? (
+                          <select
+                            className="search-input"
+                            value={u.role === 'admin' ? 'admin' : 'user'}
+                            onChange={(e) =>
+                              void patchUser(
+                                id,
+                                { role: e.target.value === 'admin' ? 'admin' : 'user' },
+                                t('users.roleUpdated'),
+                              )
                             }
                           >
-                            {t('users.approve')}
-                          </Button>{' '}
-                          <Button
-                            size="sm"
-                            variant="danger"
-                            onClick={() =>
-                              void usersApi.reject(u.email).then(() => {
-                                showSuccess(t('users.rejected'));
-                                return load();
-                              })
-                            }
-                          >
-                            {t('users.reject')}
-                          </Button>
-                        </>
-                      ) : (
-                        '—'
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                            <option value="user">{roleLabel('user')}</option>
+                            <option value="admin">{roleLabel('admin')}</option>
+                          </select>
+                        ) : (
+                          roleLabel(u.role)
+                        )}
+                      </td>
+                      <td>{statusLabel(u.status)}</td>
+                      <td>
+                        <div className="users-row-actions">
+                          {canApprove ? (
+                            <>
+                              <Button
+                                size="sm"
+                                variant="success"
+                                onClick={() =>
+                                  void usersApi.approve(u.email || id).then(() => {
+                                    showSuccess(t('users.approved'));
+                                    return load();
+                                  })
+                                }
+                              >
+                                {t('users.approve')}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="danger"
+                                onClick={() =>
+                                  void usersApi.reject(u.email || id).then(() => {
+                                    showSuccess(t('users.rejected'));
+                                    return load();
+                                  })
+                                }
+                              >
+                                {t('users.reject')}
+                              </Button>
+                            </>
+                          ) : null}
+                          {!canApprove ? (
+                            <>
+                              <div className="users-create-password-row">
+                                <input
+                                  className="search-input"
+                                  type="text"
+                                  placeholder={t('users.resetPassword')}
+                                  minLength={10}
+                                  value={resetPw[id] ?? ''}
+                                  onChange={(e) => setResetPw((prev) => ({ ...prev, [id]: e.target.value }))}
+                                  autoComplete="new-password"
+                                />
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() =>
+                                    setResetPw((prev) => ({ ...prev, [id]: generatePassword() }))
+                                  }
+                                >
+                                  {t('users.generatePassword')}
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  disabled={(resetPw[id] ?? '').length < 10}
+                                  onClick={() =>
+                                    void patchUser(id, { password: resetPw[id] }, t('users.passwordUpdated')).then(
+                                      () => setResetPw((prev) => ({ ...prev, [id]: '' })),
+                                    )
+                                  }
+                                >
+                                  {t('users.savePassword')}
+                                </Button>
+                              </div>
+                              {u.disabled || u.status === 'disabled' || u.status === 'rejected' ? (
+                                <Button
+                                  size="sm"
+                                  variant="success"
+                                  onClick={() =>
+                                    void patchUser(id, { disabled: false, status: 'approved' }, t('users.enabled'))
+                                  }
+                                >
+                                  {t('users.enable')}
+                                </Button>
+                              ) : (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => void patchUser(id, { disabled: true }, t('users.disabledMsg'))}
+                                >
+                                  {t('users.disable')}
+                                </Button>
+                              )}
+                              <Button
+                                size="sm"
+                                variant="danger"
+                                onClick={() => {
+                                  if (!window.confirm(t('users.deleteConfirm', { name: u.username }))) return;
+                                  void usersApi
+                                    .remove(id)
+                                    .then(() => {
+                                      showSuccess(t('users.deleted'));
+                                      return load();
+                                    })
+                                    .catch((e) => showError(e instanceof Error ? e.message : t('common.error')));
+                                }}
+                              >
+                                {t('users.delete')}
+                              </Button>
+                            </>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           )}

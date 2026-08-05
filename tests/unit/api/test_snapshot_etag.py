@@ -4,7 +4,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from evileye.api.core.frame_broker import get_frame_broker
+from evileye.core.runtime_services import get_frame_broker
 from evileye.api.routes import streaming as streaming_routes
 
 

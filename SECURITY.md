@@ -9,7 +9,7 @@ This document summarizes production hardening for the FastAPI web API and React 
 3. Ensure `web_auth.session_secret` and `web_auth.internal_token` are strong (auto-generated on bootstrap if missing/weak).
 4. Set explicit `EVILEYE_CORS_ALLOW_ORIGINS` (required when `EVILEYE_ENV=production`).
 5. Optionally set `EVILEYE_ALLOWED_HOSTS` and `EVILEYE_WEB_API_BASE` / `server.public_base_url` (do not rely on request `Host`).
-6. Change the one-time bootstrap admin password immediately (logged once at first start, or set `EVILEYE_BOOTSTRAP_ADMIN_PASSWORD`).
+6. Change the one-time bootstrap admin password immediately (logged once at first start, or set `EVILEYE_BOOTSTRAP_ADMIN_PASSWORD`). Use the Web UI sidebar **Change password**, `POST /api/v1/auth/change-password`, or admin `PATCH /api/v1/users/admin` with a new `password`.
 
 ## IP protection / bans
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { runGet, streamMjpgUrl, streamStatus } from '../api';
-import { useMjpegLifecycle } from '../hooks/useMjpegLifecycle';
+import { runGet, streamStatus } from '../api';
+import { useMjpegStream } from '../hooks/useMjpegStream';
 import { useI18n } from '../i18n';
 import { Button, Badge } from './ui';
 
@@ -18,13 +18,12 @@ export function StreamOverlay({
   const [name, setName] = useState('…');
   const [state, setState] = useState('…');
   const [statusText, setStatusText] = useState('…');
-  const [src, setSrc] = useState(() => streamMjpgUrl(rid, 10, sourceId ?? null));
-
-  useMjpegLifecycle(rid, sourceId ?? null);
-
-  useEffect(() => {
-    setSrc(streamMjpgUrl(rid, fps, sourceId ?? null));
-  }, [rid, sourceId, fps]);
+  const { phase, src, error, retry, onImgError, onImgLoad, attempt } = useMjpegStream({
+    rid,
+    sourceId: sourceId ?? null,
+    fps,
+    enabled: true,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -38,7 +37,19 @@ export function StreamOverlay({
         }
         setName(run.name ?? t('live.stream.runName', { id: run.id }));
         setState(run.state);
-        const st = await streamStatus(rid, sourceId ?? null).catch(() => null);
+        if (phase === 'warming') {
+          setStatusText(t('live.stream.connecting'));
+          return;
+        }
+        if (phase === 'error' || error) {
+          setStatusText(t('live.stream.streamError'));
+          return;
+        }
+        if (phase === 'streaming') {
+          setStatusText(t('live.stream.viewerActive'));
+          return;
+        }
+        const st = await streamStatus(rid, sourceId ?? null, 'stream').catch(() => null);
         if (cancelled || !st) return;
         setStatusText(
           st.stream_active
@@ -61,7 +72,7 @@ export function StreamOverlay({
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [rid, sourceId, onClose, t]);
+  }, [rid, sourceId, onClose, t, phase, error]);
 
   return (
     <div className="stream-container open">
@@ -96,7 +107,31 @@ export function StreamOverlay({
       <div className="stream-body">
         <div className="stream-main">
           <p className="stream-main-title">{t('live.stream.title')}</p>
-          <img src={src} alt={t('live.stream.title')} className="stream-frame" />
+          <div className="stream-frame-wrap">
+            {src ? (
+              <img
+                key={attempt}
+                src={src}
+                alt={t('live.stream.title')}
+                className="stream-frame"
+                onError={onImgError}
+                onLoad={onImgLoad}
+              />
+            ) : (
+              <div className="stream-placeholder">
+                {phase === 'error' || error ? (
+                  <>
+                    <p>{t('live.stream.streamError')}</p>
+                    <Button size="sm" variant="outline" onClick={retry}>
+                      {t('live.stream.retry')}
+                    </Button>
+                  </>
+                ) : (
+                  <p>{t('live.stream.connecting')}</p>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
