@@ -1444,6 +1444,20 @@ body {
   color: var(--danger);
 }
 
+.runs-section {
+  margin-top: 1.25rem;
+}
+
+.runs-section:first-of-type {
+  margin-top: 0.75rem;
+}
+
+.runs-section-title {
+  margin: 0 0 0.5rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
 .runs-status-cell {
   display: inline-flex;
   align-items: center;

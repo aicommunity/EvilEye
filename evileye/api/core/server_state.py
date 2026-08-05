@@ -276,7 +276,9 @@ def _current_run_candidate_key(run: Dict[str, Any]) -> tuple[int, int, float]:
 
 def _is_run_active(run: Dict[str, Any]) -> bool:
     state = str(run.get("state") or "")
-    return bool(run.get("alive")) or state in {"starting", "running", "stopping"}
+    if state == "stopping":
+        return True
+    return bool(run.get("alive")) and state in {"starting", "running"}
 
 
 def list_active_run_summaries() -> list[Dict[str, Any]]:
