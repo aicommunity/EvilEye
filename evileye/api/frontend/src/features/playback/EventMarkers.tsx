@@ -21,7 +21,7 @@ export function EventMarkers({
   to: number;
   onSelect?: (marker: PlaybackEventMarker) => void;
 }) {
-  const { localeTag } = useI18n();
+  const { formatDateTime } = useI18n();
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const span = to - from;
   if (span <= 0) return null;
@@ -57,8 +57,8 @@ export function EventMarkers({
         const clusterKey = `${c.leftPct}-${i}`;
         const title =
           c.count > 1
-            ? `${c.count} events @ ${new Date(primary.ts * 1000).toLocaleString(localeTag)}`
-            : `${primary.type} · ${primary.camera} @ ${new Date(primary.ts * 1000).toLocaleString(localeTag)}`;
+            ? `${c.count} events @ ${formatDateTime(primary.ts)}`
+            : `${primary.type} · ${primary.camera} @ ${formatDateTime(primary.ts)}`;
         const expanded = expandedKey === clusterKey;
         return (
           <div key={clusterKey} style={{ position: 'absolute', left: `${c.leftPct}%`, top: 2, transform: 'translateX(-50%)', zIndex: expanded ? 5 : 1 }}>
@@ -134,7 +134,7 @@ export function EventMarkers({
                     >
                       {m.type} · {m.camera}
                       <br />
-                      <span style={{ opacity: 0.7 }}>{new Date(m.ts * 1000).toLocaleString(localeTag)}</span>
+                      <span style={{ opacity: 0.7 }}>{formatDateTime(m.ts)}</span>
                     </button>
                   </li>
                 ))}

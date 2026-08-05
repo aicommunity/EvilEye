@@ -13,7 +13,7 @@ export function JournalTable({
   onSelect: (row: JournalGroupedRow) => void;
   emptyText: string;
 }) {
-  const { t, localeTag } = useI18n();
+  const { t, dateLocaleTag } = useI18n();
   if (!rows.length) return <p className="empty">{emptyText}</p>;
   return (
     <div className="journal-table-wrap">
@@ -34,11 +34,11 @@ export function JournalTable({
             const mode = row.preview ? 'found' : 'lost';
             return (
               <tr key={rowKey(row)} className="journal-row" onClick={() => onSelect(row)} style={{ cursor: 'pointer' }}>
-                <td>{formatJournalTime(row.time, localeTag)}</td>
+                <td>{formatJournalTime(row.time, dateLocaleTag)}</td>
                 <td>{String(row.event ?? '—')}</td>
                 <td>{String(row.information ?? '—')}</td>
                 <td>{String(row.source ?? '—')}</td>
-                <td>{formatJournalTime(row.time_lost, localeTag)}</td>
+                <td>{formatJournalTime(row.time_lost, dateLocaleTag)}</td>
                 <td>
                   {previewPath ? (
                     <img

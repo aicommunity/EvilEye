@@ -24,7 +24,7 @@ function yesterday(): string {
 }
 
 export function EventsPage() {
-  const { t } = useI18n();
+  const { t, formatDateTime } = useI18n();
   const { showError } = useToast();
   const [tab, setTab] = useState<JournalType | 'history'>('events');
   const [dateFrom, setDateFrom] = useState(yesterday());
@@ -217,7 +217,7 @@ export function EventsPage() {
                     <td>{String(item.project_id ?? '—')}</td>
                     <td>{String(item.configuration_id ?? '—')}</td>
                     <td>{String(item.status ?? '—')}</td>
-                    <td>{String(item.creation_time ?? '—')}</td>
+                    <td>{formatDateTime(item.creation_time as string | number | null | undefined)}</td>
                   </tr>
                 ))}
               </tbody>

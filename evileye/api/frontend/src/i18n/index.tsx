@@ -4,6 +4,15 @@ import { locales, type Locale, type Dict } from './locales';
 const STORAGE_KEY = 'evileye.ui.lang';
 const warnedKeys = new Set<string>();
 
+const DATE_TIME_OPTS: Intl.DateTimeFormatOptions = {
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+};
+
 function getByPath(dict: Dict, path: string): unknown {
   const parts = path.split('.');
   let cur: unknown = dict;
@@ -19,9 +28,21 @@ function interpolate(template: string, vars?: Record<string, string | number>): 
   return template.replace(/\{\{(\w+)\}\}/g, (_, key: string) => String(vars[key] ?? ''));
 }
 
+function resolveDateLocale(uiLang: Locale): string {
+  try {
+    if (typeof navigator !== 'undefined' && navigator.language) {
+      return navigator.language;
+    }
+  } catch {
+    /* ignore */
+  }
+  return uiLang === 'en' ? 'en-US' : 'ru-RU';
+}
+
 type I18nCtx = {
   lang: Locale;
   localeTag: 'ru-RU' | 'en-US';
+  dateLocaleTag: string;
   setLang: (lang: Locale) => void;
   t: (key: string, vars?: Record<string, string | number>) => string;
   formatDateTime: (value: number | Date | string | null | undefined) => string;
@@ -48,7 +69,9 @@ function toDate(value: number | Date | string | null | undefined): Date | null {
     const d = new Date(ms);
     return Number.isNaN(d.getTime()) ? null : d;
   }
-  const d = new Date(value);
+  const raw = String(value).trim();
+  const parsed = raw.includes('T') ? raw : raw.replace(' ', 'T');
+  const d = new Date(parsed);
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
@@ -65,6 +88,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const localeTag: 'ru-RU' | 'en-US' = lang === 'en' ? 'en-US' : 'ru-RU';
+  const dateLocaleTag = useMemo(() => resolveDateLocale(lang), [lang]);
 
   const t = useCallback(
     (key: string, vars?: Record<string, string | number>) => {
@@ -84,22 +108,22 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   const formatDateTime = useCallback(
     (value: number | Date | string | null | undefined) => {
       const d = toDate(value);
-      return d ? d.toLocaleString(localeTag) : '—';
+      return d ? d.toLocaleString(dateLocaleTag, DATE_TIME_OPTS) : '—';
     },
-    [localeTag],
+    [dateLocaleTag],
   );
 
   const formatDate = useCallback(
     (value: number | Date | string | null | undefined) => {
       const d = toDate(value);
-      return d ? d.toLocaleDateString(localeTag) : '—';
+      return d ? d.toLocaleDateString(dateLocaleTag) : '—';
     },
-    [localeTag],
+    [dateLocaleTag],
   );
 
   const value = useMemo(
-    () => ({ lang, localeTag, setLang, t, formatDateTime, formatDate }),
-    [lang, localeTag, setLang, t, formatDateTime, formatDate],
+    () => ({ lang, localeTag, dateLocaleTag, setLang, t, formatDateTime, formatDate }),
+    [lang, localeTag, dateLocaleTag, setLang, t, formatDateTime, formatDate],
   );
   return createElement(Ctx.Provider, { value }, children);
 }

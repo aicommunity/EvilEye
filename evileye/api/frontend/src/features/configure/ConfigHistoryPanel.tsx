@@ -8,7 +8,7 @@ import { useI18n } from '../../i18n';
 export function ConfigHistoryPanel({ configName }: { configName?: string }) {
   const { hasPermission } = useAuth();
   const { showError, showSuccess } = useToast();
-  const { t } = useI18n();
+  const { t, formatDateTime } = useI18n();
   const [items, setItems] = useState<Record<string, unknown>[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
   const [selected, setSelected] = useState<number[]>([]);
@@ -131,7 +131,7 @@ export function ConfigHistoryPanel({ configName }: { configName?: string }) {
                 <td>{String(item.job_id ?? '—')}</td>
                 <td>{String(item.configuration_id ?? '—')}</td>
                 <td>{String(item.status ?? '—')}</td>
-                <td>{String(item.creation_time ?? '—')}</td>
+                <td>{formatDateTime(item.creation_time as string | number | null | undefined)}</td>
                 <td>
                   {canRestore && configName && Number.isFinite(jobId) ? (
                     <Button

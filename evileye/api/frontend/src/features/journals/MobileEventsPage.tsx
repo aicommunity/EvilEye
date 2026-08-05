@@ -13,7 +13,7 @@ export function MobileEventsPage() {
 }
 
 function MobileEventsInner() {
-  const { t, lang, setLang, localeTag } = useI18n();
+  const { t, lang, setLang, dateLocaleTag } = useI18n();
   const defaultFilters = useMemo(() => {
     const format = (d: Date) =>
       `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -76,7 +76,7 @@ function MobileEventsInner() {
               >
                 <div style={{ fontWeight: 600 }}>{String(row.event ?? t('journals.eventFallback'))}</div>
                 <div className="hint">
-                  {formatJournalTime(row.time, localeTag)} · {String(row.source ?? '')}
+                  {formatJournalTime(row.time, dateLocaleTag)} · {String(row.source ?? '')}
                 </div>
                 <div className="hint" style={{ marginTop: 4 }}>
                   {String(row.information ?? '').slice(0, 120)}

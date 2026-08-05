@@ -11,18 +11,9 @@ const DURATION_PRESETS: Array<{ key: string; sec: number | null }> = [
   { key: 'permanent', sec: null },
 ];
 
-function formatTs(value?: number | null): string {
-  if (value == null) return '—';
-  try {
-    return new Date(value * 1000).toLocaleString();
-  } catch {
-    return String(value);
-  }
-}
-
 export function BansPage() {
   const { showError, showSuccess } = useToast();
-  const { t } = useI18n();
+  const { t, formatDateTime } = useI18n();
   const [items, setItems] = useState<BanRecord[]>([]);
   const [ip, setIp] = useState('');
   const [notes, setNotes] = useState('');
@@ -175,8 +166,8 @@ export function BansPage() {
                   <td>{ban.ip}</td>
                   <td>{ban.reason || '—'}</td>
                   <td>{ban.source || '—'}</td>
-                  <td>{formatTs(ban.created_at)}</td>
-                  <td>{ban.expires_at == null ? t('bans.duration.permanent') : formatTs(ban.expires_at)}</td>
+                  <td>{formatDateTime(ban.created_at)}</td>
+                  <td>{ban.expires_at == null ? t('bans.duration.permanent') : formatDateTime(ban.expires_at)}</td>
                   <td>{ban.created_by || '—'}</td>
                   <td>
                     <Button size="sm" variant="outline" disabled={busy} onClick={() => void onUnban(ban.ip)}>
