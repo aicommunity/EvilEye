@@ -116,6 +116,9 @@ export function PlaybackPage() {
           setSegmentsByCam({});
           setMarkers([]);
           setSegmentsLoaded(true);
+          if (!opts?.merge) {
+            viewport.resetToData(null, null, opts?.date ?? date);
+          }
           return;
         }
         const useDate = opts?.merge ? undefined : (opts?.date ?? date);
@@ -142,9 +145,11 @@ export function PlaybackPage() {
             opts?.merge ? Math.max(ctrl.toSec ?? to, to) : to,
             { preservePosition: Boolean(opts?.merge) || initialT != null },
           );
-          if (!opts?.merge) {
-            viewport.resetToData(from, to, date);
-          }
+        }
+        // Always establish a day (or data) window so the timeline chrome is visible
+        // even when there are no segments/events for the selected date.
+        if (!opts?.merge) {
+          viewport.resetToData(from ?? null, to ?? null, useDate ?? date);
         }
         const ev = await playbackApi.events(
           opts?.from ?? from,
@@ -168,6 +173,12 @@ export function PlaybackPage() {
     },
     [date, initialT, setSelectedIds, showError, t, ctrl, viewport],
   );
+
+  useEffect(() => {
+    // Show calendar-day timeline immediately on date change (before segments return).
+    viewport.resetToData(null, null, date);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only on date
+  }, [date]);
 
   useEffect(() => {
     if (!selectedIds.length || camerasLoading) return;

@@ -609,17 +609,20 @@ body {
 }
 
 .camera-group-grid--fit .playback-cell video {
-  flex: 1;
+  flex: 1 1 0;
   min-height: 0;
   width: 100%;
-  height: 100%;
+  height: auto;
+  max-height: none;
   object-fit: contain;
+  object-position: center;
   aspect-ratio: auto;
 }
 
 .camera-group-grid--fit .split-playback-container {
-  flex: 1;
+  flex: 1 1 0;
   min-height: 0;
+  height: auto;
 }
 
 .live-page-card {
@@ -664,6 +667,51 @@ body {
 .playback-page--fit .playback-timeline-footer {
   flex-shrink: 0;
   position: relative;
+}
+
+/* Fixed (Сетка): same viewport fill as Fit — previously only min-height: 60vh. */
+.playback-page:not(.playback-page--fit) .playback-card {
+  height: calc(100dvh - 4.5rem);
+  max-height: calc(100dvh - 4.5rem);
+  min-height: 0;
+}
+
+.playback-page:not(.playback-page--fit) .playback-main {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.playback-page:not(.playback-page--fit) .playback-main .camera-group-grid {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
+  grid-auto-rows: minmax(160px, 1fr);
+  align-content: stretch;
+}
+
+.playback-page:not(.playback-page--fit) .playback-main .camera-group-grid > * {
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+}
+
+.playback-page:not(.playback-page--fit) .playback-timeline-footer {
+  flex-shrink: 0;
+  position: relative;
+}
+
+.playback-page:not(.playback-page--fit) .playback-cell {
+  height: 100%;
+}
+
+.playback-page:not(.playback-page--fit) .playback-cell video {
+  flex: 1 1 0;
+  height: auto;
+  min-height: 0;
 }
 
 .journal-table {
@@ -1525,12 +1573,14 @@ body {
   font-size: 0.75rem;
   color: var(--text-muted);
   text-transform: uppercase;
+  flex-shrink: 0;
 }
 
 .stream-frame {
-  flex: 1;
   width: 100%;
+  height: 100%;
   object-fit: contain;
+  object-position: center;
   background: #000;
   min-height: 0;
   border-radius: 6px;
@@ -1681,6 +1731,24 @@ body {
   background: var(--bg);
 }
 
+/* Fit layout: expand fills remaining card height instead of a fixed 70vh box. */
+.live-page-card > .expanded-camera-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.live-page-card > .expanded-camera-view .expanded-camera-toolbar {
+  flex-shrink: 0;
+}
+
+.live-page-card > .expanded-camera-view .expanded-camera-media {
+  flex: 1 1 0;
+  min-height: 0;
+  height: auto;
+}
+
 .expanded-camera-toolbar {
   display: flex;
   align-items: center;
@@ -1692,13 +1760,16 @@ body {
 .expanded-camera-media {
   position: relative;
   background: #000;
+  height: min(70vh, calc(100dvh - 10rem));
   min-height: 240px;
+  overflow: hidden;
 }
 
 .expanded-camera-frame {
   width: 100%;
-  max-height: 70vh;
+  height: 100%;
   object-fit: contain;
+  object-position: center;
   display: block;
 }
 
@@ -1710,6 +1781,8 @@ body {
   justify-content: center;
   gap: 0.75rem;
   min-height: 240px;
+  width: 100%;
+  height: 100%;
   padding: 1rem;
   color: var(--text-muted, #aaa);
   text-align: center;
@@ -1725,26 +1798,36 @@ body {
 .stream-frame-wrap {
   position: relative;
   background: #000;
-  min-height: 240px;
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
 }
 
 .playback-page .playback-card {
   display: flex;
   flex-direction: column;
-  min-height: 60vh;
+  min-height: 0;
 }
 
 .playback-main {
   flex: 1;
-  min-height: 200px;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .playback-timeline-footer {
-  position: sticky;
-  bottom: 0;
+  flex-shrink: 0;
+  position: relative;
   padding-top: 0.35rem;
   background: var(--bg-card);
   border-top: 1px solid var(--border);
+  z-index: 2;
 }
 
 .playback-timeline {
@@ -1752,6 +1835,21 @@ body {
   overscroll-behavior: contain;
   cursor: grab;
   user-select: none;
+}
+
+.playback-timeline-empty-banner {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem 1rem;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  pointer-events: none;
+  z-index: 3;
+  background: color-mix(in srgb, var(--bg-card) 55%, transparent);
 }
 
 .playback-timeline.is-panning {
@@ -1800,14 +1898,39 @@ body {
   align-items: center;
   justify-content: center;
   background: #000;
-  min-height: 160px;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.split-playback-container canvas,
+.split-playback-container .camera-preview {
+  max-width: 100%;
+  max-height: 100%;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.playback-cell {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
 }
 
 .playback-cell video {
+  flex: 1 1 0;
+  min-height: 0;
   width: 100%;
-  aspect-ratio: 16 / 9;
+  height: auto;
+  object-fit: contain;
+  object-position: center;
   background: #000;
 }
+
+/* Duplicate fit override removed — see .camera-group-grid--fit .playback-cell video above. */
 
 .overview-run-detail p {
   margin: 0.35rem 0;

@@ -221,7 +221,7 @@ function PlaybackCell({
       </div>
       {slot?.url ? (
         <>
-          <video ref={ref} src={slot.url} style={{ width: '100%' }} playsInline />
+          <video ref={ref} src={slot.url} playsInline />
           <video ref={preloadRef} muted playsInline style={{ display: 'none' }} aria-hidden />
         </>
       ) : (

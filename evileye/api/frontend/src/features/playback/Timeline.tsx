@@ -54,12 +54,28 @@ export function Timeline({
   }, [viewFrom, viewTo, onViewChange]);
 
   if (viewFrom == null || viewTo == null || viewTo <= viewFrom) {
-    return <p className="hint">{t('playback.timelineEmpty')}</p>;
+    return (
+      <div
+        className="playback-timeline"
+        style={{
+          position: 'relative',
+          height: 74,
+          margin: '0',
+          background: 'var(--bg-card-hover)',
+          borderRadius: 8,
+          border: '1px solid var(--border)',
+          overflow: 'hidden',
+        }}
+      >
+        <div className="playback-timeline-empty-banner">{t('playback.timelineEmpty')}</div>
+      </div>
+    );
   }
   const span = viewTo - viewFrom;
   const pct = ((position - viewFrom) / span) * 100;
   const ticks = buildTimelineTicks(viewFrom, viewTo);
   const multiDay = span > 86400;
+  const noData = segments.length === 0 && markers.length === 0;
 
   const seekAtClientX = (clientX: number) => {
     const el = rootRef.current;
@@ -191,6 +207,7 @@ export function Timeline({
         to={viewTo}
         onSelect={(m) => onSeek(m.ts)}
       />
+      {noData ? <div className="playback-timeline-empty-banner">{t('playback.timelineNoRecordings')}</div> : null}
     </div>
   );
 }
