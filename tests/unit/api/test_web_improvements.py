@@ -54,8 +54,8 @@ def test_streaming_guard_multi_source(tmp_path, monkeypatch):
     assert exc.value.status_code == 400
 
 
-def test_streaming_has_consumers_only_with_demand_or_local_stream():
-    """Alive server alone must not force preview encode (demand-driven)."""
+def test_streaming_has_consumers_with_demand_or_local_or_server():
+    """Demand or local stream forces full encode; alive server enables heartbeat consumers."""
     service = StreamingService()
 
     class _ServerProcessManager:
@@ -66,9 +66,20 @@ def test_streaming_has_consumers_only_with_demand_or_local_stream():
             return False
 
     service.configure(pipeline_id="1", publish_fps=10.0, server_process_manager=_ServerProcessManager())
+    # Heartbeat path: server alive alone is enough for has_consumers.
+    assert service.has_consumers(source_id=0) is True
+
+    class _DeadServer:
+        def is_alive(self):
+            return False
+
+        def has_preview_demand(self, pipeline_key):
+            return False
+
+    service.configure(pipeline_id="1", publish_fps=10.0, server_process_manager=_DeadServer())
     assert service.has_consumers(source_id=0) is False
 
-    class _DemandManager(_ServerProcessManager):
+    class _DemandManager(_DeadServer):
         def has_preview_demand(self, pipeline_key):
             return True
 
@@ -77,8 +88,45 @@ def test_streaming_has_consumers_only_with_demand_or_local_stream():
 
 
 def test_streaming_has_consumers_when_server_process_alive():
-    # Backward-compatible alias name kept for discovery; behaviour is demand-driven.
-    test_streaming_has_consumers_only_with_demand_or_local_stream()
+    test_streaming_has_consumers_with_demand_or_local_or_server()
+
+
+def test_streaming_should_publish_heartbeat_vs_full(monkeypatch):
+    service = StreamingService()
+    service.configure(pipeline_id="1", publish_fps=10.0)
+    calls = []
+
+    def fake_throttle(key, *, fps_override=None):
+        calls.append(fps_override)
+        return True
+
+    monkeypatch.setattr(service, "_throttle_ok", fake_throttle)
+
+    monkeypatch.setattr(
+        service,
+        "_get_consumer_state",
+        lambda _k: (False, False, True, False),
+    )
+    assert service._should_publish("1:0") is True
+    assert calls[-1] == 1.0
+
+    calls.clear()
+    monkeypatch.setattr(
+        service,
+        "_get_consumer_state",
+        lambda _k: (False, True, True, False),
+    )
+    assert service._should_publish("1:0") is True
+    assert calls[-1] is None
+
+    calls.clear()
+    monkeypatch.setattr(
+        service,
+        "_get_consumer_state",
+        lambda _k: (False, False, False, False),
+    )
+    assert service._should_publish("1:0") is False
+    assert calls == []
 
 
 def test_web_auth_bootstrap_creates_admin(tmp_path, monkeypatch):

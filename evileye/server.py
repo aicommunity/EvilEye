@@ -148,7 +148,7 @@ class ServerProcessManager:
     def touch_preview_demand(self, pipeline_key: str, *, touched_at: float | None = None):
         self._preview_demand_ts[str(pipeline_key)] = float(touched_at or time.time())
 
-    def has_preview_demand(self, pipeline_key: str, *, ttl_sec: float = 5.0) -> bool:
+    def has_preview_demand(self, pipeline_key: str, *, ttl_sec: float = 20.0) -> bool:
         now = time.time()
         key = str(pipeline_key)
         touched_at = self._preview_demand_ts.get(key)

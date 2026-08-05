@@ -274,11 +274,11 @@ class StreamingService:
 
     def has_consumers(self, source_id: int | None = None) -> bool:
         throttle_key = f"{self._pipeline_id}:{source_id}" if source_id is not None else self._pipeline_id
-        has_local_stream, has_server_preview_demand, _has_server_process, has_relay = self._get_consumer_state(
+        has_local_stream, has_server_preview_demand, has_server_process, has_relay = self._get_consumer_state(
             throttle_key)
-        # Encode only when someone watches (local MJPEG / preview demand).
-        # Bare alive server or relay alone is not enough.
-        if has_local_stream or has_server_preview_demand:
+        # Encode when someone watches, or when the web server is alive (1 fps heartbeat
+        # keeps FrameBroker warm so Live/snapshots are not permanently "not ready").
+        if has_local_stream or has_server_preview_demand or has_server_process:
             return True
         if has_relay and has_server_preview_demand:
             return True
@@ -342,7 +342,7 @@ class StreamingService:
             return job
 
     def _should_publish(self, throttle_key: str) -> bool:
-        has_local_stream, has_server_preview_demand, _has_server_process, has_relay = self._get_consumer_state(
+        has_local_stream, has_server_preview_demand, has_server_process, has_relay = self._get_consumer_state(
             throttle_key)
 
         if has_local_stream or has_server_preview_demand:
@@ -351,6 +351,10 @@ class StreamingService:
         # Relay alone does not force encode; only with explicit demand.
         if has_relay and has_server_preview_demand:
             return self._throttle_ok(throttle_key)
+
+        # Heartbeat: keep broker warm at 1 fps while the web server process is alive.
+        if has_server_process:
+            return self._throttle_ok(throttle_key, fps_override=1.0)
 
         return False
 
