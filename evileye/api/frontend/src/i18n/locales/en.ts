@@ -96,6 +96,9 @@ const en: Dict = {
       noFrame: 'No frame',
       runName: 'Run {{id}}',
     },
+    expand: 'Expand',
+    expandClose: 'Collapse',
+    selected: 'Selected',
   },
   journals: {
     title: 'Journals',

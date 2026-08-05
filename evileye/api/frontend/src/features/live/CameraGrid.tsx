@@ -8,11 +8,17 @@ export function CameraGrid({
   cols,
   onOpenStream,
   onReorder,
+  onExpand,
+  getPreviewBlob,
+  previewWsActive = false,
 }: {
   cameras: StateCamera[];
   cols: number;
   onOpenStream: (rid: number, sid: number | null) => void;
   onReorder: (keys: string[]) => void;
+  onExpand?: (key: string) => void;
+  getPreviewBlob?: (sourceId: number | null) => string | null | undefined;
+  previewWsActive?: boolean;
 }) {
   const { t } = useI18n();
   const [selected, setSelected] = useState<string | null>(null);
@@ -78,8 +84,12 @@ export function CameraGrid({
             <CameraTile
               camera={camera}
               useMjpeg={false}
+              gridMode
               active={isVisible}
+              previewBlobUrl={getPreviewBlob?.(camera.source_id) ?? null}
+              previewWsActive={previewWsActive}
               onOpen={() => onOpenStream(camera.run_id, camera.source_id)}
+              onExpand={onExpand ? () => onExpand(key) : undefined}
               draggable
               onDragStart={() => {
                 dragKey.current = key;

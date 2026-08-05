@@ -96,6 +96,9 @@ const ru: Dict = {
       noFrame: 'Нет кадра',
       runName: 'Запуск {{id}}',
     },
+    expand: 'Развернуть',
+    expandClose: 'Свернуть',
+    selected: 'Выбрана',
   },
   journals: {
     title: 'Журналы',

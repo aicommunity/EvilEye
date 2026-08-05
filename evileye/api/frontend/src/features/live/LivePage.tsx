@@ -7,6 +7,7 @@ import { useToast } from '../../components/ui/Toast';
 import { ApiError } from '../../api';
 import { useI18n } from '../../i18n';
 import { CameraGrid } from './CameraGrid';
+import { ExpandedCameraView } from './ExpandedCameraView';
 import { LiveAlertsRail } from './LiveAlertsRail';
 import { useLiveLayout } from './useLiveLayout';
 
@@ -16,6 +17,7 @@ export function LivePage() {
   const [cameras, setCameras] = useState<StateCamera[]>([]);
   const [stats, setStats] = useState<{ events?: number; objects?: number }>({});
   const [stream, setStream] = useState<{ rid: number; sid: number | null } | null>(null);
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const { cols, setCols, order, setOrder } = useLiveLayout();
 
   const load = useCallback(async () => {
@@ -62,6 +64,20 @@ export function LivePage() {
     return result;
   }, [cameras, order]);
 
+  const expandedCamera = useMemo(() => {
+    if (!expandedKey) return null;
+    return ordered.find((c) => `${c.run_id}:${c.source_id}` === expandedKey) ?? null;
+  }, [expandedKey, ordered]);
+
+  useEffect(() => {
+    if (!expandedKey) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setExpandedKey(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [expandedKey]);
+
   return (
     <section className="panel active">
       <div className="card">
@@ -87,12 +103,17 @@ export function LivePage() {
           </div>
         </div>
         <LiveAlertsRail eventsTotal={stats.events} objectsTotal={stats.objects} cameras={cameras.length} />
-        <CameraGrid
-          cameras={ordered}
-          cols={cols}
-          onOpenStream={(rid, sid) => setStream({ rid, sid })}
-          onReorder={setOrder}
-        />
+        {expandedCamera ? (
+          <ExpandedCameraView camera={expandedCamera} onClose={() => setExpandedKey(null)} />
+        ) : (
+          <CameraGrid
+            cameras={ordered}
+            cols={cols}
+            onOpenStream={(rid, sid) => setStream({ rid, sid })}
+            onReorder={setOrder}
+            onExpand={setExpandedKey}
+          />
+        )}
       </div>
       {stream ? <StreamOverlay rid={stream.rid} sourceId={stream.sid} onClose={() => setStream(null)} /> : null}
     </section>
