@@ -30,6 +30,66 @@ class JournalPathNotFound(JournalPathError):
     pass
 
 
+class DateScopeError(ValueError):
+    """Invalid journal date / date range query parameters."""
+    pass
+
+
+def _parse_iso_date(value: str) -> str:
+    import datetime
+
+    try:
+        return datetime.date.fromisoformat(value).isoformat()
+    except ValueError as exc:
+        raise DateScopeError(f"Invalid date: {value}") from exc
+
+
+def resolve_date_scope(
+        *,
+        date: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+) -> dict[str, Any]:
+    """Resolve date query params. Single `date` wins over range."""
+    import datetime
+
+    if date is not None and str(date).strip():
+        raw = str(date).strip()
+        if raw.lower() == "today":
+            resolved = datetime.date.today().isoformat()
+        else:
+            resolved = _parse_iso_date(raw)
+        return {"mode": "single", "date": resolved, "date_from": None, "date_to": None}
+
+    df_raw = str(date_from).strip() if date_from is not None and str(date_from).strip() else None
+    dt_raw = str(date_to).strip() if date_to is not None and str(date_to).strip() else None
+    if df_raw or dt_raw:
+        df = _parse_iso_date(df_raw) if df_raw else None
+        dt = _parse_iso_date(dt_raw) if dt_raw else None
+        if df is None:
+            df = dt
+        if dt is None:
+            dt = df
+        assert df is not None and dt is not None
+        if df > dt:
+            raise DateScopeError("date_from must be <= date_to")
+        return {"mode": "range", "date": None, "date_from": df, "date_to": dt}
+
+    return {"mode": "none", "date": None, "date_from": None, "date_to": None}
+
+
+def _apply_date_scope(source: Any, scope: dict[str, Any]) -> None:
+    mode = scope.get("mode")
+    if mode == "single":
+        source.set_date(scope.get("date"))
+    elif mode == "range":
+        source.set_date_range(scope.get("date_from"), scope.get("date_to"))
+    else:
+        if hasattr(source, "set_date_range"):
+            source.set_date_range(None, None)
+        source.set_date(None)
+
+
 _db_controller_cache: DatabaseControllerPg | None = None
 _db_controller_failed: bool = False
 _grouped_row_cache: dict[str, dict[str, dict[str, Any]]] = {"events": {}, "objects": {}}
@@ -332,6 +392,8 @@ def _make_db_source(
         *,
         journal_type: str,
         date: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
 ) -> DatabaseJournalDataSource:
     runtime_params = _runtime_params()
     adapters = create_event_journal_adapters(controller, runtime_params) if journal_type == "events" else None
@@ -342,30 +404,39 @@ def _make_db_source(
         database_params={"database": _database_config()},
         params=runtime_params,
     )
-    if date:
-        source.set_date(date)
+    scope = resolve_date_scope(date=date, date_from=date_from, date_to=date_to)
+    _apply_date_scope(source, scope)
     return source
 
 
-def _get_json_source(*, date: str | None = None) -> JsonLabelJournalDataSource:
+def _get_json_source(
+        *,
+        date: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+) -> JsonLabelJournalDataSource:
     base_dir = _image_base_dir()
-    cache_key = (base_dir, date)
+    scope = resolve_date_scope(date=date, date_from=date_from, date_to=date_to)
+    cache_key = (base_dir, scope.get("date"), scope.get("date_from"), scope.get("date_to"))
     source = _json_source_cache.get(cache_key)
     if source is None:
         source = JsonLabelJournalDataSource(base_dir, params=_runtime_params())
-        if date:
-            source.set_date(date)
+        _apply_date_scope(source, scope)
         _json_source_cache[cache_key] = source
         return source
     source.set_base_dir(base_dir)
     source.params = _runtime_params()
-    if date:
-        source.set_date(date)
+    _apply_date_scope(source, scope)
     return source
 
 
-def _make_json_source(*, date: str | None = None) -> JsonLabelJournalDataSource:
-    return _get_json_source(date=date)
+def _make_json_source(
+        *,
+        date: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+) -> JsonLabelJournalDataSource:
+    return _get_json_source(date=date, date_from=date_from, date_to=date_to)
 
 
 def _with_journal_meta(payload: dict[str, Any], *, mode: str) -> dict[str, Any]:
@@ -380,47 +451,77 @@ def _with_journal_meta(payload: dict[str, Any], *, mode: str) -> dict[str, Any]:
     return enriched
 
 
-def load_events_page(*, page: int, size: int, filters: Dict[str, Any], date: str | None = None) -> dict[str, Any]:
+def load_events_page(
+        *,
+        page: int,
+        size: int,
+        filters: Dict[str, Any],
+        date: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+) -> dict[str, Any]:
     scoped_filters = _merge_current_filters(filters)
     controller = _db_controller()
     if controller is not None:
-        source = _make_db_source(controller, journal_type="events", date=date)
+        source = _make_db_source(
+            controller, journal_type="events", date=date, date_from=date_from, date_to=date_to,
+        )
         items = source.fetch(page, size, scoped_filters, sort=[("ts", "desc")])
         total = source.get_total(scoped_filters)
         return _with_journal_meta({"available": True, "items": items, "total": total}, mode="database")
     if not _json_journal_available():
         return _unavailable_payload()
     scoped_filters = {**scoped_filters, "journal_kind": "events"}
-    source = _get_json_source(date=date)
+    source = _get_json_source(date=date, date_from=date_from, date_to=date_to)
     source.begin_request()
     items = source.fetch(page, size, scoped_filters, sort=[("ts", "desc")])
     total = source.get_total(scoped_filters)
     return _with_journal_meta({"available": True, "items": items, "total": total}, mode="json")
 
 
-def load_objects_page(*, page: int, size: int, filters: Dict[str, Any], date: str | None = None) -> dict[str, Any]:
+def load_objects_page(
+        *,
+        page: int,
+        size: int,
+        filters: Dict[str, Any],
+        date: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+) -> dict[str, Any]:
     scoped_filters = _merge_current_filters(filters)
     controller = _db_controller()
     if controller is not None:
-        source = _make_db_source(controller, journal_type="objects", date=date)
+        source = _make_db_source(
+            controller, journal_type="objects", date=date, date_from=date_from, date_to=date_to,
+        )
         items = source.fetch(page, size, scoped_filters, sort=[("ts", "desc")])
         total = source.get_total(scoped_filters)
         return _with_journal_meta({"available": True, "items": items, "total": total}, mode="database")
     if not _json_journal_available():
         return _unavailable_payload()
     scoped_filters = {**scoped_filters, "journal_kind": "objects"}
-    source = _get_json_source(date=date)
+    source = _get_json_source(date=date, date_from=date_from, date_to=date_to)
     source.begin_request()
     items = source.fetch(page, size, scoped_filters, sort=[("ts", "desc")])
     total = source.get_total(scoped_filters)
     return _with_journal_meta({"available": True, "items": items, "total": total}, mode="json")
 
 
-def load_events_grouped_page(*, page: int, size: int, filters: Dict[str, Any], date: str | None = None) -> dict[str, Any]:
+def load_events_grouped_page(
+        *,
+        page: int,
+        size: int,
+        filters: Dict[str, Any],
+        date: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+) -> dict[str, Any]:
     # Group-then-paginate: over-fetch raw rows, group, then slice grouped page.
     need_groups = (page + 1) * size
     raw_needed = min(max(need_groups * 3, size * 4, 120), 2000)
-    payload = load_events_page(page=0, size=raw_needed, filters=filters, date=date)
+    payload = load_events_page(
+        page=0, size=raw_needed, filters=filters, date=date, date_from=date_from, date_to=date_to,
+    )
     if not payload.get("available"):
         return payload
     grouped = _enrich_rows(
@@ -452,10 +553,20 @@ def load_events_grouped_page(*, page: int, size: int, filters: Dict[str, Any], d
     return result
 
 
-def load_objects_grouped_page(*, page: int, size: int, filters: Dict[str, Any], date: str | None = None) -> dict[str, Any]:
+def load_objects_grouped_page(
+        *,
+        page: int,
+        size: int,
+        filters: Dict[str, Any],
+        date: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+) -> dict[str, Any]:
     need_groups = (page + 1) * size
     raw_needed = min(max(need_groups * 3, size * 4, 120), 2000)
-    payload = load_objects_page(page=0, size=raw_needed, filters=filters, date=date)
+    payload = load_objects_page(
+        page=0, size=raw_needed, filters=filters, date=date, date_from=date_from, date_to=date_to,
+    )
     if not payload.get("available"):
         return payload
     grouped = _enrich_rows(
@@ -486,18 +597,43 @@ def load_objects_grouped_page(*, page: int, size: int, filters: Dict[str, Any], 
     return result
 
 
-def load_journal_stats(*, date: str | None = None) -> dict[str, Any]:
+def load_journal_stats(
+        *,
+        date: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+) -> dict[str, Any]:
     import datetime
 
-    resolved_date = date
-    if not resolved_date or resolved_date.lower() == "today":
-        resolved_date = datetime.date.today().isoformat()
+    has_explicit = bool(
+        (date and str(date).strip())
+        or (date_from and str(date_from).strip())
+        or (date_to and str(date_to).strip())
+    )
+    if not has_explicit:
+        date = datetime.date.today().isoformat()
 
-    scoped_filters: dict[str, Any] = {"date_folder": resolved_date}
+    scope = resolve_date_scope(date=date, date_from=date_from, date_to=date_to)
+    scoped_filters: dict[str, Any] = {}
+    if scope["mode"] == "single":
+        scoped_filters["date_folder"] = scope["date"]
+
     controller = _db_controller()
     if controller is not None:
-        events_source = _make_db_source(controller, journal_type="events", date=resolved_date)
-        objects_source = _make_db_source(controller, journal_type="objects", date=resolved_date)
+        events_source = _make_db_source(
+            controller,
+            journal_type="events",
+            date=date,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        objects_source = _make_db_source(
+            controller,
+            journal_type="objects",
+            date=date,
+            date_from=date_from,
+            date_to=date_to,
+        )
         events_filters = {**scoped_filters, "journal_kind": "events"}
         objects_filters = {**scoped_filters, "journal_kind": "objects"}
         return {
@@ -509,7 +645,7 @@ def load_journal_stats(*, date: str | None = None) -> dict[str, Any]:
     if not _json_journal_available():
         return {"available": False}
 
-    source = _get_json_source(date=resolved_date)
+    source = _get_json_source(date=date, date_from=date_from, date_to=date_to)
     source.begin_request()
     events_total = source.get_total({**scoped_filters, "journal_kind": "events"})
     objects_total = source.get_total({**scoped_filters, "journal_kind": "objects"})

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { type JournalGroupedRow } from '../../api';
 import { AuthProvider } from '../../auth/AuthContext';
@@ -22,7 +22,15 @@ export function MobileEventsPage() {
 
 function MobileEventsInner() {
   const { t, lang, setLang, localeTag } = useI18n();
-  const feed = useJournalFeed('events', {});
+  const defaultFilters = useMemo(() => {
+    const format = (d: Date) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const to = new Date();
+    const from = new Date();
+    from.setDate(from.getDate() - 1);
+    return { date_from: format(from), date_to: format(to) };
+  }, []);
+  const feed = useJournalFeed('events', defaultFilters);
   const [selected, setSelected] = useState<JournalGroupedRow | null>(null);
 
   useVisibilityPolling(() => {

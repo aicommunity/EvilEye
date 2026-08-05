@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
-import { journalsApi, type JournalGroupedRow } from '../../api';
+import { journalsApi, type JournalDateFilters, type JournalGroupedRow } from '../../api';
 import { useI18n } from '../../i18n';
 import { mergePrependRows, type JournalType } from './journalMath';
 
-export function useJournalFeed(tab: JournalType, filters: { source_name?: string; event_type?: string; date?: string }) {
+export function useJournalFeed(tab: JournalType, filters: JournalDateFilters) {
   const { t } = useI18n();
   const [rows, setRows] = useState<JournalGroupedRow[]>([]);
   const [page, setPage] = useState(0);

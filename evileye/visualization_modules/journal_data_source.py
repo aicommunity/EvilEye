@@ -20,6 +20,9 @@ class EventJournalDataSource(Protocol):
     def set_date(self, date_folder: Optional[str]) -> None:
         ...
 
+    def set_date_range(self, date_from: Optional[str], date_to: Optional[str]) -> None:
+        ...
+
     def watch_live(self, callback: Callable[[List[Dict]], None]) -> None:
         """Optional live updates. Can be no-op."""
         ...

@@ -9,16 +9,26 @@ import { useJournalFeed } from './useJournalFeed';
 import type { JournalType } from './journalMath';
 import { useVisibilityPolling } from '../../hooks/useVisibilityPolling';
 
+function formatLocalDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function today(): string {
-  const now = new Date();
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  return formatLocalDate(new Date());
+}
+
+function yesterday(): string {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return formatLocalDate(d);
 }
 
 export function EventsPage() {
   const { t } = useI18n();
   const { showError } = useToast();
   const [tab, setTab] = useState<JournalType | 'history'>('events');
-  const [date, setDate] = useState(today());
+  const [dateFrom, setDateFrom] = useState(yesterday());
+  const [dateTo, setDateTo] = useState(today());
   const [eventType, setEventType] = useState('');
   const [source, setSource] = useState('');
   const [eventTypes, setEventTypes] = useState<string[]>([]);
@@ -31,11 +41,12 @@ export function EventsPage() {
 
   const filters = useMemo(
     () => ({
-      date: date || undefined,
+      date_from: dateFrom || undefined,
+      date_to: dateTo || undefined,
       event_type: eventType || undefined,
       source_name: source || undefined,
     }),
-    [date, eventType, source],
+    [dateFrom, dateTo, eventType, source],
   );
 
   const feed = useJournalFeed(tab === 'history' ? 'events' : tab, filters);
@@ -105,8 +116,47 @@ export function EventsPage() {
           </button>
         </div>
         <div className="journal-toolbar toolbar">
-          <input type="date" className="search-input" value={date} onChange={(e) => setDate(e.target.value)} />
-          <Button size="sm" variant="outline" onClick={() => setDate('')}>
+          <label className="hint" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            {t('journals.dateFrom')}
+            <input
+              type="date"
+              className="search-input"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+            />
+          </label>
+          <label className="hint" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            {t('journals.dateTo')}
+            <input type="date" className="search-input" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+          </label>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setDateFrom(today());
+              setDateTo(today());
+            }}
+          >
+            {t('journals.presetToday')}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setDateFrom(yesterday());
+              setDateTo(today());
+            }}
+          >
+            {t('journals.presetTwoDays')}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setDateFrom('');
+              setDateTo('');
+            }}
+          >
             {t('journals.allDates')}
           </Button>
           <select className="search-input" value={eventType} onChange={(e) => setEventType(e.target.value)}>

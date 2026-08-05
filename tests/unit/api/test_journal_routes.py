@@ -33,6 +33,19 @@ def journal_client(tmp_path, monkeypatch):
         ),
         encoding="utf-8",
     )
+    # Keep journals route tests free of session auth noise.
+    # Bootstrap skips when users is non-empty; keep auth disabled.
+    (tmp_path / "credentials.json").write_text(
+        json.dumps(
+            {
+                "web_auth": {
+                    "enabled": False,
+                    "users": [{"username": "test", "password": "test", "role": "admin"}],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         journal_service,
@@ -200,3 +213,54 @@ def test_video_mkv_content_type(journal_client, tmp_path):
     response = client.get(f"/api/v1/journals/video?path={mkv_rel}")
     assert response.status_code == 200
     assert "matroska" in response.headers.get("content-type", "") or "video" in response.headers.get("content-type", "")
+
+
+def _write_object_found(date_folder: str, event_id: int, object_id: int) -> None:
+    metadata = Path(f"EvilEyeData/Detections/{date_folder}/Metadata")
+    metadata.mkdir(parents=True, exist_ok=True)
+    (metadata / "objects_found.json").write_text(
+        json.dumps(
+            [
+                {
+                    "event_id": event_id,
+                    "timestamp": f"{date_folder}T10:00:00",
+                    "source_id": 0,
+                    "source_name": "Cam1",
+                    "object_id": object_id,
+                    "class_name": "person",
+                    "image_filename": "obj_preview.jpg",
+                    "date_folder": date_folder,
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_objects_grouped_date_range(journal_client):
+    client, _preview, _video = journal_client
+    _write_object_found("2026-06-12", event_id=1, object_id=11)
+    _write_object_found("2026-06-13", event_id=2, object_id=22)
+
+    ranged = client.get(
+        "/api/v1/journals/objects/grouped?page=0&size=20&date_from=2026-06-12&date_to=2026-06-13"
+    )
+    assert ranged.status_code == 200
+    items = ranged.json()["items"]
+    folders = {row.get("date_folder") for row in items}
+    assert "2026-06-12" in folders
+    assert "2026-06-13" in folders
+
+    single = client.get("/api/v1/journals/objects/grouped?page=0&size=20&date=2026-06-13")
+    assert single.status_code == 200
+    single_folders = {row.get("date_folder") for row in single.json()["items"]}
+    assert single_folders == {"2026-06-13"}
+
+
+def test_date_range_invalid_order(journal_client):
+    client, _preview, _video = journal_client
+    response = client.get(
+        "/api/v1/journals/objects/grouped?date_from=2026-06-14&date_to=2026-06-13"
+    )
+    assert response.status_code == 400
+    assert "date_from" in str(response.json().get("detail", "")).lower()

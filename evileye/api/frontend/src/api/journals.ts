@@ -1,11 +1,24 @@
 import { API_BASE, request } from './client';
 import type { JournalFiltersMeta, JournalGroupedRow, JournalPage } from './types';
 
-function journalQuery(page: number, size: number, filters?: { source_name?: string; event_type?: string; date?: string }) {
+export type JournalDateFilters = {
+  source_name?: string;
+  event_type?: string;
+  date?: string;
+  date_from?: string;
+  date_to?: string;
+};
+
+function journalQuery(page: number, size: number, filters?: JournalDateFilters) {
   const p = new URLSearchParams({ page: String(page), size: String(size) });
   if (filters?.source_name) p.set('source_name', filters.source_name);
   if (filters?.event_type) p.set('event_type', filters.event_type);
-  if (filters?.date) p.set('date', filters.date);
+  if (filters?.date) {
+    p.set('date', filters.date);
+  } else {
+    if (filters?.date_from) p.set('date_from', filters.date_from);
+    if (filters?.date_to) p.set('date_to', filters.date_to);
+  }
   return p.toString();
 }
 
@@ -13,10 +26,10 @@ export const journalsApi = {
   filtersMeta(): Promise<JournalFiltersMeta> {
     return request('/journals/filters/meta');
   },
-  eventsGrouped(page = 0, size = 30, filters?: { source_name?: string; event_type?: string; date?: string }) {
+  eventsGrouped(page = 0, size = 30, filters?: JournalDateFilters) {
     return request<JournalPage<JournalGroupedRow>>(`/journals/events/grouped?${journalQuery(page, size, filters)}`);
   },
-  objectsGrouped(page = 0, size = 30, filters?: { source_name?: string; event_type?: string; date?: string }) {
+  objectsGrouped(page = 0, size = 30, filters?: JournalDateFilters) {
     return request<JournalPage<JournalGroupedRow>>(`/journals/objects/grouped?${journalQuery(page, size, filters)}`);
   },
   configHistory(limit = 30) {
@@ -37,25 +50,35 @@ export const journalsApi = {
     const p = new URLSearchParams({ row_key: rowKeyValue, journal_type: journalType });
     return request(`/journals/row-meta?${p}`);
   },
-  stats(date?: string) {
+  stats(filters?: { date?: string; date_from?: string; date_to?: string }) {
     const p = new URLSearchParams();
-    if (date) p.set('date', date);
+    if (filters?.date) {
+      p.set('date', filters.date);
+    } else {
+      if (filters?.date_from) p.set('date_from', filters.date_from);
+      if (filters?.date_to) p.set('date_to', filters.date_to);
+    }
     const qs = p.toString();
     return request<{ available: boolean; events_total?: number; objects_total?: number }>(
       `/journals/stats${qs ? `?${qs}` : ''}`,
     );
   },
-  exportUrl(type: 'events' | 'objects', format: 'csv' | 'json', filters?: { source_name?: string; event_type?: string; date?: string }) {
+  exportUrl(type: 'events' | 'objects', format: 'csv' | 'json', filters?: JournalDateFilters) {
     const p = new URLSearchParams({ type, format });
     if (filters?.source_name) p.set('source_name', filters.source_name);
     if (filters?.event_type) p.set('event_type', filters.event_type);
-    if (filters?.date) p.set('date', filters.date);
+    if (filters?.date) {
+      p.set('date', filters.date);
+    } else {
+      if (filters?.date_from) p.set('date_from', filters.date_from);
+      if (filters?.date_to) p.set('date_to', filters.date_to);
+    }
     return `${API_BASE}/journals/export?${p}`;
   },
   async exportDownload(
     type: 'events' | 'objects',
     format: 'csv' | 'json',
-    filters?: { source_name?: string; event_type?: string; date?: string },
+    filters?: JournalDateFilters,
   ): Promise<{ blob: Blob; truncated: boolean; filename: string }> {
     const full = this.exportUrl(type, format, filters);
     const res = await fetch(full, { credentials: 'same-origin' });

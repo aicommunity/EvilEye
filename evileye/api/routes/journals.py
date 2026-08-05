@@ -6,6 +6,7 @@ import mimetypes
 import os
 
 from evileye.api.core.journal_service import (
+    DateScopeError,
     JournalPathForbidden,
     JournalPathNotFound,
     compare_config_history,
@@ -38,6 +39,14 @@ def _filters(source_name: str | None, event_type: str | None) -> dict:
     if event_type:
         filters["event_type"] = event_type
     return filters
+
+
+def _date_kwargs(
+        date: str | None,
+        date_from: str | None,
+        date_to: str | None,
+) -> dict:
+    return {"date": date, "date_from": date_from, "date_to": date_to}
 
 
 def _media_type_for_path(path: str, fallback: str) -> str:
@@ -104,10 +113,19 @@ async def journal_events(
         source_name: str | None = None,
         event_type: str | None = None,
         date: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
 ) -> dict:
-    return await asyncio.to_thread(
-        load_events_page, page=page, size=size, filters=_filters(source_name, event_type), date=date,
-    )
+    try:
+        return await asyncio.to_thread(
+            load_events_page,
+            page=page,
+            size=size,
+            filters=_filters(source_name, event_type),
+            **_date_kwargs(date, date_from, date_to),
+        )
+    except DateScopeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/events/grouped")
@@ -117,10 +135,19 @@ async def journal_events_grouped(
         source_name: str | None = None,
         event_type: str | None = None,
         date: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
 ) -> dict:
-    return await asyncio.to_thread(
-        load_events_grouped_page, page=page, size=size, filters=_filters(source_name, event_type), date=date,
-    )
+    try:
+        return await asyncio.to_thread(
+            load_events_grouped_page,
+            page=page,
+            size=size,
+            filters=_filters(source_name, event_type),
+            **_date_kwargs(date, date_from, date_to),
+        )
+    except DateScopeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/objects")
@@ -130,10 +157,19 @@ async def journal_objects(
         source_name: str | None = None,
         event_type: str | None = None,
         date: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
 ) -> dict:
-    return await asyncio.to_thread(
-        load_objects_page, page=page, size=size, filters=_filters(source_name, event_type), date=date,
-    )
+    try:
+        return await asyncio.to_thread(
+            load_objects_page,
+            page=page,
+            size=size,
+            filters=_filters(source_name, event_type),
+            **_date_kwargs(date, date_from, date_to),
+        )
+    except DateScopeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/objects/grouped")
@@ -143,10 +179,19 @@ async def journal_objects_grouped(
         source_name: str | None = None,
         event_type: str | None = None,
         date: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
 ) -> dict:
-    return await asyncio.to_thread(
-        load_objects_grouped_page, page=page, size=size, filters=_filters(source_name, event_type), date=date,
-    )
+    try:
+        return await asyncio.to_thread(
+            load_objects_grouped_page,
+            page=page,
+            size=size,
+            filters=_filters(source_name, event_type),
+            **_date_kwargs(date, date_from, date_to),
+        )
+    except DateScopeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/filters/meta")
@@ -155,8 +200,17 @@ async def journal_filters_meta() -> dict:
 
 
 @router.get("/stats")
-async def journal_stats(date: str | None = None) -> dict:
-    return await asyncio.to_thread(load_journal_stats, date=date)
+async def journal_stats(
+        date: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+) -> dict:
+    try:
+        return await asyncio.to_thread(
+            load_journal_stats, **_date_kwargs(date, date_from, date_to),
+        )
+    except DateScopeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/row-meta")
@@ -288,6 +342,8 @@ async def journal_export(
     source_name: str | None = None,
     event_type: str | None = None,
     date: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
     page: int = Query(0, ge=0),
     size: int = Query(200, ge=1, le=1000),
 ):
@@ -301,9 +357,16 @@ async def journal_export(
     # Cap total export size; stream CSV when possible
     export_size = min(size, _EXPORT_HARD_CAP)
     loader = load_objects_grouped_page if type == "objects" else load_events_grouped_page
-    data = await asyncio.to_thread(
-        loader, page=page, size=export_size, filters=filters, date=date,
-    )
+    try:
+        data = await asyncio.to_thread(
+            loader,
+            page=page,
+            size=export_size,
+            filters=filters,
+            **_date_kwargs(date, date_from, date_to),
+        )
+    except DateScopeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     items = data.get("items") or []
     truncated = bool(data.get("has_more")) or len(items) >= _EXPORT_HARD_CAP
     headers = {"X-Export-Truncated": "1" if truncated else "0"}
