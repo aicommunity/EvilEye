@@ -11,6 +11,7 @@ import { ExpandedCameraView } from './ExpandedCameraView';
 import { LiveAlertsRail } from './LiveAlertsRail';
 import { useLiveLayout } from './useLiveLayout';
 import { useLiveGridPreviewWs } from './useLiveGridPreviewWs';
+import { fitColsForCount } from '../layout/fitGrid';
 
 export function LivePage() {
   const { showError } = useToast();
@@ -19,7 +20,7 @@ export function LivePage() {
   const [stats, setStats] = useState<{ events?: number; objects?: number }>({});
   const [stream, setStream] = useState<{ rid: number; sid: number | null } | null>(null);
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
-  const { cols, setCols, order, setOrder } = useLiveLayout();
+  const { cols, setCols, order, setOrder, mode, setMode } = useLiveLayout();
 
   const load = useCallback(async () => {
     try {
@@ -92,25 +93,35 @@ export function LivePage() {
     return () => window.removeEventListener('keydown', onKey);
   }, [expandedKey]);
 
+  const effectiveCols = mode === 'fit' ? fitColsForCount(ordered.length) : cols;
+
   return (
-    <section className="panel active">
-      <div className="card">
+    <section className={`panel active${mode === 'fit' ? ' live-page--fit' : ''}`}>
+      <div className={`card${mode === 'fit' ? ' live-page-card' : ''}`}>
         <div className="toolbar" style={{ justifyContent: 'space-between' }}>
           <div>
             <h2 style={{ margin: 0 }}>{t('live.title')}</h2>
             <p className="hint">{t('live.hint')}</p>
           </div>
           <div className="toolbar">
-            {[1, 4, 9, 16].map((n) => (
-              <Button
-                key={n}
-                size="sm"
-                variant={cols === Math.sqrt(n) || (n === 1 && cols === 1) ? 'primary' : 'outline'}
-                onClick={() => setCols(n === 1 ? 1 : Math.round(Math.sqrt(n)))}
-              >
-                {n}
-              </Button>
-            ))}
+            <Button size="sm" variant={mode === 'fit' ? 'primary' : 'outline'} onClick={() => setMode('fit')}>
+              {t('layout.fit')}
+            </Button>
+            <Button size="sm" variant={mode === 'fixed' ? 'primary' : 'outline'} onClick={() => setMode('fixed')}>
+              {t('layout.fixed')}
+            </Button>
+            {mode === 'fixed'
+              ? [1, 4, 9, 16].map((n) => (
+                  <Button
+                    key={n}
+                    size="sm"
+                    variant={cols === Math.sqrt(n) || (n === 1 && cols === 1) ? 'primary' : 'outline'}
+                    onClick={() => setCols(n === 1 ? 1 : Math.round(Math.sqrt(n)))}
+                  >
+                    {n}
+                  </Button>
+                ))
+              : null}
             <Button variant="outline" onClick={() => void load()}>
               {t('live.refresh')}
             </Button>
@@ -120,15 +131,18 @@ export function LivePage() {
         {expandedCamera ? (
           <ExpandedCameraView camera={expandedCamera} onClose={() => setExpandedKey(null)} />
         ) : (
-          <CameraGrid
-            cameras={ordered}
-            cols={cols}
-            onOpenStream={(rid, sid) => setStream({ rid, sid })}
-            onReorder={setOrder}
-            onExpand={setExpandedKey}
-            getPreviewBlob={(sid) => previewWs.getBlobUrl(sid)}
-            previewWsActive={previewWs.connected}
-          />
+          <div className={mode === 'fit' ? 'live-grid-shell' : undefined}>
+            <CameraGrid
+              cameras={ordered}
+              cols={effectiveCols}
+              mode={mode}
+              onOpenStream={(rid, sid) => setStream({ rid, sid })}
+              onReorder={setOrder}
+              onExpand={setExpandedKey}
+              getPreviewBlob={(sid) => previewWs.getBlobUrl(sid)}
+              previewWsActive={previewWs.connected}
+            />
+          </div>
         )}
       </div>
       {stream ? <StreamOverlay rid={stream.rid} sourceId={stream.sid} onClose={() => setStream(null)} /> : null}

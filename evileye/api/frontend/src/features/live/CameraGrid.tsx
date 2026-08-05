@@ -6,6 +6,7 @@ import { CameraTile } from './CameraTile';
 export function CameraGrid({
   cameras,
   cols,
+  mode = 'fixed',
   onOpenStream,
   onReorder,
   onExpand,
@@ -14,6 +15,7 @@ export function CameraGrid({
 }: {
   cameras: StateCamera[];
   cols: number;
+  mode?: 'fit' | 'fixed';
   onOpenStream: (rid: number, sid: number | null) => void;
   onReorder: (keys: string[]) => void;
   onExpand?: (key: string) => void;
@@ -57,11 +59,14 @@ export function CameraGrid({
   const keyOf = (c: StateCamera) => `${c.run_id}:${c.source_id}`;
 
   return (
-    <div className="camera-group-grid" style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
+    <div
+      className={`camera-group-grid${mode === 'fit' ? ' camera-group-grid--fit' : ''}`}
+      style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
+    >
       {cameras.map((camera) => {
         const key = keyOf(camera);
         const isSelected = selected === key;
-        const isVisible = visible.has(key) || isSelected;
+        const isVisible = mode === 'fit' || visible.has(key) || isSelected;
         return (
           <div
             key={key}
