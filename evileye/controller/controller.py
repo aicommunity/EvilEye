@@ -279,6 +279,14 @@ class Controller(ControllerProcessingMixin):
             self._resource_stats_every_sec = 60.0
         self._resource_stats_last_ts = 0.0
 
+        try:
+            self._runtime_snapshot_every_sec = float(
+                os.getenv("EVILEYE_RUNTIME_SNAPSHOT_EVERY_SEC", "5") or "5"
+            )
+        except Exception:
+            self._runtime_snapshot_every_sec = 5.0
+        self._runtime_snapshot_last_ts = 0.0
+
         # File-based frame sharing for Config Run mode
         self._frame_dir = os.environ.get("EVILEYE_FRAME_DIR")
         if self._frame_dir:
@@ -370,6 +378,43 @@ class Controller(ControllerProcessingMixin):
         except Exception as exc:
             self.logger.debug("Failed to publish runtime snapshot: %s", exc)
 
+    def _sync_capture_health_for_snapshot(self) -> None:
+        """Refresh process-mode capture ``is_working`` on parent proxies before snapshot publish."""
+        sources = []
+        try:
+            if getattr(self, "_pipeline_service", None):
+                sources = self._pipeline_service.get_sources() or []
+        except Exception:
+            sources = []
+        if not sources:
+            try:
+                if self.pipeline is not None and hasattr(self.pipeline, "get_sources"):
+                    sources = self.pipeline.get_sources() or []
+            except Exception:
+                sources = []
+        for source in sources:
+            if source is None:
+                continue
+            sync = getattr(source, "sync_process_mode_health", None)
+            if callable(sync):
+                try:
+                    sync()
+                except Exception:
+                    pass
+
+    def _maybe_publish_runtime_snapshot(self, now_ts: float | None = None) -> None:
+        if not self.run_flag:
+            return
+        now = float(now_ts if now_ts is not None else time.time())
+        every = float(self._runtime_snapshot_every_sec or 0.0)
+        if every <= 0.0:
+            return
+        if (now - float(self._runtime_snapshot_last_ts or 0.0)) < every:
+            return
+        self._runtime_snapshot_last_ts = now
+        self._sync_capture_health_for_snapshot()
+        self._publish_runtime_snapshot(state="running")
+
     def system_event(self, type: str, message: str):
         if self.system_events_detector:
             self.system_events_detector.emit_message(type, message)
@@ -435,6 +480,7 @@ class Controller(ControllerProcessingMixin):
             self.system_events_detector.emit_started()
         while self.run_flag:
             try:
+                loop_now_ts = time.time()
                 # Periodic process-level resource stats to correlate slow RSS growth.
                 try:
                     if self.params and isinstance(self.params, dict):
@@ -446,13 +492,18 @@ class Controller(ControllerProcessingMixin):
                                 )
                             except Exception:
                                 pass
-                    now_ts = time.time()
+                    now_ts = loop_now_ts
                     every = float(self._resource_stats_every_sec or 0.0)
                     if ProcessingService.should_log_resource_stats(
                             self._resource_stats_last_ts, every, now_ts=now_ts
                     ):
                         self._resource_stats_last_ts = now_ts
                         self._log_resource_stats(context="periodic")
+                except Exception:
+                    pass
+
+                try:
+                    self._maybe_publish_runtime_snapshot(now_ts=loop_now_ts)
                 except Exception:
                     pass
 

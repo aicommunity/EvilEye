@@ -1,9 +1,9 @@
 {
     "pipeline": {
         "pipeline_class": "PipelineSurveillance",
-        "ipc_mode": "standard",
         "sources": [
             {
+                "execution_mode": "process",
                 "split": false,
                 "num_split": 0,
                 "src_coords": [
@@ -20,15 +20,26 @@
                 "source": "IpCamera",
                 "camera": "rtsp://10.245.1.200",
                 "type": "VideoCaptureGStreamer",
+                "record": {
+                    "enabled": true,
+                    "continuous_recording_enabled": true,
+                    "event_recording_enabled": true,
+                    "event_pre_seconds": 10,
+                    "event_post_seconds": 10,
+                    "event_buffer_fps": null,
+                    "enabled_sources": [],
+                    "container": "mp4",
+                    "segment_length_sec": 1800,
+                    "retention_days": 7,
+                    "min_free_space_pct": 80,
+                    "filename_tmpl": "{source_name}_{start_time}_{seq}.{ext}",
+                    "out_dir": "/home/user/EvilEye/EvilEyeData"
+                },
                 "apiPreference": "CAP_GSTREAMER",
-                "gstreamer_available": true,
-                "execution_mode": "process",
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
-                ]
+                "gstreamer_available": true
             },
             {
+                "execution_mode": "process",
                 "split": true,
                 "num_split": 2,
                 "src_coords": [
@@ -58,15 +69,26 @@
                 "source": "IpCamera",
                 "camera": "rtsp://10.245.1.199",
                 "type": "VideoCaptureGStreamer",
+                "record": {
+                    "enabled": true,
+                    "continuous_recording_enabled": true,
+                    "event_recording_enabled": true,
+                    "event_pre_seconds": 10,
+                    "event_post_seconds": 10,
+                    "event_buffer_fps": null,
+                    "enabled_sources": [],
+                    "container": "mp4",
+                    "segment_length_sec": 1800,
+                    "retention_days": 7,
+                    "min_free_space_pct": 80,
+                    "filename_tmpl": "{source_name}_{start_time}_{seq}.{ext}",
+                    "out_dir": "/home/user/EvilEye/EvilEyeData"
+                },
                 "apiPreference": "CAP_GSTREAMER",
-                "gstreamer_available": true,
-                "execution_mode": "process",
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
-                ]
+                "gstreamer_available": true
             },
             {
+                "execution_mode": "process",
                 "split": true,
                 "num_split": 2,
                 "src_coords": [
@@ -96,13 +118,23 @@
                 "source": "IpCamera",
                 "camera": "rtsp://10.245.1.202",
                 "type": "VideoCaptureGStreamer",
+                "record": {
+                    "enabled": true,
+                    "continuous_recording_enabled": true,
+                    "event_recording_enabled": true,
+                    "event_pre_seconds": 10,
+                    "event_post_seconds": 10,
+                    "event_buffer_fps": null,
+                    "enabled_sources": [],
+                    "container": "mp4",
+                    "segment_length_sec": 1800,
+                    "retention_days": 7,
+                    "min_free_space_pct": 80,
+                    "filename_tmpl": "{source_name}_{start_time}_{seq}.{ext}",
+                    "out_dir": "/home/user/EvilEye/EvilEyeData"
+                },
                 "apiPreference": "CAP_GSTREAMER",
-                "gstreamer_available": true,
-                "execution_mode": "process",
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
-                ]
+                "gstreamer_available": true
             }
         ],
         "detectors": [
@@ -142,13 +174,9 @@
                 "source_ids": [
                     0
                 ],
-                "num_detection_threads": 3,
-                "model": "models/yolov8n.pt",
+                "num_detection_threads": 1,
                 "execution_mode": "process",
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
-                ]
+                "model": "models/yolov8n.pt"
             },
             {
                 "roi": [
@@ -167,13 +195,9 @@
                 "source_ids": [
                     1
                 ],
-                "num_detection_threads": 3,
-                "model": "models/yolov8n.pt",
+                "num_detection_threads": 1,
                 "execution_mode": "process",
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
-                ]
+                "model": "models/yolov8n.pt"
             },
             {
                 "roi": [
@@ -217,13 +241,9 @@
                 "source_ids": [
                     2
                 ],
-                "num_detection_threads": 3,
-                "model": "models/yolov8n.pt",
+                "num_detection_threads": 1,
                 "execution_mode": "process",
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
-                ]
+                "model": "models/yolov8n.pt"
             },
             {
                 "roi": [
@@ -261,13 +281,9 @@
                 "source_ids": [
                     3
                 ],
-                "num_detection_threads": 3,
-                "model": "models/yolov8n.pt",
+                "num_detection_threads": 1,
                 "execution_mode": "process",
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
-                ]
+                "model": "models/yolov8n.pt"
             },
             {
                 "roi": [
@@ -286,13 +302,9 @@
                 "source_ids": [
                     4
                 ],
-                "num_detection_threads": 3,
-                "model": "models/yolov8n.pt",
+                "num_detection_threads": 1,
                 "execution_mode": "process",
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
-                ]
+                "model": "models/yolov8n.pt"
             }
         ],
         "trackers": [
@@ -301,11 +313,6 @@
                     0
                 ],
                 "fps": 5,
-                "execution_mode": "process",
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
-                ],
                 "botsort_cfg": {
                     "appearance_thresh": 0.25,
                     "gmc_method": "sparseOptFlow",
@@ -325,11 +332,6 @@
                     1
                 ],
                 "fps": 5,
-                "execution_mode": "process",
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
-                ],
                 "botsort_cfg": {
                     "appearance_thresh": 0.25,
                     "gmc_method": "sparseOptFlow",
@@ -349,11 +351,6 @@
                     2
                 ],
                 "fps": 5,
-                "execution_mode": "process",
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
-                ],
                 "botsort_cfg": {
                     "appearance_thresh": 0.25,
                     "gmc_method": "sparseOptFlow",
@@ -373,11 +370,6 @@
                     3
                 ],
                 "fps": 5,
-                "execution_mode": "process",
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
-                ],
                 "botsort_cfg": {
                     "appearance_thresh": 0.25,
                     "gmc_method": "sparseOptFlow",
@@ -397,11 +389,6 @@
                     4
                 ],
                 "fps": 5,
-                "execution_mode": "process",
-                "mp_restart_on_exit": true,
-                "mp_no_restart_exit_codes": [
-                    -15
-                ],
                 "botsort_cfg": {
                     "appearance_thresh": 0.25,
                     "gmc_method": "sparseOptFlow",
@@ -656,7 +643,7 @@
         "show_memory_usage": false,
         "max_memory_usage_mb": 16384,
         "auto_restart": true,
-        "use_database": true,
+        "use_database": false,
         "scheduled_restart": {
             "enabled": false,
             "mode": "daily_time",
@@ -664,10 +651,7 @@
             "interval_minutes": 0
         }
     },
-    "database": {
-        "port": 5433,
-        "image_dir": "/media/user/Data8/EvilEyeData"
-    },
+    "database": {},
     "storage_monitor": {
         "enabled": true,
         "check_interval_seconds": 300,

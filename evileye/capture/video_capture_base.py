@@ -1,5 +1,6 @@
 import copy
 import datetime
+import time
 from abc import ABC, abstractmethod
 import threading
 from queue import Queue, Empty
@@ -89,6 +90,9 @@ class VideoCaptureBase(EvilEyeBase):
         self._mp_control = None
         self._capture_dispatch_thread: threading.Thread | None = None
         self._frame_transport = SharedFrameTransport()
+        # Process mode: parent tracks frame flow from child worker (is_working lives in worker).
+        self._mp_last_frame_mono: float = 0.0
+        self._mp_worker_started_mono: float = 0.0
 
     def is_opened(self) -> bool:
         return False
@@ -363,8 +367,59 @@ class VideoCaptureBase(EvilEyeBase):
         worker = self._mp_control.add_worker(MpWorkerCapture)
         worker.set_params(self._worker_capture_params())
         self._mp_control.start()
+        self._mp_worker_started_mono = time.monotonic()
+        self._mp_last_frame_mono = 0.0
         self.logger.info("Capture initialised in PROCESS mode")
         return True
+
+    def sync_process_mode_health(self) -> None:
+        """Refresh parent ``is_working`` for process-mode capture (runtime snapshot / web health).
+
+        The real capture backend runs in a child process; without this sync the parent proxy
+        stays at the default ``is_working=False`` and web marks every camera as reconnecting.
+        """
+        if self.execution_mode != EXEC_MODE_PROCESS or self._mp_control is None:
+            return
+        try:
+            if not self._mp_control.is_alive():
+                self.is_working = False
+                return
+        except Exception:
+            self.is_working = False
+            return
+
+        timeout_sec = float(
+            getattr(self.capture_config, "frame_timeout_seconds", None)
+            or CaptureConstants.FRAME_TIMEOUT_SECONDS
+        )
+        now_mono = time.monotonic()
+
+        if self._mp_last_frame_mono > 0.0:
+            if (now_mono - self._mp_last_frame_mono) <= timeout_sec:
+                self.is_working = True
+            elif self.source_type == CaptureDeviceType.IpCamera:
+                self.is_working = False
+            return
+
+        # Worker alive, no frames yet: optimistic during init grace, then down for IP cameras.
+        grace_sec = float(
+            getattr(self.capture_config, "init_grace_period_seconds", None)
+            or CaptureConstants.INIT_GRACE_PERIOD_SECONDS
+        )
+        started_mono = self._mp_worker_started_mono or now_mono
+        if (now_mono - started_mono) <= grace_sec:
+            self.is_working = True
+        elif self.source_type == CaptureDeviceType.IpCamera:
+            self.is_working = False
+
+    def _touch_process_mode_frame_activity(self) -> None:
+        """Mark capture healthy when a frame arrives from the MP worker."""
+        if self.execution_mode != EXEC_MODE_PROCESS:
+            return
+        self._mp_last_frame_mono = time.monotonic()
+        self.is_working = True
+        self.is_inited = True
+        self.last_frame_time = datetime.datetime.now()
 
     def _capture_dispatch_loop(self) -> None:
         """Read CaptureImage objects from child process and put them into frames_queue."""
@@ -378,6 +433,7 @@ class VideoCaptureBase(EvilEyeBase):
             if frame is None:
                 self._mark_finished_if_worker_stopped()
                 continue
+            self._touch_process_mode_frame_activity()
             try:
                 self.frames_queue.put(frame)
             except Exception:
@@ -416,6 +472,7 @@ class VideoCaptureBase(EvilEyeBase):
             if not self._mp_control.output_empty():
                 return
             self.finished = True
+            self.is_working = False
             try:
                 self.logger.info(
                     "Capture worker stopped and output queue drained; marking source as finished"
