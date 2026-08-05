@@ -13,6 +13,8 @@ from evileye.core.runtime_services import get_frame_broker
 
 router = APIRouter(prefix="/api/v1/internal", tags=["internal"], include_in_schema=False)
 
+_MAX_FRAME_BYTES = 8 * 1024 * 1024
+
 
 def _merge_metadata(
     *,
@@ -26,7 +28,6 @@ def _merge_metadata(
         "transport": "http_internal",
     }
     if extra:
-        # Client metadata wins for overlay fields; keep transport tag.
         for key, value in extra.items():
             if key == "transport":
                 continue
@@ -36,9 +37,27 @@ def _merge_metadata(
     return meta
 
 
+def _reject_oversized(request: Request) -> None:
+    try:
+        from evileye.api.core.rate_guard import get_rate_guard
+
+        get_rate_guard().record_oversized_body(request)
+    except Exception:
+        pass
+    raise HTTPException(status_code=413, detail="Frame body too large")
+
+
 @router.post("/frames/{rid}")
 async def receive_frame(rid: int, request: Request, source_id: int | None = Query(None)) -> dict:
     """Accept JPEG (+ optional overlay metadata) from runtime process."""
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            if int(content_length) > _MAX_FRAME_BYTES:
+                _reject_oversized(request)
+        except ValueError:
+            pass
+
     content_type = request.headers.get("content-type", "image/jpeg")
     extra: dict[str, Any] | None = None
     body: bytes
@@ -58,7 +77,7 @@ async def receive_frame(rid: int, request: Request, source_id: int | None = Quer
         if frame_field is None:
             raise HTTPException(status_code=400, detail="Missing multipart field 'frame'")
         if hasattr(frame_field, "read"):
-            body = await frame_field.read()
+            body = await frame_field.read(_MAX_FRAME_BYTES + 1)
         else:
             body = bytes(frame_field)
         content_type = "image/jpeg"
@@ -72,6 +91,9 @@ async def receive_frame(rid: int, request: Request, source_id: int | None = Quer
                     extra = parsed
             except json.JSONDecodeError:
                 pass
+
+    if len(body) > _MAX_FRAME_BYTES:
+        _reject_oversized(request)
 
     if not body:
         raise HTTPException(status_code=400, detail="Empty body")

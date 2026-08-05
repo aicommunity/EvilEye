@@ -101,10 +101,12 @@ _PATH_RESOLVE_CACHE_MAX = 4096
 
 
 def assert_path_under_base(resolved: str, base_dir: str) -> str:
-    base = Path(base_dir).resolve()
-    target = Path(resolved).resolve()
-    if not str(target).startswith(str(base)):
-        raise JournalPathForbidden("Path outside data directory")
+    from evileye.api.core.safe_paths import UnsafePathError, assert_under_dir
+
+    try:
+        target = assert_under_dir(resolved, base_dir)
+    except UnsafePathError as exc:
+        raise JournalPathForbidden(str(exc)) from exc
     if not target.is_file():
         raise JournalPathNotFound("File not found")
     return str(target)

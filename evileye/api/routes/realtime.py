@@ -45,6 +45,18 @@ def make_hub_demand_callback(app) -> Callable[[int], None]:
 
 
 async def _authorize_live_ws(websocket: WebSocket) -> bool:
+    from evileye.api.core.ip_ban_store import get_ip_ban_store
+    from evileye.api.core.rate_guard import get_rate_guard
+
+    guard = get_rate_guard()
+    ip = guard.client_ip(websocket)
+    if get_ip_ban_store().is_banned(ip):
+        await websocket.close(code=4403)
+        return False
+    if guard.record_ws_connect(websocket):
+        await websocket.close(code=4403)
+        return False
+
     auth = load_web_auth_config()
     if not auth.enabled:
         return True
@@ -93,6 +105,18 @@ def _payload_fingerprint(payload: dict) -> str:
 
 @router.websocket("/runs/{rid}/ws")
 async def run_metadata_ws(websocket: WebSocket, rid: int, source_id: Optional[int] = Query(None)):
+    from evileye.api.core.ip_ban_store import get_ip_ban_store
+    from evileye.api.core.rate_guard import get_rate_guard
+
+    guard = get_rate_guard()
+    ip = guard.client_ip(websocket)
+    if get_ip_ban_store().is_banned(ip):
+        await websocket.close(code=4403)
+        return
+    if guard.record_ws_connect(websocket):
+        await websocket.close(code=4403)
+        return
+
     auth = load_web_auth_config()
     if auth.enabled:
         user = None

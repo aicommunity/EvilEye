@@ -15,6 +15,7 @@ React SPA (Vite) served by FastAPI from `evileye/api/static/`.
 | `/admin/configs/:name` | `config:view` | Config Studio for a chosen file (forms, ROI/Zones, history) |
 | `/admin/logs` | `logs:view` | Log files + Follow (SSE tail) |
 | `/admin/users` | `users:manage` | User management |
+| `/admin/bans` | `bans:manage` | IP ban list (auto + manual add/remove) |
 | `/admin/overview` | — | Redirect → `/live` |
 | `/admin/history` | — | Redirect → `/admin/runs` |
 | `/m/live`, `/m/events` | — | Compact mobile views |

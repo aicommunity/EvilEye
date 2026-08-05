@@ -360,19 +360,29 @@ async def _stop_stream_impl(rid: int, source_id: int | None = None, force: bool 
 
 @router.post("/runs/{rid}/stream:stop")
 async def stop_stream(
+    request: Request,
     rid: int,
     source_id: int | None = Query(None),
     force: bool = Query(False),
 ):
+    if force:
+        from evileye.api.security import require_permission
+
+        require_permission(request, "runtime:control")
     return await _stop_stream_impl(rid, source_id=source_id, force=force)
 
 
 @router.post("/pipelines/{rid}/stream:stop", deprecated=True)
 async def stop_stream_legacy(
+    request: Request,
     rid: int,
     source_id: int | None = Query(None),
     force: bool = Query(False),
 ):
+    if force:
+        from evileye.api.security import require_permission
+
+        require_permission(request, "runtime:control")
     return await _stop_stream_impl(rid, source_id=source_id, force=force)
 
 

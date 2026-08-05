@@ -124,7 +124,7 @@ export function UsersPage() {
               <span className="users-create-label-spacer" aria-hidden>
                 &nbsp;
               </span>
-              <Button type="submit" disabled={creating || !email.trim() || password.length < 6}>
+              <Button type="submit" disabled={creating || !email.trim() || password.length < 10}>
                 {t('users.create')}
               </Button>
             </div>

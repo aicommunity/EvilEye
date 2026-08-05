@@ -12,9 +12,11 @@ export function RequirePermission({
   children: ReactNode;
   fallback?: string;
 }) {
-  const { loading, hasPermission } = useAuth();
+  const { loading, hasPermission, authEnabled, user } = useAuth();
   const { t } = useI18n();
   if (loading) return <p className="hint">{t('common.loading')}</p>;
+  // Let parent AuthModal / MobileAuthGate handle login; avoid redirect loops.
+  if (authEnabled && !user) return null;
   if (!hasPermission(permission)) return <Navigate to={fallback} replace />;
   return <>{children}</>;
 }

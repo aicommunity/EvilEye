@@ -131,10 +131,39 @@ evileye deploy-samples
 
 1. Для production используйте `password_hash`, а не открытый `password`.
 2. Для HTTPS включайте `secure_cookies=true`.
-3. Для внутренних вызовов между процессами задавайте `internal_token`.
+3. Для внутренних вызовов между процессами задавайте `internal_token` (при `enabled=true` пустой токен запрещён — сервер сгенерирует его при старте).
 4. `user` подходит для live-мониторинга камер.
 5. `power_user` предназначен для просмотра предметных журналов системы и технических логов.
 6. `admin` предназначен для настройки и управления системой.
+7. Не оставляйте дефолтный `session_secret` (`evileye-dev-session-secret` / `change-me`) — при обнаружении слабого значения сервер заменит его на криптостойкий.
+8. Первый bootstrap admin получает одноразовый случайный пароль (или `EVILEYE_BOOTSTRAP_ADMIN_PASSWORD`); пароль пишется только в лог запуска.
+9. Production checklist: `enabled=true`, `secure_cookies=true`, HTTPS, явный `EVILEYE_CORS_ALLOW_ORIGINS`, заданный `internal_token`, секция `protection` для rate-limit/IP ban (см. ниже).
+
+### Секция web_auth.protection
+
+Защита от brute-force и флуда с автобаном IP. Управление банами: UI `/admin/bans` (permission `bans:manage`) или API `/api/v1/bans`.
+
+```json
+"protection": {
+  "enabled": true,
+  "trust_proxy": false,
+  "trusted_proxy_ips": ["127.0.0.1"],
+  "login_max_failures": 10,
+  "login_window_sec": 300,
+  "login_ban_sec": 1800,
+  "register_max_per_window": 5,
+  "register_window_sec": 600,
+  "register_ban_sec": 3600,
+  "global_max_requests": 120,
+  "global_window_sec": 60,
+  "global_ban_sec": 600,
+  "whitelist_ips": ["127.0.0.1", "::1"]
+}
+```
+
+При `web_auth.enabled=true` protection по умолчанию включена. Env: `EVILEYE_TRUST_PROXY=1`, `EVILEYE_PROTECTION_ENABLED=0` (отладка). Баны хранятся в `web_ip_bans.json` (не коммитить).
+
+**Multi-worker:** счётчики rate limit живут в памяти процесса. Для EvilEye типичен один uvicorn worker; при нескольких workers автобан всё равно пишется в `web_ip_bans.json`, но пороги могут срабатывать позже. Sticky sessions / один worker — рекомендуемый режим; общий Redis store — out of scope.
 
 ### Server module и схемы запуска
 

@@ -8,5 +8,6 @@ export * from './streaming';
 export * from './journals';
 export * from './logs';
 export * from './users';
+export * from './bans';
 export * from './playback';
 export * from './editors';

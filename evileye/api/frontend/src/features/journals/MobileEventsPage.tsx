@@ -1,8 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { type JournalGroupedRow } from '../../api';
-import { AuthProvider } from '../../auth/AuthContext';
-import { ToastProvider } from '../../components/ui/Toast';
 import { Button } from '../../components/ui';
 import { useI18n } from '../../i18n';
 import { JournalDetailDrawer } from './JournalDetailDrawer';
@@ -11,13 +9,7 @@ import { formatJournalTime } from './journalMath';
 import { useVisibilityPolling } from '../../hooks/useVisibilityPolling';
 
 export function MobileEventsPage() {
-  return (
-    <AuthProvider>
-      <ToastProvider>
-        <MobileEventsInner />
-      </ToastProvider>
-    </AuthProvider>
-  );
+  return <MobileEventsInner />;
 }
 
 function MobileEventsInner() {

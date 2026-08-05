@@ -9,7 +9,7 @@ import {
 } from '../../api';
 import { Button } from '../../components/ui';
 import { useI18n } from '../../i18n';
-import { bboxSvg, letterboxRect, rowKey, unixFromJournalTime, type JournalType } from './journalMath';
+import { letterboxRect, rowKey, unixFromJournalTime, type JournalType } from './journalMath';
 
 export function JournalDetailDrawer({
   row,
@@ -94,7 +94,7 @@ export function JournalDetailDrawer({
                   setBox(letterboxRect(wrap.clientWidth, wrap.clientHeight, img.naturalWidth, img.naturalHeight));
                 }}
               />
-              <svg
+                <svg
                 className="journal-preview-overlay"
                 viewBox="0 0 100 100"
                 preserveAspectRatio="none"
@@ -106,8 +106,27 @@ export function JournalDetailDrawer({
                   height: box.height || '100%',
                   pointerEvents: 'none',
                 }}
-                dangerouslySetInnerHTML={{ __html: bboxSvg(bbox as number[] | null, zone as number[][] | null) }}
-              />
+              >
+                {bbox && Array.isArray(bbox) && bbox.length === 4 ? (
+                  <rect
+                    x={`${Number(bbox[0]) * 100}%`}
+                    y={`${Number(bbox[1]) * 100}%`}
+                    width={`${(Number(bbox[2]) - Number(bbox[0])) * 100}%`}
+                    height={`${(Number(bbox[3]) - Number(bbox[1])) * 100}%`}
+                    fill="none"
+                    stroke="#22c55e"
+                    strokeWidth="2"
+                  />
+                ) : null}
+                {zone && Array.isArray(zone) && zone.length >= 3 ? (
+                  <polygon
+                    points={zone.map((p) => `${Number(p[0]) * 100},${Number(p[1]) * 100}`).join(' ')}
+                    fill="rgba(59,130,246,0.15)"
+                    stroke="#3b82f6"
+                    strokeWidth="2"
+                  />
+                ) : null}
+              </svg>
             </div>
           ) : null}
           {previewPath ? (

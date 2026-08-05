@@ -372,6 +372,11 @@ def run_api_server(host: str = "127.0.0.1", port: int = 8181,
     logger.info("=" * 60)
 
     try:
+        if ssl_certfile:
+            os.environ["EVILEYE_SSL_CERTFILE"] = str(ssl_certfile)
+        if ssl_keyfile:
+            os.environ["EVILEYE_SSL_KEYFILE"] = str(ssl_keyfile)
+        os.environ.setdefault("EVILEYE_HTTP_PORT", str(port))
         uvicorn_config = uvicorn.Config(
             app,
             host=host,

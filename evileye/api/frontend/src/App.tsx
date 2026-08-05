@@ -4,6 +4,7 @@ import { RequirePermission } from './auth/RequirePermission';
 import { ToastProvider } from './components/ui/Toast';
 import { I18nProvider } from './i18n';
 import { AppShell } from './layout/AppShell';
+import { MobileAuthGate } from './layout/MobileAuthGate';
 import { LivePage } from './features/live/LivePage';
 import { EventsPage } from './features/journals/EventsPage';
 import { PlaybackPage } from './features/playback/PlaybackPage';
@@ -13,6 +14,7 @@ import { ConfigsListPage } from './features/admin/ConfigsListPage';
 import { ConfigFilePage } from './features/admin/ConfigFilePage';
 import { LogsPage } from './features/admin/LogsPage';
 import { UsersPage } from './features/admin/UsersPage';
+import { BansPage } from './features/admin/BansPage';
 import { MobileLivePage } from './features/live/MobileLivePage';
 import { MobileEventsPage } from './features/journals/MobileEventsPage';
 import './styles/global.css';
@@ -24,8 +26,26 @@ export default function App() {
         <ToastProvider>
           <BrowserRouter>
             <Routes>
-              <Route path="/m/live" element={<MobileLivePage />} />
-              <Route path="/m/events" element={<MobileEventsPage />} />
+              <Route
+                path="/m/live"
+                element={
+                  <MobileAuthGate>
+                    <RequirePermission permission="live:view">
+                      <MobileLivePage />
+                    </RequirePermission>
+                  </MobileAuthGate>
+                }
+              />
+              <Route
+                path="/m/events"
+                element={
+                  <MobileAuthGate>
+                    <RequirePermission permission="journal:view">
+                      <MobileEventsPage />
+                    </RequirePermission>
+                  </MobileAuthGate>
+                }
+              />
               <Route element={<AppShell />}>
                 <Route index element={<Navigate to="/live" replace />} />
                 <Route
@@ -98,6 +118,14 @@ export default function App() {
                   element={
                     <RequirePermission permission="users:manage">
                       <UsersPage />
+                    </RequirePermission>
+                  }
+                />
+                <Route
+                  path="/admin/bans"
+                  element={
+                    <RequirePermission permission="bans:manage">
+                      <BansPage />
                     </RequirePermission>
                   }
                 />

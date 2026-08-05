@@ -34,6 +34,7 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "config:edit",
         "system:admin",
         "users:manage",
+        "bans:manage",
     },
     # Backward compatibility with previous naming.
     "viewer": {"live:view", "journal:view"},
@@ -78,9 +79,13 @@ def permissions_for_role(role: str) -> list[str]:
 
 
 def load_web_auth_config() -> WebAuthConfig:
-    from evileye.api.core.web_auth_bootstrap import ensure_default_admin_credentials
+    from evileye.api.core.web_auth_bootstrap import (
+        ensure_default_admin_credentials,
+        ensure_secure_web_auth_secrets,
+    )
 
     ensure_default_admin_credentials()
+    ensure_secure_web_auth_secrets()
     creds = _load_credentials()
     section = creds.get("web_auth") if isinstance(creds, dict) else {}
     if not isinstance(section, dict):
@@ -107,15 +112,22 @@ def load_web_auth_config() -> WebAuthConfig:
     session_secret = str(
         section.get("session_secret")
         or os.getenv("EVILEYE_SESSION_SECRET")
-        or "evileye-dev-session-secret"
-    )
+        or ""
+    ).strip()
+    if not session_secret:
+        # Should have been persisted by ensure_secure_web_auth_secrets; last-resort ephemeral.
+        import secrets as _secrets
+
+        session_secret = _secrets.token_urlsafe(32)
     cookie_name = str(section.get("cookie_name") or "evileye_session")
     secure_cookies = bool(section.get("secure_cookies", False))
+    if os.getenv("EVILEYE_SSL_CERTFILE") or os.getenv("EVILEYE_SSL_KEYFILE"):
+        secure_cookies = True
     internal_token = str(
         section.get("internal_token")
         or os.getenv("EVILEYE_INTERNAL_TOKEN")
         or ""
-    )
+    ).strip()
     return WebAuthConfig(
         enabled=enabled,
         session_secret=session_secret,
@@ -154,13 +166,24 @@ def verify_password(password: str, encoded: str) -> bool:
 
 
 def authenticate_user(username: str, password: str, auth: WebAuthConfig) -> Optional[dict[str, Any]]:
+    allow_plaintext = os.getenv("EVILEYE_ALLOW_PLAINTEXT_PASSWORDS", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
     user = auth.users.get(username)
     if user and not user.get("disabled"):
         password_hash = user.get("password_hash")
         plain_password = user.get("password")
         if password_hash and verify_password(password, str(password_hash)):
             return user
-        if plain_password is not None and hmac.compare_digest(str(plain_password), password):
+        if (
+            allow_plaintext
+            and plain_password is not None
+            and isinstance(plain_password, str)
+            and len(plain_password) == len(password)
+            and hmac.compare_digest(plain_password, password)
+        ):
             return user
     try:
         from evileye.api.core.user_store import get_user_store
@@ -225,6 +248,8 @@ def required_permissions_for_request(path: str, method: str) -> set[str]:
         return {"logs:view"}
     if path.startswith("/api/v1/users"):
         return {"users:manage"}
+    if path.startswith("/api/v1/bans"):
+        return {"bans:manage"}
     if path.startswith("/api/v1/journals/"):
         return {"journal:view"}
     if path.startswith("/api/v1/state/"):

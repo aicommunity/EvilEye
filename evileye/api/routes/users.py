@@ -9,8 +9,17 @@ router = APIRouter(prefix="/api/v1/users", tags=["users"])
 
 class CreateUserPayload(BaseModel):
     email: str = Field(..., min_length=3)
-    password: str = Field(..., min_length=6)
+    password: str = Field(..., min_length=10)
     role: str = Field(default="user")
+
+
+def _public_user(record: dict) -> dict:
+    return {
+        "email": record.get("email"),
+        "role": record.get("role"),
+        "status": record.get("status"),
+        "created_at": record.get("created_at"),
+    }
 
 
 def _reload_web_auth(request: Request) -> None:
@@ -20,16 +29,7 @@ def _reload_web_auth(request: Request) -> None:
 @router.get("")
 async def list_users(request: Request) -> dict:
     require_permission(request, "users:manage")
-    items = []
-    for record in get_user_store().list_users():
-        items.append(
-            {
-                "email": record.get("email"),
-                "role": record.get("role"),
-                "status": record.get("status"),
-                "created_at": record.get("created_at"),
-            }
-        )
+    items = [_public_user(record) for record in get_user_store().list_users()]
     return {"items": items}
 
 
@@ -48,12 +48,7 @@ async def create_user(payload: CreateUserPayload, request: Request) -> dict:
     _reload_web_auth(request)
     return {
         "ok": True,
-        "user": {
-            "email": item.get("email"),
-            "role": item.get("role"),
-            "status": item.get("status"),
-            "created_at": item.get("created_at"),
-        },
+        "user": _public_user(item),
         "mail": {"sent": False, "reason": "smtp_not_configured"},
     }
 
@@ -66,7 +61,7 @@ async def approve_user(email: str, request: Request) -> dict:
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="User not found") from exc
     _reload_web_auth(request)
-    return {"ok": True, "user": item}
+    return {"ok": True, "user": _public_user(item)}
 
 
 @router.post("/{email}/reject")
@@ -77,4 +72,4 @@ async def reject_user(email: str, request: Request) -> dict:
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="User not found") from exc
     _reload_web_auth(request)
-    return {"ok": True, "user": item}
+    return {"ok": True, "user": _public_user(item)}

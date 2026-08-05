@@ -75,8 +75,10 @@ export function DatabaseForm({
           <input
             type="password"
             disabled={readOnly}
-            value={String(obj.password ?? '')}
+            placeholder={obj.password ? '••••••••' : ''}
+            value={obj.password === '***' ? '' : String(obj.password ?? '')}
             onChange={(e) => update({ ...obj, password: e.target.value })}
+            autoComplete="new-password"
           />
         </FormField>
         <FormField label="image_dir">

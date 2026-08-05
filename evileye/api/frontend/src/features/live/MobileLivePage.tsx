@@ -1,21 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { stateApi, streamSnapshotUrl, streamStatus, type StateCamera } from '../../api';
-import { AuthProvider } from '../../auth/AuthContext';
-import { ToastProvider } from '../../components/ui/Toast';
 import { Badge, Button } from '../../components/ui';
 import { useVisibilityPolling } from '../../hooks/useVisibilityPolling';
 import { StreamOverlay } from '../../components/StreamOverlay';
 import { useI18n } from '../../i18n';
 
 export function MobileLivePage() {
-  return (
-    <AuthProvider>
-      <ToastProvider>
-        <MobileLiveInner />
-      </ToastProvider>
-    </AuthProvider>
-  );
+  return <MobileLiveInner />;
 }
 
 function MobileLiveInner() {

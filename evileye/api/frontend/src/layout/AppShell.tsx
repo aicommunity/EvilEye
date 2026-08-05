@@ -15,6 +15,7 @@ const NAV: Array<{ to: string; labelKey: string; permission?: string }> = [
   { to: '/admin/configs', labelKey: 'nav.configs', permission: 'config:view' },
   { to: '/admin/logs', labelKey: 'nav.logs', permission: 'logs:view' },
   { to: '/admin/users', labelKey: 'nav.users', permission: 'users:manage' },
+  { to: '/admin/bans', labelKey: 'nav.bans', permission: 'bans:manage' },
 ];
 
 export function AppShell() {
