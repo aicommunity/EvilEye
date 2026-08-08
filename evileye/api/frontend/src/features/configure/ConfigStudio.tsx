@@ -6,7 +6,9 @@ import {
   configGetSection,
   configPutSection,
   configValidate,
+  setupApi,
   type StudioTab,
+  type SetupStatus,
   ApiError,
 } from '../../api';
 import { Button } from '../../components/ui';
@@ -34,6 +36,8 @@ import { ZoneCanvas } from './ZoneCanvas';
 import { ClassMappingEditor } from './ClassMappingEditor';
 import { configBasename, stableStringify, tabsFromLegacySections } from './studioTabs';
 import { useI18n } from '../../i18n';
+import { BasicSetupForm } from './BasicSetupForm';
+import { ConfigModeToggle, useConfigUiMode } from './ConfigModeToggle';
 
 export type ConfigStudioProps = {
   mode: 'current' | 'file';
@@ -54,6 +58,16 @@ export function ConfigStudio({
   const { showError, showSuccess } = useToast();
   const { t } = useI18n();
   const canEdit = readOnlyProp === true ? false : hasPermission('config:edit');
+
+  const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null);
+  const { mode: uiMode, setMode: setUiMode, needsSetup } = useConfigUiMode(setupStatus);
+
+  useEffect(() => {
+    void setupApi
+      .status()
+      .then((s) => setSetupStatus(s))
+      .catch(() => setSetupStatus(null));
+  }, []);
 
   const [tabs, setTabs] = useState<StudioTab[]>([]);
   const [activeId, setActiveId] = useState('sources');
@@ -225,26 +239,37 @@ export function ConfigStudio({
           )}
           {dirty ? <span className="hint"> · {t('configure.dirty')}</span> : null}
         </h2>
+        <div className="toolbar" style={{ gap: '0.75rem', flexWrap: 'wrap' }}>
+          <ConfigModeToggle mode={uiMode} onChange={setUiMode} needsSetup={needsSetup} />
+          {uiMode === 'advanced' ? (
+            <Button
+              variant="outline"
+              onClick={() =>
+                void configValidate(name)
+                  .then((r) => {
+                    if (r.ok) showSuccess(t('configure.valid'));
+                    else showError(r.errors.join('; ') || t('configure.validationErrors'));
+                  })
+                  .catch((e) => showError(e.message))
+              }
+            >
+              {t('configure.validate')}
+            </Button>
+          ) : null}
+        </div>
+        {needsSetup ? <p className="setup-banner">{t('setup.needsSetupBanner')}</p> : null}
+        {uiMode === 'basic' ? (
+          <>
+            <p className="hint">{t('setup.basicHint')}</p>
+            <BasicSetupForm configName={name} onStatus={setSetupStatus} />
+          </>
+        ) : (
+          <>
         <p className="hint">
           {mode === 'current'
             ? t('configure.hintCurrent')
             : t('configure.hintFile')}
         </p>
-        <div className="toolbar">
-          <Button
-            variant="outline"
-            onClick={() =>
-              void configValidate(name)
-                .then((r) => {
-                  if (r.ok) showSuccess(t('configure.valid'));
-                  else showError(r.errors.join('; ') || t('configure.validationErrors'));
-                })
-                .catch((e) => showError(e.message))
-            }
-          >
-            {t('configure.validate')}
-          </Button>
-        </div>
         <div className="journal-tabs config-studio-tabs">
           {[...tabs.map((tab) => tab.id), ...specialIds].map((s) => (
             <button
@@ -284,6 +309,8 @@ export function ConfigStudio({
           <ClassMappingEditor configName={name} readOnly={!canEdit} />
         ) : (
           renderSectionForm()
+        )}
+          </>
         )}
       </div>
     </section>

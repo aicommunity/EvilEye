@@ -443,6 +443,29 @@ body {
   font-size: 1.15rem;
 }
 
+.config-mode-toggle {
+  display: inline-flex;
+  gap: 0.35rem;
+}
+
+.setup-banner {
+  background: rgba(230, 160, 40, 0.15);
+  border: 1px solid rgba(230, 160, 40, 0.45);
+  border-radius: var(--radius);
+  padding: 0.65rem 0.85rem;
+  margin: 0.5rem 0 1rem;
+}
+
+.basic-setup-form h3 {
+  margin: 1.25rem 0 0.5rem;
+  font-size: 1rem;
+}
+
+.form-actions-inline {
+  display: flex;
+  align-items: flex-end;
+}
+
 .change-password-modal {
   background: var(--bg-card, var(--panel, #1a1a1a));
   border: 1px solid var(--border);
