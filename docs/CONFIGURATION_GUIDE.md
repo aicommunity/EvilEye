@@ -474,6 +474,8 @@ evileye server --host 0.0.0.0 --port 8443 --ssl-certfile ./certs/server.crt --ss
     "mc_trackers": [...]
   },
   "controller": {...},
+  "server": {...},
+  "record": {...},
   "objects_handler": {...},
   "events_detectors": {...},
   "database": {...},
@@ -483,6 +485,8 @@ evileye server --host 0.0.0.0 --port 8443 --ssl-certfile ./certs/server.crt --ss
 ```
 
 **Важно**: Структура конфигурации зависит от выбранного класса pipeline. Данное руководство описывает конфигурацию для `PipelineSurveillance`. Для других классов pipeline (например, `PipelineCapture`) структура может отличаться.
+
+Секции `server` и `record` присутствуют в актуальных samples (`evileye/samples_configs/`) с `enabled: false` по умолчанию — включите их явно для web UI и записи. Production-like эталон: [`configs/poly-cameras-gst.json`](../configs/poly-cameras-gst.json).
 
 ## Примеры конфигураций
 
@@ -700,8 +704,14 @@ USB камера с GStreamer бэкендом.
 | `loop_play` | boolean | Зацикливать видео файлы | Нет (по умолчанию: `true`) |
 | `desired_fps` | int/null | Желаемый FPS для источника | Нет |
 | `type` | string | Тип бэкенда: `VideoCaptureGStreamer` для GStreamer | Нет |
+| `apiPreference` | string | Для GStreamer: `CAP_GSTREAMER` | Нет |
+| `gstreamer_available` | boolean | Явно включить GStreamer-путь capture | Нет |
 | `username` | string | Имя пользователя для IP камеры | Нет |
 | `password` | string | Пароль для IP камеры | Нет |
+
+**GStreamer:** если указан `"type": "VideoCaptureGStreamer"`, задайте также `"apiPreference": "CAP_GSTREAMER"` и `"gstreamer_available": true`. Иначе возможен fallback на OpenCV.
+
+**Split-источники:** `split` / `num_split` / `src_coords` / несколько `source_names` на одном физическом потоке. На диск пишется один набор файлов в папку `"-".join(source_names)` с префиксом `source_names[0]`; web playback кропает по `src_coords` (см. [`WEB_UI_GUIDE.md`](WEB_UI_GUIDE.md)).
 
 **Примеры типов источников**:
 
@@ -893,6 +903,55 @@ USB камера с GStreamer бэкендом.
 | `mode` | string | Режим: `daily_time` или `interval` | `daily_time` |
 | `time` | string | Время перезапуска (формат `HH:MM`) | `01:00` |
 | `interval_minutes` | int | Интервал в минутах для режима `interval` | `0` |
+
+Также задайте GUI-флаги в `controller` (не только в `visualizer`): `show_main_gui`, `gui_enabled`, `show_journal`.
+
+### Секция `server`
+
+Встроенный FastAPI web UI / API при `evileye run` (когда `server.enabled: true`).
+
+```json
+"server": {
+  "enabled": false,
+  "execution_mode": "process",
+  "host": "127.0.0.1",
+  "port": 8181,
+  "log_level": "info",
+  "preview_encoder": "turbojpeg",
+  "preview_encode_workers": 2
+}
+```
+
+| Параметр | Описание |
+|----------|----------|
+| `enabled` | Поднять web-сервер из runtime |
+| `host` / `port` | Bind (для LAN часто `0.0.0.0`) |
+| `preview_encoder` | `turbojpeg` (предпочтительно) или fallback OpenCV |
+| `preview_encode_workers` | Число encode-workers для live preview |
+
+Для реального TurboJPEG нужны пакет `PyTurboJPEG` и системная `libturbojpeg` (`sudo apt install libturbojpeg`). Без библиотеки система стартует с OpenCV fallback. См. [`CLI_SETUP_WEB.md`](CLI_SETUP_WEB.md), `evileye setup-web`.
+
+### Секция `record`
+
+Непрерывная и/или event-запись. Top-level значения могут переопределяться per-source вложенным `"record": {...}`.
+
+```json
+"record": {
+  "enabled": false,
+  "continuous_recording_enabled": false,
+  "event_recording_enabled": false,
+  "event_pre_seconds": 5,
+  "event_post_seconds": 5,
+  "segment_length_sec": 1800,
+  "retention_days": 7,
+  "container": "mp4",
+  "filename_tmpl": "{source_name}_{start_time}_{seq}.{ext}"
+}
+```
+
+Файлы continuous-записи попадают в `EvilEyeData/Streams/YYYY-MM-DD/...` (или `out_dir` / `database.image_dir`) и используются web playback.
+
+Samples поставляются с `enabled: false`. Для production-like записи см. [`poly-cameras-gst.json`](../configs/poly-cameras-gst.json).
 
 ### Секция `objects_handler`
 
@@ -1179,11 +1238,13 @@ USB камера с GStreamer бэкендом.
 evileye validate configs/my_config.json
 ```
 
-Команда проверит:
-- Корректность JSON синтаксиса
-- Наличие обязательных секций (`pipeline`, `database`, `controller`)
-- Корректность типов параметров (используя Pydantic модели, если доступен)
-- Существование указанных файлов и путей
+**Фактически в коде:**
+
+- **Hard-fail (CLI `validate_config`)**: обязательны секция `pipeline`, непустой `pipeline.sources`, у каждого источника поля `source` и `camera`.
+- **Soft (Pydantic `ConfigValidator`)**: при наличии секций проверяются типы/`fps`/`port` и т.п.; неизвестные ключи игнорируются. При `evileye run` ошибка pydantic обычно даёт **warning**, запуск продолжается.
+- Секции `server` / `record` / `scheduled_restart` **не** являются hard-required, но рекомендуются в актуальных шаблонах.
+
+Команда также проверяет корректность JSON-синтаксиса.
 
 ### Автоматическая валидация
 
@@ -1194,40 +1255,31 @@ evileye validate configs/my_config.json
 
 ### Типы проверок
 
-`ConfigValidator` выполняет следующие проверки:
+`ConfigValidator` (soft) выполняет следующие проверки:
 
-1. **Валидация секции `pipeline`**:
-   - Проверка наличия `pipeline_class`
-   - Проверка структуры `sources`, `detectors`, `trackers`
-   - Валидация типов данных через Pydantic модели (если доступен)
+1. **Валидация секции `pipeline`** (если есть): `pipeline_class`, структура `sources` / `detectors` / `trackers` через Pydantic-модели.
+2. **Валидация секции `database`** (если есть): поля вроде `database_name`, `host_name`, `port` (1–65535).
+3. **Валидация секции `controller`** (если есть): диапазон FPS (1–120), булевы флаги. Поле `scheduled_restart` поддерживается runtime/CLI scheduler; pydantic-модель может его не описывать — отсутствие в soft-модели не блокирует запуск.
 
-2. **Валидация секции `database`**:
-   - Проверка обязательных полей (`database_name`, `host_name`, `port`)
-   - Валидация диапазона порта (1-65535)
-   - Проверка корректности типов данных
-
-3. **Валидация секции `controller`**:
-   - Проверка диапазона FPS (1-120)
-   - Валидация булевых флагов
-   - Проверка структуры `scheduled_restart`
+Регрессионный lint актуальности шаблонов: `tests/unit/config/test_config_actuality_lint.py` (наличие `server`/`record`/GST-флагов в samples и канонических configs).
 
 ### Обработка ошибок
 
 При обнаружении ошибок валидации:
-- **В CLI**: выводится сообщение об ошибке с указанием проблемной секции и деталями
-- **При запуске**: система может отказаться от запуска или переключиться в fallback режим (например, JSON вместо БД)
+- **Hard CLI**: отсутствует `pipeline` / `sources` / `source`+`camera` → отказ запуска
+- **Soft pydantic**: сообщение/warning по секции; запуск часто продолжается
 - **В GUI**: ошибки отображаются пользователю с возможностью исправления
 
 ### Примеры ошибок валидации
 
 ```bash
-# Ошибка: отсутствует обязательная секция
+# Ошибка: отсутствует обязательная секция pipeline / sources
 $ evileye validate invalid.json
-Error: Pipeline config error: Field required [type=missing, input={}, input_type=dict]
+Error: ... missing pipeline / sources ...
 
-# Ошибка: некорректный тип данных
+# Soft: некорректный тип в database (часто warning при run)
 $ evileye validate invalid.json
-Error: Database config error: Input should be a valid integer [type=int_parsing, input='invalid', input_type=str]
+... Database config error: Input should be a valid integer ...
 ```
 
 ### Расширенная валидация
