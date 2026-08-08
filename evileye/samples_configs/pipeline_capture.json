@@ -1,120 +1,149 @@
 {
-    "pipeline": {
-        "pipeline_class": "PipelineCapture",
-        "sources": [
-            {
-                "execution_mode": "thread",
-                "camera": "videos/planes_sample.mp4",
-                "source": "VideoFile",
-                "split": false,
-                "num_split": 0,
-                "src_coords": [
-                    0
-                ],
-                "source_ids": [
-                    0
-                ],
-                "source_names": [
-                    "Cam1"
-                ],
-                "fps": {
-                    "value": 30
-                }
-            }
-        ]
-    },
-    "controller": {
-        "fps": 30,
-        "enable_close_from_gui": true,
-        "auto_restart": false,
-        "use_database": false,
-        "scheduled_restart": {
-            "enabled": false,
-            "mode": "daily_time",
-            "time": "01:00",
-            "interval_minutes": 0
-        }
-    },
-    "objects_handler": {
-        "max_active_objects": 100,
-        "max_lost_objects": 100,
-        "lost_thresh": 5,
-        "lost_store_time_secs": 60,
-        "history_len": 30
-    },
-    "events_detectors": {
-        "CamEventsDetector": {},
-        "FieldOfViewEventsDetector": {
-            "sources": {}
-        },
-        "ZoneEventsDetector": {
-            "sources": {},
-            "event_threshold": 0,
-            "zone_left_threshold": 0
-        }
-    },
-    "events_processor": {},
-    "database": {
-        "database_name": "evil_eye_db",
-        "host_name": "localhost",
-        "port": 5432,
-        "admin_user_name": "postgres",
-        "admin_password": "",
-        "image_dir": "EvilEyeData",
-        "preview_width": 300,
-        "preview_height": 150
-    },
-    "visualizer": {
-        "num_width": 1,
-        "num_height": 1,
-        "visual_buffer_num_frames": 10,
+  "pipeline": {
+    "pipeline_class": "PipelineCapture",
+    "sources": [
+      {
+        "execution_mode": "thread",
+        "camera": "videos/planes_sample.mp4",
+        "source": "VideoFile",
+        "split": false,
+        "num_split": 0,
+        "src_coords": [
+          0
+        ],
         "source_ids": [
-            0
+          0
         ],
-        "fps": [
-            5
+        "source_names": [
+          "Cam1"
         ],
-        "gui_enabled": true,
-        "show_debug_info": true,
-        "objects_journal_enabled": true,
-        "text_config": {
-            "font_size_pt": 42,
-            "font_face": 0,
-            "color": [
-                0,
-                0,
-                255
-            ],
-            "thickness": null,
-            "background_color": [
-                0,
-                0,
-                0
-            ],
-            "background_enabled": false,
-            "padding_percent": 1.5,
-            "position_offset_percent": [
-                0,
-                -8
-            ],
-            "font_scale_method": "resolution_based",
-            "base_resolution": [
-                1920,
-                1080
-            ]
+        "fps": {
+          "value": 30
         }
+      }
+    ]
+  },
+  "controller": {
+    "fps": 30,
+    "enable_close_from_gui": true,
+    "auto_restart": false,
+    "use_database": false,
+    "scheduled_restart": {
+      "enabled": false,
+      "mode": "daily_time",
+      "time": "01:00",
+      "interval_minutes": 0
     },
-    "storage_monitor": {
-        "enabled": true,
-        "check_interval_seconds": 300,
-        "max_dir_size_gb": 200,
-        "min_free_space_percent": 10,
-        "retention_days": {
-            "streaming_video": 7,
-            "event_videos": 7,
-            "object_images": 180,
-            "event_images": 180
-        },
-        "active_file_age_seconds": 60
+    "show_main_gui": true,
+    "gui_enabled": true,
+    "show_journal": true
+  },
+  "objects_handler": {
+    "max_active_objects": 100,
+    "max_lost_objects": 100,
+    "lost_thresh": 5,
+    "lost_store_time_secs": 60,
+    "history_len": 30
+  },
+  "events_detectors": {
+    "CamEventsDetector": {},
+    "FieldOfViewEventsDetector": {
+      "sources": {}
+    },
+    "ZoneEventsDetector": {
+      "sources": {},
+      "event_threshold": 0,
+      "zone_left_threshold": 0
+    },
+    "AttributeEventsDetector": {
+      "sources": {}
     }
+  },
+  "events_processor": {},
+  "database": {
+    "database_name": "evil_eye_db",
+    "host_name": "localhost",
+    "port": 5432,
+    "admin_user_name": "postgres",
+    "admin_password": "",
+    "image_dir": "EvilEyeData",
+    "preview_width": 300,
+    "preview_height": 150
+  },
+  "visualizer": {
+    "num_width": 1,
+    "num_height": 1,
+    "visual_buffer_num_frames": 10,
+    "source_ids": [
+      0
+    ],
+    "fps": [
+      5
+    ],
+    "gui_enabled": true,
+    "show_debug_info": true,
+    "objects_journal_enabled": true,
+    "text_config": {
+      "font_size_pt": 42,
+      "font_face": 0,
+      "color": [
+        0,
+        0,
+        255
+      ],
+      "thickness": null,
+      "background_color": [
+        0,
+        0,
+        0
+      ],
+      "background_enabled": false,
+      "padding_percent": 1.5,
+      "position_offset_percent": [
+        0,
+        -8
+      ],
+      "font_scale_method": "resolution_based",
+      "base_resolution": [
+        1920,
+        1080
+      ]
+    }
+  },
+  "storage_monitor": {
+    "enabled": true,
+    "check_interval_seconds": 300,
+    "max_dir_size_gb": 200,
+    "min_free_space_percent": 10,
+    "retention_days": {
+      "streaming_video": 7,
+      "event_videos": 7,
+      "object_images": 180,
+      "event_images": 180
+    },
+    "active_file_age_seconds": 60
+  },
+  "server": {
+    "enabled": false,
+    "execution_mode": "process",
+    "host": "127.0.0.1",
+    "port": 8181,
+    "log_level": "info",
+    "preview_encoder": "turbojpeg",
+    "preview_encode_workers": 2
+  },
+  "record": {
+    "enabled": false,
+    "continuous_recording_enabled": false,
+    "event_recording_enabled": false,
+    "event_pre_seconds": 5,
+    "event_post_seconds": 5,
+    "event_buffer_fps": 0,
+    "enabled_sources": [],
+    "container": "mp4",
+    "segment_length_sec": 1800,
+    "retention_days": 7,
+    "min_free_space_pct": 10,
+    "filename_tmpl": "{source_name}_{start_time}_{seq}.{ext}"
+  }
 }
