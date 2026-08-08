@@ -46,6 +46,21 @@ python scripts/setup/fix_entry_points.py
 evileye setup-web
 ```
 
+#### Docker (GPU)
+
+Run EvilEye in a container based on the official Ultralytics image (PyTorch + CUDA + YOLO). Data directories stay on the host by default. This path does **not** replace `pip install`.
+
+```bash
+./docker/prepare-host-dirs.sh
+# Edit credentials.json: set database.host_name to "db" for Compose Postgres
+docker compose -f docker/docker-compose.yml up --build
+
+# Optional: install host CLI wrappers (evileye → docker run)
+./docker/install-host-cli.sh
+```
+
+Full guide: [docs/DOCKER_DEPLOYMENT.md](docs/DOCKER_DEPLOYMENT.md).
+
 Next you can use the `evileye` command, or if it does not work:
 
 ```bash
@@ -942,6 +957,7 @@ Detailed documentation is located in the [docs/](docs/) folder:
 
 - **[Database Setup Guide](docs/DATABASE_SETUP_GUIDE.md)** - Detailed PostgreSQL setup guide
 - **[Deploy Command](docs/CLI_DEPLOY_COMMAND.md)** - Using the `evileye deploy` command to deploy the system
+- **[Docker Deployment (GPU)](docs/DOCKER_DEPLOYMENT.md)** - Ultralytics/PyTorch/CUDA container, host data dirs, host CLI wrappers
 - **[Configuration Guide](docs/CONFIGURATION_GUIDE.md)** - Complete guide to configuration files structure, parameters, and examples
 - **[Configuration Creation](docs/CREATE_SCRIPT_README.md)** - Using the `evileye create` command to create new configurations
 

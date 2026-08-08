@@ -20,3 +20,5 @@ evileye deploy                    # credentials, configs/, monitor/
 enable timers or start processes. See [`monitor/README.md`](monitor/README.md).
 
 Web UI details: [`../docs/CLI_SETUP_WEB.md`](../docs/CLI_SETUP_WEB.md), [`../docs/WEB_UI_GUIDE.md`](../docs/WEB_UI_GUIDE.md).
+
+**Alternative (GPU container):** [`../docs/DOCKER_DEPLOYMENT.md`](../docs/DOCKER_DEPLOYMENT.md) — Docker Compose + optional host CLI wrappers. Does not replace the pip install flow above.

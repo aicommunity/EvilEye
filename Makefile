@@ -1,7 +1,8 @@
 # EvilEye Makefile
 # Provides convenient commands for development and project management
 
-.PHONY: install install-dev uninstall clean test lint format docs fix-entry-points
+.PHONY: install install-dev uninstall clean test lint format docs fix-entry-points \
+	docker-build docker-up install-docker-cli uninstall-docker-cli prepare-docker-host
 
 # Default target
 all: install
@@ -81,6 +82,24 @@ reinstall-dev: uninstall install-dev
 # Reinstall with all dependencies
 reinstall-full: uninstall install-full
 
+# --- Docker (GPU) ---
+# See docs/DOCKER_DEPLOYMENT.md. Does not affect pip install targets above.
+
+prepare-docker-host:
+	./docker/prepare-host-dirs.sh
+
+docker-build:
+	docker compose -f docker/docker-compose.yml build
+
+docker-up:
+	docker compose -f docker/docker-compose.yml up
+
+install-docker-cli:
+	./docker/install-host-cli.sh
+
+uninstall-docker-cli:
+	./docker/uninstall-host-cli.sh
+
 # Show help
 help:
 	@echo "Available targets:"
@@ -97,4 +116,9 @@ help:
 	@echo "  reinstall        - Uninstall and install"
 	@echo "  reinstall-dev    - Uninstall and install with dev deps"
 	@echo "  reinstall-full   - Uninstall and install with all deps"
+	@echo "  prepare-docker-host - Create host data dirs + credentials.json for Docker"
+	@echo "  docker-build     - Build GPU Docker image (Ultralytics/PyTorch/CUDA)"
+	@echo "  docker-up        - Run docker compose stack (app + Postgres)"
+	@echo "  install-docker-cli - Install host CLI wrappers that call the container"
+	@echo "  uninstall-docker-cli - Remove Docker host CLI wrappers"
 	@echo "  help             - Show this help"
