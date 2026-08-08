@@ -1,21 +1,28 @@
 """
 Test script to record a short video fragment from RTSP camera and return the path.
+
+Requires EVILEYE_TEST_RTSP_PASSWORD (and optional URL/USER env vars).
 """
+import os
 import time
 import sys
 from pathlib import Path
 import datetime
 import tempfile
 
+import pytest
+
+
 def test_record_video_fragment():
     from evileye.capture.video_capture_gstreamer import VideoCaptureGStreamer
     from evileye.capture.video_capture_base import CaptureDeviceType
     from evileye.video_recorder.recording_params import RecordingParams
-    
-    # Camera details
-    camera_url = "rtsp://user:AutoZloboglaz821-@10.245.1.199"
-    username = "user"
-    password = "AutoZloboglaz821-"
+
+    camera_url = os.environ.get("EVILEYE_TEST_RTSP_URL", "rtsp://10.245.1.199")
+    username = os.environ.get("EVILEYE_TEST_RTSP_USER", "user")
+    password = os.environ.get("EVILEYE_TEST_RTSP_PASSWORD", "")
+    if not password:
+        pytest.skip("Set EVILEYE_TEST_RTSP_PASSWORD to run live RTSP tests")
     
     # Create temporary directory for recording
     tmp_dir = Path(tempfile.mkdtemp(prefix="evileye_test_"))

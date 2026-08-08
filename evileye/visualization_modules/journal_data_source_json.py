@@ -18,6 +18,8 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
         self.base_dir = base_dir
         self.params = params or {}
         self.date_folder: Optional[str] = None
+        self.date_from: Optional[str] = None
+        self.date_to: Optional[str] = None
         self._cache: List[Dict] = []
         self._last_file_timestamps = {}  # Track file modification times
         self._source_name_id_address = {}
@@ -34,9 +36,20 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
         self._last_file_timestamps.clear()
 
     def set_date(self, date_folder: Optional[str]) -> None:
-        if self.date_folder == date_folder:
+        if self.date_folder == date_folder and self.date_from is None and self.date_to is None:
             return
         self.date_folder = date_folder
+        self.date_from = None
+        self.date_to = None
+        self._cache = []
+        self._cache_loaded_generation = -1
+
+    def set_date_range(self, date_from: Optional[str], date_to: Optional[str]) -> None:
+        if self.date_from == date_from and self.date_to == date_to and self.date_folder is None:
+            return
+        self.date_folder = None
+        self.date_from = date_from
+        self.date_to = date_to
         self._cache = []
         self._cache_loaded_generation = -1
 
@@ -117,7 +130,15 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
         if self._cache_loaded_generation == self._request_generation and self._cache:
             return
 
-        dates = [self.date_folder] if self.date_folder else self.list_available_dates()[-7:]
+        if self.date_folder:
+            dates = [self.date_folder]
+        elif self.date_from and self.date_to:
+            dates = [
+                d for d in self.list_available_dates()
+                if self.date_from <= d <= self.date_to
+            ]
+        else:
+            dates = self.list_available_dates()[-7:]
 
         changed_files: List[tuple[str, str, str]] = []
         for date_folder in dates:

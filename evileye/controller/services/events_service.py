@@ -166,7 +166,16 @@ class EventsService:
                 "Database was enabled but connection failed. Using JSON-only mode for events."
             )
 
-        img_dir = (params.get("database", {}) or {}).get("image_dir", "EvilEyeData")
+        from evileye.utils.database_config_utils import resolve_writable_image_dir
+
+        preferred = (params.get("database", {}) or {}).get("image_dir") or "EvilEyeData"
+        img_dir = resolve_writable_image_dir(preferred)
+        db_section = params.get("database")
+        if not isinstance(db_section, dict):
+            db_section = {}
+            params["database"] = db_section
+        db_section["image_dir"] = img_dir
+
         for adapter_cls in JSON_EVENT_ADAPTER_CLASSES:
             try:
                 adapter = adapter_cls(None)

@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Query
+import asyncio
 
 from evileye.api.core.server_state import (
     build_overview,
@@ -16,29 +17,32 @@ router = APIRouter(prefix="/api/v1/state", tags=["state"])
 
 @router.get("/overview")
 async def state_overview() -> dict:
-    return build_overview()
+    return await asyncio.to_thread(build_overview)
 
 
 @router.get("/runs")
 async def state_runs(scope: str = Query("current", pattern="^(current|active|history|all)$")) -> dict:
-    if scope == "current":
-        current = get_current_run_summary()
-        return {"current_run": current, "items": [current] if current else []}
-    if scope == "active":
-        return {"current_run": get_current_run_summary(), "items": list_active_run_summaries()}
-    if scope == "history":
-        return {"current_run": get_current_run_summary(), "items": list_history_run_summaries(exclude_current=True)}
-    return {"current_run": get_current_run_summary(), "items": list_run_summaries()}
+    def _load() -> dict:
+        if scope == "current":
+            current = get_current_run_summary()
+            return {"current_run": current, "items": [current] if current else []}
+        if scope == "active":
+            return {"current_run": get_current_run_summary(), "items": list_active_run_summaries()}
+        if scope == "history":
+            return {"current_run": get_current_run_summary(), "items": list_history_run_summaries(exclude_current=True)}
+        return {"current_run": get_current_run_summary(), "items": list_run_summaries()}
+
+    return await asyncio.to_thread(_load)
 
 
 @router.get("/history")
 async def state_history() -> dict:
-    return build_runtime_history()
+    return await asyncio.to_thread(build_runtime_history)
 
 
 @router.get("/runs/{rid}")
 async def state_run(rid: int) -> dict:
-    item = get_run_summary(rid)
+    item = await asyncio.to_thread(get_run_summary, rid)
     if item is None:
         raise HTTPException(status_code=404, detail="Run not found")
     return item
@@ -46,4 +50,5 @@ async def state_run(rid: int) -> dict:
 
 @router.get("/cameras")
 async def state_cameras(scope: str = Query("active", pattern="^(current|active|all)$")) -> dict:
-    return {"items": list_camera_summaries(scope=scope)}
+    items = await asyncio.to_thread(list_camera_summaries, scope=scope)
+    return {"items": items}

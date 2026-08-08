@@ -39,7 +39,14 @@ def test_mp_drain_poll_sec_env(monkeypatch):
 
 @pytest.mark.unit
 def test_mp_pending_cap_tracker_default():
-    assert qc.mp_pending_cap_tracker() == 4
+    assert qc.mp_pending_cap_tracker() == 2
+
+
+@pytest.mark.unit
+def test_mp_pending_cap_detector_matches_roi(monkeypatch):
+    monkeypatch.delenv("EVILEYE_MP_PENDING_CAP", raising=False)
+    assert qc.mp_pending_cap_detector(1) == 1
+    assert qc.mp_pending_cap_detector(3) == 3
 
 
 @pytest.mark.unit

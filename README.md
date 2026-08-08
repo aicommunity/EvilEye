@@ -22,6 +22,11 @@ Intelligence video surveillance system with object detection, tracking, and mult
 # Install from PyPI with all dependencies
 pip install evileye
 
+# Optional but recommended for fast JPEG live preview:
+# sudo apt install libturbojpeg   # Debian/Ubuntu
+
+# Ensure Web UI Python deps + packaged SPA (builds frontend if static is missing)
+evileye setup-web
 ```
 
 #### From Source (Developers)
@@ -37,8 +42,38 @@ pip install -e "."
 # Fix entry points
 python scripts/setup/fix_entry_points.py
 
-Next you can use the 'evileye' command to work, or if the command does not work:
+# Check / prepare Web UI (SPA static + API packages)
+evileye setup-web
+```
+
+#### Docker (GPU)
+
+Run EvilEye in a container based on the official Ultralytics image (PyTorch + CUDA + YOLO). Data directories stay on the host by default. This path does **not** replace `pip install`.
+
+```bash
+./docker/prepare-host-dirs.sh
+# Edit credentials.json: set database.host_name to "db" for Compose Postgres
+docker compose -f docker/docker-compose.yml up --build
+
+# Optional: install host CLI wrappers (evileye → docker run)
+./docker/install-host-cli.sh
+```
+
+Full guide: [docs/DOCKER_DEPLOYMENT.md](docs/DOCKER_DEPLOYMENT.md).
+
+Next you can use the `evileye` command, or if it does not work:
+
+```bash
 python3 -m evileye.cli_wrapper
+```
+
+Typical site bring-up:
+
+```text
+pip install -e .          # or: pip install evileye
+evileye setup-web         # check + install missing Python pkgs; build SPA if needed
+evileye deploy            # credentials, configs/, monitor/
+evileye run config.json --no-gui
 ```
 
 ### Basic Usage
@@ -618,11 +653,22 @@ evileye server --log-level debug
 - ReDoc documentation: `http://localhost:8181/redoc`
 - OpenAPI schema: `http://localhost:8181/openapi.json`
 
-**Веб-интерфейс (frontend):** лёгкое SPA на TypeScript доступно по адресу `http://localhost:8181/` после однократной сборки:
+**Веб-интерфейс (frontend):** React SPA раздаётся FastAPI из `evileye/api/static/`.
+
 ```bash
+# Preferred: check deps and build SPA only if static is missing
+evileye setup-web
+evileye setup-web --check          # verify only
+evileye setup-web --scope system   # pip via sudo (asks confirmation)
+evileye setup-web --force --build  # reinstall missing pkgs + npm rebuild
+
+# Manual frontend build (developers):
 cd evileye/api/frontend && npm install && npm run build
 ```
-Подробности в `evileye/api/frontend/README.md`.
+
+`pip install` already pulls FastAPI/uvicorn. npm is needed only to **rebuild** the SPA (or if static assets are absent). For TurboJPEG preview performance install system `libturbojpeg` (see `docs/CLI_SETUP_WEB.md`).
+
+Подробности: `docs/WEB_UI_GUIDE.md`, `evileye/api/frontend/README.md`.
 
 **Alternative entry point:**
 ```bash
@@ -911,6 +957,7 @@ Detailed documentation is located in the [docs/](docs/) folder:
 
 - **[Database Setup Guide](docs/DATABASE_SETUP_GUIDE.md)** - Detailed PostgreSQL setup guide
 - **[Deploy Command](docs/CLI_DEPLOY_COMMAND.md)** - Using the `evileye deploy` command to deploy the system
+- **[Docker Deployment (GPU)](docs/DOCKER_DEPLOYMENT.md)** - Ultralytics/PyTorch/CUDA container, host data dirs, host CLI wrappers
 - **[Configuration Guide](docs/CONFIGURATION_GUIDE.md)** - Complete guide to configuration files structure, parameters, and examples
 - **[Configuration Creation](docs/CREATE_SCRIPT_README.md)** - Using the `evileye create` command to create new configurations
 

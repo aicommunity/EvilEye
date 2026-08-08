@@ -7,7 +7,13 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
 from evileye.api.core.config_run_access import get_config_run_manager
-from evileye.api.core.runtime_registry import list_runtime_records, load_runtime_record, load_runtime_snapshot
+from evileye.api.core.runtime_registry import (
+    list_runtime_record_stubs,
+    list_runtime_records,
+    load_runtime_record,
+    load_runtime_snapshot,
+    maybe_discover_process_runtimes,
+)
 from evileye.core.runtime_services import get_frame_broker
 
 
@@ -20,6 +26,9 @@ class ConfigSummary:
     event_detector_names: list[str]
     database_enabled: bool
 
+
+_config_summary_cache: dict[str, tuple[float, ConfigSummary]] = {}
+_EMPTY_CONFIG_SUMMARY = ConfigSummary(None, [], 0, 0, [], False)
 
 def _load_json(path: Path) -> dict[str, Any]:
     try:
@@ -37,9 +46,18 @@ def _get_pipeline_section(config: dict[str, Any]) -> dict[str, Any]:
 
 def load_config_summary(config_path: Optional[str]) -> ConfigSummary:
     if not config_path:
-        return ConfigSummary(None, [], 0, 0, [], False)
+        return _EMPTY_CONFIG_SUMMARY
 
-    config = _load_json(Path(config_path))
+    path = Path(config_path)
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        mtime = 0.0
+    cached = _config_summary_cache.get(config_path)
+    if cached and cached[0] == mtime:
+        return cached[1]
+
+    config = _load_json(path)
     pipeline = _get_pipeline_section(config)
     sources = pipeline.get("sources") if isinstance(pipeline, dict) else None
     detectors = pipeline.get("detectors") if isinstance(pipeline, dict) else None
@@ -57,13 +75,25 @@ def load_config_summary(config_path: Optional[str]) -> ConfigSummary:
         source_type = source.get("type") or source.get("source")
         camera_address = source.get("camera") or source.get("video") or source.get("path")
         if source_ids and source_names:
+            split = bool(source.get("split"))
+            num_split = int(source.get("num_split") or len(source_names) or 0)
+            src_coords_list = source.get("src_coords") or []
+            parent_folder = "-".join(source_names[:num_split]) if split and num_split else None
             for idx, source_id in enumerate(source_ids):
+                src_coords = None
+                if split and idx < len(src_coords_list):
+                    raw = src_coords_list[idx]
+                    if isinstance(raw, (list, tuple)) and len(raw) >= 4:
+                        src_coords = [int(raw[0]), int(raw[1]), int(raw[2]), int(raw[3])]
                 source_items.append(
                     {
                         "source_id": source_id,
                         "source_name": source_names[idx] if idx < len(source_names) else f"Source {source_id}",
                         "source_type": source_type,
                         "address": camera_address,
+                        "split": split,
+                        "parent_source_name": parent_folder,
+                        "src_coords": src_coords,
                     }
                 )
         else:
@@ -81,7 +111,7 @@ def load_config_summary(config_path: Optional[str]) -> ConfigSummary:
     if not isinstance(database, dict):
         database = {}
 
-    return ConfigSummary(
+    summary = ConfigSummary(
         pipeline_class=pipeline.get("pipeline_class") if isinstance(pipeline, dict) else None,
         source_items=source_items,
         detector_count=len(detectors or []),
@@ -89,10 +119,31 @@ def load_config_summary(config_path: Optional[str]) -> ConfigSummary:
         event_detector_names=sorted(event_detectors.keys()),
         database_enabled=bool(database),
     )
+    _config_summary_cache[config_path] = (mtime, summary)
+    return summary
 
 
-def _combined_runtime_records() -> Dict[int, Dict[str, Any]]:
-    items = list_runtime_records()
+def _merge_manager_into_stub(stub: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, Any]:
+    merged = {**stub, **item}
+    merged.setdefault("managed", True)
+    merged.setdefault("source", "web")
+    if "alive" not in item:
+        merged["alive"] = merged.get("state") in {"starting", "running"}
+    return merged
+
+
+def _combined_runtime_stubs(*, discover: bool = False) -> Dict[int, Dict[str, Any]]:
+    if discover:
+        maybe_discover_process_runtimes()
+    items = dict(list_runtime_record_stubs(discover=False))
+    for rid, item in get_config_run_manager().list().items():
+        existing = items.get(rid, {})
+        items[rid] = _merge_manager_into_stub(existing, item)
+    return dict(sorted(items.items(), key=lambda pair: pair[0]))
+
+
+def _combined_runtime_records(*, discover: bool = True) -> Dict[int, Dict[str, Any]]:
+    items = list_runtime_records(discover=discover)
     for rid, item in get_config_run_manager().list().items():
         existing = items.get(rid, {})
         merged = {**existing, **item}
@@ -120,6 +171,9 @@ def _log_files() -> list[Path]:
     return sorted(logs_dir.glob("*.log"), key=lambda item: item.stat().st_mtime, reverse=True)
 
 
+_CAMERA_STALE_SEC = 5.0
+
+
 def _preview_frame_available(run_id: int | None, source_id: int | None = None) -> bool:
     if run_id is None:
         return False
@@ -131,6 +185,73 @@ def _preview_frame_available(run_id: int | None, source_id: int | None = None) -
         return bool(broker.latest_jpeg(run_key))
     except Exception:
         return False
+
+
+def _frame_age_sec(run_id: int | None, source_id: int | None = None) -> float | None:
+    if run_id is None:
+        return None
+    try:
+        return get_frame_broker().get_frame_age_sec(str(run_id), source_id)
+    except Exception:
+        return None
+
+
+def _source_is_working_from_snapshot(
+    snapshot: dict[str, Any] | None,
+    source_id: int | None,
+) -> bool | None:
+    """Return is_working from runtime snapshot when available; None if unknown."""
+    if not isinstance(snapshot, dict) or source_id is None:
+        return None
+    sources = snapshot.get("sources")
+    if not isinstance(sources, list):
+        return None
+    for entry in sources:
+        if not isinstance(entry, dict):
+            continue
+        ids = entry.get("source_ids") or []
+        try:
+            if int(source_id) in {int(x) for x in ids}:
+                if "is_working" in entry:
+                    return bool(entry.get("is_working"))
+                return None
+        except Exception:
+            continue
+    return None
+
+
+def _camera_health(
+    run: dict[str, Any],
+    source_id: int | None,
+    *,
+    stale_sec: float = _CAMERA_STALE_SEC,
+) -> tuple[bool, float | None, bool, bool]:
+    """Return (preview_available, last_frame_age_sec, is_working, reconnecting).
+
+    ``is_working`` reflects capture health and does **not** require a JPEG in the
+    FrameBroker. ``reconnecting`` is true only when the runtime snapshot reports
+    ``is_working=False`` (real capture reconnect), not merely a missing preview.
+    """
+    rid = run.get("id")
+    age = _frame_age_sec(rid, source_id)
+    running = run.get("state") == "running"
+    preview = bool(running and _preview_frame_available(rid, source_id))
+    snap = run.get("runtime_snapshot") if isinstance(run.get("runtime_snapshot"), dict) else None
+    snap_working = _source_is_working_from_snapshot(snap, source_id)
+
+    if not running:
+        is_working = False
+    elif snap_working is not None:
+        is_working = bool(snap_working)
+    elif age is not None:
+        is_working = age < stale_sec
+    else:
+        # Unknown snapshot and no broker frames: optimistic True so empty broker
+        # does not mark every camera as reconnecting (cold-start / demand gap).
+        is_working = True
+
+    reconnecting = bool(running and snap_working is False)
+    return preview, age, is_working, reconnecting
 
 
 def _read_log_tail(path: Path, *, lines: int = 120) -> list[str]:
@@ -175,7 +296,7 @@ def _run_summary(record: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def list_run_summaries() -> list[Dict[str, Any]]:
-    return [_run_summary(record) for record in _combined_runtime_records().values()]
+    return [_run_summary(record) for record in _combined_runtime_records(discover=True).values()]
 
 
 def get_run_summary(rid: int) -> Optional[Dict[str, Any]]:
@@ -192,13 +313,29 @@ def _current_run_candidate_key(run: Dict[str, Any]) -> tuple[int, int, float]:
     return (state_rank, 1 if bool(run.get("latest_frame_available")) else 0, updated_at)
 
 
+def _stub_candidate_key(stub: Dict[str, Any]) -> tuple[int, float, int]:
+    state = str(stub.get("state") or "")
+    state_rank = 2 if state == "running" else 1 if stub.get("alive") else 0
+    updated_at = float(stub.get("updated_at") or 0.0)
+    return (state_rank, updated_at, int(stub.get("id") or 0))
+
+
 def _is_run_active(run: Dict[str, Any]) -> bool:
     state = str(run.get("state") or "")
-    return bool(run.get("alive")) or state in {"starting", "running", "stopping"}
+    if state == "stopping":
+        return True
+    return bool(run.get("alive")) and state in {"starting", "running"}
 
 
 def list_active_run_summaries() -> list[Dict[str, Any]]:
-    runs = [run for run in list_run_summaries() if _is_run_active(run)]
+    stubs = _combined_runtime_stubs(discover=True)
+    active_ids = [rid for rid, stub in stubs.items() if _is_run_active(stub)]
+    runs: list[Dict[str, Any]] = []
+    for rid in active_ids:
+        record = _combined_runtime_record(rid)
+        if record is None:
+            continue
+        runs.append(_run_summary(record))
     runs.sort(
         key=lambda item: (
             _current_run_candidate_key(item),
@@ -209,24 +346,48 @@ def list_active_run_summaries() -> list[Dict[str, Any]]:
     return runs
 
 
-def get_current_run_summary() -> Optional[Dict[str, Any]]:
-    runs = list_active_run_summaries() or list_run_summaries()
-    if not runs:
+def get_current_config_path() -> Optional[str]:
+    """Return config_path for the best current run without hydrating full summaries."""
+    stubs = _combined_runtime_stubs(discover=False)
+    if not stubs:
         return None
-    return max(runs, key=_current_run_candidate_key)
+    active = [stub for stub in stubs.values() if _is_run_active(stub)]
+    pool = active or list(stubs.values())
+    best = max(pool, key=_stub_candidate_key)
+    path = best.get("config_path")
+    return str(path) if path else None
+
+
+def get_current_run_summary() -> Optional[Dict[str, Any]]:
+    stubs = _combined_runtime_stubs(discover=True)
+    if not stubs:
+        return None
+    active = [stub for stub in stubs.values() if _is_run_active(stub)]
+    pool = active or list(stubs.values())
+    best = max(pool, key=_stub_candidate_key)
+    rid = int(best.get("id") or 0)
+    if not rid:
+        return None
+    record = _combined_runtime_record(rid)
+    if record is None:
+        return None
+    return _run_summary(record)
 
 
 def list_history_run_summaries(*, exclude_current: bool = True) -> list[Dict[str, Any]]:
-    runs = list_run_summaries()
+    stubs = _combined_runtime_stubs(discover=False)
     current = get_current_run_summary()
     current_id = current.get("id") if current else None
-    items = []
-    for run in runs:
-        if _is_run_active(run):
+    items: list[Dict[str, Any]] = []
+    for rid, stub in stubs.items():
+        if _is_run_active(stub):
             continue
-        if exclude_current and current_id is not None and run.get("id") == current_id:
+        if exclude_current and current_id is not None and rid == current_id:
             continue
-        items.append(run)
+        record = _combined_runtime_record(rid)
+        if record is None:
+            continue
+        items.append(_run_summary(record))
     items.sort(key=lambda item: float(item.get("updated_at") or 0.0), reverse=True)
     return items
 
@@ -243,20 +404,22 @@ def list_camera_summaries(*, scope: str = "current") -> list[Dict[str, Any]]:
         if not run:
             continue
         for source in run.get("sources", []):
+            sid = source.get("source_id")
+            preview, age, is_working, reconnecting = _camera_health(run, sid)
             cameras.append(
                 {
                     "run_id": run["id"],
                     "run_name": run.get("name"),
                     "run_state": run.get("state"),
                     "pipeline_class": run.get("pipeline_class"),
-                    "source_id": source.get("source_id"),
+                    "source_id": sid,
                     "source_name": source.get("source_name"),
                     "source_type": source.get("source_type"),
                     "address": source.get("address"),
-                    "preview_available": bool(
-                        run.get("state") == "running"
-                        and _preview_frame_available(run.get("id"), source.get("source_id"))
-                    ),
+                    "preview_available": preview,
+                    "is_working": is_working,
+                    "last_frame_age_sec": age,
+                    "reconnecting": reconnecting,
                     "alive": bool(run.get("alive")),
                 }
             )

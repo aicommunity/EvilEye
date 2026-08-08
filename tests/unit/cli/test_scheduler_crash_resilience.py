@@ -30,3 +30,10 @@ def test_memory_leak_restarts() -> None:
 
 def test_exit_after_next_run_continues() -> None:
     assert scheduler_should_continue(0, before_next_run=False) is True
+
+
+def test_crash_restart_is_immediate_not_daily_wait() -> None:
+    """Document intended policy: continue_scheduler + immediate_restart (no wait until 01:00)."""
+    # Policy mirror: any non-zero exit before next_run must continue without daily wait.
+    assert scheduler_should_continue(-11, before_next_run=True) is True
+    assert scheduler_should_continue(2, before_next_run=True) is True

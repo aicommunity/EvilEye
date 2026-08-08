@@ -81,13 +81,6 @@ class EventRecordingService:
                 if not source.source_ids:
                     continue
 
-                source_id = source.source_ids[0]
-                source_name = (
-                    source.source_names[0]
-                    if source.source_names
-                    else f"source_{source_id}"
-                )
-
                 buffer_fps = host.recording_params.event_buffer_fps
                 if buffer_fps is None:
                     try:
@@ -102,30 +95,41 @@ class EventRecordingService:
                         src_fps = 25.0
                     buffer_fps = min(src_fps, max_buf_fps)
 
-                host.event_buffers[source_id] = EventBuffer(max_buffer_duration, buffer_fps)
-
-                source_meta = SourceMeta(
-                    source_name=source_name,
-                    source_address=source.source_address,
-                    source_type=str(source.source_type) if source.source_type else "unknown",
-                    width=None,
-                    height=None,
-                    fps=buffer_fps,
-                    username=source.username,
-                    password=source.password,
-                    source_names=source.source_names,
-                    source_ids=source.source_ids,
-                )
-                host.event_recorders[source_id] = EventRecorder(
-                    source_meta, host.recording_params, host.event_buffers[source_id]
-                )
-                self.logger.info(
-                    "Initialized event recording for source %s (%s): buffer_duration=%ss, fps=%s",
-                    source_id,
-                    source_name,
-                    max_buffer_duration,
-                    buffer_fps,
-                )
+                # Split captures expose multiple logical source_ids (e.g. Cam4+Cam5);
+                # each needs its own event buffer/recorder.
+                for idx, source_id in enumerate(source.source_ids):
+                    if source_id in host.event_buffers:
+                        continue
+                    source_name = (
+                        source.source_names[idx]
+                        if source.source_names and idx < len(source.source_names)
+                        else f"source_{source_id}"
+                    )
+                    host.event_buffers[source_id] = EventBuffer(
+                        max_buffer_duration, buffer_fps
+                    )
+                    source_meta = SourceMeta(
+                        source_name=source_name,
+                        source_address=source.source_address,
+                        source_type=str(source.source_type) if source.source_type else "unknown",
+                        width=None,
+                        height=None,
+                        fps=buffer_fps,
+                        username=source.username,
+                        password=source.password,
+                        source_names=source.source_names,
+                        source_ids=source.source_ids,
+                    )
+                    host.event_recorders[source_id] = EventRecorder(
+                        source_meta, host.recording_params, host.event_buffers[source_id]
+                    )
+                    self.logger.info(
+                        "Initialized event recording for source %s (%s): buffer_duration=%ss, fps=%s",
+                        source_id,
+                        source_name,
+                        max_buffer_duration,
+                        buffer_fps,
+                    )
 
             if events_processor and on_event_recording:
                 events_processor.set_event_recording_callback(on_event_recording)

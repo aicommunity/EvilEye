@@ -18,6 +18,16 @@ from evileye.core.logging_config import setup_evileye_logging, log_system_info
 from evileye.core.runtime_services import get_frame_broker, get_pipeline_manager
 from evileye.api.core.config_run_access import get_config_run_manager
 
+_PREVIEW_LEVEL_RANK = {"idle": 0, "grid": 1, "stream": 2}
+_VALID_PREVIEW_LEVELS = frozenset(_PREVIEW_LEVEL_RANK)
+
+
+def _normalize_preview_level(level: str | None) -> str:
+    normalized = (level or "grid").strip().lower()
+    if normalized in _VALID_PREVIEW_LEVELS:
+        return normalized
+    return "grid"
+
 
 def _create_app() -> FastAPI:
     """Load the FastAPI app lazily so missing optional API deps do not break import of this module."""
@@ -103,7 +113,7 @@ class ServerProcessManager:
         self._demand_queue: mp.Queue | None = None
         self._demand_thread: threading.Thread | None = None
         self._demand_stop = threading.Event()
-        self._preview_demand_ts: dict[str, float] = {}
+        self._preview_demand: dict[str, tuple[float, str]] = {}
         self._dropped_frames = 0
         self._published_frames = 0
 
@@ -139,24 +149,77 @@ class ServerProcessManager:
                 item = self._demand_queue.get(timeout=0.5)
                 if item is None:
                     break
-                if isinstance(item, tuple) and len(item) == 2:
-                    key, touched_at = item
-                    self._preview_demand_ts[str(key)] = float(touched_at)
+                if isinstance(item, tuple) and len(item) >= 2:
+                    key, touched_at = item[0], item[1]
+                    level = item[2] if len(item) >= 3 else "grid"
+                    force = bool(item[3]) if len(item) >= 4 else False
+                    self.touch_preview_demand(
+                        str(key),
+                        touched_at=float(touched_at),
+                        level=str(level),
+                        force=force,
+                    )
             except Exception:
                 continue
 
-    def touch_preview_demand(self, pipeline_key: str, *, touched_at: float | None = None):
-        self._preview_demand_ts[str(pipeline_key)] = float(touched_at or time.time())
+    def _merge_preview_demand(
+        self,
+        pipeline_key: str,
+        touched_at: float,
+        level: str,
+        *,
+        force: bool = False,
+    ) -> None:
+        key = str(pipeline_key)
+        normalized_level = _normalize_preview_level(level)
+        existing = self._preview_demand.get(key)
+        if existing is None or force:
+            self._preview_demand[key] = (touched_at, normalized_level)
+            return
+        _, existing_level = existing
+        if _PREVIEW_LEVEL_RANK[normalized_level] >= _PREVIEW_LEVEL_RANK[existing_level]:
+            self._preview_demand[key] = (touched_at, normalized_level)
+        else:
+            self._preview_demand[key] = (touched_at, existing_level)
 
-    def has_preview_demand(self, pipeline_key: str, *, ttl_sec: float = 5.0) -> bool:
+    def touch_preview_demand(
+        self,
+        pipeline_key: str,
+        *,
+        touched_at: float | None = None,
+        level: str = "grid",
+        force: bool = False,
+    ) -> None:
+        self._merge_preview_demand(
+            pipeline_key,
+            float(touched_at or time.time()),
+            level,
+            force=force,
+        )
+
+    def _demand_entry_level(self, key: str, *, ttl_sec: float, now: float) -> str | None:
+        entry = self._preview_demand.get(key)
+        if entry is None:
+            return None
+        touched_at, level = entry
+        if (now - touched_at) > ttl_sec:
+            return None
+        return level
+
+    def get_preview_demand_level(self, pipeline_key: str, *, ttl_sec: float = 20.0) -> str:
         now = time.time()
         key = str(pipeline_key)
-        touched_at = self._preview_demand_ts.get(key)
-        if touched_at is not None and (now - touched_at) <= ttl_sec:
-            return True
+        level = self._demand_entry_level(key, ttl_sec=ttl_sec, now=now)
+        if level is not None:
+            return level
         root_key = key.split(":", 1)[0]
-        root_touched_at = self._preview_demand_ts.get(root_key)
-        return bool(root_touched_at is not None and (now - root_touched_at) <= ttl_sec)
+        root_level = self._demand_entry_level(root_key, ttl_sec=ttl_sec, now=now)
+        if root_level is not None:
+            return root_level
+        return "idle"
+
+    def has_preview_demand(self, pipeline_key: str, *, ttl_sec: float = 20.0) -> bool:
+        return self.get_preview_demand_level(pipeline_key, ttl_sec=ttl_sec) != "idle"
 
     def publish_frame(self, pipeline_id: str, jpeg_bytes: bytes, metadata=None):
         """Send a JPEG frame to the web server process"""
@@ -185,7 +248,7 @@ class ServerProcessManager:
             "published_frames": self._published_frames,
             "dropped_frames": self._dropped_frames,
             "queue_size": queue_size,
-            "demand_keys": len(self._preview_demand_ts),
+            "demand_keys": len(self._preview_demand),
             "alive": self.is_alive(),
         }
 
@@ -222,7 +285,7 @@ class ServerProcessManager:
             self._process = None
         self._frame_queue = None
         self._demand_queue = None
-        self._preview_demand_ts.clear()
+        self._preview_demand.clear()
         self.logger.info("Web server process stopped")
 
     def is_alive(self) -> bool:
@@ -309,6 +372,11 @@ def run_api_server(host: str = "127.0.0.1", port: int = 8181,
     logger.info("=" * 60)
 
     try:
+        if ssl_certfile:
+            os.environ["EVILEYE_SSL_CERTFILE"] = str(ssl_certfile)
+        if ssl_keyfile:
+            os.environ["EVILEYE_SSL_KEYFILE"] = str(ssl_keyfile)
+        os.environ.setdefault("EVILEYE_HTTP_PORT", str(port))
         uvicorn_config = uvicorn.Config(
             app,
             host=host,

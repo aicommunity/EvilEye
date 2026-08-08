@@ -21,3 +21,38 @@ def test_propagate_record_config_sets_out_dir():
     record = pipeline_params["sources"][0]["record"]
     assert record["out_dir"]
     assert record.get("continuous_recording_enabled") is True
+
+
+def test_propagate_record_disables_when_out_dir_unwritable(tmp_path):
+    svc = ConfigurationService()
+    blocker = tmp_path / "not_a_dir"
+    blocker.write_text("x", encoding="utf-8")
+    bad_out = str(blocker / "streams")
+    pipeline_params = {
+        "sources": [
+            {
+                "source_ids": [0],
+                "source_names": ["cam0"],
+                "record": {
+                    "enabled": True,
+                    "continuous_recording_enabled": True,
+                    "event_recording_enabled": True,
+                    "out_dir": bad_out,
+                },
+            }
+        ]
+    }
+    params = {
+        "record": {
+            "enabled": True,
+            "continuous_recording_enabled": True,
+            "event_recording_enabled": True,
+            "allow_custom_out_dir": True,
+        },
+        "database": {"image_dir": "EvilEyeData"},
+    }
+    svc.propagate_record_config_to_sources(pipeline_params, params)
+    record = pipeline_params["sources"][0]["record"]
+    assert record.get("enabled") is False
+    assert record.get("continuous_recording_enabled") is False
+    assert record.get("event_recording_enabled") is False

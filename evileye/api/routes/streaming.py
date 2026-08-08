@@ -1,8 +1,10 @@
 import asyncio
+import os
 import time
 from fastapi import APIRouter, HTTPException, Response, Query, Request
 from fastapi.responses import StreamingResponse
-from typing import AsyncGenerator
+from pydantic import BaseModel
+from typing import AsyncGenerator, Literal
 import threading
 
 from evileye.api.core.config_run_access import get_config_run_manager
@@ -12,19 +14,62 @@ from evileye.core.runtime_services import get_frame_broker
 
 router = APIRouter(prefix="/api/v1", tags=["streaming"])
 
+_mjpeg_clients_lock = threading.Lock()
+_mjpeg_clients = 0
 
-def _touch_preview_demand(request: Request, rid: int, source_id: int | None = None) -> None:
-    queue = getattr(request.app.state, "preview_demand_queue", None)
+
+def _max_mjpeg_clients() -> int:
+    try:
+        return max(1, int(os.getenv("EVILEYE_MAX_MJPEG_CLIENTS", "8")))
+    except Exception:
+        return 8
+
+
+def _acquire_mjpeg_slot() -> bool:
+    global _mjpeg_clients
+    with _mjpeg_clients_lock:
+        if _mjpeg_clients >= _max_mjpeg_clients():
+            return False
+        _mjpeg_clients += 1
+        return True
+
+
+def _release_mjpeg_slot() -> None:
+    global _mjpeg_clients
+    with _mjpeg_clients_lock:
+        _mjpeg_clients = max(0, _mjpeg_clients - 1)
+
+
+def _touch_preview_demand(
+    request: Request | None,
+    rid: int,
+    source_id: int | None = None,
+    *,
+    level: str = "grid",
+    force: bool = False,
+    demand_queue=None,
+) -> None:
+    queue = demand_queue
+    if queue is None and request is not None:
+        queue = getattr(request.app.state, "preview_demand_queue", None)
     if queue is None:
         return
     touched_at = time.time()
+    normalized_level = (level or "grid").strip().lower()
+    if normalized_level not in {"grid", "stream"}:
+        normalized_level = "grid"
     try:
         key = f"{rid}:{source_id}" if source_id is not None else str(rid)
-        queue.put_nowait((key, touched_at))
+        queue.put_nowait((key, touched_at, normalized_level, force))
         if source_id is not None:
-            queue.put_nowait((str(rid), touched_at))
+            queue.put_nowait((str(rid), touched_at, normalized_level, force))
     except Exception:
         return
+
+
+class StreamStatusTouch(BaseModel):
+    level: Literal["grid", "stream"] = "grid"
+    source_id: int | None = None
 
 
 def _resolve_run(rid: int) -> dict:
@@ -108,16 +153,37 @@ async def _snapshot_impl(request: Request, rid: int, source_id: int | None = Non
     """
     Return the latest available JPEG snapshot for the given runtime.
     """
-    _touch_preview_demand(request, rid, source_id=source_id)
+    _touch_preview_demand(request, rid, source_id=source_id, level="grid")
     run_info = _resolve_run(rid)
     _require_source_id_if_multi(run_info, source_id)
-    data = _load_latest_frame(run_info, source_id=source_id)
-    if not data:
+    run_id_str = str(run_info["id"])
+    broker_key = f"{run_id_str}:{source_id}" if source_id is not None else run_id_str
+    broker = get_frame_broker()
+    payload = broker.latest_payload(broker_key)
+    if not payload and source_id is not None:
+        payload = broker.latest_payload(run_id_str)
+    if not payload or not payload.data:
         raise HTTPException(status_code=404, detail="No frame available")
+    data = payload.data
+    meta = payload.metadata or {}
+    etag = meta.get("etag")
+    if not etag:
+        import hashlib
+        etag = hashlib.md5(data).hexdigest()
+    if_none_match = request.headers.get("if-none-match")
+    if if_none_match and if_none_match.strip('"') == str(etag):
+        return Response(
+            status_code=304,
+            headers={
+                "ETag": f'"{etag}"',
+                "Cache-Control": "no-cache",
+            },
+        )
     return Response(
         content=data,
         media_type="image/jpeg",
         headers={
+            "ETag": f'"{etag}"',
             "Cache-Control": "no-cache, no-store, must-revalidate",
             "Pragma": "no-cache",
             "Expires": "0",
@@ -136,17 +202,26 @@ async def snapshot_legacy(request: Request, rid: int, source_id: int | None = Qu
 
 
 async def _mjpeg_generator(
-        run_info: dict, fps: int, stop_event: threading.Event, source_id: int | None = None,
+        run_info: dict,
+        fps: int,
+        stop_event: threading.Event,
+        source_id: int | None = None,
+        *,
+        stream_key: str,
+        idle_sec: float = 8.0,
+        demand_queue=None,
+        rid: int | None = None,
 ) -> AsyncGenerator[bytes, None]:
-    run_id_str = str(run_info["id"])
-    stream_key = f"{run_id_str}:{source_id}" if source_id is not None else run_id_str
     boundary = b"--frame"
     delay = 1.0 / max(1, fps)
+    no_frame_since = time.monotonic()
+    broker = get_frame_broker()
 
     try:
         while not stop_event.is_set():
             data = _load_latest_frame(run_info, source_id=source_id)
             if data:
+                no_frame_since = time.monotonic()
                 yield (
                         boundary
                         + b"\r\n"
@@ -154,17 +229,30 @@ async def _mjpeg_generator(
                         + data
                         + b"\r\n"
                 )
+            elif time.monotonic() - no_frame_since > idle_sec:
+                break
 
-            elapsed = 0
+            elapsed = 0.0
             check_interval = 0.1
             while elapsed < delay and not stop_event.is_set():
                 await asyncio.sleep(min(check_interval, delay - elapsed))
                 elapsed += check_interval
     finally:
+        _release_mjpeg_slot()
         try:
-            get_frame_broker().stop_stream(stream_key)
+            broker.release_stream(stream_key)
         except Exception:
             pass
+        # Drop stream demand back to grid when MJPEG consumer disconnects.
+        if rid is not None:
+            _touch_preview_demand(
+                None,
+                rid,
+                source_id=source_id,
+                level="grid",
+                force=True,
+                demand_queue=demand_queue,
+            )
 
 
 async def _mjpeg_stream_impl(
@@ -179,20 +267,34 @@ async def _mjpeg_stream_impl(
     Browsers and players render it as a video stream thanks to
     'multipart/x-mixed-replace' and boundary markers.
     """
-    _touch_preview_demand(request, rid, source_id=source_id)
+    # Raise stream demand first so the publisher can start encoding even when
+    # the broker has no JPEG yet. Do not 409 on empty broker — the generator
+    # waits for the first frame up to EVILEYE_MJPEG_IDLE_SEC.
+    _touch_preview_demand(request, rid, source_id=source_id, level="stream")
     run_info = _resolve_run(rid)
     _require_source_id_if_multi(run_info, source_id)
-    if not _web_stream_available(run_info, source_id=source_id):
+    if not _acquire_mjpeg_slot():
         raise HTTPException(
-            status_code=409,
-            detail="Web stream is unavailable for this run. Preview relay is not delivering frames.",
+            status_code=503,
+            detail=f"Too many MJPEG clients (limit={_max_mjpeg_clients()})",
         )
     run_id_str = str(run_info["id"])
     stream_key = f"{run_id_str}:{source_id}" if source_id is not None else run_id_str
-    stop_event = get_frame_broker().start_stream(stream_key)
+    stop_event = get_frame_broker().acquire_stream(stream_key)
+    idle_sec = float(os.getenv("EVILEYE_MJPEG_IDLE_SEC", "8") or 8)
+    demand_queue = getattr(request.app.state, "preview_demand_queue", None)
 
     return StreamingResponse(
-        _mjpeg_generator(run_info, fps, stop_event, source_id=source_id),
+        _mjpeg_generator(
+            run_info,
+            fps,
+            stop_event,
+            source_id=source_id,
+            stream_key=stream_key,
+            idle_sec=idle_sec,
+            demand_queue=demand_queue,
+            rid=rid,
+        ),
         media_type="multipart/x-mixed-replace; boundary=frame",
         headers={
             "X-Accel-Buffering": "no",
@@ -223,21 +325,28 @@ async def mjpeg_stream_legacy(
     return await _mjpeg_stream_impl(request, rid, source_id=source_id, fps=fps)
 
 
-async def _stop_stream_impl(rid: int, source_id: int | None = None):
+async def _stop_stream_impl(rid: int, source_id: int | None = None, force: bool = False):
     """
-    Stop the active MJPEG stream for the given run.
+    Soft stop is a no-op: each MJPEG generator releases its own ref on disconnect.
+    force=true hard-stops all consumers for the stream key.
     """
     run_info = _resolve_run(rid)
     run_id_str = str(run_info["id"])
     stream_key = f"{run_id_str}:{source_id}" if source_id is not None else run_id_str
-    stopped = get_frame_broker().stop_stream(stream_key)
-
+    if not force:
+        return {
+            "run_id": rid,
+            "pipeline_id": rid,
+            "status": "noop",
+            "message": "Soft stop is a no-op; MJPEG disconnect releases the consumer ref",
+        }
+    stopped = get_frame_broker().release_stream(stream_key, force=True)
     if stopped:
         return {
             "run_id": rid,
             "pipeline_id": rid,
             "status": "stopped",
-            "message": f"Stream for run '{rid}' has been stopped",
+            "message": f"Stream for run '{rid}' has been force-stopped",
         }
     return {
         "run_id": rid,
@@ -248,20 +357,38 @@ async def _stop_stream_impl(rid: int, source_id: int | None = None):
 
 
 @router.post("/runs/{rid}/stream:stop")
-async def stop_stream(rid: int, source_id: int | None = Query(None)):
-    return await _stop_stream_impl(rid, source_id=source_id)
+async def stop_stream(
+    request: Request,
+    rid: int,
+    source_id: int | None = Query(None),
+    force: bool = Query(False),
+):
+    if force:
+        from evileye.api.security import require_permission
+
+        require_permission(request, "runtime:control")
+    return await _stop_stream_impl(rid, source_id=source_id, force=force)
 
 
 @router.post("/pipelines/{rid}/stream:stop", deprecated=True)
-async def stop_stream_legacy(rid: int, source_id: int | None = Query(None)):
-    return await _stop_stream_impl(rid, source_id=source_id)
+async def stop_stream_legacy(
+    request: Request,
+    rid: int,
+    source_id: int | None = Query(None),
+    force: bool = Query(False),
+):
+    if force:
+        from evileye.api.security import require_permission
+
+        require_permission(request, "runtime:control")
+    return await _stop_stream_impl(rid, source_id=source_id, force=force)
 
 
 async def _stream_status_impl(request: Request, rid: int, source_id: int | None = None):
     """
     Get the status of the stream for the given run.
     """
-    _touch_preview_demand(request, rid, source_id=source_id)
+    _touch_preview_demand(request, rid, source_id=source_id, level="grid")
     run_info = _resolve_run(rid)
     _require_source_id_if_multi(run_info, source_id)
     return _stream_status_payload(rid, run_info, source_id=source_id)
@@ -272,6 +399,35 @@ async def stream_status(request: Request, rid: int, source_id: int | None = Quer
     return await _stream_status_impl(request, rid, source_id=source_id)
 
 
+@router.post("/runs/{rid}/stream:status")
+async def stream_status_touch(request: Request, rid: int, body: StreamStatusTouch):
+    _touch_preview_demand(
+        request,
+        rid,
+        source_id=body.source_id,
+        level=body.level,
+    )
+    run_info = _resolve_run(rid)
+    _require_source_id_if_multi(run_info, body.source_id)
+    return _stream_status_payload(rid, run_info, source_id=body.source_id)
+
+
 @router.get("/pipelines/{rid}/stream:status", deprecated=True)
 async def stream_status_legacy(request: Request, rid: int, source_id: int | None = Query(None)):
     return await _stream_status_impl(request, rid, source_id=source_id)
+
+
+@router.get("/runs/{rid}/metadata")
+async def stream_metadata(rid: int, source_id: int | None = Query(None)):
+    run_info = _resolve_run(rid)
+    _require_source_id_if_multi(run_info, source_id)
+    key = f"{run_info['id']}:{source_id}" if source_id is not None else str(run_info["id"])
+    meta = get_frame_broker().latest_metadata(key) or get_frame_broker().latest_metadata(str(run_info["id"])) or {}
+    return {
+        "run_id": rid,
+        "source_id": source_id,
+        "ts": meta.get("ts") or meta.get("timestamp"),
+        "objects": meta.get("objects") or [],
+        "zones": meta.get("zones") or [],
+        "signalization": bool(meta.get("signalization")),
+    }

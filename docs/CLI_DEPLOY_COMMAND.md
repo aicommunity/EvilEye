@@ -205,4 +205,14 @@ evileye create advanced_config --sources 2 --detector-model /path/to/model.pt --
 - `--tracker-type` - Тип трекера
 - `--db/--no-db` - Включить/отключить базу данных
 
+## Связанные команды
+
+Перед первым запуском Web UI на сайте:
+
+```bash
+evileye setup-web
+```
+
+Подробности: [`CLI_SETUP_WEB.md`](CLI_SETUP_WEB.md).
+
 

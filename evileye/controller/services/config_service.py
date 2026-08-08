@@ -368,14 +368,22 @@ class ConfigurationService:
                         merged.get("out_dir"),
                         merged.get("container"),
                     )
-                    if merged.get("enabled") and merged.get("continuous_recording_enabled"):
+                    needs_out_dir = bool(merged.get("enabled")) and (
+                        bool(merged.get("continuous_recording_enabled"))
+                        or bool(merged.get("event_recording_enabled"))
+                    )
+                    if needs_out_dir:
                         from evileye.video_recorder.recording_params import RecordingParams
 
                         rp = RecordingParams.from_config({"record": merged})
                         ok, reason = rp.check_out_dir_writable()
                         if not ok:
-                            self.logger.error(
-                                "Continuous recording for source id=%s name=%s will fail: "
+                            merged["enabled"] = False
+                            merged["continuous_recording_enabled"] = False
+                            merged["event_recording_enabled"] = False
+                            source["record"] = merged
+                            self.logger.warning(
+                                "Recording disabled for source id=%s name=%s: "
                                 "out_dir not writable: %s (%s)",
                                 sid_log,
                                 sname_log,

@@ -65,6 +65,7 @@ dependencies = [
     "PyQt6>=6.5.0; platform_system != 'Linux' or platform_machine != 'aarch64'",
     "rfdetr>=0.1.0",
     "supervision>=0.16.0",
+    "PyTurboJPEG>=1.7.0",
 ]
 
 [project.optional-dependencies]
@@ -116,6 +117,8 @@ exclude = ["tests*", "scripts*", "samples*", "configs*", "models*", "icons*", "d
     "deploy_monitor/README.md",
     "deploy_monitor/scripts/*",
     "deploy_monitor/systemd/*",
+    "api/static/index.html",
+    "api/static/assets/*",
 ]
 
 [tool.black]

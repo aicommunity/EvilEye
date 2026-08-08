@@ -13,6 +13,70 @@ from ..core.logger import get_module_logger
 logger = get_module_logger("database_config_utils")
 
 _IMAGE_DIR_KEYS = ("image_dir", "images_dir")
+_DEFAULT_IMAGE_DIR = "EvilEyeData"
+
+
+def _path_is_writable_dir(path: Path) -> tuple[bool, str]:
+    """Best-effort check that ``path`` can be created and written to."""
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        if not path.is_dir():
+            return False, f"not a directory: {path}"
+        if not os.access(path, os.W_OK | os.X_OK):
+            return False, f"not writable: {path}"
+        return True, ""
+    except Exception as exc:
+        return False, str(exc)
+
+
+def resolve_writable_image_dir(
+        preferred: Optional[str] = None,
+        *,
+        fallback: str = _DEFAULT_IMAGE_DIR,
+        env_var: str = "EVILEYE_DATA_DIR",
+) -> str:
+    """Pick a writable image/data directory for JSON adapters and event media.
+
+    Preference order: explicit ``preferred``, ``EVILEYE_DATA_DIR``, then ``fallback``
+    (local ``EvilEyeData``). Unwritable preferred paths fall back with a single warning.
+    """
+    candidates: list[str] = []
+    if preferred not in (None, ""):
+        candidates.append(str(preferred))
+    env_dir = os.environ.get(env_var)
+    if env_dir not in (None, "") and env_dir not in candidates:
+        candidates.append(str(env_dir))
+    if fallback not in candidates:
+        candidates.append(fallback)
+
+    last_reason = ""
+    for idx, raw in enumerate(candidates):
+        path = Path(raw)
+        if not path.is_absolute():
+            path = path.resolve()
+        ok, reason = _path_is_writable_dir(path)
+        if ok:
+            chosen = str(path)
+            if idx > 0 and preferred not in (None, ""):
+                logger.warning(
+                    "image_dir %r is not writable (%s); falling back to %s",
+                    preferred,
+                    last_reason or reason,
+                    chosen,
+                )
+            return chosen
+        last_reason = reason
+
+    # Last resort: return resolved fallback even if check failed (caller may still fail loudly).
+    fallback_path = Path(fallback)
+    if not fallback_path.is_absolute():
+        fallback_path = fallback_path.resolve()
+    logger.warning(
+        "No writable image_dir found (last error: %s); using %s",
+        last_reason,
+        fallback_path,
+    )
+    return str(fallback_path)
 
 
 def _normalize_image_dir_keys(db_section: Dict[str, Any]) -> Dict[str, Any]:

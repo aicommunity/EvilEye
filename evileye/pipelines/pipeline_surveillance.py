@@ -202,16 +202,22 @@ class PipelineSurveillance(PipelineProcessors):
         if not params:
             return
 
-        num_trackers = len(params)
+        # Skip entries explicitly disabled (e.g. enable: false placeholders in config).
+        active_params = [p for p in params if isinstance(p, dict) and p.get("enable", True)]
+        if not active_params:
+            self.logger.info("mc_trackers: all entries disabled; skipping init")
+            return
+
+        num_trackers = len(active_params)
         # Get class_name from config, default to ObjectMultiCameraTracking
-        class_name = params[0].get("type", "ObjectMultiCameraTracking") if params else "ObjectMultiCameraTracking"
-        if not any(param.get("type") for param in params):
+        class_name = active_params[0].get("type", "ObjectMultiCameraTracking")
+        if not any(param.get("type") for param in active_params):
             self.logger.warning(
                 f"Warning: 'type' parameter not found in mc_trackers configuration. Using default: {class_name}")
 
         mc_trackers_proc = ProcessorStep(processor_name="mc_trackers", class_name=class_name,
                                          num_processors=num_trackers, order=4)
-        mc_trackers_proc.set_params(params)
+        mc_trackers_proc.set_params(active_params)
         mc_trackers_proc.init(encoders=self.encoders)
         self._add_processor(mc_trackers_proc)
 

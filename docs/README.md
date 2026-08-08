@@ -8,6 +8,8 @@
 
 - **[Руководство по настройке базы данных](DATABASE_SETUP_GUIDE.md)** - Подробное руководство по настройке PostgreSQL базы данных для EvilEye
 - **[Команда deploy](CLI_DEPLOY_COMMAND.md)** - Использование команды `evileye deploy` для развертывания системы
+- **[Команда setup-web](CLI_SETUP_WEB.md)** - Проверка и установка зависимостей Web UI (Python + SPA)
+- **[Docker-деплой (GPU)](DOCKER_DEPLOYMENT.md)** - Контейнер на Ultralytics/PyTorch/CUDA, данные на хосте, host-CLI обёртки
 - **[Руководство по конфигурациям](CONFIGURATION_GUIDE.md)** - Полное описание структуры конфигурационных файлов, всех параметров и примеры конфигураций
 
 ### Архитектура системы
@@ -30,6 +32,7 @@
 - **[Матрица аудита документации](DOC_AUDIT_MATRIX.md)** - статус актуальности docs
 - **[Post-refactor gate](../reports/mp_refactor_gate/e2e_gate_summary.md)** - E2E/soak после R0–R6
 - **[Руководство по рефакторингу GUI](GUI_REFACTORING_GUIDE.md)** - Архитектура GUI системы, компоненты и лучшие практики
+- **[Web UI](WEB_UI_GUIDE.md)** - React SPA, маршруты, сборка, API streaming/playback/editors
 - **[Руководство по Dependency Injection](DEPENDENCY_INJECTION_GUIDE.md)** - Подробное описание механизма Dependency Injection, DIContainer и DependencyRegistry с примерами использования
 
 ### Что нового по мультипроцессному режиму
@@ -59,8 +62,9 @@
 
 1. Начните с [установки и настройки базы данных](DATABASE_SETUP_GUIDE.md)
 2. Изучите [команду deploy](CLI_DEPLOY_COMMAND.md) для развертывания системы
-3. Ознакомьтесь с [руководством по конфигурациям](CONFIGURATION_GUIDE.md) для понимания структуры конфигурационных файлов
-4. Изучите [создание конфигураций](CREATE_SCRIPT_README.md) для создания собственных конфигураций
+3. При контейнерном деплое см. [Docker-деплой (GPU)](DOCKER_DEPLOYMENT.md)
+4. Ознакомьтесь с [руководством по конфигурациям](CONFIGURATION_GUIDE.md) для понимания структуры конфигурационных файлов
+5. Изучите [создание конфигураций](CREATE_SCRIPT_README.md) для создания собственных конфигураций
 
 ### Для разработчиков
 

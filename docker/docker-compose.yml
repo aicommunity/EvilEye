@@ -1,47 +1,56 @@
-version: "3.9"
+# EvilEye Docker Compose stack (GPU app + PostgreSQL)
+#
+# From repo root:
+#   docker compose -f docker/docker-compose.yml up --build
+#
+# Host data dirs default to paths next to the repo root (../ from this file).
+# Override with EVILEYE_HOST_* env vars. See docs/DOCKER_DEPLOYMENT.md.
 
 services:
   app:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+      args:
+        ULTRALYTICS_TAG: "8.4.115"
     image: evileye/app:latest
     container_name: evileye_app
-    runtime: nvidia
+    working_dir: /opt/evileye
     environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
-      - PYTHONUNBUFFERED=1
-      - DB_HOST=db
-      - DB_PORT=5432
-      - DB_USER=postgres
-      - DB_PASSWORD=postgres
-      - DB_NAME=evil_eye_db
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
+      EVILEYE_DATA_DIR: /opt/evileye/EvilEyeData
+      PYTHONUNBUFFERED: "1"
     volumes:
-      - ../EvilEyeData:/opt/evileye/EvilEyeData
-      - ../logs:/opt/evileye/logs
-      - ../videos:/opt/evileye/videos
-      - ../configs:/opt/evileye/configs:ro
+      - ${EVILEYE_HOST_DATA:-../EvilEyeData}:/opt/evileye/EvilEyeData
+      - ${EVILEYE_HOST_VIDEOS:-../videos}:/opt/evileye/videos
+      - ${EVILEYE_HOST_MODELS:-../models}:/opt/evileye/models
+      - ${EVILEYE_HOST_CONFIGS:-../configs}:/opt/evileye/configs
+      - ${EVILEYE_HOST_LOGS:-../logs}:/opt/evileye/logs
+      - ${EVILEYE_HOST_CREDENTIALS:-../credentials.json}:/opt/evileye/credentials.json
+    ports:
+      - "${EVILEYE_HOST_PORT:-8181}:8181"
     depends_on:
-      - db
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - capabilities: [gpu]
-    command: ["python", "-m", "evileye.cli", "--config", "configs/single_video.json", "--gui", "false"]
+      db:
+        condition: service_started
+    gpus: all
+    command:
+      - evileye
+      - run
+      - configs/single_video.json
+      - --no-gui
 
   db:
     image: postgres:15-alpine
     container_name: evileye_db
     environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=evil_eye_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: evil_eye_db
     volumes:
       - evileye_db_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "${EVILEYE_PG_PORT:-5432}:5432"
 
 volumes:
   evileye_db_data:
