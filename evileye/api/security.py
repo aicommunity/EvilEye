@@ -262,6 +262,8 @@ def required_permissions_for_request(path: str, method: str) -> set[str]:
         return {"runtime:view"} if method == "GET" else {"runtime:control"}
     if path.startswith("/api/v1/configs"):
         return {"config:view"} if method == "GET" else {"config:edit"}
+    if path.startswith("/api/v1/setup"):
+        return {"config:view"} if method == "GET" else {"config:edit"}
     if path.startswith("/api/v1/version"):
         return {"live:view"}
     return {"system:admin"} if method not in {"GET"} else {"live:view"}
