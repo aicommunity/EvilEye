@@ -360,6 +360,27 @@ def resolve_camera_folder(date_dir: Path, camera: str) -> Optional[Path]:
     return None
 
 
+def _mp4_paths_for_logical_camera(folder: Path, camera: str) -> list[str]:
+    """Segment files for a logical camera in a resolved storage folder.
+
+    Split sources share one recording: folder name is ``"-".join(source_names)``,
+    files are typically prefixed with the first part. Every logical part of that
+    folder must see the same shared set (crop is applied by the client).
+    """
+    if folder.name == camera or "-" not in folder.name:
+        return glob.glob(str(folder / "*.mp4"))
+
+    parts = [p for p in folder.name.split("-") if p]
+    if camera in parts:
+        primary = parts[0]
+        primary_paths = glob.glob(str(folder / f"{primary}_*.mp4"))
+        if primary_paths:
+            return primary_paths
+        return glob.glob(str(folder / "*.mp4"))
+
+    return glob.glob(str(folder / f"{camera}_*.mp4"))
+
+
 def discover_cameras(date: Optional[str] = None) -> list[dict[str, Any]]:
     base = data_dir() / "Streams"
     if not base.exists():
@@ -441,10 +462,8 @@ def list_logical_cameras(run_id: int | None = None, date: Optional[str] = None) 
             folder_exists = True
             if folder == date_dir:
                 segment_count += len(glob.glob(str(date_dir / f"{logical_id}*.mp4")))
-            elif split and folder.name != logical_id:
-                segment_count += len(glob.glob(str(folder / f"{logical_id}_*.mp4")))
             else:
-                segment_count += len(glob.glob(str(folder / "*.mp4")))
+                segment_count += len(_mp4_paths_for_logical_camera(folder, logical_id))
 
         cameras.append(
             {
@@ -481,11 +500,7 @@ def load_segments(
         if folder == date_dir:
             paths.extend(glob.glob(str(date_dir / f"{camera}*.mp4")))
         else:
-            folder_name = folder.name
-            if "-" in folder_name and camera != folder_name:
-                paths.extend(glob.glob(str(folder / f"{camera}_*.mp4")))
-            else:
-                paths.extend(glob.glob(str(folder / "*.mp4")))
+            paths.extend(_mp4_paths_for_logical_camera(folder, camera))
 
     configured_length = _configured_segment_length_sec()
     parsed_named: list[tuple[str, float, int | None]] = []

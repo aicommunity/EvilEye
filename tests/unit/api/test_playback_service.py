@@ -59,6 +59,10 @@ def test_composite_folder_resolution(tmp_path, monkeypatch):
     assert "Cam2" in ids or "Cam2-Cam3" in ids
     segs = svc.load_segments("Cam2", date="2026-08-04")
     assert segs
+    # Non-primary logical part must share the same recording files.
+    segs_cam3 = svc.load_segments("Cam3", date="2026-08-04")
+    assert segs_cam3
+    assert segs_cam3[0]["path"] == segs[0]["path"]
 
 
 def test_path_traversal_rejected(tmp_path, monkeypatch):
