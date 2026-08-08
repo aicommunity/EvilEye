@@ -20,6 +20,7 @@ class GstBranchRefs:
 
     recording_queue: object
     videoconvert: object
+    capsfilter: object
     x264enc: object
     h264parse: object
     queue_before_mux: object
@@ -93,16 +94,24 @@ class GstContinuousRecorder(VideoRecorderBase):
 
             # Create elements
             videoconvert = Gst.ElementFactory.make("videoconvert", "recording_videoconvert")
+            # Force I420 so x264enc emits browser-playable High/Main (not High 4:4:4).
+            capsfilter = Gst.ElementFactory.make("capsfilter", "recording_i420_caps")
             x264enc = Gst.ElementFactory.make("x264enc", "recording_x264enc")
             h264parse = Gst.ElementFactory.make("h264parse", "recording_h264parse")
             queue_before_mux = Gst.ElementFactory.make("queue", "recording_queue_before_mux")
             splitmuxsink = Gst.ElementFactory.make("splitmuxsink", "recording_splitmuxsink")
-            if not (videoconvert and x264enc and h264parse and queue_before_mux and splitmuxsink):
+            if not (videoconvert and capsfilter and x264enc and h264parse and queue_before_mux and splitmuxsink):
                 raise RuntimeError("Failed to create one or more recording elements")
 
+            capsfilter.set_property("caps", Gst.Caps.from_string("video/x-raw,format=I420"))
             x264enc.set_property("tune", "zerolatency")
             x264enc.set_property("speed-preset", "ultrafast")
             x264enc.set_property("bitrate", 2000)
+            try:
+                # Explicit profile for HTML5 <video> compatibility (Chrome/Firefox).
+                x264enc.set_property("profile", "high")
+            except Exception:
+                pass
 
             # IMPORTANT: bound mux queue to avoid runaway RSS if mux/disk stalls.
             try:
@@ -150,6 +159,7 @@ class GstContinuousRecorder(VideoRecorderBase):
 
             # Add to pipeline and link
             pipeline.add(videoconvert)
+            pipeline.add(capsfilter)
             pipeline.add(x264enc)
             pipeline.add(h264parse)
             pipeline.add(queue_before_mux)
@@ -157,8 +167,10 @@ class GstContinuousRecorder(VideoRecorderBase):
 
             if not recording_queue_elem.link(videoconvert):
                 raise RuntimeError("Failed to link recording_queue -> videoconvert")
-            if not videoconvert.link(x264enc):
-                raise RuntimeError("Failed to link videoconvert -> x264enc")
+            if not videoconvert.link(capsfilter):
+                raise RuntimeError("Failed to link videoconvert -> capsfilter(I420)")
+            if not capsfilter.link(x264enc):
+                raise RuntimeError("Failed to link capsfilter -> x264enc")
             if not x264enc.link(h264parse):
                 raise RuntimeError("Failed to link x264enc -> h264parse")
             if not h264parse.link(queue_before_mux):
@@ -170,7 +182,7 @@ class GstContinuousRecorder(VideoRecorderBase):
             try:
                 ret, current_state, _pending = pipeline.get_state(Gst.SECOND)
                 if ret != Gst.StateChangeReturn.FAILURE and current_state in (Gst.State.NULL, Gst.State.READY):
-                    for elem in (videoconvert, x264enc, h264parse, queue_before_mux, splitmuxsink):
+                    for elem in (videoconvert, capsfilter, x264enc, h264parse, queue_before_mux, splitmuxsink):
                         elem.sync_state_with_parent()
             except Exception:
                 pass
@@ -178,6 +190,7 @@ class GstContinuousRecorder(VideoRecorderBase):
             self._refs = GstBranchRefs(
                 recording_queue=recording_queue_elem,
                 videoconvert=videoconvert,
+                capsfilter=capsfilter,
                 x264enc=x264enc,
                 h264parse=h264parse,
                 queue_before_mux=queue_before_mux,
@@ -280,7 +293,14 @@ class GstContinuousRecorder(VideoRecorderBase):
         if not refs:
             return
 
-        for elem in [refs.videoconvert, refs.x264enc, refs.h264parse, refs.queue_before_mux, refs.splitmuxsink]:
+        for elem in [
+            refs.videoconvert,
+            refs.capsfilter,
+            refs.x264enc,
+            refs.h264parse,
+            refs.queue_before_mux,
+            refs.splitmuxsink,
+        ]:
             try:
                 elem.set_state(Gst.State.NULL)
             except Exception:

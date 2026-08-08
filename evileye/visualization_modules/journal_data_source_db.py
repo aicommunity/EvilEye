@@ -34,6 +34,8 @@ class DatabaseJournalDataSource(EventJournalDataSource):
         self.db_connection_name = db_connection_name
 
         self.date_filter: Optional[str] = None
+        self.date_from: Optional[str] = None
+        self.date_to: Optional[str] = None
         self._cache: List[Dict] = []  # Keep for compatibility, but won't be used for full load
         self._source_name_id_address = {}
 
@@ -82,9 +84,32 @@ class DatabaseJournalDataSource(EventJournalDataSource):
         self._cache.clear()
 
     def set_date(self, date_folder: Optional[str]) -> None:
-        """Set date filter"""
+        """Set single-day date filter (clears range)."""
         self.date_filter = date_folder
+        self.date_from = None
+        self.date_to = None
         self._cache.clear()
+
+    def set_date_range(self, date_from: Optional[str], date_to: Optional[str]) -> None:
+        """Set inclusive date range filter (clears single-day filter)."""
+        self.date_filter = None
+        self.date_from = date_from
+        self.date_to = date_to
+        self._cache.clear()
+
+    def _append_date_conditions(self, conditions: list, *, initial_load: bool = False) -> None:
+        if self.date_filter:
+            conditions.append(f"DATE(time_stamp) = '{self.date_filter}'")
+        elif self.date_from and self.date_to:
+            conditions.append(
+                f"DATE(time_stamp) BETWEEN '{self.date_from}' AND '{self.date_to}'"
+            )
+        elif initial_load:
+            today = datetime.datetime.now().date()
+            conditions.append(f"DATE(time_stamp) = '{today.strftime('%Y-%m-%d')}'")
+        else:
+            default_start = datetime.datetime.now() - datetime.timedelta(days=self.default_days_back)
+            conditions.append(f"time_stamp >= '{default_start.strftime('%Y-%m-%d %H:%M:%S')}'")
 
     def force_refresh(self) -> None:
         """Force refresh of cache (no-op since we use on-demand loading)"""
@@ -289,17 +314,7 @@ class DatabaseJournalDataSource(EventJournalDataSource):
 
         conditions = []
 
-        # Date filter
-        if self.date_filter:
-            conditions.append(f"DATE(time_stamp) = '{self.date_filter}'")
-        elif initial_load:
-            # При начальной загрузке - только последний день
-            today = datetime.datetime.now().date()
-            conditions.append(f"DATE(time_stamp) = '{today.strftime('%Y-%m-%d')}'")
-        else:
-            # Default: last 7 days (for pagination)
-            default_start = datetime.datetime.now() - datetime.timedelta(days=self.default_days_back)
-            conditions.append(f"time_stamp >= '{default_start.strftime('%Y-%m-%d %H:%M:%S')}'")
+        self._append_date_conditions(conditions, initial_load=initial_load)
 
         # Source name filter
         self._append_source_filters(conditions, filters)
@@ -349,17 +364,7 @@ class DatabaseJournalDataSource(EventJournalDataSource):
 
         conditions = []
 
-        # Date filter
-        if self.date_filter:
-            conditions.append(f"DATE(time_stamp) = '{self.date_filter}'")
-        elif initial_load:
-            # При начальной загрузке - только последний день
-            today = datetime.datetime.now().date()
-            conditions.append(f"DATE(time_stamp) = '{today.strftime('%Y-%m-%d')}'")
-        else:
-            # Default: last 7 days (for pagination)
-            default_start = datetime.datetime.now() - datetime.timedelta(days=self.default_days_back)
-            conditions.append(f"time_stamp >= '{default_start.strftime('%Y-%m-%d %H:%M:%S')}'")
+        self._append_date_conditions(conditions, initial_load=initial_load)
 
         # Source name filter
         self._append_source_filters(conditions, filters)
@@ -632,13 +637,7 @@ class DatabaseJournalDataSource(EventJournalDataSource):
                 # Build COUNT query for objects
                 conditions = []
 
-                # Date filter
-                if self.date_filter:
-                    conditions.append(f"DATE(time_stamp) = '{self.date_filter}'")
-                else:
-                    # Default: last 7 days
-                    default_start = datetime.datetime.now() - datetime.timedelta(days=self.default_days_back)
-                    conditions.append(f"time_stamp >= '{default_start.strftime('%Y-%m-%d %H:%M:%S')}'")
+                self._append_date_conditions(conditions, initial_load=False)
 
                 # Source name filter
                 self._append_source_filters(conditions, filters)

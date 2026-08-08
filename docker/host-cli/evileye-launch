@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# EvilEye docker host-cli
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LAUNCHER="${EVILEYE_DOCKER_LAUNCHER:-$ROOT/evileye-docker-run.sh}"
+exec "$LAUNCHER" evileye-launch "$@"

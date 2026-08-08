@@ -70,7 +70,7 @@ class GStreamerRecorder(VideoRecorderBase):
         # uridecodebin doesn't support latency property, so we skip it
         branch = (
             f"uridecodebin uri=\"{rtsp_uri}\" ! "
-            "videoconvert ! x264enc tune=zerolatency speed-preset=ultrafast bitrate=2000 ! h264parse ! queue ! "
+            "videoconvert ! video/x-raw,format=I420 ! x264enc tune=zerolatency speed-preset=ultrafast bitrate=2000 ! h264parse ! queue ! "
             f"splitmuxsink max-size-time={self.params.segment_length_sec * 1000000000} "
             f"location=\"{location}\" muxer-factory={mux_factory} async-finalize=true"
         )
@@ -91,7 +91,7 @@ class GStreamerRecorder(VideoRecorderBase):
         else:
             # Fallback: decode and re-encode to h264
             branch = (
-                f"filesrc location=\"{src}\" ! decodebin name=dec ! queue ! "
+                f"filesrc location=\"{src}\" ! decodebin name=dec ! queue ! videoconvert ! video/x-raw,format=I420 ! "
                 "x264enc tune=zerolatency byte-stream=true speed-preset=ultrafast ! h264parse ! queue ! video/x-h264,stream-format=avc,alignment=au ! "
                 f"splitmuxsink max-size-time={self.params.segment_length_sec * 1000000000} "
                 f"location=\"{location}\" muxer-factory={mux_factory} async-finalize=true"

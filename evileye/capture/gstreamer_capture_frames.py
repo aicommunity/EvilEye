@@ -340,12 +340,48 @@ class GStreamerCaptureFramesMixin:
 
                         # Реконнектим только если действительно нужно
                         if should_reconnect:
+                            try:
+                                cfg_nf = (self.params or {}).get("noframes_restart", {}) or {}
+                                cfg_rc = (self.params or {}).get("reconnect", {}) or {}
+                            except Exception:
+                                cfg_nf, cfg_rc = {}, {}
+                            min_interval = float(
+                                cfg_nf.get(
+                                    "min_interval_sec",
+                                    cfg_rc.get(
+                                        "min_interval_sec",
+                                        CaptureConstants.NOFRAMES_RECONNECT_MIN_INTERVAL_SEC,
+                                    ),
+                                )
+                            )
+                            from .reconnect_policy import allow_noframes_reconnect
+
+                            if not allow_noframes_reconnect(
+                                float(getattr(self, "_noframes_restart_last_ts", 0.0) or 0.0),
+                                now,
+                                min_interval,
+                            ):
+                                should_reconnect = False
+                                self.logger.info(
+                                    "Skipping IpCamera reconnect for %s: cooldown "
+                                    "(last_success_ago=%.1fs < min_interval=%.1fs)",
+                                    self.source_names,
+                                    now - float(getattr(self, "_noframes_restart_last_ts", 0.0) or 0.0),
+                                    min_interval,
+                                )
+
+                        if should_reconnect and not self._reconnecting:
                             self.logger.info(
                                 f"Pipeline not working, starting reconnect loop for {self.source_names}. "
                                 f"Diagnostics: {pipeline_state_str}, {last_frame_info}, "
                                 f"is_inited={self.is_inited}, _reconnecting={self._reconnecting}"
                             )
                             threading.Thread(target=self._reconnect_loop, daemon=True).start()
+                        elif should_reconnect and self._reconnecting:
+                            self.logger.debug(
+                                "Reconnect already in progress for %s; not starting another thread",
+                                self.source_names,
+                            )
                 # For video files with loop_play, check if reconnection is needed
                 elif self.source_type == CaptureDeviceType.VideoFile and self.loop_play:
                     # Don't reconnect if already reconnecting (via EOS handler or previous attempt)
@@ -772,15 +808,22 @@ class GStreamerCaptureFramesMixin:
             initial_delay_sec = float(cfg.get('initial_delay_sec', CaptureConstants.RECONNECT_INITIAL_DELAY_SEC))
             max_delay_sec = float(cfg.get('max_delay_sec', CaptureConstants.RECONNECT_MAX_DELAY_SEC))
             backoff_step_sec = float(cfg.get('backoff_step_sec', CaptureConstants.RECONNECT_BACKOFF_STEP_SEC))
+            min_first_backoff_sec = float(
+                cfg.get('min_first_backoff_sec', CaptureConstants.RECONNECT_MIN_FIRST_BACKOFF_SEC)
+            )
             attempt = 0
+            from .reconnect_policy import reconnect_wait_sec
             while self.run_flag and not self.stop_event.is_set() and (max_attempts == 0 or attempt < max_attempts):
-                # First attempt immediately; subsequent attempts with backoff
-                if attempt == 0:
-                    wait_time = 0.0
-                else:
-                    wait_time = initial_delay_sec + (attempt - 1) * backoff_step_sec
-                    if wait_time > max_delay_sec:
-                        wait_time = max_delay_sec
+                # First attempt immediate only for a fresh session; later attempts use backoff.
+                # If we already had a successful reconnect recently, still apply min first backoff
+                # when attempt>0 inside this loop.
+                wait_time = reconnect_wait_sec(
+                    attempt,
+                    initial_delay_sec=initial_delay_sec,
+                    backoff_step_sec=backoff_step_sec,
+                    max_delay_sec=max_delay_sec,
+                    min_first_backoff_sec=0.0 if attempt == 0 else min_first_backoff_sec,
+                )
                 if wait_time > 0:
                     self.logger.debug(
                         f"Waiting {wait_time:.1f}s before reconnect attempt {attempt + 1} for {self.source_names}")
@@ -888,6 +931,10 @@ class GStreamerCaptureFramesMixin:
                             timestamp = datetime.datetime.now()
                             self.logger.info(f"Reconnected to source: {self.source_names}")
                             self.reconnects.append((self.source_address, timestamp, self.is_working))
+                            try:
+                                self._noframes_restart_last_ts = time.time()
+                            except Exception:
+                                pass
                             for sub in self.subscribers:
                                 sub.update()
                             break

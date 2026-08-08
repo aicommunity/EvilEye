@@ -151,6 +151,8 @@ x64/
 
 # Local / runtime artifacts (do not commit)
 credentials.json
+web_users.json
+web_ip_bans.json
 EvilEyeData*/
 *.mp4
 *.avi

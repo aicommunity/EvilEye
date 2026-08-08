@@ -38,6 +38,8 @@ def pack_frame_for_worker(
         frame_id=int(frame.frame_id or 0),
         timestamp=float(frame.time_stamp or time.time()),
     )
+    # Keep parent Frame.image: the same CaptureImage is shared with sources/GUI.
+    # Clearing it here blanks live preview for that source until the next capture.
     return {
         "detection_result": detection_result,
         "frame_handle": frame_handle,

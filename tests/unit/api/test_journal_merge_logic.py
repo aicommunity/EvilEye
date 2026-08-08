@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from evileye.api.core.journal_grouping import group_objects_rows
+from evileye.api.core import journal_service as js
 
 
 def test_merge_prepend_logic_break_on_overlap():
@@ -23,3 +24,19 @@ def test_merge_prepend_logic_break_on_overlap():
         fresh.append(row)
     assert len(fresh) == 1
     assert fresh[0]["row_key"] == "t3|E|c"
+
+
+def test_merge_current_filters_skips_source_names_for_events(monkeypatch):
+    monkeypatch.setattr(js, "_current_source_names", lambda: {"Cam1", "Cam2"})
+    events = js._merge_current_filters({}, journal_kind="events")
+    assert "source_names" not in events
+    objects = js._merge_current_filters({}, journal_kind="objects")
+    assert objects["source_names"] == ["Cam1", "Cam2"]
+
+
+def test_merge_current_filters_respects_explicit_source_name(monkeypatch):
+    monkeypatch.setattr(js, "_current_source_names", lambda: {"Cam1", "Cam2"})
+    merged = js._merge_current_filters({"source_name": "Cam1"}, journal_kind="objects")
+    assert "source_names" not in merged
+    assert merged["source_name"] == "Cam1"
+

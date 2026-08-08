@@ -1,10 +1,26 @@
 """
-Test RTSP connection to specific camera: rtsp://user:AutoZloboglaz821-@10.245.1.199
-This test helps debug connection issues with GStreamer pipeline.
+Test RTSP connection to a lab camera via GStreamer.
+
+Live tests need credentials from the environment (never hardcode secrets):
+  EVILEYE_TEST_RTSP_URL (default rtsp://10.245.1.199)
+  EVILEYE_TEST_RTSP_USER (default user)
+  EVILEYE_TEST_RTSP_PASSWORD (required for live connect tests)
 """
+import os
 import time
 import pytest
 from pathlib import Path
+
+
+def _rtsp_credentials(*, require_password: bool = True):
+    camera_url = os.environ.get("EVILEYE_TEST_RTSP_URL", "rtsp://10.245.1.199")
+    username = os.environ.get("EVILEYE_TEST_RTSP_USER", "user")
+    password = os.environ.get("EVILEYE_TEST_RTSP_PASSWORD", "")
+    if require_password and not password:
+        pytest.skip("Set EVILEYE_TEST_RTSP_PASSWORD to run live RTSP tests")
+    if not require_password and not password:
+        password = "test_password"
+    return camera_url, username, password
 
 
 def test_rtsp_connection_specific_camera_tcp(tmp_path):
@@ -14,10 +30,7 @@ def test_rtsp_connection_specific_camera_tcp(tmp_path):
     from evileye.capture.video_capture_gstreamer import VideoCaptureGStreamer
     from evileye.capture.video_capture_base import CaptureDeviceType
     
-    # Camera details
-    camera_url = "rtsp://user:AutoZloboglaz821-@10.245.1.199"
-    username = "user"
-    password = "AutoZloboglaz821-"
+    camera_url, username, password = _rtsp_credentials()
     
     cap = VideoCaptureGStreamer()
     
@@ -110,17 +123,14 @@ def test_rtsp_connection_specific_camera_tcp(tmp_path):
 
 def test_rtsp_connection_specific_camera(tmp_path):
     """
-    Test connection to specific RTSP camera: rtsp://user:AutoZloboglaz821-@10.245.1.199
+    Test connection to specific RTSP camera (creds from env).
     Records a short video fragment for verification.
     """
     from evileye.capture.video_capture_gstreamer import VideoCaptureGStreamer
     from evileye.capture.video_capture_base import CaptureDeviceType
     from evileye.video_recorder.recording_params import RecordingParams
     
-    # Camera details
-    camera_url = "rtsp://user:AutoZloboglaz821-@10.245.1.199"
-    username = "user"
-    password = "AutoZloboglaz821-"
+    camera_url, username, password = _rtsp_credentials()
     
     cap = VideoCaptureGStreamer()
     
@@ -284,9 +294,7 @@ def test_rtsp_pipeline_string_generation():
     from evileye.capture.video_capture_gstreamer import VideoCaptureGStreamer
     from evileye.capture.video_capture_base import CaptureDeviceType
     
-    camera_url = "rtsp://user:AutoZloboglaz821-@10.245.1.199"
-    username = "user"
-    password = "AutoZloboglaz821-"
+    camera_url, username, password = _rtsp_credentials(require_password=False)
     
     cap = VideoCaptureGStreamer()
     cap.source_type = CaptureDeviceType.IpCamera
@@ -320,9 +328,7 @@ def test_rtsp_connection_with_recording():
     from pathlib import Path
     import tempfile
     
-    camera_url = "rtsp://user:AutoZloboglaz821-@10.245.1.199"
-    username = "user"
-    password = "AutoZloboglaz821-"
+    camera_url, username, password = _rtsp_credentials(require_password=False)
     
     cap = VideoCaptureGStreamer()
     
@@ -375,9 +381,7 @@ def test_rtsp_gst_launch_command():
     from evileye.capture.video_capture_gstreamer import VideoCaptureGStreamer
     from evileye.capture.video_capture_base import CaptureDeviceType
     
-    camera_url = "rtsp://user:AutoZloboglaz821-@10.245.1.199"
-    username = "user"
-    password = "AutoZloboglaz821-"
+    camera_url, username, password = _rtsp_credentials(require_password=False)
     
     cap = VideoCaptureGStreamer()
     cap.set_params(

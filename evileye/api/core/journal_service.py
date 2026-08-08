@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -9,7 +10,7 @@ from typing import Any, Dict, Optional
 from evileye.api.core.journal_adapters_factory import create_event_journal_adapters
 from evileye.api.core.journal_grouping import group_events_rows, group_objects_rows
 from evileye.api.core.journal_time import normalize_row_times
-from evileye.api.core.server_state import get_current_run_summary
+from evileye.api.core.server_state import get_current_config_path
 from evileye.database.config_history_manager import ConfigHistoryManager
 from evileye.database_controller.database_controller_pg import DatabaseControllerPg
 from evileye.visualization_modules.journal_data_source_db import DatabaseJournalDataSource
@@ -30,21 +31,85 @@ class JournalPathNotFound(JournalPathError):
     pass
 
 
+class DateScopeError(ValueError):
+    """Invalid journal date / date range query parameters."""
+    pass
+
+
+def _parse_iso_date(value: str) -> str:
+    import datetime
+
+    try:
+        return datetime.date.fromisoformat(value).isoformat()
+    except ValueError as exc:
+        raise DateScopeError(f"Invalid date: {value}") from exc
+
+
+def resolve_date_scope(
+        *,
+        date: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+) -> dict[str, Any]:
+    """Resolve date query params. Single `date` wins over range."""
+    import datetime
+
+    if date is not None and str(date).strip():
+        raw = str(date).strip()
+        if raw.lower() == "today":
+            resolved = datetime.date.today().isoformat()
+        else:
+            resolved = _parse_iso_date(raw)
+        return {"mode": "single", "date": resolved, "date_from": None, "date_to": None}
+
+    df_raw = str(date_from).strip() if date_from is not None and str(date_from).strip() else None
+    dt_raw = str(date_to).strip() if date_to is not None and str(date_to).strip() else None
+    if df_raw or dt_raw:
+        df = _parse_iso_date(df_raw) if df_raw else None
+        dt = _parse_iso_date(dt_raw) if dt_raw else None
+        if df is None:
+            df = dt
+        if dt is None:
+            dt = df
+        assert df is not None and dt is not None
+        if df > dt:
+            raise DateScopeError("date_from must be <= date_to")
+        return {"mode": "range", "date": None, "date_from": df, "date_to": dt}
+
+    return {"mode": "none", "date": None, "date_from": None, "date_to": None}
+
+
+def _apply_date_scope(source: Any, scope: dict[str, Any]) -> None:
+    mode = scope.get("mode")
+    if mode == "single":
+        source.set_date(scope.get("date"))
+    elif mode == "range":
+        source.set_date_range(scope.get("date_from"), scope.get("date_to"))
+    else:
+        if hasattr(source, "set_date_range"):
+            source.set_date_range(None, None)
+        source.set_date(None)
+
+
 _db_controller_cache: DatabaseControllerPg | None = None
 _db_controller_failed: bool = False
 _grouped_row_cache: dict[str, dict[str, dict[str, Any]]] = {"events": {}, "objects": {}}
 _json_source_cache: dict[tuple[str, str | None], JsonLabelJournalDataSource] = {}
 _runtime_params_cache: tuple[str, float, dict[str, Any]] | None = None
 _image_base_dir_cache: tuple[str, float, str] | None = None
+_light_config_path_cache: tuple[float, str | None] | None = None
+_LIGHT_CONFIG_PATH_TTL_SEC = 5.0
 _path_resolve_cache: OrderedDict[tuple[str, ...], str | None] = OrderedDict()
 _PATH_RESOLVE_CACHE_MAX = 4096
 
 
 def assert_path_under_base(resolved: str, base_dir: str) -> str:
-    base = Path(base_dir).resolve()
-    target = Path(resolved).resolve()
-    if not str(target).startswith(str(base)):
-        raise JournalPathForbidden("Path outside data directory")
+    from evileye.api.core.safe_paths import UnsafePathError, assert_under_dir
+
+    try:
+        target = assert_under_dir(resolved, base_dir)
+    except UnsafePathError as exc:
+        raise JournalPathForbidden(str(exc)) from exc
     if not target.is_file():
         raise JournalPathNotFound("File not found")
     return str(target)
@@ -76,31 +141,27 @@ def _config_mtime(config_path: str | None) -> float:
 
 
 def _current_config_path() -> str | None:
-    current_run = get_current_run_summary()
-    if not isinstance(current_run, dict):
-        return None
-    config_path = current_run.get("config_path")
-    return str(config_path) if config_path else None
+    """Resolve current config path without hydrating full run summaries."""
+    global _light_config_path_cache
+    now = time.time()
+    if _light_config_path_cache is not None:
+        cached_at, cached_path = _light_config_path_cache
+        if now - cached_at < _LIGHT_CONFIG_PATH_TTL_SEC:
+            return cached_path
+    path = get_current_config_path()
+    _light_config_path_cache = (now, path)
+    return path
 
 
 def _load_runtime_params_uncached() -> dict[str, Any]:
-    current_run = get_current_run_summary()
-    if not current_run:
+    config_path = _current_config_path()
+    if not config_path:
         return {}
-    snapshot = current_run.get("runtime_snapshot") if isinstance(current_run, dict) else None
-    if isinstance(snapshot, dict):
-        payload = snapshot.get("config")
-        if isinstance(payload, dict):
-            return payload
-    config_path = current_run.get("config_path")
-    if config_path:
-        try:
-            payload = json.loads(Path(config_path).read_text(encoding="utf-8"))
-        except Exception:
-            payload = None
-        if isinstance(payload, dict):
-            return payload
-    return {}
+    try:
+        payload = json.loads(Path(config_path).read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
 
 def _runtime_params() -> dict[str, Any]:
@@ -129,12 +190,22 @@ def _image_base_dir() -> str:
     if _image_base_dir_cache and _image_base_dir_cache[0] == config_path and _image_base_dir_cache[1] == mtime:
         return _image_base_dir_cache[2]
     params = _runtime_params()
-    controller = params.get("controller") if isinstance(params, dict) else None
     image_dir = "EvilEyeData"
-    if isinstance(controller, dict):
-        configured = controller.get("image_dir")
+    database = params.get("database") if isinstance(params, dict) else None
+    if isinstance(database, dict):
+        configured = database.get("image_dir") or database.get("images_dir")
         if configured:
             image_dir = str(configured)
+    if image_dir == "EvilEyeData":
+        controller = params.get("controller") if isinstance(params, dict) else None
+        if isinstance(controller, dict):
+            configured = controller.get("image_dir")
+            if configured:
+                image_dir = str(configured)
+    if image_dir == "EvilEyeData":
+        record = params.get("record") if isinstance(params, dict) else None
+        if isinstance(record, dict) and record.get("out_dir"):
+            image_dir = str(record["out_dir"])
     _image_base_dir_cache = (config_path, mtime, image_dir)
     return image_dir
 
@@ -202,7 +273,21 @@ def _enrich_rows(
     return enriched_rows
 
 
+_filters_meta_cache: tuple[float, dict[str, Any]] | None = None
+_FILTERS_META_TTL_SEC = 60.0
+_journal_stats_page_cache: dict[tuple[str | None, str | None, str | None], tuple[float, dict[str, Any]]] = {}
+_JOURNAL_STATS_PAGE_TTL_SEC = 20.0
+_FILTERS_META_MAX_DATES = 60
+
+
 def load_filters_meta() -> dict[str, Any]:
+    global _filters_meta_cache
+    now = time.time()
+    if _filters_meta_cache is not None:
+        cached_at, payload = _filters_meta_cache
+        if now - cached_at < _FILTERS_META_TTL_SEC:
+            return payload
+
     dates: list[str] = []
     try:
         controller = _db_controller()
@@ -215,7 +300,10 @@ def load_filters_meta() -> dict[str, Any]:
             dates = list(source.list_available_dates())
     except Exception:
         dates = []
-    return {
+    # Newest dates last in many adapters; keep the most recent N for UI dropdowns.
+    if len(dates) > _FILTERS_META_MAX_DATES:
+        dates = sorted(dates)[-_FILTERS_META_MAX_DATES:]
+    payload = {
         "dates": dates,
         "source_names": sorted(_current_source_names()),
         "event_types_events": [
@@ -224,12 +312,26 @@ def load_filters_meta() -> dict[str, Any]:
         ],
         "event_types_objects": ["found", "lost"],
     }
+    _filters_meta_cache = (now, payload)
+    return payload
 
 
-def _merge_current_filters(filters: Dict[str, Any]) -> Dict[str, Any]:
+def _merge_current_filters(
+    filters: Dict[str, Any],
+    *,
+    journal_kind: str | None = None,
+) -> Dict[str, Any]:
+    """Merge implicit run-scope filters.
+
+    Events include System rows (``source_name='System'``). Auto-scoping to
+    camera names would hide them, so events keep caller filters only.
+    Objects still default to current pipeline source names.
+    """
     merged = dict(filters)
+    if journal_kind == "events":
+        return merged
     source_names = _current_source_names()
-    if source_names and "source_name" not in merged:
+    if source_names and "source_name" not in merged and "source_names" not in merged:
         merged["source_names"] = sorted(source_names)
     return merged
 
@@ -332,6 +434,8 @@ def _make_db_source(
         *,
         journal_type: str,
         date: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
 ) -> DatabaseJournalDataSource:
     runtime_params = _runtime_params()
     adapters = create_event_journal_adapters(controller, runtime_params) if journal_type == "events" else None
@@ -342,30 +446,39 @@ def _make_db_source(
         database_params={"database": _database_config()},
         params=runtime_params,
     )
-    if date:
-        source.set_date(date)
+    scope = resolve_date_scope(date=date, date_from=date_from, date_to=date_to)
+    _apply_date_scope(source, scope)
     return source
 
 
-def _get_json_source(*, date: str | None = None) -> JsonLabelJournalDataSource:
+def _get_json_source(
+        *,
+        date: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+) -> JsonLabelJournalDataSource:
     base_dir = _image_base_dir()
-    cache_key = (base_dir, date)
+    scope = resolve_date_scope(date=date, date_from=date_from, date_to=date_to)
+    cache_key = (base_dir, scope.get("date"), scope.get("date_from"), scope.get("date_to"))
     source = _json_source_cache.get(cache_key)
     if source is None:
         source = JsonLabelJournalDataSource(base_dir, params=_runtime_params())
-        if date:
-            source.set_date(date)
+        _apply_date_scope(source, scope)
         _json_source_cache[cache_key] = source
         return source
     source.set_base_dir(base_dir)
     source.params = _runtime_params()
-    if date:
-        source.set_date(date)
+    _apply_date_scope(source, scope)
     return source
 
 
-def _make_json_source(*, date: str | None = None) -> JsonLabelJournalDataSource:
-    return _get_json_source(date=date)
+def _make_json_source(
+        *,
+        date: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+) -> JsonLabelJournalDataSource:
+    return _get_json_source(date=date, date_from=date_from, date_to=date_to)
 
 
 def _with_journal_meta(payload: dict[str, Any], *, mode: str) -> dict[str, Any]:
@@ -380,44 +493,77 @@ def _with_journal_meta(payload: dict[str, Any], *, mode: str) -> dict[str, Any]:
     return enriched
 
 
-def load_events_page(*, page: int, size: int, filters: Dict[str, Any], date: str | None = None) -> dict[str, Any]:
-    scoped_filters = _merge_current_filters(filters)
+def load_events_page(
+        *,
+        page: int,
+        size: int,
+        filters: Dict[str, Any],
+        date: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+) -> dict[str, Any]:
+    scoped_filters = _merge_current_filters(filters, journal_kind="events")
     controller = _db_controller()
     if controller is not None:
-        source = _make_db_source(controller, journal_type="events", date=date)
+        source = _make_db_source(
+            controller, journal_type="events", date=date, date_from=date_from, date_to=date_to,
+        )
         items = source.fetch(page, size, scoped_filters, sort=[("ts", "desc")])
         total = source.get_total(scoped_filters)
         return _with_journal_meta({"available": True, "items": items, "total": total}, mode="database")
     if not _json_journal_available():
         return _unavailable_payload()
     scoped_filters = {**scoped_filters, "journal_kind": "events"}
-    source = _get_json_source(date=date)
+    source = _get_json_source(date=date, date_from=date_from, date_to=date_to)
     source.begin_request()
     items = source.fetch(page, size, scoped_filters, sort=[("ts", "desc")])
     total = source.get_total(scoped_filters)
     return _with_journal_meta({"available": True, "items": items, "total": total}, mode="json")
 
 
-def load_objects_page(*, page: int, size: int, filters: Dict[str, Any], date: str | None = None) -> dict[str, Any]:
-    scoped_filters = _merge_current_filters(filters)
+def load_objects_page(
+        *,
+        page: int,
+        size: int,
+        filters: Dict[str, Any],
+        date: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+) -> dict[str, Any]:
+    scoped_filters = _merge_current_filters(filters, journal_kind="objects")
     controller = _db_controller()
     if controller is not None:
-        source = _make_db_source(controller, journal_type="objects", date=date)
+        source = _make_db_source(
+            controller, journal_type="objects", date=date, date_from=date_from, date_to=date_to,
+        )
         items = source.fetch(page, size, scoped_filters, sort=[("ts", "desc")])
         total = source.get_total(scoped_filters)
         return _with_journal_meta({"available": True, "items": items, "total": total}, mode="database")
     if not _json_journal_available():
         return _unavailable_payload()
     scoped_filters = {**scoped_filters, "journal_kind": "objects"}
-    source = _get_json_source(date=date)
+    source = _get_json_source(date=date, date_from=date_from, date_to=date_to)
     source.begin_request()
     items = source.fetch(page, size, scoped_filters, sort=[("ts", "desc")])
     total = source.get_total(scoped_filters)
     return _with_journal_meta({"available": True, "items": items, "total": total}, mode="json")
 
 
-def load_events_grouped_page(*, page: int, size: int, filters: Dict[str, Any], date: str | None = None) -> dict[str, Any]:
-    payload = load_events_page(page=page, size=size, filters=filters, date=date)
+def load_events_grouped_page(
+        *,
+        page: int,
+        size: int,
+        filters: Dict[str, Any],
+        date: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+) -> dict[str, Any]:
+    # Group-then-paginate: over-fetch raw rows, group, then slice grouped page.
+    need_groups = (page + 1) * size
+    raw_needed = min(max(need_groups * 3, size * 4, 120), 2000)
+    payload = load_events_page(
+        page=0, size=raw_needed, filters=filters, date=date, date_from=date_from, date_to=date_to,
+    )
     if not payload.get("available"):
         return payload
     grouped = _enrich_rows(
@@ -426,12 +572,22 @@ def load_events_grouped_page(*, page: int, size: int, filters: Dict[str, Any], d
         list_mode=True,
         cache_rows=True,
     )
+    start = page * size
+    sliced = grouped[start : start + size]
+    raw_total = int(payload.get("total") or 0)
+    # If we scanned all raw rows, grouped length is authoritative; else estimate.
+    if raw_total <= raw_needed:
+        total_grouped = len(grouped)
+    else:
+        total_grouped = max(len(grouped), raw_total // 2)
+    has_more = (start + size) < total_grouped or raw_total > raw_needed
     result = {
         "available": True,
-        "items": grouped,
-        "total": payload.get("total", len(grouped)),
+        "items": sliced,
+        "total": total_grouped,
         "page": page,
         "size": size,
+        "has_more": has_more,
     }
     for key in ("mode", "reason", "message"):
         if key in payload:
@@ -439,8 +595,20 @@ def load_events_grouped_page(*, page: int, size: int, filters: Dict[str, Any], d
     return result
 
 
-def load_objects_grouped_page(*, page: int, size: int, filters: Dict[str, Any], date: str | None = None) -> dict[str, Any]:
-    payload = load_objects_page(page=page, size=size, filters=filters, date=date)
+def load_objects_grouped_page(
+        *,
+        page: int,
+        size: int,
+        filters: Dict[str, Any],
+        date: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+) -> dict[str, Any]:
+    need_groups = (page + 1) * size
+    raw_needed = min(max(need_groups * 3, size * 4, 120), 2000)
+    payload = load_objects_page(
+        page=0, size=raw_needed, filters=filters, date=date, date_from=date_from, date_to=date_to,
+    )
     if not payload.get("available"):
         return payload
     grouped = _enrich_rows(
@@ -449,12 +617,21 @@ def load_objects_grouped_page(*, page: int, size: int, filters: Dict[str, Any], 
         list_mode=True,
         cache_rows=True,
     )
+    start = page * size
+    sliced = grouped[start : start + size]
+    raw_total = int(payload.get("total") or 0)
+    if raw_total <= raw_needed:
+        total_grouped = len(grouped)
+    else:
+        total_grouped = max(len(grouped), raw_total // 2)
+    has_more = (start + size) < total_grouped or raw_total > raw_needed
     result = {
         "available": True,
-        "items": grouped,
-        "total": payload.get("total", len(grouped)),
+        "items": sliced,
+        "total": total_grouped,
         "page": page,
         "size": size,
+        "has_more": has_more,
     }
     for key in ("mode", "reason", "message"):
         if key in payload:
@@ -462,38 +639,75 @@ def load_objects_grouped_page(*, page: int, size: int, filters: Dict[str, Any], 
     return result
 
 
-def load_journal_stats(*, date: str | None = None) -> dict[str, Any]:
+def load_journal_stats(
+        *,
+        date: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+) -> dict[str, Any]:
     import datetime
 
-    resolved_date = date
-    if not resolved_date or resolved_date.lower() == "today":
-        resolved_date = datetime.date.today().isoformat()
+    has_explicit = bool(
+        (date and str(date).strip())
+        or (date_from and str(date_from).strip())
+        or (date_to and str(date_to).strip())
+    )
+    if not has_explicit:
+        date = datetime.date.today().isoformat()
 
-    scoped_filters: dict[str, Any] = {"date_folder": resolved_date}
+    cache_key = (date, date_from, date_to)
+    now = time.time()
+    cached = _journal_stats_page_cache.get(cache_key)
+    if cached is not None:
+        cached_at, payload = cached
+        if now - cached_at < _JOURNAL_STATS_PAGE_TTL_SEC:
+            return payload
+
+    scope = resolve_date_scope(date=date, date_from=date_from, date_to=date_to)
+    scoped_filters: dict[str, Any] = {}
+    if scope["mode"] == "single":
+        scoped_filters["date_folder"] = scope["date"]
+
     controller = _db_controller()
     if controller is not None:
-        events_source = _make_db_source(controller, journal_type="events", date=resolved_date)
-        objects_source = _make_db_source(controller, journal_type="objects", date=resolved_date)
+        events_source = _make_db_source(
+            controller,
+            journal_type="events",
+            date=date,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        objects_source = _make_db_source(
+            controller,
+            journal_type="objects",
+            date=date,
+            date_from=date_from,
+            date_to=date_to,
+        )
         events_filters = {**scoped_filters, "journal_kind": "events"}
         objects_filters = {**scoped_filters, "journal_kind": "objects"}
-        return {
+        payload = {
             "available": True,
             "events_total": int(events_source.get_total(events_filters)),
             "objects_total": int(objects_source.get_total(objects_filters)),
         }
+        _journal_stats_page_cache[cache_key] = (now, payload)
+        return payload
 
     if not _json_journal_available():
         return {"available": False}
 
-    source = _get_json_source(date=resolved_date)
+    source = _get_json_source(date=date, date_from=date_from, date_to=date_to)
     source.begin_request()
     events_total = source.get_total({**scoped_filters, "journal_kind": "events"})
     objects_total = source.get_total({**scoped_filters, "journal_kind": "objects"})
-    return {
+    payload = {
         "available": True,
         "events_total": int(events_total),
         "objects_total": int(objects_total),
     }
+    _journal_stats_page_cache[cache_key] = (now, payload)
+    return payload
 
 
 def load_row_meta(*, row_key_value: str, journal_type: str, meta_only: bool = True) -> dict[str, Any]:
@@ -644,11 +858,41 @@ def load_config_history(*, limit: int) -> dict[str, Any]:
         }
     manager = ConfigHistoryManager(controller)
     items = manager.get_config_history(limit=limit)
-    current_run = get_current_run_summary()
-    config_path = current_run.get("config_path") if current_run else None
+    config_path = _current_config_path()
     if config_path:
         items = [
             item for item in items
             if config_path in json.dumps(item.get("configuration_info") or {}, ensure_ascii=False)
         ]
     return {"available": True, "items": items, "mode": "database", "reason": "ok"}
+
+
+def compare_config_history(job_id1: int, job_id2: int) -> dict[str, Any]:
+    controller = _db_controller()
+    if controller is None:
+        return {"available": False, "error": "Database unavailable"}
+    manager = ConfigHistoryManager(controller)
+    result = manager.compare_configurations(job_id1, job_id2)
+    c1 = manager.get_config_by_job_id(job_id1)
+    c2 = manager.get_config_by_job_id(job_id2)
+    result["left"] = (c1 or {}).get("configuration_info")
+    result["right"] = (c2 or {}).get("configuration_info")
+    result["available"] = True
+    return result
+
+
+def restore_config_history(job_id: int, target_name: str) -> dict[str, Any]:
+    safe = Path(target_name).name
+    if safe != target_name or ".." in target_name:
+        raise ValueError("Invalid target config name")
+    target = Path("configs") / safe
+    if not target.parent.exists():
+        raise FileNotFoundError("configs directory not found")
+    controller = _db_controller()
+    if controller is None:
+        raise ValueError("Database unavailable for restore")
+    manager = ConfigHistoryManager(controller)
+    result = manager.restore_configuration(job_id, str(target), create_backup=True)
+    if not result.get("success"):
+        raise ValueError(result.get("error") or "Restore failed")
+    return result

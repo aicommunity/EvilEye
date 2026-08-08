@@ -265,14 +265,14 @@ This is a unit test to verify the reconnect loop logic works correctly.
 
 ##### test_gstreamer_rtsp_connection.py
 
-Test RTSP connection to specific camera: rtsp://user:AutoZloboglaz821-@10.245.1.199
+Test RTSP connection to a lab camera (credentials from `EVILEYE_TEST_RTSP_*` env vars).
 This test helps debug connection issues with GStreamer pipeline.
 
 - **Путь**: `integration/capture/gstreamer/test_gstreamer_rtsp_connection.py`
 - **Модуль**: `evileye.capture`
 - **Тестовые функции**:
   - `test_rtsp_connection_specific_camera_tcp`: Test connection to specific RTSP camera using TCP protocol.
-  - `test_rtsp_connection_specific_camera`: Test connection to specific RTSP camera: rtsp://user:AutoZloboglaz821-@10.245.1.199
+  - `test_rtsp_connection_specific_camera`: Test connection to specific RTSP camera (creds from env).
 Records a short video fragment for verification.
   - `test_rtsp_pipeline_string_generation`: Test that pipeline string is generated correctly for RTSP camera.
   - `test_rtsp_connection_with_recording`: Test RTSP connection with recording enabled.

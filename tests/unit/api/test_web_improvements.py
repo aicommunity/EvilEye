@@ -54,7 +54,8 @@ def test_streaming_guard_multi_source(tmp_path, monkeypatch):
     assert exc.value.status_code == 400
 
 
-def test_streaming_has_consumers_when_server_process_alive():
+def test_streaming_has_consumers_with_demand_or_local_or_server():
+    """Grid/stream demand or local MJPEG enables consumers; alive server alone needs heartbeat env."""
     service = StreamingService()
 
     class _ServerProcessManager:
@@ -64,19 +65,102 @@ def test_streaming_has_consumers_when_server_process_alive():
         def has_preview_demand(self, pipeline_key):
             return False
 
+        def get_preview_demand_level(self, pipeline_key):
+            return "idle"
+
     service.configure(pipeline_id="1", publish_fps=10.0, server_process_manager=_ServerProcessManager())
+    assert service.has_consumers(source_id=0) is False
+
+    class _DeadServer:
+        def is_alive(self):
+            return False
+
+        def has_preview_demand(self, pipeline_key):
+            return False
+
+        def get_preview_demand_level(self, pipeline_key):
+            return "idle"
+
+    service.configure(pipeline_id="1", publish_fps=10.0, server_process_manager=_DeadServer())
+    assert service.has_consumers(source_id=0) is False
+
+    class _DemandManager(_DeadServer):
+        def is_alive(self):
+            return True
+
+        def has_preview_demand(self, pipeline_key):
+            return True
+
+        def get_preview_demand_level(self, pipeline_key):
+            return "grid"
+
+    service.configure(pipeline_id="1", publish_fps=10.0, server_process_manager=_DemandManager())
     assert service.has_consumers(source_id=0) is True
+
+
+def test_streaming_has_consumers_when_server_process_alive():
+    test_streaming_has_consumers_with_demand_or_local_or_server()
+
+
+def test_streaming_should_publish_heartbeat_vs_full(monkeypatch):
+    service = StreamingService()
+    service.configure(pipeline_id="1", publish_fps=10.0)
+    calls = []
+
+    def fake_throttle(key, *, fps_override=None):
+        calls.append(fps_override)
+        return True
+
+    monkeypatch.setattr(service, "_throttle_ok", fake_throttle)
+
+    monkeypatch.setattr(
+        service,
+        "_get_consumer_state",
+        lambda _k: (False, False, True, False),
+    )
+    assert service._should_publish("1:0") is False
+    assert calls == []
+
+    monkeypatch.setenv("EVILEYE_PREVIEW_HEARTBEAT_FPS", "1")
+    assert service._should_publish("1:0") is True
+    assert calls[-1] == 1.0
+
+    calls.clear()
+    monkeypatch.setattr(
+        service,
+        "_get_consumer_state",
+        lambda _k: (False, True, True, False),
+    )
+    monkeypatch.setattr(service, "_get_preview_demand_level", lambda _k: "stream")
+    assert service._should_publish("1:0") is True
+    assert calls[-1] == 10.0
+
+    calls.clear()
+    monkeypatch.setattr(
+        service,
+        "_get_consumer_state",
+        lambda _k: (False, False, False, False),
+    )
+    assert service._should_publish("1:0") is False
+    assert calls == []
 
 
 def test_web_auth_bootstrap_creates_admin(tmp_path, monkeypatch):
     creds_path = tmp_path / "credentials.json"
     monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("EVILEYE_BOOTSTRAP_ADMIN_PASSWORD", raising=False)
+    monkeypatch.delenv("EVILEYE_SESSION_SECRET", raising=False)
+    monkeypatch.delenv("EVILEYE_INTERNAL_TOKEN", raising=False)
     created = ensure_default_admin_credentials(creds_path)
     assert created is True
     payload = json.loads(creds_path.read_text(encoding="utf-8"))
     users = payload["web_auth"]["users"]
     assert users[0]["username"] == "admin"
     assert users[0]["role"] == "admin"
+    assert "password" not in users[0] or not users[0].get("password")
+    assert users[0].get("password_hash", "").startswith("pbkdf2_sha256$")
+    assert payload["web_auth"]["session_secret"] not in {"", "evileye-dev-session-secret", "change-me"}
+    assert payload["web_auth"].get("internal_token")
     assert not ensure_default_admin_credentials(creds_path)
 
 
@@ -163,3 +247,50 @@ def test_auth_register_and_users_flow(tmp_path, monkeypatch):
     assert user_login.status_code == 200
     perms = set(user_login.json().get("permissions") or [])
     assert "logs:view" not in perms
+
+
+def test_admin_create_user_approved_and_login(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    creds_path = tmp_path / "credentials.json"
+    creds_path.write_text(json.dumps({"web_auth": {"enabled": True, "users": []}}), encoding="utf-8")
+    ensure_default_admin_credentials(creds_path)
+
+    app = create_app()
+    client = TestClient(app)
+
+    assert client.post("/api/v1/users", json={
+        "email": "new@example.com",
+        "password": "secret12",
+        "role": "user",
+    }).status_code in {401, 403}
+
+    assert client.post("/api/v1/auth/login", json={"username": "admin", "password": "admin"}).status_code == 200
+
+    created = client.post(
+        "/api/v1/users",
+        json={"email": "new@example.com", "password": "secret12", "role": "user"},
+    )
+    assert created.status_code == 200
+    body = created.json()
+    assert body["ok"] is True
+    assert body["user"]["status"] == "approved"
+    assert body["mail"]["sent"] is False
+
+    dup = client.post(
+        "/api/v1/users",
+        json={"email": "new@example.com", "password": "secret12", "role": "user"},
+    )
+    assert dup.status_code == 409
+
+    login = client.post("/api/v1/auth/login", json={"username": "new@example.com", "password": "secret12"})
+    assert login.status_code == 200
+
+
+def test_user_store_create_user_unit(tmp_path):
+    from evileye.api.core.user_store import UserStore
+
+    store = UserStore(tmp_path / "web_users.json")
+    record = store.create_user("ops@example.com", "secret12", role="admin")
+    assert record["status"] == "approved"
+    assert record["role"] == "admin"
+    assert store.authenticate("ops@example.com", "secret12") is not None

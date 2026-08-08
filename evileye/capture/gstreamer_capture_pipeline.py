@@ -14,6 +14,7 @@ from .gstreamer_capture_common import (
     threading,
     time,
 )
+from .gstreamer_capture_recording import _RecordingFilesystemError
 
 
 class GStreamerCapturePipelineMixin:

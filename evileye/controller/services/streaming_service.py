@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 import threading
 import time
 import urllib.error
@@ -21,28 +23,125 @@ class StreamFrameJob:
     source_id: Optional[int]
     frame_id: Optional[int]
     created_at: float
+    objects: list[dict[str, Any]] | None = None
+    zones: list[dict[str, Any]] | None = None
+    signalization: bool = False
 
 
 class FrameRelayClient:
+    """Non-blocking frame relay: encode workers enqueue; a dedicated thread POSTs (drop-old)."""
+
     def __init__(self, base_url: str, *, token: str | None = None, timeout_sec: float = 0.5):
         self.base_url = base_url.rstrip("/")
         self.token = token or ""
         self.timeout_sec = max(0.1, float(timeout_sec))
         self.logger = get_module_logger("frame_relay")
+        self._lock = threading.Lock()
+        self._pending: dict[str, tuple[str, bytes, int | None, dict[str, Any] | None]] = {}
+        self._wake = threading.Event()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._loop, daemon=True, name="FrameRelay")
+        self._thread.start()
 
-    def publish_jpeg(self, pipeline_id: str, jpeg_bytes: bytes, *, source_id: int | None = None) -> bool:
+    def close(self) -> None:
+        self._stop.set()
+        self._wake.set()
+        if self._thread.is_alive():
+            self._thread.join(timeout=2.0)
+
+    def publish_jpeg(
+        self,
+        pipeline_id: str,
+        jpeg_bytes: bytes,
+        *,
+        source_id: int | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> bool:
+        key = f"{pipeline_id}:{source_id}" if source_id is not None else pipeline_id
+        with self._lock:
+            self._pending[key] = (pipeline_id, jpeg_bytes, source_id, metadata)
+        self._wake.set()
+        return True
+
+    def _loop(self) -> None:
+        while not self._stop.is_set():
+            self._wake.wait(timeout=0.5)
+            self._wake.clear()
+            while not self._stop.is_set():
+                with self._lock:
+                    if not self._pending:
+                        break
+                    _key, item = self._pending.popitem()
+                pipeline_id, jpeg_bytes, source_id, metadata = item
+                try:
+                    self._post(pipeline_id, jpeg_bytes, source_id=source_id, metadata=metadata)
+                except Exception as exc:
+                    self.logger.debug("Frame relay publish failed: %s", exc)
+
+    def _post(
+        self,
+        pipeline_id: str,
+        jpeg_bytes: bytes,
+        *,
+        source_id: int | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> bool:
         query = f"?source_id={source_id}" if source_id is not None else ""
         url = f"{self.base_url}/internal/frames/{pipeline_id}{query}"
-        headers = {"Content-Type": "image/jpeg"}
+        headers: dict[str, str] = {}
         if self.token:
             headers["X-EvilEye-Internal-Token"] = self.token
-        request = urllib.request.Request(url, data=jpeg_bytes, headers=headers, method="POST")
+
+        if metadata:
+            boundary = "----EvilEyeFrameBoundary"
+            meta_bytes = json.dumps(metadata, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            chunks = [
+                f"--{boundary}\r\nContent-Disposition: form-data; name=\"metadata\"\r\n"
+                f"Content-Type: application/json\r\n\r\n".encode("utf-8"),
+                meta_bytes,
+                b"\r\n",
+                (
+                    f"--{boundary}\r\nContent-Disposition: form-data; name=\"frame\"; "
+                    f"filename=\"frame.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n"
+                ).encode("utf-8"),
+                jpeg_bytes,
+                b"\r\n",
+                f"--{boundary}--\r\n".encode("utf-8"),
+            ]
+            data = b"".join(chunks)
+            headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
+        else:
+            data = jpeg_bytes
+            headers["Content-Type"] = "image/jpeg"
+
+        request = urllib.request.Request(url, data=data, headers=headers, method="POST")
         try:
             with urllib.request.urlopen(request, timeout=self.timeout_sec) as response:
                 return 200 <= getattr(response, "status", 200) < 300
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             self.logger.debug("Frame relay publish failed: %s", exc)
             return False
+
+
+def _downscale_image(image: Any, max_edge: int) -> Any:
+    if image is None or max_edge <= 0:
+        return image
+    try:
+        import cv2  # type: ignore
+        import numpy as np  # type: ignore
+
+        if not isinstance(image, np.ndarray):
+            return image
+        h, w = image.shape[:2]
+        edge = max(h, w)
+        if edge <= max_edge:
+            return image
+        scale = max_edge / float(edge)
+        new_w = max(1, int(w * scale))
+        new_h = max(1, int(h * scale))
+        return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    except Exception:
+        return image
 
 
 class StreamingService:
@@ -63,6 +162,7 @@ class StreamingService:
         self._frame_relay: FrameRelayClient | None = None
         self._encoder: JpegEncoderBackend = create_jpeg_encoder()
         self._worker_count = 1
+        self._preview_max_edge = 960
         self._stats = {
             "submitted": 0,
             "copied_images": 0,
@@ -89,6 +189,7 @@ class StreamingService:
             encoder_backend: str = "auto",
             jpeg_quality: int = 85,
             num_workers: int = 1,
+            preview_max_edge: int = 960,
     ) -> None:
         with self._condition:
             self._stop_event.clear()
@@ -96,9 +197,15 @@ class StreamingService:
             self._publish_fps = max(0.0, float(publish_fps or 0.0))
             self._last_publish_ts_by_key.clear()
             self._server_process_manager = server_process_manager
+            if self._frame_relay is not None:
+                try:
+                    self._frame_relay.close()
+                except Exception:
+                    pass
             self._frame_relay = FrameRelayClient(relay_base_url, token=relay_token) if relay_base_url else None
             self._encoder = create_jpeg_encoder(encoder_backend, jpeg_quality)
             self._worker_count = max(1, int(num_workers or 1))
+            self._preview_max_edge = max(0, int(preview_max_edge or 0))
             self._pending_jobs.clear()
             self._ensure_workers_locked()
             self._condition.notify_all()
@@ -110,10 +217,22 @@ class StreamingService:
 
     def set_frame_relay(self, relay_base_url: str | None, relay_token: str | None = None) -> None:
         with self._condition:
+            if self._frame_relay is not None:
+                try:
+                    self._frame_relay.close()
+                except Exception:
+                    pass
             self._frame_relay = FrameRelayClient(relay_base_url, token=relay_token) if relay_base_url else None
             self._condition.notify_all()
 
-    def submit_frame(self, frame) -> bool:
+    def submit_frame(
+        self,
+        frame,
+        *,
+        objects: list[dict[str, Any]] | None = None,
+        zones: list[dict[str, Any]] | None = None,
+        signalization: bool = False,
+    ) -> bool:
         image = getattr(frame, "image", None)
         if image is None:
             return False
@@ -133,12 +252,20 @@ class StreamingService:
             except Exception:
                 image_for_encode = image
 
+        # Prefer explicit args; fall back to attributes attached on the frame.
+        objects_meta = objects if objects is not None else getattr(frame, "_stream_objects", None)
+        zones_meta = zones if zones is not None else getattr(frame, "_stream_zones", None)
+        signal_meta = signalization or bool(getattr(frame, "_stream_signalization", False))
+
         job = StreamFrameJob(
             pipeline_id=self._pipeline_id,
             image=image_for_encode,
             source_id=getattr(frame, "source_id", None),
             frame_id=getattr(frame, "frame_id", None),
             created_at=time.time(),
+            objects=list(objects_meta or []),
+            zones=list(zones_meta or []),
+            signalization=bool(signal_meta),
         )
         with self._condition:
             self._pending_jobs[self._job_key(job)] = job
@@ -150,12 +277,17 @@ class StreamingService:
         throttle_key = f"{self._pipeline_id}:{source_id}" if source_id is not None else self._pipeline_id
         has_local_stream, has_server_preview_demand, has_server_process, has_relay = self._get_consumer_state(
             throttle_key)
-        return (
-            has_local_stream
-            or has_server_preview_demand
-            or has_server_process
-            or has_relay
-        )
+        if has_local_stream:
+            return True
+        if has_server_preview_demand:
+            level = self._get_preview_demand_level(throttle_key)
+            return self._fps_for_demand_level(level) > 0.0
+        if has_relay and has_server_preview_demand:
+            return True
+        heartbeat_fps = self._get_heartbeat_fps()
+        if has_server_process and heartbeat_fps > 0.0:
+            return True
+        return False
 
     def get_runtime_stats(self) -> dict:
         with self._condition:
@@ -194,7 +326,8 @@ class StreamingService:
                 continue
             try:
                 encode_started = time.perf_counter()
-                payload = self._encoder.encode(job.image)
+                image = _downscale_image(job.image, self._preview_max_edge)
+                payload = self._encoder.encode(image)
                 self._stats["last_encode_ms"] = (time.perf_counter() - encode_started) * 1000.0
                 if not payload:
                     continue
@@ -217,18 +350,55 @@ class StreamingService:
         has_local_stream, has_server_preview_demand, has_server_process, has_relay = self._get_consumer_state(
             throttle_key)
 
-        if has_local_stream or has_server_preview_demand or has_relay:
-            return self._throttle_ok(throttle_key)
+        if has_local_stream:
+            return self._throttle_ok(throttle_key, fps_override=self._publish_fps)
 
-        # Fallback for embedded server + web-ui bootstrap: keep a very low-rate
-        # preview heartbeat so snapshots do not stay permanently "not ready" if
-        # explicit demand propagation is delayed or lost.
-        if has_server_process:
-            return self._throttle_ok(throttle_key, fps_override=min(self._publish_fps, 3.0))
+        if has_server_preview_demand:
+            level = self._get_preview_demand_level(throttle_key)
+            fps = self._fps_for_demand_level(level)
+            if fps <= 0.0:
+                return False
+            return self._throttle_ok(throttle_key, fps_override=fps)
 
-        if not has_local_stream and not has_server_preview_demand and not has_relay:
-            return False
-        return self._throttle_ok(throttle_key)
+        if has_relay and has_server_preview_demand:
+            level = self._get_preview_demand_level(throttle_key)
+            fps = self._fps_for_demand_level(level)
+            if fps <= 0.0:
+                return False
+            return self._throttle_ok(throttle_key, fps_override=fps)
+
+        heartbeat_fps = self._get_heartbeat_fps()
+        if has_server_process and heartbeat_fps > 0.0:
+            return self._throttle_ok(throttle_key, fps_override=heartbeat_fps)
+
+        return False
+
+    def _get_preview_demand_level(self, throttle_key: str) -> str:
+        if self._server_process_manager is None:
+            return "idle"
+        try:
+            return self._server_process_manager.get_preview_demand_level(throttle_key)
+        except Exception:
+            return "idle"
+
+    def _get_heartbeat_fps(self) -> float:
+        try:
+            return max(0.0, float(os.getenv("EVILEYE_PREVIEW_HEARTBEAT_FPS", "0")))
+        except Exception:
+            return 0.0
+
+    def _get_grid_fps(self) -> float:
+        try:
+            return max(0.0, float(os.getenv("EVILEYE_PREVIEW_GRID_FPS", "2.0")))
+        except Exception:
+            return 2.0
+
+    def _fps_for_demand_level(self, level: str) -> float:
+        if level == "stream":
+            return self._publish_fps
+        if level == "grid":
+            return self._get_grid_fps()
+        return 0.0
 
     def _get_consumer_state(self, throttle_key: str) -> tuple[bool, bool, bool, bool]:
         has_local_stream = False
@@ -275,9 +445,13 @@ class StreamingService:
     def _publish_jpeg(self, pipeline_id: str, jpeg_bytes: bytes, job: StreamFrameJob) -> None:
         metadata = {
             "timestamp": job.created_at,
+            "ts": job.created_at,
             "source_id": job.source_id,
             "frame_id": job.frame_id,
             "content_type": "image/jpeg",
+            "objects": list(job.objects or []),
+            "zones": list(job.zones or []),
+            "signalization": bool(job.signalization),
         }
         broker = get_frame_broker()
         broker.publish_jpeg(pipeline_id, jpeg_bytes, metadata=metadata)
@@ -289,4 +463,9 @@ class StreamingService:
             except Exception:
                 pass
         if self._frame_relay is not None:
-            self._frame_relay.publish_jpeg(pipeline_id, jpeg_bytes, source_id=job.source_id)
+            self._frame_relay.publish_jpeg(
+                pipeline_id,
+                jpeg_bytes,
+                source_id=job.source_id,
+                metadata=metadata,
+            )

@@ -8,12 +8,16 @@ autonomously until stopped.
 """
 from __future__ import annotations
 
+import sys
 import time
 from queue import Empty, Full
 
 from ..core.mp_worker import MpWorker
 from ..core.processor_base import EXEC_MODE_THREAD
 from ..core.frame_transport import SharedFrameTransport
+
+# Exit code listed in capture MpControl no_restart_exit_codes — stops restart storms.
+CAPTURE_INIT_FAIL_EXIT_CODE = 2
 
 
 class MpWorkerCapture(MpWorker):
@@ -54,6 +58,7 @@ class MpWorkerCapture(MpWorker):
         try:
             rp = getattr(capture, "recording_params", None)
             rm = getattr(capture, "recorder_manager", None)
+            gst_rec = getattr(capture, "_gst_continuous_recorder", None)
             if rp is None:
                 self.logger.warning(
                     "Capture worker started without recording_params for %s",
@@ -61,14 +66,25 @@ class MpWorkerCapture(MpWorker):
                 )
                 return
             continuous = bool(rp.enabled and rp.continuous_recording_enabled)
-            recorder_active = bool(rm and getattr(rm, "recorder", None))
+            opencv_active = bool(rm and getattr(rm, "recorder", None))
+            gst_active = bool(
+                gst_rec is not None
+                and (
+                    getattr(gst_rec, "is_running", False)
+                    or getattr(gst_rec, "_refs", None) is not None
+                )
+            )
+            # GStreamer continuous recording is tee-integrated; OpenCV uses recorder_manager.
+            recorder_active = opencv_active or gst_active
+            backend = "gstreamer" if gst_active else ("opencv" if opencv_active else "none")
             self.logger.info(
                 "Capture worker recording: source=%s enabled=%s continuous=%s "
-                "recorder_active=%s out_dir=%s",
+                "recorder_active=%s backend=%s out_dir=%s",
                 self._capture_params.get("source_names"),
                 rp.enabled,
                 rp.continuous_recording_enabled,
                 recorder_active,
+                backend,
                 rp.out_dir,
             )
             if continuous and not recorder_active:
@@ -142,11 +158,11 @@ class MpWorkerCapture(MpWorker):
             self.init_worker()
         except Exception as e:
             self.logger.error("Capture worker init failed: %s", e, exc_info=True)
-            return
+            sys.exit(CAPTURE_INIT_FAIL_EXIT_CODE)
 
         if self._capture is None:
             self.logger.error("Capture object is None after init — exiting")
-            return
+            sys.exit(CAPTURE_INIT_FAIL_EXIT_CODE)
 
         self.logger.info("Capture worker ready, entering frame loop")
 

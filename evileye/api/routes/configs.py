@@ -6,7 +6,9 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from evileye.api.core.config_run_access import get_config_run_manager
+from evileye.api.core.public_base_url import resolve_public_api_base_url
 from evileye.api.core.runtime_registry import list_runtime_records, load_runtime_record
+from evileye.api.core.safe_paths import UnsafePathError, assert_under_dir, safe_config_name
 
 router = APIRouter(prefix="/api/v1/configs", tags=["configs"])
 
@@ -38,7 +40,16 @@ class ConfigRunCreate(BaseModel):
     config_body: Optional[dict] = Field(None, description="Configuration body, if file name not used")
 
 
-# ── Config file CRUD ────────────────────────────────────────────────
+def _configs_dir() -> Path:
+    cfg_dir = Path("configs")
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    return cfg_dir
+
+
+def _config_path(name: str) -> Path:
+    safe = safe_config_name(name)
+    return assert_under_dir(_configs_dir() / safe, _configs_dir())
+
 
 @router.get("")
 async def list_configs() -> List[str]:
@@ -48,7 +59,6 @@ async def list_configs() -> List[str]:
     return sorted([p.name for p in configs_dir.glob("*.json")])
 
 
-# Маршруты /runs объявлены до /{name}, иначе GET /configs/runs матчится как get_config(name="runs")
 @router.get("/runs")
 async def list_config_runs() -> Dict[int, Dict]:
     return _list_combined_runs()
@@ -67,7 +77,7 @@ async def create_config_run(payload: ConfigRunCreate) -> Dict:
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Config file not found") from exc
-    except ValueError as e:
+    except (ValueError, UnsafePathError) as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
 
@@ -88,7 +98,7 @@ async def get_config_run(rid: int) -> Dict:
 @router.post("/runs/{rid}/start")
 async def start_config_run(rid: int, request: Request) -> Dict:
     try:
-        api_base_url = str(request.base_url).rstrip("/") + "/api/v1"
+        api_base_url = resolve_public_api_base_url()
         return get_config_run_manager().start(rid, api_base_url=api_base_url)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Config run not found") from exc
@@ -116,26 +126,56 @@ async def delete_config_run(rid: int) -> Dict:
         raise HTTPException(status_code=409, detail=str(e)) from e
 
 
+def _mask_secrets(value):
+    """Recursively mask password-like fields and credentials embedded in URIs."""
+    import re
+
+    rtsp_re = re.compile(r"(?i)^(rtsp[s]?://)([^:/@]+):([^@/]+)@")
+
+    def mask_uri(text: str) -> str:
+        return rtsp_re.sub(r"\1***:***@", text)
+
+    if isinstance(value, dict):
+        out = {}
+        for key, item in value.items():
+            key_l = str(key).lower()
+            if key_l in {"password", "passwd", "secret", "admin_password"} and item:
+                out[key] = "***"
+            elif key_l in {"source", "uri", "camera", "url", "location"} and isinstance(item, str) and "://" in item:
+                out[key] = mask_uri(item)
+            else:
+                out[key] = _mask_secrets(item)
+        return out
+    if isinstance(value, list):
+        return [_mask_secrets(item) for item in value]
+    if isinstance(value, str) and value.lower().startswith("rtsp"):
+        return mask_uri(value)
+    return value
+
+
 @router.get("/{name}")
 async def get_config(name: str) -> dict:
-    path = Path("configs") / name
+    try:
+        path = _config_path(name)
+    except UnsafePathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not path.exists() or not path.is_file():
         raise HTTPException(status_code=404, detail="Config not found")
     try:
         with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+            payload = json.load(f)
+        return _mask_secrets(payload)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to read config: {e}") from e
 
 
 @router.post("")
 async def create_config(payload: ConfigCreate):
-    name = Path(payload.name).name
-    if not name.endswith(".json"):
-        raise HTTPException(status_code=400, detail="Config name must end with .json")
-    cfg_dir = Path("configs")
-    cfg_dir.mkdir(parents=True, exist_ok=True)
-    path = cfg_dir / name
+    try:
+        name = safe_config_name(payload.name)
+        path = _config_path(name)
+    except UnsafePathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if path.exists():
         raise HTTPException(status_code=409, detail="Config already exists")
     try:
@@ -146,14 +186,49 @@ async def create_config(payload: ConfigCreate):
         raise HTTPException(status_code=500, detail=f"Failed to create config: {e}") from e
 
 
+def _merge_preserving_secrets(existing: dict, incoming: dict) -> dict:
+    """Keep existing secrets when UI sends masked placeholders."""
+    result = dict(incoming)
+    for key, value in incoming.items():
+        key_l = str(key).lower()
+        if key_l in {"password", "passwd", "secret", "admin_password"}:
+            if value in (None, "", "***"):
+                if key in existing:
+                    result[key] = existing[key]
+        elif key_l in {"source", "uri", "camera", "url", "location"} and isinstance(value, str):
+            if "***:***@" in value and key in existing:
+                result[key] = existing[key]
+        elif isinstance(value, dict) and isinstance(existing.get(key), dict):
+            result[key] = _merge_preserving_secrets(existing[key], value)
+        elif isinstance(value, list) and isinstance(existing.get(key), list):
+            # shallow: merge dict items by index when both are objects
+            merged_list = []
+            for idx, item in enumerate(value):
+                prev = existing[key][idx] if idx < len(existing[key]) else None
+                if isinstance(item, dict) and isinstance(prev, dict):
+                    merged_list.append(_merge_preserving_secrets(prev, item))
+                else:
+                    merged_list.append(item)
+            result[key] = merged_list
+    return result
+
+
 @router.put("/{name}")
 async def update_config(name: str, payload: ConfigUpdate):
-    target = Path("configs") / Path(name).name
+    try:
+        target = _config_path(name)
+    except UnsafePathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not target.exists():
         raise HTTPException(status_code=404, detail="Config not found")
     try:
+        with open(target, "r", encoding="utf-8") as f:
+            existing = json.load(f)
+        if not isinstance(existing, dict):
+            existing = {}
+        body = _merge_preserving_secrets(existing, payload.body if isinstance(payload.body, dict) else {})
         with open(target, "w", encoding="utf-8") as f:
-            json.dump(payload.body, f, ensure_ascii=False, indent=2)
+            json.dump(body, f, ensure_ascii=False, indent=2)
         return {"name": target.name, "status": "updated"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to update config: {e}") from e
@@ -161,7 +236,10 @@ async def update_config(name: str, payload: ConfigUpdate):
 
 @router.delete("/{name}")
 async def delete_config(name: str):
-    target = Path("configs") / Path(name).name
+    try:
+        target = _config_path(name)
+    except UnsafePathError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not target.exists():
         raise HTTPException(status_code=404, detail="Config not found")
     try:

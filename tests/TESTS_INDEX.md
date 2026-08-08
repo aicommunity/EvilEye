@@ -54,7 +54,7 @@ Gate: `scripts/soak_mp_memory.sh`, `reports/mp_refactor_gate/`. Runbook: [docs/d
 ### gstreamer
 
 - `test_gstreamer_reconnect_recording.py`
-- `test_gstreamer_rtsp_connection.py` - Test RTSP connection to specific camera: rtsp://user:AutoZloboglaz821-@10.245.1.
+- `test_gstreamer_rtsp_connection.py` - Test RTSP connection to a lab camera (creds via EVILEYE_TEST_RTSP_* env)
 - `test_record_video_fragment.py` - Test script to record a short video fragment from RTSP camera and return the pat
 
 ### image_saving

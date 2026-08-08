@@ -46,6 +46,10 @@ class CaptureConstants:
     RECONNECT_INITIAL_DELAY_SEC: float = 8.0
     RECONNECT_BACKOFF_STEP_SEC: float = 6.0
     RECONNECT_MAX_DELAY_SEC: float = 60.0
+    # After a successful no-frames reconnect/reset, suppress another for this long.
+    NOFRAMES_RECONNECT_MIN_INTERVAL_SEC: float = 45.0
+    # Minimum wait on repeated reconnect sessions (avoid backoff=0 storms).
+    RECONNECT_MIN_FIRST_BACKOFF_SEC: float = 3.0
 
     # Default FPS fallback
     DEFAULT_FPS_FALLBACK: float = 15.0

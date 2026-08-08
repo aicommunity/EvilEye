@@ -247,11 +247,17 @@ class ConfigRunManager:
         return cfg_dir
 
     def _write_config_file(self, rid: int, name: Optional[str], body: dict) -> Path:
+        from evileye.api.core.safe_paths import UnsafePathError, assert_under_dir, safe_config_name
+
         cfg_dir = self._ensure_configs_dir()
-        safe_name = (name or f"config_run_{rid}.json").strip()
-        if not safe_name.endswith(".json"):
-            safe_name += ".json"
-        target = cfg_dir / safe_name
+        raw = (name or f"config_run_{rid}.json").strip()
+        if not raw.endswith(".json"):
+            raw += ".json"
+        try:
+            safe_name = safe_config_name(raw)
+            target = assert_under_dir(cfg_dir / safe_name, cfg_dir)
+        except UnsafePathError as exc:
+            raise ValueError(str(exc)) from exc
         with open(target, "w", encoding="utf-8") as f:
             json.dump(body, f, ensure_ascii=False, indent=2)
         return target
@@ -263,7 +269,15 @@ class ConfigRunManager:
                 raise ValueError("Config run already exists")
 
             if config_body is None and config_name:
-                path = self._ensure_configs_dir() / Path(config_name).name
+                from evileye.api.core.safe_paths import UnsafePathError, assert_under_dir, safe_config_name
+
+                try:
+                    safe = safe_config_name(
+                        config_name if str(config_name).endswith(".json") else f"{config_name}.json"
+                    )
+                    path = assert_under_dir(self._ensure_configs_dir() / safe, self._ensure_configs_dir())
+                except UnsafePathError as exc:
+                    raise ValueError(str(exc)) from exc
                 if not path.exists():
                     raise FileNotFoundError("Config file not found")
             elif config_body is not None:
