@@ -929,6 +929,138 @@ def deploy() -> None:
         "enable watchdog via monitor/scripts/install_timer.sh[/dim]"
     )
 
+
+@app.command("setup-web")
+def setup_web(
+    check: bool = typer.Option(False, "--check", help="Only check environment; do not install or build"),
+    scope: str = typer.Option(
+        "user",
+        "--scope",
+        help="pip install scope: user (~/.local) or system (sudo pip)",
+        case_sensitive=False,
+    ),
+    build: Optional[bool] = typer.Option(
+        None,
+        "--build/--no-build",
+        help="Build SPA with npm (default: build only if static is missing)",
+    ),
+    force: bool = typer.Option(False, "--force", help="Reinstall missing Python packages and rebuild SPA"),
+) -> None:
+    """
+    Check and prepare Web UI dependencies (Python API packages + SPA static).
+
+    pip --scope user|system installs missing Python packages. Frontend npm
+    packages stay local to evileye/api/frontend (never global).
+    """
+    from evileye import setup_web as sw
+
+    scope_norm = (scope or "user").strip().lower()
+    if scope_norm not in {"user", "system"}:
+        console.print("[red]--scope must be 'user' or 'system'[/red]")
+        raise typer.Exit(1)
+
+    report = sw.collect_web_setup_report()
+    table = Table(title="EvilEye Web UI environment")
+    table.add_column("Check", style="cyan")
+    table.add_column("Status")
+    table.add_column("Detail")
+    for item in report.items:
+        status = "[green]OK[/green]" if item.ok else "[red]FAIL[/red]"
+        table.add_row(item.name, status, item.detail)
+    console.print(table)
+
+    if check:
+        if report.ok:
+            console.print("[green]Web UI environment looks ready.[/green]")
+            raise typer.Exit(0)
+        if report.needs_libturbojpeg():
+            console.print(f"[yellow]{sw.LIBTURBOJPEG_HINT}[/yellow]")
+        console.print("[red]Web UI environment check failed.[/red]")
+        raise typer.Exit(1)
+
+    if report.ok and not force and build is not True:
+        console.print("[green]Web UI environment already ready; nothing to do.[/green]")
+        console.print("[dim]Use --force to rebuild SPA or reinstall packages.[/dim]")
+        raise typer.Exit(0)
+
+    if scope_norm == "system" and not check:
+        confirm = typer.confirm(
+            "Install missing Python packages system-wide with sudo?",
+            default=False,
+        )
+        if not confirm:
+            console.print("[yellow]Aborted (system scope not confirmed).[/yellow]")
+            raise typer.Exit(1)
+
+    missing = report.missing_pip_packages()
+    if missing or force:
+        # On --force, still only install packages that fail import unless force wants all web pkgs
+        to_install = missing if missing else ([] if not force else [])
+        if force and not to_install:
+            # Re-check: force with everything ok → skip pip
+            pass
+        if to_install:
+            console.print(f"[blue]Installing Python packages ({scope_norm}): {', '.join(to_install)}[/blue]")
+            try:
+                sw.pip_install(to_install, scope=scope_norm)
+            except Exception as exc:
+                console.print(f"[red]pip install failed: {exc}[/red]")
+                raise typer.Exit(1)
+
+    # Re-check turbojpeg native after pip
+    report_after_pip = sw.collect_web_setup_report()
+    if report_after_pip.needs_libturbojpeg():
+        console.print(f"[yellow]{sw.LIBTURBOJPEG_HINT}[/yellow]")
+
+    should_build = force or build is True or report.needs_frontend_build() or report_after_pip.needs_frontend_build()
+    if build is False:
+        should_build = False
+
+    if should_build:
+        if report_after_pip.needs_node() or report.needs_node():
+            console.print(
+                "[red]Node.js/npm required to build the SPA. "
+                "Install with: sudo apt install nodejs npm[/red]"
+            )
+            raise typer.Exit(1)
+        console.print("[blue]Building frontend (npm install && npm run build)…[/blue]")
+        try:
+            sw.build_frontend()
+        except Exception as exc:
+            console.print(f"[red]Frontend build failed: {exc}[/red]")
+            raise typer.Exit(1)
+
+    final = sw.collect_web_setup_report()
+    if final.ok:
+        console.print("[green]Web UI setup completed successfully.[/green]")
+        raise typer.Exit(0)
+
+    if final.needs_libturbojpeg():
+        console.print(f"[yellow]{sw.LIBTURBOJPEG_HINT}[/yellow]")
+        # Native lib missing: SPA/API still usable with OpenCV fallback.
+        if all(
+            item.ok
+            for item in final.items
+            if item.name != "python:turbojpeg_native"
+            and item.name in {
+                "python:fastapi",
+                "python:uvicorn",
+                "python:pydantic",
+                "python:itsdangerous",
+                "python:turbojpeg",
+                "static",
+            }
+        ):
+            console.print(
+                "[yellow]Setup finished with TurboJPEG native library missing "
+                "(preview will use OpenCV fallback).[/yellow]"
+            )
+            raise typer.Exit(0)
+
+    console.print("[red]Web UI setup incomplete.[/red]")
+    raise typer.Exit(1)
+
+
 @app.command()
 def deploy_samples() -> None:
     """

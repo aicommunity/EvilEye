@@ -22,6 +22,11 @@ Intelligence video surveillance system with object detection, tracking, and mult
 # Install from PyPI with all dependencies
 pip install evileye
 
+# Optional but recommended for fast JPEG live preview:
+# sudo apt install libturbojpeg   # Debian/Ubuntu
+
+# Ensure Web UI Python deps + packaged SPA (builds frontend if static is missing)
+evileye setup-web
 ```
 
 #### From Source (Developers)
@@ -37,8 +42,23 @@ pip install -e "."
 # Fix entry points
 python scripts/setup/fix_entry_points.py
 
-Next you can use the 'evileye' command to work, or if the command does not work:
+# Check / prepare Web UI (SPA static + API packages)
+evileye setup-web
+```
+
+Next you can use the `evileye` command, or if it does not work:
+
+```bash
 python3 -m evileye.cli_wrapper
+```
+
+Typical site bring-up:
+
+```text
+pip install -e .          # or: pip install evileye
+evileye setup-web         # check + install missing Python pkgs; build SPA if needed
+evileye deploy            # credentials, configs/, monitor/
+evileye run config.json --no-gui
 ```
 
 ### Basic Usage
@@ -618,11 +638,22 @@ evileye server --log-level debug
 - ReDoc documentation: `http://localhost:8181/redoc`
 - OpenAPI schema: `http://localhost:8181/openapi.json`
 
-**Веб-интерфейс (frontend):** лёгкое SPA на TypeScript доступно по адресу `http://localhost:8181/` после однократной сборки:
+**Веб-интерфейс (frontend):** React SPA раздаётся FastAPI из `evileye/api/static/`.
+
 ```bash
+# Preferred: check deps and build SPA only if static is missing
+evileye setup-web
+evileye setup-web --check          # verify only
+evileye setup-web --scope system   # pip via sudo (asks confirmation)
+evileye setup-web --force --build  # reinstall missing pkgs + npm rebuild
+
+# Manual frontend build (developers):
 cd evileye/api/frontend && npm install && npm run build
 ```
-Подробности в `evileye/api/frontend/README.md`.
+
+`pip install` already pulls FastAPI/uvicorn. npm is needed only to **rebuild** the SPA (or if static assets are absent). For TurboJPEG preview performance install system `libturbojpeg` (see `docs/CLI_SETUP_WEB.md`).
+
+Подробности: `docs/WEB_UI_GUIDE.md`, `evileye/api/frontend/README.md`.
 
 **Alternative entry point:**
 ```bash

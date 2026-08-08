@@ -1,48 +1,40 @@
-# Основные зависимости для компьютерного зрения и ML
-ultralytics
-psycopg2-binary
-lapx
-albumentations
-scikit-learn
-onnxruntime-gpu>=1.15.0
-tqdm
-shapely
-pympler
-PyQt6
-rfdetr>=0.1.0
-supervision>=0.16.0
+# Mirror of pyproject.toml [project.dependencies]. Prefer: pip install -e .
+# Floor versions only (>=); do not pin exact releases here.
 
-# OpenCV (критически важен, используется везде)
+ultralytics>=8.0.0
+psycopg2-binary>=2.9.0
+lapx>=0.1.0
+albumentations>=1.3.0
+shapely>=2.0.0
+scikit-learn>=1.3.0
+onnxruntime-gpu>=1.15.0; platform_system != "Windows"
+onnxruntime-gpu>=1.15.0,<1.20.2; platform_system == "Windows"
+tqdm>=4.65.0
+pympler>=0.9.0
 opencv-python>=4.8.0
 opencv-contrib-python>=4.8.0
-
-# YAML для конфигураций
+numpy>=1.24.0
+pillow>=10.0.0
 pyyaml>=6.0
-
-# API зависимости (для server.py и api/)
+matplotlib>=3.7.0
+seaborn>=0.12.0
+pandas>=2.0.0
+sqlalchemy>=2.0.0
+psutil>=5.9.0
+requests>=2.31.0
+websockets>=11.0.0
+aiohttp>=3.8.0
+asyncio-mqtt>=0.13.0
+pydantic>=2.0.0
 fastapi>=0.115.0
 uvicorn>=0.30.0
-pydantic>=2.0.0
 itsdangerous>=2.2.0
-
-# CLI зависимости (для cli.py)
-typer>=0.9.0
+loguru>=0.7.0
 rich>=13.0.0
-
-# Системные утилиты
-psutil>=5.9.0
-
-# PyQt5 для совместимости с aarch64 Linux
-PyQt5>=5.15.11
-
-# Примечание: следующие пакеты устанавливаются автоматически как транзитивные зависимости
-# и не требуют явного указания:
-# - numpy (устанавливается с ultralytics, lapx, albumentations, scikit-learn, shapely, rfdetr, supervision)
-# - pillow (устанавливается с ultralytics, supervision)
-# - requests (устанавливается с ultralytics, supervision)
-# - pandas (устанавливается с ultralytics, rfdetr)
-# - matplotlib (устанавливается с ultralytics, rfdetr, supervision)
-# - scipy (устанавливается с ultralytics, albumentations, scikit-learn, rfdetr, supervision)
-# - opencv-python (устанавливается с ultralytics, rfdetr, supervision, но указан явно для контроля версии)
-# - pyyaml (устанавливается с albumentations, rfdetr, supervision, но указан явно для контроля версии)
-# - pydantic (устанавливается с albumentations, rfdetr, но указан явно для контроля версии)
+click>=8.1.0
+typer>=0.9.0
+PyQt5>=5.15.11; platform_system == "Linux" and platform_machine == "aarch64"
+PyQt6>=6.5.0; platform_system != "Linux" or platform_machine != "aarch64"
+rfdetr>=0.1.0
+supervision>=0.16.0
+PyTurboJPEG>=1.7.0

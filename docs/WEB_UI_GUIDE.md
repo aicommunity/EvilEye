@@ -2,6 +2,25 @@
 
 React SPA (Vite) served by FastAPI from `evileye/api/static/`.
 
+## Runtime vs build
+
+| Need | What to install |
+|------|-----------------|
+| API + serve existing SPA | `pip install evileye` (or `-e .`) — FastAPI/uvicorn are main deps; static ships in the package when present |
+| Fast JPEG live preview | Python `PyTurboJPEG` (main dep) **and** system `libturbojpeg` (`sudo apt install libturbojpeg`) |
+| Rebuild / first-time SPA from sources | Node.js + `npm` → `evileye setup-web` or manual `npm run build` |
+
+Recommended:
+
+```bash
+pip install -e .
+# optional: sudo apt install libturbojpeg
+evileye setup-web
+evileye setup-web --check
+```
+
+See [`CLI_SETUP_WEB.md`](CLI_SETUP_WEB.md).
+
 ## Routes
 
 | Path | Permission | Description |
@@ -25,6 +44,8 @@ Language switcher (RU/EN) is in the sidebar footer (`localStorage` key `evileye.
 ## Build & test
 
 ```bash
+evileye setup-web --build
+# or manually:
 cd evileye/api/frontend && npm install && npm run build
 npm test   # vitest (journalMath)
 # optional e2e (server must be up):
@@ -103,4 +124,4 @@ EvilEyeData/
   Events/…
 ```
 
-Composite split folders (`Cam2-Cam3`) map to logical cameras `Cam2` / `Cam3` with prefix-filtered segments (`Cam2_*.mp4`).
+Composite split folders (`Cam2-Cam3`) map to logical cameras `Cam2` / `Cam3`. All parts share the same recording files (prefixed with the first source name); the UI crops via `src_coords`.

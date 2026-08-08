@@ -2,7 +2,17 @@
 
 Vite + React + TypeScript SPA for the EvilEye REST API.
 
-## Build
+## Preferred: CLI
+
+```bash
+evileye setup-web          # check Python web deps; build SPA if static missing
+evileye setup-web --check
+evileye setup-web --build  # force npm install && npm run build
+```
+
+See [`docs/CLI_SETUP_WEB.md`](../../../docs/CLI_SETUP_WEB.md).
+
+## Manual build
 
 ```bash
 cd evileye/api/frontend
@@ -11,6 +21,8 @@ npm run build
 ```
 
 Output is written to `evileye/api/static/`. FastAPI serves the SPA with client-side routing fallback.
+
+Prebuilt `api/static/` may already be present in the package/repo; npm is required only to rebuild after frontend changes.
 
 ## Dev
 
