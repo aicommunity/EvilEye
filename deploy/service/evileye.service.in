@@ -1,0 +1,16 @@
+[Unit]
+Description=EvilEye Web Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory={{WORKING_DIRECTORY}}
+ExecStart={{EVILEYE_BIN}} server --host {{HOST}} --port {{PORT}} --no-reload{{CONFIG_ARGS}}
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

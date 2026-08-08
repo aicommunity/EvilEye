@@ -923,11 +923,99 @@ def deploy() -> None:
         console.print(f"[red]Error deploying monitor assets: {e}[/red]")
         raise typer.Exit(1)
 
+    # Step 4: Ensure OS service for Web UI (does not fail the whole deploy)
+    try:
+        from evileye.service_manager import ensure_service
+        from evileye.service_manager.minimal_config import ensure_system_config
+
+        ensure_system_config(current_dir)
+        svc = ensure_service(site_dir=current_dir, force_user=True)
+        if svc.ok:
+            console.print(f"[green]{svc.message}[/green]")
+        else:
+            console.print(f"[yellow]Service ensure skipped/failed: {svc.message}[/yellow]")
+            console.print("[dim]Run manually: evileye service-install[/dim]")
+    except Exception as e:
+        console.print(f"[yellow]Service ensure skipped: {e}[/yellow]")
+        console.print("[dim]Run manually: evileye service-install[/dim]")
+
     console.print("[green]Deployment completed successfully![/green]")
     console.print(
-        "[dim]Next: create a config (`evileye create ...`), then optionally "
-        "enable watchdog via monitor/scripts/install_timer.sh[/dim]"
+        "[dim]Next: open the Web UI, set admin password, complete Basic setup. "
+        "Optional watchdog: monitor/scripts/install_timer.sh[/dim]"
     )
+
+
+@app.command("service-install")
+def service_install(
+    config: Optional[Path] = typer.Argument(
+        None,
+        help="Optional config name/path for auto-run after server start",
+    ),
+    host: str = typer.Option("0.0.0.0", "--host", help="Bind host for the service"),
+    port: int = typer.Option(8181, "--port", help="Bind port for the service"),
+    user: bool = typer.Option(False, "--user", help="Force systemd --user unit (Linux)"),
+    system: bool = typer.Option(False, "--system", help="Force system unit (may need sudo)"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print unit/plan without applying"),
+) -> None:
+    """
+    Install and start EvilEye as an OS service (Web UI server).
+
+    Without CONFIG starts `evileye server` only (minimal post-install mode).
+    Re-running updates the unit and restarts (idempotent ensure).
+    Use `evileye service-uninstall` to remove the service.
+    """
+    from evileye.service_manager import install_service
+
+    cfg = str(config) if config is not None else None
+    # Default to user unit when neither flag set on non-root installs
+    force_user = user or (not system)
+    force_system = system
+    if user and system:
+        console.print("[red]Cannot combine --user and --system[/red]")
+        raise typer.Exit(1)
+
+    try:
+        result = install_service(
+            site_dir=Path.cwd(),
+            config=cfg,
+            host=host,
+            port=port,
+            force_user=force_user and not force_system,
+            force_system=force_system,
+            dry_run=dry_run,
+        )
+    except Exception as e:
+        console.print(f"[red]service-install failed: {e}[/red]")
+        raise typer.Exit(1)
+
+    if dry_run and result.unit_text:
+        console.print("[blue]Dry-run unit file:[/blue]")
+        console.print(result.unit_text)
+
+    if result.ok:
+        console.print(f"[green]{result.message}[/green]")
+    else:
+        style = "yellow" if result.warn_only else "red"
+        console.print(f"[{style}]{result.message}[/{style}]")
+        if not result.warn_only:
+            raise typer.Exit(1)
+
+
+@app.command("service-uninstall")
+def service_uninstall(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be removed"),
+) -> None:
+    """Stop and remove the EvilEye OS service installed by service-install."""
+    from evileye.service_manager import uninstall_service
+
+    try:
+        result = uninstall_service(site_dir=Path.cwd(), dry_run=dry_run)
+    except Exception as e:
+        console.print(f"[red]service-uninstall failed: {e}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]{result.message}[/green]")
 
 
 @app.command("setup-web")

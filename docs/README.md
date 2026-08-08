@@ -8,6 +8,7 @@
 
 - **[Руководство по настройке базы данных](DATABASE_SETUP_GUIDE.md)** - Подробное руководство по настройке PostgreSQL базы данных для EvilEye
 - **[Команда deploy](CLI_DEPLOY_COMMAND.md)** - Использование команды `evileye deploy` для развертывания системы
+- **[Команды service-install / service-uninstall](CLI_SERVICE_COMMANDS.md)** - OS-сервис Web UI (отдельно от watchdog)
 - **[Команда setup-web](CLI_SETUP_WEB.md)** - Проверка и установка зависимостей Web UI (Python + SPA)
 - **[Docker-деплой (GPU)](DOCKER_DEPLOYMENT.md)** - Контейнер на Ultralytics/PyTorch/CUDA, данные на хосте, host-CLI обёртки
 - **[Руководство по конфигурациям](CONFIGURATION_GUIDE.md)** - Полное описание структуры конфигурационных файлов, всех параметров и примеры конфигураций

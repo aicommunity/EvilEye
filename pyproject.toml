@@ -121,6 +121,8 @@ exclude = ["tests*", "scripts*", "samples*", "configs*", "models*", "icons*", "d
     "api/static/assets/*",
 ]
 
+# deploy/service templates are referenced from repo path; keep mirror note in docs
+
 [tool.black]
 line-length = 88
 target-version = ["py38"]
