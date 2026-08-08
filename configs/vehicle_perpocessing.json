@@ -17,7 +17,7 @@
           "Cam1"
         ],
         "username": "user",
-        "password": "AutoZloboglaz821"
+        "password": ""
       },
       {
         "source": "IpCamera",
@@ -48,7 +48,7 @@
           "Cam3"
         ],
         "username": "user",
-        "password": "AutoZloboglaz821-"
+        "password": ""
       },
       {
         "source": "IpCamera",
@@ -79,7 +79,7 @@
           "Cam5"
         ],
         "username": "user",
-        "password": "AutoZloboglaz821"
+        "password": ""
       }
     ],
     "detectors": [
