@@ -38,6 +38,10 @@ const en: Dict = {
     loginFail: 'Sign-in failed',
     registerFail: 'Registration failed',
     registerSubmitted: 'Registration submitted',
+    mustChangeTitle: 'Set administrator password',
+    mustChangeHint:
+      'A temporary password was created at install time. Set a new password to continue.',
+    mustChangeMinLength: 'New password must be at least 8 characters',
   },
   common: {
     save: 'Save',

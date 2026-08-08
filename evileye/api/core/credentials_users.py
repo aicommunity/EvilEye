@@ -96,6 +96,7 @@ def update_credentials_user(
             raise ValueError("Password must be at least 8 characters")
         item["password_hash"] = hash_password(password)
         item.pop("password", None)
+        item["must_change_password"] = False
     if role is not None:
         item["role"] = normalize_role(role)
     if disabled is not None:

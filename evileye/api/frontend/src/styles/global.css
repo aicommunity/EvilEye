@@ -424,6 +424,25 @@ body {
   z-index: 1000;
 }
 
+.force-password-gate {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+
+.force-password-card {
+  max-width: 420px;
+}
+
+.force-password-card h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.15rem;
+}
+
 .change-password-modal {
   background: var(--bg-card, var(--panel, #1a1a1a));
   border: 1px solid var(--border);

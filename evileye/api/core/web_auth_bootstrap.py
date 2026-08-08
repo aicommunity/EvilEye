@@ -14,6 +14,20 @@ logger = get_module_logger("api.web_auth_bootstrap")
 
 DEFAULT_ADMIN_USER = "admin"
 INSECURE_SESSION_SECRETS = frozenset({"", "evileye-dev-session-secret", "change-me"})
+INSECURE_PLAINTEXT_PASSWORDS = frozenset({"", "change-me", "admin", "password"})
+
+
+def user_must_change_password(user_record: dict[str, Any] | None) -> bool:
+    """Resolve whether the user must change password before using the UI."""
+    if not isinstance(user_record, dict):
+        return False
+    if "must_change_password" in user_record:
+        return bool(user_record.get("must_change_password"))
+    # Legacy / manually edited users without the flag are not forced.
+    plain = user_record.get("password")
+    if isinstance(plain, str) and plain in INSECURE_PLAINTEXT_PASSWORDS:
+        return True
+    return False
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -109,6 +123,7 @@ def ensure_default_admin_credentials(path: Path | None = None) -> bool:
             "password_hash": password_hash,
             "role": "admin",
             "disabled": False,
+            "must_change_password": True,
         }
     ]
     _atomic_write(creds_path, creds)

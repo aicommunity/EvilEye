@@ -97,6 +97,7 @@ export interface AuthMeResponse {
   auth_enabled: boolean;
   user: AuthUser | null;
   permissions: string[];
+  must_change_password?: boolean;
 }
 
 export interface OverviewResponse {

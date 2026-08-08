@@ -6,6 +6,7 @@ import { Button } from '../components/ui';
 import { useToast } from '../components/ui/Toast';
 import { useI18n } from '../i18n';
 import { AuthModal } from './AuthModal';
+import { ForcePasswordGate } from './ForcePasswordGate';
 
 const NAV: Array<{ to: string; labelKey: string; permission?: string }> = [
   { to: '/live', labelKey: 'nav.live', permission: 'live:view' },
@@ -20,7 +21,7 @@ const NAV: Array<{ to: string; labelKey: string; permission?: string }> = [
 ];
 
 export function AppShell() {
-  const { loading, authEnabled, user, hasPermission, logout } = useAuth();
+  const { loading, authEnabled, user, hasPermission, logout, refresh } = useAuth();
   const { t, lang, setLang } = useI18n();
   const { showError, showSuccess } = useToast();
   const [version, setVersion] = useState('—');
@@ -101,6 +102,7 @@ export function AppShell() {
         {loading ? <p className="hint">{t('shell.loading')}</p> : needLogin ? null : <Outlet />}
       </main>
       <AuthModal open={needLogin} />
+      <ForcePasswordGate />
       {pwOpen ? (
         <div className="pw-modal-backdrop" onClick={() => !pwSaving && setPwOpen(false)}>
           <div className="change-password-modal" onClick={(e) => e.stopPropagation()}>
