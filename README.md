@@ -72,9 +72,12 @@ Typical site bring-up:
 ```text
 pip install -e .          # or: pip install evileye
 evileye setup-web         # check + install missing Python pkgs; build SPA if needed
-evileye deploy            # credentials, configs/, monitor/
-evileye run config.json --no-gui
+evileye deploy            # credentials, configs/, monitor/ + ensure service-install
+# Open http://127.0.0.1:8181 → set admin password → Basic setup in Настройка
+# Optional: evileye service-uninstall / watchdog via monitor/scripts/install_timer.sh
 ```
+
+See also [docs/CLI_SERVICE_COMMANDS.md](docs/CLI_SERVICE_COMMANDS.md) and [docs/WEB_UI_GUIDE.md](docs/WEB_UI_GUIDE.md).
 
 ### Basic Usage
 

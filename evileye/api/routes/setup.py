@@ -160,9 +160,11 @@ def _build_status() -> dict[str, Any]:
     record = config.get("record") if isinstance(config.get("record"), dict) else {}
     recording_enabled = bool(record.get("enabled", False))
 
-    needs_setup = not bool(setup.get("data_dir_confirmed"))
-    configured = bool(setup.get("data_dir_confirmed")) and bool(setup.get("completed"))
-    ready_to_run = bool(setup.get("data_dir_confirmed")) and has_sources
+    needs_setup = not bool(setup.get("data_dir_confirmed")) and not bool(str(data_dir).strip())
+    configured = (bool(setup.get("data_dir_confirmed")) or bool(str(data_dir).strip())) and (
+        bool(setup.get("completed")) or has_sources or bool(str(data_dir).strip())
+    )
+    ready_to_run = (bool(setup.get("data_dir_confirmed")) or bool(str(data_dir).strip())) and has_sources
     if use_database:
         db_creds = creds.get("database") if isinstance(creds.get("database"), dict) else {}
         ready_to_run = ready_to_run and bool(db_creds.get("password") or db_creds.get("admin_password"))
