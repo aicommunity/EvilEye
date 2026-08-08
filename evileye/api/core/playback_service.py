@@ -156,16 +156,60 @@ def _configured_segment_length_sec() -> float:
     return length
 
 
-def _segment_start_ts(path: str) -> float | None:
-    """Parse segment start from filename (Cam2_YYYYMMDD_HHMMSS_... or YYYYMMDD_HHMMSS)."""
+def _parse_segment_name(path: str) -> tuple[float, int | None] | None:
+    """Parse session start and optional splitmux index from filename.
+
+    Production GStreamer names look like ``Cam1_YYYYMMDD_HHMMSS_0_%05d.mp4``:
+    the datetime is the recording session start; the trailing ``_%05d`` is the
+    rotation index. Older/alternate names may use a unique datetime per file.
+    """
     name = Path(path).stem
     m = re.search(r"(\d{8})[_-](\d{6})", name)
     if not m:
         return None
     try:
-        return datetime.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M%S").timestamp()
+        session_start = datetime.strptime(m.group(1) + m.group(2), "%Y%m%d%H%M%S").timestamp()
     except Exception:
         return None
+    idx_m = re.search(r"_(\d{5})$", name)
+    index = int(idx_m.group(1)) if idx_m else None
+    return session_start, index
+
+
+def _resolve_segment_starts(
+    parsed: list[tuple[str, float, int | None]],
+    *,
+    configured_length: float,
+) -> list[tuple[str, float]]:
+    """Map files to start timestamps, expanding splitmux indices when needed."""
+    if not parsed:
+        return []
+    by_session: dict[float, list[tuple[str, int | None]]] = {}
+    for path, session_start, index in parsed:
+        by_session.setdefault(session_start, []).append((path, index))
+
+    out: list[tuple[str, float]] = []
+    for session_start, items in by_session.items():
+        indices = [idx for _, idx in items if idx is not None]
+        use_index = (
+            len(items) > 1
+            and len(indices) == len(items)
+            and len(set(indices)) == len(items)
+        )
+        for path, idx in items:
+            if use_index and idx is not None:
+                out.append((path, session_start + float(idx) * configured_length))
+            else:
+                out.append((path, session_start))
+    return out
+
+
+def _segment_start_ts(path: str) -> float | None:
+    """Parse segment start from filename (Cam2_YYYYMMDD_HHMMSS_... or YYYYMMDD_HHMMSS)."""
+    parsed = _parse_segment_name(path)
+    if parsed is None:
+        return None
+    return parsed[0]
 
 
 def _video_duration_sec(path: str) -> float | None:
@@ -444,14 +488,17 @@ def load_segments(
                 paths.extend(glob.glob(str(folder / "*.mp4")))
 
     configured_length = _configured_segment_length_sec()
-    dated: list[tuple[str, float]] = []
+    parsed_named: list[tuple[str, float, int | None]] = []
     undated: list[str] = []
     for path in set(paths):
-        start = _segment_start_ts(path)
-        if start is not None:
-            dated.append((path, start))
+        parsed = _parse_segment_name(path)
+        if parsed is not None:
+            session_start, index = parsed
+            parsed_named.append((path, session_start, index))
         else:
             undated.append(path)
+
+    dated = _resolve_segment_starts(parsed_named, configured_length=configured_length)
 
     items: list[dict[str, Any]] = []
     for path, start_ts, end_ts in _assign_segment_ends(dated, configured_length=configured_length):

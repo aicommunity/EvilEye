@@ -316,10 +316,22 @@ def load_filters_meta() -> dict[str, Any]:
     return payload
 
 
-def _merge_current_filters(filters: Dict[str, Any]) -> Dict[str, Any]:
+def _merge_current_filters(
+    filters: Dict[str, Any],
+    *,
+    journal_kind: str | None = None,
+) -> Dict[str, Any]:
+    """Merge implicit run-scope filters.
+
+    Events include System rows (``source_name='System'``). Auto-scoping to
+    camera names would hide them, so events keep caller filters only.
+    Objects still default to current pipeline source names.
+    """
     merged = dict(filters)
+    if journal_kind == "events":
+        return merged
     source_names = _current_source_names()
-    if source_names and "source_name" not in merged:
+    if source_names and "source_name" not in merged and "source_names" not in merged:
         merged["source_names"] = sorted(source_names)
     return merged
 
@@ -490,7 +502,7 @@ def load_events_page(
         date_from: str | None = None,
         date_to: str | None = None,
 ) -> dict[str, Any]:
-    scoped_filters = _merge_current_filters(filters)
+    scoped_filters = _merge_current_filters(filters, journal_kind="events")
     controller = _db_controller()
     if controller is not None:
         source = _make_db_source(
@@ -518,7 +530,7 @@ def load_objects_page(
         date_from: str | None = None,
         date_to: str | None = None,
 ) -> dict[str, Any]:
-    scoped_filters = _merge_current_filters(filters)
+    scoped_filters = _merge_current_filters(filters, journal_kind="objects")
     controller = _db_controller()
     if controller is not None:
         source = _make_db_source(

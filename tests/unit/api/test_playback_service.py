@@ -118,3 +118,23 @@ def test_load_segments_uses_neighbor_gap_not_opencv(tmp_path, monkeypatch):
     # First segment ends when the next starts (30 minutes), no OpenCV needed.
     assert abs(segs[0]["duration_ms"] - 30 * 60 * 1000) < 1000
     assert segs[0]["end_ts"] == segs[1]["start_ts"]
+
+
+def test_load_segments_splitmux_same_session_timestamp(tmp_path, monkeypatch):
+    """GStreamer splitmux keeps one session datetime; index selects the slot."""
+    root = tmp_path / "EvilEyeData"
+    cam = root / "Streams" / "2026-08-08" / "Cam1"
+    cam.mkdir(parents=True)
+    for idx in range(3):
+        (cam / f"Cam1_20260808_010020_0_{idx:05d}.mp4").write_bytes(b"fake")
+    monkeypatch.setenv("EVILEYE_DATA_DIR", str(root))
+    monkeypatch.setattr(svc, "_configured_segment_length_sec", lambda: 1800.0)
+
+    segs = svc.load_segments("Cam1", date="2026-08-08")
+    assert len(segs) == 3
+    assert abs(segs[1]["start_ts"] - segs[0]["start_ts"] - 1800) < 1
+    assert abs(segs[2]["start_ts"] - segs[1]["start_ts"] - 1800) < 1
+    assert segs[0]["end_ts"] == segs[1]["start_ts"]
+    assert segs[1]["end_ts"] == segs[2]["start_ts"]
+    # Three contiguous 30-min slots (~1.5h coverage from session start).
+    assert abs(segs[2]["start_ts"] - segs[0]["start_ts"] - 3600) < 1

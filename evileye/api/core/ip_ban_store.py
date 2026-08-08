@@ -60,12 +60,15 @@ def _with_lock(path: Path, callback):
                 payload = {"bans": []}
             if not isinstance(payload.get("bans"), list):
                 payload["bans"] = []
+            before = json.dumps(payload, sort_keys=True, ensure_ascii=False)
             result = callback(payload)
-            handle.seek(0)
-            handle.truncate(0)
-            json.dump(payload, handle, indent=2, ensure_ascii=False)
-            handle.write("\n")
-            handle.flush()
+            after = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+            if after != before:
+                handle.seek(0)
+                handle.truncate(0)
+                json.dump(payload, handle, indent=2, ensure_ascii=False)
+                handle.write("\n")
+                handle.flush()
             return result
         finally:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
