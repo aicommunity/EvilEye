@@ -53,6 +53,7 @@ export function AppShell() {
       setCurrentPw('');
       setNewPw('');
       setNewPw2('');
+      await refresh();
     } catch (e) {
       showError(e instanceof Error ? e.message : t('common.error'));
     } finally {
