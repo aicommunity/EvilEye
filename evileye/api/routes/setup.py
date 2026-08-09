@@ -159,6 +159,11 @@ def _build_status(config_name: Optional[str] = None) -> dict[str, Any]:
     use_database = bool(controller.get("use_database", False))
     record = config.get("record") if isinstance(config.get("record"), dict) else {}
     recording_enabled = bool(record.get("enabled", False))
+    enabled_sources = record.get("enabled_sources")
+    if not recording_enabled and isinstance(enabled_sources, dict):
+        recording_enabled = any(bool(v) for v in enabled_sources.values())
+    elif not recording_enabled and isinstance(enabled_sources, list):
+        recording_enabled = len(enabled_sources) > 0
 
     needs_setup = config_needs_setup(config)
     configured = (not needs_setup) or bool(setup.get("completed")) or bool(setup.get("data_dir_confirmed"))

@@ -456,9 +456,53 @@ body {
   margin: 0.5rem 0 1rem;
 }
 
+.setup-banner--pending {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
 .basic-setup-form h3 {
   margin: 1.25rem 0 0.5rem;
   font-size: 1rem;
+}
+
+.basic-sources-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin: 0.75rem 0 0.5rem;
+}
+
+.basic-source-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--bg-card, var(--panel, #1a1a1a)) 92%, var(--accent) 8%);
+  padding: 0.85rem 1rem 1rem;
+}
+
+.basic-source-card__title {
+  font-weight: 600;
+  margin-bottom: 0.65rem;
+  font-size: 0.95rem;
+}
+
+.basic-add-source-bar {
+  margin: 0.75rem 0 1.25rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px dashed color-mix(in srgb, #2e7d32 55%, var(--border));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, #2e7d32 10%, transparent);
+  display: flex;
+  justify-content: flex-start;
+}
+
+.basic-recording-summary {
+  margin: 0.5rem 0 0;
+  font-size: 0.9rem;
+  color: var(--muted, var(--text));
 }
 
 .form-actions-inline {

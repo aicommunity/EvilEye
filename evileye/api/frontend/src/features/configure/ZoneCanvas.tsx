@@ -9,11 +9,13 @@ export function ZoneCanvas({
   sourceId,
   onSourceIdChange,
   readOnly,
+  onSaved,
 }: {
   configName: string;
   sourceId: number;
   onSourceIdChange: (id: number) => void;
   readOnly: boolean;
+  onSaved?: (restartRequired: boolean) => void;
 }) {
   const { showError, showSuccess } = useToast();
   const { t } = useI18n();
@@ -75,7 +77,10 @@ export function ZoneCanvas({
             onClick={() =>
               void editorsApi
                 .putZones(configName, sourceId, zones)
-                .then((r) => showSuccess(r.restart_required ? t('common.savedRestart') : t('common.saved')))
+                .then((r) => {
+                  showSuccess(r.restart_required ? t('common.savedRestart') : t('common.saved'));
+                  onSaved?.(Boolean(r.restart_required));
+                })
                 .catch((e) => showError(e.message))
             }
           >

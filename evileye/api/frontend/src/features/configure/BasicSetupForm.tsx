@@ -1,8 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   setupApi,
-  runCreate,
-  runStart,
   type BasicSetup,
   type BasicSource,
   type SetupStatus,
@@ -13,6 +11,7 @@ import { useToast } from '../../components/ui/Toast';
 import { useAuth } from '../../auth/AuthContext';
 import { useI18n } from '../../i18n';
 import { FormField, FormGrid } from './formLayout';
+import { restartConfigRun } from './restartConfigRun';
 
 const SOURCE_TYPES = ['IpCamera', 'VideoFile', 'Device'] as const;
 
@@ -37,9 +36,11 @@ function emptyBasic(configName: string): BasicSetup {
 export function BasicSetupForm({
   configName,
   onStatus,
+  onPendingApplyChange,
 }: {
   configName: string;
   onStatus?: (s: SetupStatus) => void;
+  onPendingApplyChange?: (pending: boolean) => void;
 }) {
   const { t } = useI18n();
   const { hasPermission } = useAuth();
@@ -105,16 +106,27 @@ export function BasicSetupForm({
     setBasic((prev) => ({ ...prev, sources: prev.sources.filter((_, i) => i !== index) }));
   };
 
-  const buildPayload = (): BasicSetup => ({
-    ...basic,
-    config_name: configName,
-    database: {
-      ...basic.database,
-      password: dbPassword || undefined,
-    },
-  });
+  const recordingSummary = useMemo(() => {
+    const recording = basic.sources.filter((s) => Boolean(s.record));
+    if (!recording.length) return t('setup.recordingSummaryOff');
+    const names = recording.map((s) => s.name || `Cam${s.id + 1}`).join(', ');
+    return t('setup.recordingSummaryOn', { names, count: recording.length });
+  }, [basic.sources, t]);
 
-  const save = async (andRun: boolean) => {
+  const buildPayload = (): BasicSetup => {
+    const sources = basic.sources;
+    return {
+      ...basic,
+      config_name: configName,
+      recording_enabled: sources.some((s) => Boolean(s.record)),
+      database: {
+        ...basic.database,
+        password: dbPassword || undefined,
+      },
+    };
+  };
+
+  const save = async (andRestart: boolean) => {
     if (!canEdit) return;
     setSaving(true);
     try {
@@ -124,18 +136,22 @@ export function BasicSetupForm({
       onStatus?.(res.status);
       setDbPassword('');
       showSuccess(t('setup.saved'));
-      if (andRun) {
+      if (andRestart) {
         if (!res.status.ready_to_run) {
           showError(t('setup.notReadyToRun'));
+          onPendingApplyChange?.(true);
           return;
         }
         if (!canRun) {
           showError(t('setup.noRunPermission'));
+          onPendingApplyChange?.(true);
           return;
         }
-        const run = await runCreate({ config_name: configName });
-        await runStart(run.id as number);
+        await restartConfigRun(configName);
+        onPendingApplyChange?.(false);
         showSuccess(t('setup.runStarted'));
+      } else {
+        onPendingApplyChange?.(true);
       }
     } catch (e) {
       showError(e instanceof ApiError ? e.message : e instanceof Error ? e.message : t('common.saveFail'));
@@ -256,73 +272,80 @@ export function BasicSetupForm({
 
       <h3>{t('setup.sectionSources')}</h3>
       <p className="hint">{t('setup.sourcesHint')}</p>
-      {basic.sources.map((src, i) => (
-        <div key={`${src.id}-${i}`} className="config-source-block">
-          <FormGrid>
-            <FormField label={t('setup.sourceName')}>
-              <input
-                disabled={!canEdit}
-                value={src.name}
-                onChange={(e) => updateSource(i, { name: e.target.value })}
-              />
-            </FormField>
-            <FormField label={t('setup.sourceType')}>
-              <select
-                disabled={!canEdit}
-                value={src.type}
-                onChange={(e) => updateSource(i, { type: e.target.value })}
-              >
-                {SOURCE_TYPES.map((tp) => (
-                  <option key={tp} value={tp}>
-                    {tp}
-                  </option>
-                ))}
-              </select>
-            </FormField>
-            <FormField label={t('setup.sourceAddress')}>
-              <input
-                disabled={!canEdit}
-                value={String(src.address ?? '')}
-                onChange={(e) => updateSource(i, { address: e.target.value })}
-              />
-            </FormField>
-            <FormField label={t('setup.sourceUser')}>
-              <input
-                disabled={!canEdit}
-                value={src.username ?? ''}
-                onChange={(e) => updateSource(i, { username: e.target.value })}
-              />
-            </FormField>
-            <FormField label={t('setup.sourcePassword')}>
-              <input
-                type="password"
-                disabled={!canEdit}
-                placeholder={src.password_set ? '••••••••' : ''}
-                value={src.password ?? ''}
-                onChange={(e) => updateSource(i, { password: e.target.value })}
-                autoComplete="new-password"
-              />
-            </FormField>
-            <FormField label={t('setup.sourceRecord')}>
-              <input
-                type="checkbox"
-                disabled={!canEdit}
-                checked={Boolean(src.record)}
-                onChange={(e) => updateSource(i, { record: e.target.checked })}
-              />
-            </FormField>
-          </FormGrid>
-          {canEdit ? (
-            <Button size="sm" variant="danger" onClick={() => removeSource(i)}>
-              {t('setup.removeSource')}
-            </Button>
-          ) : null}
-        </div>
-      ))}
+      <div className="basic-sources-list">
+        {basic.sources.map((src, i) => (
+          <div key={`${src.id}-${i}`} className="basic-source-card">
+            <div className="basic-source-card__title">
+              {t('setup.cameraCardTitle', { index: i + 1, name: src.name || `Cam${src.id + 1}` })}
+            </div>
+            <FormGrid>
+              <FormField label={t('setup.sourceName')}>
+                <input
+                  disabled={!canEdit}
+                  value={src.name}
+                  onChange={(e) => updateSource(i, { name: e.target.value })}
+                />
+              </FormField>
+              <FormField label={t('setup.sourceType')}>
+                <select
+                  disabled={!canEdit}
+                  value={src.type}
+                  onChange={(e) => updateSource(i, { type: e.target.value })}
+                >
+                  {SOURCE_TYPES.map((tp) => (
+                    <option key={tp} value={tp}>
+                      {tp}
+                    </option>
+                  ))}
+                </select>
+              </FormField>
+              <FormField label={t('setup.sourceAddress')}>
+                <input
+                  disabled={!canEdit}
+                  value={String(src.address ?? '')}
+                  onChange={(e) => updateSource(i, { address: e.target.value })}
+                />
+              </FormField>
+              <FormField label={t('setup.sourceUser')}>
+                <input
+                  disabled={!canEdit}
+                  value={src.username ?? ''}
+                  onChange={(e) => updateSource(i, { username: e.target.value })}
+                />
+              </FormField>
+              <FormField label={t('setup.sourcePassword')}>
+                <input
+                  type="password"
+                  disabled={!canEdit}
+                  placeholder={src.password_set ? '••••••••' : ''}
+                  value={src.password ?? ''}
+                  onChange={(e) => updateSource(i, { password: e.target.value })}
+                  autoComplete="new-password"
+                />
+              </FormField>
+              <FormField label={t('setup.sourceRecord')}>
+                <input
+                  type="checkbox"
+                  disabled={!canEdit}
+                  checked={Boolean(src.record)}
+                  onChange={(e) => updateSource(i, { record: e.target.checked })}
+                />
+              </FormField>
+            </FormGrid>
+            {canEdit ? (
+              <Button size="sm" variant="danger" onClick={() => removeSource(i)}>
+                {t('setup.removeSource')}
+              </Button>
+            ) : null}
+          </div>
+        ))}
+      </div>
       {canEdit ? (
-        <Button size="sm" variant="outline" onClick={addSource}>
-          {t('setup.addSource')}
-        </Button>
+        <div className="basic-add-source-bar">
+          <Button size="sm" variant="success" onClick={addSource}>
+            {t('setup.addSource')}
+          </Button>
+        </div>
       ) : null}
 
       <h3>{t('setup.sectionOptions')}</h3>
@@ -335,23 +358,16 @@ export function BasicSetupForm({
             onChange={(e) => update({ analytics_enabled: e.target.checked })}
           />
         </FormField>
-        <FormField label={t('setup.recording')}>
-          <input
-            type="checkbox"
-            disabled={!canEdit}
-            checked={basic.recording_enabled}
-            onChange={(e) => update({ recording_enabled: e.target.checked })}
-          />
-        </FormField>
       </FormGrid>
       <p className="hint">{t('setup.analyticsHint')}</p>
+      <p className="basic-recording-summary">{recordingSummary}</p>
 
       {canEdit ? (
         <div className="modal-actions" style={{ marginTop: '1rem' }}>
           <Button variant="primary" disabled={saving} onClick={() => void save(false)}>
             {t('setup.save')}
           </Button>
-          <Button variant="outline" disabled={saving} onClick={() => void save(true)}>
+          <Button variant="outline" disabled={saving || !canRun} onClick={() => void save(true)}>
             {t('setup.saveAndRun')}
           </Button>
         </div>

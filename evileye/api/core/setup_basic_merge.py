@@ -148,7 +148,12 @@ def project_basic_from_config(
         },
         "sources": sources_out,
         "analytics_enabled": analytics,
-        "recording_enabled": bool(record.get("enabled", False)),
+        # Prefer OR of per-camera flags so Basic UI matches enabled_sources.
+        "recording_enabled": (
+            any(bool(s.get("record")) for s in sources_out)
+            if sources_out
+            else bool(record.get("enabled", False))
+        ),
     }
 
 
@@ -334,7 +339,11 @@ def apply_basic_setup(
         pipeline["trackers"] = []
         # leave mc_trackers / events alone
 
-    recording_enabled = bool(basic.get("recording_enabled", False))
+    # Master switch follows any per-camera record flag (Basic UI has no global checkbox).
+    if enabled_sources:
+        recording_enabled = any(bool(v) for v in enabled_sources.values())
+    else:
+        recording_enabled = bool(basic.get("recording_enabled", False))
     record["enabled"] = recording_enabled
     if recording_enabled:
         record.setdefault("continuous_recording_enabled", True)
@@ -343,7 +352,9 @@ def apply_basic_setup(
         if isinstance(prev, dict):
             merged_es = dict(prev)
             merged_es.update(enabled_sources)
-            record["enabled_sources"] = merged_es
+            # Drop ids no longer present in the sources list
+            keep_ids = set(enabled_sources.keys())
+            record["enabled_sources"] = {k: bool(v) for k, v in merged_es.items() if str(k) in keep_ids}
         else:
             record["enabled_sources"] = enabled_sources
 

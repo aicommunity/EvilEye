@@ -108,3 +108,43 @@ def test_project_basic_roundtrip_fields():
     assert projected["config_name"] == "system.json"
     assert projected["sources"][0]["name"] == "Front"
     assert projected["analytics_enabled"] is True
+
+
+def test_recording_enabled_follows_source_record_flags():
+    basic = {
+        "data_dir": "D",
+        "storage_mode": "json",
+        "sources": [
+            {"id": 0, "name": "Cam1", "type": "VideoFile", "address": "a.mp4", "record": True},
+            {"id": 1, "name": "Cam2", "type": "VideoFile", "address": "b.mp4", "record": False},
+        ],
+        "analytics_enabled": False,
+        "recording_enabled": False,  # ignored when sources present
+    }
+    cfg, _ = apply_basic_setup({}, basic, {})
+    assert cfg["record"]["enabled"] is True
+    assert cfg["record"]["enabled_sources"]["0"] is True
+    assert cfg["record"]["enabled_sources"]["1"] is False
+
+
+def test_recording_disabled_when_all_sources_off():
+    basic = {
+        "data_dir": "D",
+        "storage_mode": "json",
+        "sources": [
+            {"id": 0, "name": "Cam1", "type": "VideoFile", "address": "a.mp4", "record": False},
+        ],
+        "analytics_enabled": False,
+        "recording_enabled": True,  # ignored when sources present
+    }
+    cfg, _ = apply_basic_setup({}, basic, {})
+    assert cfg["record"]["enabled"] is False
+    assert cfg["record"]["enabled_sources"]["0"] is False
+
+
+def test_project_recording_enabled_is_or_of_sources():
+    cfg = _rich_config()
+    cfg["record"] = {"enabled": False, "enabled_sources": {"0": True}}
+    projected = project_basic_from_config(cfg, {}, config_name="system.json")
+    assert projected["sources"][0]["record"] is True
+    assert projected["recording_enabled"] is True
