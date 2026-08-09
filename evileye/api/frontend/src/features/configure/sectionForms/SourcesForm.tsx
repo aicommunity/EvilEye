@@ -1,9 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Button } from '../../../components/ui';
 import { useI18n } from '../../../i18n';
 import { FormActions, FormField, FormGrid } from '../formLayout';
 import { SourceAdvancedEditor } from '../SourceAdvancedEditor';
-import { cloneSourceRow } from '../sourceRowUtils';
+import {
+  applyRegionsToRow,
+  cloneSourceRow,
+  collectOccupiedSourceIds,
+  padRegions,
+  parseSourceRegions,
+} from '../sourceRowUtils';
 
 type SourceRow = {
   source?: string;
@@ -50,6 +56,7 @@ export function SourcesForm({
   const [advanced, setAdvanced] = useState(false);
   const [jsonText, setJsonText] = useState('[]');
   const [editIndex, setEditIndex] = useState<number | null>(null);
+  const [editSnapshot, setEditSnapshot] = useState<Record<string, unknown> | null>(null);
 
   useEffect(() => {
     const next = asRows(data);
@@ -61,6 +68,16 @@ export function SourcesForm({
     setRows(next);
     onChange?.(next);
   };
+
+  const openAdvanced = (i: number) => {
+    setEditSnapshot(cloneSourceRow(rows[i] as Record<string, unknown>));
+    setEditIndex(i);
+  };
+
+  const occupiedForEdit = useMemo(() => {
+    if (editIndex == null) return [] as number[];
+    return [...collectOccupiedSourceIds(rows as Record<string, unknown>[], editIndex)];
+  }, [editIndex, rows]);
 
   if (advanced) {
     return (
@@ -174,7 +191,20 @@ export function SourcesForm({
                 checked={Boolean(row.split)}
                 onChange={(e) => {
                   const next = [...rows];
-                  next[i] = { ...row, split: e.target.checked };
+                  const asRec = row as Record<string, unknown>;
+                  const parsed = parseSourceRegions(asRec);
+                  const occupied = collectOccupiedSourceIds(rows as Record<string, unknown>[], i);
+                  if (e.target.checked) {
+                    const padded = padRegions(2, parsed.ids, parsed.names, parsed.coords, 1920, 1080, occupied);
+                    next[i] = applyRegionsToRow(asRec, { split: true, ...padded }) as SourceRow;
+                  } else {
+                    next[i] = applyRegionsToRow(asRec, {
+                      split: false,
+                      ids: [parsed.ids[0] ?? 0],
+                      names: [parsed.names[0] ?? `Cam${(parsed.ids[0] ?? 0) + 1}`],
+                      coords: [],
+                    }) as SourceRow;
+                  }
                   updateRows(next);
                 }}
               />
@@ -227,7 +257,7 @@ export function SourcesForm({
             </FormField>
           </FormGrid>
           <div className="config-source-block__actions">
-            <Button size="sm" variant="outline" onClick={() => setEditIndex(i)}>
+            <Button size="sm" variant="outline" onClick={() => openAdvanced(i)}>
               {t('setup.sourceAdvanced')}
             </Button>
             {!readOnly ? (
@@ -258,9 +288,13 @@ export function SourcesForm({
         open={editIndex != null}
         configName={configName}
         sourceIndex={editIndex ?? 0}
-        initialRow={editIndex != null ? cloneSourceRow(rows[editIndex] as Record<string, unknown>) : {}}
+        initialRow={editSnapshot ?? {}}
+        occupiedIds={occupiedForEdit}
         readOnly={readOnly}
-        onClose={() => setEditIndex(null)}
+        onClose={() => {
+          setEditIndex(null);
+          setEditSnapshot(null);
+        }}
         onApplied={async (row) => {
           if (editIndex == null) return;
           const next = [...rows];
@@ -268,6 +302,7 @@ export function SourcesForm({
           updateRows(next);
           await onSave(next);
           setEditIndex(null);
+          setEditSnapshot(null);
         }}
       />
     </div>

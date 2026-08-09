@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { stateApi, streamSnapshotUrl } from '../../api';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { stateApi, streamMjpgUrl } from '../../api';
 import { Button, Modal } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
 import { useI18n } from '../../i18n';
@@ -20,50 +20,6 @@ const CAPTURE_TYPES = ['VideoCaptureGStreamer', 'VideoCaptureOpencv'] as const;
 const SOURCE_KINDS = ['IpCamera', 'VideoFile', 'Device'] as const;
 const API_PREFS = ['CAP_GSTREAMER', 'CAP_FFMPEG'] as const;
 
-async function loadImage(url: string): Promise<HTMLImageElement | null> {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => resolve(null);
-    img.src = url;
-  });
-}
-
-/** Compose logical (cropped) snapshots onto a full-frame canvas using src_coords. */
-async function composeFullFramePreview(
-  runId: number,
-  ids: number[],
-  coords: PixelRect[],
-  frameW: number,
-  frameH: number,
-): Promise<{ dataUrl: string; w: number; h: number } | null> {
-  if (!ids.length || !coords.length) return null;
-  const w = Math.max(1, Math.floor(frameW));
-  const h = Math.max(1, Math.floor(frameH));
-  const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return null;
-  ctx.fillStyle = '#111';
-  ctx.fillRect(0, 0, w, h);
-
-  let drew = 0;
-  for (let i = 0; i < ids.length; i++) {
-    const rect = coords[i];
-    if (!rect) continue;
-    const base = streamSnapshotUrl(runId, ids[i]);
-    const url = `${base}${base.includes('?') ? '&' : '?'}t=${Date.now()}_${i}`;
-    const img = await loadImage(url);
-    if (!img) continue;
-    const [x, y, rw, rh] = rect;
-    ctx.drawImage(img, x, y, Math.max(1, rw), Math.max(1, rh));
-    drew += 1;
-  }
-  if (!drew) return null;
-  return { dataUrl: canvas.toDataURL('image/jpeg', 0.85), w, h };
-}
-
 export function SourceAdvancedEditor({
   open,
   configName,
@@ -72,6 +28,7 @@ export function SourceAdvancedEditor({
   readOnly,
   onClose,
   onApplied,
+  occupiedIds,
 }: {
   open: boolean;
   configName: string;
@@ -80,6 +37,8 @@ export function SourceAdvancedEditor({
   readOnly: boolean;
   onClose: () => void;
   onApplied: (row: Record<string, unknown>) => void | Promise<void>;
+  /** Logical source_ids used by other physical rows (for unique split ids). */
+  occupiedIds?: Iterable<number>;
 }) {
   const { t } = useI18n();
   const { showError } = useToast();
@@ -90,9 +49,24 @@ export function SourceAdvancedEditor({
   const [applying, setApplying] = useState(false);
   const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
   const [previewRunId, setPreviewRunId] = useState<number | null>(null);
+  const [previewUsesFull, setPreviewUsesFull] = useState(false);
+  const [previewNeedsRestart, setPreviewNeedsRestart] = useState(false);
+  /** Bumped on each open so MJPEG URL always changes (browser reconnect). */
+  const [previewSession, setPreviewSession] = useState(0);
+  /** Gate preview until draft is synced from initialRow for this open. */
+  const [rowReady, setRowReady] = useState(false);
+  const previewSessionRef = useRef(0);
+  const occupiedSet = useMemo(() => new Set(occupiedIds ?? []), [occupiedIds]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setCanvasBgUrl(null);
+      setPreviewRunId(null);
+      setPreviewUsesFull(false);
+      setPreviewNeedsRestart(false);
+      setRowReady(false);
+      return;
+    }
     const cloned = cloneSourceRow(initialRow);
     setDraft(cloned);
     setBaseline(JSON.stringify(cloned));
@@ -100,83 +74,88 @@ export function SourceAdvancedEditor({
     setNaturalSize(null);
     setCanvasBgUrl(null);
     setPreviewRunId(null);
+    setPreviewUsesFull(false);
+    setPreviewNeedsRestart(false);
+    setPreviewSession((s) => {
+      const next = s + 1;
+      previewSessionRef.current = next;
+      return next;
+    });
+    setRowReady(true);
   }, [open, initialRow, sourceIndex]);
 
   const regions = useMemo(() => parseSourceRegions(draft), [draft]);
   const dirty = useMemo(() => JSON.stringify(draft) !== baseline, [draft, baseline]);
 
   const frameSize = useMemo(() => {
+    // Split editor coordinate space must follow src_coords (capture pixels), not the
+    // possibly downscaled JPEG natural size — otherwise rects overflow the viewBox
+    // and each zone appears to cover the whole canvas.
     if (regions.split && regions.coords.length) {
       const fromCoords = canvasSizeFromCoords(regions.coords);
-      if (naturalSize) {
-        return {
-          w: Math.max(fromCoords.w, naturalSize.w),
-          h: Math.max(fromCoords.h, naturalSize.h),
-        };
-      }
-      return fromCoords;
+      if (!naturalSize) return fromCoords;
+      return {
+        w: Math.max(fromCoords.w, naturalSize.w),
+        h: Math.max(fromCoords.h, naturalSize.h),
+      };
     }
     return naturalSize ?? { w: 1920, h: 1080 };
   }, [naturalSize, regions.coords, regions.split]);
 
-  const refreshPreview = useCallback(async () => {
+  const resolvePreview = useCallback(async () => {
+    if (!open || !rowReady) return;
+    const sessionAtStart = previewSessionRef.current;
+    if (sessionAtStart <= 0) return;
+    const regionsNow = parseSourceRegions(draft);
+    const idSet = new Set(regionsNow.ids);
+    const preferredSid = regionsNow.ids[0];
     try {
       const res = await stateApi.cameras('current');
+      if (previewSessionRef.current !== sessionAtStart) return;
       const cams = res.items ?? [];
-      const idSet = new Set(regions.ids);
-      const matches = cams.filter(
+      const running = cams.filter(
         (c) => c.source_id != null && idSet.has(Number(c.source_id)) && c.run_state === 'running',
       );
       const anyMatch =
-        matches[0] ??
+        running.find((c) => Number(c.source_id) === preferredSid) ??
+        running[0] ??
+        cams.find((c) => c.source_id != null && Number(c.source_id) === preferredSid) ??
         cams.find((c) => c.source_id != null && idSet.has(Number(c.source_id))) ??
         null;
-      if (!anyMatch || anyMatch.run_id == null) {
+      if (!anyMatch || anyMatch.run_id == null || anyMatch.source_id == null) {
         setCanvasBgUrl(null);
         setPreviewRunId(null);
+        setPreviewUsesFull(false);
+        setPreviewNeedsRestart(Boolean(regionsNow.split));
         return;
       }
       const runId = Number(anyMatch.run_id);
+      const sid = preferredSid != null ? preferredSid : Number(anyMatch.source_id);
+      // Full frame only when runtime already exposes multiple logical siblings (split applied).
+      const runtimeSplit = regionsNow.split && running.length >= 2;
+      const useFull = runtimeSplit;
+      if (previewSessionRef.current !== sessionAtStart) return;
       setPreviewRunId(runId);
-
-      if (regions.split && regions.coords.length >= 1) {
-        const composed = await composeFullFramePreview(
-          runId,
-          regions.ids,
-          regions.coords,
-          frameSize.w,
-          frameSize.h,
-        );
-        if (composed) {
-          setCanvasBgUrl(composed.dataUrl);
-          setNaturalSize({ w: composed.w, h: composed.h });
-          return;
-        }
-      }
-
-      // Non-split (or compose failed): show single logical/full stream as canvas background.
-      const sid = Number(anyMatch.source_id);
-      const base = streamSnapshotUrl(runId, sid);
-      const url = `${base}${base.includes('?') ? '&' : '?'}t=${Date.now()}`;
-      const img = await loadImage(url);
-      if (img && img.naturalWidth > 0) {
-        setNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
-        setCanvasBgUrl(url);
-      } else {
-        setCanvasBgUrl(null);
-      }
+      setPreviewUsesFull(useFull);
+      setPreviewNeedsRestart(Boolean(regionsNow.split) && !useFull);
+      const base = streamMjpgUrl(runId, 2, sid, { full: useFull });
+      const url = `${base}${base.includes('?') ? '&' : '?'}sess=${sessionAtStart}`;
+      setCanvasBgUrl(url);
     } catch {
+      if (previewSessionRef.current !== sessionAtStart) return;
       setCanvasBgUrl(null);
       setPreviewRunId(null);
+      setPreviewUsesFull(false);
+      setPreviewNeedsRestart(false);
     }
-  }, [frameSize.h, frameSize.w, regions.coords, regions.ids, regions.split]);
+  }, [draft, open, rowReady]);
 
   useEffect(() => {
-    if (!open) return;
-    void refreshPreview();
-    const id = window.setInterval(() => void refreshPreview(), 2500);
+    if (!open || !rowReady) return;
+    void resolvePreview();
+    const id = window.setInterval(() => void resolvePreview(), 5000);
     return () => window.clearInterval(id);
-  }, [open, refreshPreview]);
+  }, [open, rowReady, resolvePreview, previewSession]);
 
   const patchDraft = (patch: Record<string, unknown>) => setDraft((prev) => ({ ...prev, ...patch }));
 
@@ -210,7 +189,15 @@ export function SourceAdvancedEditor({
 
   const addRegion = () => {
     const n = Math.max(2, regions.ids.length + 1);
-    const padded = padRegions(n, regions.ids, regions.names, regions.coords, frameSize.w, frameSize.h);
+    const padded = padRegions(
+      n,
+      regions.ids,
+      regions.names,
+      regions.coords,
+      frameSize.w,
+      frameSize.h,
+      occupiedSet,
+    );
     setRegions({ split: true, ...padded });
     setSelected(padded.ids.length - 1);
   };
@@ -218,7 +205,6 @@ export function SourceAdvancedEditor({
   const removeSelectedRegion = () => {
     if (selected == null || selected < 0 || selected >= regions.ids.length) return;
     if (regions.ids.length <= 2) {
-      // Turning off split when fewer than 2 remain
       setRegions({
         split: false,
         ids: [regions.ids[selected === 0 ? 1 : 0] ?? regions.ids[0] ?? 0],
@@ -269,7 +255,8 @@ export function SourceAdvancedEditor({
       <div className="source-advanced-layout">
         <div className="source-advanced-preview-col">
           {!canvasBgUrl ? <p className="hint">{t('setup.noPreviewRun')}</p> : null}
-          {regions.split ? <p className="hint">{t('setup.splitPreviewHint')}</p> : null}
+          {regions.split && previewUsesFull ? <p className="hint">{t('setup.splitPreviewHint')}</p> : null}
+          {previewNeedsRestart ? <p className="hint">{t('setup.splitPreviewNeedsRestart')}</p> : null}
           <SourceSplitCanvas
             width={frameSize.w}
             height={frameSize.h}
@@ -277,6 +264,9 @@ export function SourceAdvancedEditor({
             selected={selected}
             readOnly={readOnly || !regions.split}
             bgUrl={canvasBgUrl}
+            onBgNaturalSize={(w, h) => {
+              setNaturalSize((prev) => (prev && prev.w === w && prev.h === h ? prev : { w, h }));
+            }}
             onSelect={setSelected}
             onChangeRect={(index, rect) => {
               if (!regions.split) return;
@@ -376,7 +366,15 @@ export function SourceAdvancedEditor({
                 checked={regions.split}
                 onChange={(e) => {
                   if (e.target.checked) {
-                    const padded = padRegions(2, regions.ids, regions.names, regions.coords, frameSize.w, frameSize.h);
+                    const padded = padRegions(
+                      2,
+                      regions.ids,
+                      regions.names,
+                      regions.coords,
+                      frameSize.w,
+                      frameSize.h,
+                      occupiedSet,
+                    );
                     setRegions({ split: true, ...padded });
                     setSelected(0);
                   } else {

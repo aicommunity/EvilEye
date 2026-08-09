@@ -59,6 +59,8 @@ class VideoCaptureBase(EvilEyeBase):
         self.split_stream = False
         self.num_split = 0
         self.src_coords = None
+        self._latest_full_frame = None
+        self._latest_full_frame_ts = 0.0
         self.source_ids = None
         self.source_names = None
         self.finished = False
@@ -431,6 +433,10 @@ class VideoCaptureBase(EvilEyeBase):
                 continue
             frame = self._unpack_capture_payload(payload)
             if frame is None:
+                # full_frame payloads return None after stashing; only probe worker exit
+                # when the queue item was not a usable processing frame.
+                if isinstance(payload, dict) and (payload.get("frame_meta") or {}).get("kind") == "full_frame":
+                    continue
                 self._mark_finished_if_worker_stopped()
                 continue
             self._touch_process_mode_frame_activity()
@@ -440,13 +446,28 @@ class VideoCaptureBase(EvilEyeBase):
                 pass
 
     def _unpack_capture_payload(self, payload):
-        """Convert descriptor payload from capture worker to CaptureImage."""
+        """Convert descriptor payload from capture worker to CaptureImage.
+
+        Payloads with ``frame_meta.kind == "full_frame"`` stash the uncropped
+        image on this parent proxy for split-editor preview and return None
+        so they are not queued as processing frames.
+        """
         if isinstance(payload, dict) and "frame_handle" in payload:
             try:
                 handle = payload.get("frame_handle")
                 if not isinstance(handle, FrameHandle):
                     return None
                 meta = payload.get("frame_meta", {}) or {}
+                image = self._frame_transport.consume_frame(handle)
+                if image is None:
+                    return None
+                if meta.get("kind") == "full_frame":
+                    self._latest_full_frame = image
+                    try:
+                        self._latest_full_frame_ts = float(meta.get("time_stamp") or time.time())
+                    except Exception:
+                        self._latest_full_frame_ts = time.time()
+                    return None
                 frame = Frame()
                 frame.source_id = meta.get("source_id")
                 frame.frame_id = meta.get("frame_id")
@@ -454,7 +475,7 @@ class VideoCaptureBase(EvilEyeBase):
                 frame.current_video_position = meta.get("current_video_position")
                 frame.source_video_duration = meta.get("source_video_duration")
                 frame.time_stamp = meta.get("time_stamp")
-                frame.image = self._frame_transport.consume_frame(handle)
+                frame.image = image
                 return frame
             except Exception:
                 return None
@@ -803,6 +824,16 @@ class VideoCaptureBase(EvilEyeBase):
 
         if not self.split_stream or not self.src_coords or not self.num_split:
             return captured_images
+
+        # Throttled stash of the uncropped frame for web split-editor preview.
+        try:
+            now = time.time()
+            last = float(getattr(self, "_latest_full_frame_ts", 0.0) or 0.0)
+            if (now - last) >= 0.5:
+                self._latest_full_frame = src_image.copy()
+                self._latest_full_frame_ts = now
+        except Exception:
+            pass
 
         for stream_cnt in range(self.num_split):
             if stream_cnt >= len(self.src_coords):

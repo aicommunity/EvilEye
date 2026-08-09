@@ -26,6 +26,8 @@ class StreamFrameJob:
     objects: list[dict[str, Any]] | None = None
     zones: list[dict[str, Any]] | None = None
     signalization: bool = False
+    full_frame: bool = False
+    alias_source_ids: list[int] | None = None
 
 
 class FrameRelayClient:
@@ -273,6 +275,47 @@ class StreamingService:
             self._condition.notify()
         return True
 
+    def submit_full_frame(self, image, *, primary_source_id: int, source_ids: list[int] | None = None) -> bool:
+        """Publish uncropped capture frame for split-editor preview.
+
+        Broker keys: ``{pipeline}:full:{primary}`` and aliases ``{pipeline}:full:{each_id}``.
+        """
+        if image is None or primary_source_id is None:
+            return False
+        throttle_key = f"{self._pipeline_id}:full:{int(primary_source_id)}"
+        # Also publish when any logical sibling is being viewed.
+        ids = list(source_ids or []) or [int(primary_source_id)]
+        demand = self._should_publish(throttle_key)
+        if not demand:
+            for sid in ids:
+                if self._should_publish(f"{self._pipeline_id}:{int(sid)}"):
+                    demand = True
+                    break
+        if not demand:
+            return False
+        try:
+            image_for_encode = image.copy()
+            self._stats["copied_images"] += 1
+        except Exception:
+            image_for_encode = image
+        job = StreamFrameJob(
+            pipeline_id=self._pipeline_id,
+            image=image_for_encode,
+            source_id=int(primary_source_id),
+            frame_id=None,
+            created_at=time.time(),
+            objects=[],
+            zones=[],
+            signalization=False,
+            full_frame=True,
+            alias_source_ids=[int(x) for x in ids],
+        )
+        with self._condition:
+            self._pending_jobs[f"full:{int(primary_source_id)}"] = job
+            self._stats["submitted"] += 1
+            self._condition.notify()
+        return True
+
     def has_consumers(self, source_id: int | None = None) -> bool:
         throttle_key = f"{self._pipeline_id}:{source_id}" if source_id is not None else self._pipeline_id
         has_local_stream, has_server_preview_demand, has_server_process, has_relay = self._get_consumer_state(
@@ -326,7 +369,11 @@ class StreamingService:
                 continue
             try:
                 encode_started = time.perf_counter()
-                image = _downscale_image(job.image, self._preview_max_edge)
+                # Keep native resolution for split-editor full frames so src_coords align.
+                if job.full_frame:
+                    image = job.image
+                else:
+                    image = _downscale_image(job.image, self._preview_max_edge)
                 payload = self._encoder.encode(image)
                 self._stats["last_encode_ms"] = (time.perf_counter() - encode_started) * 1000.0
                 if not payload:
@@ -452,8 +499,24 @@ class StreamingService:
             "objects": list(job.objects or []),
             "zones": list(job.zones or []),
             "signalization": bool(job.signalization),
+            "full_frame": bool(job.full_frame),
         }
         broker = get_frame_broker()
+        if job.full_frame and job.source_id is not None:
+            aliases = list(job.alias_source_ids or [job.source_id])
+            for sid in aliases:
+                key = f"{pipeline_id}:full:{int(sid)}"
+                sid_meta = dict(metadata)
+                sid_meta["source_id"] = int(sid)
+                sid_meta["full_frame"] = True
+                broker.publish_jpeg(key, jpeg_bytes, metadata=sid_meta)
+                if self._server_process_manager is not None:
+                    try:
+                        # Key is already ``{pipeline}:full:{sid}``; IPC must not alias as crop.
+                        self._server_process_manager.publish_frame(key, jpeg_bytes, metadata=sid_meta)
+                    except Exception:
+                        pass
+            return
         broker.publish_jpeg(pipeline_id, jpeg_bytes, metadata=metadata)
         if job.source_id is not None:
             broker.publish_jpeg(f"{pipeline_id}:{job.source_id}", jpeg_bytes, metadata=metadata)

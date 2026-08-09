@@ -97,7 +97,10 @@ const en: Dict = {
     cancel: 'Cancel',
     noPreviewRun: 'No active run preview for this source.',
     splitPreviewHint:
-      'Split editor shows a reconstructed full frame (crops placed by coordinates). Click a region to select; drag to move or resize edges. Use Add/Remove for regions.',
+      'Split editor shows the full original frame; rectangles are crops on that frame. Click a region to select; drag to move or resize edges. Use Add/Remove for regions.',
+    splitPreviewNeedsRestart:
+      'Full-frame split preview appears after Apply and Restart (showing logical preview for now, or frame not ready yet).',
+    splitRestartHint: 'Split saved to config. Restart the run to apply capture changes.',
     splitEnable: 'Split into multiple streams',
     splitRegions: 'Regions',
     addSplitRegion: 'Add region',

@@ -15,7 +15,7 @@ import { useI18n } from '../../i18n';
 import { FormField, FormGrid } from './formLayout';
 import { restartConfigRun } from './restartConfigRun';
 import { SourceAdvancedEditor } from './SourceAdvancedEditor';
-import { cloneSourceRow, findSourceRowIndex } from './sourceRowUtils';
+import { cloneSourceRow, collectOccupiedSourceIds, findSourceRowIndex } from './sourceRowUtils';
 
 const SOURCE_TYPES = ['IpCamera', 'VideoFile', 'Device'] as const;
 
@@ -60,6 +60,7 @@ export function BasicSetupForm({
   const [advancedOpen, setAdvancedOpen] = useState<{
     index: number;
     row: Record<string, unknown>;
+    occupiedIds: number[];
   } | null>(null);
 
   const load = useCallback(async () => {
@@ -183,7 +184,11 @@ export function BasicSetupForm({
         showError(t('common.loadFail'));
         return;
       }
-      setAdvancedOpen({ index: si, row: cloneSourceRow(sources[si]) });
+      setAdvancedOpen({
+        index: si,
+        row: cloneSourceRow(sources[si]),
+        occupiedIds: [...collectOccupiedSourceIds(sources, si)],
+      });
     } catch (e) {
       showError(e instanceof Error ? e.message : t('common.loadFail'));
     }
@@ -202,7 +207,11 @@ export function BasicSetupForm({
     sources[advancedOpen.index] = row;
     await configPutSection(configName, 'pipeline.sources', sources);
     onPendingApplyChange?.(true);
-    showSuccess(t('setup.saved'));
+    const splitTouched =
+      Boolean(row.split) ||
+      Boolean((advancedOpen.row as { split?: boolean }).split) ||
+      (Array.isArray(row.source_ids) && row.source_ids.length > 1);
+    showSuccess(splitTouched ? t('setup.splitRestartHint') : t('setup.saved'));
     setAdvancedOpen(null);
     await load();
   };
@@ -439,6 +448,7 @@ export function BasicSetupForm({
         configName={configName}
         sourceIndex={advancedOpen?.index ?? 0}
         initialRow={advancedOpen?.row ?? {}}
+        occupiedIds={advancedOpen?.occupiedIds}
         readOnly={!canEdit}
         onClose={() => setAdvancedOpen(null)}
         onApplied={applyAdvanced}

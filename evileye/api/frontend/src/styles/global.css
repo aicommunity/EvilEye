@@ -545,11 +545,19 @@ body {
   background: #111;
   border: 1px solid var(--border);
   border-radius: 4px;
-  background-size: contain;
-  background-repeat: no-repeat;
-  background-position: center;
   cursor: crosshair;
   overflow: hidden;
+}
+
+.source-split-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center;
+  pointer-events: none;
+  user-select: none;
 }
 
 .source-split-svg {

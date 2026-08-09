@@ -81,6 +81,7 @@ export function SourceSplitCanvas({
   onSelect,
   onChangeRect,
   bgUrl,
+  onBgNaturalSize,
 }: {
   width: number;
   height: number;
@@ -90,6 +91,7 @@ export function SourceSplitCanvas({
   onSelect: (index: number | null) => void;
   onChangeRect: (index: number, rect: PixelRect) => void;
   bgUrl?: string | null;
+  onBgNaturalSize?: (w: number, h: number) => void;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<DragMode | null>(null);
@@ -194,7 +196,6 @@ export function SourceSplitCanvas({
       className="source-split-canvas"
       style={{
         aspectRatio: `${Math.max(width, 1)} / ${Math.max(height, 1)}`,
-        backgroundImage: bgUrl ? `url(${bgUrl})` : undefined,
         cursor: cursorFor(),
       }}
       onMouseDown={onMouseDown}
@@ -202,6 +203,20 @@ export function SourceSplitCanvas({
       onMouseUp={endDrag}
       onMouseLeave={endDrag}
     >
+      {bgUrl ? (
+        <img
+          className="source-split-bg"
+          src={bgUrl}
+          alt=""
+          draggable={false}
+          onLoad={(e) => {
+            const img = e.currentTarget;
+            if (img.naturalWidth > 0 && img.naturalHeight > 0 && onBgNaturalSize) {
+              onBgNaturalSize(img.naturalWidth, img.naturalHeight);
+            }
+          }}
+        />
+      ) : null}
       <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" className="source-split-svg">
         {coords.map((r, i) => {
           const active = selected === i;
