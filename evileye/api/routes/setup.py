@@ -35,6 +35,8 @@ class BasicSourceModel(BaseModel):
     username: Optional[str] = None
     password: Optional[str] = None
     record: bool = True
+    # Projection-only (split tails); ignored on apply.
+    extra_names: Optional[list[str]] = None
 
 
 class BasicDatabaseModel(BaseModel):

@@ -76,6 +76,30 @@ def source_recording_flag(
     return True
 
 
+def _row_source_ids(row: dict[str, Any], fallback_idx: int) -> list[int]:
+    ids = row.get("source_ids")
+    out: list[int] = []
+    if isinstance(ids, list) and ids:
+        for x in ids:
+            try:
+                out.append(int(x))
+            except Exception:
+                continue
+    if not out:
+        out = [fallback_idx]
+    return out
+
+
+def _row_source_names(row: dict[str, Any], ids: list[int]) -> list[str]:
+    names = row.get("source_names")
+    if isinstance(names, list) and names:
+        return [str(n) for n in names]
+    name = row.get("source_name") or row.get("name")
+    if name:
+        return [str(name)]
+    return [f"Cam{ids[0] + 1}"]
+
+
 def recording_effectively_enabled(config: dict[str, Any]) -> bool:
     """True if at least one pipeline source would record under current record settings."""
     record = _as_dict(config.get("record"))
@@ -84,21 +108,15 @@ def recording_effectively_enabled(config: dict[str, Any]) -> bool:
     pipeline = _as_dict(config.get("pipeline"))
     sources = _as_list(pipeline.get("sources"))
     if not sources:
-        # No sources yet — still report master flag for empty configs.
         return True
     for idx, raw in enumerate(sources):
         row = _as_dict(raw)
-        sid = idx
-        ids = row.get("source_ids")
-        if isinstance(ids, list) and ids:
-            try:
-                sid = int(ids[0])
-            except Exception:
-                sid = idx
-        names = row.get("source_names")
-        name = str(names[0]) if isinstance(names, list) and names else None
-        if source_recording_flag(record, sid, name):
-            return True
+        ids = _row_source_ids(row, idx)
+        names = _row_source_names(row, ids)
+        for i, sid in enumerate(ids):
+            name = names[i] if i < len(names) else None
+            if source_recording_flag(record, sid, name):
+                return True
     return False
 
 
@@ -146,29 +164,23 @@ def project_basic_from_config(
     sources_out: list[dict[str, Any]] = []
     for idx, raw in enumerate(_as_list(pipeline.get("sources"))):
         row = _as_dict(raw)
-        sid = 0
-        ids = row.get("source_ids")
-        if isinstance(ids, list) and ids:
-            try:
-                sid = int(ids[0])
-            except Exception:
-                sid = idx
-        else:
-            sid = idx
-        names = row.get("source_names")
-        name = (
-            str(names[0])
-            if isinstance(names, list) and names
-            else str(row.get("source_name") or row.get("name") or f"Cam{sid + 1}")
-        )
+        ids = _row_source_ids(row, idx)
+        names = _row_source_names(row, ids)
+        sid = ids[0]
+        name = names[0]
+        extra_names = names[1:] if len(names) > 1 else []
         src_type = str(row.get("source") or row.get("type") or "IpCamera")
         address = str(row.get("camera") or row.get("uri") or row.get("address") or "")
         cred = _as_dict(source_creds.get(address))
-        rec_flag = source_recording_flag(record, sid, name)
+        # Card record flag is ON if any logical id in the row would record.
+        rec_flag = any(
+            source_recording_flag(record, ids[i], names[i] if i < len(names) else None) for i in range(len(ids))
+        )
         sources_out.append(
             {
                 "id": sid,
                 "name": name,
+                "extra_names": extra_names,
                 "type": SOURCE_TYPE_MAP.get(src_type, src_type),
                 "address": address,
                 "username": str(cred.get("username") or ""),
@@ -214,7 +226,28 @@ def _default_tracker(source_id: int) -> dict[str, Any]:
     return {"source_ids": [source_id]}
 
 
+def _covered_source_ids(entries: list[Any]) -> set[int]:
+    covered: set[int] = set()
+    for raw in entries:
+        ids = _as_dict(raw).get("source_ids") or []
+        for x in ids:
+            try:
+                covered.add(int(x))
+            except Exception:
+                pass
+    return covered
+
+
+def _all_logical_ids(sources: list[dict[str, Any]]) -> set[int]:
+    out: set[int] = set()
+    for idx, s in enumerate(sources):
+        for sid in _row_source_ids(s, idx):
+            out.add(sid)
+    return out
+
+
 def _build_source_row(basic_src: dict[str, Any], existing: Optional[dict[str, Any]], index: int) -> dict[str, Any]:
+    """Merge basic card onto existing source row without wiping unmanaged fields / split ids."""
     row = copy.deepcopy(existing) if isinstance(existing, dict) else {}
     sid = int(basic_src.get("id", index))
     name = str(basic_src.get("name") or f"Cam{sid + 1}")
@@ -224,8 +257,31 @@ def _build_source_row(basic_src: dict[str, Any], existing: Optional[dict[str, An
         address = 0 if src_type == "Device" else ""
     row["source"] = src_type
     row["camera"] = address
-    row["source_ids"] = [sid]
-    row["source_names"] = [name]
+
+    existing_ids = row.get("source_ids") if isinstance(row.get("source_ids"), list) else None
+    existing_names = row.get("source_names") if isinstance(row.get("source_names"), list) else None
+    is_split = bool(row.get("split")) or (isinstance(existing_ids, list) and len(existing_ids) > 1)
+
+    if is_split and isinstance(existing_ids, list) and existing_ids:
+        ids = list(existing_ids)
+        try:
+            ids[0] = sid
+        except Exception:
+            ids = [sid] + list(existing_ids[1:])
+        row["source_ids"] = ids
+        if isinstance(existing_names, list) and existing_names:
+            names = list(existing_names)
+            names[0] = name
+            # Keep tail names aligned with ids length
+            while len(names) < len(ids):
+                names.append(f"Cam{ids[len(names)] + 1}")
+            row["source_names"] = names[: len(ids)]
+        else:
+            row["source_names"] = [name] + [f"Cam{i + 1}" for i in ids[1:]]
+    else:
+        row["source_ids"] = [sid]
+        row["source_names"] = [name]
+
     row.setdefault("execution_mode", "thread")
     return row
 
@@ -238,7 +294,7 @@ def apply_basic_setup(
     """
     Merge basic setup into config + credentials.
 
-    Returns (new_config, new_credentials). Does not wipe unmanaged sections.
+    Only allowlisted fields are mutated; unmanaged sections/keys are preserved.
     """
     config = copy.deepcopy(existing_config) if isinstance(existing_config, dict) else {}
     creds = copy.deepcopy(credentials) if isinstance(credentials, dict) else {}
@@ -247,19 +303,19 @@ def apply_basic_setup(
     controller = _as_dict(config.get("controller"))
     database = _as_dict(config.get("database"))
     record = _as_dict(config.get("record"))
-    storage_monitor = _as_dict(config.get("storage_monitor"))
+    storage_monitor = _as_dict(config.get("storage_monitor")) if "storage_monitor" in config else {}
 
     old_image_dir = str(database.get("image_dir") or "")
     data_dir = str(basic.get("data_dir") or "").strip()
     if data_dir:
         database["image_dir"] = data_dir
-        # Sync out_dir / storage path only when unset or previously tied to image_dir
         out_dir = record.get("out_dir")
         if not out_dir or str(out_dir) == old_image_dir:
             record["out_dir"] = data_dir
-        sm_path = storage_monitor.get("path")
-        if not sm_path or str(sm_path) == old_image_dir:
-            storage_monitor["path"] = data_dir
+        if storage_monitor:
+            sm_path = storage_monitor.get("path")
+            if not sm_path or str(sm_path) == old_image_dir:
+                storage_monitor["path"] = data_dir
 
     storage_mode = str(basic.get("storage_mode") or "json").lower()
     use_database = storage_mode == "database"
@@ -281,14 +337,18 @@ def apply_basic_setup(
             db_creds.setdefault("admin_password", password)
             if not db_creds.get("admin_user_name"):
                 db_creds["admin_user_name"] = db_creds.get("user_name") or "postgres"
-        # Strip secrets from config database section
         for secret_key in ("password", "admin_password"):
             database.pop(secret_key, None)
         creds["database"] = db_creds
-    database.setdefault("preview_width", 300)
-    database.setdefault("preview_height", 150)
+    if "preview_width" not in database:
+        database["preview_width"] = 300
+    if "preview_height" not in database:
+        database["preview_height"] = 150
 
-    pipeline["pipeline_class"] = "PipelineSurveillance"
+    # Do not overwrite an existing pipeline_class.
+    if not pipeline.get("pipeline_class"):
+        pipeline["pipeline_class"] = "PipelineSurveillance"
+
     existing_sources = [_as_dict(x) for x in _as_list(pipeline.get("sources"))]
     existing_by_key = {_source_key(s): s for s in existing_sources}
 
@@ -308,15 +368,20 @@ def apply_basic_setup(
         }
         existing = existing_by_key.get(_source_key(probe))
         if existing is None:
-            # try match by id alone
             for cand in existing_sources:
                 ids = cand.get("source_ids")
-                if isinstance(ids, list) and ids and int(ids[0]) == sid:
-                    existing = cand
-                    break
+                if isinstance(ids, list) and ids:
+                    try:
+                        if int(ids[0]) == sid:
+                            existing = cand
+                            break
+                    except Exception:
+                        continue
         row = _build_source_row(basic_src, existing, idx)
         new_sources.append(row)
-        enabled_sources[str(sid)] = bool(basic_src.get("record", True))
+        rec = bool(basic_src.get("record", True))
+        for logical_id in _row_source_ids(row, idx):
+            enabled_sources[str(logical_id)] = rec
         address = str(row.get("camera") or "")
         if address.startswith("rtsp://") or address.startswith("http"):
             kept_uris.add(address)
@@ -330,12 +395,9 @@ def apply_basic_setup(
             if entry:
                 source_creds[address] = entry
 
-    # Drop credentials for removed URIs that we previously tracked in sources list
     for uri in list(source_creds.keys()):
         if uri.startswith("rtsp://") or uri.startswith("http"):
-            # Keep if still referenced
             if uri not in kept_uris:
-                # only remove if it was among previous source cameras
                 prev_cameras = {str(s.get("camera") or "") for s in existing_sources}
                 if uri in prev_cameras:
                     source_creds.pop(uri, None)
@@ -344,68 +406,41 @@ def apply_basic_setup(
 
     analytics_enabled = bool(basic.get("analytics_enabled", False))
     if analytics_enabled:
-        detectors = _as_list(pipeline.get("detectors"))
-        trackers = _as_list(pipeline.get("trackers"))
+        detectors = [copy.deepcopy(_as_dict(d)) for d in _as_list(pipeline.get("detectors"))]
+        trackers = [copy.deepcopy(_as_dict(t)) for t in _as_list(pipeline.get("trackers"))]
+        logical_ids = _all_logical_ids(new_sources)
         if not detectors:
-            pipeline["detectors"] = [_default_detector(int((_as_dict(s).get("source_ids") or [i])[0])) for i, s in enumerate(new_sources)]
+            pipeline["detectors"] = [_default_detector(sid) for sid in sorted(logical_ids)]
         else:
-            # Ensure coverage for current source ids without wiping model params
-            covered: set[int] = set()
-            for det in detectors:
-                ids = _as_dict(det).get("source_ids") or []
-                for x in ids:
-                    try:
-                        covered.add(int(x))
-                    except Exception:
-                        pass
-            for s in new_sources:
-                ids = s.get("source_ids") or []
-                if ids and int(ids[0]) not in covered:
-                    detectors.append(_default_detector(int(ids[0])))
+            covered = _covered_source_ids(detectors)
+            for sid in sorted(logical_ids):
+                if sid not in covered:
+                    detectors.append(_default_detector(sid))
             pipeline["detectors"] = detectors
         if not trackers:
-            pipeline["trackers"] = [_default_tracker(int((_as_dict(s).get("source_ids") or [i])[0])) for i, s in enumerate(new_sources)]
+            pipeline["trackers"] = [_default_tracker(sid) for sid in sorted(logical_ids)]
         else:
-            covered_t: set[int] = set()
-            for tr in trackers:
-                ids = _as_dict(tr).get("source_ids") or []
-                for x in ids:
-                    try:
-                        covered_t.add(int(x))
-                    except Exception:
-                        pass
-            for s in new_sources:
-                ids = s.get("source_ids") or []
-                if ids and int(ids[0]) not in covered_t:
-                    trackers.append(_default_tracker(int(ids[0])))
+            covered_t = _covered_source_ids(trackers)
+            for sid in sorted(logical_ids):
+                if sid not in covered_t:
+                    trackers.append(_default_tracker(sid))
             pipeline["trackers"] = trackers
-        if "mc_trackers" not in pipeline:
-            pipeline["mc_trackers"] = [
-                {"source_ids": [int((s.get("source_ids") or [0])[0]) for s in new_sources], "enable": False}
-            ]
+        # Never create/overwrite mc_trackers if missing — leave Advanced to manage.
     else:
         pipeline["detectors"] = []
         pipeline["trackers"] = []
         # leave mc_trackers / events alone
 
-    # Master switch follows any per-camera record flag (Basic UI has no global checkbox).
     if enabled_sources:
         recording_enabled = any(bool(v) for v in enabled_sources.values())
     else:
         recording_enabled = bool(basic.get("recording_enabled", False))
     record["enabled"] = recording_enabled
-    if recording_enabled:
-        record.setdefault("continuous_recording_enabled", True)
+    if recording_enabled and "continuous_recording_enabled" not in record:
+        record["continuous_recording_enabled"] = True
     if enabled_sources:
-        prev = record.get("enabled_sources")
-        if isinstance(prev, dict):
-            merged_es = dict(prev)
-            merged_es.update(enabled_sources)
-            # Drop ids no longer present in the sources list
-            keep_ids = set(enabled_sources.keys())
-            record["enabled_sources"] = {k: bool(v) for k, v in merged_es.items() if str(k) in keep_ids}
-        else:
-            record["enabled_sources"] = enabled_sources
+        # Replace with explicit per-id map for current logical sources only.
+        record["enabled_sources"] = {k: bool(v) for k, v in enabled_sources.items()}
 
     config["pipeline"] = pipeline
     config["controller"] = controller
@@ -414,10 +449,14 @@ def apply_basic_setup(
     if storage_monitor:
         config["storage_monitor"] = storage_monitor
 
-    # Ensure common empty sections exist for brand-new configs only
-    config.setdefault("objects_handler", config.get("objects_handler", {}))
-    config.setdefault("events_detectors", config.get("events_detectors", {}))
-    config.setdefault("events_processor", config.get("events_processor", {}))
-    config.setdefault("visualizer", config.get("visualizer") or {"num_width": 1, "num_height": 1})
+    # Only seed empty sections for brand-new configs; never replace existing ones.
+    if "objects_handler" not in config:
+        config["objects_handler"] = {}
+    if "events_detectors" not in config:
+        config["events_detectors"] = {}
+    if "events_processor" not in config:
+        config["events_processor"] = {}
+    if "visualizer" not in config:
+        config["visualizer"] = {"num_width": 1, "num_height": 1}
 
     return config, creds

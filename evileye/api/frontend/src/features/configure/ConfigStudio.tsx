@@ -280,7 +280,7 @@ export function ConfigStudio({
             <span>{t('setup.pendingApplyBanner')}</span>
             {canRun ? (
               <Button size="sm" variant="primary" disabled={applying} onClick={() => void applyRestart()}>
-                {t('setup.saveAndRun')}
+                {t('setup.restart')}
               </Button>
             ) : null}
           </div>

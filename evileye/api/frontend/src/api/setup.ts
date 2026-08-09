@@ -19,6 +19,8 @@ export type SetupStatus = {
 export type BasicSource = {
   id: number;
   name: string;
+  /** Extra logical names for split sources (Cam3 when card is Cam2). */
+  extra_names?: string[];
   type: string;
   address: string | number;
   username?: string;

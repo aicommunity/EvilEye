@@ -82,9 +82,9 @@ const en: Dict = {
     recordingSummaryOff: 'Recording is off',
     analyticsHint: 'Always uses the standard PipelineSurveillance pipeline. Without analytics, detectors and trackers are disabled.',
     save: 'Save',
-    saveAndRun: 'Save and restart',
+    restart: 'Restart',
     pendingApplyBanner:
-      'Configuration is saved but not applied to the running system. Click “Save and restart”.',
+      'Configuration is saved but not applied to the running system. Click “Restart”.',
     saved: 'Settings saved',
     notReadyToRun: 'Cannot start: set a data directory and at least one source.',
     noRunPermission: 'Insufficient permissions to start a run.',

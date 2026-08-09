@@ -126,7 +126,7 @@ export function BasicSetupForm({
     };
   };
 
-  const save = async (andRestart: boolean) => {
+  const save = async () => {
     if (!canEdit) return;
     setSaving(true);
     try {
@@ -136,28 +136,37 @@ export function BasicSetupForm({
       onStatus?.(res.status);
       setDbPassword('');
       showSuccess(t('setup.saved'));
-      if (andRestart) {
-        if (!res.status.ready_to_run) {
-          showError(t('setup.notReadyToRun'));
-          onPendingApplyChange?.(true);
-          return;
-        }
-        if (!canRun) {
-          showError(t('setup.noRunPermission'));
-          onPendingApplyChange?.(true);
-          return;
-        }
-        await restartConfigRun(configName);
-        onPendingApplyChange?.(false);
-        showSuccess(t('setup.runStarted'));
-      } else {
-        onPendingApplyChange?.(true);
-      }
+      onPendingApplyChange?.(true);
     } catch (e) {
       showError(e instanceof ApiError ? e.message : e instanceof Error ? e.message : t('common.saveFail'));
     } finally {
       setSaving(false);
     }
+  };
+
+  const restart = async () => {
+    if (!canRun) return;
+    setSaving(true);
+    try {
+      if (status && !status.ready_to_run) {
+        showError(t('setup.notReadyToRun'));
+        return;
+      }
+      await restartConfigRun(configName);
+      onPendingApplyChange?.(false);
+      showSuccess(t('setup.runStarted'));
+    } catch (e) {
+      showError(e instanceof ApiError ? e.message : e instanceof Error ? e.message : t('common.error'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const cameraTitle = (src: BasicSource, index: number) => {
+    const base = src.name || `Cam${src.id + 1}`;
+    const extras = (src.extra_names || []).filter(Boolean);
+    const name = extras.length ? `${base} (+${extras.join(', ')})` : base;
+    return t('setup.cameraCardTitle', { index: index + 1, name });
   };
 
   if (loading) {
@@ -275,9 +284,7 @@ export function BasicSetupForm({
       <div className="basic-sources-list">
         {basic.sources.map((src, i) => (
           <div key={`${src.id}-${i}`} className="basic-source-card">
-            <div className="basic-source-card__title">
-              {t('setup.cameraCardTitle', { index: i + 1, name: src.name || `Cam${src.id + 1}` })}
-            </div>
+            <div className="basic-source-card__title">{cameraTitle(src, i)}</div>
             <FormGrid>
               <FormField label={t('setup.sourceName')}>
                 <input
@@ -362,14 +369,18 @@ export function BasicSetupForm({
       <p className="hint">{t('setup.analyticsHint')}</p>
       <p className="basic-recording-summary">{recordingSummary}</p>
 
-      {canEdit ? (
+      {canEdit || canRun ? (
         <div className="modal-actions" style={{ marginTop: '1rem' }}>
-          <Button variant="primary" disabled={saving} onClick={() => void save(false)}>
-            {t('setup.save')}
-          </Button>
-          <Button variant="outline" disabled={saving || !canRun} onClick={() => void save(true)}>
-            {t('setup.saveAndRun')}
-          </Button>
+          {canEdit ? (
+            <Button variant="primary" disabled={saving} onClick={() => void save()}>
+              {t('setup.save')}
+            </Button>
+          ) : null}
+          {canRun ? (
+            <Button variant="outline" disabled={saving} onClick={() => void restart()}>
+              {t('setup.restart')}
+            </Button>
+          ) : null}
         </div>
       ) : null}
     </div>
