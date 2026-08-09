@@ -40,6 +40,7 @@ from evileye.api.security import (
     required_permissions_for_request,
 )
 from evileye import __version__
+from evileye.core.paths import creds_path
 
 logger = get_module_logger("api.app")
 
@@ -122,10 +123,10 @@ async def lifespan(_app: FastAPI):
         raise RuntimeError("web_auth.enabled must be true when EVILEYE_ENV=production or EVILEYE_REQUIRE_AUTH=1")
 
     try:
-        creds_path = Path("credentials.json")
+        creds_file = creds_path()
         section = {}
-        if creds_path.exists():
-            payload = json.loads(creds_path.read_text(encoding="utf-8"))
+        if creds_file.exists():
+            payload = json.loads(creds_file.read_text(encoding="utf-8"))
             section = payload.get("web_auth") if isinstance(payload, dict) else {}
         get_rate_guard().configure(load_protection_config(section if isinstance(section, dict) else {}))
     except Exception as exc:
@@ -249,10 +250,10 @@ def create_app() -> FastAPI:
     app.state.web_auth = web_auth
 
     try:
-        creds_path = Path("credentials.json")
+        creds_file = creds_path()
         section = {}
-        if creds_path.exists():
-            payload = json.loads(creds_path.read_text(encoding="utf-8"))
+        if creds_file.exists():
+            payload = json.loads(creds_file.read_text(encoding="utf-8"))
             section = payload.get("web_auth") if isinstance(payload, dict) else {}
         get_rate_guard().configure(load_protection_config(section if isinstance(section, dict) else {}))
     except Exception:

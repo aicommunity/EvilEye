@@ -129,7 +129,7 @@ class RecordingParams:
             # Basic writability check (directory must be traversable too)
             if not path.is_dir():
                 return False, f"not a directory: {path}"
-            if not os.access(path, os.W_OK | os.X_OK):
+            if not os.access(path, os.W_OK):
                 return False, f"not writable: {path}"
             return True, ""
         except Exception as e:

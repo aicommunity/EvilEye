@@ -47,9 +47,23 @@ evileye service-install my.json
 - System: `/etc/systemd/system/evileye.service`
 - Шаблон: [`deploy/service/evileye.service.in`](../deploy/service/evileye.service.in)
 
-### Windows (best-effort)
+### Windows (best-effort → supported)
 
-Генерируется `scripts/evileye-server.bat`; по возможности регистрируется Scheduled Task. NSSM не требуется.
+Генерируется `scripts/evileye-server.bat`; регистрируется Scheduled Task **`EvilEye`** (`ONSTART`, `/RL HIGHEST`). NSSM не требуется. Нужны права администратора для `schtasks`.
+
+Ручной запуск при ошибке Task: двойной клик по `.bat` или:
+
+```powershell
+schtasks /Run /TN EvilEye
+```
+
+Полный native bring-up: [WINDOWS_NATIVE.md](WINDOWS_NATIVE.md).
+
+Watchdog (отдельно от service):
+
+```powershell
+evileye watchdog-install --config configs/single_video.json
+```
 
 ## service-uninstall
 

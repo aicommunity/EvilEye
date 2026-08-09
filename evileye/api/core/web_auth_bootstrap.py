@@ -9,6 +9,7 @@ from typing import Any
 
 from evileye.api.security import hash_password
 from evileye.core.logger import get_module_logger
+from evileye.core.paths import creds_path
 
 logger = get_module_logger("api.web_auth_bootstrap")
 
@@ -63,7 +64,7 @@ def _ensure_web_auth_section(creds: dict[str, Any]) -> dict[str, Any]:
 
 def ensure_secure_web_auth_secrets(path: Path | None = None) -> bool:
     """Replace weak/missing session_secret and internal_token; persist if changed."""
-    creds_path = path or Path("credentials.json")
+    creds_path = path or creds_path()
     creds = _load_json(creds_path)
     web_auth = _ensure_web_auth_section(creds)
     changed = False
@@ -95,7 +96,7 @@ def ensure_secure_web_auth_secrets(path: Path | None = None) -> bool:
 
 def ensure_default_admin_credentials(path: Path | None = None) -> bool:
     """Create default admin user in credentials.json if web_auth.users is empty."""
-    creds_path = path or Path("credentials.json")
+    creds_path = path or creds_path()
     creds = _load_json(creds_path)
     web_auth = _ensure_web_auth_section(creds)
 

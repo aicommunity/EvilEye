@@ -132,21 +132,36 @@ def spawn_detached_restart_helper(
         "    break\n"
         "  time.sleep(0.4)\n"
         "else:\n"
-        "  try: os.kill(wait_pid, signal.SIGKILL)\n"
+        "  try:\n"
+        "    if os.name=='nt':\n"
+        "      subprocess.run(['taskkill','/F','/T','/PID',str(wait_pid)],check=False,"
+        " capture_output=True)\n"
+        "    else:\n"
+        "      os.kill(wait_pid, signal.SIGKILL)\n"
         "  except Exception: pass\n"
         "  time.sleep(1.0)\n"
-        "subprocess.Popen(cmd, cwd=cwd, start_new_session=True,"
-        " stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,"
-        " close_fds=True)\n"
+        "kwargs=dict(cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,"
+        " stderr=subprocess.DEVNULL, close_fds=(os.name!='nt'))\n"
+        "if os.name=='nt':\n"
+        "  kwargs['creationflags']=getattr(subprocess,'CREATE_NEW_PROCESS_GROUP',0)\n"
+        "else:\n"
+        "  kwargs['start_new_session']=True\n"
+        "subprocess.Popen(cmd, **kwargs)\n"
     )
+    popen_kwargs: dict[str, Any] = {
+        "cwd": workdir,
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "close_fds": os.name != "nt",
+    }
+    if os.name == "nt":
+        popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    else:
+        popen_kwargs["start_new_session"] = True
     proc = subprocess.Popen(
         [sys.executable, "-c", helper, str(int(wait_pid)), str(grace), workdir, *cmd],
-        cwd=workdir,
-        start_new_session=True,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        close_fds=True,
+        **popen_kwargs,
     )
     logger.info(
         "Spawned restart helper pid=%s waiting for pid=%s then: %s",

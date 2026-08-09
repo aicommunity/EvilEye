@@ -22,7 +22,7 @@ def _path_is_writable_dir(path: Path) -> tuple[bool, str]:
         path.mkdir(parents=True, exist_ok=True)
         if not path.is_dir():
             return False, f"not a directory: {path}"
-        if not os.access(path, os.W_OK | os.X_OK):
+        if not os.access(path, os.W_OK):
             return False, f"not writable: {path}"
         return True, ""
     except Exception as exc:

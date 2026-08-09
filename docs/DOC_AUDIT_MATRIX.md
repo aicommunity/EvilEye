@@ -31,7 +31,13 @@ Last full pass: **2026-05-22** (branch `mt_refactoring2`, post MP refactor R0–
 | docs/GUI_REFACTORING_GUIDE.md | visualization/ | Feature | **OK** | |
 | docs/DEPENDENCY_INJECTION_GUIDE.md | core/di | Feature | **OK** | |
 | docs/CLI_DEPLOY_COMMAND.md | cli | Feature | **OK** | |
-| docs/DATABASE_SETUP_GUIDE.md | database/ | Feature | **OK** | |
+| docs/CLI_SERVICE_COMMANDS.md | service_manager | Feature | **OK** | Windows schtasks |
+| docs/CLI_SETUP_WEB.md | setup_web | Feature | **OK** | |
+| docs/DOCKER_DEPLOYMENT.md | docker/ | Feature | **OK** | Linux host-cli; Win → WINDOWS_DOCKER |
+| docs/WINDOWS_NATIVE.md | cli, watchdog_native | Feature | **OK** | Native pip Windows |
+| docs/WINDOWS_DOCKER_DEPLOYMENT.md | docker/windows | Feature | **OK** | Docker Desktop |
+| docs/WEB_UI_GUIDE.md | api/ | Feature | **OK** | |
+| docs/DATABASE_SETUP_GUIDE.md | database/ | Feature | **Partial** | Prefer credentials `host_name` |
 | docs/STREAMING_REFACTOR_NOTES.md | controller/ | Feature | **OK** | |
 | docs/LABELING_SYSTEM_README.md | objects_handler/ | Feature | **N/A** | No MP terms |
 | docs/CREATE_SCRIPT_README.md | — | Tooling | **N/A** | |

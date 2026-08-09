@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import signal
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -14,7 +13,7 @@ from evileye.api.core.process_restart import (
 )
 
 
-def test_stop_uses_killpg_on_process_group():
+def test_stop_uses_terminate_tree():
     manager = ConfigRunManager()
     cfg_item = ConfigRunItem(1, "test", Path("configs/test.json"))
     cfg_item.pid = 4242
@@ -23,16 +22,15 @@ def test_stop_uses_killpg_on_process_group():
     manager._items[1] = cfg_item
 
     with patch("evileye.api.core.process_restart.pid_hosts_current_process", return_value=False), \
-            patch("evileye.api.core.config_run_manager.os.getpgid", return_value=4242) as getpgid, \
-            patch("evileye.api.core.config_run_manager.os.killpg") as killpg, \
-            patch("evileye.api.core.config_run_manager.os.kill", side_effect=ProcessLookupError), \
+            patch("evileye.core.process_control.terminate_tree") as terminate_tree, \
+            patch("evileye.core.process_control.pid_exists", return_value=False), \
             patch("evileye.api.core.config_run_manager.mark_runtime_stopped") as mark_stopped, \
             patch("evileye.core.mp_session_registry.cleanup_session_by_id") as cleanup_session:
         manager._stop_grace_sec = lambda: 0.1  # type: ignore[method-assign]
         result = manager.stop(1)
 
-    getpgid.assert_called_once_with(4242)
-    killpg.assert_called_once_with(4242, signal.SIGTERM)
+    terminate_tree.assert_called_once()
+    assert terminate_tree.call_args[0][0] == 4242
     cleanup_session.assert_called_once_with("abc123")
     mark_stopped.assert_called_once()
     assert result["state"] == ConfigRunState.STOPPED
@@ -46,10 +44,10 @@ def test_stop_refuses_to_kill_api_host_process():
     manager._items[1] = cfg_item
 
     with patch("evileye.api.core.process_restart.pid_hosts_current_process", return_value=True), \
-            patch("evileye.api.core.config_run_manager.os.killpg") as killpg:
+            patch("evileye.core.process_control.terminate_tree") as terminate_tree:
         with pytest.raises(RuntimeError, match="hosts this API"):
             manager.stop(1)
-    killpg.assert_not_called()
+    terminate_tree.assert_not_called()
 
 
 def test_cmdline_has_gui():
@@ -101,7 +99,6 @@ def test_restart_self_hosted_spawns_helper_and_terms_pid():
             ]), \
             patch("evileye.api.core.process_restart.spawn_detached_restart_helper", return_value=555) as spawn, \
             patch("evileye.api.core.process_restart.signal_pid_term") as term:
-        # Avoid safe_config_name needing real file — use name that passes basename check
         result = manager.restart_for_config("poly-cameras-gst.json")
 
     assert result["mode"] == "self_hosted_detached"
@@ -115,5 +112,5 @@ def test_pid_hosts_current_process_self():
     import os
 
     assert pid_hosts_current_process(os.getpid()) is True
-    assert pid_hosts_current_process(1) or not pid_hosts_current_process(1)  # may or may not be ancestor
+    assert pid_hosts_current_process(1) or not pid_hosts_current_process(1)
     assert pid_hosts_current_process(-1) is False

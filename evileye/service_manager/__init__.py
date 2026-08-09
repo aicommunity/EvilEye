@@ -53,7 +53,9 @@ def _normalize_config_rel(config: Optional[str], site_dir: Path) -> Optional[str
 
 
 def service_status(site_dir: Path | None = None) -> dict[str, Any]:
-    root = Path(site_dir) if site_dir is not None else Path.cwd()
+    from evileye.core.paths import site_root
+
+    root = Path(site_dir).resolve() if site_dir is not None else site_root()
     state = load_state(root)
     out = dict(state) if state else {"installed": False}
     out["site_dir"] = str(root.resolve())
@@ -71,7 +73,9 @@ def install_service(
     dry_run: bool = False,
     ensure_minimal_config: bool = True,
 ) -> ServiceActionResult:
-    root = (Path(site_dir) if site_dir is not None else Path.cwd()).resolve()
+    from evileye.core.paths import site_root
+
+    root = Path(site_dir).resolve() if site_dir is not None else site_root()
     root.mkdir(parents=True, exist_ok=True)
     (root / "configs").mkdir(parents=True, exist_ok=True)
     (root / "logs").mkdir(parents=True, exist_ok=True)
@@ -207,7 +211,9 @@ def uninstall_service(
     site_dir: Path | None = None,
     dry_run: bool = False,
 ) -> ServiceActionResult:
-    root = (Path(site_dir) if site_dir is not None else Path.cwd()).resolve()
+    from evileye.core.paths import site_root
+
+    root = Path(site_dir).resolve() if site_dir is not None else site_root()
     state = load_state(root)
 
     if sys.platform.startswith("linux"):

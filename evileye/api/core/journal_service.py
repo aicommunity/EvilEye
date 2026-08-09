@@ -17,6 +17,7 @@ from evileye.visualization_modules.journal_data_source_db import DatabaseJournal
 from evileye.visualization_modules.journal_data_source_json import JsonLabelJournalDataSource
 from evileye.visualization_modules.journal_media_resolver import enrich_grouped_row, relative_to_base, row_key
 from evileye.visualization_modules.journal_path_resolver import JournalPathResolver
+from evileye.core.paths import configs_dir, creds_path
 
 
 class JournalPathError(Exception):
@@ -116,7 +117,7 @@ def assert_path_under_base(resolved: str, base_dir: str) -> str:
 
 
 def _load_credentials() -> dict[str, Any]:
-    path = Path("credentials.json")
+    path = creds_path()
     if not path.exists():
         return {}
     try:
@@ -885,7 +886,7 @@ def restore_config_history(job_id: int, target_name: str) -> dict[str, Any]:
     safe = Path(target_name).name
     if safe != target_name or ".." in target_name:
         raise ValueError("Invalid target config name")
-    target = Path("configs") / safe
+    target = configs_dir() / safe
     if not target.parent.exists():
         raise FileNotFoundError("configs directory not found")
     controller = _db_controller()

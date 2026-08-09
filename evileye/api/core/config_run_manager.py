@@ -6,6 +6,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from evileye.core.paths import configs_dir, site_root
 from typing import Dict, Optional
 
 from evileye.api.core.runtime_registry import (
@@ -134,59 +135,17 @@ class ConfigRunManager:
         if not pid:
             return True
         from evileye.api.core.process_restart import pid_hosts_current_process
+        from evileye.core.process_control import pid_exists, terminate_tree
 
         if pid_hosts_current_process(int(pid)):
             raise RuntimeError(
                 "Refusing to stop the process that hosts this API; use POST /api/v1/system/restart"
             )
         try:
-            pgid = os.getpgid(pid)
-        except ProcessLookupError:
-            return True
+            terminate_tree(int(pid), grace_sec=grace_sec)
         except Exception:
-            pgid = pid
-        try:
-            os.killpg(pgid, signal.SIGTERM)
-        except ProcessLookupError:
-            return True
-        except Exception:
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except Exception:
-                return False
-
-        deadline = time.monotonic() + grace_sec
-        while time.monotonic() < deadline:
-            try:
-                os.kill(pid, 0)
-            except OSError:
-                return True
-            time.sleep(0.2)
-
-        try:
-            import psutil  # type: ignore
-
-            parent = psutil.Process(pid)
-            children = parent.children(recursive=True)
-            for child in children:
-                try:
-                    child.kill()
-                except Exception:
-                    pass
-            try:
-                parent.kill()
-            except Exception:
-                pass
-            return True
-        except Exception:
-            try:
-                os.killpg(pgid, signal.SIGKILL)
-            except Exception:
-                try:
-                    os.kill(pid, signal.SIGKILL)
-                except Exception:
-                    return False
-            return True
+            return False
+        return not pid_exists(int(pid))
 
     def restart_for_config(
         self,
@@ -238,7 +197,7 @@ class ConfigRunManager:
 
         rid = int(matching.get("id"))
         pid = matching.get("pid")
-        config_path = matching.get("config_path") or str(Path("configs") / safe_name)
+        config_path = matching.get("config_path") or str(configs_dir() / safe_name)
         managed = bool(matching.get("managed"))
 
         if pid and pid_hosts_current_process(int(pid)):
@@ -252,7 +211,7 @@ class ConfigRunManager:
             helper_pid = spawn_detached_restart_helper(
                 wait_pid=int(pid),
                 cmd=cmd,
-                cwd=Path.cwd(),
+                cwd=site_root(),
                 grace_sec=max(self._stop_grace_sec(), 90.0),
             )
             # Graceful controller shutdown without killpg (would suicide the API).
@@ -357,7 +316,7 @@ class ConfigRunManager:
             return self._describe_locked(item)
 
     def _ensure_configs_dir(self) -> Path:
-        cfg_dir = Path("configs")
+        cfg_dir = configs_dir()
         cfg_dir.mkdir(parents=True, exist_ok=True)
         return cfg_dir
 
@@ -472,7 +431,7 @@ class ConfigRunManager:
             self.logger.info(f"Starting config run '{rid}': {' '.join(cmd)}")
             proc = subprocess.Popen(
                 cmd,
-                cwd=str(Path.cwd()),
+                cwd=str(site_root()),
                 env=env,
                 start_new_session=True,
             )

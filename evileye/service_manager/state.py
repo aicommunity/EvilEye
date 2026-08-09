@@ -13,7 +13,9 @@ SERVICE_NAME = "evileye"
 
 
 def state_path(site_dir: Path | None = None) -> Path:
-    root = Path(site_dir) if site_dir is not None else Path.cwd()
+    from evileye.core.paths import site_root
+
+    root = Path(site_dir).resolve() if site_dir is not None else site_root()
     return root / STATE_FILENAME
 
 

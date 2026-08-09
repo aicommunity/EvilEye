@@ -70,7 +70,8 @@ class TestDbPayload(BaseModel):
 
 
 def _configs_dir() -> Path:
-    cfg_dir = Path("configs")
+    from evileye.core.paths import configs_dir
+    cfg_dir = configs_dir()
     cfg_dir.mkdir(parents=True, exist_ok=True)
     return cfg_dir
 
@@ -107,7 +108,8 @@ def _atomic_write(path: Path, payload: dict[str, Any]) -> None:
 
 
 def _credentials_path() -> Path:
-    return Path("credentials.json")
+    from evileye.core.paths import creds_path
+    return creds_path()
 
 
 def _setup_section(creds: dict[str, Any]) -> dict[str, Any]:
