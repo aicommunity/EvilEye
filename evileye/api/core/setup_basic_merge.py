@@ -43,6 +43,65 @@ def resolve_usable_data_dir(config: dict[str, Any]) -> str:
     return ""
 
 
+def source_recording_flag(
+    record: dict[str, Any],
+    source_id: int,
+    source_name: str | None = None,
+) -> bool:
+    """
+    Whether a source should record, matching controller ConfigService semantics.
+
+    - Master ``record.enabled`` must be true.
+    - ``enabled_sources`` as dict: per-id bool flags (missing id → false if dict non-empty).
+    - ``enabled_sources`` as non-empty list: allow-list of ids/names.
+    - Empty list / missing: all sources follow the master switch.
+    """
+    if not bool(record.get("enabled", False)):
+        return False
+    enabled_sources = record.get("enabled_sources")
+    if isinstance(enabled_sources, dict):
+        if not enabled_sources:
+            return True
+        if str(source_id) in enabled_sources:
+            return bool(enabled_sources[str(source_id)])
+        if source_id in enabled_sources:
+            return bool(enabled_sources[source_id])
+        return False
+    if isinstance(enabled_sources, list) and len(enabled_sources) > 0:
+        if source_id in enabled_sources or str(source_id) in enabled_sources:
+            return True
+        if source_name and source_name in enabled_sources:
+            return True
+        return False
+    return True
+
+
+def recording_effectively_enabled(config: dict[str, Any]) -> bool:
+    """True if at least one pipeline source would record under current record settings."""
+    record = _as_dict(config.get("record"))
+    if not bool(record.get("enabled", False)):
+        return False
+    pipeline = _as_dict(config.get("pipeline"))
+    sources = _as_list(pipeline.get("sources"))
+    if not sources:
+        # No sources yet — still report master flag for empty configs.
+        return True
+    for idx, raw in enumerate(sources):
+        row = _as_dict(raw)
+        sid = idx
+        ids = row.get("source_ids")
+        if isinstance(ids, list) and ids:
+            try:
+                sid = int(ids[0])
+            except Exception:
+                sid = idx
+        names = row.get("source_names")
+        name = str(names[0]) if isinstance(names, list) and names else None
+        if source_recording_flag(record, sid, name):
+            return True
+    return False
+
+
 def config_needs_setup(config: dict[str, Any]) -> bool:
     """True only for empty/scaffold configs (no sources and no usable data path)."""
     pipeline = _as_dict(config.get("pipeline"))
@@ -105,12 +164,7 @@ def project_basic_from_config(
         src_type = str(row.get("source") or row.get("type") or "IpCamera")
         address = str(row.get("camera") or row.get("uri") or row.get("address") or "")
         cred = _as_dict(source_creds.get(address))
-        enabled_sources = record.get("enabled_sources")
-        rec_flag = True
-        if isinstance(enabled_sources, dict):
-            rec_flag = bool(enabled_sources.get(str(sid), enabled_sources.get(sid, True)))
-        elif isinstance(enabled_sources, list):
-            rec_flag = sid in enabled_sources or str(sid) in enabled_sources
+        rec_flag = source_recording_flag(record, sid, name)
         sources_out.append(
             {
                 "id": sid,
@@ -148,12 +202,7 @@ def project_basic_from_config(
         },
         "sources": sources_out,
         "analytics_enabled": analytics,
-        # Prefer OR of per-camera flags so Basic UI matches enabled_sources.
-        "recording_enabled": (
-            any(bool(s.get("record")) for s in sources_out)
-            if sources_out
-            else bool(record.get("enabled", False))
-        ),
+        "recording_enabled": recording_effectively_enabled(config),
     }
 
 

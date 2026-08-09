@@ -16,6 +16,7 @@ from evileye.api.core.setup_basic_merge import (
     apply_basic_setup,
     config_needs_setup,
     project_basic_from_config,
+    recording_effectively_enabled,
     resolve_usable_data_dir,
 )
 from evileye.api.core.web_auth_bootstrap import user_must_change_password
@@ -158,12 +159,7 @@ def _build_status(config_name: Optional[str] = None) -> dict[str, Any]:
     controller = config.get("controller") if isinstance(config.get("controller"), dict) else {}
     use_database = bool(controller.get("use_database", False))
     record = config.get("record") if isinstance(config.get("record"), dict) else {}
-    recording_enabled = bool(record.get("enabled", False))
-    enabled_sources = record.get("enabled_sources")
-    if not recording_enabled and isinstance(enabled_sources, dict):
-        recording_enabled = any(bool(v) for v in enabled_sources.values())
-    elif not recording_enabled and isinstance(enabled_sources, list):
-        recording_enabled = len(enabled_sources) > 0
+    recording_enabled = recording_effectively_enabled(config)
 
     needs_setup = config_needs_setup(config)
     configured = (not needs_setup) or bool(setup.get("completed")) or bool(setup.get("data_dir_confirmed"))

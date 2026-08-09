@@ -142,9 +142,33 @@ def test_recording_disabled_when_all_sources_off():
     assert cfg["record"]["enabled_sources"]["0"] is False
 
 
-def test_project_recording_enabled_is_or_of_sources():
+def test_project_recording_enabled_follows_enabled_sources_dict():
     cfg = _rich_config()
-    cfg["record"] = {"enabled": False, "enabled_sources": {"0": True}}
+    cfg["record"] = {"enabled": True, "enabled_sources": {"0": True}}
     projected = project_basic_from_config(cfg, {}, config_name="system.json")
     assert projected["sources"][0]["record"] is True
     assert projected["recording_enabled"] is True
+
+
+def test_project_recording_off_when_master_disabled():
+    cfg = _rich_config()
+    cfg["record"] = {"enabled": False, "enabled_sources": {"0": True}}
+    projected = project_basic_from_config(cfg, {}, config_name="system.json")
+    assert projected["sources"][0]["record"] is False
+    assert projected["recording_enabled"] is False
+
+
+def test_project_empty_enabled_sources_list_follows_master():
+    cfg = _rich_config()
+    cfg["record"] = {"enabled": True, "enabled_sources": []}
+    projected = project_basic_from_config(cfg, {}, config_name="system.json")
+    assert projected["sources"][0]["record"] is True
+    assert projected["recording_enabled"] is True
+
+
+def test_project_dict_all_false_means_recording_off():
+    cfg = _rich_config()
+    cfg["record"] = {"enabled": True, "enabled_sources": {"0": False}}
+    projected = project_basic_from_config(cfg, {}, config_name="system.json")
+    assert projected["sources"][0]["record"] is False
+    assert projected["recording_enabled"] is False

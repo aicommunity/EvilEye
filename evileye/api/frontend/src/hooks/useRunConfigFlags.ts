@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { setupApi, stateApi, isAbortError } from '../api';
+import { setupApi, stateApi, isAbortError, type StateRun } from '../api';
 import { configBasename } from '../features/configure/studioTabs';
 
 export type RunConfigFlags = {
@@ -8,6 +8,15 @@ export type RunConfigFlags = {
   recordingEnabled: boolean | null;
   analyticsEnabled: boolean | null;
 };
+
+function pickCurrentRun(res: { current_run?: StateRun | null; items?: StateRun[] } | StateRun[]): StateRun | null {
+  if (Array.isArray(res)) {
+    return res.find((r) => r.state === 'running') ?? res[0] ?? null;
+  }
+  if (res.current_run) return res.current_run;
+  const items = res.items ?? [];
+  return items.find((r) => r.state === 'running') ?? items[0] ?? null;
+}
 
 /**
  * Flags from the current run's config (falls back to default setup status).
@@ -27,17 +36,25 @@ export function useRunConfigFlags(): RunConfigFlags {
         try {
           const res = await stateApi.runs('current', { signal: ac.signal });
           if (ac.signal.aborted) return;
-          const items = Array.isArray(res) ? res : res.items ?? [];
-          const running = items.find((r) => r.state === 'running') ?? items[0];
+          const running = pickCurrentRun(res);
           name = configBasename(running?.config_path) ?? undefined;
         } catch (e) {
           if (isAbortError(e)) return;
         }
-        const st = await setupApi.status(name);
+        // Prefer basic projection: recording_enabled already accounts for enabled_sources.
+        const [st, basic] = await Promise.all([
+          setupApi.status(name),
+          setupApi.basicGet(name).catch(() => null),
+        ]);
         if (ac.signal.aborted) return;
-        setConfigName(st.default_config || name || null);
-        setRecordingEnabled(Boolean(st.recording_enabled));
-        setAnalyticsEnabled(Boolean(st.analytics_enabled));
+        const resolvedName = (basic?.config_name || name || st.default_config || null) as string | null;
+        setConfigName(resolvedName);
+        const recording =
+          basic != null ? Boolean(basic.recording_enabled) : Boolean(st.recording_enabled);
+        setRecordingEnabled(recording);
+        setAnalyticsEnabled(
+          basic != null ? Boolean(basic.analytics_enabled) : Boolean(st.analytics_enabled),
+        );
       } catch (e) {
         if (isAbortError(e)) return;
         setRecordingEnabled(null);
