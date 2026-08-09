@@ -601,6 +601,8 @@ body {
 
 .source-advanced-fields {
   min-width: 0;
+  container-type: inline-size;
+  container-name: source-advanced-fields;
 }
 
 .source-advanced-subtitle {
@@ -608,14 +610,91 @@ body {
   font-size: 0.95rem;
 }
 
-.source-split-table input {
+.source-split-regions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.source-split-region-row {
+  display: grid;
+  grid-template-columns: 4.5rem minmax(6rem, 1fr) repeat(4, minmax(4.75rem, 1fr));
+  gap: 0.4rem 0.5rem;
+  padding: 0.5rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  cursor: pointer;
+}
+
+.source-split-region-row--active {
+  border-color: #22c55e;
+  background: color-mix(in srgb, #22c55e 8%, var(--bg));
+}
+
+.source-split-region-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.source-split-region-field input {
   width: 100%;
-  min-width: 3rem;
-  font-size: 0.8rem;
+  min-width: 0;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 0.875rem;
+  color: var(--text);
+  padding: 0.35rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+}
+
+.source-split-region-field input[type='number'] {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 520px) {
+  .source-split-region-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .source-split-region-field--name {
+    grid-column: 1 / -1;
+  }
+}
+
+@container source-advanced-fields (max-width: 520px) {
+  .source-split-region-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .source-split-region-field--name {
+    grid-column: 1 / -1;
+  }
 }
 
 .modal-content-wide {
-  max-width: min(1100px, 96vw);
+  max-width: min(1280px, 96vw);
+}
+
+.config-input-num {
+  min-width: 5.5rem;
+  width: 5.5rem;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.config-input-csv {
+  min-width: 8rem;
+  width: min(100%, 14rem);
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .basic-add-source-bar {
@@ -1127,7 +1206,8 @@ body {
 .config-form-grid input[type='text'],
 .config-form-grid input[type='number'],
 .config-form-grid input[type='password'],
-.config-form-grid input:not([type]) {
+.config-form-grid input:not([type]),
+.config-form-grid select {
   width: 100%;
   font: inherit;
   padding: 0.45rem 0.65rem;

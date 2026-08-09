@@ -56,7 +56,7 @@ export function VisualizerForm({
             disabled={readOnly}
             value={fps ?? ''}
             onChange={(e) => update({ ...obj, fps: e.target.value === '' ? undefined : Number(e.target.value) })}
-            style={{ width: 80 }}
+            className="config-input-num"
           />
         </label>
         <label>

@@ -75,7 +75,7 @@ export function HandlerForm({
             onChange={(e) =>
               update({ ...obj, retention_days: e.target.value === '' ? undefined : Number(e.target.value) })
             }
-            style={{ width: 80 }}
+            className="config-input-num"
           />
         </label>
       </div>

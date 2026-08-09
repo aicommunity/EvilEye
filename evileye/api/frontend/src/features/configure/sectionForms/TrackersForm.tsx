@@ -62,7 +62,7 @@ export function TrackersForm({
                 next[i] = { ...row, max_age: e.target.value === '' ? undefined : Number(e.target.value) };
                 updateRows(next);
               }}
-              style={{ width: 80 }}
+              className="config-input-num"
             />
           </label>
           <label>
@@ -76,7 +76,7 @@ export function TrackersForm({
                 next[i] = { ...row, min_hits: e.target.value === '' ? undefined : Number(e.target.value) };
                 updateRows(next);
               }}
-              style={{ width: 80 }}
+              className="config-input-num"
             />
           </label>
           <label>
@@ -91,7 +91,7 @@ export function TrackersForm({
                 next[i] = { ...row, iou_threshold: e.target.value === '' ? undefined : Number(e.target.value) };
                 updateRows(next);
               }}
-              style={{ width: 80 }}
+              className="config-input-num"
             />
           </label>
           {!readOnly ? (

@@ -66,7 +66,7 @@ export function DetectorsForm({
                 next[i] = { ...row, conf: e.target.value === '' ? undefined : Number(e.target.value) };
                 updateRows(next);
               }}
-              style={{ width: 80 }}
+              className="config-input-num"
             />
           </label>
           <label>
@@ -86,7 +86,7 @@ export function DetectorsForm({
                 updateRows(next);
               }}
               placeholder="0,1"
-              style={{ width: 100 }}
+              className="config-input-csv"
             />
           </label>
           <label>

@@ -411,69 +411,72 @@ export function SourceAdvancedEditor({
                 ) : null}
               </div>
               <h4 className="source-advanced-subtitle">{t('setup.splitRegions')}</h4>
-              <table className="source-split-table journal-table">
-                <thead>
-                  <tr>
-                    <th>id</th>
-                    <th>name</th>
-                    <th>x</th>
-                    <th>y</th>
-                    <th>w</th>
-                    <th>h</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {regions.ids.map((id, i) => {
-                    const c = regions.coords[i] ?? [0, 0, 1, 1];
-                    return (
-                      <tr
-                        key={`${id}-${i}`}
-                        className={selected === i ? 'run-row-highlight' : undefined}
-                        onClick={() => setSelected(i)}
-                      >
-                        <td>
+              <div className="source-split-regions">
+                {regions.ids.map((id, i) => {
+                  const c = regions.coords[i] ?? [0, 0, 1, 1];
+                  return (
+                    <div
+                      key={`${id}-${i}`}
+                      className={
+                        selected === i
+                          ? 'source-split-region-row source-split-region-row--active'
+                          : 'source-split-region-row'
+                      }
+                      onClick={() => setSelected(i)}
+                    >
+                      <label className="source-split-region-field">
+                        <span>id</span>
+                        <input
+                          type="number"
+                          disabled={readOnly}
+                          value={id}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => {
+                            const ids = [...regions.ids];
+                            ids[i] = Number(e.target.value);
+                            setRegions({ split: true, ids, names: regions.names, coords: regions.coords });
+                          }}
+                        />
+                      </label>
+                      <label className="source-split-region-field source-split-region-field--name">
+                        <span>name</span>
+                        <input
+                          disabled={readOnly}
+                          value={regions.names[i] ?? ''}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => {
+                            const names = [...regions.names];
+                            names[i] = e.target.value;
+                            setRegions({ split: true, ids: regions.ids, names, coords: regions.coords });
+                          }}
+                        />
+                      </label>
+                      {([
+                        [0, 'x'],
+                        [1, 'y'],
+                        [2, 'w'],
+                        [3, 'h'],
+                      ] as const).map(([ci, label]) => (
+                        <label key={ci} className="source-split-region-field">
+                          <span>{label}</span>
                           <input
                             type="number"
                             disabled={readOnly}
-                            value={id}
+                            value={c[ci]}
+                            onClick={(e) => e.stopPropagation()}
                             onChange={(e) => {
-                              const ids = [...regions.ids];
-                              ids[i] = Number(e.target.value);
-                              setRegions({ split: true, ids, names: regions.names, coords: regions.coords });
+                              const coords = regions.coords.map((r) => [...r] as PixelRect);
+                              while (coords.length <= i) coords.push([0, 0, 100, 100]);
+                              coords[i][ci] = Number(e.target.value);
+                              setRegions({ split: true, ids: regions.ids, names: regions.names, coords });
                             }}
                           />
-                        </td>
-                        <td>
-                          <input
-                            disabled={readOnly}
-                            value={regions.names[i] ?? ''}
-                            onChange={(e) => {
-                              const names = [...regions.names];
-                              names[i] = e.target.value;
-                              setRegions({ split: true, ids: regions.ids, names, coords: regions.coords });
-                            }}
-                          />
-                        </td>
-                        {([0, 1, 2, 3] as const).map((ci) => (
-                          <td key={ci}>
-                            <input
-                              type="number"
-                              disabled={readOnly}
-                              value={c[ci]}
-                              onChange={(e) => {
-                                const coords = regions.coords.map((r) => [...r] as PixelRect);
-                                while (coords.length <= i) coords.push([0, 0, 100, 100]);
-                                coords[i][ci] = Number(e.target.value);
-                                setRegions({ split: true, ids: regions.ids, names: regions.names, coords });
-                              }}
-                            />
-                          </td>
-                        ))}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                        </label>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
             </>
           ) : null}
         </div>
