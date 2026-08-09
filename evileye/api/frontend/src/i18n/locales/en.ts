@@ -97,9 +97,11 @@ const en: Dict = {
     cancel: 'Cancel',
     noPreviewRun: 'No active run preview for this source.',
     splitPreviewHint:
-      'When split is on, live preview shows one logical stream; draw regions in full-frame pixel coordinates.',
+      'Split editor shows a reconstructed full frame (crops placed by coordinates). Click a region to select; drag to move or resize edges. Use Add/Remove for regions.',
     splitEnable: 'Split into multiple streams',
     splitRegions: 'Regions',
+    addSplitRegion: 'Add region',
+    removeSplitRegion: 'Remove region',
     captureType: 'Capture class',
     apiPreference: 'API preference',
     executionMode: 'Execution mode',

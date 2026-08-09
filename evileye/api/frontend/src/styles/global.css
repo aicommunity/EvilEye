@@ -571,6 +571,20 @@ body {
   stroke: #22c55e;
 }
 
+.source-split-handle {
+  fill: #fff;
+  stroke: #22c55e;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.source-split-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.75rem 0 0.35rem;
+}
+
 .source-split-label {
   fill: #fff;
   font-size: 14px;
