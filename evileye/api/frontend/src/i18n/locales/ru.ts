@@ -339,7 +339,7 @@ const ru: Dict = {
     hint: 'Откройте Студию для форм и ROI/Zones. Raw JSON — вторичный режим.',
     search: 'Поиск…',
     create: 'Создать',
-    studio: 'Студия',
+    studio: 'Настроить',
     raw: 'Raw',
     delete: 'Удалить',
     deleted: 'Удалён',

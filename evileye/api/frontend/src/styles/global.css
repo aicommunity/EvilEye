@@ -1821,19 +1821,6 @@ body {
   padding-left: 1.25rem;
 }
 
-.config-related-runs {
-  margin: 0.75rem 0 1rem;
-  padding: 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-}
-
-.config-related-runs-title {
-  margin: 0 0 0.5rem;
-  font-size: 0.95rem;
-  font-weight: 600;
-}
-
 .config-runs-count {
   font-size: 0.75rem;
   color: var(--text-muted);

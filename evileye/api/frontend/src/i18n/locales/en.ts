@@ -337,7 +337,7 @@ const en: Dict = {
     hint: 'Open Studio for forms and ROI/Zones. Raw JSON is secondary.',
     search: 'Search…',
     create: 'Create',
-    studio: 'Studio',
+    studio: 'Configure',
     raw: 'Raw',
     delete: 'Delete',
     deleted: 'Deleted',

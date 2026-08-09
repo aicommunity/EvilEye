@@ -32,7 +32,6 @@ import { StorageMonitorForm } from './sectionForms/StorageMonitorForm';
 import { GenericSectionForm } from './sectionForms/GenericSectionForm';
 import { JsonAdvancedTab } from './JsonAdvancedTab';
 import { ConfigHistoryPanel } from './ConfigHistoryPanel';
-import { ConfigRelatedRunsPanel } from './ConfigRelatedRunsPanel';
 import { RoiCanvas } from './RoiCanvas';
 import { ZoneCanvas } from './ZoneCanvas';
 import { ClassMappingEditor } from './ClassMappingEditor';
@@ -334,7 +333,6 @@ export function ConfigStudio({
             ? t('configure.hintCurrent')
             : t('configure.hintFile')}
         </p>
-        {mode === 'file' && name ? <ConfigRelatedRunsPanel configName={name} /> : null}
         <div className="journal-tabs config-studio-tabs">
           {[...tabs.map((tab) => tab.id), ...specialIds].map((s) => (
             <button

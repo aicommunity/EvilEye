@@ -2,13 +2,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   configsList,
-  configGet,
   configCreate,
-  configUpdate,
   configDelete,
   stateApi,
   type StateRun,
-  ApiError,
   cacheGet,
   cacheSet,
   isAbortError,
@@ -47,7 +44,7 @@ export function ConfigsListPage() {
   const canRun = hasPermission('runtime:control');
   const [names, setNames] = useState<string[]>([]);
   const [search, setSearch] = useState('');
-  const [modal, setModal] = useState<{ mode: 'raw' | 'create'; name?: string } | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
   const [nameInput, setNameInput] = useState('');
   const [body, setBody] = useState('{}');
   const [runsPayload, setRunsPayload] = useState<RunsPayload | null>(
@@ -91,17 +88,6 @@ export function ConfigsListPage() {
     void loadRuns(ac.signal);
     return () => ac.abort();
   }, [loadRuns]);
-
-  const openRaw = async (name: string) => {
-    setModal({ mode: 'raw', name });
-    setNameInput(name);
-    try {
-      const data = await configGet(name);
-      setBody(JSON.stringify(data, null, 2));
-    } catch (e) {
-      showError(e instanceof ApiError ? e.message : t('common.loadFail'));
-    }
-  };
 
   const handleStart = async (name: string) => {
     if (!canRun) return;
@@ -149,7 +135,7 @@ export function ConfigsListPage() {
             <Button
               variant="primary"
               onClick={() => {
-                setModal({ mode: 'create' });
+                setModalOpen(true);
                 setNameInput('');
                 setBody('{}');
               }}
@@ -180,9 +166,6 @@ export function ConfigsListPage() {
                       {t('configs.start')}
                     </Button>
                   ) : null}
-                  <Button size="sm" variant="outline" onClick={() => void openRaw(n)}>
-                    {t('configs.raw')}
-                  </Button>
                   {hasPermission('config:edit') ? (
                     <Button
                       size="sm"
@@ -206,9 +189,9 @@ export function ConfigsListPage() {
         </ul>
       </div>
       <Modal
-        open={Boolean(modal)}
-        title={modal?.mode === 'create' ? t('configs.newTitle') : t('configs.rawTitle', { name: modal?.name ?? '' })}
-        onClose={() => setModal(null)}
+        open={modalOpen}
+        title={t('configs.newTitle')}
+        onClose={() => setModalOpen(false)}
         footer={
           hasPermission('config:edit') ? (
             <Button
@@ -217,16 +200,11 @@ export function ConfigsListPage() {
                 void (async () => {
                   try {
                     const parsed = JSON.parse(body);
-                    if (modal?.mode === 'create') {
-                      let fname = nameInput.trim();
-                      if (!fname.endsWith('.json')) fname = `${fname}.json`;
-                      await configCreate(fname, parsed);
-                      showSuccess(t('configs.saved'));
-                    } else if (modal?.name) {
-                      await configUpdate(modal.name, parsed);
-                      showSuccess(t('configs.saved'));
-                    }
-                    setModal(null);
+                    let fname = nameInput.trim();
+                    if (!fname.endsWith('.json')) fname = `${fname}.json`;
+                    await configCreate(fname, parsed);
+                    showSuccess(t('configs.saved'));
+                    setModalOpen(false);
                     await load();
                   } catch (e) {
                     showError(e instanceof Error ? e.message : t('common.error'));
@@ -239,12 +217,10 @@ export function ConfigsListPage() {
           ) : null
         }
       >
-        {modal?.mode === 'create' ? (
-          <label className="field">
-            <span>{t('configs.fileName')}</span>
-            <input value={nameInput} onChange={(e) => setNameInput(e.target.value)} />
-          </label>
-        ) : null}
+        <label className="field">
+          <span>{t('configs.fileName')}</span>
+          <input value={nameInput} onChange={(e) => setNameInput(e.target.value)} />
+        </label>
         <textarea className="json-editor" value={body} onChange={(e) => setBody(e.target.value)} rows={18} />
       </Modal>
     </section>
