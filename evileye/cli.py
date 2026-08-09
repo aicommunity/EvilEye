@@ -133,22 +133,70 @@ def _scheduler_prepare_next_launch(logger: logging.Logger) -> None:
 
 
 def _scheduler_terminate_child(proc: subprocess.Popen, logger: logging.Logger) -> None:
-    """Terminate the scheduled child process and its process group."""
+    """Terminate the scheduled child process and its process group.
+
+    Polls ``proc`` during grace so a zombie leader is reaped promptly instead of
+    blocking for the full ``EVILEYE_SCHEDULER_STOP_GRACE_SEC`` window.
+    """
+    import threading
+
     from evileye.core.process_control import terminate_tree
 
     pid = proc.pid
     grace_sec = _scheduler_stop_grace_sec()
-    try:
-        terminate_tree(int(pid), grace_sec=grace_sec)
-    except Exception as exc:
-        logger.error("[scheduler] Error terminating process %s: %s", pid, exc, exc_info=True)
+    terminate_errors: list[BaseException] = []
+
+    def _run_terminate() -> None:
+        try:
+            terminate_tree(int(pid), grace_sec=grace_sec)
+        except Exception as exc:
+            terminate_errors.append(exc)
+
+    # Already exited (zombie until wait/poll) — short PG cleanup then reap.
+    if proc.poll() is not None:
+        try:
+            terminate_tree(int(pid), grace_sec=min(5.0, grace_sec))
+        except Exception as exc:
+            logger.warning("[scheduler] Post-exit process group cleanup failed for %s: %s", pid, exc)
+        try:
+            proc.wait(timeout=1)
+        except Exception:
+            pass
+        logger.info("[scheduler] Process %s terminated", pid)
+        return
+
+    worker = threading.Thread(
+        target=_run_terminate,
+        name=f"scheduler-terminate-{pid}",
+        daemon=True,
+    )
+    worker.start()
+
+    # Poll while terminate_tree runs so we reap as soon as the child exits.
+    deadline = time.monotonic() + grace_sec + 15.0
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            worker.join(timeout=min(5.0, grace_sec))
+            break
+        if not worker.is_alive():
+            break
+        time.sleep(0.1)
+    else:
+        worker.join(timeout=0.1)
+
+    if terminate_errors:
+        logger.error("[scheduler] Error terminating process %s: %s", pid, terminate_errors[0])
         try:
             proc.kill()
         except Exception:
             pass
         return
+
     try:
-        proc.wait(timeout=10)
+        if proc.poll() is None:
+            proc.wait(timeout=10)
+        else:
+            proc.wait(timeout=1)
         logger.info("[scheduler] Process %s terminated", pid)
     except subprocess.TimeoutExpired:
         logger.error(

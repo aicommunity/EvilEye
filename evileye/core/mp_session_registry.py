@@ -9,6 +9,7 @@ from pathlib import Path
 from threading import Lock
 
 from evileye.core.paths import runtime_dir
+from evileye.core.process_control import is_zombie as _is_zombie
 from evileye.core.process_control import pid_exists as _pc_pid_exists
 from evileye.core.process_control import process_cmdline, terminate_tree
 
@@ -58,23 +59,6 @@ def _is_evileye_python_process(pid: int) -> bool:
     if not cmd:
         return False
     return ("python" in cmd) and ("evileye" in cmd)
-
-
-def _is_zombie(pid: int) -> bool:
-    try:
-        import psutil
-
-        return psutil.Process(pid).status() == psutil.STATUS_ZOMBIE
-    except Exception:
-        pass
-    try:
-        status = Path(f"/proc/{pid}/status").read_text(encoding="utf-8", errors="ignore")
-        for line in status.splitlines():
-            if line.startswith("State:"):
-                return " Z" in line or line.rstrip().endswith("Z")
-    except Exception:
-        pass
-    return False
 
 
 def _is_active_evileye_owner(pid: int) -> bool:
