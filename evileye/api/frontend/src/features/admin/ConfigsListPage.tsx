@@ -18,6 +18,7 @@ import { useToast } from '../../components/ui/Toast';
 import { useAuth } from '../../auth/AuthContext';
 import { useI18n } from '../../i18n';
 import { runConfigName, runsHubHref } from './runLinks';
+import { restartConfigRun } from '../configure/restartConfigRun';
 
 const RUNS_CACHE_KEY = 'state:runs:all';
 const RUNS_TTL_MS = 15_000;
@@ -43,14 +44,19 @@ export function ConfigsListPage() {
   const { hasPermission } = useAuth();
   const { showError, showSuccess } = useToast();
   const { t } = useI18n();
+  const canRun = hasPermission('runtime:control');
   const [names, setNames] = useState<string[]>([]);
   const [search, setSearch] = useState('');
   const [modal, setModal] = useState<{ mode: 'raw' | 'create'; name?: string } | null>(null);
   const [nameInput, setNameInput] = useState('');
   const [body, setBody] = useState('{}');
+  const [runsPayload, setRunsPayload] = useState<RunsPayload | null>(
+    () => cacheGet<RunsPayload>(RUNS_CACHE_KEY) ?? null,
+  );
   const [runCounts, setRunCounts] = useState<Record<string, number>>(() =>
     countRunsByConfig(cacheGet<RunsPayload>(RUNS_CACHE_KEY)),
   );
+  const [startingName, setStartingName] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -62,18 +68,18 @@ export function ConfigsListPage() {
 
   const loadRuns = useCallback(
     async (signal?: AbortSignal) => {
-      if (!hasPermission('runtime:view')) return;
+      if (!hasPermission('runtime:view') && !canRun) return;
       try {
         const data = (await stateApi.runs('all', { signal })) as RunsPayload;
         if (signal?.aborted) return;
         cacheSet(RUNS_CACHE_KEY, data, RUNS_TTL_MS);
+        setRunsPayload(data);
         setRunCounts(countRunsByConfig(data));
       } catch (e) {
         if (isAbortError(e) || signal?.aborted) return;
-        // Non-fatal for configs list
       }
     },
-    [hasPermission],
+    [canRun, hasPermission],
   );
 
   useEffect(() => {
@@ -94,6 +100,39 @@ export function ConfigsListPage() {
       setBody(JSON.stringify(data, null, 2));
     } catch (e) {
       showError(e instanceof ApiError ? e.message : t('common.loadFail'));
+    }
+  };
+
+  const handleStart = async (name: string) => {
+    if (!canRun) return;
+    let payload = runsPayload;
+    try {
+      payload = (await stateApi.runs('all')) as RunsPayload;
+      cacheSet(RUNS_CACHE_KEY, payload, RUNS_TTL_MS);
+      setRunsPayload(payload);
+      setRunCounts(countRunsByConfig(payload));
+    } catch {
+      /* use cached */
+    }
+    const current = payload?.current_run ?? null;
+    const currentName = current ? runConfigName(current) : null;
+    const alive = Boolean(current && (current.alive || current.state === 'running' || current.state === 'starting'));
+    let msg = t('configs.startConfirm', { name });
+    if (alive && currentName && currentName !== name) {
+      msg = t('configs.startConfirmReplace', { current: currentName, name });
+    } else if (alive && currentName === name) {
+      msg = t('configs.startConfirmRestart', { name });
+    }
+    if (!window.confirm(msg)) return;
+    setStartingName(name);
+    try {
+      await restartConfigRun(name);
+      showSuccess(t('configs.started'));
+      void loadRuns();
+    } catch (e) {
+      showError(e instanceof Error ? e.message : t('configs.startFailed'));
+    } finally {
+      setStartingName(null);
     }
   };
 
@@ -136,6 +175,11 @@ export function ConfigsListPage() {
                   <Link className="btn btn-sm btn-outline" to={`/admin/configs/${encodeURIComponent(n)}`}>
                     {t('configs.studio')}
                   </Link>
+                  {canRun ? (
+                    <Button size="sm" variant="primary" disabled={startingName === n} onClick={() => void handleStart(n)}>
+                      {t('configs.start')}
+                    </Button>
+                  ) : null}
                   <Button size="sm" variant="outline" onClick={() => void openRaw(n)}>
                     {t('configs.raw')}
                   </Button>

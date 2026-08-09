@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   setupApi,
+  configGet,
+  configPutSection,
   type BasicSetup,
   type BasicSource,
   type SetupStatus,
@@ -12,6 +14,8 @@ import { useAuth } from '../../auth/AuthContext';
 import { useI18n } from '../../i18n';
 import { FormField, FormGrid } from './formLayout';
 import { restartConfigRun } from './restartConfigRun';
+import { SourceAdvancedEditor } from './SourceAdvancedEditor';
+import { cloneSourceRow, findSourceRowIndex } from './sourceRowUtils';
 
 const SOURCE_TYPES = ['IpCamera', 'VideoFile', 'Device'] as const;
 
@@ -53,6 +57,10 @@ export function BasicSetupForm({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [dbPassword, setDbPassword] = useState('');
+  const [advancedOpen, setAdvancedOpen] = useState<{
+    index: number;
+    row: Record<string, unknown>;
+  } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -162,6 +170,41 @@ export function BasicSetupForm({
     } finally {
       setSaving(false);
     }
+  };
+
+  const openAdvanced = async (index: number) => {
+    try {
+      const full = await configGet(configName);
+      const pipeline = (full.pipeline ?? {}) as Record<string, unknown>;
+      const sources = Array.isArray(pipeline.sources) ? (pipeline.sources as Record<string, unknown>[]) : [];
+      const basicSrc = basic.sources[index];
+      const si = findSourceRowIndex(sources, basicSrc?.id ?? index, index);
+      if (si < 0 || !sources[si]) {
+        showError(t('common.loadFail'));
+        return;
+      }
+      setAdvancedOpen({ index: si, row: cloneSourceRow(sources[si]) });
+    } catch (e) {
+      showError(e instanceof Error ? e.message : t('common.loadFail'));
+    }
+  };
+
+  const applyAdvanced = async (row: Record<string, unknown>) => {
+    if (advancedOpen == null) return;
+    const full = await configGet(configName);
+    const pipeline = (full.pipeline ?? {}) as Record<string, unknown>;
+    const sources = Array.isArray(pipeline.sources)
+      ? (pipeline.sources as Record<string, unknown>[]).map((r) => cloneSourceRow(r))
+      : [];
+    if (advancedOpen.index < 0 || advancedOpen.index >= sources.length) {
+      throw new Error(t('common.saveFail'));
+    }
+    sources[advancedOpen.index] = row;
+    await configPutSection(configName, 'pipeline.sources', sources);
+    onPendingApplyChange?.(true);
+    showSuccess(t('setup.saved'));
+    setAdvancedOpen(null);
+    await load();
   };
 
   const cameraTitle = (src: BasicSource, index: number) => {
@@ -342,9 +385,14 @@ export function BasicSetupForm({
               </FormField>
             </FormGrid>
             {canEdit ? (
-              <Button size="sm" variant="danger" onClick={() => removeSource(i)}>
-                {t('setup.removeSource')}
-              </Button>
+              <div className="basic-source-card__actions">
+                <Button size="sm" variant="outline" onClick={() => void openAdvanced(i)}>
+                  {t('setup.sourceAdvanced')}
+                </Button>
+                <Button size="sm" variant="danger" onClick={() => removeSource(i)}>
+                  {t('setup.removeSource')}
+                </Button>
+              </div>
             ) : null}
           </div>
         ))}
@@ -385,6 +433,16 @@ export function BasicSetupForm({
           ) : null}
         </div>
       ) : null}
+
+      <SourceAdvancedEditor
+        open={Boolean(advancedOpen)}
+        configName={configName}
+        sourceIndex={advancedOpen?.index ?? 0}
+        initialRow={advancedOpen?.row ?? {}}
+        readOnly={!canEdit}
+        onClose={() => setAdvancedOpen(null)}
+        onApplied={applyAdvanced}
+      />
     </div>
   );
 }

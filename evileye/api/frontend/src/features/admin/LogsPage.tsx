@@ -168,7 +168,7 @@ export function LogsPage() {
       </div>
       <Modal
         open={Boolean(view)}
-        title={view ? `${view.name}${view.live ? ` (${t('logs.following')})` : ''}` : t('logs.title')}
+        title={view ? view.name : t('logs.title')}
         onClose={() => {
           esRef.current?.close();
           esRef.current = null;

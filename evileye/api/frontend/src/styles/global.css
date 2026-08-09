@@ -489,6 +489,113 @@ body {
   font-size: 0.95rem;
 }
 
+.basic-source-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.65rem;
+}
+
+.config-source-block__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.source-advanced-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.source-advanced-layout {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 1rem;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .source-advanced-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.source-advanced-preview-col {
+  min-width: 0;
+}
+
+.source-advanced-preview-thumb {
+  display: block;
+  width: 100%;
+  max-height: 220px;
+  object-fit: contain;
+  background: #111;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-bottom: 0.5rem;
+}
+
+.source-split-canvas {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  background: #111;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  cursor: crosshair;
+  overflow: hidden;
+}
+
+.source-split-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.source-split-rect {
+  fill: rgba(59, 130, 246, 0.18);
+  stroke: #3b82f6;
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.source-split-rect.active {
+  fill: rgba(34, 197, 94, 0.22);
+  stroke: #22c55e;
+}
+
+.source-split-label {
+  fill: #fff;
+  font-size: 14px;
+  pointer-events: none;
+}
+
+.source-advanced-fields {
+  min-width: 0;
+}
+
+.source-advanced-subtitle {
+  margin: 0.75rem 0 0.35rem;
+  font-size: 0.95rem;
+}
+
+.source-split-table input {
+  width: 100%;
+  min-width: 3rem;
+  font-size: 0.8rem;
+}
+
+.modal-content-wide {
+  max-width: min(1100px, 96vw);
+}
+
 .basic-add-source-bar {
   margin: 0.75rem 0 1.25rem;
   padding: 0.75rem 0.85rem;
@@ -1912,7 +2019,7 @@ body {
 }
 
 .modal-content-wide {
-  max-width: min(960px, 95vw);
+  max-width: min(1100px, 96vw);
 }
 
 .auth-tabs {

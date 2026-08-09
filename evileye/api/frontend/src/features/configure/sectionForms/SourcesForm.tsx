@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { Button } from '../../../components/ui';
 import { useI18n } from '../../../i18n';
 import { FormActions, FormField, FormGrid } from '../formLayout';
+import { SourceAdvancedEditor } from '../SourceAdvancedEditor';
+import { cloneSourceRow } from '../sourceRowUtils';
 
 type SourceRow = {
   source?: string;
@@ -35,16 +37,19 @@ export function SourcesForm({
   readOnly,
   onSave,
   onChange,
+  configName,
 }: {
   data: unknown;
   readOnly: boolean;
   onSave: (data: unknown) => Promise<void>;
   onChange?: (data: unknown) => void;
+  configName: string;
 }) {
   const { t } = useI18n();
   const [rows, setRows] = useState<SourceRow[]>(() => asRows(data));
   const [advanced, setAdvanced] = useState(false);
   const [jsonText, setJsonText] = useState('[]');
+  const [editIndex, setEditIndex] = useState<number | null>(null);
 
   useEffect(() => {
     const next = asRows(data);
@@ -221,11 +226,16 @@ export function SourcesForm({
               />
             </FormField>
           </FormGrid>
-          {!readOnly ? (
-            <Button size="sm" variant="outline" onClick={() => updateRows(rows.filter((_, j) => j !== i))}>
-              {t('configure.forms.removeSource')}
+          <div className="config-source-block__actions">
+            <Button size="sm" variant="outline" onClick={() => setEditIndex(i)}>
+              {t('setup.sourceAdvanced')}
             </Button>
-          ) : null}
+            {!readOnly ? (
+              <Button size="sm" variant="outline" onClick={() => updateRows(rows.filter((_, j) => j !== i))}>
+                {t('configure.forms.removeSource')}
+              </Button>
+            ) : null}
+          </div>
         </div>
       ))}
       <FormActions>
@@ -243,6 +253,23 @@ export function SourcesForm({
           JSON
         </Button>
       </FormActions>
+
+      <SourceAdvancedEditor
+        open={editIndex != null}
+        configName={configName}
+        sourceIndex={editIndex ?? 0}
+        initialRow={editIndex != null ? cloneSourceRow(rows[editIndex] as Record<string, unknown>) : {}}
+        readOnly={readOnly}
+        onClose={() => setEditIndex(null)}
+        onApplied={async (row) => {
+          if (editIndex == null) return;
+          const next = [...rows];
+          next[editIndex] = row as SourceRow;
+          updateRows(next);
+          await onSave(next);
+          setEditIndex(null);
+        }}
+      />
     </div>
   );
 }

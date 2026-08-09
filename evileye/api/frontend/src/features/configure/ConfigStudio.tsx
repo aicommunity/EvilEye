@@ -230,7 +230,7 @@ export function ConfigStudio({
   const renderSectionForm = () => {
     switch (activeId) {
       case 'sources':
-        return <SourcesForm {...formProps} />;
+        return <SourcesForm {...formProps} configName={name ?? ''} />;
       case 'record':
         return <RecordForm {...formProps} />;
       case 'detectors':
