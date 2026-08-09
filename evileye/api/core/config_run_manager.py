@@ -133,6 +133,12 @@ class ConfigRunManager:
     def _terminate_process_tree(self, pid: int, *, grace_sec: float) -> bool:
         if not pid:
             return True
+        from evileye.api.core.process_restart import pid_hosts_current_process
+
+        if pid_hosts_current_process(int(pid)):
+            raise RuntimeError(
+                "Refusing to stop the process that hosts this API; use POST /api/v1/system/restart"
+            )
         try:
             pgid = os.getpgid(pid)
         except ProcessLookupError:
@@ -181,6 +187,115 @@ class ConfigRunManager:
                 except Exception:
                     return False
             return True
+
+    def restart_for_config(
+        self,
+        config_name: str,
+        *,
+        api_base_url: str | None = None,
+    ) -> Dict:
+        """
+        Safely restart the pipeline for a config.
+
+        - If the running process hosts this API (evileye run + embedded server):
+          spawn a detached helper, SIGTERM the pipeline PID only, return immediately.
+        - Otherwise (standalone API / managed run): stop → create → start.
+        """
+        from evileye.api.core.process_restart import (
+            build_process_cmd,
+            cmdline_config_path,
+            cmdline_has_gui,
+            find_matching_runtime,
+            pid_hosts_current_process,
+            read_cmdline,
+            signal_pid_term,
+            spawn_detached_restart_helper,
+        )
+        from evileye.api.core.runtime_registry import list_runtime_records
+        from evileye.api.core.safe_paths import safe_config_name
+
+        safe_name = safe_config_name(
+            config_name if str(config_name).endswith(".json") else f"{config_name}.json"
+        )
+        # Merge live registry + manager items for discovery
+        records = dict(list_runtime_records())
+        for rid, item in self.list().items():
+            existing = records.get(rid, {})
+            records[rid] = {**existing, **item, "id": rid}
+
+        matching = find_matching_runtime(records, safe_name)
+        if matching is None:
+            # No running process — just create and start a managed run.
+            rid = self.next_run_id()
+            self.create(rid, Path(safe_name).stem, config_name=safe_name)
+            started = self.start(rid, api_base_url=api_base_url)
+            return {
+                "mode": "managed_start",
+                "scheduled": False,
+                "config_name": safe_name,
+                "run": started,
+            }
+
+        rid = int(matching.get("id"))
+        pid = matching.get("pid")
+        config_path = matching.get("config_path") or str(Path("configs") / safe_name)
+        managed = bool(matching.get("managed"))
+
+        if pid and pid_hosts_current_process(int(pid)):
+            argv = read_cmdline(int(pid))
+            gui = cmdline_has_gui(argv) if argv else False
+            # Prefer config path from cmdline when present
+            cfg_from_cmd = cmdline_config_path(argv) if argv else None
+            if cfg_from_cmd:
+                config_path = cfg_from_cmd
+            cmd = build_process_cmd(config_path, gui=gui, autoclose=False)
+            helper_pid = spawn_detached_restart_helper(
+                wait_pid=int(pid),
+                cmd=cmd,
+                cwd=Path.cwd(),
+                grace_sec=max(self._stop_grace_sec(), 90.0),
+            )
+            # Graceful controller shutdown without killpg (would suicide the API).
+            try:
+                signal_pid_term(int(pid))
+            except ProcessLookupError:
+                pass
+            self.logger.info(
+                "Self-hosted restart scheduled: rid=%s pid=%s helper=%s gui=%s",
+                rid,
+                pid,
+                helper_pid,
+                gui,
+            )
+            return {
+                "mode": "self_hosted_detached",
+                "scheduled": True,
+                "config_name": safe_name,
+                "stopped_rid": rid,
+                "stopped_pid": int(pid),
+                "helper_pid": helper_pid,
+                "restart_cmd": cmd,
+            }
+
+        # External / managed run under standalone API: classic stop + recreate.
+        try:
+            self.stop(rid)
+        except KeyError:
+            pass
+        except RuntimeError as exc:
+            # Should not be self-hosted here, but surface clearly.
+            raise
+        new_rid = self.next_run_id()
+        self.create(new_rid, Path(safe_name).stem, config_name=safe_name)
+        started = self.start(new_rid, api_base_url=api_base_url)
+        return {
+            "mode": "managed_restart",
+            "scheduled": False,
+            "config_name": safe_name,
+            "previous_rid": rid,
+            "run": started,
+            "managed": managed,
+        }
 
     def _cleanup_run_session(self, item: ConfigRunItem) -> None:
         if not item.session_id:
@@ -431,6 +546,10 @@ class ConfigRunManager:
             item.pid = None
             item.state = ConfigRunState.STOPPED
             self._cleanup_run_session(item)
+        except RuntimeError:
+            # e.g. refusing to kill API host — surface to caller (HTTP 409)
+            item.state = ConfigRunState.RUNNING
+            raise
         except Exception as e:
             item.state = ConfigRunState.ERROR
             item.error = str(e)

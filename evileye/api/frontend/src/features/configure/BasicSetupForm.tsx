@@ -152,9 +152,11 @@ export function BasicSetupForm({
         showError(t('setup.notReadyToRun'));
         return;
       }
-      await restartConfigRun(configName);
+      // pendingApply cleared inside restartConfigRun before the request.
       onPendingApplyChange?.(false);
-      showSuccess(t('setup.runStarted'));
+      const res = await restartConfigRun(configName);
+      onPendingApplyChange?.(false);
+      showSuccess(res.scheduled ? t('setup.restartScheduled') : t('setup.runStarted'));
     } catch (e) {
       showError(e instanceof ApiError ? e.message : e instanceof Error ? e.message : t('common.error'));
     } finally {

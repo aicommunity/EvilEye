@@ -112,6 +112,8 @@ async def stop_config_run(rid: int) -> Dict:
         return get_config_run_manager().stop(rid)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Config run not found") from exc
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 

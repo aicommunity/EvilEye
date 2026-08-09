@@ -83,6 +83,7 @@ const en: Dict = {
     analyticsHint: 'Always uses the standard PipelineSurveillance pipeline. Without analytics, detectors and trackers are disabled.',
     save: 'Save',
     restart: 'Restart',
+    restartScheduled: 'Restart scheduled — the system will stop and come back up',
     pendingApplyBanner:
       'Configuration is saved but not applied to the running system. Click “Restart”.',
     saved: 'Settings saved',

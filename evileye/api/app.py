@@ -26,6 +26,7 @@ from evileye.api.routes.realtime import router as realtime_router
 from evileye.api.routes.playback import router as playback_router
 from evileye.api.routes.internal import router as internal_router
 from evileye.api.routes.setup import router as setup_router
+from evileye.api.routes.system import router as system_router
 from evileye.api.core.config_run_access import get_config_run_manager
 from evileye.api.core.web_auth_bootstrap import ensure_default_admin_credentials
 from evileye.api.core.ip_ban_store import get_ip_ban_store
@@ -303,12 +304,13 @@ def create_app() -> FastAPI:
     app.include_router(config_editors_router)
     app.include_router(configs_router)
     app.include_router(setup_router)
+    app.include_router(system_router)
     app.include_router(streaming_router)
     app.include_router(realtime_router)
     app.include_router(playback_router)
     app.include_router(internal_router)
     logger.info(
-        "Routers registered: auth, state, journals, logs, users, bans, config_editors, configs, setup, streaming, realtime, playback, internal"
+        "Routers registered: auth, state, journals, logs, users, bans, config_editors, configs, setup, system, streaming, realtime, playback, internal"
     )
 
     static_dir = Path(__file__).parent / "static"

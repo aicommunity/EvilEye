@@ -189,9 +189,10 @@ export function ConfigStudio({
     if (!name || !canRun) return;
     setApplying(true);
     try {
-      await restartConfigRun(name);
       markPendingApply(false);
-      showSuccess(t('setup.runStarted'));
+      const res = await restartConfigRun(name);
+      markPendingApply(false);
+      showSuccess(res.scheduled ? t('setup.restartScheduled') : t('setup.runStarted'));
     } catch (e) {
       showError(e instanceof Error ? e.message : t('common.error'));
     } finally {
