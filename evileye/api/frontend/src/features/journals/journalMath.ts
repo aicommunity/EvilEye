@@ -2,6 +2,13 @@ export type JournalType = 'events' | 'objects';
 
 import type { JournalGroupedRow } from '../../api';
 
+/** Strip userinfo from rtsp/http URLs so credentials never render in the journal UI. */
+export function redactMediaCredentials(text: unknown): string {
+  const raw = String(text ?? '');
+  if (!raw) return raw;
+  return raw.replace(/(rtsp[s]?|https?):\/\/[^/@\s]+@/gi, '$1://');
+}
+
 export function rowKey(row: JournalGroupedRow): string {
   return String(row.row_key ?? `${row.time}|${row.event}|${row.information}`);
 }

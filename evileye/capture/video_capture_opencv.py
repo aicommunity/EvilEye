@@ -223,7 +223,7 @@ class VideoCaptureOpencv(VideoCaptureBase):
                     self.logger.info(
                         f"Reconnected to a sources: {self.source_names} (is_inited={self.is_inited}, is_working={self.is_working})")
                     self.is_working = True
-                    self.reconnects.append((self.params['camera'], timestamp, self.is_working))
+                    self._record_reconnect(timestamp)
                     # Update last_frame_time to give reset time to start producing frames
                     self.last_frame_time = datetime.datetime.now()
                     self._noframes_reset_last_ts = time.time()
@@ -325,7 +325,7 @@ class VideoCaptureOpencv(VideoCaptureBase):
                         timestamp = datetime.datetime.now()
                         self.logger.info(
                             f"Reconnected to a sources: {self.source_names} (is_inited={self.is_inited}, is_working={self.is_working})")
-                        self.reconnects.append((self.params['camera'], timestamp, self.is_working))
+                        self._record_reconnect(timestamp)
                         self._noframes_reset_last_ts = time.time()
                         for sub in self.subscribers:
                             sub.update()
@@ -384,7 +384,7 @@ class VideoCaptureOpencv(VideoCaptureBase):
                 # Для живых источников (или fallback для роликов) — старая логика reconnection
                 self.is_working = False
                 timestamp = datetime.datetime.now()
-                self.disconnects.append((self.params['camera'], timestamp, self.is_working))
+                self._record_disconnect(timestamp)
                 for sub in self.subscribers:
                     sub.update()
                 # reset() попытается восстановить поток
@@ -501,7 +501,7 @@ class VideoCaptureOpencv(VideoCaptureBase):
                 # Для живых источников — логика reconnection
                 self.is_working = False
                 timestamp = datetime.datetime.now()
-                self.disconnects.append((self.params['camera'], timestamp, self.is_working))
+                self._record_disconnect(timestamp)
                 for sub in self.subscribers:
                     sub.update()
                 # reset() попытается восстановить поток
@@ -638,12 +638,12 @@ class VideoCaptureOpencv(VideoCaptureBase):
         with self.conn_mutex:
             timestamp = datetime.datetime.now()
             self.logger.info(f'Disconnect: {timestamp}')
-            is_working = False
-            self.disconnects.append((self.source_address, timestamp, is_working))
+            self.is_working = False
+            self._record_disconnect(timestamp)
 
     def test_reconnect(self) -> None:
         with self.conn_mutex:
             timestamp = datetime.datetime.now()
             self.logger.info(f'Reconnect: {timestamp}')
-            is_working = True
-            self.reconnects.append((self.source_address, timestamp, is_working))
+            self.is_working = True
+            self._record_reconnect(timestamp)

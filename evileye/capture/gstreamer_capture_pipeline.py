@@ -758,7 +758,7 @@ class GStreamerCapturePipelineMixin:
                     self.logger.warning("GStreamer EOS for IP camera")
                     self.is_working = False
                     timestamp = datetime.datetime.now()
-                    self.disconnects.append((self.source_address, timestamp, self.is_working))
+                    self._record_disconnect(timestamp)
                     for sub in self.subscribers:
                         sub.update()
                     # Trigger reconnect loop if not already running
@@ -820,7 +820,7 @@ class GStreamerCapturePipelineMixin:
 
                         if self.source_type == CaptureDeviceType.IpCamera and self.run_flag:
                             timestamp = datetime.datetime.now()
-                            self.disconnects.append((self.source_address, timestamp, self.is_working))
+                            self._record_disconnect(timestamp)
                             for sub in self.subscribers:
                                 sub.update()
                             # Store error for protocol switching logic
@@ -843,7 +843,7 @@ class GStreamerCapturePipelineMixin:
                     # For IP cameras, just mark not working; monitor thread handles reconnect
                     if self.source_type == CaptureDeviceType.IpCamera and self.run_flag:
                         timestamp = datetime.datetime.now()
-                        self.disconnects.append((self.source_address, timestamp, self.is_working))
+                        self._record_disconnect(timestamp)
                         for sub in self.subscribers:
                             sub.update()
                         # Store error for protocol switching logic

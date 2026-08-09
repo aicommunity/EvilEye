@@ -566,8 +566,21 @@ class DatabaseJournalDataSource(EventJournalDataSource):
                 self._enrich_fov_event(event_dict, row_dict)
         elif event_type == 'CameraEvent':
             # CameraEvent enrichment is fast (no DB query), so always do it
-            event_dict['camera_full_address'] = row_dict.get('source_name', '')
-            event_dict['connection_status'] = 'reconnect' in (row_dict.get('information', '') or '').lower()
+            from evileye.utils.camera_event_label import sanitize_camera_event_record
+
+            clean = sanitize_camera_event_record(
+                {
+                    'camera_full_address': row_dict.get('source_name', ''),
+                    'connection_status': 'reconnect' in (row_dict.get('information', '') or '').lower(),
+                    'information': row_dict.get('information', ''),
+                    'source_name': row_dict.get('source_name', ''),
+                },
+                source_mappings=self._source_name_id_address,
+            )
+            event_dict['camera_full_address'] = clean.get('camera_full_address', '')
+            event_dict['connection_status'] = bool(clean.get('connection_status', False))
+            event_dict['source_name'] = clean.get('source_name', '')
+            event_dict['information'] = clean.get('information', '')
         elif event_type == 'SystemEvent':
             # SystemEvent enrichment is fast (no DB query), so always do it
             # Extract original event_type from information (which contains 'System started' or 'System stopped')

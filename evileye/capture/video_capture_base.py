@@ -659,6 +659,23 @@ class VideoCaptureBase(EvilEyeBase):
         self.reconnects = []
         return reconnects
 
+    def _camera_event_identity(self) -> str:
+        """Stream name(s) for CameraEvent; never embed RTSP credentials."""
+        from evileye.utils.camera_event_label import camera_event_identity
+
+        return camera_event_identity(
+            source_names=getattr(self, "source_names", None),
+            address=getattr(self, "source_address", None) or (self.params or {}).get("camera"),
+        )
+
+    def _record_disconnect(self, timestamp: datetime.datetime | None = None) -> None:
+        ts = timestamp or datetime.datetime.now()
+        self.disconnects.append((self._camera_event_identity(), ts, self.is_working))
+
+    def _record_reconnect(self, timestamp: datetime.datetime | None = None) -> None:
+        ts = timestamp or datetime.datetime.now()
+        self.reconnects.append((self._camera_event_identity(), ts, self.is_working))
+
     @staticmethod
     def reconstruct_url(url_parsed_info: ParseResult, username: str | None, password: str | None) -> str:
         processed_username = username if (username and username != "") else None

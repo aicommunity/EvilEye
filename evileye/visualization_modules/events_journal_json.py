@@ -614,16 +614,30 @@ class EventsJournalJson(QWidget):
 
             # Add camera events as standalone rows
             for ev in cam_events:
+                from evileye.utils.camera_event_label import (
+                    format_camera_event_information,
+                    media_url_without_credentials,
+                    sanitize_camera_event_record,
+                    source_names_label,
+                )
+
+                clean = sanitize_camera_event_record(ev)
+                identity = (
+                    source_names_label(clean.get("source_names"))
+                    or source_names_label(clean.get("source_name"))
+                    or media_url_without_credentials(str(clean.get("camera_full_address") or ""))
+                )
+                connection_status = bool(clean.get("connection_status", False))
                 table_rows.append({
-                    'source': ev.get('camera_full_address', ''),
-                    'event': 'CameraEvent',
-                    'information': f"Camera {ev.get('camera_full_address')} status={ev.get('connection_status')}",
-                    'time': ev.get('ts', ''),
-                    'time_lost': '',
-                    'preview': '',
-                    'lost_preview': '',
-                    'found_event': None,
-                    'lost_event': None
+                    "source": identity or "camera",
+                    "event": "CameraEvent",
+                    "information": format_camera_event_information(identity, connected=connection_status),
+                    "time": clean.get("ts", ""),
+                    "time_lost": "",
+                    "preview": "",
+                    "lost_preview": "",
+                    "found_event": None,
+                    "lost_event": None,
                 })
 
             # Добавляем системные события отдельными строками

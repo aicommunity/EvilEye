@@ -9,7 +9,7 @@ import {
 } from '../../api';
 import { Button } from '../../components/ui';
 import { useI18n } from '../../i18n';
-import { letterboxRect, rowKey, unixFromJournalTime, type JournalType } from './journalMath';
+import { letterboxRect, redactMediaCredentials, rowKey, unixFromJournalTime, type JournalType } from './journalMath';
 
 export function JournalDetailDrawer({
   row,
@@ -66,14 +66,15 @@ export function JournalDetailDrawer({
       <div className="modal-content journal-detail-content">
         <header className="journal-detail-header">
           <h3>
-            {String(enriched.event ?? t('journals.eventFallback'))} · {String(enriched.source ?? '')}
+            {String(enriched.event ?? t('journals.eventFallback'))} ·{' '}
+            {redactMediaCredentials(enriched.source ?? '')}
           </h3>
           <Button size="sm" variant="outline" onClick={onClose} aria-label={t('common.close')}>
             ×
           </Button>
         </header>
         <div id="journal-detail-body" className="modal-body">
-          <p className="hint">{String(enriched.information ?? '')}</p>
+          <p className="hint">{redactMediaCredentials(enriched.information ?? '')}</p>
           {previewPath ? (
             <div ref={wrapRef} className="journal-preview-wrap" style={{ position: 'relative', maxWidth: 640, minHeight: 200 }}>
               <img
