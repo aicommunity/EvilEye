@@ -45,8 +45,9 @@ export type BasicSetup = {
 };
 
 export const setupApi = {
-  status(): Promise<SetupStatus> {
-    return request('/setup/status');
+  status(config?: string): Promise<SetupStatus> {
+    const q = config ? `?config=${encodeURIComponent(config)}` : '';
+    return request(`/setup/status${q}`);
   },
   basicGet(config?: string): Promise<BasicSetup> {
     const q = config ? `?config=${encodeURIComponent(config)}` : '';

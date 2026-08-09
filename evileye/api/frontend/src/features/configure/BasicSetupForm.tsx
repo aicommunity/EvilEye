@@ -56,7 +56,7 @@ export function BasicSetupForm({
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [st, body] = await Promise.all([setupApi.status(), setupApi.basicGet(configName)]);
+      const [st, body] = await Promise.all([setupApi.status(configName), setupApi.basicGet(configName)]);
       setStatus(st);
       onStatus?.(st);
       setBasic({ ...body, config_name: configName });

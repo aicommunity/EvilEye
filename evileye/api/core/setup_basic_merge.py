@@ -24,6 +24,34 @@ def _as_list(value: Any) -> list[Any]:
     return list(value) if isinstance(value, list) else []
 
 
+def resolve_usable_data_dir(config: dict[str, Any]) -> str:
+    """Best-effort data directory from image_dir, record.out_dir, or source out_dir."""
+    database = _as_dict(config.get("database"))
+    image_dir = str(database.get("image_dir") or "").strip()
+    if image_dir:
+        return image_dir
+    record = _as_dict(config.get("record"))
+    out_dir = str(record.get("out_dir") or "").strip()
+    if out_dir:
+        return out_dir
+    pipeline = _as_dict(config.get("pipeline"))
+    for raw in _as_list(pipeline.get("sources")):
+        row = _as_dict(raw)
+        src_out = str(row.get("out_dir") or "").strip()
+        if src_out:
+            return src_out
+    return ""
+
+
+def config_needs_setup(config: dict[str, Any]) -> bool:
+    """True only for empty/scaffold configs (no sources and no usable data path)."""
+    pipeline = _as_dict(config.get("pipeline"))
+    sources = _as_list(pipeline.get("sources"))
+    has_sources = len(sources) > 0
+    usable = bool(resolve_usable_data_dir(config))
+    return (not usable) and (not has_sources)
+
+
 def _source_key(row: dict[str, Any]) -> tuple[Any, ...]:
     ids = row.get("source_ids")
     if isinstance(ids, list) and ids:
@@ -97,7 +125,7 @@ def project_basic_from_config(
 
     return {
         "config_name": config_name,
-        "data_dir": str(database.get("image_dir") or ""),
+        "data_dir": resolve_usable_data_dir(config),
         "storage_mode": "database" if use_db else "json",
         "database": {
             "host_name": str(database.get("host_name") or db_creds.get("host_name") or "localhost"),

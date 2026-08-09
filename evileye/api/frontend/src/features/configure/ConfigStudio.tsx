@@ -62,12 +62,18 @@ export function ConfigStudio({
   const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null);
   const { mode: uiMode, setMode: setUiMode, needsSetup } = useConfigUiMode(setupStatus);
 
+  const name = configName;
+
   useEffect(() => {
+    if (!name) {
+      setSetupStatus(null);
+      return;
+    }
     void setupApi
-      .status()
+      .status(name)
       .then((s) => setSetupStatus(s))
       .catch(() => setSetupStatus(null));
-  }, []);
+  }, [name]);
 
   const [tabs, setTabs] = useState<StudioTab[]>([]);
   const [activeId, setActiveId] = useState('sources');
@@ -77,7 +83,6 @@ export function ConfigStudio({
   const [fullJson, setFullJson] = useState('{}');
   const [sourceId, setSourceId] = useState(0);
 
-  const name = configName;
   const activeTab = useMemo(() => tabs.find((t) => t.id === activeId), [tabs, activeId]);
   const activePath = activeTab?.path ?? activeId;
 
@@ -257,7 +262,6 @@ export function ConfigStudio({
             </Button>
           ) : null}
         </div>
-        {needsSetup ? <p className="setup-banner">{t('setup.needsSetupBanner')}</p> : null}
         {uiMode === 'basic' ? (
           <>
             <p className="hint">{t('setup.basicHint')}</p>

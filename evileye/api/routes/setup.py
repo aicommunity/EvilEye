@@ -12,7 +12,12 @@ from typing import Any, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from evileye.api.core.setup_basic_merge import apply_basic_setup, project_basic_from_config
+from evileye.api.core.setup_basic_merge import (
+    apply_basic_setup,
+    config_needs_setup,
+    project_basic_from_config,
+    resolve_usable_data_dir,
+)
 from evileye.api.core.web_auth_bootstrap import user_must_change_password
 from evileye.api.core.safe_paths import UnsafePathError, assert_under_dir, safe_config_name
 from evileye.service_manager.minimal_config import ensure_system_config, minimal_system_config
@@ -134,37 +139,33 @@ def _analytics_enabled(config: dict[str, Any]) -> bool:
     return bool(detectors or trackers)
 
 
-def _build_status() -> dict[str, Any]:
+def _build_status(config_name: Optional[str] = None) -> dict[str, Any]:
     creds = _load_json(_credentials_path())
     setup = _setup_section(creds)
     default_config = _default_config_name(creds)
     ensure_system_config(Path.cwd())
+    name = config_name or default_config
+    if not str(name).endswith(".json"):
+        name = f"{name}.json"
     try:
-        cfg_path = _config_path(default_config)
+        cfg_path = _config_path(name)
     except UnsafePathError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     config = _load_json(cfg_path) if cfg_path.exists() else minimal_system_config()
 
-    database_section = config.get("database") if isinstance(config.get("database"), dict) else {}
-    data_dir = str(database_section.get("image_dir") or "")
-    data_dir_confirmed = bool(setup.get("data_dir_confirmed")) or bool(data_dir.strip())
-    # Prefer explicit flag; treat non-empty image_dir as confirmed for existing configs
-    if data_dir.strip() and not setup.get("data_dir_confirmed"):
-        # Existing installs with image_dir already set: treat as configured for mode unlock,
-        # but still expose data_dir_confirmed from flag for first-run banner.
-        pass
-
+    data_dir = resolve_usable_data_dir(config)
     has_sources = _has_sources(config)
     controller = config.get("controller") if isinstance(config.get("controller"), dict) else {}
     use_database = bool(controller.get("use_database", False))
     record = config.get("record") if isinstance(config.get("record"), dict) else {}
     recording_enabled = bool(record.get("enabled", False))
 
-    needs_setup = not bool(setup.get("data_dir_confirmed")) and not bool(str(data_dir).strip())
-    configured = (bool(setup.get("data_dir_confirmed")) or bool(str(data_dir).strip())) and (
-        bool(setup.get("completed")) or has_sources or bool(str(data_dir).strip())
-    )
-    ready_to_run = (bool(setup.get("data_dir_confirmed")) or bool(str(data_dir).strip())) and has_sources
+    needs_setup = config_needs_setup(config)
+    configured = (not needs_setup) or bool(setup.get("completed")) or bool(setup.get("data_dir_confirmed"))
+    ready_to_run = has_sources and (bool(data_dir) or bool(setup.get("data_dir_confirmed")))
+    # Working configs with sources but no explicit data dir are still runnable (legacy paths).
+    if has_sources and not ready_to_run:
+        ready_to_run = True
     if use_database:
         db_creds = creds.get("database") if isinstance(creds.get("database"), dict) else {}
         ready_to_run = ready_to_run and bool(db_creds.get("password") or db_creds.get("admin_password"))
@@ -184,8 +185,9 @@ def _build_status() -> dict[str, Any]:
         "ready_to_run": ready_to_run,
         "must_change_password": must_change,
         "default_config": default_config,
+        "config_name": cfg_path.name if cfg_path.exists() else name,
         "data_dir": data_dir,
-        "data_dir_confirmed": bool(setup.get("data_dir_confirmed")),
+        "data_dir_confirmed": bool(setup.get("data_dir_confirmed")) or bool(data_dir),
         "use_database": use_database,
         "has_sources": has_sources,
         "source_count": len((config.get("pipeline") or {}).get("sources") or []) if isinstance(config.get("pipeline"), dict) else 0,
@@ -199,8 +201,8 @@ def _build_status() -> dict[str, Any]:
 
 
 @router.get("/status")
-async def setup_status() -> dict:
-    return _build_status()
+async def setup_status(config: Optional[str] = None) -> dict:
+    return _build_status(config_name=config)
 
 
 @router.get("/basic")
@@ -243,7 +245,7 @@ async def setup_basic_put(payload: BasicSetupModel) -> dict:
     _atomic_write(path, new_config)
     _atomic_write(creds_path, new_creds)
 
-    status = _build_status()
+    status = _build_status(config_name=path.name)
     projected = project_basic_from_config(new_config, new_creds, config_name=path.name)
     return {"ok": True, "status": status, "basic": projected}
 
