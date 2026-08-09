@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   configGet,
   configUpdate,
@@ -31,6 +32,7 @@ import { StorageMonitorForm } from './sectionForms/StorageMonitorForm';
 import { GenericSectionForm } from './sectionForms/GenericSectionForm';
 import { JsonAdvancedTab } from './JsonAdvancedTab';
 import { ConfigHistoryPanel } from './ConfigHistoryPanel';
+import { ConfigRelatedRunsPanel } from './ConfigRelatedRunsPanel';
 import { RoiCanvas } from './RoiCanvas';
 import { ZoneCanvas } from './ZoneCanvas';
 import { ClassMappingEditor } from './ClassMappingEditor';
@@ -59,6 +61,7 @@ export function ConfigStudio({
   const { hasPermission } = useAuth();
   const { showError, showSuccess } = useToast();
   const { t } = useI18n();
+  const [searchParams] = useSearchParams();
   const canEdit = readOnlyProp === true ? false : hasPermission('config:edit');
   const canRun = hasPermission('runtime:control');
 
@@ -92,7 +95,11 @@ export function ConfigStudio({
   }, [name]);
 
   const [tabs, setTabs] = useState<StudioTab[]>([]);
-  const [activeId, setActiveId] = useState('sources');
+  const [activeId, setActiveId] = useState(() => {
+    const tab = searchParams.get('tab');
+    if (tab === 'history' && allowConfigHistory) return 'history';
+    return 'sources';
+  });
   const [sectionData, setSectionData] = useState<unknown>(null);
   const [baselineJson, setBaselineJson] = useState('');
   const [dirty, setDirty] = useState(false);
@@ -107,6 +114,13 @@ export function ConfigStudio({
     if (allowConfigHistory) extra.push('history');
     return extra;
   }, [allowConfigHistory]);
+
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    if (tab === 'history' && allowConfigHistory) {
+      setActiveId('history');
+    }
+  }, [searchParams, allowConfigHistory]);
 
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -320,6 +334,7 @@ export function ConfigStudio({
             ? t('configure.hintCurrent')
             : t('configure.hintFile')}
         </p>
+        {mode === 'file' && name ? <ConfigRelatedRunsPanel configName={name} /> : null}
         <div className="journal-tabs config-studio-tabs">
           {[...tabs.map((tab) => tab.id), ...specialIds].map((s) => (
             <button

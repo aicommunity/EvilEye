@@ -446,12 +446,16 @@ class ConfigRunManager:
             auth = load_web_auth_config()
 
             session_id = uuid.uuid4().hex
+            from evileye.api.core.log_service import allocate_log_session_id
+
+            log_session_id = allocate_log_session_id()
             env = {
                 **os.environ,
                 "EVILEYE_PIPELINE_ID": str(rid),
                 "EVILEYE_PIPELINE_NAME": item.name,
                 "EVILEYE_MANAGED_RUN": "1",
                 "EVILEYE_SESSION_ID": session_id,
+                "EVILEYE_LOG_SESSION_ID": log_session_id,
                 "PYTHONUNBUFFERED": "1",
             }
             if api_base_url:
@@ -487,6 +491,7 @@ class ConfigRunManager:
                 managed=True,
                 state="running",
                 session_id=session_id,
+                log_session_id=log_session_id,
             )
             self.logger.info(f"ConfigRun '{rid}' running with pid {item.pid}")
         except Exception as e:

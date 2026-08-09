@@ -15,7 +15,6 @@ const NAV: Array<{ to: string; labelKey: string; permission?: string }> = [
   { to: '/configure', labelKey: 'nav.configure', permission: 'config:view' },
   { to: '/admin/runs', labelKey: 'nav.runs', permission: 'runtime:view' },
   { to: '/admin/configs', labelKey: 'nav.configs', permission: 'config:view' },
-  { to: '/admin/logs', labelKey: 'nav.logs', permission: 'logs:view' },
   { to: '/admin/users', labelKey: 'nav.users', permission: 'users:manage' },
   { to: '/admin/bans', labelKey: 'nav.bans', permission: 'bans:manage' },
 ];

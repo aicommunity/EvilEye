@@ -21,6 +21,14 @@ export interface StateRun extends ConfigRun {
   tracker_count?: number;
   event_detector_names?: string[];
   database_enabled?: boolean;
+  config_name?: string | null;
+  log_session_id?: string | null;
+  log_files?: {
+    main?: string | null;
+    errors?: string | null;
+    performance?: string | null;
+  };
+  log_match?: 'exact' | 'heuristic' | 'none';
   sources?: Array<{
     source_id: number | null;
     source_name: string;

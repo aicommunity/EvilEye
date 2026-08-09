@@ -140,6 +140,7 @@ def main():
         source="process",
         managed=os.environ.get("EVILEYE_MANAGED_RUN") == "1",
         state="starting",
+        log_session_id=(os.environ.get("EVILEYE_LOG_SESSION_ID") or "").strip() or None,
     )
     update_runtime_snapshot(
         int(pipeline_id),

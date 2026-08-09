@@ -37,6 +37,7 @@ _STUB_FIELDS = (
     "managed",
     "frame_dir",
     "error",
+    "log_session_id",
 )
 
 def _ensure_dirs() -> None:
@@ -311,6 +312,7 @@ def register_runtime(
         state: str = "running",
         error: Optional[str] = None,
         session_id: Optional[str] = None,
+        log_session_id: Optional[str] = None,
 ) -> Dict:
     now = time.time()
     existing = load_runtime_record(rid, refresh_state=False) or {}
@@ -326,6 +328,7 @@ def register_runtime(
         "state": state,
         "error": error,
         "session_id": session_id or existing.get("session_id"),
+        "log_session_id": log_session_id or existing.get("log_session_id"),
         "started_at": existing.get("started_at") or now,
         "updated_at": now,
     }
