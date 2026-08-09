@@ -16,6 +16,7 @@ import { FormField, FormGrid } from './formLayout';
 import { restartConfigRun } from './restartConfigRun';
 import { SourceAdvancedEditor } from './SourceAdvancedEditor';
 import { cloneSourceRow, collectOccupiedSourceIds, findSourceRowIndex } from './sourceRowUtils';
+import { formatInt, INT_STEP, parseIntInput } from './numberFormat';
 
 const SOURCE_TYPES = ['IpCamera', 'VideoFile', 'Device'] as const;
 
@@ -283,11 +284,13 @@ export function BasicSetupForm({
           <FormField label={t('setup.dbPort')}>
             <input
               type="number"
+              step={INT_STEP}
               disabled={!canEdit}
-              value={basic.database.port}
-              onChange={(e) =>
-                update({ database: { ...basic.database, port: Number(e.target.value) || 5432 } })
-              }
+              value={formatInt(Number(basic.database.port))}
+              onChange={(e) => {
+                const n = parseIntInput(e.target.value);
+                update({ database: { ...basic.database, port: n ?? 5432 } });
+              }}
             />
           </FormField>
           <FormField label={t('setup.dbName')}>

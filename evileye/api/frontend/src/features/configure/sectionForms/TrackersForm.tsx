@@ -1,6 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../../../components/ui';
 import { useI18n } from '../../../i18n';
+import {
+  DECIMAL_STEP,
+  formatDecimal,
+  formatInt,
+  INT_STEP,
+  parseDecimalInput,
+  parseIntInput,
+} from '../numberFormat';
 
 type TrackerRow = {
   name?: string;
@@ -55,11 +63,12 @@ export function TrackersForm({
             max_age{' '}
             <input
               type="number"
+              step={INT_STEP}
               disabled={readOnly}
-              value={row.max_age ?? ''}
+              value={row.max_age != null ? formatInt(Number(row.max_age)) : ''}
               onChange={(e) => {
                 const next = [...rows];
-                next[i] = { ...row, max_age: e.target.value === '' ? undefined : Number(e.target.value) };
+                next[i] = { ...row, max_age: parseIntInput(e.target.value) };
                 updateRows(next);
               }}
               className="config-input-num"
@@ -69,11 +78,12 @@ export function TrackersForm({
             min_hits{' '}
             <input
               type="number"
+              step={INT_STEP}
               disabled={readOnly}
-              value={row.min_hits ?? ''}
+              value={row.min_hits != null ? formatInt(Number(row.min_hits)) : ''}
               onChange={(e) => {
                 const next = [...rows];
-                next[i] = { ...row, min_hits: e.target.value === '' ? undefined : Number(e.target.value) };
+                next[i] = { ...row, min_hits: parseIntInput(e.target.value) };
                 updateRows(next);
               }}
               className="config-input-num"
@@ -83,12 +93,12 @@ export function TrackersForm({
             iou{' '}
             <input
               type="number"
-              step="0.01"
+              step={DECIMAL_STEP}
               disabled={readOnly}
-              value={row.iou_threshold ?? ''}
+              value={row.iou_threshold != null ? formatDecimal(Number(row.iou_threshold)) : ''}
               onChange={(e) => {
                 const next = [...rows];
-                next[i] = { ...row, iou_threshold: e.target.value === '' ? undefined : Number(e.target.value) };
+                next[i] = { ...row, iou_threshold: parseDecimalInput(e.target.value) };
                 updateRows(next);
               }}
               className="config-input-num"

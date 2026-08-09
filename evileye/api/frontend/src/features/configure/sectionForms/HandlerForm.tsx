@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../../../components/ui';
 import { useI18n } from '../../../i18n';
+import { formatInt, INT_STEP, parseIntInput } from '../numberFormat';
 
 type HandlerCfg = {
   enabled?: boolean;
@@ -70,11 +71,10 @@ export function HandlerForm({
           retention_days{' '}
           <input
             type="number"
+            step={INT_STEP}
             disabled={readOnly}
-            value={obj.retention_days ?? ''}
-            onChange={(e) =>
-              update({ ...obj, retention_days: e.target.value === '' ? undefined : Number(e.target.value) })
-            }
+            value={obj.retention_days != null ? formatInt(Number(obj.retention_days)) : ''}
+            onChange={(e) => update({ ...obj, retention_days: parseIntInput(e.target.value) })}
             className="config-input-num"
           />
         </label>

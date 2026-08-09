@@ -15,10 +15,15 @@ import {
   validateSplitRegions,
   type PixelRect,
 } from './sourceRowUtils';
+import { formatInt, INT_STEP, parseIntInput } from './numberFormat';
 
 const CAPTURE_TYPES = ['VideoCaptureGStreamer', 'VideoCaptureOpencv'] as const;
 const SOURCE_KINDS = ['IpCamera', 'VideoFile', 'Device'] as const;
 const API_PREFS = ['CAP_GSTREAMER', 'CAP_FFMPEG'] as const;
+
+function roundRect(rect: PixelRect): PixelRect {
+  return [Math.round(rect[0]), Math.round(rect[1]), Math.max(1, Math.round(rect[2])), Math.max(1, Math.round(rect[3]))];
+}
 
 export function SourceAdvancedEditor({
   open,
@@ -272,7 +277,7 @@ export function SourceAdvancedEditor({
               if (!regions.split) return;
               const coords = regions.coords.map((r) => [...r] as PixelRect);
               if (index < 0 || index >= coords.length) return;
-              coords[index] = rect;
+              coords[index] = roundRect(rect);
               setRegions({ split: true, ids: regions.ids, names: regions.names, coords });
             }}
           />
@@ -329,17 +334,18 @@ export function SourceAdvancedEditor({
             <FormField label={t('setup.desiredFps')}>
               <input
                 type="number"
+                step={INT_STEP}
                 disabled={readOnly}
                 value={
                   draft.desired_fps != null
-                    ? Number(draft.desired_fps)
+                    ? formatInt(Number(draft.desired_fps))
                     : draft.fps != null
-                      ? Number(draft.fps)
+                      ? formatInt(Number(draft.fps))
                       : ''
                 }
                 onChange={(e) => {
-                  const n = e.target.value === '' ? null : Number(e.target.value);
-                  patchDraft({ desired_fps: n, fps: n });
+                  const n = parseIntInput(e.target.value);
+                  patchDraft({ desired_fps: n ?? null, fps: n ?? null });
                 }}
               />
             </FormField>
@@ -428,12 +434,14 @@ export function SourceAdvancedEditor({
                         <span>id</span>
                         <input
                           type="number"
+                          step={INT_STEP}
                           disabled={readOnly}
-                          value={id}
+                          value={formatInt(id)}
                           onClick={(e) => e.stopPropagation()}
                           onChange={(e) => {
                             const ids = [...regions.ids];
-                            ids[i] = Number(e.target.value);
+                            const parsed = parseIntInput(e.target.value);
+                            ids[i] = parsed ?? 0;
                             setRegions({ split: true, ids, names: regions.names, coords: regions.coords });
                           }}
                         />
@@ -461,13 +469,16 @@ export function SourceAdvancedEditor({
                           <span>{label}</span>
                           <input
                             type="number"
+                            step={INT_STEP}
                             disabled={readOnly}
-                            value={c[ci]}
+                            value={formatInt(c[ci])}
                             onClick={(e) => e.stopPropagation()}
                             onChange={(e) => {
                               const coords = regions.coords.map((r) => [...r] as PixelRect);
                               while (coords.length <= i) coords.push([0, 0, 100, 100]);
-                              coords[i][ci] = Number(e.target.value);
+                              const parsed = parseIntInput(e.target.value);
+                              coords[i][ci] = parsed ?? 0;
+                              if (ci >= 2) coords[i][ci] = Math.max(1, coords[i][ci]);
                               setRegions({ split: true, ids: regions.ids, names: regions.names, coords });
                             }}
                           />

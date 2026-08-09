@@ -43,10 +43,10 @@ export function parseSourceRegions(row: Record<string, unknown>): {
     for (const item of coordsRaw) {
       if (!Array.isArray(item) || item.length !== 4) continue;
       const rect: PixelRect = [
-        Number(item[0]),
-        Number(item[1]),
-        Number(item[2]),
-        Number(item[3]),
+        Math.round(Number(item[0])),
+        Math.round(Number(item[1])),
+        Math.max(1, Math.round(Number(item[2]))),
+        Math.max(1, Math.round(Number(item[3]))),
       ];
       if (rect.every((n) => !Number.isNaN(n))) coords.push(rect);
     }

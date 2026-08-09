@@ -3,6 +3,7 @@ import { editorsApi, stateApi, streamSnapshotUrl } from '../../api';
 import { Button } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
 import { useI18n } from '../../i18n';
+import { formatInt, INT_STEP, parseIntInput } from './numberFormat';
 
 export function RoiCanvas({
   configName,
@@ -62,7 +63,13 @@ export function RoiCanvas({
       <div className="toolbar">
         <label>
           source_id{' '}
-          <input type="number" min={0} value={sourceId} onChange={(e) => onSourceIdChange(Number(e.target.value))} />
+          <input
+            type="number"
+            step={INT_STEP}
+            min={0}
+            value={formatInt(sourceId)}
+            onChange={(e) => onSourceIdChange(parseIntInput(e.target.value) ?? 0)}
+          />
         </label>
         {!readOnly ? (
           <Button

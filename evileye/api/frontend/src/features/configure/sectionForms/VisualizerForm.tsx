@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../../../components/ui';
 import { useI18n } from '../../../i18n';
+import { formatInt, INT_STEP, parseIntInput } from '../numberFormat';
 
 type VisCfg = {
   enabled?: boolean;
@@ -53,9 +54,10 @@ export function VisualizerForm({
           fps{' '}
           <input
             type="number"
+            step={INT_STEP}
             disabled={readOnly}
-            value={fps ?? ''}
-            onChange={(e) => update({ ...obj, fps: e.target.value === '' ? undefined : Number(e.target.value) })}
+            value={fps != null ? formatInt(Number(fps)) : ''}
+            onChange={(e) => update({ ...obj, fps: parseIntInput(e.target.value) })}
             className="config-input-num"
           />
         </label>

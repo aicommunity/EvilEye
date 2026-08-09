@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../../../components/ui';
 import { useI18n } from '../../../i18n';
+import { DECIMAL_STEP, formatDecimal, parseDecimalInput } from '../numberFormat';
 
 type DetectorRow = {
   model?: string;
@@ -56,14 +57,14 @@ export function DetectorsForm({
             conf{' '}
             <input
               type="number"
-              step="0.01"
+              step={DECIMAL_STEP}
               min={0}
               max={1}
               disabled={readOnly}
-              value={row.conf ?? ''}
+              value={row.conf != null ? formatDecimal(Number(row.conf)) : ''}
               onChange={(e) => {
                 const next = [...rows];
-                next[i] = { ...row, conf: e.target.value === '' ? undefined : Number(e.target.value) };
+                next[i] = { ...row, conf: parseDecimalInput(e.target.value) };
                 updateRows(next);
               }}
               className="config-input-num"

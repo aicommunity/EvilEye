@@ -10,6 +10,7 @@ import {
   padRegions,
   parseSourceRegions,
 } from '../sourceRowUtils';
+import { formatInt, INT_STEP, parseIntInput } from '../numberFormat';
 
 type SourceRow = {
   source?: string;
@@ -151,11 +152,16 @@ export function SourcesForm({
             <FormField label="desired_fps / fps">
               <input
                 type="number"
+                step={INT_STEP}
                 disabled={readOnly}
-                value={row.desired_fps ?? row.fps ?? ''}
+                value={
+                  row.desired_fps != null || row.fps != null
+                    ? formatInt(Number(row.desired_fps ?? row.fps))
+                    : ''
+                }
                 onChange={(e) => {
                   const next = [...rows];
-                  const n = e.target.value === '' ? undefined : Number(e.target.value);
+                  const n = parseIntInput(e.target.value);
                   next[i] = { ...row, desired_fps: n, fps: n };
                   updateRows(next);
                 }}
@@ -212,11 +218,12 @@ export function SourcesForm({
             <FormField label="num_split">
               <input
                 type="number"
+                step={INT_STEP}
                 disabled={readOnly}
-                value={row.num_split ?? ''}
+                value={row.num_split != null ? formatInt(Number(row.num_split)) : ''}
                 onChange={(e) => {
                   const next = [...rows];
-                  next[i] = { ...row, num_split: e.target.value === '' ? undefined : Number(e.target.value) };
+                  next[i] = { ...row, num_split: parseIntInput(e.target.value) };
                   updateRows(next);
                 }}
               />
