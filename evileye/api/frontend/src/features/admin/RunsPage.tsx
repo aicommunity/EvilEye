@@ -112,7 +112,7 @@ export function RunsPage() {
         if (!signal?.aborted) setLoading(false);
       }
     },
-    [showError, t],
+    [showError],
   );
 
   const loadDbHistory = useCallback(
@@ -134,7 +134,7 @@ export function RunsPage() {
         if (!signal?.aborted) setDbLoading(false);
       }
     },
-    [canViewHistory, t],
+    [canViewHistory],
   );
 
   useEffect(() => {

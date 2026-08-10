@@ -15,9 +15,26 @@ def test_group_events_rows_camera_uses_stream_name_not_credentials():
     )
     assert len(rows) == 1
     assert rows[0]["source"] == "Cam2"
-    assert rows[0]["information"] == "Camera=Cam2 reconnect"
+    assert rows[0]["information"] == "Reconnect [Cam2]"
     assert "SecretPass" not in rows[0]["information"]
     assert "rtsp://" not in rows[0]["information"]
+
+
+def test_group_events_rows_camera_split_lists_all_names():
+    rows = group_events_rows(
+        [
+            {
+                "event_type": "cam",
+                "ts": "2026-08-09T22:00:00",
+                "source_names": ["Cam2", "Cam3"],
+                "camera_full_address": "rtsp://user:SecretPass@10.245.1.199",
+                "connection_status": True,
+            }
+        ]
+    )
+    assert rows[0]["source"] == "Cam2, Cam3"
+    assert rows[0]["information"] == "Reconnect [Cam2, Cam3]"
+    assert "SecretPass" not in rows[0]["information"]
 
 
 def test_group_events_rows_camera_strips_credentials_from_legacy_url_only_events():

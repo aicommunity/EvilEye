@@ -61,7 +61,7 @@ export function ConfigsListPage() {
     } catch (e) {
       showError(e instanceof Error ? e.message : t('common.error'));
     }
-  }, [showError, t]);
+  }, [showError]);
 
   const loadRuns = useCallback(
     async (signal?: AbortSignal) => {

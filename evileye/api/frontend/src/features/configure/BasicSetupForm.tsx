@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   setupApi,
   configGet,
@@ -47,7 +47,7 @@ export function BasicSetupForm({
   onStatus?: (s: SetupStatus) => void;
   onPendingApplyChange?: (pending: boolean) => void;
 }) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const { hasPermission } = useAuth();
   const { showError, showSuccess } = useToast();
   const canEdit = hasPermission('config:edit');
@@ -63,20 +63,26 @@ export function BasicSetupForm({
     row: Record<string, unknown>;
     occupiedIds: number[];
   } | null>(null);
+  const hasLoadedRef = useRef(false);
 
   const load = useCallback(async () => {
-    setLoading(true);
+    if (!hasLoadedRef.current) setLoading(true);
     try {
       const [st, body] = await Promise.all([setupApi.status(configName), setupApi.basicGet(configName)]);
       setStatus(st);
       onStatus?.(st);
       setBasic({ ...body, config_name: configName });
+      hasLoadedRef.current = true;
     } catch (e) {
       showError(e instanceof Error ? e.message : t('common.error'));
     } finally {
       setLoading(false);
     }
-  }, [configName, onStatus, showError, t]);
+  }, [configName, onStatus, showError]);
+
+  useEffect(() => {
+    hasLoadedRef.current = false;
+  }, [configName]);
 
   useEffect(() => {
     void load();
@@ -121,7 +127,7 @@ export function BasicSetupForm({
     if (!recording.length) return t('setup.recordingSummaryOff');
     const names = recording.map((s) => s.name || `Cam${s.id + 1}`).join(', ');
     return t('setup.recordingSummaryOn', { names, count: recording.length });
-  }, [basic.sources, t]);
+  }, [basic.sources, lang, t]);
 
   const buildPayload = (): BasicSetup => {
     const sources = basic.sources;

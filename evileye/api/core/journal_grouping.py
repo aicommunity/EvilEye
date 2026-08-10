@@ -66,7 +66,11 @@ def group_objects_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return table_rows
 
 
-def group_events_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def group_events_rows(
+    rows: list[dict[str, Any]],
+    *,
+    source_mappings: dict[str, tuple[Any, Any]] | None = None,
+) -> list[dict[str, Any]]:
     grouped: dict[tuple, dict[str, Any]] = defaultdict(lambda: {"found": None, "lost": None})
     cam_events: list[dict[str, Any]] = []
     sys_events: list[dict[str, Any]] = []
@@ -137,7 +141,7 @@ def group_events_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         )
 
     for ev in cam_events:
-        clean = sanitize_camera_event_record(ev)
+        clean = sanitize_camera_event_record(ev, source_mappings=source_mappings)
         identity = (
             source_names_label(clean.get("source_names"))
             or source_names_label(clean.get("source_name"))

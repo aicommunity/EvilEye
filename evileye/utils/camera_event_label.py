@@ -73,29 +73,36 @@ def camera_event_identity(
 
 
 def format_camera_event_information(identity: str, *, connected: bool) -> str:
-    status = "reconnect" if connected else "disconnect"
+    status = "Reconnect" if connected else "Disconnect"
     label = identity or "camera"
     if looks_like_media_url(label):
         label = media_url_without_credentials(label)
     else:
         label = redact_media_url_credentials(label)
-    return f"Camera={label} {status}"
+    return f"{status} [{label}]"
 
 
 def resolve_source_name_from_mappings(
     address: str,
     mappings: Optional[Mapping[str, Tuple[Any, str]]] = None,
 ) -> str:
-    """Match camera address (with/without credentials) to configured stream name."""
+    """Match camera address (with/without credentials) to configured stream name(s).
+
+    If several logical cameras share one physical URL (split source), join all
+    matching names: ``Cam2, Cam3``.
+    """
     if not address or not mappings:
         return ""
     needle = media_url_without_credentials(address)
+    matched: list[str] = []
     for source_name, (_source_id, mapped_address) in mappings.items():
         if not mapped_address:
             continue
         if mapped_address == address or media_url_without_credentials(str(mapped_address)) == needle:
-            return str(source_name)
-    return ""
+            text = str(source_name).strip()
+            if text and text not in matched:
+                matched.append(text)
+    return ", ".join(matched)
 
 
 def sanitize_camera_event_record(

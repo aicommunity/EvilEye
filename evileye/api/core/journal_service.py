@@ -568,7 +568,7 @@ def load_events_grouped_page(
     if not payload.get("available"):
         return payload
     grouped = _enrich_rows(
-        group_events_rows(payload.get("items") or []),
+        group_events_rows(payload.get("items") or [], source_mappings=_source_mappings()),
         journal_type="events",
         list_mode=True,
         cache_rows=True,

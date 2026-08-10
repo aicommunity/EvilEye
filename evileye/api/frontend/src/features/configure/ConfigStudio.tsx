@@ -178,7 +178,7 @@ export function ConfigStudio({
     return () => {
       cancelled = true;
     };
-  }, [name, activeId, tabs, showError, specialIds, t]);
+  }, [name, activeId, tabs, showError, specialIds]);
 
   const markDirtyFromDraft = (draft: unknown) => {
     setDirty(stableStringify(draft) !== baselineJson);

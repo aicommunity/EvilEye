@@ -49,7 +49,7 @@ export function useJournalFeed(tab: JournalType, filters: JournalDateFilters) {
         setLoading(false);
       }
     },
-    [tab, filters, page, t],
+    [tab, filters, page],
   );
 
   const reload = useCallback(async (signal?: AbortSignal) => {
@@ -94,7 +94,7 @@ export function useJournalFeed(tab: JournalType, filters: JournalDateFilters) {
     } finally {
       if (!signal?.aborted) setLoading(false);
     }
-  }, [tab, filters, t]);
+  }, [tab, filters]);
 
   const poll = useCallback(async () => {
     try {

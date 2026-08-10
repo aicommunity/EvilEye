@@ -152,7 +152,7 @@ export function PlaybackPage() {
       cancelled = true;
       ac.abort();
     };
-  }, [date, runId, runReady, showError, t, urlCamera, setSelectedIds, softRefreshCameras]);
+  }, [date, runId, runReady, showError, urlCamera, setSelectedIds, softRefreshCameras]);
 
   const loadSegments = useCallback(
     async (camsOverride?: string[], opts?: { from?: number; to?: number; merge?: boolean; date?: string }) => {
@@ -227,7 +227,7 @@ export function PlaybackPage() {
         showError(e instanceof Error ? e.message : t('playback.unavailable'));
       }
     },
-    [date, initialT, showError, t, ctrl, viewport],
+    [date, initialT, showError, ctrl, viewport],
   );
   useEffect(() => {
     // Show calendar-day timeline immediately on date change (before segments return).

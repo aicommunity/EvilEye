@@ -47,7 +47,7 @@ export function LogsPage() {
         if (!signal?.aborted) setLoading(false);
       }
     },
-    [showError, t],
+    [showError],
   );
 
   useEffect(() => {
@@ -123,7 +123,7 @@ export function LogsPage() {
       return;
     }
     openLive(safe);
-  }, [queryFile, loading, files, openLive, showError, t]);
+  }, [queryFile, loading, files, openLive, showError]);
 
   return (
     <section className="panel active">

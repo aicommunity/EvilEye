@@ -38,7 +38,8 @@ export function ConfigurePage() {
         setLoaded(true);
       }
     })();
-  }, [routeName, showError, t]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- t is stable; language switch must not re-resolve
+  }, [routeName, showError]);
 
   if (routeName) {
     return <Navigate to={`/admin/configs/${encodeURIComponent(routeName)}`} replace />;

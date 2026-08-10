@@ -109,7 +109,7 @@ export function EventsPage() {
         if (!ac.signal.aborted) setHistoryLoading(false);
       });
     return () => ac.abort();
-  }, [tab, t]);
+  }, [tab]);
 
   useVisibilityPolling(() => {
     if (tab === 'history' || selected) return;
