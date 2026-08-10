@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Navigate, useParams } from 'react-router-dom';
-import { stateApi, type StateRun } from '../../api';
+import { setupApi, stateApi, type StateRun } from '../../api';
 import { useToast } from '../../components/ui/Toast';
 import { ConfigStudio } from './ConfigStudio';
 import { configBasename } from './studioTabs';
@@ -19,14 +19,26 @@ export function ConfigurePage() {
       try {
         const data = (await stateApi.runs('current')) as { current_run?: StateRun | null };
         const path = data.current_run?.config_path;
-        setConfigName(configBasename(path));
+        const fromRun = configBasename(path);
+        if (fromRun) {
+          setConfigName(fromRun);
+          return;
+        }
+        const status = await setupApi.status();
+        setConfigName(status.default_config || 'system.json');
       } catch (e) {
-        showError(e instanceof Error ? e.message : t('configure.noActiveRun'));
-        setConfigName(null);
+        try {
+          const status = await setupApi.status();
+          setConfigName(status.default_config || 'system.json');
+        } catch {
+          showError(e instanceof Error ? e.message : t('configure.noActiveRun'));
+          setConfigName('system.json');
+        }
       } finally {
         setLoaded(true);
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- t is stable; language switch must not re-resolve
   }, [routeName, showError]);
 
   if (routeName) {
@@ -43,5 +55,6 @@ export function ConfigurePage() {
     );
   }
 
-  return <ConfigStudio mode="current" configName={configName} currentBadge />;
+  // Prefer file mode so Basic setup works without an active run.
+  return <ConfigStudio mode="file" configName={configName} currentBadge={false} />;
 }

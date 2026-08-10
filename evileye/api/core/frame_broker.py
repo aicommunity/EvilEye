@@ -75,10 +75,17 @@ class FrameBroker:
                     pipeline_id, jpeg_bytes = item
                     metadata = None
                 self._stats["ipc_received"] += 1
-                self.publish_jpeg(pipeline_id, jpeg_bytes, metadata=metadata)
-                source_id = (metadata or {}).get("source_id") if isinstance(metadata, dict) else None
+                meta = metadata if isinstance(metadata, dict) else {}
+                key = str(pipeline_id)
+                is_full = bool(meta.get("full_frame")) or ":full:" in key
+                self.publish_jpeg(key, jpeg_bytes, metadata=metadata)
+                # Do not also publish as {key}:{source_id} for full-frame keys — that would
+                # overwrite logical crop previews with the uncropped JPEG.
+                if is_full:
+                    continue
+                source_id = meta.get("source_id")
                 if source_id is not None:
-                    self.publish_jpeg(f"{pipeline_id}:{source_id}", jpeg_bytes, metadata=metadata)
+                    self.publish_jpeg(f"{key}:{source_id}", jpeg_bytes, metadata=metadata)
             except Exception:
                 continue
 

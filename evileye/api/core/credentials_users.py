@@ -7,6 +7,11 @@ from pathlib import Path
 from typing import Any, Optional
 
 from evileye.api.security import hash_password, normalize_role
+from evileye.core.paths import creds_path
+
+
+def _default_creds() -> Path:
+    return creds_path()
 
 
 DEFAULT_CREDS = Path("credentials.json")
@@ -54,7 +59,7 @@ def _find_user_index(users: list[dict[str, Any]], username: str) -> int:
 
 
 def list_credentials_users(path: Path | None = None) -> list[dict[str, Any]]:
-    creds_path = path or DEFAULT_CREDS
+    creds_path = path or _default_creds()
     web_auth = _ensure_web_auth(_load_json(creds_path))
     result: list[dict[str, Any]] = []
     for item in web_auth.get("users") or []:
@@ -83,7 +88,7 @@ def update_credentials_user(
     disabled: bool | None = None,
     path: Path | None = None,
 ) -> dict[str, Any]:
-    creds_path = path or DEFAULT_CREDS
+    creds_path = path or _default_creds()
     creds = _load_json(creds_path)
     web_auth = _ensure_web_auth(creds)
     users: list[dict[str, Any]] = list(web_auth.get("users") or [])
@@ -96,6 +101,7 @@ def update_credentials_user(
             raise ValueError("Password must be at least 8 characters")
         item["password_hash"] = hash_password(password)
         item.pop("password", None)
+        item["must_change_password"] = False
     if role is not None:
         item["role"] = normalize_role(role)
     if disabled is not None:
@@ -111,7 +117,7 @@ def set_credentials_password(username: str, new_password: str, path: Path | None
 
 
 def delete_credentials_user(username: str, path: Path | None = None) -> None:
-    creds_path = path or DEFAULT_CREDS
+    creds_path = path or _default_creds()
     creds = _load_json(creds_path)
     web_auth = _ensure_web_auth(creds)
     users: list[dict[str, Any]] = list(web_auth.get("users") or [])

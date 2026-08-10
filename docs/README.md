@@ -8,8 +8,12 @@
 
 - **[Руководство по настройке базы данных](DATABASE_SETUP_GUIDE.md)** - Подробное руководство по настройке PostgreSQL базы данных для EvilEye
 - **[Команда deploy](CLI_DEPLOY_COMMAND.md)** - Использование команды `evileye deploy` для развертывания системы
+- **[Команды service-install / service-uninstall](CLI_SERVICE_COMMANDS.md)** - OS-сервис Web UI (отдельно от watchdog)
 - **[Команда setup-web](CLI_SETUP_WEB.md)** - Проверка и установка зависимостей Web UI (Python + SPA)
 - **[Docker-деплой (GPU)](DOCKER_DEPLOYMENT.md)** - Контейнер на Ultralytics/PyTorch/CUDA, данные на хосте, host-CLI обёртки
+- **[Windows: native pip](WINDOWS_NATIVE.md)** - Установка и watchdog без Docker
+- **[Windows: Docker Desktop](WINDOWS_DOCKER_DEPLOYMENT.md)** - Compose + PowerShell + Docker watchdog
+- **[Web UI](WEB_UI_GUIDE.md)** - React SPA, first-run, API
 - **[Руководство по конфигурациям](CONFIGURATION_GUIDE.md)** - Полное описание структуры конфигурационных файлов, всех параметров и примеры конфигураций
 
 ### Архитектура системы
@@ -62,9 +66,10 @@
 
 1. Начните с [установки и настройки базы данных](DATABASE_SETUP_GUIDE.md)
 2. Изучите [команду deploy](CLI_DEPLOY_COMMAND.md) для развертывания системы
-3. При контейнерном деплое см. [Docker-деплой (GPU)](DOCKER_DEPLOYMENT.md)
-4. Ознакомьтесь с [руководством по конфигурациям](CONFIGURATION_GUIDE.md) для понимания структуры конфигурационных файлов
-5. Изучите [создание конфигураций](CREATE_SCRIPT_README.md) для создания собственных конфигураций
+3. Windows: [native pip](WINDOWS_NATIVE.md) или [Docker Desktop](WINDOWS_DOCKER_DEPLOYMENT.md)
+4. При контейнерном деплое на Linux см. [Docker-деплой (GPU)](DOCKER_DEPLOYMENT.md)
+5. Ознакомьтесь с [руководством по конфигурациям](CONFIGURATION_GUIDE.md) для понимания структуры конфигурационных файлов
+6. Изучите [создание конфигураций](CREATE_SCRIPT_README.md) для создания собственных конфигураций
 
 ### Для разработчиков
 

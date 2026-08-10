@@ -36,6 +36,7 @@ class MpWorkerCapture(MpWorker):
         self._capture_params: dict = {}
         self._capture = None
         self._frame_transport = SharedFrameTransport()
+        self._last_full_ipc_ts = 0.0
 
     def set_params(self, params: dict) -> None:
         self._capture_params = dict(params) if params else {}
@@ -188,6 +189,8 @@ class MpWorkerCapture(MpWorker):
                 time.sleep(0.002)
                 continue
 
+            from .queue_policy import put_drop_oldest
+
             for frame in frames:
                 packed = self._pack_frame_for_ipc(frame)
                 handle = (
@@ -195,8 +198,6 @@ class MpWorkerCapture(MpWorker):
                     if isinstance(packed, dict)
                     else None
                 )
-                from .queue_policy import put_drop_oldest
-
                 ok = put_drop_oldest(
                     self.output_queue,
                     packed,
@@ -207,11 +208,59 @@ class MpWorkerCapture(MpWorker):
                 elif not ok:
                     self._release_packed_frame(packed)
 
+            self._maybe_push_full_frame()
+
         try:
             self.cleanup()
         except Exception:
             pass
         self.logger.info("Capture worker exiting")
+
+    def _maybe_push_full_frame(self) -> None:
+        """Send throttled uncropped frame to parent for split-editor preview."""
+        cap = self._capture
+        if cap is None or not getattr(cap, "split_stream", False):
+            return
+        full = getattr(cap, "_latest_full_frame", None)
+        ts = float(getattr(cap, "_latest_full_frame_ts", 0.0) or 0.0)
+        if full is None or ts <= 0.0:
+            return
+        if ts <= float(self._last_full_ipc_ts or 0.0):
+            return
+        ids = [int(x) for x in (getattr(cap, "source_ids", None) or []) if x is not None]
+        primary = ids[0] if ids else None
+        try:
+            handle = self._frame_transport.alloc_frame(
+                full, frame_id=0, timestamp=ts
+            )
+        except Exception:
+            return
+        packed = {
+            "frame_handle": handle,
+            "frame_meta": {
+                "kind": "full_frame",
+                "source_id": primary,
+                "primary_source_id": primary,
+                "source_ids": ids,
+                "time_stamp": ts,
+                "frame_id": None,
+            },
+        }
+        from .queue_policy import put_drop_oldest
+
+        ok = put_drop_oldest(
+            self.output_queue,
+            packed,
+            on_drop=self._release_packed_frame,
+        )
+        if ok:
+            self._last_full_ipc_ts = ts
+            try:
+                self._frame_transport.relinquish_frame(handle)
+            except Exception:
+                pass
+        else:
+            self._release_packed_frame(packed)
 
     def _pack_frame_for_ipc(self, frame):
         image = getattr(frame, "image", None)

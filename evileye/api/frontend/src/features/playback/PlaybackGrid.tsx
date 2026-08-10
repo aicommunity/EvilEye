@@ -215,18 +215,20 @@ function PlaybackCell({
   }
 
   return (
-    <article className="camera-card playback-cell">
-      <div className="camera-card-head">
-        <span className="run-name">{id}</span>
+    <article className="camera-card camera-card-grid playback-cell">
+      <div className="camera-card-media">
+        {slot?.url ? (
+          <>
+            <video ref={ref} src={slot.url} playsInline className="camera-preview" />
+            <video ref={preloadRef} muted playsInline style={{ display: 'none' }} aria-hidden />
+          </>
+        ) : (
+          <div className="camera-preview camera-preview-empty">{t('playback.noSegment')}</div>
+        )}
+        <div className="camera-card-overlay-top">
+          <span className="camera-name">{id}</span>
+        </div>
       </div>
-      {slot?.url ? (
-        <>
-          <video ref={ref} src={slot.url} playsInline />
-          <video ref={preloadRef} muted playsInline style={{ display: 'none' }} aria-hidden />
-        </>
-      ) : (
-        <div className="camera-preview-empty">{t('playback.noSegment')}</div>
-      )}
     </article>
   );
 }

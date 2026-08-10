@@ -41,10 +41,18 @@ class DatabaseAdapterCamEvents(DatabaseAdapterBase):
         threading_events.notify(EventType.NEW_EVENT)
 
     def _prepare_for_saving(self, event) -> tuple[list, list]:
-        fields_for_saving = {'camera_full_address': event.camera_address,
-                             'time_stamp': event.timestamp,
-                             'event_id': event.event_id,
-                             'connection_status': event.con_status,
-                             'project_id': self.db_controller.get_project_id(),
-                             'job_id': self.db_controller.get_job_id()}
+        from evileye.utils.camera_event_label import camera_event_identity
+
+        identity = camera_event_identity(
+            source_names=getattr(event, "source_names", None),
+            address=getattr(event, "camera_address", ""),
+        )
+        fields_for_saving = {
+            "camera_full_address": identity,
+            "time_stamp": event.timestamp,
+            "event_id": event.event_id,
+            "connection_status": event.con_status,
+            "project_id": self.db_controller.get_project_id(),
+            "job_id": self.db_controller.get_job_id(),
+        }
         return list(fields_for_saving.keys()), list(fields_for_saving.values())

@@ -319,22 +319,34 @@ class ConfigurationService:
                 else:
                     merged["out_dir"] = default_out_dir
 
-                if enabled_list and len(enabled_list) > 0:
-                    try:
-                        sid = (source.get("source_ids") or [idx])[0]
-                    except Exception:
-                        sid = idx
+                try:
+                    sid = (source.get("source_ids") or [idx])[0]
+                except Exception:
+                    sid = idx
+                sname = None
+                try:
+                    sname = (source.get("source_names") or [None])[0]
+                except Exception:
                     sname = None
-                    try:
-                        sname = (source.get("source_names") or [None])[0]
-                    except Exception:
-                        sname = None
+
+                if isinstance(enabled_list, dict) and len(enabled_list) > 0:
+                    if str(sid) in enabled_list:
+                        merged["enabled"] = bool(enabled_list[str(sid)])
+                    elif sid in enabled_list:
+                        merged["enabled"] = bool(enabled_list[sid])
+                    elif sname and sname in enabled_list:
+                        merged["enabled"] = bool(enabled_list[sname])
+                    else:
+                        merged["enabled"] = False
+                elif isinstance(enabled_list, list) and len(enabled_list) > 0:
                     enabled = False
                     for item in enabled_list:
                         if isinstance(item, int) and item == sid:
                             enabled = True
                             break
-                        if isinstance(item, str) and sname and item == sname:
+                        if isinstance(item, str) and (
+                            item == str(sid) or (sname and item == sname)
+                        ):
                             enabled = True
                             break
                     merged["enabled"] = enabled
@@ -357,8 +369,8 @@ class ConfigurationService:
 
                 source["record"] = merged
                 try:
-                    sid_log = (source.get("source_ids") or [idx])[0]
-                    sname_log = (source.get("source_names") or [None])[0]
+                    sid_log = sid
+                    sname_log = sname
                     self.logger.info(
                         "Record config for source id=%s name=%s: enabled=%s continuous=%s out_dir=%s container=%s",
                         sid_log,

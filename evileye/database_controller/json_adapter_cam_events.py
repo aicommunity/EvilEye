@@ -50,9 +50,26 @@ class JsonAdapterCamEvents(DatabaseAdapterBase):
         rec = {
             'event_id': event.event_id,
             'ts': event.timestamp.isoformat() if hasattr(event.timestamp, 'isoformat') else str(event.timestamp),
-            'camera_full_address': getattr(event, 'camera_address', ''),
+            'camera_full_address': '',
             'connection_status': getattr(event, 'con_status', False),
         }
+        from evileye.utils.camera_event_label import (
+            camera_event_identity,
+            media_url_without_credentials,
+            source_names_label,
+        )
+
+        identity = camera_event_identity(
+            source_names=getattr(event, 'source_names', None),
+            address=getattr(event, 'camera_address', ''),
+        )
+        # Never persist credentials; prefer stream names already placed in camera_address.
+        rec['camera_full_address'] = identity or media_url_without_credentials(
+            str(getattr(event, 'camera_address', '') or '')
+        )
+        names = source_names_label(getattr(event, 'source_names', None))
+        if names:
+            rec['source_names'] = names
         append_json_record(file_path, rec)
 
     def _update_impl(self, event):

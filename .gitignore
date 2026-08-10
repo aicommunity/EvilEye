@@ -153,6 +153,7 @@ x64/
 credentials.json
 web_users.json
 web_ip_bans.json
+.evileye_service.json
 EvilEyeData*/
 *.mp4
 *.avi

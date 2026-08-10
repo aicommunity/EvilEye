@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "evileye"
-version = "0.0.11"
+version = "0.0.12"
 description = "Intelligence video surveillance system"
 readme = "README.md"
 license = "MIT"
@@ -120,6 +120,8 @@ exclude = ["tests*", "scripts*", "samples*", "configs*", "models*", "icons*", "d
     "api/static/index.html",
     "api/static/assets/*",
 ]
+
+# deploy/service templates are referenced from repo path; keep mirror note in docs
 
 [tool.black]
 line-length = 88

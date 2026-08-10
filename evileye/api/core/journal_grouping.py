@@ -3,6 +3,13 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
+from evileye.utils.camera_event_label import (
+    format_camera_event_information,
+    media_url_without_credentials,
+    sanitize_camera_event_record,
+    source_names_label,
+)
+
 
 def group_objects_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     grouped_events: dict[Any, dict[str, Any]] = defaultdict(lambda: {"found": None, "lost": None})
@@ -59,7 +66,11 @@ def group_objects_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return table_rows
 
 
-def group_events_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def group_events_rows(
+    rows: list[dict[str, Any]],
+    *,
+    source_mappings: dict[str, tuple[Any, Any]] | None = None,
+) -> list[dict[str, Any]]:
     grouped: dict[tuple, dict[str, Any]] = defaultdict(lambda: {"found": None, "lost": None})
     cam_events: list[dict[str, Any]] = []
     sys_events: list[dict[str, Any]] = []
@@ -130,18 +141,23 @@ def group_events_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         )
 
     for ev in cam_events:
-        camera_full_address = ev.get("camera_full_address", "")
-        connection_status = ev.get("connection_status", False)
-        status_text = "reconnect" if connection_status else "disconnect"
+        clean = sanitize_camera_event_record(ev, source_mappings=source_mappings)
+        identity = (
+            source_names_label(clean.get("source_names"))
+            or source_names_label(clean.get("source_name"))
+            or media_url_without_credentials(str(clean.get("camera_full_address") or ""))
+        )
+        connection_status = bool(clean.get("connection_status", False))
         table_rows.append(
             {
-                "source": ev.get("source_name") or camera_full_address,
+                "source": identity or "camera",
                 "event": "CameraEvent",
-                "information": f"Camera={camera_full_address} {status_text}",
-                "time": ev.get("ts", ""),
+                "information": format_camera_event_information(identity, connected=connection_status),
+                "time": clean.get("ts", ""),
                 "time_lost": "",
                 "preview": "",
                 "lost_preview": "",
+                "date_folder": clean.get("date_folder", ""),
             }
         )
 

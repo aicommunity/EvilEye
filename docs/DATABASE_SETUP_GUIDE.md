@@ -30,7 +30,7 @@ WARNING - Database enabled but unavailable. Working without database. Reason: 'i
 ```json
 "database": {
     "type": "postgresql",
-    "host": "localhost",
+    "host_name": "localhost",
     "port": 5432,
     "database_name": "evilEye",
     "user_name": "evileye_user",
@@ -40,6 +40,8 @@ WARNING - Database enabled but unavailable. Working without database. Reason: 'i
     "preview_width": 200
 }
 ```
+
+> Канон для `credentials.json`: ключ **`host_name`** (см. `evileye/credentials_proto.json`). Поле `"host"` в старых примерах устарело.
 
 ### 2. **Создана директория для изображений**
 
@@ -62,7 +64,7 @@ GRANT ALL PRIVILEGES ON DATABASE evileye TO evileye_user;
 ```json
 "database": {
     "type": "postgresql",
-    "host": "your_postgres_host",
+    "host_name": "your_postgres_host",
     "port": 5432,
     "database_name": "evileye",
     "user_name": "your_username",

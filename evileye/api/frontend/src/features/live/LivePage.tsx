@@ -61,7 +61,7 @@ export function LivePage() {
     } finally {
       if (!ac.signal.aborted) setCamerasLoading(false);
     }
-  }, [showError, t]);
+  }, [showError]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
 

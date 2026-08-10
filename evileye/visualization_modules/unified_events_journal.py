@@ -92,18 +92,17 @@ class UnifiedEventsJournal(UnifiedJournalBase):
         if not camera_full_address:
             return ''
 
-        # Get source mappings from data_source
+        from evileye.utils.camera_event_label import (
+            media_url_without_credentials,
+            resolve_source_name_from_mappings,
+        )
+
         source_mappings = getattr(self.data_source, '_source_name_id_address', {})
-        if not source_mappings:
-            return camera_full_address
-
-        # Find source_name by matching camera_full_address
-        for source_name, (source_id, address) in source_mappings.items():
-            if address == camera_full_address:
-                return source_name
-
-        # If not found, return original address
-        return camera_full_address
+        resolved = resolve_source_name_from_mappings(camera_full_address, source_mappings)
+        if resolved:
+            return resolved
+        # Never fall back to a credential-bearing URL
+        return media_url_without_credentials(camera_full_address)
 
     def _build_ui(self):
         """Build user interface"""
@@ -473,20 +472,33 @@ class UnifiedEventsJournal(UnifiedJournalBase):
 
         # Add camera events as standalone rows
         for ev in cam_events:
-            camera_full_address = ev.get('camera_full_address', '')
-            source_name = self._get_source_name_from_address(camera_full_address)
-            connection_status = ev.get('connection_status', False)
-            status_text = 'reconnect' if connection_status else 'disconnect'
+            from evileye.utils.camera_event_label import (
+                format_camera_event_information,
+                media_url_without_credentials,
+                sanitize_camera_event_record,
+                source_names_label,
+            )
+
+            clean = sanitize_camera_event_record(ev)
+            identity = (
+                source_names_label(clean.get("source_names"))
+                or source_names_label(clean.get("source_name"))
+                or self._get_source_name_from_address(str(clean.get("camera_full_address") or ""))
+                or media_url_without_credentials(str(clean.get("camera_full_address") or ""))
+            )
+            # Never show credentials even if mapping fails
+            identity = media_url_without_credentials(identity) if "://" in identity else identity
+            connection_status = bool(clean.get("connection_status", False))
             table_rows.append({
-                'source': source_name,
-                'event': 'CameraEvent',
-                'information': f"Camera={camera_full_address} {status_text}",
-                'time': ev.get('ts', ''),
-                'time_lost': '',
-                'preview': '',
-                'lost_preview': '',
-                'found_event': None,
-                'lost_event': None
+                "source": identity or "camera",
+                "event": "CameraEvent",
+                "information": format_camera_event_information(identity, connected=connection_status),
+                "time": clean.get("ts", ""),
+                "time_lost": "",
+                "preview": "",
+                "lost_preview": "",
+                "found_event": None,
+                "lost_event": None,
             })
 
         # Add system events as standalone rows
@@ -638,21 +650,33 @@ class UnifiedEventsJournal(UnifiedJournalBase):
 
             # Add camera events
             for ev in cam_events:
-                camera_full_address = ev.get('camera_full_address', '')
-                source_name = self._get_source_name_from_address(camera_full_address)
-                # Format information to match old journal: 'Camera=' || camera_full_address || ' ' || 'reconnect'/'disconnect'
-                connection_status = ev.get('connection_status', False)
-                status_text = 'reconnect' if connection_status else 'disconnect'
+                from evileye.utils.camera_event_label import (
+                    format_camera_event_information,
+                    media_url_without_credentials,
+                    sanitize_camera_event_record,
+                    source_names_label,
+                )
+
+                clean = sanitize_camera_event_record(ev)
+                identity = (
+                    source_names_label(clean.get("source_names"))
+                    or source_names_label(clean.get("source_name"))
+                    or self._get_source_name_from_address(str(clean.get("camera_full_address") or ""))
+                    or media_url_without_credentials(str(clean.get("camera_full_address") or ""))
+                )
+                if "://" in identity:
+                    identity = media_url_without_credentials(identity)
+                connection_status = bool(clean.get("connection_status", False))
                 new_table_rows.append({
-                    'source': source_name,
-                    'event': 'CameraEvent',
-                    'information': f"Camera={camera_full_address} {status_text}",
-                    'time': ev.get('ts', ''),
-                    'time_lost': '',
-                    'preview': '',
-                    'lost_preview': '',
-                    'found_event': None,
-                    'lost_event': None
+                    "source": identity or "camera",
+                    "event": "CameraEvent",
+                    "information": format_camera_event_information(identity, connected=connection_status),
+                    "time": clean.get("ts", ""),
+                    "time_lost": "",
+                    "preview": "",
+                    "lost_preview": "",
+                    "found_event": None,
+                    "lost_event": None,
                 })
 
             # Add system events

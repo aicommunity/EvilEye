@@ -3,16 +3,21 @@ from __future__ import annotations
 import json
 import os
 import signal
+import sys
 import time
 from pathlib import Path
 from threading import Lock
+
+from evileye.core.paths import runtime_dir
+from evileye.core.process_control import is_zombie as _is_zombie
+from evileye.core.process_control import pid_exists as _pc_pid_exists
+from evileye.core.process_control import process_cmdline, terminate_tree
 
 _LOCK = Lock()
 
 
 def _registry_dir() -> Path:
-    base = Path(os.getenv("XDG_RUNTIME_DIR") or "/tmp")
-    path = base / "evileye_mp_sessions"
+    path = runtime_dir() / "mp_sessions"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -41,25 +46,12 @@ def _write_json(path: Path, data: dict) -> None:
 
 
 def _pid_exists(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    except Exception:
-        return False
+    return _pc_pid_exists(pid)
 
 
 def _cmdline(pid: int) -> str:
-    try:
-        raw = Path(f"/proc/{pid}/cmdline").read_bytes()
-        if not raw:
-            return ""
-        return raw.replace(b"\x00", b" ").decode("utf-8", errors="ignore").strip()
-    except Exception:
-        return ""
+    text = process_cmdline(pid)
+    return text or ""
 
 
 def _is_evileye_python_process(pid: int) -> bool:
@@ -67,17 +59,6 @@ def _is_evileye_python_process(pid: int) -> bool:
     if not cmd:
         return False
     return ("python" in cmd) and ("evileye" in cmd)
-
-
-def _is_zombie(pid: int) -> bool:
-    try:
-        status = Path(f"/proc/{pid}/status").read_text(encoding="utf-8", errors="ignore")
-        for line in status.splitlines():
-            if line.startswith("State:"):
-                return " Z" in line or line.rstrip().endswith("Z")
-    except Exception:
-        pass
-    return False
 
 
 def _is_active_evileye_owner(pid: int) -> bool:
@@ -91,6 +72,9 @@ def _is_active_evileye_owner(pid: int) -> bool:
 def _terminate_pid(pid: int, timeout_sec: float = 2.0) -> bool:
     if not _pid_exists(pid):
         return True
+    if sys.platform.startswith("win"):
+        terminate_tree(pid, grace_sec=timeout_sec)
+        return not _pid_exists(pid)
     try:
         os.kill(pid, signal.SIGTERM)
     except Exception:

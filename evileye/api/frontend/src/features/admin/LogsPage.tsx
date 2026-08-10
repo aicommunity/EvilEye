@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { logsApi, ApiError, cacheGet, cacheSet, isAbortError } from '../../api';
 import { Button, Modal } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
@@ -18,6 +19,8 @@ type LogsList = { available: boolean; files: Array<{ name: string; updated_at: n
 export function LogsPage() {
   const { showError } = useToast();
   const { t, formatDateTime } = useI18n();
+  const [searchParams] = useSearchParams();
+  const queryFile = searchParams.get('file');
   const cached = cacheGet<LogsList>(LOGS_CACHE_KEY);
   const [files, setFiles] = useState<Array<{ name: string; updated_at: number; size_bytes: number }>>(
     () => cached?.files ?? [],
@@ -27,6 +30,7 @@ export function LogsPage() {
   filesRef.current = files;
   const [view, setView] = useState<{ name: string; content: string; live: boolean } | null>(null);
   const esRef = useRef<EventSource | null>(null);
+  const openedQueryRef = useRef<string | null>(null);
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
@@ -43,7 +47,7 @@ export function LogsPage() {
         if (!signal?.aborted) setLoading(false);
       }
     },
-    [showError, t],
+    [showError],
   );
 
   useEffect(() => {
@@ -68,30 +72,58 @@ export function LogsPage() {
       .catch((e) => showError(e instanceof ApiError ? e.message : t('common.error')));
   };
 
-  const openLive = (name: string) => {
-    esRef.current?.close();
-    const es = new EventSource(logsApi.streamUrl(name, 400));
-    esRef.current = es;
-    setView({ name, content: t('logs.connecting'), live: true });
-    es.onmessage = (ev) => {
-      try {
-        const data = JSON.parse(ev.data) as { content?: string; append?: string; name?: string };
-        setView((prev) => {
-          const nextName = data.name ?? name;
-          if (data.append != null && prev && prev.name === nextName && prev.content !== t('logs.connecting')) {
-            return { name: nextName, content: prev.content + data.append, live: true };
-          }
-          return { name: nextName, content: data.content ?? data.append ?? '', live: true };
-        });
-      } catch {
-        /* ignore */
-      }
-    };
-    es.onerror = () => {
-      showError(t('logs.sseError'));
-      es.close();
-    };
-  };
+  const openLive = useCallback(
+    (name: string) => {
+      esRef.current?.close();
+      const es = new EventSource(logsApi.streamUrl(name, 400));
+      esRef.current = es;
+      setView({ name, content: t('logs.connecting'), live: true });
+      es.onmessage = (ev) => {
+        try {
+          const data = JSON.parse(ev.data) as { content?: string; append?: string; name?: string };
+          setView((prev) => {
+            const nextName = data.name ?? name;
+            if (data.append != null && prev && prev.name === nextName && prev.content !== t('logs.connecting')) {
+              return { name: nextName, content: prev.content + data.append, live: true };
+            }
+            return { name: nextName, content: data.content ?? data.append ?? '', live: true };
+          });
+        } catch {
+          /* ignore */
+        }
+      };
+      es.onerror = () => {
+        showError(t('logs.sseError'));
+        es.close();
+      };
+    },
+    [showError, t],
+  );
+
+  useEffect(() => {
+    if (!queryFile) {
+      openedQueryRef.current = null;
+      return;
+    }
+    if (loading) return;
+    if (openedQueryRef.current === queryFile) return;
+    openedQueryRef.current = queryFile;
+    const safe = queryFile.includes('/') || queryFile.includes('..') ? null : queryFile;
+    if (!safe) {
+      showError(t('logs.fileNotFound'));
+      return;
+    }
+    const known = files.some((f) => f.name === safe);
+    if (!known) {
+      // Still try follow — file may exist but outside list limit / freshly created.
+      void logsApi
+        .read(safe, 1)
+        .then(() => openLive(safe))
+        .catch(() => showError(t('logs.fileNotFound')));
+      return;
+    }
+    openLive(safe);
+  }, [queryFile, loading, files, openLive, showError]);
 
   return (
     <section className="panel active">
@@ -102,6 +134,7 @@ export function LogsPage() {
             {t('logs.refresh')}
           </Button>
         </div>
+        {queryFile ? <p className="hint">{t('logs.openFromQuery', { name: queryFile })}</p> : null}
         {!files.length ? (
           <p className="empty">{loading ? t('common.searching') : t('logs.empty')}</p>
         ) : (
@@ -135,7 +168,7 @@ export function LogsPage() {
       </div>
       <Modal
         open={Boolean(view)}
-        title={view ? `${view.name}${view.live ? ` (${t('logs.following')})` : ''}` : t('logs.title')}
+        title={view ? view.name : t('logs.title')}
         onClose={() => {
           esRef.current?.close();
           esRef.current = null;

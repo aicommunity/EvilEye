@@ -1,15 +1,26 @@
 import { API_BASE, request } from './client';
 
-export function streamSnapshotUrl(rid: number, sourceId?: number | null): string {
+export type StreamUrlOpts = {
+  sourceId?: number | null;
+  full?: boolean;
+  fps?: number;
+};
+
+export function streamSnapshotUrl(rid: number, sourceId?: number | null, opts?: { full?: boolean }): string {
   const u = `${API_BASE}/runs/${rid}/snapshot`;
-  return sourceId != null ? `${u}?source_id=${sourceId}` : u;
+  const params = new URLSearchParams();
+  if (sourceId != null) params.set('source_id', String(sourceId));
+  if (opts?.full) params.set('full', '1');
+  const qs = params.toString();
+  return qs ? `${u}?${qs}` : u;
 }
 
-export function streamMjpgUrl(rid: number, fps?: number, sourceId?: number | null): string {
+export function streamMjpgUrl(rid: number, fps?: number, sourceId?: number | null, opts?: { full?: boolean }): string {
   const u = `${API_BASE}/runs/${rid}/stream.mjpg`;
   const params = new URLSearchParams();
   if (fps != null) params.set('fps', String(fps));
   if (sourceId != null) params.set('source_id', String(sourceId));
+  if (opts?.full) params.set('full', '1');
   const qs = params.toString();
   return qs ? `${u}?${qs}` : u;
 }

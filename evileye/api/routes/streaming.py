@@ -114,10 +114,18 @@ def _require_source_id_if_multi(run_info: dict, source_id: int | None) -> None:
         )
 
 
-def _load_latest_frame(run_info: dict, *, source_id: int | None = None) -> bytes | None:
+def _load_latest_frame(
+    run_info: dict,
+    *,
+    source_id: int | None = None,
+    full: bool = False,
+) -> bytes | None:
     run_id_str = str(run_info["id"])
-    broker_key = f"{run_id_str}:{source_id}" if source_id is not None else run_id_str
     broker = get_frame_broker()
+    if full and source_id is not None:
+        # Never fall back to cropped logical frames (split editor needs true full frame).
+        return broker.latest_jpeg(f"{run_id_str}:full:{source_id}")
+    broker_key = f"{run_id_str}:{source_id}" if source_id is not None else run_id_str
     data = broker.latest_jpeg(broker_key)
     if not data and source_id is not None:
         data = broker.latest_jpeg(run_id_str)
@@ -149,17 +157,39 @@ def _stream_status_payload(rid: int, run_info: dict, *, source_id: int | None = 
     }
 
 
-async def _snapshot_impl(request: Request, rid: int, source_id: int | None = None):
+async def _snapshot_impl(
+    request: Request,
+    rid: int,
+    source_id: int | None = None,
+    *,
+    full: bool = False,
+):
     """
     Return the latest available JPEG snapshot for the given runtime.
     """
     _touch_preview_demand(request, rid, source_id=source_id, level="grid")
+    if full and source_id is not None:
+        # Demand key for full-frame publisher throttle.
+        _touch_preview_demand(request, rid, source_id=None, level="grid")
+        try:
+            queue = getattr(request.app.state, "preview_demand_queue", None)
+            if queue is not None:
+                key = f"{rid}:full:{source_id}"
+                queue.put_nowait((key, time.time(), "grid", False))
+        except Exception:
+            pass
     run_info = _resolve_run(rid)
     _require_source_id_if_multi(run_info, source_id)
     run_id_str = str(run_info["id"])
-    broker_key = f"{run_id_str}:{source_id}" if source_id is not None else run_id_str
+    if full and source_id is not None:
+        broker_key = f"{run_id_str}:full:{source_id}"
+    else:
+        broker_key = f"{run_id_str}:{source_id}" if source_id is not None else run_id_str
     broker = get_frame_broker()
     payload = broker.latest_payload(broker_key)
+    if not payload and full and source_id is not None:
+        # No full frame yet — do not fall back to cropped (would confuse split editor).
+        raise HTTPException(status_code=404, detail="No full frame available")
     if not payload and source_id is not None:
         payload = broker.latest_payload(run_id_str)
     if not payload or not payload.data:
@@ -192,13 +222,23 @@ async def _snapshot_impl(request: Request, rid: int, source_id: int | None = Non
 
 
 @router.get("/runs/{rid}/snapshot")
-async def snapshot(request: Request, rid: int, source_id: int | None = Query(None)):
-    return await _snapshot_impl(request, rid, source_id=source_id)
+async def snapshot(
+    request: Request,
+    rid: int,
+    source_id: int | None = Query(None),
+    full: bool = Query(False),
+):
+    return await _snapshot_impl(request, rid, source_id=source_id, full=full)
 
 
 @router.get("/pipelines/{rid}/snapshot", deprecated=True)
-async def snapshot_legacy(request: Request, rid: int, source_id: int | None = Query(None)):
-    return await _snapshot_impl(request, rid, source_id=source_id)
+async def snapshot_legacy(
+    request: Request,
+    rid: int,
+    source_id: int | None = Query(None),
+    full: bool = Query(False),
+):
+    return await _snapshot_impl(request, rid, source_id=source_id, full=full)
 
 
 async def _mjpeg_generator(
@@ -211,24 +251,29 @@ async def _mjpeg_generator(
         idle_sec: float = 8.0,
         demand_queue=None,
         rid: int | None = None,
+        full: bool = False,
 ) -> AsyncGenerator[bytes, None]:
     boundary = b"--frame"
     delay = 1.0 / max(1, fps)
     no_frame_since = time.monotonic()
     broker = get_frame_broker()
+    last_data: bytes | None = None
 
     try:
         while not stop_event.is_set():
-            data = _load_latest_frame(run_info, source_id=source_id)
+            data = _load_latest_frame(run_info, source_id=source_id, full=full)
             if data:
                 no_frame_since = time.monotonic()
-                yield (
-                        boundary
-                        + b"\r\n"
-                        + b"Content-Type: image/jpeg\r\n\r\n"
-                        + data
-                        + b"\r\n"
-                )
+                # Skip identical payloads to reduce client flicker when encoder re-publishes.
+                if data is not last_data and data != last_data:
+                    last_data = data
+                    yield (
+                            boundary
+                            + b"\r\n"
+                            + b"Content-Type: image/jpeg\r\n\r\n"
+                            + data
+                            + b"\r\n"
+                    )
             elif time.monotonic() - no_frame_since > idle_sec:
                 break
 
@@ -243,7 +288,6 @@ async def _mjpeg_generator(
             broker.release_stream(stream_key)
         except Exception:
             pass
-        # Drop stream demand back to grid when MJPEG consumer disconnects.
         if rid is not None:
             _touch_preview_demand(
                 None,
@@ -260,6 +304,7 @@ async def _mjpeg_stream_impl(
         rid: int,
         source_id: int | None = None,
         fps: int = Query(5, ge=1, le=60, description="Frames per second (1–60)"),
+        full: bool = Query(False),
 ):
     """
     MJPEG streaming endpoint.
@@ -267,10 +312,14 @@ async def _mjpeg_stream_impl(
     Browsers and players render it as a video stream thanks to
     'multipart/x-mixed-replace' and boundary markers.
     """
-    # Raise stream demand first so the publisher can start encoding even when
-    # the broker has no JPEG yet. Do not 409 on empty broker — the generator
-    # waits for the first frame up to EVILEYE_MJPEG_IDLE_SEC.
     _touch_preview_demand(request, rid, source_id=source_id, level="stream")
+    if full and source_id is not None:
+        try:
+            queue = getattr(request.app.state, "preview_demand_queue", None)
+            if queue is not None:
+                queue.put_nowait((f"{rid}:full:{source_id}", time.time(), "stream", False))
+        except Exception:
+            pass
     run_info = _resolve_run(rid)
     _require_source_id_if_multi(run_info, source_id)
     if not _acquire_mjpeg_slot():
@@ -279,7 +328,10 @@ async def _mjpeg_stream_impl(
             detail=f"Too many MJPEG clients (limit={_max_mjpeg_clients()})",
         )
     run_id_str = str(run_info["id"])
-    stream_key = f"{run_id_str}:{source_id}" if source_id is not None else run_id_str
+    if full and source_id is not None:
+        stream_key = f"{run_id_str}:full:{source_id}"
+    else:
+        stream_key = f"{run_id_str}:{source_id}" if source_id is not None else run_id_str
     stop_event = get_frame_broker().acquire_stream(stream_key)
     idle_sec = float(os.getenv("EVILEYE_MJPEG_IDLE_SEC", "8") or 8)
     demand_queue = getattr(request.app.state, "preview_demand_queue", None)
@@ -294,6 +346,7 @@ async def _mjpeg_stream_impl(
             idle_sec=idle_sec,
             demand_queue=demand_queue,
             rid=rid,
+            full=full,
         ),
         media_type="multipart/x-mixed-replace; boundary=frame",
         headers={
@@ -311,8 +364,9 @@ async def mjpeg_stream(
         rid: int,
         source_id: int | None = Query(None),
         fps: int = Query(5, ge=1, le=60, description="Frames per second (1–60)"),
+        full: bool = Query(False),
 ):
-    return await _mjpeg_stream_impl(request, rid, source_id=source_id, fps=fps)
+    return await _mjpeg_stream_impl(request, rid, source_id=source_id, fps=fps, full=full)
 
 
 @router.get("/pipelines/{rid}/stream.mjpg", deprecated=True)
@@ -321,8 +375,9 @@ async def mjpeg_stream_legacy(
         rid: int,
         source_id: int | None = Query(None),
         fps: int = Query(5, ge=1, le=60, description="Frames per second (1–60)"),
+        full: bool = Query(False),
 ):
-    return await _mjpeg_stream_impl(request, rid, source_id=source_id, fps=fps)
+    return await _mjpeg_stream_impl(request, rid, source_id=source_id, fps=fps, full=full)
 
 
 async def _stop_stream_impl(rid: int, source_id: int | None = None, force: bool = False):

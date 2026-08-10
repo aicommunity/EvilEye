@@ -14,11 +14,13 @@ interface AuthState {
   authEnabled: boolean;
   user: AuthUser | null;
   permissions: Set<string>;
+  mustChangePassword: boolean;
   refresh: () => Promise<boolean>;
   login: (username: string, password: string) => Promise<void>;
   register: (email: string, password: string) => Promise<string>;
   logout: () => Promise<void>;
   hasPermission: (permission: string) => boolean;
+  clearMustChangePassword: () => void;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -28,23 +30,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [authEnabled, setAuthEnabled] = useState(false);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [permissions, setPermissions] = useState<Set<string>>(new Set());
+  const [mustChangePassword, setMustChangePassword] = useState(false);
 
-  const apply = useCallback((enabled: boolean, nextUser: AuthUser | null, perms: string[]) => {
-    setAuthEnabled(enabled);
-    setUser(nextUser);
-    setPermissions(new Set(perms));
-  }, []);
+  const apply = useCallback(
+    (enabled: boolean, nextUser: AuthUser | null, perms: string[], mustChange = false) => {
+      setAuthEnabled(enabled);
+      setUser(nextUser);
+      setPermissions(new Set(perms));
+      setMustChangePassword(Boolean(enabled && nextUser && mustChange));
+    },
+    [],
+  );
 
   const refresh = useCallback(async () => {
     try {
       const me = await authApi.me();
-      apply(me.auth_enabled, me.user, me.permissions ?? []);
+      apply(me.auth_enabled, me.user, me.permissions ?? [], Boolean(me.must_change_password));
       setLoading(false);
       if (!me.auth_enabled) return true;
       return Boolean(me.user);
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) {
-        apply(true, null, []);
+        apply(true, null, [], false);
         setLoading(false);
         return false;
       }
@@ -60,7 +67,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(
     async (username: string, password: string) => {
       const result = await authApi.login(username, password);
-      apply(result.auth_enabled, result.user, result.permissions ?? []);
+      apply(
+        result.auth_enabled,
+        result.user,
+        result.permissions ?? [],
+        Boolean(result.must_change_password),
+      );
     },
     [apply],
   );
@@ -72,7 +84,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     await authApi.logout();
-    apply(authEnabled, null, []);
+    apply(authEnabled, null, [], false);
   }, [apply, authEnabled]);
 
   const hasPermission = useCallback(
@@ -83,19 +95,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [authEnabled, permissions],
   );
 
+  const clearMustChangePassword = useCallback(() => setMustChangePassword(false), []);
+
   const value = useMemo(
     () => ({
       loading,
       authEnabled,
       user,
       permissions,
+      mustChangePassword,
       refresh,
       login,
       register,
       logout,
       hasPermission,
+      clearMustChangePassword,
     }),
-    [loading, authEnabled, user, permissions, refresh, login, register, logout, hasPermission],
+    [
+      loading,
+      authEnabled,
+      user,
+      permissions,
+      mustChangePassword,
+      refresh,
+      login,
+      register,
+      logout,
+      hasPermission,
+      clearMustChangePassword,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

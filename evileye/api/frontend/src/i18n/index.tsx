@@ -1,4 +1,13 @@
-import { createContext, createElement, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  createElement,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import { locales, type Locale, type Dict } from './locales';
 
 const STORAGE_KEY = 'evileye.ui.lang';
@@ -77,6 +86,8 @@ function toDate(value: number | Date | string | null | undefined): Date | null {
 
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<Locale>(readInitial);
+  const langRef = useRef(lang);
+  langRef.current = lang;
 
   const setLang = useCallback((next: Locale) => {
     setLangState(next);
@@ -89,37 +100,33 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 
   const localeTag: 'ru-RU' | 'en-US' = lang === 'en' ? 'en-US' : 'ru-RU';
   const dateLocaleTag = useMemo(() => resolveDateLocale(lang), [lang]);
+  const dateLocaleTagRef = useRef(dateLocaleTag);
+  dateLocaleTagRef.current = dateLocaleTag;
 
-  const t = useCallback(
-    (key: string, vars?: Record<string, string | number>) => {
-      const raw = getByPath(locales[lang], key) ?? getByPath(locales.ru, key);
-      if (raw == null || typeof raw === 'object') {
-        if (import.meta.env.DEV && !warnedKeys.has(key)) {
-          warnedKeys.add(key);
-          console.warn(`[i18n] missing key: ${key}`);
-        }
-        return key;
+  // Stable identity: language changes re-render via `lang` in context, but must not
+  // invalidate data-fetch callbacks that list `t` in their dependency arrays.
+  const t = useCallback((key: string, vars?: Record<string, string | number>) => {
+    const current = langRef.current;
+    const raw = getByPath(locales[current], key) ?? getByPath(locales.ru, key);
+    if (raw == null || typeof raw === 'object') {
+      if (import.meta.env.DEV && !warnedKeys.has(key)) {
+        warnedKeys.add(key);
+        console.warn(`[i18n] missing key: ${key}`);
       }
-      return interpolate(String(raw), vars);
-    },
-    [lang],
-  );
+      return key;
+    }
+    return interpolate(String(raw), vars);
+  }, []);
 
-  const formatDateTime = useCallback(
-    (value: number | Date | string | null | undefined) => {
-      const d = toDate(value);
-      return d ? d.toLocaleString(dateLocaleTag, DATE_TIME_OPTS) : '—';
-    },
-    [dateLocaleTag],
-  );
+  const formatDateTime = useCallback((value: number | Date | string | null | undefined) => {
+    const d = toDate(value);
+    return d ? d.toLocaleString(dateLocaleTagRef.current, DATE_TIME_OPTS) : '—';
+  }, []);
 
-  const formatDate = useCallback(
-    (value: number | Date | string | null | undefined) => {
-      const d = toDate(value);
-      return d ? d.toLocaleDateString(dateLocaleTag) : '—';
-    },
-    [dateLocaleTag],
-  );
+  const formatDate = useCallback((value: number | Date | string | null | undefined) => {
+    const d = toDate(value);
+    return d ? d.toLocaleDateString(dateLocaleTagRef.current) : '—';
+  }, []);
 
   const value = useMemo(
     () => ({ lang, localeTag, dateLocaleTag, setLang, t, formatDateTime, formatDate }),

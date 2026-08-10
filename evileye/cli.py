@@ -133,53 +133,78 @@ def _scheduler_prepare_next_launch(logger: logging.Logger) -> None:
 
 
 def _scheduler_terminate_child(proc: subprocess.Popen, logger: logging.Logger) -> None:
-    """Terminate the scheduled child process and its process group."""
+    """Terminate the scheduled child process and its process group.
+
+    Polls ``proc`` during grace so a zombie leader is reaped promptly instead of
+    blocking for the full ``EVILEYE_SCHEDULER_STOP_GRACE_SEC`` window.
+    """
+    import threading
+
+    from evileye.core.process_control import terminate_tree
+
     pid = proc.pid
     grace_sec = _scheduler_stop_grace_sec()
-    try:
-        pgid = os.getpgid(pid)
-    except Exception:
-        pgid = pid
-    try:
-        os.killpg(pgid, signal.SIGTERM)
-    except Exception:
+    terminate_errors: list[BaseException] = []
+
+    def _run_terminate() -> None:
         try:
-            proc.terminate()
+            terminate_tree(int(pid), grace_sec=grace_sec)
         except Exception as exc:
-            logger.error("[scheduler] Error terminating process %s: %s", pid, exc, exc_info=True)
-            return
-    try:
-        proc.wait(timeout=grace_sec)
-        logger.info("[scheduler] Process %s terminated gracefully", pid)
+            terminate_errors.append(exc)
+
+    # Already exited (zombie until wait/poll) — short PG cleanup then reap.
+    if proc.poll() is not None:
+        try:
+            terminate_tree(int(pid), grace_sec=min(5.0, grace_sec))
+        except Exception as exc:
+            logger.warning("[scheduler] Post-exit process group cleanup failed for %s: %s", pid, exc)
+        try:
+            proc.wait(timeout=1)
+        except Exception:
+            pass
+        logger.info("[scheduler] Process %s terminated", pid)
         return
-    except subprocess.TimeoutExpired:
-        logger.warning(
-            "[scheduler] Process %s did not exit after SIGTERM within %.0fs, killing process group",
-            pid,
-            grace_sec,
-        )
-    except Exception as exc:
-        logger.warning(
-            "[scheduler] Error waiting for process %s after terminate: %s, killing",
-            pid,
-            exc,
-        )
-    try:
-        os.killpg(pgid, signal.SIGKILL)
-    except Exception:
+
+    worker = threading.Thread(
+        target=_run_terminate,
+        name=f"scheduler-terminate-{pid}",
+        daemon=True,
+    )
+    worker.start()
+
+    # Poll while terminate_tree runs so we reap as soon as the child exits.
+    deadline = time.monotonic() + grace_sec + 15.0
+    while time.monotonic() < deadline:
+        if proc.poll() is not None:
+            worker.join(timeout=min(5.0, grace_sec))
+            break
+        if not worker.is_alive():
+            break
+        time.sleep(0.1)
+    else:
+        worker.join(timeout=0.1)
+
+    if terminate_errors:
+        logger.error("[scheduler] Error terminating process %s: %s", pid, terminate_errors[0])
         try:
             proc.kill()
-        except Exception as exc:
-            logger.error("[scheduler] Failed to kill process %s: %s", pid, exc)
-            return
+        except Exception:
+            pass
+        return
+
     try:
-        proc.wait(timeout=10)
-        logger.info("[scheduler] Process %s killed and terminated", pid)
+        if proc.poll() is None:
+            proc.wait(timeout=10)
+        else:
+            proc.wait(timeout=1)
+        logger.info("[scheduler] Process %s terminated", pid)
     except subprocess.TimeoutExpired:
         logger.error(
-            "[scheduler] Process %s did not exit after SIGKILL within 10s, but continuing anyway",
+            "[scheduler] Process %s did not exit after terminate within 10s, but continuing anyway",
             pid,
         )
+    except Exception as exc:
+        logger.warning("[scheduler] Error waiting for process %s: %s", pid, exc)
 
 
 def _run_with_scheduler(
@@ -849,15 +874,29 @@ def _deploy_monitor_assets(site_dir: Path) -> None:
             (monitor_dir / name).mkdir(parents=True, exist_ok=True)
 
     hint = monitor_dir / "INSTALL_HINT.txt"
-    hint.write_text(
-        "Monitor scripts were deployed by `evileye deploy`.\n"
-        "They are NOT started automatically.\n\n"
-        "To enable the user systemd watchdog on this machine:\n"
-        f"  DEPLOY_DIR={site_dir} {scripts_dst / 'install_timer.sh'}\n\n"
-        "Manual health check:\n"
-        f"  DEPLOY_DIR={site_dir} {scripts_dst / 'health_check.sh'}\n",
-        encoding="utf-8",
-    )
+    if sys.platform.startswith("win"):
+        hint.write_text(
+            "Monitor assets were deployed by `evileye deploy`.\n"
+            "Linux install_timer.sh does not run on Windows.\n\n"
+            "Native Windows watchdog:\n"
+            "  evileye watchdog-install --config configs/single_video.json\n"
+            "  evileye watchdog-check --config configs/single_video.json\n"
+            "  evileye watchdog-uninstall\n\n"
+            "Docker Desktop deployments: use docker/windows/Install-Watchdog.ps1 instead.\n",
+            encoding="utf-8",
+        )
+    else:
+        hint.write_text(
+            "Monitor scripts were deployed by `evileye deploy`.\n"
+            "They are NOT started automatically.\n\n"
+            "To enable the user systemd watchdog on this machine:\n"
+            f"  DEPLOY_DIR={site_dir} {scripts_dst / 'install_timer.sh'}\n\n"
+            "Manual health check:\n"
+            f"  DEPLOY_DIR={site_dir} {scripts_dst / 'health_check.sh'}\n\n"
+            "Cross-platform native watchdog (also works on Linux):\n"
+            "  evileye watchdog-install --config configs/single_video.json\n",
+            encoding="utf-8",
+        )
 
     console.print(
         f"[green]Deployed monitor assets "
@@ -923,11 +962,173 @@ def deploy() -> None:
         console.print(f"[red]Error deploying monitor assets: {e}[/red]")
         raise typer.Exit(1)
 
+    # Step 4: Ensure OS service for Web UI (does not fail the whole deploy)
+    try:
+        from evileye.service_manager import ensure_service
+        from evileye.service_manager.minimal_config import ensure_system_config
+
+        ensure_system_config(current_dir)
+        svc = ensure_service(site_dir=current_dir, force_user=True)
+        if svc.ok:
+            console.print(f"[green]{svc.message}[/green]")
+        else:
+            console.print(f"[yellow]Service ensure skipped/failed: {svc.message}[/yellow]")
+            console.print("[dim]Run manually: evileye service-install[/dim]")
+    except Exception as e:
+        console.print(f"[yellow]Service ensure skipped: {e}[/yellow]")
+        console.print("[dim]Run manually: evileye service-install[/dim]")
+
     console.print("[green]Deployment completed successfully![/green]")
     console.print(
-        "[dim]Next: create a config (`evileye create ...`), then optionally "
-        "enable watchdog via monitor/scripts/install_timer.sh[/dim]"
+        "[dim]Next: open the Web UI, set admin password, complete Basic setup. "
+        "Optional watchdog: monitor/scripts/install_timer.sh[/dim]"
     )
+
+
+@app.command("service-install")
+def service_install(
+    config: Optional[Path] = typer.Argument(
+        None,
+        help="Optional config name/path for auto-run after server start",
+    ),
+    host: str = typer.Option("0.0.0.0", "--host", help="Bind host for the service"),
+    port: int = typer.Option(8181, "--port", help="Bind port for the service"),
+    user: bool = typer.Option(False, "--user", help="Force systemd --user unit (Linux)"),
+    system: bool = typer.Option(False, "--system", help="Force system unit (may need sudo)"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print unit/plan without applying"),
+) -> None:
+    """
+    Install and start EvilEye as an OS service (Web UI server).
+
+    Without CONFIG starts `evileye server` only (minimal post-install mode).
+    Re-running updates the unit and restarts (idempotent ensure).
+    Use `evileye service-uninstall` to remove the service.
+    """
+    from evileye.service_manager import install_service
+
+    cfg = str(config) if config is not None else None
+    # Default to user unit when neither flag set on non-root installs
+    force_user = user or (not system)
+    force_system = system
+    if user and system:
+        console.print("[red]Cannot combine --user and --system[/red]")
+        raise typer.Exit(1)
+
+    try:
+        result = install_service(
+            site_dir=Path.cwd(),
+            config=cfg,
+            host=host,
+            port=port,
+            force_user=force_user and not force_system,
+            force_system=force_system,
+            dry_run=dry_run,
+        )
+    except Exception as e:
+        console.print(f"[red]service-install failed: {e}[/red]")
+        raise typer.Exit(1)
+
+    if dry_run and result.unit_text:
+        console.print("[blue]Dry-run unit file:[/blue]")
+        console.print(result.unit_text)
+
+    if result.ok:
+        console.print(f"[green]{result.message}[/green]")
+    else:
+        style = "yellow" if result.warn_only else "red"
+        console.print(f"[{style}]{result.message}[/{style}]")
+        if not result.warn_only:
+            raise typer.Exit(1)
+
+
+@app.command("service-uninstall")
+def service_uninstall(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be removed"),
+) -> None:
+    """Stop and remove the EvilEye OS service installed by service-install."""
+    from evileye.service_manager import uninstall_service
+
+    try:
+        result = uninstall_service(site_dir=Path.cwd(), dry_run=dry_run)
+    except Exception as e:
+        console.print(f"[red]service-uninstall failed: {e}[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"[green]{result.message}[/green]")
+
+
+@app.command("watchdog-install")
+def watchdog_install(
+    config: Optional[str] = typer.Option(
+        None,
+        "--config",
+        help="Config to watch (default: configs/system.json or configs/single_video.json)",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show plan without registering tasks"),
+) -> None:
+    """Install native watchdog (Scheduled Task on Windows; scripts elsewhere)."""
+    from evileye.watchdog_native import install_watchdog
+
+    cfg = config or "configs/system.json"
+    if not Path(cfg).exists() and Path("configs/single_video.json").exists():
+        cfg = "configs/single_video.json"
+    try:
+        result = install_watchdog(config=cfg, dry_run=dry_run)
+    except Exception as exc:
+        console.print(f"[red]watchdog-install failed: {exc}[/red]")
+        raise typer.Exit(1)
+    console.print(f"[green]Watchdog installed[/green] backend={result.get('backend')} config={cfg}")
+    if dry_run:
+        console.print(str(result))
+
+
+@app.command("watchdog-uninstall")
+def watchdog_uninstall(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show plan without removing"),
+) -> None:
+    """Remove native watchdog Scheduled Tasks / scripts."""
+    from evileye.watchdog_native import uninstall_watchdog
+
+    try:
+        uninstall_watchdog(dry_run=dry_run)
+    except Exception as exc:
+        console.print(f"[red]watchdog-uninstall failed: {exc}[/red]")
+        raise typer.Exit(1)
+    console.print("[green]Watchdog uninstalled[/green]")
+
+
+@app.command("watchdog-check")
+def watchdog_check(
+    config: Optional[str] = typer.Option(
+        None,
+        "--config",
+        help="Config stem/path to watch",
+    ),
+    no_restart: bool = typer.Option(False, "--no-restart", help="Only report, do not restart"),
+) -> None:
+    """Run one native watchdog health check."""
+    from evileye.watchdog_native import health_check
+
+    cfg = config
+    if not cfg:
+        install_meta = Path("monitor/watchdog_install.json")
+        if install_meta.exists():
+            try:
+                cfg = json.loads(install_meta.read_text(encoding="utf-8")).get("config")
+            except Exception:
+                cfg = None
+    cfg = cfg or "configs/single_video.json"
+    entry = health_check(config=cfg, do_restart=not no_restart)
+    console.print(f"status={entry.get('status')} reason={entry.get('reason')}")
+
+
+@app.command("watchdog-morning")
+def watchdog_morning() -> None:
+    """Write morning watchdog report under monitor/reports/."""
+    from evileye.watchdog_native import morning_report
+
+    path = morning_report()
+    console.print(f"[green]Report written:[/green] {path}")
 
 
 @app.command("setup-web")

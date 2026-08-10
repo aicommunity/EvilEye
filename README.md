@@ -59,7 +59,7 @@ docker compose -f docker/docker-compose.yml up --build
 ./docker/install-host-cli.sh
 ```
 
-Full guide: [docs/DOCKER_DEPLOYMENT.md](docs/DOCKER_DEPLOYMENT.md).
+Full guide: [docs/DOCKER_DEPLOYMENT.md](docs/DOCKER_DEPLOYMENT.md). On Windows use [docs/WINDOWS_DOCKER_DEPLOYMENT.md](docs/WINDOWS_DOCKER_DEPLOYMENT.md) (`docker/windows/*.ps1`); bash host-cli is Linux/WSL-only.
 
 Next you can use the `evileye` command, or if it does not work:
 
@@ -72,9 +72,12 @@ Typical site bring-up:
 ```text
 pip install -e .          # or: pip install evileye
 evileye setup-web         # check + install missing Python pkgs; build SPA if needed
-evileye deploy            # credentials, configs/, monitor/
-evileye run config.json --no-gui
+evileye deploy            # credentials, configs/, monitor/ + ensure service-install
+# Open http://127.0.0.1:8181 → set admin password → Basic setup in Настройка
+# Optional: evileye service-uninstall / watchdog via monitor/scripts/install_timer.sh
 ```
+
+See also [docs/CLI_SERVICE_COMMANDS.md](docs/CLI_SERVICE_COMMANDS.md) and [docs/WEB_UI_GUIDE.md](docs/WEB_UI_GUIDE.md).
 
 ### Basic Usage
 
@@ -114,14 +117,31 @@ evileye-process --config configs/my_config.json
 
 #### After Running `evileye deploy`
 
-The `deploy` command creates the following structure in your current directory:
+The `deploy` command creates the following structure in your current directory (or `EVILEYE_SITE_DIR`):
 
 ```
 your_project/
 ├── credentials.json          # Database and camera credentials
-└── configs/                  # Configuration files directory
-    └── (empty - ready for your configs)
+├── configs/                  # Configuration files directory (empty)
+├── logs/                     # Application logs
+├── monitor/                  # Watchdog scripts + systemd templates (not started)
+│   ├── scripts/
+│   ├── systemd/
+│   ├── incidents/
+│   ├── reports/
+│   └── INSTALL_HINT.txt
+└── (service-install attempted at end — Web UI OS service)
 ```
+
+See [docs/CLI_DEPLOY_COMMAND.md](docs/CLI_DEPLOY_COMMAND.md) and [docs/CLI_SERVICE_COMMANDS.md](docs/CLI_SERVICE_COMMANDS.md).
+
+### Platforms
+
+| Platform | Support |
+|----------|---------|
+| **Linux** | Primary: `pip install` and [Docker GPU](docs/DOCKER_DEPLOYMENT.md) |
+| **Windows** | [Native pip](docs/WINDOWS_NATIVE.md) and [Docker Desktop](docs/WINDOWS_DOCKER_DEPLOYMENT.md) |
+| **macOS** | Not officially supported |
 
 #### After Running `evileye deploy-samples`
 

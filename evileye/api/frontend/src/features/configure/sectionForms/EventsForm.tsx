@@ -78,7 +78,7 @@ export function EventsForm({
                 next[i] = { ...row, source_ids: ids };
                 updateRows(next);
               }}
-              style={{ width: 100 }}
+              className="config-input-csv"
             />
           </label>
           {!readOnly ? (

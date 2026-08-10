@@ -14,7 +14,10 @@ export const authApi = {
   logout(): Promise<{ ok: boolean }> {
     return request('/auth/logout', { method: 'POST' });
   },
-  changePassword(body: { current_password: string; new_password: string }): Promise<{ ok: boolean }> {
+  changePassword(body: { current_password: string; new_password: string }): Promise<{
+    ok: boolean;
+    must_change_password?: boolean;
+  }> {
     return request('/auth/change-password', { method: 'POST', body: JSON.stringify(body) });
   },
 };

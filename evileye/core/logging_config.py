@@ -44,8 +44,12 @@ class EvilEyeLoggingConfig:
 
         # Определяем папку для логов
         if log_dir is None:
-            # Используем рабочую директорию запуска процесса
-            self.log_dir = Path.cwd() / "logs"
+            try:
+                from evileye.core.paths import logs_dir as _logs_dir
+
+                self.log_dir = _logs_dir()
+            except Exception:
+                self.log_dir = Path.cwd() / "logs"
         else:
             self.log_dir = Path(log_dir)
 

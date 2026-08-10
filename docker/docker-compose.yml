@@ -1,10 +1,11 @@
-# EvilEye Docker Compose stack (GPU app + PostgreSQL)
+# EvilEye Docker Compose stack (GPU app + Web UI + PostgreSQL)
 #
 # From repo root:
 #   docker compose -f docker/docker-compose.yml up --build
 #
 # Host data dirs default to paths next to the repo root (../ from this file).
-# Override with EVILEYE_HOST_* env vars. See docs/DOCKER_DEPLOYMENT.md.
+# Override with EVILEYE_HOST_* env vars. See docs/DOCKER_DEPLOYMENT.md
+# and docs/WINDOWS_DOCKER_DEPLOYMENT.md.
 
 services:
   app:
@@ -16,9 +17,35 @@ services:
     image: evileye/app:latest
     container_name: evileye_app
     working_dir: /opt/evileye
+    restart: unless-stopped
     environment:
       NVIDIA_VISIBLE_DEVICES: all
       NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
+      EVILEYE_DATA_DIR: /opt/evileye/EvilEyeData
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ${EVILEYE_HOST_DATA:-../EvilEyeData}:/opt/evileye/EvilEyeData
+      - ${EVILEYE_HOST_VIDEOS:-../videos}:/opt/evileye/videos
+      - ${EVILEYE_HOST_MODELS:-../models}:/opt/evileye/models
+      - ${EVILEYE_HOST_CONFIGS:-../configs}:/opt/evileye/configs
+      - ${EVILEYE_HOST_LOGS:-../logs}:/opt/evileye/logs
+      - ${EVILEYE_HOST_CREDENTIALS:-../credentials.json}:/opt/evileye/credentials.json
+    depends_on:
+      db:
+        condition: service_started
+    gpus: all
+    command:
+      - evileye
+      - run
+      - configs/single_video.json
+      - --no-gui
+
+  web:
+    image: evileye/app:latest
+    container_name: evileye_web
+    working_dir: /opt/evileye
+    restart: unless-stopped
+    environment:
       EVILEYE_DATA_DIR: /opt/evileye/EvilEyeData
       PYTHONUNBUFFERED: "1"
     volumes:
@@ -33,16 +60,19 @@ services:
     depends_on:
       db:
         condition: service_started
-    gpus: all
     command:
       - evileye
-      - run
-      - configs/single_video.json
-      - --no-gui
+      - server
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8181"
+      - --no-reload
 
   db:
     image: postgres:15-alpine
     container_name: evileye_db
+    restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres

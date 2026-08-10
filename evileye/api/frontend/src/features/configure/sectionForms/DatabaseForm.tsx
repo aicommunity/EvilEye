@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '../../../components/ui';
 import { useI18n } from '../../../i18n';
 import { FormActions, FormField, FormGrid } from '../formLayout';
+import { formatInt, INT_STEP, parseIntInput } from '../numberFormat';
 
 type DbCfg = {
   enabled?: boolean;
@@ -56,9 +57,10 @@ export function DatabaseForm({
         <FormField label="port">
           <input
             type="number"
+            step={INT_STEP}
             disabled={readOnly}
-            value={obj.port ?? ''}
-            onChange={(e) => update({ ...obj, port: e.target.value === '' ? undefined : Number(e.target.value) })}
+            value={obj.port != null ? formatInt(Number(obj.port)) : ''}
+            onChange={(e) => update({ ...obj, port: parseIntInput(e.target.value) })}
           />
         </FormField>
         <FormField label="database">

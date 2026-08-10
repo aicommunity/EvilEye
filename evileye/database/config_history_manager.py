@@ -830,7 +830,7 @@ class ConfigHistoryManager:
                         # Проверяем существование файлов
                         if 'source_address' in source_config:
                             source_path = source_config['source_address']
-                            if source_path.startswith('/') and not os.path.exists(source_path):
+                            if Path(source_path).is_absolute() and not Path(source_path).exists():
                                 warnings.append(f"Source file not found: {source_path}")
 
             # Проверяем детекторы

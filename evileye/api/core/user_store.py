@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import re
@@ -10,9 +9,17 @@ from pathlib import Path
 from typing import Any, Optional
 
 from evileye.api.security import hash_password, normalize_role, verify_password
+from evileye.core.filelock import with_file_lock
+from evileye.core.paths import site_root
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
-DEFAULT_STORE = Path("web_users.json")
+
+
+def _default_store_path() -> Path:
+    return site_root() / "web_users.json"
+
+
+DEFAULT_STORE = Path("web_users.json")  # backward-compatible name; prefer _default_store_path()
 
 
 def _load_store(path: Path) -> dict[str, Any]:
@@ -46,9 +53,8 @@ def _with_lock(path: Path, callback):
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
         _atomic_write(path, {"users": []})
-    with open(path, "r+", encoding="utf-8") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        try:
+    with with_file_lock(path):
+        with open(path, "r+", encoding="utf-8") as handle:
             handle.seek(0)
             try:
                 payload = json.load(handle)
@@ -65,13 +71,11 @@ def _with_lock(path: Path, callback):
             handle.write("\n")
             handle.flush()
             return result
-        finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 class UserStore:
     def __init__(self, path: Path | None = None):
-        self.path = path or DEFAULT_STORE
+        self.path = path or _default_store_path()
 
     def register(self, email: str, password: str) -> dict[str, Any]:
         normalized = email.strip().lower()

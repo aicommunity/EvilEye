@@ -107,13 +107,15 @@ export function SplitPlaybackCell({
   }, [playing, videoUrl, startTs, positionSec]);
 
   return (
-    <article className="camera-card playback-cell">
-      <div className="camera-card-head">
-        <span className="run-name">{label}</span>
-      </div>
-      <div ref={containerRef} className="split-playback-container">
-        <video ref={videoRef} src={videoUrl} preload="auto" style={{ display: 'none' }} muted playsInline />
-        <canvas ref={canvasRef} className="camera-preview" />
+    <article className="camera-card camera-card-grid playback-cell">
+      <div className="camera-card-media">
+        <div ref={containerRef} className="split-playback-container">
+          <video ref={videoRef} src={videoUrl} preload="auto" style={{ display: 'none' }} muted playsInline />
+          <canvas ref={canvasRef} className="camera-preview" />
+        </div>
+        <div className="camera-card-overlay-top">
+          <span className="camera-name">{label}</span>
+        </div>
       </div>
     </article>
   );

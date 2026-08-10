@@ -72,7 +72,7 @@ export function StreamOverlay({
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [rid, sourceId, onClose, t, phase, error]);
+  }, [rid, sourceId, onClose, phase, error]);
 
   return (
     <div className="stream-container open">

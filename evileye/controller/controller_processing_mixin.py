@@ -533,26 +533,49 @@ class ControllerProcessingMixin:
                     interested_source_ids.add(source_id)
             if not interested_frames:
                 self.logger.debug("No frames currently requested for preview publish")
-                return
-            objects_by_source = self._collect_preview_objects_by_source(interested_source_ids, objects_results)
-            published = 0
-            for frame in interested_frames:
-                accepted = False
-                if self._preview_render_service is not None:
-                    render_context = self._build_preview_render_context(frame, objects_by_source)
-                    accepted = self._preview_render_service.submit_frame(frame, render_context)
-                elif self._streaming_service:
-                    accepted = self._streaming_service.submit_frame(frame)
-                if accepted:
-                    published += 1
-                    self.logger.debug(
-                        "Submitted frame for async streaming publish: pipeline=%s source=%s frame=%s",
-                        self.stream_pipeline_id,
-                        getattr(frame, "source_id", None),
-                        getattr(frame, "frame_id", None),
-                    )
-            if published == 0:
-                self.logger.debug("No frames were accepted for async streaming publish")
+            else:
+                objects_by_source = self._collect_preview_objects_by_source(interested_source_ids, objects_results)
+                published = 0
+                for frame in interested_frames:
+                    accepted = False
+                    if self._preview_render_service is not None:
+                        render_context = self._build_preview_render_context(frame, objects_by_source)
+                        accepted = self._preview_render_service.submit_frame(frame, render_context)
+                    elif self._streaming_service:
+                        accepted = self._streaming_service.submit_frame(frame)
+                    if accepted:
+                        published += 1
+                        self.logger.debug(
+                            "Submitted frame for async streaming publish: pipeline=%s source=%s frame=%s",
+                            self.stream_pipeline_id,
+                            getattr(frame, "source_id", None),
+                            getattr(frame, "frame_id", None),
+                        )
+                if published == 0:
+                    self.logger.debug("No frames were accepted for async streaming publish")
+            # Uncropped frames for split-editor preview (demand-gated inside submit_full_frame).
+            try:
+                sources = []
+                if getattr(self, "_pipeline_service", None) is not None:
+                    sources = self._pipeline_service.get_sources() or []
+                elif getattr(self, "pipeline", None) is not None and hasattr(self.pipeline, "get_sources"):
+                    sources = self.pipeline.get_sources() or []
+                for src in sources:
+                    if not getattr(src, "split_stream", False):
+                        continue
+                    full = getattr(src, "_latest_full_frame", None)
+                    if full is None:
+                        continue
+                    ids = [int(x) for x in (getattr(src, "source_ids", None) or []) if x is not None]
+                    if not ids:
+                        continue
+                    primary = ids[0]
+                    if self._streaming_service is not None and hasattr(self._streaming_service, "submit_full_frame"):
+                        self._streaming_service.submit_full_frame(
+                            full, primary_source_id=primary, source_ids=ids
+                        )
+            except Exception:
+                pass
         except Exception as e:
             # Do not break controller loop if streaming is not initialized
             self.logger.debug(f"Frame publish failed: {e}")
