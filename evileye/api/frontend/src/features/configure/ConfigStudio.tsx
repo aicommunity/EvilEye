@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   configGet,
   configUpdate,
@@ -6,7 +7,9 @@ import {
   configGetSection,
   configPutSection,
   configValidate,
+  setupApi,
   type StudioTab,
+  type SetupStatus,
   ApiError,
 } from '../../api';
 import { Button } from '../../components/ui';
@@ -34,6 +37,10 @@ import { ZoneCanvas } from './ZoneCanvas';
 import { ClassMappingEditor } from './ClassMappingEditor';
 import { configBasename, stableStringify, tabsFromLegacySections } from './studioTabs';
 import { useI18n } from '../../i18n';
+import { BasicSetupForm } from './BasicSetupForm';
+import { ConfigModeToggle, useConfigUiMode } from './ConfigModeToggle';
+import { readPendingApply, writePendingApply } from './pendingApply';
+import { restartConfigRun } from './restartConfigRun';
 
 export type ConfigStudioProps = {
   mode: 'current' | 'file';
@@ -53,17 +60,51 @@ export function ConfigStudio({
   const { hasPermission } = useAuth();
   const { showError, showSuccess } = useToast();
   const { t } = useI18n();
+  const [searchParams] = useSearchParams();
   const canEdit = readOnlyProp === true ? false : hasPermission('config:edit');
+  const canRun = hasPermission('runtime:control');
+
+  const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null);
+  const { mode: uiMode, setMode: setUiMode, needsSetup } = useConfigUiMode(setupStatus);
+  const [pendingApply, setPendingApply] = useState(false);
+  const [applying, setApplying] = useState(false);
+
+  const name = configName;
+
+  const markPendingApply = useCallback(
+    (pending: boolean) => {
+      if (!name) return;
+      writePendingApply(name, pending);
+      setPendingApply(pending);
+    },
+    [name],
+  );
+
+  useEffect(() => {
+    if (!name) {
+      setSetupStatus(null);
+      setPendingApply(false);
+      return;
+    }
+    setPendingApply(readPendingApply(name));
+    void setupApi
+      .status(name)
+      .then((s) => setSetupStatus(s))
+      .catch(() => setSetupStatus(null));
+  }, [name]);
 
   const [tabs, setTabs] = useState<StudioTab[]>([]);
-  const [activeId, setActiveId] = useState('sources');
+  const [activeId, setActiveId] = useState(() => {
+    const tab = searchParams.get('tab');
+    if (tab === 'history' && allowConfigHistory) return 'history';
+    return 'sources';
+  });
   const [sectionData, setSectionData] = useState<unknown>(null);
   const [baselineJson, setBaselineJson] = useState('');
   const [dirty, setDirty] = useState(false);
   const [fullJson, setFullJson] = useState('{}');
   const [sourceId, setSourceId] = useState(0);
 
-  const name = configName;
   const activeTab = useMemo(() => tabs.find((t) => t.id === activeId), [tabs, activeId]);
   const activePath = activeTab?.path ?? activeId;
 
@@ -72,6 +113,13 @@ export function ConfigStudio({
     if (allowConfigHistory) extra.push('history');
     return extra;
   }, [allowConfigHistory]);
+
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    if (tab === 'history' && allowConfigHistory) {
+      setActiveId('history');
+    }
+  }, [searchParams, allowConfigHistory]);
 
   useEffect(() => {
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -130,7 +178,7 @@ export function ConfigStudio({
     return () => {
       cancelled = true;
     };
-  }, [name, activeId, tabs, showError, specialIds, t]);
+  }, [name, activeId, tabs, showError, specialIds]);
 
   const markDirtyFromDraft = (draft: unknown) => {
     setDirty(stableStringify(draft) !== baselineJson);
@@ -144,8 +192,24 @@ export function ConfigStudio({
       setSectionData(data);
       setBaselineJson(stableStringify(data));
       setDirty(false);
+      markPendingApply(true);
     } catch (e) {
       showError(e instanceof Error ? e.message : t('configure.saveFail'));
+    }
+  };
+
+  const applyRestart = async () => {
+    if (!name || !canRun) return;
+    setApplying(true);
+    try {
+      markPendingApply(false);
+      const res = await restartConfigRun(name);
+      markPendingApply(false);
+      showSuccess(res.scheduled ? t('setup.restartScheduled') : t('setup.runStarted'));
+    } catch (e) {
+      showError(e instanceof Error ? e.message : t('common.error'));
+    } finally {
+      setApplying(false);
     }
   };
 
@@ -165,7 +229,7 @@ export function ConfigStudio({
   const renderSectionForm = () => {
     switch (activeId) {
       case 'sources':
-        return <SourcesForm {...formProps} />;
+        return <SourcesForm {...formProps} configName={name ?? ''} />;
       case 'record':
         return <RecordForm {...formProps} />;
       case 'detectors':
@@ -225,26 +289,50 @@ export function ConfigStudio({
           )}
           {dirty ? <span className="hint"> · {t('configure.dirty')}</span> : null}
         </h2>
+        {pendingApply ? (
+          <div className="setup-banner setup-banner--pending">
+            <span>{t('setup.pendingApplyBanner')}</span>
+            {canRun ? (
+              <Button size="sm" variant="primary" disabled={applying} onClick={() => void applyRestart()}>
+                {t('setup.restart')}
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+        <div className="toolbar" style={{ gap: '0.75rem', flexWrap: 'wrap' }}>
+          <ConfigModeToggle mode={uiMode} onChange={setUiMode} needsSetup={needsSetup} />
+          {uiMode === 'advanced' ? (
+            <Button
+              variant="outline"
+              onClick={() =>
+                void configValidate(name)
+                  .then((r) => {
+                    if (r.ok) showSuccess(t('configure.valid'));
+                    else showError(r.errors.join('; ') || t('configure.validationErrors'));
+                  })
+                  .catch((e) => showError(e.message))
+              }
+            >
+              {t('configure.validate')}
+            </Button>
+          ) : null}
+        </div>
+        {uiMode === 'basic' ? (
+          <>
+            <p className="hint">{t('setup.basicHint')}</p>
+            <BasicSetupForm
+              configName={name}
+              onStatus={setSetupStatus}
+              onPendingApplyChange={markPendingApply}
+            />
+          </>
+        ) : (
+          <>
         <p className="hint">
           {mode === 'current'
             ? t('configure.hintCurrent')
             : t('configure.hintFile')}
         </p>
-        <div className="toolbar">
-          <Button
-            variant="outline"
-            onClick={() =>
-              void configValidate(name)
-                .then((r) => {
-                  if (r.ok) showSuccess(t('configure.valid'));
-                  else showError(r.errors.join('; ') || t('configure.validationErrors'));
-                })
-                .catch((e) => showError(e.message))
-            }
-          >
-            {t('configure.validate')}
-          </Button>
-        </div>
         <div className="journal-tabs config-studio-tabs">
           {[...tabs.map((tab) => tab.id), ...specialIds].map((s) => (
             <button
@@ -270,6 +358,7 @@ export function ConfigStudio({
               setFullJson(text);
               setBaselineJson(text);
               setDirty(false);
+              markPendingApply(true);
               showSuccess(t('configure.jsonSaved'));
             }}
             onChange={(text) => setDirty(text !== fullJson)}
@@ -277,13 +366,37 @@ export function ConfigStudio({
         ) : activeId === 'history' ? (
           <ConfigHistoryPanel configName={name} />
         ) : activeId === 'roi' ? (
-          <RoiCanvas configName={name} sourceId={sourceId} onSourceIdChange={setSourceId} readOnly={!canEdit} />
+          <RoiCanvas
+            configName={name}
+            sourceId={sourceId}
+            onSourceIdChange={setSourceId}
+            readOnly={!canEdit}
+            onSaved={(restartRequired) => {
+              if (restartRequired) markPendingApply(true);
+            }}
+          />
         ) : activeId === 'zones' ? (
-          <ZoneCanvas configName={name} sourceId={sourceId} onSourceIdChange={setSourceId} readOnly={!canEdit} />
+          <ZoneCanvas
+            configName={name}
+            sourceId={sourceId}
+            onSourceIdChange={setSourceId}
+            readOnly={!canEdit}
+            onSaved={(restartRequired) => {
+              if (restartRequired) markPendingApply(true);
+            }}
+          />
         ) : activeId === 'classes' ? (
-          <ClassMappingEditor configName={name} readOnly={!canEdit} />
+          <ClassMappingEditor
+            configName={name}
+            readOnly={!canEdit}
+            onSaved={(restartRequired) => {
+              if (restartRequired) markPendingApply(true);
+            }}
+          />
         ) : (
           renderSectionForm()
+        )}
+          </>
         )}
       </div>
     </section>

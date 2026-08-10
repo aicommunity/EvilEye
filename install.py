@@ -5,7 +5,6 @@ Installation script for EvilEye package with automatic entry point fixing
 
 import subprocess
 import sys
-import os
 from pathlib import Path
 
 
@@ -31,104 +30,64 @@ def install_package(extra_deps=None):
     else:
         cmd = "pip install -e ."
         description = "Installing package"
-    
+
     return run_command(cmd, description)
 
 
 def fix_entry_points():
     """Fix entry points after installation"""
-    # Use Python script for fixing entry points
     fix_script_py = Path("scripts/setup/fix_entry_points.py")
     if not fix_script_py.is_file():
         fix_script_py = Path("fix_entry_points.py")
 
     if fix_script_py.exists():
         return run_command(f"python {fix_script_py}", "Fixing entry points with Python script")
-    else:
-        print("⚠️  fix_entry_points.py not found, skipping entry point fix")
-        return True
+    print("⚠️  fix_entry_points.py not found, skipping entry point fix")
+    return True
 
 
 def main():
     """Main installation function"""
     print("🚀 EvilEye Installation Script")
     print("=" * 40)
-    
-    # Parse command line arguments
+
     extra_deps = None
     if len(sys.argv) > 1:
-        if sys.argv[1] == "--dev":
+        arg = sys.argv[1]
+        if arg == "--dev":
             extra_deps = "dev"
-        elif sys.argv[1] == "--full":
-            extra_deps = "full"
-        elif sys.argv[1] == "--gui":
-            extra_deps = "gui"
-        elif sys.argv[1] == "--gpu":
-            extra_deps = "gpu"
-        elif sys.argv[1] == "--help":
-            print("Usage: python install.py [--dev|--full|--gui|--gpu]")
-            print("  --dev   - Install with development dependencies")
-            print("  --full  - Install with all dependencies")
-            print("  --gui   - Install with GUI dependencies")
-            print("  --gpu   - Install with GPU support")
+        elif arg == "--win":
+            extra_deps = "win"
+        elif arg == "--jetson":
+            extra_deps = "jetson"
+        elif arg == "--help":
+            print("Usage: python install.py [--dev|--win|--jetson]")
+            print("  --dev     - Install with development dependencies")
+            print("  --win     - Install Windows optional extra (onnxruntime pin)")
+            print("  --jetson  - Install Jetson optional extra (PyQt5)")
             return
-    
-    # Install package
+        else:
+            print(f"Unknown option: {arg} (use --help)")
+            sys.exit(2)
+
     if not install_package(extra_deps):
         print("❌ Installation failed!")
         sys.exit(1)
-    
-    # Fix entry points
+
     if not fix_entry_points():
         print("⚠️  Entry point fix failed, but installation completed")
-    
+
     print("\n🎉 Installation completed successfully!")
     print("\nYou can now use:")
     print("  evileye --help")
     print("  evileye info")
     print("  evileye-process --help")
-    
+
     if extra_deps == "dev":
         print("\nDevelopment tools available:")
         print("  make test     - Run tests")
         print("  make lint     - Run linting")
         print("  make format   - Format code")
-
-
-def auto_fix_entry_points():
-    """Auto-fix entry points without user interaction"""
-    try:
-        # Import the package to trigger auto-fix
-        import evileye
-        return True
-    except Exception as e:
-        print(f"⚠️  Auto-fix failed: {e}")
-        return False
-
-
-if __name__ == "__main__":
-    main()
-else:
-    # If imported as module, auto-fix entry points
-    auto_fix_entry_points()
-
-
-def auto_fix_entry_points():
-    """Auto-fix entry points without user interaction"""
-    try:
-        # Import the package to trigger auto-fix
-        import evileye
-        return True
-    except Exception as e:
-        print(f"⚠️  Auto-fix failed: {e}")
-        return False
-
-
-if __name__ == "__main__":
-    main()
-else:
-    # If imported as module, auto-fix entry points
-    auto_fix_entry_points()
 
 
 if __name__ == "__main__":

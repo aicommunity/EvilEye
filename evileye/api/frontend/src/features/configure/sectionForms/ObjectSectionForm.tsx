@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '../../../components/ui';
 import { useI18n } from '../../../i18n';
 import { FormActions, FormField, FormGrid } from '../formLayout';
+import { DECIMAL_STEP, formatSmartNumber, INT_STEP, parseSmartNumberInput } from '../numberFormat';
 
 type FieldDef =
   | { key: string; label: string; kind: 'bool' }
@@ -121,11 +122,26 @@ export function ObjectSectionForm({
               <input
                 disabled={readOnly}
                 type={f.kind === 'number' ? 'number' : 'text'}
-                value={value == null ? '' : String(value)}
+                step={
+                  f.kind === 'number' && typeof value === 'number'
+                    ? Math.abs(Number(value) - Math.round(Number(value))) < 1e-9
+                      ? INT_STEP
+                      : DECIMAL_STEP
+                    : f.kind === 'number'
+                      ? DECIMAL_STEP
+                      : undefined
+                }
+                value={
+                  value == null
+                    ? ''
+                    : f.kind === 'number' && typeof value === 'number'
+                      ? formatSmartNumber(Number(value))
+                      : String(value)
+                }
                 onChange={(e) => {
                   const raw = e.target.value;
                   if (f.kind === 'number') {
-                    update({ ...obj, [f.key]: raw === '' ? undefined : Number(raw) });
+                    update({ ...obj, [f.key]: parseSmartNumberInput(raw) });
                   } else {
                     update({ ...obj, [f.key]: raw });
                   }

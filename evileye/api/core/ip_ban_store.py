@@ -1,7 +1,6 @@
 """Persistent IP ban store (web_ip_bans.json)."""
 from __future__ import annotations
 
-import fcntl
 import ipaddress
 import json
 import os
@@ -11,9 +10,17 @@ import uuid
 from pathlib import Path
 from typing import Any, Optional
 
+from evileye.core.filelock import with_file_lock
 from evileye.core.logger import get_module_logger
+from evileye.core.paths import site_root
 
 logger = get_module_logger("api.ip_ban_store")
+
+
+def _default_store_path() -> Path:
+    return site_root() / "web_ip_bans.json"
+
+
 DEFAULT_STORE = Path("web_ip_bans.json")
 
 
@@ -48,9 +55,8 @@ def _with_lock(path: Path, callback):
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
         _atomic_write(path, {"bans": []})
-    with open(path, "r+", encoding="utf-8") as handle:
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        try:
+    with with_file_lock(path):
+        with open(path, "r+", encoding="utf-8") as handle:
             handle.seek(0)
             try:
                 payload = json.load(handle)
@@ -70,8 +76,6 @@ def _with_lock(path: Path, callback):
                 handle.write("\n")
                 handle.flush()
             return result
-        finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def validate_ip_or_cidr(value: str, *, allow_cidr: bool = True) -> str:
@@ -113,7 +117,7 @@ def _ip_matches(ban_ip: str, client_ip: str) -> bool:
 
 class IpBanStore:
     def __init__(self, path: Path | None = None):
-        self.path = path or DEFAULT_STORE
+        self.path = path or _default_store_path()
         self._cache_mtime: float | None = None
         self._cache_payload: dict[str, Any] | None = None
 

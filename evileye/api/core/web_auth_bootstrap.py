@@ -9,11 +9,26 @@ from typing import Any
 
 from evileye.api.security import hash_password
 from evileye.core.logger import get_module_logger
+from evileye.core.paths import creds_path
 
 logger = get_module_logger("api.web_auth_bootstrap")
 
 DEFAULT_ADMIN_USER = "admin"
 INSECURE_SESSION_SECRETS = frozenset({"", "evileye-dev-session-secret", "change-me"})
+INSECURE_PLAINTEXT_PASSWORDS = frozenset({"", "change-me", "admin", "password"})
+
+
+def user_must_change_password(user_record: dict[str, Any] | None) -> bool:
+    """Resolve whether the user must change password before using the UI."""
+    if not isinstance(user_record, dict):
+        return False
+    if "must_change_password" in user_record:
+        return bool(user_record.get("must_change_password"))
+    # Legacy / manually edited users without the flag are not forced.
+    plain = user_record.get("password")
+    if isinstance(plain, str) and plain in INSECURE_PLAINTEXT_PASSWORDS:
+        return True
+    return False
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -49,8 +64,8 @@ def _ensure_web_auth_section(creds: dict[str, Any]) -> dict[str, Any]:
 
 def ensure_secure_web_auth_secrets(path: Path | None = None) -> bool:
     """Replace weak/missing session_secret and internal_token; persist if changed."""
-    creds_path = path or Path("credentials.json")
-    creds = _load_json(creds_path)
+    creds_file = path or creds_path()
+    creds = _load_json(creds_file)
     web_auth = _ensure_web_auth_section(creds)
     changed = False
 
@@ -60,7 +75,7 @@ def ensure_secure_web_auth_secrets(path: Path | None = None) -> bool:
         new_secret = env_secret if env_secret and env_secret not in INSECURE_SESSION_SECRETS else secrets.token_urlsafe(32)
         web_auth["session_secret"] = new_secret
         changed = True
-        logger.warning("Generated secure web_auth.session_secret in %s", creds_path)
+        logger.warning("Generated secure web_auth.session_secret in %s", creds_file)
 
     env_token = (os.getenv("EVILEYE_INTERNAL_TOKEN") or "").strip()
     current_token = str(web_auth.get("internal_token") or env_token or "").strip()
@@ -69,24 +84,24 @@ def ensure_secure_web_auth_secrets(path: Path | None = None) -> bool:
         new_token = env_token or secrets.token_urlsafe(32)
         web_auth["internal_token"] = new_token
         changed = True
-        logger.warning("Generated web_auth.internal_token in %s (required when auth is enabled)", creds_path)
+        logger.warning("Generated web_auth.internal_token in %s (required when auth is enabled)", creds_file)
     elif env_token and not web_auth.get("internal_token"):
         web_auth["internal_token"] = env_token
         changed = True
 
     if changed:
-        _atomic_write(creds_path, creds)
+        _atomic_write(creds_file, creds)
     return changed
 
 
 def ensure_default_admin_credentials(path: Path | None = None) -> bool:
     """Create default admin user in credentials.json if web_auth.users is empty."""
-    creds_path = path or Path("credentials.json")
-    creds = _load_json(creds_path)
+    creds_file = path or creds_path()
+    creds = _load_json(creds_file)
     web_auth = _ensure_web_auth_section(creds)
 
-    ensure_secure_web_auth_secrets(creds_path)
-    creds = _load_json(creds_path)
+    ensure_secure_web_auth_secrets(creds_file)
+    creds = _load_json(creds_file)
     web_auth = _ensure_web_auth_section(creds)
 
     users = web_auth.get("users")
@@ -109,13 +124,14 @@ def ensure_default_admin_credentials(path: Path | None = None) -> bool:
             "password_hash": password_hash,
             "role": "admin",
             "disabled": False,
+            "must_change_password": True,
         }
     ]
-    _atomic_write(creds_path, creds)
+    _atomic_write(creds_file, creds)
     logger.warning(
         "Created default web admin credentials in %s (username=%s password=%s). "
         "Change the password immediately; this password is shown only once.",
-        creds_path,
+        creds_file,
         DEFAULT_ADMIN_USER,
         bootstrap_password,
     )

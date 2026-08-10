@@ -33,7 +33,7 @@ export function UsersPage() {
     } catch (e) {
       showError(e instanceof Error ? e.message : t('common.error'));
     }
-  }, [showError, t]);
+  }, [showError]);
 
   useEffect(() => {
     void load();

@@ -13,11 +13,17 @@
 3. **Разворачивает `monitor/`** — скрипты watchdog и шаблоны systemd (без запуска сервисов)
 4. **Создает `logs/`**, а также `monitor/incidents/` и `monitor/reports/`
 
-Команда **не** включает systemd timers и **не** запускает EvilEye. Для активации watchdog отдельно:
+Команда **не** включает systemd timers watchdog и **не** запускает pipeline runtime.
+В конце `deploy` вызывает **ensure** `evileye service-install` (Web UI OS-сервис).
+Ошибка установки сервиса не отменяет deploy — сайт всё равно создаётся.
+
+Для активации watchdog отдельно:
 
 ```bash
 DEPLOY_DIR=$PWD ./monitor/scripts/install_timer.sh
 ```
+
+См. также [`CLI_SERVICE_COMMANDS.md`](CLI_SERVICE_COMMANDS.md) (`service-install` / `service-uninstall`).
 
 ## Использование
 

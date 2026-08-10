@@ -496,7 +496,11 @@ def main():
     logger.info("Initializing PyQt application")
     app = QApplication(sys.argv)
     app.setApplicationName("EvilEye")
-    app.setApplicationVersion("0.0.9")
+    try:
+        from evileye import __version__ as _ee_version
+    except Exception:
+        _ee_version = "0.0.0"
+    app.setApplicationVersion(_ee_version)
 
     use_unified_launcher = args.unified
 

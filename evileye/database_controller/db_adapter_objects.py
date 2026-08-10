@@ -159,7 +159,11 @@ class DatabaseAdapterObjects(DatabaseAdapterBase):
             if obj.source_id in camera['source_ids']:
                 id_idx = camera['source_ids'].index(obj.source_id)
                 fields_for_saving['source_name'] = camera['source_names'][id_idx]
-                fields_for_saving['camera_full_address'] = camera['camera']
+                from evileye.utils.camera_event_label import media_url_without_credentials
+
+                fields_for_saving['camera_full_address'] = media_url_without_credentials(
+                    str(camera.get('camera') or '')
+                )
                 break
         fields_for_saving['preview_path'] = self._get_img_path('preview', 'detected',
                                                                fields_for_saving['source_name'], obj)

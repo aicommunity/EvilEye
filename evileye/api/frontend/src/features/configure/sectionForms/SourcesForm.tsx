@@ -1,7 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Button } from '../../../components/ui';
 import { useI18n } from '../../../i18n';
 import { FormActions, FormField, FormGrid } from '../formLayout';
+import { SourceAdvancedEditor } from '../SourceAdvancedEditor';
+import {
+  applyRegionsToRow,
+  cloneSourceRow,
+  collectOccupiedSourceIds,
+  padRegions,
+  parseSourceRegions,
+} from '../sourceRowUtils';
+import { formatInt, INT_STEP, parseIntInput } from '../numberFormat';
 
 type SourceRow = {
   source?: string;
@@ -35,16 +44,20 @@ export function SourcesForm({
   readOnly,
   onSave,
   onChange,
+  configName,
 }: {
   data: unknown;
   readOnly: boolean;
   onSave: (data: unknown) => Promise<void>;
   onChange?: (data: unknown) => void;
+  configName: string;
 }) {
   const { t } = useI18n();
   const [rows, setRows] = useState<SourceRow[]>(() => asRows(data));
   const [advanced, setAdvanced] = useState(false);
   const [jsonText, setJsonText] = useState('[]');
+  const [editIndex, setEditIndex] = useState<number | null>(null);
+  const [editSnapshot, setEditSnapshot] = useState<Record<string, unknown> | null>(null);
 
   useEffect(() => {
     const next = asRows(data);
@@ -56,6 +69,16 @@ export function SourcesForm({
     setRows(next);
     onChange?.(next);
   };
+
+  const openAdvanced = (i: number) => {
+    setEditSnapshot(cloneSourceRow(rows[i] as Record<string, unknown>));
+    setEditIndex(i);
+  };
+
+  const occupiedForEdit = useMemo(() => {
+    if (editIndex == null) return [] as number[];
+    return [...collectOccupiedSourceIds(rows as Record<string, unknown>[], editIndex)];
+  }, [editIndex, rows]);
 
   if (advanced) {
     return (
@@ -129,11 +152,16 @@ export function SourcesForm({
             <FormField label="desired_fps / fps">
               <input
                 type="number"
+                step={INT_STEP}
                 disabled={readOnly}
-                value={row.desired_fps ?? row.fps ?? ''}
+                value={
+                  row.desired_fps != null || row.fps != null
+                    ? formatInt(Number(row.desired_fps ?? row.fps))
+                    : ''
+                }
                 onChange={(e) => {
                   const next = [...rows];
-                  const n = e.target.value === '' ? undefined : Number(e.target.value);
+                  const n = parseIntInput(e.target.value);
                   next[i] = { ...row, desired_fps: n, fps: n };
                   updateRows(next);
                 }}
@@ -169,7 +197,20 @@ export function SourcesForm({
                 checked={Boolean(row.split)}
                 onChange={(e) => {
                   const next = [...rows];
-                  next[i] = { ...row, split: e.target.checked };
+                  const asRec = row as Record<string, unknown>;
+                  const parsed = parseSourceRegions(asRec);
+                  const occupied = collectOccupiedSourceIds(rows as Record<string, unknown>[], i);
+                  if (e.target.checked) {
+                    const padded = padRegions(2, parsed.ids, parsed.names, parsed.coords, 1920, 1080, occupied);
+                    next[i] = applyRegionsToRow(asRec, { split: true, ...padded }) as SourceRow;
+                  } else {
+                    next[i] = applyRegionsToRow(asRec, {
+                      split: false,
+                      ids: [parsed.ids[0] ?? 0],
+                      names: [parsed.names[0] ?? `Cam${(parsed.ids[0] ?? 0) + 1}`],
+                      coords: [],
+                    }) as SourceRow;
+                  }
                   updateRows(next);
                 }}
               />
@@ -177,11 +218,12 @@ export function SourcesForm({
             <FormField label="num_split">
               <input
                 type="number"
+                step={INT_STEP}
                 disabled={readOnly}
-                value={row.num_split ?? ''}
+                value={row.num_split != null ? formatInt(Number(row.num_split)) : ''}
                 onChange={(e) => {
                   const next = [...rows];
-                  next[i] = { ...row, num_split: e.target.value === '' ? undefined : Number(e.target.value) };
+                  next[i] = { ...row, num_split: parseIntInput(e.target.value) };
                   updateRows(next);
                 }}
               />
@@ -221,11 +263,16 @@ export function SourcesForm({
               />
             </FormField>
           </FormGrid>
-          {!readOnly ? (
-            <Button size="sm" variant="outline" onClick={() => updateRows(rows.filter((_, j) => j !== i))}>
-              {t('configure.forms.removeSource')}
+          <div className="config-source-block__actions">
+            <Button size="sm" variant="outline" onClick={() => openAdvanced(i)}>
+              {t('setup.sourceAdvanced')}
             </Button>
-          ) : null}
+            {!readOnly ? (
+              <Button size="sm" variant="outline" onClick={() => updateRows(rows.filter((_, j) => j !== i))}>
+                {t('configure.forms.removeSource')}
+              </Button>
+            ) : null}
+          </div>
         </div>
       ))}
       <FormActions>
@@ -243,6 +290,28 @@ export function SourcesForm({
           JSON
         </Button>
       </FormActions>
+
+      <SourceAdvancedEditor
+        open={editIndex != null}
+        configName={configName}
+        sourceIndex={editIndex ?? 0}
+        initialRow={editSnapshot ?? {}}
+        occupiedIds={occupiedForEdit}
+        readOnly={readOnly}
+        onClose={() => {
+          setEditIndex(null);
+          setEditSnapshot(null);
+        }}
+        onApplied={async (row) => {
+          if (editIndex == null) return;
+          const next = [...rows];
+          next[editIndex] = row as SourceRow;
+          updateRows(next);
+          await onSave(next);
+          setEditIndex(null);
+          setEditSnapshot(null);
+        }}
+      />
     </div>
   );
 }

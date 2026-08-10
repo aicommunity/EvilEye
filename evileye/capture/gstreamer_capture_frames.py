@@ -142,7 +142,7 @@ class GStreamerCaptureFramesMixin:
                                 timestamp = datetime.datetime.now()
                                 self.logger.info(
                                     f"Reconnected to source: {self.source_names} (is_inited={self.is_inited}, is_working={self.is_working})")
-                                self.reconnects.append((self.source_address, timestamp, self.is_working))
+                                self._record_reconnect(timestamp)
                                 for sub in self.subscribers:
                                     sub.update()
                             else:
@@ -930,7 +930,7 @@ class GStreamerCaptureFramesMixin:
                         if init_ok:
                             timestamp = datetime.datetime.now()
                             self.logger.info(f"Reconnected to source: {self.source_names}")
-                            self.reconnects.append((self.source_address, timestamp, self.is_working))
+                            self._record_reconnect(timestamp)
                             try:
                                 self._noframes_restart_last_ts = time.time()
                             except Exception:

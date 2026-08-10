@@ -13,6 +13,7 @@ import {
 import { Button } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
 import { useI18n } from '../../i18n';
+import { useRunConfigFlags } from '../../hooks/useRunConfigFlags';
 import { Timeline } from './Timeline';
 import { PlaybackGrid } from './PlaybackGrid';
 import { usePlaybackController } from './usePlaybackController';
@@ -45,6 +46,7 @@ export function PlaybackPage() {
   const [params] = useSearchParams();
   const { showError } = useToast();
   const { t } = useI18n();
+  const flags = useRunConfigFlags();
   const [date, setDate] = useState(today());
   const [runId, setRunId] = useState<number | null>(null);
   const [runReady, setRunReady] = useState(false);
@@ -150,7 +152,7 @@ export function PlaybackPage() {
       cancelled = true;
       ac.abort();
     };
-  }, [date, runId, runReady, showError, t, urlCamera, setSelectedIds, softRefreshCameras]);
+  }, [date, runId, runReady, showError, urlCamera, setSelectedIds, softRefreshCameras]);
 
   const loadSegments = useCallback(
     async (camsOverride?: string[], opts?: { from?: number; to?: number; merge?: boolean; date?: string }) => {
@@ -225,7 +227,7 @@ export function PlaybackPage() {
         showError(e instanceof Error ? e.message : t('playback.unavailable'));
       }
     },
-    [date, initialT, showError, t, ctrl, viewport],
+    [date, initialT, showError, ctrl, viewport],
   );
   useEffect(() => {
     // Show calendar-day timeline immediately on date change (before segments return).
@@ -329,6 +331,9 @@ export function PlaybackPage() {
             ))}
           </div>
         </div>
+        {!flags.loading && flags.recordingEnabled === false ? (
+          <p className="setup-banner">{t('playback.recordingDisabled')}</p>
+        ) : null}
         <div className="toolbar" style={{ flexWrap: 'wrap' }}>
           {camerasLoading ? <span className="hint">{t('playback.loadingCameras')}</span> : null}
           {!camerasLoading && !cameras.length ? <span className="hint">{t('playback.noCameras')}</span> : null}

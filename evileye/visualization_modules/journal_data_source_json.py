@@ -323,15 +323,27 @@ class JsonLabelJournalDataSource(EventJournalDataSource):
                     'date_folder': date_folder,
                 }
             elif event_type == 'cam':
+                from evileye.utils.camera_event_label import sanitize_camera_event_record
+
+                clean = sanitize_camera_event_record(
+                    {
+                        'camera_full_address': item.get('camera_full_address'),
+                        'connection_status': item.get('connection_status'),
+                        'source_names': item.get('source_names'),
+                        'source_name': item.get('source_name'),
+                    },
+                    source_mappings=self._source_name_id_address,
+                )
                 return {
                     'event_id': event_id_str,
                     'event_id_numeric': event_id_numeric,
                     'event_type': event_type,
                     'ts': timestamp,
-                    'camera_full_address': item.get('camera_full_address'),
-                    'connection_status': item.get('connection_status'),
+                    'camera_full_address': clean.get('camera_full_address'),
+                    'connection_status': clean.get('connection_status'),
                     'source_id': None,  # Camera events don't have source_id
-                    'source_name': None,  # Will be resolved from camera_full_address
+                    'source_name': clean.get('source_name'),
+                    'source_names': clean.get('source_names') or clean.get('source_name'),
                     'video_path': None,  # Camera events don't have video
                     'video_path_lost': None,
                     'date_folder': date_folder,

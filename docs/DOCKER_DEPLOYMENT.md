@@ -219,9 +219,20 @@ docker run --rm --gpus all --ipc=host \
 | GUI | поддерживается на хосте | headless по умолчанию |
 | Watchdog systemd | `evileye deploy` + monitor | по желанию на хосте отдельно |
 
+## Windows
+
+Host-cli bash scripts (`install-host-cli.sh`, `prepare-host-dirs.sh`) are **Linux/WSL-only**.
+
+On Windows use Docker Desktop + PowerShell:
+
+- [WINDOWS_DOCKER_DEPLOYMENT.md](WINDOWS_DOCKER_DEPLOYMENT.md)
+- `docker/windows/Install-EvilEye.ps1`, `Prepare-HostDirs.ps1`, `Install-Watchdog.ps1`
+
+Compose includes services `app` (pipeline), `web` (API/UI on :8181), and `db`, all with `restart: unless-stopped`.
+
 ## Troubleshooting
 
-- **Compose: error mounting credentials.json** — сначала `./docker/prepare-host-dirs.sh`.
+- **Compose: error mounting credentials.json** — сначала `./docker/prepare-host-dirs.sh` (Linux) или `docker/windows/Prepare-HostDirs.ps1` (Windows).
 - **CUDA unavailable** — драйвер, toolkit, флаги `--gpus` / CDI, `nvidia-smi` в тестовом контейнере.
 - **Нет видео / NVDEC** — в compose уже есть `NVIDIA_DRIVER_CAPABILITIES=compute,utility,video`; при необходимости software decode: `EVILEYE_GST_FORCE_SW_DECODER=1`.
 - **pip и docker-cli конфликтуют** — `which -a evileye`; удалите один из способов (`uninstall-docker-cli` или `pip uninstall evileye`).
@@ -233,5 +244,7 @@ docker run --rm --gpus all --ipc=host \
 - [`docker/docker-compose.yml`](../docker/docker-compose.yml)
 - [`docker/install-host-cli.sh`](../docker/install-host-cli.sh)
 - [`docker/prepare-host-dirs.sh`](../docker/prepare-host-dirs.sh)
+- [`docker/windows/`](../docker/windows/)
+- [Windows Docker](WINDOWS_DOCKER_DEPLOYMENT.md)
 - [Команда deploy](CLI_DEPLOY_COMMAND.md)
 - [Настройка БД](DATABASE_SETUP_GUIDE.md)

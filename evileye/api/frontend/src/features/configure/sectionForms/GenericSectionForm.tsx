@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Button } from '../../../components/ui';
 import { useI18n } from '../../../i18n';
+import { DECIMAL_STEP, formatSmartNumber, INT_STEP, parseSmartNumberInput } from '../numberFormat';
 
 /** Field editor for dict/list sections with common scalar keys. */
 export function GenericSectionForm({
@@ -82,11 +83,12 @@ export function GenericSectionForm({
             <input
               disabled={readOnly}
               type={typeof value === 'number' ? 'number' : 'text'}
-              value={value == null ? '' : String(value)}
+              step={typeof value === 'number' ? (Math.abs(Number(value) - Math.round(Number(value))) < 1e-9 ? INT_STEP : DECIMAL_STEP) : undefined}
+              value={value == null ? '' : typeof value === 'number' ? formatSmartNumber(Number(value)) : String(value)}
               onChange={(e) => {
                 const raw = e.target.value;
                 if (typeof value === 'number') {
-                  const next = { ...obj, [key]: raw === '' ? 0 : Number(raw) };
+                  const next = { ...obj, [key]: parseSmartNumberInput(raw) ?? 0 };
                   setObj(next); onChange?.(next);
                 } else {
                   const next = { ...obj, [key]: raw };

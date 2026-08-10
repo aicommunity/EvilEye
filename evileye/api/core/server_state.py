@@ -263,10 +263,15 @@ def _read_log_tail(path: Path, *, lines: int = 120) -> list[str]:
 
 
 def _run_summary(record: Dict[str, Any]) -> Dict[str, Any]:
+    from evileye.api.core.log_service import resolve_run_log_files
+
     config_summary = load_config_summary(record.get("config_path"))
     runtime_snapshot = load_runtime_snapshot(int(record.get("id") or 0)) if record.get("id") is not None else None
     rid = record.get("id")
     latest_frame_exists = _preview_frame_available(rid)
+    config_path = record.get("config_path")
+    config_name = Path(config_path).name if config_path else None
+    log_info = resolve_run_log_files(record)
     return {
         "id": record.get("id"),
         "name": record.get("name"),
@@ -275,7 +280,8 @@ def _run_summary(record: Dict[str, Any]) -> Dict[str, Any]:
         "alive": bool(record.get("alive")),
         "managed": bool(record.get("managed")),
         "source": record.get("source"),
-        "config_path": record.get("config_path"),
+        "config_path": config_path,
+        "config_name": config_name,
         "frame_dir": record.get("frame_dir"),
         "latest_frame_available": latest_frame_exists,
         "error": record.get("error"),
@@ -292,6 +298,9 @@ def _run_summary(record: Dict[str, Any]) -> Dict[str, Any]:
         "database_enabled": config_summary.database_enabled,
         "sources": config_summary.source_items,
         "runtime_snapshot": runtime_snapshot,
+        "log_session_id": log_info.get("log_session_id"),
+        "log_files": log_info.get("log_files"),
+        "log_match": log_info.get("log_match"),
     }
 
 

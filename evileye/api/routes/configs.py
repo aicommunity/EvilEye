@@ -41,7 +41,9 @@ class ConfigRunCreate(BaseModel):
 
 
 def _configs_dir() -> Path:
-    cfg_dir = Path("configs")
+    from evileye.core.paths import configs_dir
+
+    cfg_dir = configs_dir()
     cfg_dir.mkdir(parents=True, exist_ok=True)
     return cfg_dir
 
@@ -53,7 +55,7 @@ def _config_path(name: str) -> Path:
 
 @router.get("")
 async def list_configs() -> List[str]:
-    configs_dir = Path("configs")
+    configs_dir = _configs_dir()
     if not configs_dir.exists():
         return []
     return sorted([p.name for p in configs_dir.glob("*.json")])
@@ -112,6 +114,8 @@ async def stop_config_run(rid: int) -> Dict:
         return get_config_run_manager().stop(rid)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Config run not found") from exc
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 

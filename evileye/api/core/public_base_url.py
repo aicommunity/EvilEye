@@ -5,10 +5,11 @@ import json
 import os
 from pathlib import Path
 from typing import Any, Optional
+from evileye.core.paths import creds_path
 
 
 def _load_credentials() -> dict[str, Any]:
-    path = Path("credentials.json")
+    path = creds_path()
     if not path.exists():
         return {}
     try:

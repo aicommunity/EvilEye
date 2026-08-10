@@ -3,6 +3,7 @@ import { journalsApi, type JournalGroupedRow, cacheGet, cacheSet, isAbortError }
 import { Button } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
 import { useI18n } from '../../i18n';
+import { useRunConfigFlags } from '../../hooks/useRunConfigFlags';
 import { JournalDetailDrawer } from './JournalDetailDrawer';
 import { JournalTable } from './JournalTable';
 import { useJournalFeed } from './useJournalFeed';
@@ -29,6 +30,7 @@ const META_TTL_MS = 60_000;
 export function EventsPage() {
   const { t, formatDateTime } = useI18n();
   const { showError } = useToast();
+  const flags = useRunConfigFlags();
   const [tab, setTab] = useState<JournalType | 'history'>('events');
   const [dateFrom, setDateFrom] = useState(yesterday());
   const [dateTo, setDateTo] = useState(today());
@@ -107,7 +109,7 @@ export function EventsPage() {
         if (!ac.signal.aborted) setHistoryLoading(false);
       });
     return () => ac.abort();
-  }, [tab, t]);
+  }, [tab]);
 
   useVisibilityPolling(() => {
     if (tab === 'history' || selected) return;
@@ -153,6 +155,9 @@ export function EventsPage() {
             {t('journals.tabHistory')}
           </button>
         </div>
+        {!flags.loading && flags.analyticsEnabled === false && tab !== 'history' ? (
+          <p className="setup-banner">{t('journals.detectionDisabled')}</p>
+        ) : null}
         <div className="journal-toolbar toolbar">
           <label className="hint" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
             {t('journals.dateFrom')}
@@ -266,9 +271,11 @@ export function EventsPage() {
               emptyText={
                 feed.loading && !feed.rows.length
                   ? t('common.searching')
-                  : tab === 'events'
-                    ? t('journals.emptyEvents')
-                    : t('journals.emptyObjects')
+                  : flags.analyticsEnabled === false
+                    ? t('journals.detectionDisabled')
+                    : tab === 'events'
+                      ? t('journals.emptyEvents')
+                      : t('journals.emptyObjects')
               }
             />
             {feed.hasMore ? (

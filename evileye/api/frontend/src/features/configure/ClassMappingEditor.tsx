@@ -4,7 +4,15 @@ import { Button } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
 import { useI18n } from '../../i18n';
 
-export function ClassMappingEditor({ configName, readOnly }: { configName: string; readOnly: boolean }) {
+export function ClassMappingEditor({
+  configName,
+  readOnly,
+  onSaved,
+}: {
+  configName: string;
+  readOnly: boolean;
+  onSaved?: (restartRequired: boolean) => void;
+}) {
   const { showError, showSuccess } = useToast();
   const { t } = useI18n();
   const [text, setText] = useState('{}');
@@ -26,7 +34,10 @@ export function ClassMappingEditor({ configName, readOnly }: { configName: strin
           onClick={() =>
             void editorsApi
               .putClassMapping(configName, JSON.parse(text || '{}'))
-              .then((r) => showSuccess(r.restart_required ? t('common.savedRestart') : t('common.saved')))
+              .then((r) => {
+                showSuccess(r.restart_required ? t('common.savedRestart') : t('common.saved'));
+                onSaved?.(Boolean(r.restart_required));
+              })
               .catch((e) => showError(e.message))
           }
         >

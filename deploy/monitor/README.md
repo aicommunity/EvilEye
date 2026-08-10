@@ -20,6 +20,14 @@ deploy/monitor/                 # in the EvilEye git repo (source of truth)
     └── watchdog.log            # runtime
 ```
 
+## Platform matrix
+
+| Path | How to enable |
+|------|----------------|
+| Linux | `install_timer.sh` (systemd user timers) |
+| Windows native pip | `evileye watchdog-install` — see [WINDOWS_NATIVE.md](../../docs/WINDOWS_NATIVE.md) |
+| Windows Docker | `docker/windows/Install-Watchdog.ps1` — see [WINDOWS_DOCKER_DEPLOYMENT.md](../../docs/WINDOWS_DOCKER_DEPLOYMENT.md) |
+
 ## Install on a new machine
 
 ```bash

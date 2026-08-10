@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from evileye.core.paths import configs_dir
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -22,7 +23,7 @@ router = APIRouter(prefix="/api/v1/configs", tags=["config-editors"])
 
 def _config_path(name: str) -> Path:
     safe = Path(name).name
-    path = Path("configs") / safe
+    path = configs_dir() / safe
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"Config '{safe}' not found")
     return path

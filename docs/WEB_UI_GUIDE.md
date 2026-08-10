@@ -28,10 +28,10 @@ See [`CLI_SETUP_WEB.md`](CLI_SETUP_WEB.md).
 | `/live` | `live:view` | Compact camera grid (WS preview / snapshot fallback); expand opens MJPEG + metadata overlays (pre-warm `stream` demand, loading/error/retry) |
 | `/events` | `journal:view` | Journals + export + detail drawer (letterbox overlays) |
 | `/playback` | `journal:view` | Live-like grid + bottom timeline; logical cameras from run config; split crop |
-| `/configure` | `config:view` | Config Studio for the **current run** config only |
-| `/admin/runs` | `runtime:view` | Read-only active/current runs (no start/stop/create) |
+| `/configure` | `config:view` | Settings: **Basic** mode by default (data dir, JSON/DB, sources, analytics, recording); Advanced = full Config Studio. Works without an active run (`system.json`) |
+| `/admin/runs` | `runtime:view` | Read-only active/current runs (create/start also via Basic «Save and run» with `runtime:control`) |
 | `/admin/configs` | `config:view` | Config file list; open Studio or Raw JSON |
-| `/admin/configs/:name` | `config:view` | Config Studio for a chosen file (forms, ROI/Zones, history) |
+| `/admin/configs/:name` | `config:view` | Config Studio / Basic for a chosen file (forms, ROI/Zones, history) |
 | `/admin/logs` | `logs:view` | Log files + Follow (SSE tail) |
 | `/admin/users` | `users:manage` | User management (credentials.json + web_users.json; role/password/disable/delete) |
 | `/admin/bans` | `bans:manage` | IP ban list (auto + manual add/remove) |
@@ -40,6 +40,16 @@ See [`CLI_SETUP_WEB.md`](CLI_SETUP_WEB.md).
 | `/m/live`, `/m/events` | — | Compact mobile views |
 
 Language switcher (RU/EN) is in the sidebar footer (`localStorage` key `evileye.ui.lang`).
+Config mode Basic/Advanced is stored in `localStorage` key `evileye.config.mode` (default **basic**).
+
+## First-run / Basic setup
+
+1. `evileye deploy` ensures OS service (`service-install`) and creates `configs/system.json`.
+2. Open Web UI → log in as `admin` → forced password change when `must_change_password` is set.
+3. **Настройка**: Basic form → data directory, JSON vs PostgreSQL, sources, analytics, recording → Save / Save and run.
+4. APIs: `GET /api/v1/setup/status`, `GET|PUT /api/v1/setup/basic`, `POST /api/v1/setup/check-data-dir`, `POST /api/v1/setup/test-database`.
+
+Advanced Config Studio remains available after setup (or when a data directory is already present).
 
 ## Build & test
 

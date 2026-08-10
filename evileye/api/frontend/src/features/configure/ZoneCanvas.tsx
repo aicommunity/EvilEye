@@ -3,17 +3,20 @@ import { editorsApi, stateApi, streamSnapshotUrl, type ZoneItem } from '../../ap
 import { Button } from '../../components/ui';
 import { useToast } from '../../components/ui/Toast';
 import { useI18n } from '../../i18n';
+import { formatInt, INT_STEP, parseIntInput } from './numberFormat';
 
 export function ZoneCanvas({
   configName,
   sourceId,
   onSourceIdChange,
   readOnly,
+  onSaved,
 }: {
   configName: string;
   sourceId: number;
   onSourceIdChange: (id: number) => void;
   readOnly: boolean;
+  onSaved?: (restartRequired: boolean) => void;
 }) {
   const { showError, showSuccess } = useToast();
   const { t } = useI18n();
@@ -61,7 +64,13 @@ export function ZoneCanvas({
       <div className="toolbar">
         <label>
           source_id{' '}
-          <input type="number" min={0} value={sourceId} onChange={(e) => onSourceIdChange(Number(e.target.value))} />
+          <input
+            type="number"
+            step={INT_STEP}
+            min={0}
+            value={formatInt(sourceId)}
+            onChange={(e) => onSourceIdChange(parseIntInput(e.target.value) ?? 0)}
+          />
         </label>
         <Button size="sm" variant={mode === 'rect' ? 'primary' : 'outline'} onClick={() => setMode('rect')}>
           Rect
@@ -75,7 +84,10 @@ export function ZoneCanvas({
             onClick={() =>
               void editorsApi
                 .putZones(configName, sourceId, zones)
-                .then((r) => showSuccess(r.restart_required ? t('common.savedRestart') : t('common.saved')))
+                .then((r) => {
+                  showSuccess(r.restart_required ? t('common.savedRestart') : t('common.saved'));
+                  onSaved?.(Boolean(r.restart_required));
+                })
                 .catch((e) => showError(e.message))
             }
           >
