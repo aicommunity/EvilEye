@@ -5,7 +5,11 @@ from pathlib import Path
 import pytest
 
 from evileye.api.core import playback_metadata_service as svc
-from evileye.visualization_modules.overlay_config import extract_zones_by_source, serialize_zones_for_overlay
+from evileye.visualization_modules.overlay_config import (
+    extract_zones_by_source,
+    serialize_zones_for_overlay,
+    video_size_for_source,
+)
 
 
 def test_parse_event_timestamp_formats():
@@ -108,10 +112,20 @@ def test_build_playback_metadata_from_json(tmp_path, monkeypatch):
     assert len(payload["objects"]) >= 1
     assert payload["objects"][0]["class_name"] == "person"
     assert payload["objects"][0]["bbox"][0] == pytest.approx(0.1, abs=0.01)
-    assert payload["zones"]
+    assert payload["zones"] == []
     assert payload["signalization"] is True
     assert payload["objects"][0]["event_active"] is True
-    assert payload["debug_rois"]
+    assert payload["debug_rois"] == []
+
+    static_payload = svc.build_playback_static_metadata(
+        camera="Cam1",
+        run_id=1,
+        source_id=0,
+        frame_w=1920,
+        frame_h=1080,
+    )
+    assert static_payload["zones"]
+    assert static_payload["debug_rois"] == []
 
 
 def test_build_playback_metadata_batch(tmp_path, monkeypatch):
@@ -192,7 +206,7 @@ def test_load_dynamic_records_db_mode_skips_json(tmp_path, monkeypatch):
     assert events == []
 
 
-def test_build_playback_static_metadata(tmp_path, monkeypatch):
+def test_build_playback_static_metadata_uses_live_serializer(tmp_path, monkeypatch):
     cfg = tmp_path / "config.json"
     cfg.write_text(
         json.dumps(
@@ -202,17 +216,30 @@ def test_build_playback_static_metadata(tmp_path, monkeypatch):
                         "sources": {"0": [[[0.1, 0.1], [0.2, 0.1], [0.2, 0.2]]]},
                     }
                 },
-                "visualization": {"text_config": {"base_resolution": [1920, 1080]}},
-                "pipeline": {"sources": [{"source_ids": [0], "source_names": ["Cam1"]}]},
+                "visualizer": {
+                    "show_debug_info": True,
+                    "show_zones": True,
+                    "text_config": {"base_resolution": [1920, 1080]},
+                },
+                "pipeline": {
+                    "sources": [{"source_ids": [0], "source_names": ["Cam1"]}],
+                    "detectors": [{"source_ids": [0], "roi": [[[100, 50, 200, 150]]]}],
+                },
             }
         ),
         encoding="utf-8",
     )
     monkeypatch.setattr(svc, "_load_params_for_run", lambda _run_id: json.loads(cfg.read_text(encoding="utf-8")))
-    payload = svc.build_playback_static_metadata(camera="Cam1", run_id=1, source_id=0)
-    assert payload["zones"]
-    assert payload["overlay"]["source_name"] == "Cam1"
-    assert payload["objects"] == []
+    payload = svc.build_playback_static_metadata(
+        camera="Cam1",
+        run_id=1,
+        source_id=0,
+        frame_w=1920,
+        frame_h=1080,
+    )
+    assert payload["zones"][0]["points"] == [[0.1, 0.1], [0.2, 0.1], [0.2, 0.2]]
+    assert payload["debug_rois"]
+    assert payload["debug_rois"][0][0] == pytest.approx(100 / 1920, rel=1e-3)
 
 
 def test_extract_zones_by_source():
@@ -225,5 +252,42 @@ def test_extract_zones_by_source():
     }
     zones = extract_zones_by_source(params)
     assert 2 in zones
-    serialized = serialize_zones_for_overlay(zones[2])
-    assert serialized[0]["points"]
+    serialized = serialize_zones_for_overlay(zones[2], normalize=False)
+    assert serialized[0]["points"] == [[0.5, 0.5], [0.6, 0.5], [0.6, 0.6]]
+
+
+def test_extract_zones_web_editor_format():
+    params = {
+        "web_zones": {
+            "0": [{"name": "ZoneA", "type": "polygon", "points": [[0.1, 0.1], [0.2, 0.1], [0.2, 0.2]]}],
+        }
+    }
+    zones = extract_zones_by_source(params)
+    assert 0 in zones
+    assert zones[0][0][1][0] == [0.1, 0.1]
+
+
+def test_normalize_zone_points_in_preview_render():
+    from evileye.visualization_modules.preview_render import _normalize_zone_points
+
+    norm = _normalize_zone_points([[960, 540], [1920, 1080]], 1920, 1080)
+    assert norm[0][0] == pytest.approx(0.5, rel=1e-3)
+    assert norm[1][1] == pytest.approx(1.0, rel=1e-3)
+    unchanged = _normalize_zone_points([[0.2, 0.3], [0.4, 0.5]], 1920, 1080)
+    assert unchanged == [[0.2, 0.3], [0.4, 0.5]]
+
+
+def test_video_size_for_source_prefers_source_dimensions():
+    params = {
+        "visualization": {"text_config": {"base_resolution": [1920, 1080]}},
+        "pipeline": {
+            "sources": [
+                {
+                    "source_ids": [0],
+                    "frame_width": 3840,
+                    "frame_height": 2160,
+                }
+            ]
+        },
+    }
+    assert video_size_for_source(params, 0) == (3840, 2160)

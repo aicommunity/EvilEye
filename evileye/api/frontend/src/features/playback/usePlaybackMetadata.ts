@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { isAbortError, playbackApi, type StreamMetadata } from '../../api';
+import { isAbortError, playbackApi, type FrameSize, type StreamMetadata } from '../../api';
 import { localDateString } from './timelineMath';
 
 const THROTTLE_MS = 80;
@@ -13,8 +13,18 @@ type CacheEntry = { ts: number; meta: StreamMetadata | null };
 
 const metadataCache = new Map<string, CacheEntry>();
 
-function cacheKey(camera: string, ts: number, date: string, runId: number | null): string {
-  return `${camera}:${roundTs(ts)}:${date}:${runId ?? 'none'}`;
+function hasFrameSize(frameSize: FrameSize | null | undefined): frameSize is FrameSize {
+  return Boolean(frameSize && frameSize.w > 0 && frameSize.h > 0);
+}
+
+function cacheKey(
+  camera: string,
+  ts: number,
+  date: string,
+  runId: number | null,
+  frameSize: FrameSize,
+): string {
+  return `${camera}:${roundTs(ts)}:${date}:${runId ?? 'none'}:${frameSize.w}x${frameSize.h}`;
 }
 
 export function usePlaybackMetadata({
@@ -23,12 +33,14 @@ export function usePlaybackMetadata({
   positionSec,
   runId,
   enabled,
+  frameSize,
 }: {
   camera: string;
   sourceId?: number | null;
   positionSec: number;
   runId: number | null;
   enabled: boolean;
+  frameSize?: FrameSize | null;
 }) {
   const [meta, setMeta] = useState<StreamMetadata | null>(null);
   const [loading, setLoading] = useState(false);
@@ -44,10 +56,13 @@ export function usePlaybackMetadata({
       setError(null);
       return;
     }
+    if (!hasFrameSize(frameSize)) {
+      return;
+    }
 
     const rounded = roundTs(positionSec);
     const eventDate = localDateString(positionSec);
-    const key = cacheKey(camera, rounded, eventDate, runId);
+    const key = cacheKey(camera, rounded, eventDate, runId, frameSize);
     const cached = metadataCache.get(key);
     if (cached) {
       setMeta(cached.meta);
@@ -64,6 +79,7 @@ export function usePlaybackMetadata({
         .metadata(camera, rounded, eventDate, runId, {
           signal: ac.signal,
           sourceId: sourceId ?? undefined,
+          frameSize,
         })
         .then((res) => {
           if (ac.signal.aborted || lastFetchKey.current !== key) return;
@@ -91,7 +107,7 @@ export function usePlaybackMetadata({
       if (timerRef.current != null) window.clearTimeout(timerRef.current);
       abortRef.current?.abort();
     };
-  }, [camera, sourceId, positionSec, runId, enabled]);
+  }, [camera, sourceId, positionSec, runId, enabled, frameSize?.w, frameSize?.h]);
 
   return { meta, loading, error };
 }

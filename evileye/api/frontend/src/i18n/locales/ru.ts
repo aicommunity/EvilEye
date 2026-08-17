@@ -241,6 +241,7 @@ const ru: Dict = {
     noSegment: 'Нет сегмента',
     showMetadata: 'Показать метаданные',
     currentTime: 'Текущий момент воспроизведения',
+    expandCameraHint: '{{id}} · запуск #{{run}} · source #{{sid}}',
   },
   configure: {
     title: 'Студия конфигурации',

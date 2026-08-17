@@ -75,6 +75,8 @@ async def playback_metadata(
     window: float = Query(1.0, ge=0.1, le=10.0),
     source_id: Optional[int] = Query(None),
     static_only: bool = Query(False, description="Return config-only layers (zones, ROI)"),
+    frame_w: Optional[int] = Query(None, ge=1, description="Actual video frame width from client"),
+    frame_h: Optional[int] = Query(None, ge=1, description="Actual video frame height from client"),
 ) -> dict:
     effective_ts = float(ts if ts is not None else 0.0)
     if not static_only and ts is None:
@@ -89,6 +91,8 @@ async def playback_metadata(
             run_id=run_id,
             window_sec=window,
             static_only=static_only,
+            frame_w=frame_w,
+            frame_h=frame_h,
         )
         return {"by_camera": by_camera}
     if not camera:
@@ -99,6 +103,8 @@ async def playback_metadata(
             camera=camera,
             run_id=run_id,
             source_id=source_id,
+            frame_w=frame_w,
+            frame_h=frame_h,
         )
     else:
         payload = await asyncio.to_thread(
@@ -109,6 +115,8 @@ async def playback_metadata(
             run_id=run_id,
             window_sec=window,
             source_id=source_id,
+            frame_w=frame_w,
+            frame_h=frame_h,
         )
     return {"metadata": payload}
 

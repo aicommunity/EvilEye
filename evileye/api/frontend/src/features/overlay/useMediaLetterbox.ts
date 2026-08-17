@@ -21,8 +21,21 @@ export function useMediaLetterbox(
       setBox(letterboxRect(wrap.clientWidth, wrap.clientHeight, size.w, size.h));
     };
     update();
+    const wrap = containerRef.current;
+    const media = mediaRef.current;
+    const ro = typeof ResizeObserver !== 'undefined' && wrap ? new ResizeObserver(update) : null;
+    if (wrap) ro?.observe(wrap);
+    media?.addEventListener('loadedmetadata', update);
+    media?.addEventListener('loadeddata', update);
+    media?.addEventListener('seeked', update);
     window.addEventListener('resize', update);
-    return () => window.removeEventListener('resize', update);
+    return () => {
+      ro?.disconnect();
+      media?.removeEventListener('loadedmetadata', update);
+      media?.removeEventListener('loadeddata', update);
+      media?.removeEventListener('seeked', update);
+      window.removeEventListener('resize', update);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- getNaturalSize is caller-provided
   }, deps);
 

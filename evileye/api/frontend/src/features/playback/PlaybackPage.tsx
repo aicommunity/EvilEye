@@ -284,6 +284,38 @@ export function PlaybackPage() {
   };
 
   const cameraDefs = useMemo(() => Object.fromEntries(cameras.map((c) => [c.id, c])), [cameras]);
+  const expandedCamera = useMemo(() => {
+    if (!expandedCameraId) return null;
+    if (!selectedIds.includes(expandedCameraId)) return null;
+    const cam = cameraDefs[expandedCameraId];
+    if (!cam) return null;
+    return cam;
+  }, [expandedCameraId, selectedIds, cameraDefs]);
+
+  useEffect(() => {
+    if (!expandedCameraId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setExpandedCameraId(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [expandedCameraId]);
+
+  useEffect(() => {
+    if (!expandedCameraId) return;
+    if (!selectedIds.includes(expandedCameraId)) {
+      setExpandedCameraId(null);
+      return;
+    }
+    if (segmentsLoaded && !(segmentsByCam[expandedCameraId]?.length)) {
+      setExpandedCameraId(null);
+    }
+  }, [expandedCameraId, selectedIds, segmentsLoaded, segmentsByCam]);
+
+  useEffect(() => {
+    setExpandedCameraId(null);
+  }, [date]);
+
   const allSegments = useMemo(() => Object.values(segmentsByCam).flat(), [segmentsByCam]);
   const effectiveCols = mode === 'fit' ? fitColsForCount(selectedIds.length) : cols;
   const positionLabel = formatPlaybackDateTime(ctrl.positionSec);
@@ -361,12 +393,12 @@ export function PlaybackPage() {
             );
           })}
         </div>
-        <div className="playback-main">
-          {expandedCameraId ? (
+        <div className="playback-main expanded-camera-view-host">
+          {expandedCamera ? (
             <ExpandedPlaybackView
-              cameraId={expandedCameraId}
-              camera={cameraDefs[expandedCameraId]}
-              segments={segmentsByCam[expandedCameraId] ?? []}
+              cameraId={expandedCamera.id}
+              camera={expandedCamera}
+              segments={segmentsByCam[expandedCamera.id] ?? []}
               getPosition={ctrl.getPosition}
               positionSec={ctrl.positionSec}
               playing={ctrl.playing}

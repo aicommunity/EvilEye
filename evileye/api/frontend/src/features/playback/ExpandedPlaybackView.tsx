@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { PlaybackCamera, PlaybackSegment } from '../../api';
+import type { FrameSize, PlaybackCamera, PlaybackSegment } from '../../api';
 import { Button } from '../../components/ui';
 import { useI18n } from '../../i18n';
 import {
@@ -35,7 +35,8 @@ export function ExpandedPlaybackView({
   const { t } = useI18n();
   const mediaRef = useRef<HTMLDivElement>(null);
   const [videoReady, setVideoReady] = useState(0);
-  const { ref, preloadRef, slot } = usePlaybackCameraSlot(segments, getPosition, positionSec, playing);
+  const [frameSize, setFrameSize] = useState<FrameSize | null>(null);
+  const { ref, preloadRef, slot, applySync } = usePlaybackCameraSlot(segments, getPosition, positionSec, playing);
   const meta = usePlaybackCameraMetadata({
     cameraId,
     camera,
@@ -43,6 +44,7 @@ export function ExpandedPlaybackView({
     runId,
     showMetadata,
     hasVideo: Boolean(slot?.url),
+    frameSize,
   });
 
   useEffect(() => {
@@ -58,7 +60,14 @@ export function ExpandedPlaybackView({
   return (
     <div className="expanded-camera-view">
       <div className="expanded-camera-toolbar">
-        <strong>{cameraId}</strong>
+        <strong>{camera?.name ?? cameraId}</strong>
+        <span className="hint">
+          {t('playback.expandCameraHint', {
+            id: cameraId,
+            sid: camera?.source_id ?? '—',
+            run: runId ?? '—',
+          })}
+        </span>
         <Button size="sm" variant="outline" onClick={onClose}>
           {t('live.expandClose')}
         </Button>
@@ -79,6 +88,8 @@ export function ExpandedPlaybackView({
             runId={runId}
             showMetadata={showMetadata}
             expanded
+            frameSize={frameSize}
+            onFrameSize={setFrameSize}
           />
         ) : (
           <PlaybackVideoSurface
@@ -92,6 +103,8 @@ export function ExpandedPlaybackView({
             setVideoReady={setVideoReady}
             cameraLabel={cameraId}
             expanded
+            onVideoReady={applySync}
+            onVideoDimensions={setFrameSize}
             playing={playing}
             speed={speed}
           />

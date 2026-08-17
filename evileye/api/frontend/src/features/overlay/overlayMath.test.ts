@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { formatObjectLabel, polygonCentroid, rgbArrayToCss, transformMetadataForCrop } from './overlayMath';
+import {
+  formatObjectLabel,
+  polygonCentroid,
+  rescaleMetadataForVideoSize,
+  rgbArrayToCss,
+  transformMetadataForCrop,
+} from './overlayMath';
 
 describe('overlayMath', () => {
   it('formats object label with global id', () => {
@@ -19,6 +25,17 @@ describe('overlayMath', () => {
 
   it('builds css color from rgb array', () => {
     expect(rgbArrayToCss([255, 0, 0])).toBe('rgb(255, 0, 0)');
+  });
+
+  it('rescales metadata when video size differs from coord_ref', () => {
+    const meta = {
+      coord_ref: { w: 1920, h: 1080 },
+      debug_rois: [[0.1, 0.1, 0.2, 0.2] as [number, number, number, number]],
+      objects: [{ bbox: [0.5, 0.5, 0.6, 0.6] as [number, number, number, number] }],
+    };
+    const rescaled = rescaleMetadataForVideoSize(meta, 3840, 2160);
+    expect(rescaled?.debug_rois?.[0]?.[0]).toBeCloseTo(0.05, 4);
+    expect(rescaled?.objects?.[0]?.bbox?.[0]).toBeCloseTo(0.25, 4);
   });
 
   it('transforms metadata into crop space', () => {

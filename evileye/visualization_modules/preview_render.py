@@ -39,13 +39,16 @@ def serialize_preview_metadata(
     *,
     frame_id: int | None = None,
     frame: CaptureImage | None = None,
+    source_id: int | None = None,
 ) -> dict[str, Any]:
     """Build WS overlay payload (normalized 0..1 coords) from preview context."""
     h = w = None
     if image_shape is not None and len(image_shape) >= 2:
         h, w = int(image_shape[0]), int(image_shape[1])
 
-    source_id = getattr(frame, "source_id", None) if frame is not None else None
+    resolved_source_id = source_id
+    if resolved_source_id is None and frame is not None:
+        resolved_source_id = getattr(frame, "source_id", None)
     objects: list[dict[str, Any]] = []
     if context.show_boxes:
         for obj in context.track_info or []:
@@ -99,9 +102,7 @@ def serialize_preview_metadata(
         for zone in context.zones or []:
             try:
                 zone_type, zone_coords, _extra = zone
-                points = []
-                for px, py in zone_coords or []:
-                    points.append([float(px), float(py)])
+                points = _normalize_zone_points(zone_coords, w, h)
                 if points:
                     zones.append({"name": str(zone_type), "points": points})
             except Exception:
@@ -113,11 +114,32 @@ def serialize_preview_metadata(
         "signalization": bool(context.event_signal_enabled and context.active_event_labels),
         "event_labels": list(context.active_event_labels or []),
         "event_color": [int(v) for v in context.event_color_rgb],
-        "debug_rois": _serialize_debug_rois(context.debug_info, source_id=source_id, w=w, h=h)
+        "debug_rois": _serialize_debug_rois(context.debug_info, source_id=resolved_source_id, w=w, h=h)
         if context.show_debug_info else [],
         "overlay": _serialize_overlay_info(context, frame),
     }
     return payload
+
+
+def _normalize_zone_points(
+    zone_coords: Any,
+    w: int | None,
+    h: int | None,
+) -> list[list[float]]:
+    """Normalize zone polygon points to 0..1 (pixel coords use frame w/h like ROI)."""
+    if not zone_coords:
+        return []
+    points_raw: list[tuple[float, float]] = []
+    for coord in zone_coords or []:
+        if not isinstance(coord, (list, tuple)) or len(coord) < 2:
+            continue
+        points_raw.append((float(coord[0]), float(coord[1])))
+    if not points_raw:
+        return []
+    max_val = max(max(abs(px), abs(py)) for px, py in points_raw)
+    if w and h and max_val > 1.5:
+        return [[px / float(w), py / float(h)] for px, py in points_raw]
+    return [[px, py] for px, py in points_raw]
 
 
 def _serialize_object_attributes(attrs: Any, max_items: int = 4) -> list[dict[str, Any]]:

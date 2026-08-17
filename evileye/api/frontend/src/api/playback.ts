@@ -1,6 +1,15 @@
 import { API_BASE, request, type RequestOptions } from './client';
 import type { PlaybackCamera, PlaybackEventMarker, PlaybackSegment } from './types';
 
+export type FrameSize = { w: number; h: number };
+
+function appendFrameSize(p: URLSearchParams, frameSize?: FrameSize | null) {
+  if (frameSize && frameSize.w > 0 && frameSize.h > 0) {
+    p.set('frame_w', String(Math.round(frameSize.w)));
+    p.set('frame_h', String(Math.round(frameSize.h)));
+  }
+}
+
 export const playbackApi = {
   cameras(date?: string, runId?: number | null, opts?: RequestOptions): Promise<{ items: PlaybackCamera[] }> {
     const p = new URLSearchParams();
@@ -59,23 +68,25 @@ export const playbackApi = {
     ts: number,
     date?: string,
     runId?: number | null,
-    opts?: RequestOptions & { window?: number; sourceId?: number | null },
+    opts?: RequestOptions & { window?: number; sourceId?: number | null; frameSize?: FrameSize | null },
   ): Promise<{ metadata: import('./types').StreamMetadata }> {
     const p = new URLSearchParams({ camera, ts: String(ts) });
     if (date) p.set('date', date);
     if (runId != null) p.set('run_id', String(runId));
     if (opts?.window != null) p.set('window', String(opts.window));
     if (opts?.sourceId != null) p.set('source_id', String(opts.sourceId));
+    appendFrameSize(p, opts?.frameSize);
     return request(`/playback/metadata?${p}`, opts);
   },
   metadataStatic(
     camera: string,
     runId?: number | null,
-    opts?: RequestOptions & { sourceId?: number | null },
+    opts?: RequestOptions & { sourceId?: number | null; frameSize?: FrameSize | null },
   ): Promise<{ metadata: import('./types').StreamMetadata }> {
     const p = new URLSearchParams({ camera, static_only: 'true' });
     if (runId != null) p.set('run_id', String(runId));
     if (opts?.sourceId != null) p.set('source_id', String(opts.sourceId));
+    appendFrameSize(p, opts?.frameSize);
     return request(`/playback/metadata?${p}`, opts);
   },
   metadataBatch(

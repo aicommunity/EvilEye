@@ -64,6 +64,47 @@ function transformBbox(
   ];
 }
 
+/** Re-map normalized coords when backend reference size differs from actual video. */
+export function rescaleMetadataForVideoSize(
+  meta: StreamMetadata | null,
+  videoW: number,
+  videoH: number,
+): StreamMetadata | null {
+  if (!meta || videoW <= 0 || videoH <= 0) return meta;
+  const ref = meta.coord_ref;
+  if (!ref || ref.w <= 0 || ref.h <= 0) return meta;
+  if (ref.w === videoW && ref.h === videoH) return meta;
+
+  const sx = ref.w / videoW;
+  const sy = ref.h / videoH;
+  const scaleX = (v: number) => v * sx;
+  const scaleY = (v: number) => v * sy;
+
+  const objects = (meta.objects ?? []).map((obj) => {
+    const next = { ...obj };
+    if (obj.bbox?.length === 4) {
+      const [x1, y1, x2, y2] = obj.bbox;
+      next.bbox = [scaleX(x1), scaleY(y1), scaleX(x2), scaleY(y2)];
+    }
+    if (obj.trail?.length) {
+      next.trail = obj.trail.map(([x, y]) => [scaleX(x), scaleY(y)] as [number, number]);
+    }
+    return next;
+  });
+
+  const debug_rois = (meta.debug_rois ?? []).map((roi) => {
+    const [x1, y1, x2, y2] = roi;
+    return [scaleX(x1), scaleY(y1), scaleX(x2), scaleY(y2)] as [number, number, number, number];
+  });
+
+  return {
+    ...meta,
+    coord_ref: { w: videoW, h: videoH },
+    objects,
+    debug_rois,
+  };
+}
+
 /** Map normalized overlay coords from parent frame into split-crop space. */
 export function transformMetadataForCrop(
   meta: StreamMetadata | null,

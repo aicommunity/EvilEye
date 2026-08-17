@@ -10,11 +10,10 @@ from typing import Any
 from evileye.api.core.playback_service import _config_path_for_run, data_dir
 from evileye.visualization_modules.journal_metadata_extractor import EventMetadataExtractor
 from evileye.visualization_modules.overlay_config import (
-    extract_debug_rois_from_params,
     extract_zones_by_source,
-    serialize_zones_for_overlay,
     video_size_for_source,
 )
+from evileye.visualization_modules.preview_render import PreviewRenderContext, serialize_preview_metadata
 
 _OBJECT_FILES = ("objects_found.json", "objects_lost.json")
 _EVENT_FILES = {
@@ -91,16 +90,6 @@ def _resolve_source_id(
 ) -> int | None:
     if source_id is not None:
         return source_id
-    try:
-        from evileye.api.core.server_state import load_config_summary
-
-        summary = load_config_summary(_config_path_for_run(None))
-        for item in summary.source_items:
-            if str(item.get("source_name")) == camera:
-                sid = item.get("source_id")
-                return int(sid) if sid is not None else None
-    except Exception:
-        pass
     pipeline = params.get("pipeline") if isinstance(params.get("pipeline"), dict) else params
     sources = pipeline.get("sources") if isinstance(pipeline, dict) else None
     for source in sources or []:
@@ -114,6 +103,30 @@ def _resolve_source_id(
                     return int(ids[idx])
                 except Exception:
                     return None
+        # Split / composite storage: match parent folder built from source_names prefix.
+        split = bool(source.get("split"))
+        num_split = int(source.get("num_split") or len(names) or 0)
+        if split and num_split and names:
+            parent_folder = "-".join(str(n) for n in names[:num_split])
+            if camera == parent_folder or camera in {str(n) for n in names}:
+                try:
+                    return int(ids[0]) if ids else None
+                except Exception:
+                    return None
+    try:
+        from evileye.api.core.server_state import load_config_summary
+
+        summary = load_config_summary(_config_path_for_run(None))
+        for item in summary.source_items:
+            if str(item.get("source_name")) == camera:
+                sid = item.get("source_id")
+                return int(sid) if sid is not None else None
+            parent = item.get("parent_source_name")
+            if parent and str(parent) == camera:
+                sid = item.get("source_id")
+                return int(sid) if sid is not None else None
+    except Exception:
+        pass
     return None
 
 
@@ -346,33 +359,85 @@ def _load_dynamic_records(
     return raw_objects, raw_events
 
 
+def _visualizer_cfg(params: dict[str, Any]) -> dict[str, Any]:
+    vis = params.get("visualization") or params.get("visualizer") or {}
+    return vis if isinstance(vis, dict) else {}
+
+
+def _debug_info_from_params(params: dict[str, Any]) -> dict[str, Any]:
+    """Runtime-like debug_info.detectors tree from static pipeline config."""
+    pipeline = params.get("pipeline") if isinstance(params.get("pipeline"), dict) else params
+    detectors = pipeline.get("detectors") if isinstance(pipeline, dict) else None
+    if not isinstance(detectors, list):
+        return {}
+    mapped: dict[str, Any] = {}
+    for idx, detector in enumerate(detectors):
+        if isinstance(detector, dict):
+            mapped[f"detector_{idx}"] = detector
+    return {"detectors": mapped} if mapped else {}
+
+
+def _resolve_frame_size(
+    params: dict[str, Any],
+    source_id: int | None,
+    frame_w: int | None,
+    frame_h: int | None,
+) -> tuple[int, int]:
+    """Frame size for coord normalization — prefer client video dimensions (same as live image_shape)."""
+    try:
+        w = int(frame_w) if frame_w is not None else 0
+        h = int(frame_h) if frame_h is not None else 0
+        if w > 0 and h > 0:
+            return w, h
+    except Exception:
+        pass
+    return video_size_for_source(params, source_id)
+
+
 def build_playback_static_metadata(
     *,
     camera: str,
     run_id: int | None = None,
     source_id: int | None = None,
+    frame_w: int | None = None,
+    frame_h: int | None = None,
 ) -> dict[str, Any]:
-    """Config-derived overlay layers (zones, detector ROI) independent of playback time."""
+    """Config-derived overlay layers (zones, detector ROI) — same serializer as live preview."""
     params = _load_params_for_run(run_id)
     resolved_source_id = _resolve_source_id(params, camera, source_id)
-    img_w, img_h = video_size_for_source(params, resolved_source_id)
+    img_w, img_h = _resolve_frame_size(params, resolved_source_id, frame_w, frame_h)
 
-    zones_raw = []
+    vis_cfg = _visualizer_cfg(params)
+    show_zones = vis_cfg.get("show_zones")
+    if show_zones is None:
+        show_zones = vis_cfg.get("display_zones", True)
+    show_debug = bool(vis_cfg.get("show_debug_info", False))
+
+    zones_raw: list[Any] = []
     if resolved_source_id is not None:
         zones_raw = extract_zones_by_source(params).get(resolved_source_id, [])
 
-    return {
-        "source_id": resolved_source_id,
-        "objects": [],
-        "zones": serialize_zones_for_overlay(zones_raw, img_w, img_h),
-        "signalization": False,
-        "event_labels": [],
-        "event_color": [255, 0, 0],
-        "debug_rois": extract_debug_rois_from_params(params, source_id=resolved_source_id, img_w=img_w, img_h=img_h),
-        "overlay": {
-            "source_name": camera,
-        },
-    }
+    context = PreviewRenderContext(
+        source_name=camera,
+        zones=zones_raw,
+        debug_info=_debug_info_from_params(params),
+        show_zones=bool(show_zones),
+        show_debug_info=show_debug,
+        show_boxes=False,
+        burn_in_overlay=False,
+    )
+    payload = serialize_preview_metadata(
+        context,
+        (img_h, img_w),
+        source_id=resolved_source_id,
+    )
+    payload["source_id"] = resolved_source_id
+    overlay = payload.get("overlay")
+    if not isinstance(overlay, dict):
+        overlay = {}
+        payload["overlay"] = overlay
+    overlay["source_name"] = camera
+    return payload
 
 
 def build_playback_metadata(
@@ -383,10 +448,12 @@ def build_playback_metadata(
     run_id: int | None = None,
     window_sec: float = 1.0,
     source_id: int | None = None,
+    frame_w: int | None = None,
+    frame_h: int | None = None,
 ) -> dict[str, Any]:
     params = _load_params_for_run(run_id)
     resolved_source_id = _resolve_source_id(params, camera, source_id)
-    img_w, img_h = video_size_for_source(params, resolved_source_id)
+    img_w, img_h = _resolve_frame_size(params, resolved_source_id, frame_w, frame_h)
 
     target = datetime.fromtimestamp(float(ts))
     # Always derive storage folder from playback instant (not calendar picker).
@@ -442,11 +509,6 @@ def build_playback_metadata(
         if serialized:
             objects.append(serialized)
 
-    zones_raw = []
-    if resolved_source_id is not None:
-        zones_raw = extract_zones_by_source(params).get(resolved_source_id, [])
-    zones = serialize_zones_for_overlay(zones_raw, img_w, img_h)
-
     signal_events = [ev for ev in raw_events if _is_signal_event(ev)]
     event_labels = [_event_label(ev) for ev in signal_events[:8]]
 
@@ -455,11 +517,11 @@ def build_playback_metadata(
         "source_id": resolved_source_id,
         "ts": float(ts),
         "objects": objects,
-        "zones": zones,
+        "zones": [],
         "signalization": bool(event_labels),
         "event_labels": event_labels,
         "event_color": [255, 0, 0],
-        "debug_rois": extract_debug_rois_from_params(params, source_id=resolved_source_id, img_w=img_w, img_h=img_h),
+        "debug_rois": [],
         "overlay": {
             "source_name": camera,
             "time_label": time_label,
@@ -475,6 +537,8 @@ def build_playback_metadata_batch(
     run_id: int | None = None,
     window_sec: float = 1.0,
     static_only: bool = False,
+    frame_w: int | None = None,
+    frame_h: int | None = None,
 ) -> dict[str, dict[str, Any]]:
     by_camera: dict[str, dict[str, Any]] = {}
     for camera in cameras:
@@ -482,7 +546,12 @@ def build_playback_metadata_batch(
         if not cam:
             continue
         if static_only:
-            by_camera[cam] = build_playback_static_metadata(camera=cam, run_id=run_id)
+            by_camera[cam] = build_playback_static_metadata(
+                camera=cam,
+                run_id=run_id,
+                frame_w=frame_w,
+                frame_h=frame_h,
+            )
         else:
             by_camera[cam] = build_playback_metadata(
                 camera=cam,
@@ -490,5 +559,7 @@ def build_playback_metadata_batch(
                 date=date,
                 run_id=run_id,
                 window_sec=window_sec,
+                frame_w=frame_w,
+                frame_h=frame_h,
             )
     return by_camera

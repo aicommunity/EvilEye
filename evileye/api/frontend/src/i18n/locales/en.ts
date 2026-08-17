@@ -239,6 +239,7 @@ const en: Dict = {
     noSegment: 'No segment',
     showMetadata: 'Show metadata',
     currentTime: 'Current playback time',
+    expandCameraHint: '{{id}} · run #{{run}} · source #{{sid}}',
   },
   configure: {
     title: 'Config Studio',

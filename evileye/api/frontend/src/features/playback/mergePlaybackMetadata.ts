@@ -9,12 +9,11 @@ export function mergePlaybackMetadata(
   const base = staticMeta ?? {};
   const live = dynamicMeta ?? {};
   return {
-    ...base,
-    ...live,
     source_id: live.source_id ?? base.source_id,
     ts: live.ts ?? base.ts,
-    zones: (base.zones?.length ? base.zones : live.zones) ?? [],
-    debug_rois: (base.debug_rois?.length ? base.debug_rois : live.debug_rois) ?? [],
+    // Static config layers always win — dynamic payload must not clobber them on scrub.
+    zones: base.zones?.length ? base.zones : live.zones ?? [],
+    debug_rois: base.debug_rois?.length ? base.debug_rois : live.debug_rois ?? [],
     objects: live.objects ?? [],
     signalization: live.signalization ?? false,
     event_labels: live.event_labels ?? [],

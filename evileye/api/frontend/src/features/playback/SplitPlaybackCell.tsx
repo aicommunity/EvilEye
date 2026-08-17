@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { FrameSize } from '../../api';
 import { MetadataOverlayLayer } from '../overlay/MetadataOverlayLayer';
 import { transformMetadataForCrop } from '../overlay/overlayMath';
 import { useMediaLetterbox } from '../overlay/useMediaLetterbox';
@@ -23,6 +24,8 @@ export function SplitPlaybackCell({
   showMetadata,
   onExpand,
   expanded = false,
+  frameSize: frameSizeProp,
+  onFrameSize,
 }: {
   videoUrl: string;
   srcCoords: [number, number, number, number];
@@ -38,6 +41,8 @@ export function SplitPlaybackCell({
   showMetadata: boolean;
   onExpand?: () => void;
   expanded?: boolean;
+  frameSize?: FrameSize | null;
+  onFrameSize?: (size: FrameSize) => void;
 }) {
   const { t } = useI18n();
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -46,13 +51,15 @@ export function SplitPlaybackCell({
   const getPositionRef = useRef(getPosition);
   getPositionRef.current = getPosition;
   const [videoReady, setVideoReady] = useState(0);
-  const [parentVideoSize, setParentVideoSize] = useState<{ w: number; h: number } | null>(null);
+  const [localFrameSize, setLocalFrameSize] = useState<FrameSize | null>(null);
+  const parentVideoSize = frameSizeProp ?? localFrameSize;
 
   const staticMeta = usePlaybackStaticMetadata({
     camera: cameraId,
     sourceId,
     runId,
     enabled: showMetadata,
+    frameSize: parentVideoSize,
   });
   const { meta: dynamicMeta } = usePlaybackMetadata({
     camera: cameraId,
@@ -60,6 +67,7 @@ export function SplitPlaybackCell({
     positionSec,
     runId,
     enabled: showMetadata,
+    frameSize: parentVideoSize,
   });
   const mergedMeta = useMemo(
     () => mergePlaybackMetadata(staticMeta, dynamicMeta),
@@ -174,17 +182,27 @@ export function SplitPlaybackCell({
         playsInline
         onLoadedMetadata={() => {
           const video = videoRef.current;
-          if (video?.videoWidth) {
-            setParentVideoSize({ w: video.videoWidth, h: video.videoHeight });
+          if (video?.videoWidth && video.videoHeight) {
+            const size = { w: video.videoWidth, h: video.videoHeight };
+            setLocalFrameSize(size);
+            onFrameSize?.(size);
           }
           setVideoReady((n) => n + 1);
           seekPlaybackVideo(video, getPositionRef.current(), startTs, { playing });
         }}
       />
-      <canvas ref={canvasRef} className={previewClass} />
+      <canvas
+        ref={canvasRef}
+        className={previewClass}
+        onDoubleClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onExpand?.();
+        }}
+      />
       <MetadataOverlayLayer
         meta={displayMeta}
-        layoutBox={layoutBox.width > 0 ? layoutBox : undefined}
+        layoutBox={layoutBox.width > 0 && layoutBox.height > 0 ? layoutBox : undefined}
         density={expanded ? 'full' : 'compact'}
         visible={showMetadata}
       />

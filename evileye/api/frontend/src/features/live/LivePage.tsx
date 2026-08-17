@@ -129,7 +129,7 @@ export function LivePage() {
 
   return (
     <section className={`panel active${mode === 'fit' ? ' live-page--fit' : ''}`}>
-      <div className={`card${mode === 'fit' ? ' live-page-card' : ''}`}>
+      <div className={`card${mode === 'fit' ? ' live-page-card expanded-camera-view-host' : ' expanded-camera-view-host'}`}>
         <div className="toolbar" style={{ justifyContent: 'space-between' }}>
           <div>
             <h2 style={{ margin: 0 }}>{t('live.title')}</h2>

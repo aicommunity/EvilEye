@@ -11,28 +11,84 @@ def extract_zones_by_source(params: dict[str, Any] | None) -> dict[int, list]:
         (((params or {}).get("events_detectors", {}) or {}).get("ZoneEventsDetector", {}) or {}).get("sources", {})
     )
     sources_zones: dict[int, list] = {}
-    if not isinstance(zones_cfg, dict):
+    if isinstance(zones_cfg, dict):
+        for key, zone_list in zones_cfg.items():
+            try:
+                source_id = int(key)
+            except Exception:
+                continue
+            prepared = _prepare_zone_entries(zone_list)
+            if prepared:
+                sources_zones[source_id] = prepared
+
+    if sources_zones:
         return sources_zones
-    for key, zone_list in zones_cfg.items():
-        try:
-            source_id = int(key)
-        except Exception:
-            continue
-        prepared = []
-        for coords in zone_list or []:
-            if isinstance(coords, list) and coords:
-                prepared.append(["poly", coords, None])
-        if prepared:
-            sources_zones[source_id] = prepared
+
+    # Web config editor / legacy fallbacks (same paths as config_editors API).
+    events = (params or {}).get("events_detectors") or {}
+    if isinstance(events, dict):
+        zones_map = events.get("zones")
+        if isinstance(zones_map, dict):
+            for key, zone_list in zones_map.items():
+                try:
+                    source_id = int(key)
+                except Exception:
+                    continue
+                prepared = _prepare_zone_entries(zone_list)
+                if prepared:
+                    sources_zones[source_id] = prepared
+
+    web_zones = (params or {}).get("web_zones")
+    if isinstance(web_zones, dict):
+        for key, zone_list in web_zones.items():
+            try:
+                source_id = int(key)
+            except Exception:
+                continue
+            prepared = _prepare_zone_entries(zone_list)
+            if prepared:
+                sources_zones[source_id] = prepared
+
     return sources_zones
+
+
+def _prepare_zone_entries(zone_list: Any) -> list[list[Any]]:
+    prepared: list[list[Any]] = []
+    for entry in zone_list or []:
+        parsed = _parse_zone_entry(entry)
+        if parsed is not None:
+            prepared.append(parsed)
+    return prepared
+
+
+def _parse_zone_entry(entry: Any) -> list[Any] | None:
+    """Normalize config zone entry to [type, points, extra] tuple."""
+    if isinstance(entry, dict):
+        points = entry.get("points") or entry.get("coords") or entry.get("coordinates")
+        if not isinstance(points, list) or not points:
+            return None
+        zone_type = entry.get("type") or entry.get("name") or "poly"
+        return [str(zone_type), points, None]
+    if isinstance(entry, (list, tuple)) and entry:
+        if isinstance(entry[0], (list, tuple)) and len(entry[0]) >= 2:
+            return ["poly", list(entry), None]
+        if len(entry) >= 2 and isinstance(entry[0], str):
+            # Already ["poly", coords, extra]
+            return list(entry)
+    return None
 
 
 def serialize_zones_for_overlay(
     zones: list[Any] | None,
     img_w: int = 0,
     img_h: int = 0,
+    *,
+    normalize: bool = True,
 ) -> list[dict[str, Any]]:
-    """Convert internal zone tuples to StreamMetadata zone dicts (normalized 0..1)."""
+    """Convert internal zone tuples to StreamMetadata zone dicts (normalized 0..1).
+
+    When ``normalize=False``, coords are copied as-is (same as live WS metadata).
+    """
     from evileye.visualization_modules.journal_metadata_extractor import EventMetadataExtractor
 
     out: list[dict[str, Any]] = []
@@ -40,7 +96,7 @@ def serialize_zones_for_overlay(
         try:
             zone_type, zone_coords, _extra = zone
             norm = None
-            if img_w > 0 and img_h > 0:
+            if normalize and img_w > 0 and img_h > 0:
                 norm = EventMetadataExtractor.normalize_zone_coords(zone_coords, img_w, img_h)
             if norm:
                 points = [[float(px), float(py)] for px, py in norm]
@@ -61,16 +117,6 @@ def video_size_for_source(params: dict[str, Any] | None, source_id: int | None) 
     if not params or source_id is None:
         return default
 
-    vis = params.get("visualization") or {}
-    base = vis.get("text_config", {}).get("base_resolution") if isinstance(vis.get("text_config"), dict) else None
-    if isinstance(base, (list, tuple)) and len(base) >= 2:
-        try:
-            w, h = int(base[0]), int(base[1])
-            if w > 0 and h > 0:
-                return w, h
-        except Exception:
-            pass
-
     pipeline = params.get("pipeline") if isinstance(params.get("pipeline"), dict) else params
     sources = pipeline.get("sources") if isinstance(pipeline, dict) else None
     for source in sources or []:
@@ -79,13 +125,39 @@ def video_size_for_source(params: dict[str, Any] | None, source_id: int | None) 
         source_ids = source.get("source_ids") or []
         if source_id not in source_ids:
             continue
-        for key in ("width", "frame_width", "video_width"):
+        for key in ("frame_width", "width", "video_width"):
             value = source.get(key)
             if value:
-                w = int(value)
-                h_key = key.replace("width", "height").replace("frame_width", "frame_height")
-                h = source.get(h_key) or source.get("height") or source.get("frame_height") or default[1]
-                return w, int(h)
+                try:
+                    w = int(value)
+                except Exception:
+                    continue
+                if w <= 0:
+                    continue
+                h = (
+                    source.get("frame_height")
+                    or source.get("height")
+                    or source.get("video_height")
+                    or default[1]
+                )
+                try:
+                    h = int(h)
+                except Exception:
+                    h = default[1]
+                if h > 0:
+                    return w, h
+
+    vis = params.get("visualization") or params.get("visualizer") or {}
+    text_cfg = vis.get("text_config") if isinstance(vis.get("text_config"), dict) else {}
+    base = text_cfg.get("base_resolution")
+    if isinstance(base, (list, tuple)) and len(base) >= 2:
+        try:
+            w, h = int(base[0]), int(base[1])
+            if w > 0 and h > 0:
+                return w, h
+        except Exception:
+            pass
+
     return default
 
 

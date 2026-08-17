@@ -150,6 +150,8 @@ export interface StreamMetadataObject {
 export interface StreamMetadata {
   source_id?: number | null;
   ts?: number;
+  /** @deprecated Playback uses live serializer; kept for backward compatibility. */
+  coord_ref?: { w: number; h: number };
   objects?: StreamMetadataObject[];
   zones?: Array<{ name?: string; kind?: 'poly' | 'rect'; points: [number, number][] }>;
   signalization?: boolean;

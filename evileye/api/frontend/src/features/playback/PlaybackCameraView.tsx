@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
-import { playbackApi, type PlaybackCamera, type PlaybackSegment, type StreamMetadata } from '../../api';
+import { playbackApi, type FrameSize, type PlaybackCamera, type PlaybackSegment, type StreamMetadata } from '../../api';
 import { useI18n } from '../../i18n';
 import { PlaybackMediaWithOverlay } from './PlaybackMediaWithOverlay';
 import { mergePlaybackMetadata } from './mergePlaybackMetadata';
@@ -43,6 +43,7 @@ export function usePlaybackCameraSlot(
     const seg = pickSegmentNear(segs, position);
     const nxt = nextSegment(segs, seg);
     const preload = preloadRef.current;
+    let segmentChanged = false;
 
     if (!seg) {
       if (pathRef.current != null) {
@@ -51,6 +52,7 @@ export function usePlaybackCameraSlot(
         setSlot(null);
       }
     } else if (seg.path !== pathRef.current) {
+      segmentChanged = true;
       const nextSlot: PlaybackMediaSlot = {
         url: playbackApi.mediaUrl(seg.path),
         startTs: seg.start_ts,
@@ -77,6 +79,8 @@ export function usePlaybackCameraSlot(
         preload.removeAttribute('src');
       }
     }
+
+    if (segmentChanged) return;
 
     const v = ref.current;
     const current = slotRef.current;
@@ -146,6 +150,7 @@ export function usePlaybackCameraMetadata({
   runId,
   showMetadata,
   hasVideo,
+  frameSize,
 }: {
   cameraId: string;
   camera?: PlaybackCamera;
@@ -153,12 +158,14 @@ export function usePlaybackCameraMetadata({
   runId: number | null;
   showMetadata: boolean;
   hasVideo: boolean;
+  frameSize?: FrameSize | null;
 }): StreamMetadata | null {
   const staticMeta = usePlaybackStaticMetadata({
     camera: cameraId,
     sourceId: camera?.source_id,
     runId,
     enabled: showMetadata,
+    frameSize,
   });
   const { meta: dynamicMeta } = usePlaybackMetadata({
     camera: cameraId,
@@ -166,6 +173,7 @@ export function usePlaybackCameraMetadata({
     positionSec,
     runId,
     enabled: showMetadata && hasVideo,
+    frameSize,
   });
   return useMemo(() => mergePlaybackMetadata(staticMeta, dynamicMeta), [staticMeta, dynamicMeta]);
 }
@@ -182,6 +190,8 @@ export function PlaybackVideoSurface({
   cameraLabel,
   expanded = false,
   onExpand,
+  onVideoReady,
+  onVideoDimensions,
   playing,
   speed,
 }: {
@@ -196,6 +206,8 @@ export function PlaybackVideoSurface({
   cameraLabel: string;
   expanded?: boolean;
   onExpand?: () => void;
+  onVideoReady?: () => void;
+  onVideoDimensions?: (size: FrameSize) => void;
   playing: boolean;
   speed: number;
 }) {
@@ -221,7 +233,20 @@ export function PlaybackVideoSurface({
             playsInline
             preload="auto"
             className={previewClass}
-            onLoadedMetadata={() => setVideoReady((n) => n + 1)}
+            onLoadedMetadata={() => {
+              const v = videoRef.current;
+              if (v?.videoWidth && v.videoHeight) {
+                onVideoDimensions?.({ w: v.videoWidth, h: v.videoHeight });
+              }
+              setVideoReady((n) => n + 1);
+              onVideoReady?.();
+            }}
+            onSeeked={() => onVideoReady?.()}
+            onDoubleClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onExpand?.();
+            }}
           />
           <video ref={preloadRef as RefObject<HTMLVideoElement>} muted playsInline style={{ display: 'none' }} aria-hidden />
           <PlaybackMediaWithOverlay

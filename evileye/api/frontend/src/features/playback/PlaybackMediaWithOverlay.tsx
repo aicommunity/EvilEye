@@ -37,7 +37,7 @@ export function PlaybackMediaWithOverlay({
   return (
     <MetadataOverlayLayer
       meta={displayMeta}
-      layoutBox={layoutBox.width > 0 ? layoutBox : undefined}
+      layoutBox={layoutBox.width > 0 && layoutBox.height > 0 ? layoutBox : undefined}
       density={density}
       visible={showMetadata}
     />

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { PlaybackCamera, PlaybackSegment } from '../../api';
+import type { FrameSize, PlaybackCamera, PlaybackSegment } from '../../api';
 import { useI18n } from '../../i18n';
 import {
   PlaybackVideoSurface,
@@ -87,7 +87,8 @@ function PlaybackCell({
 }) {
   const mediaRef = useRef<HTMLDivElement>(null);
   const [videoReady, setVideoReady] = useState(0);
-  const { ref, preloadRef, slot } = usePlaybackCameraSlot(segments, getPosition, positionSec, playing);
+  const [frameSize, setFrameSize] = useState<FrameSize | null>(null);
+  const { ref, preloadRef, slot, applySync } = usePlaybackCameraSlot(segments, getPosition, positionSec, playing);
   const meta = usePlaybackCameraMetadata({
     cameraId: id,
     camera,
@@ -95,6 +96,7 @@ function PlaybackCell({
     runId,
     showMetadata,
     hasVideo: Boolean(slot?.url),
+    frameSize,
   });
 
   const split = Boolean(camera?.split && camera?.src_coords && camera.src_coords.length === 4);
@@ -115,6 +117,8 @@ function PlaybackCell({
         runId={runId}
         showMetadata={showMetadata}
         onExpand={onExpand}
+        frameSize={frameSize}
+        onFrameSize={setFrameSize}
       />
     );
   }
@@ -136,6 +140,8 @@ function PlaybackCell({
           setVideoReady={setVideoReady}
           cameraLabel={id}
           onExpand={onExpand}
+          onVideoReady={applySync}
+          onVideoDimensions={setFrameSize}
           playing={playing}
           speed={speed}
         />
