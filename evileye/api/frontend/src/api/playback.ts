@@ -54,4 +54,41 @@ export const playbackApi = {
   mediaUrl(path: string): string {
     return `${API_BASE}/playback/media?path=${encodeURIComponent(path)}`;
   },
+  metadata(
+    camera: string,
+    ts: number,
+    date?: string,
+    runId?: number | null,
+    opts?: RequestOptions & { window?: number; sourceId?: number | null },
+  ): Promise<{ metadata: import('./types').StreamMetadata }> {
+    const p = new URLSearchParams({ camera, ts: String(ts) });
+    if (date) p.set('date', date);
+    if (runId != null) p.set('run_id', String(runId));
+    if (opts?.window != null) p.set('window', String(opts.window));
+    if (opts?.sourceId != null) p.set('source_id', String(opts.sourceId));
+    return request(`/playback/metadata?${p}`, opts);
+  },
+  metadataStatic(
+    camera: string,
+    runId?: number | null,
+    opts?: RequestOptions & { sourceId?: number | null },
+  ): Promise<{ metadata: import('./types').StreamMetadata }> {
+    const p = new URLSearchParams({ camera, static_only: 'true' });
+    if (runId != null) p.set('run_id', String(runId));
+    if (opts?.sourceId != null) p.set('source_id', String(opts.sourceId));
+    return request(`/playback/metadata?${p}`, opts);
+  },
+  metadataBatch(
+    cameras: string[],
+    ts: number,
+    date?: string,
+    runId?: number | null,
+    opts?: RequestOptions & { window?: number },
+  ): Promise<{ by_camera: Record<string, import('./types').StreamMetadata> }> {
+    const p = new URLSearchParams({ cameras: cameras.join(','), ts: String(ts) });
+    if (date) p.set('date', date);
+    if (runId != null) p.set('run_id', String(runId));
+    if (opts?.window != null) p.set('window', String(opts.window));
+    return request(`/playback/metadata?${p}`, opts);
+  },
 };

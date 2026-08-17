@@ -21,6 +21,7 @@ export interface StateRun extends ConfigRun {
   tracker_count?: number;
   event_detector_names?: string[];
   database_enabled?: boolean;
+  storage_mode?: 'json' | 'database';
   config_name?: string | null;
   log_session_id?: string | null;
   log_files?: {
@@ -160,6 +161,9 @@ export interface StreamMetadata {
     time_label?: string;
   };
 }
+
+/** Alias for overlays shared between live and archive playback. */
+export type OverlayMetadata = StreamMetadata;
 
 export interface PlaybackCamera {
   id: string;

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   journalFrameUrl,
@@ -6,10 +6,13 @@ import {
   journalPreviewUrl,
   journalVideoUrl,
   type JournalGroupedRow,
+  type StreamMetadata,
 } from '../../api';
 import { Button } from '../../components/ui';
 import { useI18n } from '../../i18n';
-import { letterboxRect, redactMediaCredentials, rowKey, unixFromJournalTime, type JournalType } from './journalMath';
+import { MetadataOverlayLayer } from '../overlay/MetadataOverlayLayer';
+import { useImageLetterbox } from '../overlay/useMediaLetterbox';
+import { redactMediaCredentials, rowKey, unixFromJournalTime, type JournalType } from './journalMath';
 
 export function JournalDetailDrawer({
   row,
@@ -23,6 +26,7 @@ export function JournalDetailDrawer({
   const { t } = useI18n();
   const [enriched, setEnriched] = useState<JournalGroupedRow>(row);
   const [showVideo, setShowVideo] = useState(false);
+  const [imgLoaded, setImgLoaded] = useState(0);
   const mode: 'found' | 'lost' = enriched.has_found_preview || enriched.preview ? 'found' : 'lost';
   const previewPath = mode === 'found' ? enriched.preview : enriched.lost_preview;
   const videoPath =
@@ -32,11 +36,34 @@ export function JournalDetailDrawer({
   const ts = unixFromJournalTime(enriched.time);
   const wrapRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
-  const [box, setBox] = useState({ left: 0, top: 0, width: 0, height: 0 });
+  const layoutBox = useImageLetterbox(wrapRef, imgRef, [previewPath, imgLoaded]);
+
+  const snapshotMeta = useMemo((): StreamMetadata | null => {
+    const objects =
+      bbox && Array.isArray(bbox) && bbox.length === 4
+        ? [
+            {
+              bbox: bbox.map(Number) as [number, number, number, number],
+              class_name: enriched.class_name != null ? String(enriched.class_name) : null,
+            },
+          ]
+        : [];
+    const zones =
+      zone && Array.isArray(zone) && zone.length >= 3
+        ? [
+            {
+              points: zone.map((p) => [Number(p[0]), Number(p[1])] as [number, number]),
+            },
+          ]
+        : [];
+    if (!objects.length && !zones.length) return null;
+    return { objects, zones };
+  }, [bbox, zone, enriched.class_name]);
 
   useEffect(() => {
     setEnriched(row);
     setShowVideo(false);
+    setImgLoaded(0);
     const key = rowKey(row);
     if (!key) return;
     let cancelled = false;
@@ -47,18 +74,6 @@ export function JournalDetailDrawer({
       cancelled = true;
     };
   }, [row, journalType]);
-
-  useLayoutEffect(() => {
-    const update = () => {
-      const wrap = wrapRef.current;
-      const img = imgRef.current;
-      if (!wrap || !img || !img.naturalWidth) return;
-      setBox(letterboxRect(wrap.clientWidth, wrap.clientHeight, img.naturalWidth, img.naturalHeight));
-    };
-    update();
-    window.addEventListener('resize', update);
-    return () => window.removeEventListener('resize', update);
-  }, [previewPath]);
 
   return (
     <div className="modal open journal-detail-modal" role="dialog">
@@ -88,48 +103,9 @@ export function JournalDetailDrawer({
                 })}
                 alt={t('journals.preview')}
                 style={{ width: '100%', display: 'block' }}
-                onLoad={() => {
-                  const wrap = wrapRef.current;
-                  const img = imgRef.current;
-                  if (!wrap || !img) return;
-                  setBox(letterboxRect(wrap.clientWidth, wrap.clientHeight, img.naturalWidth, img.naturalHeight));
-                }}
+                onLoad={() => setImgLoaded((n) => n + 1)}
               />
-                <svg
-                className="journal-preview-overlay"
-                viewBox="0 0 100 100"
-                preserveAspectRatio="none"
-                style={{
-                  position: 'absolute',
-                  left: box.left,
-                  top: box.top,
-                  width: box.width || '100%',
-                  height: box.height || '100%',
-                  pointerEvents: 'none',
-                }}
-              >
-                {bbox && Array.isArray(bbox) && bbox.length === 4 ? (
-                  <rect
-                    x={`${Number(bbox[0]) * 100}%`}
-                    y={`${Number(bbox[1]) * 100}%`}
-                    width={`${(Number(bbox[2]) - Number(bbox[0])) * 100}%`}
-                    height={`${(Number(bbox[3]) - Number(bbox[1])) * 100}%`}
-                    fill="none"
-                    stroke="#22c55e"
-                    strokeWidth="1.5"
-                    vectorEffect="non-scaling-stroke"
-                  />
-                ) : null}
-                {zone && Array.isArray(zone) && zone.length >= 3 ? (
-                  <polygon
-                    points={zone.map((p) => `${Number(p[0]) * 100},${Number(p[1]) * 100}`).join(' ')}
-                    fill="rgba(59,130,246,0.15)"
-                    stroke="#3b82f6"
-                    strokeWidth="1.5"
-                    vectorEffect="non-scaling-stroke"
-                  />
-                ) : null}
-              </svg>
+              <MetadataOverlayLayer meta={snapshotMeta} layoutBox={layoutBox} density="full" />
             </div>
           ) : null}
           {previewPath ? (

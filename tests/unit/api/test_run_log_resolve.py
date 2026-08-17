@@ -132,3 +132,42 @@ def test_run_summary_includes_config_name_and_logs(tmp_path, monkeypatch):
     assert summary["log_session_id"] == sid
     assert summary["log_match"] == "exact"
     assert summary["log_files"]["main"] == f"{sid}_evileye_main.log"
+
+
+def test_run_summary_storage_mode_from_snapshot(tmp_path, monkeypatch):
+    import evileye.api.core.server_state as ss
+
+    monkeypatch.setattr(rr, "RUNTIME_ROOT", tmp_path)
+    monkeypatch.setattr(rr, "REGISTRY_DIR", tmp_path / "pipelines")
+    monkeypatch.setattr(rr, "SNAPSHOT_DIR", tmp_path / "snapshots")
+    monkeypatch.setattr(rr, "LOCK_FILE", tmp_path / ".lock")
+
+    config_path = tmp_path / "configs" / "demo.json"
+    config_path.parent.mkdir(parents=True)
+    config_path.write_text(
+        '{"controller": {"use_database": true}, "database": {"image_dir": "EvilEyeData"}}',
+        encoding="utf-8",
+    )
+
+    rr.register_runtime(
+        rid=4,
+        pid=1,
+        config_path=str(config_path),
+        name="demo",
+        frame_dir=None,
+        source="web",
+        state="running",
+    )
+    rr.save_runtime_snapshot(
+        4,
+        {
+            "config": {
+                "controller": {"use_database": False},
+                "database": {"image_dir": "EvilEyeData"},
+            },
+        },
+    )
+
+    summary = ss._run_summary(rr.load_runtime_record(4, refresh_state=False))
+    assert summary["database_enabled"] is False
+    assert summary["storage_mode"] == "json"

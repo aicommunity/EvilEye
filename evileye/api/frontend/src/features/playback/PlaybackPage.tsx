@@ -16,11 +16,12 @@ import { useI18n } from '../../i18n';
 import { useRunConfigFlags } from '../../hooks/useRunConfigFlags';
 import { Timeline } from './Timeline';
 import { PlaybackGrid } from './PlaybackGrid';
+import { ExpandedPlaybackView } from './ExpandedPlaybackView';
 import { usePlaybackController } from './usePlaybackController';
 import { usePlaybackLayout } from './usePlaybackLayout';
 import { useTimelineViewport } from './useTimelineViewport';
 import { fitColsForCount } from '../layout/fitGrid';
-import { localDateString, mergeSegments } from './timelineMath';
+import { formatPlaybackDateTime, localDateString, mergeSegments } from './timelineMath';
 
 function today(): string {
   const d = new Date();
@@ -56,6 +57,8 @@ export function PlaybackPage() {
   const [segmentsByCam, setSegmentsByCam] = useState<Record<string, PlaybackSegment[]>>({});
   const [markers, setMarkers] = useState<PlaybackEventMarker[]>([]);
   const [segmentsLoaded, setSegmentsLoaded] = useState(false);
+  const [showMetadata, setShowMetadata] = useState(true);
+  const [expandedCameraId, setExpandedCameraId] = useState<string | null>(null);
   const initialT = parseDeepLinkTime(params.get('t'));
   const ctrl = usePlaybackController(initialT);
   const viewport = useTimelineViewport();
@@ -283,6 +286,7 @@ export function PlaybackPage() {
   const cameraDefs = useMemo(() => Object.fromEntries(cameras.map((c) => [c.id, c])), [cameras]);
   const allSegments = useMemo(() => Object.values(segmentsByCam).flat(), [segmentsByCam]);
   const effectiveCols = mode === 'fit' ? fitColsForCount(selectedIds.length) : cols;
+  const positionLabel = formatPlaybackDateTime(ctrl.positionSec);
 
   let gridEmpty: string | null = null;
   if (camerasLoading) gridEmpty = t('playback.loadingCamerasGrid');
@@ -308,6 +312,9 @@ export function PlaybackPage() {
                 setDate(e.target.value);
               }}
             />
+            <span className="hint playback-position-clock" title={t('playback.currentTime')}>
+              {positionLabel}
+            </span>
             <Button size="sm" variant={mode === 'fit' ? 'primary' : 'outline'} onClick={() => setMode('fit')}>
               {t('layout.fit')}
             </Button>
@@ -329,6 +336,14 @@ export function PlaybackPage() {
                 {s}x
               </Button>
             ))}
+            <label className="hint" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <input
+                type="checkbox"
+                checked={showMetadata}
+                onChange={(e) => setShowMetadata(e.target.checked)}
+              />
+              {t('playback.showMetadata')}
+            </label>
           </div>
         </div>
         {!flags.loading && flags.recordingEnabled === false ? (
@@ -347,7 +362,20 @@ export function PlaybackPage() {
           })}
         </div>
         <div className="playback-main">
-          {gridEmpty ? (
+          {expandedCameraId ? (
+            <ExpandedPlaybackView
+              cameraId={expandedCameraId}
+              camera={cameraDefs[expandedCameraId]}
+              segments={segmentsByCam[expandedCameraId] ?? []}
+              getPosition={ctrl.getPosition}
+              positionSec={ctrl.positionSec}
+              playing={ctrl.playing}
+              speed={ctrl.speed}
+              runId={runId}
+              showMetadata={showMetadata}
+              onClose={() => setExpandedCameraId(null)}
+            />
+          ) : gridEmpty ? (
             <p className="empty">{gridEmpty}</p>
           ) : (
             <PlaybackGrid
@@ -360,6 +388,9 @@ export function PlaybackPage() {
               positionSec={ctrl.positionSec}
               playing={ctrl.playing}
               speed={ctrl.speed}
+              runId={runId}
+              showMetadata={showMetadata}
+              onExpand={setExpandedCameraId}
             />
           )}
         </div>

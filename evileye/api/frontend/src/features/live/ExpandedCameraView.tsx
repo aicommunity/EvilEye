@@ -3,8 +3,8 @@ import { type StateCamera, type StreamMetadata } from '../../api';
 import { Button } from '../../components/ui';
 import { useMjpegStream } from '../../hooks/useMjpegStream';
 import { useI18n } from '../../i18n';
-import { OverlayCanvas } from './OverlayCanvas';
-import { useImageLetterbox } from './useImageLetterbox';
+import { OverlayCanvas } from '../overlay/OverlayCanvas';
+import { useImageLetterbox } from '../overlay/useMediaLetterbox';
 import { useRunMetadataWs } from './useRunMetadataWs';
 
 export function ExpandedCameraView({

@@ -2,8 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { streamSnapshotUrl, type StateCamera, type StreamMetadata } from '../../api';
 import { Button, Badge } from '../../components/ui';
 import { useI18n } from '../../i18n';
-import { OverlayCanvas } from './OverlayCanvas';
-import { useImageLetterbox } from './useImageLetterbox';
+import { OverlayCanvas } from '../overlay/OverlayCanvas';
+import { useImageLetterbox } from '../overlay/useMediaLetterbox';
 import { useRunMetadataWs } from './useRunMetadataWs';
 
 const STALE_SEC = 5;

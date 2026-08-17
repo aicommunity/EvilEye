@@ -155,6 +155,18 @@ def _current_config_path() -> str | None:
 
 
 def _load_runtime_params_uncached() -> dict[str, Any]:
+    try:
+        from evileye.api.core.server_state import get_current_run_summary
+
+        current = get_current_run_summary()
+        if isinstance(current, dict):
+            snapshot = current.get("runtime_snapshot")
+            if isinstance(snapshot, dict):
+                payload = snapshot.get("config")
+                if isinstance(payload, dict):
+                    return payload
+    except Exception:
+        pass
     config_path = _current_config_path()
     if not config_path:
         return {}
@@ -165,14 +177,30 @@ def _load_runtime_params_uncached() -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _runtime_params_snapshot_ts() -> float:
+    try:
+        from evileye.api.core.server_state import get_current_run_summary
+
+        current = get_current_run_summary()
+        if isinstance(current, dict):
+            snapshot = current.get("runtime_snapshot")
+            if isinstance(snapshot, dict):
+                return float(snapshot.get("updated_at") or 0.0)
+    except Exception:
+        pass
+    return 0.0
+
+
 def _runtime_params() -> dict[str, Any]:
     global _runtime_params_cache
     config_path = _current_config_path() or ""
     mtime = _config_mtime(config_path or None)
-    if _runtime_params_cache and _runtime_params_cache[0] == config_path and _runtime_params_cache[1] == mtime:
+    snapshot_ts = _runtime_params_snapshot_ts()
+    cache_key = (config_path, mtime, snapshot_ts)
+    if _runtime_params_cache and _runtime_params_cache[0] == cache_key:
         return _runtime_params_cache[2]
     params = _load_runtime_params_uncached()
-    _runtime_params_cache = (config_path, mtime, params)
+    _runtime_params_cache = (cache_key, snapshot_ts, params)
     return params
 
 
@@ -182,6 +210,11 @@ def _database_enabled_in_config() -> bool:
     if isinstance(controller, dict) and "use_database" in controller:
         return bool(controller.get("use_database"))
     return True
+
+
+def configured_storage_mode() -> str:
+    """Effective storage backend: live run snapshot when active, else on-disk config."""
+    return "database" if _database_enabled_in_config() else "json"
 
 
 def _image_base_dir() -> str:
@@ -291,11 +324,12 @@ def load_filters_meta() -> dict[str, Any]:
 
     dates: list[str] = []
     try:
-        controller = _db_controller()
-        if controller is not None:
-            source = _make_db_source(controller, journal_type="events")
-            if hasattr(source, "list_available_dates"):
-                dates = list(source.list_available_dates())
+        if configured_storage_mode() == "database":
+            controller = _db_controller()
+            if controller is not None:
+                source = _make_db_source(controller, journal_type="events")
+                if hasattr(source, "list_available_dates"):
+                    dates = list(source.list_available_dates())
         elif _json_journal_available():
             source = _make_json_source()
             dates = list(source.list_available_dates())
@@ -378,44 +412,49 @@ def _json_journal_available() -> bool:
     return False
 
 
-def journal_availability() -> dict[str, Any]:
-    if _db_controller() is not None:
-        return {
-            "available": True,
-            "mode": "database",
-            "reason": "ok",
-            "message": "",
-        }
+def _json_mode_status() -> dict[str, Any]:
     if _json_journal_available():
         return {
             "available": True,
             "mode": "json",
-            "reason": "json_fallback",
-            "message": "Данные читаются из JSON-файлов (EvilEyeData), PostgreSQL не используется.",
-        }
-    if not _database_enabled_in_config():
-        return {
-            "available": False,
-            "mode": "none",
-            "reason": "database_disabled",
-            "message": (
-                "База данных отключена в конфигурации (controller.use_database: false). "
-                "Включите use_database и настройте credentials.json, либо дождитесь записи JSON в EvilEyeData."
-            ),
-        }
-    if not _database_config():
-        return {
-            "available": False,
-            "mode": "none",
-            "reason": "database_not_configured",
-            "message": "PostgreSQL не настроена: отсутствует секция database в credentials.json.",
+            "reason": "ok",
+            "message": "",
         }
     return {
         "available": False,
-        "mode": "none",
-        "reason": "database_unreachable",
-        "message": "PostgreSQL настроена, но подключение не установлено.",
+        "mode": "json",
+        "reason": "json_unavailable",
+        "message": "JSON-данные в EvilEyeData пока отсутствуют.",
     }
+
+
+def _database_mode_status() -> dict[str, Any]:
+    if not _database_config():
+        return {
+            "available": False,
+            "mode": "database",
+            "reason": "database_not_configured",
+            "message": "PostgreSQL не настроена: отсутствует секция database в credentials.json.",
+        }
+    if _db_controller() is None:
+        return {
+            "available": False,
+            "mode": "database",
+            "reason": "database_unreachable",
+            "message": "PostgreSQL настроена, но подключение не установлено.",
+        }
+    return {
+        "available": True,
+        "mode": "database",
+        "reason": "ok",
+        "message": "",
+    }
+
+
+def journal_availability() -> dict[str, Any]:
+    if configured_storage_mode() == "database":
+        return _database_mode_status()
+    return _json_mode_status()
 
 
 def _unavailable_payload() -> dict[str, Any]:
@@ -485,12 +524,8 @@ def _make_json_source(
 def _with_journal_meta(payload: dict[str, Any], *, mode: str) -> dict[str, Any]:
     enriched = dict(payload)
     enriched["mode"] = mode
-    enriched.setdefault("reason", "ok" if mode == "database" else "json_fallback")
-    if mode == "json":
-        enriched.setdefault(
-            "message",
-            "Данные читаются из JSON-файлов (EvilEyeData), PostgreSQL не используется.",
-        )
+    enriched.setdefault("reason", "ok")
+    enriched.setdefault("message", "")
     return enriched
 
 
@@ -504,8 +539,10 @@ def load_events_page(
         date_to: str | None = None,
 ) -> dict[str, Any]:
     scoped_filters = _merge_current_filters(filters, journal_kind="events")
-    controller = _db_controller()
-    if controller is not None:
+    if configured_storage_mode() == "database":
+        controller = _db_controller()
+        if controller is None:
+            return _unavailable_payload()
         source = _make_db_source(
             controller, journal_type="events", date=date, date_from=date_from, date_to=date_to,
         )
@@ -532,8 +569,10 @@ def load_objects_page(
         date_to: str | None = None,
 ) -> dict[str, Any]:
     scoped_filters = _merge_current_filters(filters, journal_kind="objects")
-    controller = _db_controller()
-    if controller is not None:
+    if configured_storage_mode() == "database":
+        controller = _db_controller()
+        if controller is None:
+            return _unavailable_payload()
         source = _make_db_source(
             controller, journal_type="objects", date=date, date_from=date_from, date_to=date_to,
         )
@@ -669,8 +708,10 @@ def load_journal_stats(
     if scope["mode"] == "single":
         scoped_filters["date_folder"] = scope["date"]
 
-    controller = _db_controller()
-    if controller is not None:
+    if configured_storage_mode() == "database":
+        controller = _db_controller()
+        if controller is None:
+            return {"available": False}
         events_source = _make_db_source(
             controller,
             journal_type="events",
@@ -845,6 +886,15 @@ def resolve_secured_journal_file(*, resolver) -> str:
 
 
 def load_config_history(*, limit: int) -> dict[str, Any]:
+    mode = configured_storage_mode()
+    if mode != "database":
+        return {
+            "available": False,
+            "items": [],
+            "mode": mode,
+            "reason": "database_mode_required",
+            "message": "История конфигураций хранится только в PostgreSQL и доступна в режиме database.",
+        }
     controller = _db_controller()
     if controller is None:
         status = journal_availability()

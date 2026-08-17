@@ -36,6 +36,7 @@ from evileye.core.class_manager import ClassManager
 from evileye.pipelines import PipelineSurveillance
 from evileye.core.logger import get_module_logger
 from evileye.api.core.runtime_registry import update_runtime_snapshot
+from evileye.api.core.server_state import storage_mode_from_params, use_database_from_params
 from evileye.api.security import load_web_auth_config
 from evileye.core.system_diagnostics import SystemDiagnostics
 from evileye.core.memory_monitor import MemoryMonitor
@@ -316,6 +317,13 @@ class Controller(ControllerProcessingMixin):
     def get_params(self):
         return self.params
 
+    def _sync_use_database_to_params(self) -> None:
+        if not isinstance(self.params, dict):
+            return
+        controller = self.params.setdefault("controller", {})
+        if isinstance(controller, dict):
+            controller["use_database"] = bool(self.use_database)
+
     def _publish_runtime_snapshot(self, *, state: str | None = None) -> None:
         try:
             runtime_id = int(self.stream_pipeline_id)
@@ -345,9 +353,12 @@ class Controller(ControllerProcessingMixin):
 
         try:
             server_cfg = params.get("server", {}) if isinstance(params, dict) else {}
+            use_database = use_database_from_params(params if isinstance(params, dict) else None)
+            storage_mode = storage_mode_from_params(params if isinstance(params, dict) else None)
             journal_context = {
                 "config_path": getattr(self, "config_path", None),
-                "database_enabled": bool(params.get("database")) if isinstance(params, dict) else False,
+                "database_enabled": use_database,
+                "storage_mode": storage_mode,
                 "source_names": [name for source in sources_payload for name in source.get("source_names", [])],
             }
             update_runtime_snapshot(
@@ -361,7 +372,8 @@ class Controller(ControllerProcessingMixin):
                     "pipeline_class": self.pipeline.__class__.__name__ if self.pipeline is not None else None,
                     "detector_count": len(getattr(self.pipeline, "detectors", []) or []),
                     "tracker_count": len(getattr(self.pipeline, "trackers", []) or []),
-                    "database_enabled": bool(params.get("database")) if isinstance(params, dict) else False,
+                    "database_enabled": use_database,
+                    "storage_mode": storage_mode,
                     "event_detector_names": sorted((params.get("events_detectors") or {}).keys()) if isinstance(params,
                                                                                                                 dict) and isinstance(
                         params.get("events_detectors"), dict) else [],
@@ -911,6 +923,7 @@ class Controller(ControllerProcessingMixin):
 
                 # Полностью отключаем функциональность БД
                 self.use_database = False
+                self._sync_use_database_to_params()
                 # Останавливаем адаптеры БД, если они были запущены
                 try:
                     if self.db_adapter_obj:
@@ -1222,6 +1235,7 @@ class Controller(ControllerProcessingMixin):
             else:
                 # Fallback to no-database mode
                 self.use_database = False
+                self._sync_use_database_to_params()
                 self.db_controller = None
                 self.database_config = {"database": {}, "database_adapters": {}}
 

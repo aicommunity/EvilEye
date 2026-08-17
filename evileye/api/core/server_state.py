@@ -37,6 +37,37 @@ def _load_json(path: Path) -> dict[str, Any]:
         return {}
 
 
+def use_database_from_params(params: dict[str, Any] | None) -> bool:
+    """Whether the run uses PostgreSQL (controller.use_database), not merely a database config section."""
+    controller = params.get("controller") if isinstance(params, dict) else None
+    if isinstance(controller, dict) and "use_database" in controller:
+        return bool(controller.get("use_database"))
+    return True
+
+
+def storage_mode_from_params(params: dict[str, Any] | None) -> str:
+    return "database" if use_database_from_params(params) else "json"
+
+
+def _params_from_config_path(config_path: str | None) -> dict[str, Any]:
+    if not config_path:
+        return {}
+    payload = _load_json(Path(config_path))
+    return payload if isinstance(payload, dict) else {}
+
+
+def effective_params_for_run(
+        config_path: str | None,
+        runtime_snapshot: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Effective run config: live snapshot when present, else on-disk config file."""
+    if isinstance(runtime_snapshot, dict):
+        payload = runtime_snapshot.get("config")
+        if isinstance(payload, dict):
+            return payload
+    return _params_from_config_path(config_path)
+
+
 def _get_pipeline_section(config: dict[str, Any]) -> dict[str, Any]:
     pipeline = config.get("pipeline")
     if isinstance(pipeline, dict):
@@ -64,7 +95,6 @@ def load_config_summary(config_path: Optional[str]) -> ConfigSummary:
     trackers = pipeline.get("trackers") if isinstance(pipeline, dict) else None
     event_detectors = config.get("events_detectors") or pipeline.get("events_detectors") if isinstance(pipeline,
                                                                                                        dict) else {}
-    database = config.get("database") or pipeline.get("database") if isinstance(pipeline, dict) else {}
 
     source_items: list[dict[str, Any]] = []
     for source in sources or []:
@@ -108,8 +138,6 @@ def load_config_summary(config_path: Optional[str]) -> ConfigSummary:
 
     if not isinstance(event_detectors, dict):
         event_detectors = {}
-    if not isinstance(database, dict):
-        database = {}
 
     summary = ConfigSummary(
         pipeline_class=pipeline.get("pipeline_class") if isinstance(pipeline, dict) else None,
@@ -117,7 +145,7 @@ def load_config_summary(config_path: Optional[str]) -> ConfigSummary:
         detector_count=len(detectors or []),
         tracker_count=len(trackers or []),
         event_detector_names=sorted(event_detectors.keys()),
-        database_enabled=bool(database),
+        database_enabled=use_database_from_params(config),
     )
     _config_summary_cache[config_path] = (mtime, summary)
     return summary
@@ -272,6 +300,9 @@ def _run_summary(record: Dict[str, Any]) -> Dict[str, Any]:
     config_path = record.get("config_path")
     config_name = Path(config_path).name if config_path else None
     log_info = resolve_run_log_files(record)
+    effective_params = effective_params_for_run(config_path, runtime_snapshot)
+    database_enabled = use_database_from_params(effective_params)
+    storage_mode = storage_mode_from_params(effective_params)
     return {
         "id": record.get("id"),
         "name": record.get("name"),
@@ -295,7 +326,8 @@ def _run_summary(record: Dict[str, Any]) -> Dict[str, Any]:
         "detector_count": config_summary.detector_count,
         "tracker_count": config_summary.tracker_count,
         "event_detector_names": config_summary.event_detector_names,
-        "database_enabled": config_summary.database_enabled,
+        "database_enabled": database_enabled,
+        "storage_mode": storage_mode,
         "sources": config_summary.source_items,
         "runtime_snapshot": runtime_snapshot,
         "log_session_id": log_info.get("log_session_id"),

@@ -36,6 +36,16 @@ function archiveBadgeState(state: string | undefined): string {
   return String(state || '').trim() === 'error' ? 'error' : 'stopped';
 }
 
+function storageModeLabel(
+  run: Pick<StateRun, 'storage_mode' | 'database_enabled'>,
+  t: (key: string) => string,
+): string {
+  const mode = run.storage_mode ?? (run.database_enabled ? 'database' : 'json');
+  if (mode === 'database') return t('setup.storageDb');
+  if (mode === 'json') return t('setup.storageJson');
+  return '—';
+}
+
 const RUNS_CACHE_KEY = 'state:runs:all';
 const RUNS_TTL_MS = 15_000;
 
@@ -216,6 +226,7 @@ export function RunsPage() {
           <th>{t('runs.columns.name')}</th>
           <th>{t('runs.columns.status')}</th>
           <th>{t('runs.columns.config')}</th>
+          <th>{t('runs.columns.storage')}</th>
           <th>{t('runs.columns.log')}</th>
           <th>{t('runs.columns.pipeline')}</th>
           <th>{t('runs.columns.pid')}</th>
@@ -250,6 +261,7 @@ export function RunsPage() {
                 </div>
               </td>
               <td className="run-config">{renderConfigCell(r)}</td>
+              <td>{storageModeLabel(r, t)}</td>
               <td>{renderLogCell(r)}</td>
               <td>{r.pipeline_class ?? '—'}</td>
               <td>{r.pid ?? '—'}</td>
@@ -399,6 +411,9 @@ export function RunsPage() {
                 {detail.run.config_path}
               </p>
             ) : null}
+            <p>
+              <strong>{t('runs.columns.storage')}</strong> {storageModeLabel(detail.run, t)}
+            </p>
             <p>
               <strong>{t('runs.columns.pipeline')}</strong> {detail.run.pipeline_class ?? '—'}
             </p>

@@ -239,6 +239,8 @@ const ru: Dict = {
     timelineNoRecordings: 'Нет записей и событий за выбранный день.',
     timelineHint: 'Колесо — масштаб, перетаскивание — сдвиг, клик — переход к кадру.',
     noSegment: 'Нет сегмента',
+    showMetadata: 'Показать метаданные',
+    currentTime: 'Текущий момент воспроизведения',
   },
   configure: {
     title: 'Студия конфигурации',
@@ -394,6 +396,7 @@ const ru: Dict = {
       name: 'Имя',
       status: 'Статус',
       config: 'Конфиг',
+      storage: 'Хранение',
       log: 'Лог',
       pipeline: 'Pipeline',
       pid: 'PID',

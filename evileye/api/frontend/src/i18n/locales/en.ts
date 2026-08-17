@@ -237,6 +237,8 @@ const en: Dict = {
     timelineNoRecordings: 'No recordings or events for the selected day.',
     timelineHint: 'Wheel zooms, drag pans, click seeks to a frame.',
     noSegment: 'No segment',
+    showMetadata: 'Show metadata',
+    currentTime: 'Current playback time',
   },
   configure: {
     title: 'Config Studio',
@@ -392,6 +394,7 @@ const en: Dict = {
       name: 'Name',
       status: 'Status',
       config: 'Config',
+      storage: 'Storage',
       log: 'Log',
       pipeline: 'Pipeline',
       pid: 'PID',

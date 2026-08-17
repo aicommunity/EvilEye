@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse
 
 from evileye.api.core import playback_service as svc
+from evileye.api.core import playback_metadata_service as metadata_svc
 
 router = APIRouter(prefix="/api/v1/playback", tags=["playback"])
 
@@ -62,6 +63,54 @@ async def playback_events(
         limit=limit,
     )
     return {"items": items}
+
+
+@router.get("/metadata")
+async def playback_metadata(
+    camera: Optional[str] = Query(None),
+    cameras: Optional[str] = Query(None, description="Comma-separated camera ids for batch"),
+    ts: Optional[float] = Query(None, description="Unix timestamp (seconds); optional for static_only"),
+    date: Optional[str] = None,
+    run_id: Optional[int] = Query(None),
+    window: float = Query(1.0, ge=0.1, le=10.0),
+    source_id: Optional[int] = Query(None),
+    static_only: bool = Query(False, description="Return config-only layers (zones, ROI)"),
+) -> dict:
+    effective_ts = float(ts if ts is not None else 0.0)
+    if not static_only and ts is None:
+        raise HTTPException(status_code=400, detail="ts query required unless static_only=true")
+    if cameras:
+        cam_list = [c.strip() for c in cameras.split(",") if c.strip()]
+        by_camera = await asyncio.to_thread(
+            metadata_svc.build_playback_metadata_batch,
+            cameras=cam_list,
+            ts=effective_ts,
+            date=date,
+            run_id=run_id,
+            window_sec=window,
+            static_only=static_only,
+        )
+        return {"by_camera": by_camera}
+    if not camera:
+        raise HTTPException(status_code=400, detail="camera or cameras query required")
+    if static_only:
+        payload = await asyncio.to_thread(
+            metadata_svc.build_playback_static_metadata,
+            camera=camera,
+            run_id=run_id,
+            source_id=source_id,
+        )
+    else:
+        payload = await asyncio.to_thread(
+            metadata_svc.build_playback_metadata,
+            camera=camera,
+            ts=effective_ts,
+            date=date,
+            run_id=run_id,
+            window_sec=window,
+            source_id=source_id,
+        )
+    return {"metadata": payload}
 
 
 @router.get("/media")

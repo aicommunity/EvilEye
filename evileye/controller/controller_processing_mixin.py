@@ -278,23 +278,9 @@ class ControllerProcessingMixin:
         return obj
 
     def _extract_preview_zones(self) -> dict[int, list]:
-        zones_cfg = (((self.params or {}).get('events_detectors', {}) or {}).get('ZoneEventsDetector', {}) or {}).get(
-            'sources', {})
-        sources_zones: dict[int, list] = {}
-        if not isinstance(zones_cfg, dict):
-            return sources_zones
-        for key, zone_list in zones_cfg.items():
-            try:
-                source_id = int(key)
-            except Exception:
-                continue
-            prepared = []
-            for coords in (zone_list or []):
-                if isinstance(coords, list) and coords:
-                    prepared.append(['poly', coords, None])
-            if prepared:
-                sources_zones[source_id] = prepared
-        return sources_zones
+        from evileye.visualization_modules.overlay_config import extract_zones_by_source
+
+        return extract_zones_by_source(self.params)
 
     def _extract_track_ids(self, data) -> tuple[set[int], int]:
         track_ids: set[int] = set()

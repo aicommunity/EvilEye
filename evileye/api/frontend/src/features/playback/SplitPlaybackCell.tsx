@@ -1,29 +1,89 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { MetadataOverlayLayer } from '../overlay/MetadataOverlayLayer';
+import { transformMetadataForCrop } from '../overlay/overlayMath';
+import { useMediaLetterbox } from '../overlay/useMediaLetterbox';
+import { useI18n } from '../../i18n';
+import { mergePlaybackMetadata } from './mergePlaybackMetadata';
+import { seekPlaybackVideo } from './playbackVideoSync';
+import { usePlaybackMetadata } from './usePlaybackMetadata';
+import { usePlaybackStaticMetadata } from './usePlaybackStaticMetadata';
 
 export function SplitPlaybackCell({
   videoUrl,
   srcCoords,
   label,
+  cameraId,
+  sourceId,
   getPosition,
   positionSec,
   playing,
   speed,
   startTs,
+  runId,
+  showMetadata,
+  onExpand,
+  expanded = false,
 }: {
   videoUrl: string;
   srcCoords: [number, number, number, number];
   label: string;
+  cameraId: string;
+  sourceId?: number | null;
   getPosition: () => number;
   positionSec: number;
   playing: boolean;
   speed: number;
   startTs: number;
+  runId: number | null;
+  showMetadata: boolean;
+  onExpand?: () => void;
+  expanded?: boolean;
 }) {
+  const { t } = useI18n();
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const mediaRef = useRef<HTMLDivElement>(null);
   const getPositionRef = useRef(getPosition);
   getPositionRef.current = getPosition;
+  const [videoReady, setVideoReady] = useState(0);
+  const [parentVideoSize, setParentVideoSize] = useState<{ w: number; h: number } | null>(null);
+
+  const staticMeta = usePlaybackStaticMetadata({
+    camera: cameraId,
+    sourceId,
+    runId,
+    enabled: showMetadata,
+  });
+  const { meta: dynamicMeta } = usePlaybackMetadata({
+    camera: cameraId,
+    sourceId,
+    positionSec,
+    runId,
+    enabled: showMetadata,
+  });
+  const mergedMeta = useMemo(
+    () => mergePlaybackMetadata(staticMeta, dynamicMeta),
+    [staticMeta, dynamicMeta],
+  );
+
+  const layoutBox = useMediaLetterbox(
+    mediaRef,
+    canvasRef,
+    () => {
+      const canvas = canvasRef.current;
+      if (!canvas?.width) return null;
+      return { w: canvas.width, h: canvas.height };
+    },
+    [videoReady, videoUrl, srcCoords],
+  );
+
+  const displayMeta = useMemo(() => {
+    if (!mergedMeta || !showMetadata) return null;
+    const parentW = parentVideoSize?.w ?? 0;
+    const parentH = parentVideoSize?.h ?? 0;
+    if (parentW <= 0 || parentH <= 0) return mergedMeta;
+    return transformMetadataForCrop(mergedMeta, srcCoords, parentW, parentH);
+  }, [mergedMeta, showMetadata, srcCoords, parentVideoSize]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -43,15 +103,17 @@ export function SplitPlaybackCell({
 
     video.addEventListener('timeupdate', draw);
     video.addEventListener('loadeddata', draw);
+    video.addEventListener('seeked', draw);
     draw();
     return () => {
       video.removeEventListener('timeupdate', draw);
       video.removeEventListener('loadeddata', draw);
+      video.removeEventListener('seeked', draw);
     };
   }, [videoUrl, srcCoords]);
 
   useEffect(() => {
-    const container = containerRef.current;
+    const container = mediaRef.current;
     const canvas = canvasRef.current;
     if (!container || !canvas) return;
     const ro = new ResizeObserver(() => {
@@ -88,14 +150,7 @@ export function SplitPlaybackCell({
       if (cancelled) return;
       const video = videoRef.current;
       if (video && videoUrl) {
-        const local = Math.max(0, getPositionRef.current() - startTs);
-        if (Math.abs(video.currentTime - local) > 0.4) {
-          try {
-            video.currentTime = local;
-          } catch {
-            /* ignore */
-          }
-        }
+        seekPlaybackVideo(video, getPositionRef.current(), startTs, { playing });
       }
       if (playing) raf = window.requestAnimationFrame(tick);
     };
@@ -106,16 +161,60 @@ export function SplitPlaybackCell({
     };
   }, [playing, videoUrl, startTs, positionSec]);
 
+  const previewClass = expanded ? 'expanded-camera-frame' : 'camera-preview';
+
+  const inner = (
+    <div ref={mediaRef} className="split-playback-container" style={{ position: 'relative' }}>
+      <video
+        ref={videoRef}
+        src={videoUrl}
+        preload="auto"
+        style={{ display: 'none' }}
+        muted
+        playsInline
+        onLoadedMetadata={() => {
+          const video = videoRef.current;
+          if (video?.videoWidth) {
+            setParentVideoSize({ w: video.videoWidth, h: video.videoHeight });
+          }
+          setVideoReady((n) => n + 1);
+          seekPlaybackVideo(video, getPositionRef.current(), startTs, { playing });
+        }}
+      />
+      <canvas ref={canvasRef} className={previewClass} />
+      <MetadataOverlayLayer
+        meta={displayMeta}
+        layoutBox={layoutBox.width > 0 ? layoutBox : undefined}
+        density={expanded ? 'full' : 'compact'}
+        visible={showMetadata}
+      />
+      <div className="camera-card-overlay-top">
+        <span className="camera-name">{label}</span>
+      </div>
+      {onExpand ? (
+        <div className="camera-card-overlay-actions">
+          <button
+            type="button"
+            className="icon-btn"
+            title={t('live.expand')}
+            onClick={(e) => {
+              e.stopPropagation();
+              onExpand();
+            }}
+          >
+            ⤢
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+
+  if (expanded) return inner;
+
   return (
-    <article className="camera-card camera-card-grid playback-cell">
-      <div className="camera-card-media">
-        <div ref={containerRef} className="split-playback-container">
-          <video ref={videoRef} src={videoUrl} preload="auto" style={{ display: 'none' }} muted playsInline />
-          <canvas ref={canvasRef} className="camera-preview" />
-        </div>
-        <div className="camera-card-overlay-top">
-          <span className="camera-name">{label}</span>
-        </div>
+    <article className="camera-card camera-card-mini camera-card-grid playback-cell" onDoubleClick={onExpand}>
+      <div className="camera-card-media" style={{ position: 'relative' }}>
+        {inner}
       </div>
     </article>
   );

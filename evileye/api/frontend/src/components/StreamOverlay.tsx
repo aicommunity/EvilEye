@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { runGet, streamStatus, type StreamMetadata } from '../api';
 import { useMjpegStream } from '../hooks/useMjpegStream';
 import { useI18n } from '../i18n';
-import { OverlayCanvas } from '../features/live/OverlayCanvas';
-import { useImageLetterbox } from '../features/live/useImageLetterbox';
+import { OverlayCanvas } from '../features/overlay/OverlayCanvas';
+import { useImageLetterbox } from '../features/overlay/useMediaLetterbox';
 import { useRunMetadataWs } from '../features/live/useRunMetadataWs';
 import { Button, Badge } from './ui';
 
