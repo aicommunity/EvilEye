@@ -5,6 +5,7 @@ import glob
 import json
 import os
 import re
+import struct
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -113,6 +114,7 @@ def _secure_under(base: Path, candidate: Path) -> Path:
 
 _DEFAULT_SEGMENT_LENGTH_SEC = 300.0
 _DURATION_CACHE: dict[str, tuple[float, float]] = {}
+_MP4_DURATION_CACHE: dict[str, tuple[float, float | None]] = {}
 _SEGMENT_LENGTH_CACHE: tuple[str, float, float] | None = None
 
 
@@ -183,6 +185,108 @@ def _file_mtime(path: str) -> float | None:
         return None
 
 
+def _read_mp4_box_header(fh, file_size: int) -> tuple[int, bytes, int] | None:
+    pos = fh.tell()
+    if pos + 8 > file_size:
+        return None
+    header = fh.read(8)
+    if len(header) < 8:
+        return None
+    size, typ = struct.unpack(">I4s", header)
+    hdr_len = 8
+    if size == 1:
+        wide = fh.read(8)
+        if len(wide) < 8:
+            return None
+        size = struct.unpack(">Q", wide)[0]
+        hdr_len = 16
+    elif size == 0:
+        size = file_size - pos
+    if size < hdr_len:
+        return None
+    return size, typ, hdr_len
+
+
+def _parse_mvhd_duration(payload: bytes) -> float | None:
+    if len(payload) < 20:
+        return None
+    version = payload[0]
+    try:
+        if version == 1:
+            if len(payload) < 32:
+                return None
+            timescale = struct.unpack(">I", payload[20:24])[0]
+            duration = struct.unpack(">Q", payload[24:32])[0]
+        else:
+            timescale = struct.unpack(">I", payload[12:16])[0]
+            duration = struct.unpack(">I", payload[16:20])[0]
+    except struct.error:
+        return None
+    if timescale <= 0 or duration <= 0:
+        return None
+    return duration / float(timescale)
+
+
+def _mp4_duration_sec(path: str) -> float | None:
+    """Read movie duration from ``mvhd`` without decoding frames.
+
+    Closed splitmux parts have ``moov``; in-progress files often do not.
+    Result is cached by mtime.
+    """
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    cached = _MP4_DURATION_CACHE.get(path)
+    if cached and cached[0] == st.st_mtime:
+        return cached[1]
+
+    duration: float | None = None
+    try:
+        with open(path, "rb") as fh:
+            file_size = st.st_size
+            stack: list[int] = [file_size]
+            while True:
+                pos = fh.tell()
+                limit = stack[-1] if stack else file_size
+                if pos + 8 > limit:
+                    if len(stack) <= 1:
+                        break
+                    fh.seek(stack.pop())
+                    continue
+                parsed = _read_mp4_box_header(fh, file_size)
+                if parsed is None:
+                    break
+                size, typ, hdr_len = parsed
+                payload_end = pos + size
+                if payload_end > file_size or payload_end < pos:
+                    break
+                if typ == b"mvhd":
+                    payload = fh.read(min(40, size - hdr_len))
+                    duration = _parse_mvhd_duration(payload)
+                    break
+                if typ == b"moov":
+                    stack.append(payload_end)
+                    continue
+                fh.seek(payload_end)
+    except OSError:
+        duration = None
+
+    _MP4_DURATION_CACHE[path] = (st.st_mtime, duration)
+    return duration
+
+
+def _plausible_media_duration(duration: float | None, configured_length: float) -> float | None:
+    if duration is None:
+        return None
+    if duration < 1.0:
+        return None
+    # Do not scale against configured_length: a stale 300s default would reject 30-min parts.
+    if duration > 8 * 3600:
+        return None
+    return duration
+
+
 def _resolve_segment_starts(
     parsed: list[tuple[str, float, int | None]],
     *,
@@ -190,11 +294,14 @@ def _resolve_segment_starts(
 ) -> list[tuple[str, float]]:
     """Map files to start timestamps, expanding splitmux indices when needed.
 
-    ``index * segment_length_sec`` drifts: splitmux rotates on media time, which
-    is a few seconds short of the configured wall-clock slot. After many parts
-    the playhead lands in the wrong file (boxes match JSON, the frame does not).
-    When the previous part's mtime is close to the nominal slot, use that close
-    time as the next part's start.
+    Splitmux rotates on media time. Using ``index * segment_length_sec`` drifts
+    across a long session. Using the previous file's mtime is worse for part 0:
+    ``async-finalize`` stamps mtime ~10s after the last frame, and that delay
+    shifts every later part so overlay boxes lead the video.
+
+    Closed parts: accumulate ``mvhd`` duration from the session start. Fallback
+    to mtime only when duration is missing and the stamp is close to the
+    nominal slot (not for the first part).
     """
     if not parsed:
         return []
@@ -216,14 +323,23 @@ def _resolve_segment_starts(
                 out.append((path, session_start))
             continue
         ordered = sorted(items, key=lambda item: (item[1] if item[1] is not None else 0, item[0]))
-        prev_mtime: float | None = None
+        start = session_start
         for path, idx in ordered:
             nominal = session_start + float(idx or 0) * configured_length
-            start = nominal
-            if prev_mtime is not None and abs(prev_mtime - nominal) <= slack:
-                start = prev_mtime
-            out.append((path, start))
-            prev_mtime = _file_mtime(path)
+            chosen = start
+            if abs(chosen - nominal) > slack:
+                chosen = nominal
+            out.append((path, chosen))
+            media_dur = _plausible_media_duration(_mp4_duration_sec(path), configured_length)
+            if media_dur is not None:
+                start = chosen + media_dur
+                continue
+            mtime = _file_mtime(path)
+            # Skip part-0 mtime: it includes mux finalize, not media time.
+            if idx not in (None, 0) and mtime is not None and abs(mtime - (chosen + configured_length)) <= slack:
+                start = mtime
+            else:
+                start = chosen + configured_length
     return out
 
 
@@ -251,13 +367,13 @@ def _video_duration_sec(path: str) -> float | None:
 
     start = _segment_start_ts(path)
     configured = _configured_segment_length_sec()
-    duration: float | None = None
-    if start is not None:
-        # Closed or in-progress file: wall clock since segment open is a good estimate.
-        age = max(0.1, st.st_mtime - start)
-        duration = min(age, configured * 1.5)
-    else:
-        duration = configured
+    duration = _plausible_media_duration(_mp4_duration_sec(path), configured)
+    if duration is None:
+        if start is not None:
+            age = max(0.1, st.st_mtime - start)
+            duration = min(age, configured * 1.5)
+        else:
+            duration = configured
 
     _DURATION_CACHE[path] = (st.st_mtime, duration)
     return duration
@@ -287,11 +403,15 @@ def _assign_segment_ends(
                 except OSError:
                     end = start + configured_length
         else:
-            try:
-                mtime = os.path.getmtime(path)
-                end = max(start + 0.1, min(mtime, start + max_span))
-            except OSError:
-                end = start + configured_length
+            dur = _plausible_media_duration(_mp4_duration_sec(path), configured_length)
+            if dur is not None:
+                end = start + dur
+            else:
+                try:
+                    mtime = os.path.getmtime(path)
+                    end = max(start + 0.1, min(mtime, start + max_span))
+                except OSError:
+                    end = start + configured_length
         out.append((path, start, end))
     return out
 

@@ -1,5 +1,6 @@
 import json
 import os
+import struct
 from pathlib import Path
 
 from evileye.api.core import playback_service as svc
@@ -173,3 +174,55 @@ def test_load_segments_splitmux_uses_mtime_when_media_drifts(tmp_path, monkeypat
     assert tick_1118 - part19["start_ts"] < 60
     # index*1800 would start part 18 ~66s later and keep 11:18:15 in the previous file.
     assert part18["start_ts"] < session + 18 * 1800 - 30
+
+
+def _minimal_mp4(duration_sec: float, timescale: int = 1000) -> bytes:
+    duration = int(round(duration_sec * timescale))
+    mvhd_payload = struct.pack(">BBBBIIII", 0, 0, 0, 0, 0, 0, timescale, duration)
+    mvhd = struct.pack(">I4s", 8 + len(mvhd_payload), b"mvhd") + mvhd_payload
+    moov = struct.pack(">I4s", 8 + len(mvhd), b"moov") + mvhd
+    ftyp_payload = b"isom" + struct.pack(">I", 0) + b"isom"
+    ftyp = struct.pack(">I4s", 8 + len(ftyp_payload), b"ftyp") + ftyp_payload
+    return ftyp + moov
+
+
+def test_mp4_duration_reads_mvhd(tmp_path):
+    path = tmp_path / "clip.mp4"
+    path.write_bytes(_minimal_mp4(1796.353))
+    assert abs(svc._mp4_duration_sec(str(path)) - 1796.353) < 0.002
+
+
+def test_load_segments_splitmux_ignores_first_file_finalize_delay(tmp_path, monkeypatch):
+    """async-finalize mtime of part 0 is ~12s after media; must not shift later parts."""
+    from datetime import datetime
+
+    root = tmp_path / "EvilEyeData"
+    cam = root / "Streams" / "2026-08-17" / "Cam4-Cam5"
+    cam.mkdir(parents=True)
+    session = datetime(2026, 8, 17, 1, 49, 11).timestamp()
+    media = [1796.353] + [1795.2] * 19
+    wall = session
+    for idx, dur in enumerate(media):
+        path = cam / f"Cam4_20260817_014911_0_{idx:05d}.mp4"
+        path.write_bytes(_minimal_mp4(dur))
+        wall += dur
+        extra = 11.7 if idx == 0 else 0.0
+        os.utime(path, (wall + extra, wall + extra))
+    monkeypatch.setenv("EVILEYE_DATA_DIR", str(root))
+    monkeypatch.setattr(svc, "_configured_segment_length_sec", lambda: 1800.0)
+    svc._MP4_DURATION_CACHE.clear()
+
+    segs = {Path(s["path"]).name: s for s in svc.load_segments("Cam4", date="2026-08-17")}
+    part0 = segs["Cam4_20260817_014911_0_00000.mp4"]
+    part1 = segs["Cam4_20260817_014911_0_00001.mp4"]
+    part18 = segs["Cam4_20260817_014911_0_00018.mp4"]
+    part19 = segs["Cam4_20260817_014911_0_00019.mp4"]
+    assert abs(part0["start_ts"] - session) < 0.1
+    assert abs(part1["start_ts"] - (session + 1796.353)) < 0.1
+    # mtime chain would have started part 1 ~12s later.
+    assert part1["start_ts"] < session + 1808
+    tick_1059 = datetime(2026, 8, 17, 10, 59, 27).timestamp()
+    tick_1118 = datetime(2026, 8, 17, 11, 18, 15).timestamp()
+    assert part18["start_ts"] <= tick_1059 <= part18["end_ts"]
+    assert part19["start_ts"] <= tick_1118 <= part19["end_ts"]
+    assert tick_1118 - part19["start_ts"] < 60
