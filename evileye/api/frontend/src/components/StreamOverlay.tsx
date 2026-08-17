@@ -1,7 +1,10 @@
-import { useEffect, useState } from 'react';
-import { runGet, streamStatus } from '../api';
+import { useEffect, useRef, useState } from 'react';
+import { runGet, streamStatus, type StreamMetadata } from '../api';
 import { useMjpegStream } from '../hooks/useMjpegStream';
 import { useI18n } from '../i18n';
+import { OverlayCanvas } from '../features/live/OverlayCanvas';
+import { useImageLetterbox } from '../features/live/useImageLetterbox';
+import { useRunMetadataWs } from '../features/live/useRunMetadataWs';
 import { Button, Badge } from './ui';
 
 export function StreamOverlay({
@@ -18,12 +21,17 @@ export function StreamOverlay({
   const [name, setName] = useState('…');
   const [state, setState] = useState('…');
   const [statusText, setStatusText] = useState('…');
+  const frameWrapRef = useRef<HTMLDivElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
+  const [imgLoaded, setImgLoaded] = useState(0);
   const { phase, src, error, retry, onImgError, onImgLoad, attempt } = useMjpegStream({
     rid,
     sourceId: sourceId ?? null,
     fps,
     enabled: true,
   });
+  const meta = useRunMetadataWs(rid, sourceId ?? null);
+  const layoutBox = useImageLetterbox(frameWrapRef, imgRef, [src, attempt, imgLoaded]);
 
   useEffect(() => {
     let cancelled = false;
@@ -72,7 +80,12 @@ export function StreamOverlay({
       cancelled = true;
       window.clearInterval(id);
     };
-  }, [rid, sourceId, onClose, phase, error]);
+  }, [rid, sourceId, onClose, phase, error, t]);
+
+  const handleImgLoad = () => {
+    onImgLoad();
+    setImgLoaded((n) => n + 1);
+  };
 
   return (
     <div className="stream-container open">
@@ -107,16 +120,20 @@ export function StreamOverlay({
       <div className="stream-body">
         <div className="stream-main">
           <p className="stream-main-title">{t('live.stream.title')}</p>
-          <div className="stream-frame-wrap">
+          <div className="stream-frame-wrap" ref={frameWrapRef} style={{ position: 'relative' }}>
             {src ? (
-              <img
-                key={attempt}
-                src={src}
-                alt={t('live.stream.title')}
-                className="stream-frame"
-                onError={onImgError}
-                onLoad={onImgLoad}
-              />
+              <>
+                <img
+                  ref={imgRef}
+                  key={attempt}
+                  src={src}
+                  alt={t('live.stream.title')}
+                  className="stream-frame"
+                  onError={onImgError}
+                  onLoad={handleImgLoad}
+                />
+                <OverlayCanvas meta={meta as StreamMetadata | null} layoutBox={layoutBox} />
+              </>
             ) : (
               <div className="stream-placeholder">
                 {phase === 'error' || error ? (

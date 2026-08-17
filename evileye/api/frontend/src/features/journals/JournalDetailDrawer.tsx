@@ -116,7 +116,8 @@ export function JournalDetailDrawer({
                     height={`${(Number(bbox[3]) - Number(bbox[1])) * 100}%`}
                     fill="none"
                     stroke="#22c55e"
-                    strokeWidth="2"
+                    strokeWidth="1.5"
+                    vectorEffect="non-scaling-stroke"
                   />
                 ) : null}
                 {zone && Array.isArray(zone) && zone.length >= 3 ? (
@@ -124,7 +125,8 @@ export function JournalDetailDrawer({
                     points={zone.map((p) => `${Number(p[0]) * 100},${Number(p[1]) * 100}`).join(' ')}
                     fill="rgba(59,130,246,0.15)"
                     stroke="#3b82f6"
-                    strokeWidth="2"
+                    strokeWidth="1.5"
+                    vectorEffect="non-scaling-stroke"
                   />
                 ) : null}
               </svg>

@@ -27,6 +27,10 @@ class PreviewRenderContext:
     event_active_obj_ids: set[int] = field(default_factory=set)
     active_event_labels: list[str] = field(default_factory=list)
     zones: list[Any] = field(default_factory=list)
+    show_boxes: bool = True
+    show_zones: bool = True
+    # When False, boxes/zones are sent via metadata only (SVG overlay in web UI).
+    burn_in_overlay: bool = True
 
 
 def serialize_preview_metadata(context: PreviewRenderContext, image_shape=None) -> dict[str, Any]:
@@ -36,51 +40,53 @@ def serialize_preview_metadata(context: PreviewRenderContext, image_shape=None) 
         h, w = int(image_shape[0]), int(image_shape[1])
 
     objects: list[dict[str, Any]] = []
-    for obj in context.track_info or []:
-        try:
-            track = getattr(obj, "track", None)
-            bbox = getattr(track, "bounding_box", None) if track is not None else None
-            if bbox is None:
-                bbox = getattr(obj, "bounding_box", None)
-            if not bbox or len(bbox) < 4:
+    if context.show_boxes:
+        for obj in context.track_info or []:
+            try:
+                track = getattr(obj, "track", None)
+                bbox = getattr(track, "bounding_box", None) if track is not None else None
+                if bbox is None:
+                    bbox = getattr(obj, "bounding_box", None)
+                if not bbox or len(bbox) < 4:
+                    continue
+                x1, y1, x2, y2 = [float(v) for v in bbox[:4]]
+                if w and h and max(x1, y1, x2, y2) > 1.5:
+                    x1, x2 = x1 / w, x2 / w
+                    y1, y2 = y1 / h, y2 / h
+                class_id = getattr(obj, "class_id", None)
+                class_name = None
+                if context.class_mapping and class_id is not None:
+                    try:
+                        reverse = {cid: name for name, cid in context.class_mapping.items()}
+                        class_name = reverse.get(class_id)
+                    except Exception:
+                        class_name = None
+                conf = getattr(track, "confidence", None) if track is not None else None
+                track_id = getattr(track, "track_id", None) if track is not None else getattr(obj, "object_id", None)
+                objects.append(
+                    {
+                        "track_id": track_id,
+                        "class_id": class_id,
+                        "class_name": class_name,
+                        "conf": float(conf) if conf is not None else None,
+                        "bbox": [x1, y1, x2, y2],
+                    }
+                )
+            except Exception:
                 continue
-            x1, y1, x2, y2 = [float(v) for v in bbox[:4]]
-            if w and h and max(x1, y1, x2, y2) > 1.5:
-                x1, x2 = x1 / w, x2 / w
-                y1, y2 = y1 / h, y2 / h
-            class_id = getattr(obj, "class_id", None)
-            class_name = None
-            if context.class_mapping and class_id is not None:
-                try:
-                    reverse = {cid: name for name, cid in context.class_mapping.items()}
-                    class_name = reverse.get(class_id)
-                except Exception:
-                    class_name = None
-            conf = getattr(track, "confidence", None) if track is not None else None
-            track_id = getattr(track, "track_id", None) if track is not None else getattr(obj, "object_id", None)
-            objects.append(
-                {
-                    "track_id": track_id,
-                    "class_id": class_id,
-                    "class_name": class_name,
-                    "conf": float(conf) if conf is not None else None,
-                    "bbox": [x1, y1, x2, y2],
-                }
-            )
-        except Exception:
-            continue
 
     zones: list[dict[str, Any]] = []
-    for zone in context.zones or []:
-        try:
-            zone_type, zone_coords, _extra = zone
-            points = []
-            for px, py in zone_coords or []:
-                points.append([float(px), float(py)])
-            if points:
-                zones.append({"name": str(zone_type), "points": points})
-        except Exception:
-            continue
+    if context.show_zones:
+        for zone in context.zones or []:
+            try:
+                zone_type, zone_coords, _extra = zone
+                points = []
+                for px, py in zone_coords or []:
+                    points.append([float(px), float(py)])
+                if points:
+                    zones.append({"name": str(zone_type), "points": points})
+            except Exception:
+                continue
 
     return {
         "objects": objects,
@@ -116,22 +122,24 @@ def apply_preview_overlay(frame: CaptureImage, context: PreviewRenderContext) ->
     if frame is None or getattr(frame, "image", None) is None:
         return frame
 
-    utils.draw_boxes_tracking(
-        frame,
-        context.track_info or [],
-        context.source_name,
-        context.source_duration_msecs,
-        context.font_scale,
-        context.font_thickness,
-        context.font_color,
-        text_config=context.text_config,
-        class_mapping=context.class_mapping,
-        event_active_obj_ids=context.event_active_obj_ids,
-        event_color=_rgb_to_bgr(context.event_color_rgb),
-    )
+    if context.show_boxes and context.burn_in_overlay:
+        utils.draw_boxes_tracking(
+            frame,
+            context.track_info or [],
+            context.source_name,
+            context.source_duration_msecs,
+            context.font_scale,
+            context.font_thickness,
+            context.font_color,
+            text_config=context.text_config,
+            class_mapping=context.class_mapping,
+            event_active_obj_ids=context.event_active_obj_ids,
+            event_color=_rgb_to_bgr(context.event_color_rgb),
+        )
     if context.show_debug_info:
         utils.draw_debug_info(frame, context.debug_info or {})
-    _draw_zones(frame.image, context.zones)
+    if context.show_zones and context.burn_in_overlay:
+        _draw_zones(frame.image, context.zones)
     _draw_event_overlay(frame.image, context)
     return frame
 

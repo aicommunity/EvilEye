@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { streamSnapshotUrl, type StateCamera } from '../../api';
+import { streamSnapshotUrl, type StateCamera, type StreamMetadata } from '../../api';
 import { Button, Badge } from '../../components/ui';
 import { useI18n } from '../../i18n';
+import { OverlayCanvas } from './OverlayCanvas';
+import { useImageLetterbox } from './useImageLetterbox';
+import { useRunMetadataWs } from './useRunMetadataWs';
 
 const STALE_SEC = 5;
 const LIVE_SNAPSHOT_MS = 3000;
@@ -69,9 +72,14 @@ export function CameraTile({
   const [backoffStep, setBackoffStep] = useState(0);
   const [staleSnapStep, setStaleSnapStep] = useState(0);
   const retryTimer = useRef<number | null>(null);
+  const mediaRef = useRef<HTMLDivElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
+  const [imgLoaded, setImgLoaded] = useState(0);
 
   const mode = useMemo(() => resolvePreviewMode(camera, previewError), [camera, previewError]);
   const running = camera.run_state === 'running';
+  const wantOverlay = running && active;
+  const meta = useRunMetadataWs(wantOverlay ? camera.run_id : null, camera.source_id ?? null);
   const wantSnapshot = running && active && !useMjpeg && !previewWsActive;
   const wantWsPreview = running && active && !useMjpeg && previewWsActive && previewBlobUrl;
 
@@ -117,6 +125,7 @@ export function CameraTile({
     setPreviewError(false);
     setBackoffStep(0);
     setStaleSnapStep(0);
+    setImgLoaded((n) => n + 1);
   };
 
   const snapBase = streamSnapshotUrl(camera.run_id, camera.source_id);
@@ -128,6 +137,7 @@ export function CameraTile({
     : wantWsPreview
       ? previewBlobUrl!
       : snapshotSrc;
+  const layoutBox = useImageLetterbox(mediaRef, imgRef, [imgSrc, imgLoaded, camera.run_id, camera.source_id]);
 
   const emptyLabel =
     mode === 'offline'
@@ -150,17 +160,23 @@ export function CameraTile({
         onDrop={onDrop}
         onDoubleClick={() => onExpand?.()}
       >
-        <div className="camera-card-media">
+        <div className="camera-card-media" ref={mediaRef} style={{ position: 'relative' }}>
           {mode === 'offline' ? (
             <div className="camera-preview camera-preview-empty">{emptyLabel}</div>
           ) : imgSrc ? (
-            <img
-              src={imgSrc}
-              alt={camera.source_name}
-              className="camera-preview"
-              onError={onImgError}
-              onLoad={onImgLoad}
-            />
+            <>
+              <img
+                ref={imgRef}
+                src={imgSrc}
+                alt={camera.source_name}
+                className="camera-preview"
+                onError={onImgError}
+                onLoad={onImgLoad}
+              />
+              {wantOverlay ? (
+                <OverlayCanvas meta={meta as StreamMetadata | null} layoutBox={layoutBox} />
+              ) : null}
+            </>
           ) : (
             <div className="camera-preview camera-preview-empty">{emptyLabel}</div>
           )}
@@ -228,15 +244,21 @@ export function CameraTile({
       {mode === 'offline' ? (
         <div className="camera-preview camera-preview-empty">{emptyLabel}</div>
       ) : (
-        <div className="camera-preview-wrap" style={{ position: 'relative' }}>
+        <div className="camera-preview-wrap" ref={mediaRef} style={{ position: 'relative' }}>
           {imgSrc ? (
-            <img
-              src={imgSrc}
-              alt={camera.source_name}
-              className="camera-preview"
-              onError={onImgError}
-              onLoad={onImgLoad}
-            />
+            <>
+              <img
+                ref={imgRef}
+                src={imgSrc}
+                alt={camera.source_name}
+                className="camera-preview"
+                onError={onImgError}
+                onLoad={onImgLoad}
+              />
+              {wantOverlay ? (
+                <OverlayCanvas meta={meta as StreamMetadata | null} layoutBox={layoutBox} />
+              ) : null}
+            </>
           ) : (
             <div className="camera-preview camera-preview-empty">{emptyLabel}</div>
           )}

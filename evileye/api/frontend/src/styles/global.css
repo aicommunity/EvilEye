@@ -1325,6 +1325,12 @@ body {
   display: block;
 }
 
+.journal-preview-overlay rect,
+.journal-preview-overlay polygon {
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
 .journal-detail-media-wrap {
   position: relative;
   display: inline-block;
