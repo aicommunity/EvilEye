@@ -19,7 +19,9 @@ from evileye.visualization_modules.preview_render import PreviewRenderContext, s
 
 _OBJECT_FILES = ("objects_found.json", "objects_lost.json")
 DEFAULT_MATCH_SEC = 0.5
+MAX_LERP_SEC = 3.0
 DETECTION_INDEX_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+JSON_OBJECTS_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _EVENT_FILES = {
     "camera_events.json": "camera_events",
     "system_events.json": "system_events",
@@ -176,11 +178,21 @@ def _read_json_objects(filepath: Path) -> list[dict[str, Any]]:
     if not filepath.is_file():
         return []
     try:
+        mtime = filepath.stat().st_mtime
+    except OSError:
+        return []
+    key = str(filepath)
+    cached = JSON_OBJECTS_CACHE.get(key)
+    if cached and cached[0] == mtime:
+        return cached[1]
+    try:
         data = json.loads(filepath.read_text(encoding="utf-8"))
     except Exception:
         return []
     objects_list = data if isinstance(data, list) else data.get("objects", [])
-    return [obj for obj in objects_list if isinstance(obj, dict)]
+    parsed = [obj for obj in objects_list if isinstance(obj, dict)]
+    JSON_OBJECTS_CACHE[key] = (mtime, parsed)
+    return parsed
 
 
 def _detection_event_ts(raw: dict[str, Any], kind: str) -> datetime | None:
@@ -416,6 +428,8 @@ def _load_objects_from_json(
         if not (found_ts <= target <= lost_ts):
             continue
         span = (lost_ts - found_ts).total_seconds()
+        if span > MAX_LERP_SEC:
+            continue
         t = 0.0 if span <= 1e-9 else (target - found_ts).total_seconds() / span
         interpolated = dict(found_obj)
         interpolated["bounding_box"] = _lerp_bbox(
@@ -682,8 +696,19 @@ def _load_dynamic_records(
     if mode == "database" and _db_available():
         db_objects = _load_objects_from_db(target, camera, date_folder, window_sec)
         db_events = _load_events_from_db(target, camera, date_folder, window_sec)
-        if db_objects or db_events:
+        if db_objects:
             return db_objects, db_events
+        json_objects, json_events = _load_json_dynamic_records(
+            target=target,
+            date_folder=date_folder,
+            window_sec=window_sec,
+            params=params,
+            aliases=aliases,
+            source_id=source_id,
+        )
+        if db_events:
+            return json_objects, db_events
+        return json_objects, json_events
     return _load_json_dynamic_records(
         target=target,
         date_folder=date_folder,

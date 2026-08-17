@@ -562,6 +562,137 @@ def test_json_active_track_between_found_and_lost(tmp_path, monkeypatch):
     assert len(gone["objects"]) == 0
 
 
+def test_json_long_track_has_no_mid_lerp(tmp_path, monkeypatch):
+    root = tmp_path / "EvilEyeData"
+    date = "2026-08-17"
+    meta = root / "Detections" / date / "Metadata"
+    meta.mkdir(parents=True)
+    (meta / "objects_found.json").write_text(
+        json.dumps(
+            {
+                "objects": [
+                    {
+                        "object_id": 464,
+                        "source_name": "Cam4",
+                        "timestamp": "2026-08-17T10:57:28",
+                        "bounding_box": {"x": 100, "y": 100, "width": 50, "height": 80},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (meta / "objects_lost.json").write_text(
+        json.dumps(
+            {
+                "objects": [
+                    {
+                        "object_id": 464,
+                        "source_name": "Cam4",
+                        "lost_timestamp": "2026-08-17T10:59:37",
+                        "bounding_box": {"x": 200, "y": 120, "width": 50, "height": 80},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    cfg = {"controller": {"use_database": False}, "record": {"out_dir": str(root)}}
+    monkeypatch.setattr(svc, "_load_params_for_run", lambda _run_id: cfg)
+
+    mid = svc.build_playback_metadata(
+        camera="Cam4",
+        ts=datetime(2026, 8, 17, 10, 59, 0).timestamp(),
+        run_id=1,
+    )
+    found = svc.build_playback_metadata(
+        camera="Cam4",
+        ts=datetime(2026, 8, 17, 10, 57, 28).timestamp(),
+        run_id=1,
+    )
+    lost = svc.build_playback_metadata(
+        camera="Cam4",
+        ts=datetime(2026, 8, 17, 10, 59, 37).timestamp(),
+        run_id=1,
+    )
+    assert len(mid["objects"]) == 0
+    assert len(found["objects"]) == 1
+    assert len(lost["objects"]) == 1
+
+
+def test_json_objects_cached_by_mtime(tmp_path, monkeypatch):
+    root = tmp_path / "EvilEyeData"
+    date = "2026-08-17"
+    meta = root / "Detections" / date / "Metadata"
+    meta.mkdir(parents=True)
+    payload = {
+        "objects": [
+            {
+                "object_id": 1,
+                "source_name": "Cam1",
+                "timestamp": "2026-08-17T11:00:00",
+                "bounding_box": {"x": 10, "y": 10, "width": 20, "height": 20},
+            }
+        ]
+    }
+    (meta / "objects_found.json").write_text(json.dumps(payload), encoding="utf-8")
+    (meta / "objects_lost.json").write_text(json.dumps({"objects": []}), encoding="utf-8")
+    cfg = {"controller": {"use_database": False}, "record": {"out_dir": str(root)}}
+    monkeypatch.setattr(svc, "_load_params_for_run", lambda _run_id: cfg)
+
+    loads = {"n": 0}
+    orig = json.loads
+
+    def counting_loads(raw, *args, **kwargs):
+        loads["n"] += 1
+        return orig(raw, *args, **kwargs)
+
+    monkeypatch.setattr(svc.json, "loads", counting_loads)
+    ts = datetime(2026, 8, 17, 11, 0, 0).timestamp()
+    first = svc.build_playback_metadata(camera="Cam1", ts=ts, run_id=1)
+    after_first = loads["n"]
+    second = svc.build_playback_metadata(camera="Cam1", ts=ts, run_id=1)
+    assert len(first["objects"]) == 1
+    assert len(second["objects"]) == 1
+    assert after_first >= 1
+    assert loads["n"] == after_first
+
+
+def test_db_events_without_objects_fall_back_to_json(tmp_path, monkeypatch):
+    root = tmp_path / "EvilEyeData"
+    date = "2026-08-17"
+    meta = root / "Detections" / date / "Metadata"
+    meta.mkdir(parents=True)
+    (meta / "objects_found.json").write_text(
+        json.dumps(
+            {
+                "objects": [
+                    {
+                        "object_id": 9,
+                        "source_name": "Cam1",
+                        "timestamp": "2026-08-17T11:00:00",
+                        "bounding_box": {"x": 10, "y": 10, "width": 20, "height": 20},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    cfg = {"controller": {"use_database": True}, "record": {"out_dir": str(root)}}
+    monkeypatch.setattr(svc, "_load_params_for_run", lambda _run_id: cfg)
+    monkeypatch.setattr(svc, "_playback_storage_mode", lambda _p: "database")
+    monkeypatch.setattr(svc, "_db_available", lambda: True)
+    monkeypatch.setattr(svc, "_load_objects_from_db", lambda *_a, **_k: [])
+    monkeypatch.setattr(svc, "_load_events_from_db", lambda *_a, **_k: [{"event_type": "signal"}])
+
+    payload = svc.build_playback_metadata(
+        camera="Cam1",
+        ts=datetime(2026, 8, 17, 11, 0, 0).timestamp(),
+        run_id=1,
+    )
+    assert len(payload["objects"]) == 1
+
+
 def test_json_found_without_lost_does_not_stick(tmp_path, monkeypatch):
     root = tmp_path / "EvilEyeData"
     date = "2026-08-17"
