@@ -6,7 +6,7 @@ import {
   PAN_CLICK_SLOP_PX,
   buildTimelineTicks,
   formatPlaybackDateTime,
-  snapUnixToDetections,
+  snapTimelineSeek,
   unixAtClientX,
   zoomViewAt,
 } from './timelineMath';
@@ -89,7 +89,7 @@ export function Timeline({
     if (!el) return;
     const rect = el.getBoundingClientRect();
     const raw = unixAtClientX(clientX, rect, viewFrom, viewTo);
-    onSeek(snapUnixToDetections(raw, detectionTs, viewFrom, viewTo, rect.width));
+    onSeek(snapTimelineSeek(raw, detectionTs, viewFrom, viewTo, rect.width));
   };
 
   const updateHover = (clientX: number) => {
@@ -115,7 +115,7 @@ export function Timeline({
       onPointerDown={(e) => {
         if (e.button !== 0) return;
         const target = e.target as HTMLElement;
-        if (target.closest('[data-timeline-marker],[data-timeline-detection]')) return;
+        if (target.closest('[data-timeline-marker]')) return;
         dragRef.current = {
           pointerId: e.pointerId,
           startX: e.clientX,
@@ -199,26 +199,7 @@ export function Timeline({
           );
         })}
       </div>
-      {detectionTs.map((ts) => {
-        if (ts < viewFrom || ts > viewTo) return null;
-        const left = ((ts - viewFrom) / span) * 100;
-        return (
-          <button
-            key={`det-${ts}`}
-            type="button"
-            data-timeline-detection
-            className="timeline-detection-tick"
-            style={{ left: `${left}%` }}
-            title={formatPlaybackDateTime(ts)}
-            aria-label={`detection ${formatPlaybackDateTime(ts)}`}
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation();
-              onSeek(ts);
-            }}
-          />
-        );
-      })}
+      <DetectionTicksCanvas detectionTs={detectionTs} viewFrom={viewFrom} viewTo={viewTo} />
       {segments.map((seg) => {
         const left = ((seg.start_ts - viewFrom) / span) * 100;
         const width = ((seg.end_ts - seg.start_ts) / span) * 100;
@@ -282,3 +263,52 @@ export function Timeline({
 
 export { EventMarkers } from './EventMarkers';
 export { buildTimelineTicks } from './timelineMath';
+
+function DetectionTicksCanvas({
+  detectionTs,
+  viewFrom,
+  viewTo,
+}: {
+  detectionTs: number[];
+  viewFrom: number;
+  viewTo: number;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const parent = canvas?.parentElement;
+    if (!canvas || !parent) return;
+
+    const paint = () => {
+      const dpr = window.devicePixelRatio || 1;
+      const w = parent.clientWidth;
+      const h = parent.clientHeight;
+      canvas.width = Math.max(1, Math.round(w * dpr));
+      canvas.height = Math.max(1, Math.round(h * dpr));
+      canvas.style.width = `${w}px`;
+      canvas.style.height = `${h}px`;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      const span = viewTo - viewFrom;
+      if (!(span > 0) || !detectionTs.length) return;
+      ctx.fillStyle = 'rgba(34, 197, 94, 0.95)';
+      for (const ts of detectionTs) {
+        if (ts < viewFrom || ts > viewTo) continue;
+        const x = ((ts - viewFrom) / span) * w;
+        ctx.beginPath();
+        ctx.arc(x, h * 0.62, 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    };
+
+    paint();
+    const ro = new ResizeObserver(paint);
+    ro.observe(parent);
+    return () => ro.disconnect();
+  }, [detectionTs, viewFrom, viewTo]);
+
+  return <canvas ref={canvasRef} className="timeline-detection-canvas" aria-hidden />;
+}

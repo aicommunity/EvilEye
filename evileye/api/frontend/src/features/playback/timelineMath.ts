@@ -7,6 +7,8 @@ export const PAN_CLICK_SLOP_PX = 10;
 export const DETECTION_SNAP_PX = 10;
 /** Do not snap clicks across more than this many seconds (avoids sticky playhead when zoomed out). */
 export const DETECTION_SNAP_MAX_SEC = 1.5;
+/** Snap clicks to detection ticks only when the view is zoomed in this far. */
+export const DETECTION_SNAP_VIEW_SPAN_SEC = 2 * 3600;
 
 const TICK_STEPS_SEC = [60, 300, 900, 1800, 3600, 7200, 14400, 21600, 43200, 86400];
 
@@ -130,6 +132,17 @@ export function snapUnixToDetections(
   }
   if (best != null && bestDt <= maxDt) return best;
   return unix;
+}
+
+export function snapTimelineSeek(
+  unix: number,
+  detectionTs: number[],
+  viewFrom: number,
+  viewTo: number,
+  widthPx: number,
+): number {
+  if (viewTo - viewFrom >= DETECTION_SNAP_VIEW_SPAN_SEC) return unix;
+  return snapUnixToDetections(unix, detectionTs, viewFrom, viewTo, widthPx);
 }
 
 export function localDateString(tsSec: number): string {
