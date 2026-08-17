@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   formatObjectLabel,
   polygonCentroid,
+  prepareOverlayMetadata,
   rescaleMetadataForVideoSize,
   rgbArrayToCss,
   transformMetadataForCrop,
 } from './overlayMath';
+import { resolvePlaybackFrameSize } from './playbackFrameSize';
 
 describe('overlayMath', () => {
   it('formats object label with global id', () => {
@@ -46,5 +48,28 @@ describe('overlayMath', () => {
     const cropped = transformMetadataForCrop(meta, [960, 540, 960, 540], 1920, 1080);
     expect(cropped?.objects?.[0]?.bbox?.[0]).toBeCloseTo(0, 1);
     expect(cropped?.zones?.[0]?.points?.length).toBeGreaterThan(0);
+  });
+
+  it('prepareOverlayMetadata is no-op when coord_ref matches display size', () => {
+    const meta = {
+      coord_ref: { w: 2304, h: 1292 },
+      zones: [{ points: [[0.1, 0.2], [0.3, 0.4], [0.5, 0.6], [0.7, 0.8]] as [number, number][] }],
+    };
+    const prepared = prepareOverlayMetadata(meta, { w: 2304, h: 1292 });
+    expect(prepared?.zones?.[0]?.points?.length).toBe(4);
+  });
+
+  it('resolvePlaybackFrameSize returns crop dims for split camera', () => {
+    const size = resolvePlaybackFrameSize(
+      {
+        id: 'Cam3',
+        name: 'Cam3',
+        folder: 'Cam2-Cam3',
+        split: true,
+        src_coords: [0, 1300, 2304, 1292],
+      },
+      { w: 2304, h: 2592 },
+    );
+    expect(size).toEqual({ w: 2304, h: 1292 });
   });
 });

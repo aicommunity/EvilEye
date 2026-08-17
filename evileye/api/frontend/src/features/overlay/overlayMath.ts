@@ -1,5 +1,7 @@
 import type { StreamMetadataObject, StreamMetadata } from '../../api';
 
+export type FrameSize = { w: number; h: number };
+
 export function formatObjectLabel(o: StreamMetadataObject): string {
   const classLabel = o.class_name ?? (o.class_id != null ? `class_${o.class_id}` : 'object');
   const trackLabel = o.track_id != null ? String(o.track_id) : '?';
@@ -103,6 +105,15 @@ export function rescaleMetadataForVideoSize(
     objects,
     debug_rois,
   };
+}
+
+/** Align metadata to displayed media using coord_ref (live + playback unified). */
+export function prepareOverlayMetadata(
+  meta: StreamMetadata | null,
+  displaySize: FrameSize | null,
+): StreamMetadata | null {
+  if (!meta || !displaySize || displaySize.w <= 0 || displaySize.h <= 0) return meta;
+  return rescaleMetadataForVideoSize(meta, displaySize.w, displaySize.h);
 }
 
 /** Map normalized overlay coords from parent frame into split-crop space. */

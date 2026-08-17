@@ -67,6 +67,8 @@ def test_build_playback_metadata_from_json(tmp_path, monkeypatch):
     cfg.write_text(
         json.dumps(
             {
+                "controller": {"use_database": False},
+                "record": {"out_dir": str(root)},
                 "events_detectors": {
                     "ZoneEventsDetector": {
                         "sources": {
@@ -95,10 +97,6 @@ def test_build_playback_metadata_from_json(tmp_path, monkeypatch):
 
     monkeypatch.setenv("EVILEYE_DATA_DIR", str(root))
     monkeypatch.setattr(svc, "_load_params_for_run", lambda _run_id: json.loads(cfg.read_text(encoding="utf-8")))
-    monkeypatch.setattr(
-        "evileye.api.core.journal_service.configured_storage_mode",
-        lambda: "json",
-    )
 
     payload = svc.build_playback_metadata(
         camera="Cam1",
@@ -116,6 +114,7 @@ def test_build_playback_metadata_from_json(tmp_path, monkeypatch):
     assert payload["signalization"] is True
     assert payload["objects"][0]["event_active"] is True
     assert payload["debug_rois"] == []
+    assert payload["coord_ref"] == {"w": 1920, "h": 1080}
 
     static_payload = svc.build_playback_static_metadata(
         camera="Cam1",
@@ -126,6 +125,7 @@ def test_build_playback_metadata_from_json(tmp_path, monkeypatch):
     )
     assert static_payload["zones"]
     assert static_payload["debug_rois"] == []
+    assert static_payload["coord_ref"] == {"w": 1920, "h": 1080}
 
 
 def test_build_playback_metadata_batch(tmp_path, monkeypatch):
@@ -163,11 +163,8 @@ def test_load_dynamic_records_json_mode(tmp_path, monkeypatch):
         ),
         encoding="utf-8",
     )
+    params = {"controller": {"use_database": False}, "record": {"out_dir": str(root)}}
     monkeypatch.setenv("EVILEYE_DATA_DIR", str(root))
-    monkeypatch.setattr(
-        "evileye.api.core.journal_service.configured_storage_mode",
-        lambda: "json",
-    )
     from evileye.api.core.playback_metadata_service import _load_dynamic_records
 
     objects, events = _load_dynamic_records(
@@ -175,17 +172,16 @@ def test_load_dynamic_records_json_mode(tmp_path, monkeypatch):
         camera="Cam1",
         date_folder=date,
         window_sec=1.0,
+        params=params,
+        source_id=0,
     )
     assert len(objects) == 1
     assert events == []
 
 
 def test_load_dynamic_records_db_mode_skips_json(tmp_path, monkeypatch):
+    params = {"controller": {"use_database": True}, "record": {"out_dir": str(tmp_path / "EvilEyeData")}}
     monkeypatch.setenv("EVILEYE_DATA_DIR", str(tmp_path / "EvilEyeData"))
-    monkeypatch.setattr(
-        "evileye.api.core.journal_service.configured_storage_mode",
-        lambda: "database",
-    )
     monkeypatch.setattr(
         "evileye.api.core.playback_metadata_service._load_objects_from_db",
         lambda *args, **kwargs: [{"object_id": 9, "bounding_box": [0, 0, 0.1, 0.1]}],
@@ -201,6 +197,8 @@ def test_load_dynamic_records_db_mode_skips_json(tmp_path, monkeypatch):
         camera="Cam1",
         date_folder="2026-06-13",
         window_sec=1.0,
+        params=params,
+        source_id=0,
     )
     assert objects[0]["object_id"] == 9
     assert events == []
@@ -291,3 +289,183 @@ def test_video_size_for_source_prefers_source_dimensions():
         },
     }
     assert video_size_for_source(params, 0) == (3840, 2160)
+
+
+SPLIT_CONFIG = {
+    "controller": {"use_database": False},
+    "record": {"out_dir": "EvilEyeData"},
+    "events_detectors": {
+        "ZoneEventsDetector": {
+            "sources": {
+                "2": [
+                    [
+                        [0.08, 0.07],
+                        [0.46, 0.62],
+                        [0.35, 0.76],
+                        [0.05, 0.10],
+                    ]
+                ],
+            },
+        },
+    },
+    "pipeline": {
+        "sources": [
+            {
+                "split": True,
+                "num_split": 2,
+                "source_ids": [1, 2],
+                "source_names": ["Cam2", "Cam3"],
+                "src_coords": [
+                    [0, 0, 2304, 1300],
+                    [0, 1300, 2304, 1292],
+                ],
+            }
+        ],
+    },
+}
+
+
+def test_resolve_playback_coord_context_split_cam3():
+    from evileye.visualization_modules.playback_coord import resolve_playback_coord_context
+
+    ctx = resolve_playback_coord_context(
+        SPLIT_CONFIG,
+        camera="Cam3",
+        source_id=2,
+        frame_w=2304,
+        frame_h=2592,
+    )
+    assert ctx.is_split is True
+    assert ctx.logical_w == 2304
+    assert ctx.logical_h == 1292
+    assert ctx.src_coords == (0, 1300, 2304, 1292)
+
+
+def test_static_metadata_split_zone_four_points(tmp_path, monkeypatch):
+    monkeypatch.setattr(svc, "_load_params_for_run", lambda _run_id: SPLIT_CONFIG)
+    payload = svc.build_playback_static_metadata(
+        camera="Cam3",
+        run_id=1,
+        source_id=2,
+        frame_w=2304,
+        frame_h=2592,
+    )
+    assert len(payload["zones"]) == 1
+    assert len(payload["zones"][0]["points"]) == 4
+    assert payload["coord_ref"] == {"w": 2304, "h": 1292}
+
+
+def test_object_bbox_json_crop_pixels(tmp_path, monkeypatch):
+    root = tmp_path / "EvilEyeData"
+    date = "2026-06-13"
+    detections = root / "Detections" / date / "Metadata"
+    detections.mkdir(parents=True)
+    target_ts = datetime(2026, 6, 13, 10, 0, 0).timestamp()
+    (detections / "objects_found.json").write_text(
+        json.dumps(
+            [
+                {
+                    "timestamp": "2026-06-13T10:00:00",
+                    "source_name": "Cam3",
+                    "source_id": 2,
+                    "object_id": 7,
+                    "class_name": "person",
+                    "bounding_box": {"x": 100, "y": 200, "width": 50, "height": 80},
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    cfg = dict(SPLIT_CONFIG)
+    cfg["record"] = {"out_dir": str(root)}
+    monkeypatch.setenv("EVILEYE_DATA_DIR", str(root))
+    monkeypatch.setattr(svc, "_load_params_for_run", lambda _run_id: cfg)
+
+    payload = svc.build_playback_metadata(
+        camera="Cam3",
+        ts=target_ts,
+        run_id=1,
+        source_id=2,
+        frame_w=2304,
+        frame_h=2592,
+    )
+    assert len(payload["objects"]) == 1
+    bbox = payload["objects"][0]["bbox"]
+    assert bbox[1] == pytest.approx(200 / 1292, rel=1e-3)
+    assert bbox[3] == pytest.approx(280 / 1292, rel=1e-3)
+
+
+def test_dynamic_storage_mode_from_run_params(tmp_path, monkeypatch):
+    root = tmp_path / "EvilEyeData"
+    date = "2026-06-13"
+    detections = root / "Detections" / date / "Metadata"
+    detections.mkdir(parents=True)
+    (detections / "objects_found.json").write_text(
+        json.dumps(
+            [
+                {
+                    "timestamp": "2026-06-13T10:00:00",
+                    "source_name": "Cam1",
+                    "object_id": 1,
+                    "bounding_box": [0.1, 0.1, 0.2, 0.2],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    cfg = {
+        "controller": {"use_database": False},
+        "record": {"out_dir": str(root)},
+        "pipeline": {"sources": [{"source_ids": [0], "source_names": ["Cam1"]}]},
+    }
+    monkeypatch.setenv("EVILEYE_DATA_DIR", str(root))
+    monkeypatch.setattr(svc, "_load_params_for_run", lambda _run_id: cfg)
+    monkeypatch.setattr(
+        "evileye.api.core.journal_service.configured_storage_mode",
+        lambda: "database",
+    )
+
+    payload = svc.build_playback_metadata(
+        camera="Cam1",
+        ts=datetime(2026, 6, 13, 10, 0, 0).timestamp(),
+        run_id=1,
+        source_id=0,
+        frame_w=1920,
+        frame_h=1080,
+    )
+    assert len(payload["objects"]) == 1
+
+
+def test_source_match_by_source_id(tmp_path, monkeypatch):
+    root = tmp_path / "EvilEyeData"
+    date = "2026-06-13"
+    detections = root / "Detections" / date / "Metadata"
+    detections.mkdir(parents=True)
+    target_ts = datetime(2026, 6, 13, 10, 0, 0).timestamp()
+    (detections / "objects_found.json").write_text(
+        json.dumps(
+            [
+                {
+                    "timestamp": "2026-06-13T10:00:00",
+                    "source_id": 2,
+                    "object_id": 3,
+                    "bounding_box": {"x": 10, "y": 20, "width": 30, "height": 40},
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    cfg = dict(SPLIT_CONFIG)
+    cfg["record"] = {"out_dir": str(root)}
+    monkeypatch.setenv("EVILEYE_DATA_DIR", str(root))
+    monkeypatch.setattr(svc, "_load_params_for_run", lambda _run_id: cfg)
+
+    payload = svc.build_playback_metadata(
+        camera="Cam3",
+        ts=target_ts,
+        run_id=1,
+        source_id=2,
+        frame_w=2304,
+        frame_h=2592,
+    )
+    assert len(payload["objects"]) == 1

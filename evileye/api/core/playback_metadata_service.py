@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from evileye.api.core.playback_service import _config_path_for_run, data_dir
+from evileye.api.core.playback_service import _config_path_for_run, _configured_data_dir_from_params, data_dir
 from evileye.visualization_modules.journal_metadata_extractor import EventMetadataExtractor
-from evileye.visualization_modules.overlay_config import (
-    extract_zones_by_source,
-    video_size_for_source,
+from evileye.visualization_modules.overlay_config import extract_zones_by_source
+from evileye.visualization_modules.playback_coord import (
+    PlaybackCoordContext,
+    resolve_playback_coord_context,
+    source_aliases,
 )
 from evileye.visualization_modules.preview_render import PreviewRenderContext, serialize_preview_metadata
 
@@ -103,12 +105,11 @@ def _resolve_source_id(
                     return int(ids[idx])
                 except Exception:
                     return None
-        # Split / composite storage: match parent folder built from source_names prefix.
         split = bool(source.get("split"))
         num_split = int(source.get("num_split") or len(names) or 0)
         if split and num_split and names:
             parent_folder = "-".join(str(n) for n in names[:num_split])
-            if camera == parent_folder or camera in {str(n) for n in names}:
+            if camera == parent_folder:
                 try:
                     return int(ids[0]) if ids else None
                 except Exception:
@@ -130,10 +131,42 @@ def _resolve_source_id(
     return None
 
 
+def _playback_storage_mode(params: dict[str, Any]) -> str:
+    from evileye.api.core.server_state import storage_mode_from_params
+
+    return storage_mode_from_params(params)
+
+
+def _playback_data_dir(params: dict[str, Any]) -> Path:
+    configured = _configured_data_dir_from_params(params)
+    if configured:
+        return Path(configured).resolve()
+    return data_dir()
+
+
+def _record_matches_camera(
+    raw: dict[str, Any],
+    *,
+    aliases: set[str],
+    source_id: int | None,
+) -> bool:
+    obj_source = raw.get("source_name") or raw.get("source")
+    if obj_source and str(obj_source) in aliases:
+        return True
+    raw_sid = raw.get("source_id")
+    if source_id is not None and raw_sid is not None:
+        try:
+            return int(raw_sid) == int(source_id)
+        except Exception:
+            pass
+    return not obj_source
+
+
 def _load_objects_from_json(
     detections_dir: Path,
     target: datetime,
-    source_name: str,
+    aliases: set[str],
+    source_id: int | None,
     window_sec: float,
 ) -> list[dict[str, Any]]:
     objects: list[dict[str, Any]] = []
@@ -152,12 +185,11 @@ def _load_objects_from_json(
             if not isinstance(obj, dict):
                 continue
             obj_timestamp = parse_event_timestamp(obj.get("ts") or obj.get("time_stamp") or obj.get("timestamp"))
-            obj_source = obj.get("source_name") or obj.get("source")
             if not obj_timestamp:
                 continue
             if abs((obj_timestamp - target).total_seconds()) >= window_sec:
                 continue
-            if source_name and obj_source and str(obj_source) != source_name:
+            if not _record_matches_camera(obj, aliases=aliases, source_id=source_id):
                 continue
             objects.append(obj)
     return objects
@@ -166,7 +198,8 @@ def _load_objects_from_json(
 def _load_events_from_json(
     events_dir: Path,
     target: datetime,
-    source_name: str,
+    aliases: set[str],
+    source_id: int | None,
     window_sec: float,
 ) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
@@ -187,15 +220,47 @@ def _load_events_from_json(
             event = dict(event)
             event["event_type"] = event_type
             event_timestamp = parse_event_timestamp(event.get("ts") or event.get("time_stamp") or event.get("timestamp"))
-            event_source = event.get("source_name") or event.get("source")
             if not event_timestamp:
                 continue
             if abs((event_timestamp - target).total_seconds()) >= window_sec:
                 continue
-            if source_name and event_source and str(event_source) != source_name:
+            if not _record_matches_camera(event, aliases=aliases, source_id=source_id):
                 continue
             events.append(event)
     return events
+
+
+def _normalize_trail_points(
+    trail: Any,
+    *,
+    img_w: int,
+    img_h: int,
+) -> list[list[float]]:
+    if not isinstance(trail, list) or not trail:
+        return []
+    points: list[list[float]] = []
+    for item in trail:
+        if not isinstance(item, (list, tuple)) or len(item) < 2:
+            continue
+        try:
+            x, y = float(item[0]), float(item[1])
+        except Exception:
+            continue
+        if img_w > 0 and img_h > 0 and max(abs(x), abs(y)) > 1.5:
+            x /= float(img_w)
+            y /= float(img_h)
+        points.append([x, y])
+    return points
+
+
+def _serialize_trail_from_raw(
+    raw: dict[str, Any],
+    *,
+    img_w: int,
+    img_h: int,
+) -> list[list[float]]:
+    trail = raw.get("trail") or raw.get("history")
+    return _normalize_trail_points(trail, img_w=img_w, img_h=img_h)
 
 
 def _serialize_object_from_raw(
@@ -251,7 +316,7 @@ def _serialize_object_from_raw(
         "bbox": norm_bbox,
         "event_active": event_active,
         "attributes": attributes,
-        "trail": [],
+        "trail": _serialize_trail_from_raw(raw, img_w=img_w, img_h=img_h),
     }
 
 
@@ -339,23 +404,29 @@ def _load_dynamic_records(
     camera: str,
     date_folder: str,
     window_sec: float,
+    params: dict[str, Any],
+    source_id: int | None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    from evileye.api.core.journal_service import configured_storage_mode
-
-    mode = configured_storage_mode()
+    mode = _playback_storage_mode(params)
+    aliases = source_aliases(params, camera, source_id)
     if mode == "database":
         return (
             _load_objects_from_db(target, camera, date_folder, window_sec),
             _load_events_from_db(target, camera, date_folder, window_sec),
         )
-    detections_dir = data_dir() / "Detections" / date_folder / "Metadata"
-    events_dir = data_dir() / "Events" / date_folder / "Metadata"
+    base = _playback_data_dir(params)
+    detections_dir = base / "Detections" / date_folder / "Metadata"
+    events_dir = base / "Events" / date_folder / "Metadata"
     raw_objects: list[dict[str, Any]] = []
     raw_events: list[dict[str, Any]] = []
     if detections_dir.is_dir():
-        raw_objects = _load_objects_from_json(detections_dir, target, camera, window_sec)
+        raw_objects = _load_objects_from_json(
+            detections_dir, target, aliases, source_id, window_sec,
+        )
     if events_dir.is_dir():
-        raw_events = _load_events_from_json(events_dir, target, camera, window_sec)
+        raw_events = _load_events_from_json(
+            events_dir, target, aliases, source_id, window_sec,
+        )
     return raw_objects, raw_events
 
 
@@ -377,21 +448,26 @@ def _debug_info_from_params(params: dict[str, Any]) -> dict[str, Any]:
     return {"detectors": mapped} if mapped else {}
 
 
-def _resolve_frame_size(
+def _resolve_coord_context(
     params: dict[str, Any],
+    camera: str,
     source_id: int | None,
     frame_w: int | None,
     frame_h: int | None,
-) -> tuple[int, int]:
-    """Frame size for coord normalization — prefer client video dimensions (same as live image_shape)."""
-    try:
-        w = int(frame_w) if frame_w is not None else 0
-        h = int(frame_h) if frame_h is not None else 0
-        if w > 0 and h > 0:
-            return w, h
-    except Exception:
-        pass
-    return video_size_for_source(params, source_id)
+) -> PlaybackCoordContext:
+    return resolve_playback_coord_context(
+        params,
+        camera=camera,
+        source_id=source_id,
+        frame_w=frame_w,
+        frame_h=frame_h,
+    )
+
+
+def _finalize_metadata_payload(payload: dict[str, Any], ctx: PlaybackCoordContext) -> dict[str, Any]:
+    payload["coord_ref"] = {"w": ctx.logical_w, "h": ctx.logical_h}
+    payload.setdefault("source_id", ctx.source_id)
+    return payload
 
 
 def build_playback_static_metadata(
@@ -404,8 +480,8 @@ def build_playback_static_metadata(
 ) -> dict[str, Any]:
     """Config-derived overlay layers (zones, detector ROI) — same serializer as live preview."""
     params = _load_params_for_run(run_id)
-    resolved_source_id = _resolve_source_id(params, camera, source_id)
-    img_w, img_h = _resolve_frame_size(params, resolved_source_id, frame_w, frame_h)
+    ctx = _resolve_coord_context(params, camera, source_id, frame_w, frame_h)
+    img_w, img_h = ctx.logical_w, ctx.logical_h
 
     vis_cfg = _visualizer_cfg(params)
     show_zones = vis_cfg.get("show_zones")
@@ -414,8 +490,8 @@ def build_playback_static_metadata(
     show_debug = bool(vis_cfg.get("show_debug_info", False))
 
     zones_raw: list[Any] = []
-    if resolved_source_id is not None:
-        zones_raw = extract_zones_by_source(params).get(resolved_source_id, [])
+    if ctx.source_id is not None:
+        zones_raw = extract_zones_by_source(params).get(ctx.source_id, [])
 
     context = PreviewRenderContext(
         source_name=camera,
@@ -429,15 +505,14 @@ def build_playback_static_metadata(
     payload = serialize_preview_metadata(
         context,
         (img_h, img_w),
-        source_id=resolved_source_id,
+        source_id=ctx.source_id,
     )
-    payload["source_id"] = resolved_source_id
     overlay = payload.get("overlay")
     if not isinstance(overlay, dict):
         overlay = {}
         payload["overlay"] = overlay
     overlay["source_name"] = camera
-    return payload
+    return _finalize_metadata_payload(payload, ctx)
 
 
 def build_playback_metadata(
@@ -452,11 +527,10 @@ def build_playback_metadata(
     frame_h: int | None = None,
 ) -> dict[str, Any]:
     params = _load_params_for_run(run_id)
-    resolved_source_id = _resolve_source_id(params, camera, source_id)
-    img_w, img_h = _resolve_frame_size(params, resolved_source_id, frame_w, frame_h)
+    ctx = _resolve_coord_context(params, camera, source_id, frame_w, frame_h)
+    img_w, img_h = ctx.logical_w, ctx.logical_h
 
     target = datetime.fromtimestamp(float(ts))
-    # Always derive storage folder from playback instant (not calendar picker).
     date_folder = target.strftime("%Y-%m-%d")
 
     raw_objects, raw_events = _load_dynamic_records(
@@ -464,6 +538,8 @@ def build_playback_metadata(
         camera=camera,
         date_folder=date_folder,
         window_sec=window_sec,
+        params=params,
+        source_id=ctx.source_id,
     )
 
     active_object_ids = {
@@ -513,8 +589,8 @@ def build_playback_metadata(
     event_labels = [_event_label(ev) for ev in signal_events[:8]]
 
     time_label = target.strftime("%H:%M:%S")
-    return {
-        "source_id": resolved_source_id,
+    payload = {
+        "source_id": ctx.source_id,
         "ts": float(ts),
         "objects": objects,
         "zones": [],
@@ -527,6 +603,7 @@ def build_playback_metadata(
             "time_label": time_label,
         },
     }
+    return _finalize_metadata_payload(payload, ctx)
 
 
 def build_playback_metadata_batch(

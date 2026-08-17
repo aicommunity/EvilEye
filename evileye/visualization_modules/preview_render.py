@@ -118,6 +118,8 @@ def serialize_preview_metadata(
         if context.show_debug_info else [],
         "overlay": _serialize_overlay_info(context, frame),
     }
+    if w and h:
+        payload["coord_ref"] = {"w": int(w), "h": int(h)}
     return payload
 
 

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { FrameSize } from '../../api';
+import type { FrameSize, PlaybackCamera } from '../../api';
 import { MetadataOverlayLayer } from '../overlay/MetadataOverlayLayer';
-import { transformMetadataForCrop } from '../overlay/overlayMath';
+import { prepareOverlayMetadata } from '../overlay/overlayMath';
+import { resolvePlaybackFrameSize } from '../overlay/playbackFrameSize';
 import { useMediaLetterbox } from '../overlay/useMediaLetterbox';
 import { useI18n } from '../../i18n';
 import { mergePlaybackMetadata } from './mergePlaybackMetadata';
@@ -14,6 +15,7 @@ export function SplitPlaybackCell({
   srcCoords,
   label,
   cameraId,
+  camera,
   sourceId,
   getPosition,
   positionSec,
@@ -31,6 +33,7 @@ export function SplitPlaybackCell({
   srcCoords: [number, number, number, number];
   label: string;
   cameraId: string;
+  camera?: PlaybackCamera;
   sourceId?: number | null;
   getPosition: () => number;
   positionSec: number;
@@ -54,12 +57,17 @@ export function SplitPlaybackCell({
   const [localFrameSize, setLocalFrameSize] = useState<FrameSize | null>(null);
   const parentVideoSize = frameSizeProp ?? localFrameSize;
 
+  const metadataFrameSize = useMemo(
+    () => resolvePlaybackFrameSize(camera, parentVideoSize),
+    [camera, parentVideoSize],
+  );
+
   const staticMeta = usePlaybackStaticMetadata({
     camera: cameraId,
     sourceId,
     runId,
     enabled: showMetadata,
-    frameSize: parentVideoSize,
+    frameSize: metadataFrameSize,
   });
   const { meta: dynamicMeta } = usePlaybackMetadata({
     camera: cameraId,
@@ -67,7 +75,7 @@ export function SplitPlaybackCell({
     positionSec,
     runId,
     enabled: showMetadata,
-    frameSize: parentVideoSize,
+    frameSize: metadataFrameSize,
   });
   const mergedMeta = useMemo(
     () => mergePlaybackMetadata(staticMeta, dynamicMeta),
@@ -87,11 +95,8 @@ export function SplitPlaybackCell({
 
   const displayMeta = useMemo(() => {
     if (!mergedMeta || !showMetadata) return null;
-    const parentW = parentVideoSize?.w ?? 0;
-    const parentH = parentVideoSize?.h ?? 0;
-    if (parentW <= 0 || parentH <= 0) return mergedMeta;
-    return transformMetadataForCrop(mergedMeta, srcCoords, parentW, parentH);
-  }, [mergedMeta, showMetadata, srcCoords, parentVideoSize]);
+    return prepareOverlayMetadata(mergedMeta, metadataFrameSize);
+  }, [mergedMeta, showMetadata, metadataFrameSize]);
 
   useEffect(() => {
     const video = videoRef.current;

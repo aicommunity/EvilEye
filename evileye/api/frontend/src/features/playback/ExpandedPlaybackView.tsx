@@ -79,6 +79,7 @@ export function ExpandedPlaybackView({
             srcCoords={camera.src_coords}
             label={cameraId}
             cameraId={cameraId}
+            camera={camera}
             sourceId={camera.source_id}
             getPosition={getPosition}
             positionSec={positionSec}

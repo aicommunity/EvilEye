@@ -108,6 +108,7 @@ function PlaybackCell({
         srcCoords={camera.src_coords}
         label={id}
         cameraId={id}
+        camera={camera}
         sourceId={camera.source_id}
         getPosition={getPosition}
         positionSec={positionSec}

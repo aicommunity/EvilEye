@@ -465,6 +465,15 @@ def list_logical_cameras(run_id: int | None = None, date: Optional[str] = None) 
             else:
                 segment_count += len(_mp4_paths_for_logical_camera(folder, logical_id))
 
+        logical_frame_size = None
+        if split and isinstance(src_coords, (list, tuple)) and len(src_coords) >= 4:
+            try:
+                lw, lh = int(src_coords[2]), int(src_coords[3])
+                if lw > 0 and lh > 0:
+                    logical_frame_size = {"w": lw, "h": lh}
+            except Exception:
+                logical_frame_size = None
+
         cameras.append(
             {
                 "id": logical_id,
@@ -474,6 +483,7 @@ def list_logical_cameras(run_id: int | None = None, date: Optional[str] = None) 
                 "parent_folder": parent_folder,
                 "split": split,
                 "src_coords": src_coords,
+                "logical_frame_size": logical_frame_size,
                 "folder": storage_folder,
                 "segment_count": segment_count,
                 "available": folder_exists or segment_count > 0,

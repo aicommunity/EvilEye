@@ -134,7 +134,11 @@ export function OverlayCanvas({
           {(payload.objects ?? []).map((o, i) => renderObjectLabel(o, i))}
           {(payload.objects ?? []).map((o, i) => renderObjectAttributes(o, i))}
         </div>
-      ) : null}
+      ) : (
+        <div className="live-overlay-label-layer live-overlay-label-layer--compact">
+          {(payload.objects ?? []).map((o, i) => renderCompactObjectLabel(o, i))}
+        </div>
+      )}
       {payload.signalization && (payload.event_labels?.length ?? 0) > 0 ? (
         <div
           className="live-event-banner"
@@ -150,6 +154,26 @@ export function OverlayCanvas({
       ) : null}
       {payload.overlay?.source_name ? <div className="live-overlay-source">{payload.overlay.source_name}</div> : null}
       {payload.overlay?.time_label ? <div className="live-overlay-time">{payload.overlay.time_label}</div> : null}
+    </div>
+  );
+}
+
+function renderCompactObjectLabel(o: StreamMetadataObject, i: number) {
+  const b = o.bbox;
+  if (!b || b.length !== 4) return null;
+  const [x1, y1] = b;
+  const classLabel = o.class_name ?? (o.class_id != null ? `class_${o.class_id}` : 'object');
+  const trackLabel = o.track_id != null ? String(o.track_id) : '?';
+  return (
+    <div
+      key={`lc${i}`}
+      className="live-overlay-label live-overlay-label--compact"
+      style={{
+        left: `${x1 * 100}%`,
+        top: `${y1 * 100}%`,
+      }}
+    >
+      {classLabel} [{trackLabel}]
     </div>
   );
 }

@@ -150,7 +150,7 @@ export interface StreamMetadataObject {
 export interface StreamMetadata {
   source_id?: number | null;
   ts?: number;
-  /** @deprecated Playback uses live serializer; kept for backward compatibility. */
+  /** Pixel size of the reference frame used for normalized coords (logical/display frame). */
   coord_ref?: { w: number; h: number };
   objects?: StreamMetadataObject[];
   zones?: Array<{ name?: string; kind?: 'poly' | 'rect'; points: [number, number][] }>;
@@ -176,6 +176,7 @@ export interface PlaybackCamera {
   parent_folder?: string | null;
   split?: boolean;
   src_coords?: [number, number, number, number] | null;
+  logical_frame_size?: { w: number; h: number };
   segment_count?: number;
   available?: boolean;
 }
