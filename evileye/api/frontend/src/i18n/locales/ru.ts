@@ -239,6 +239,8 @@ const ru: Dict = {
     timelineNoRecordings: 'Нет записей и событий за выбранный день.',
     timelineHint: 'Колесо — масштаб, перетаскивание — сдвиг, клик — переход к кадру (к зелёной метке, если рядом).',
     noSegment: 'Нет сегмента',
+    seekingFrame: 'Ищем кадр…',
+    loadingMetadata: 'Загрузка метаданных…',
     showMetadata: 'Показать метаданные',
     currentTime: 'Текущий момент воспроизведения',
     expandCameraHint: '{{id}} · запуск #{{run}} · source #{{sid}}',

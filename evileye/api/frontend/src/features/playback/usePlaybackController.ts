@@ -16,6 +16,7 @@ export function usePlaybackController(initialSec: number | null) {
   const detectionTsRef = useRef<number[]>([]);
   const skipEnabledRef = useRef(false);
   const scrubbingRef = useRef(false);
+  const seekHoldTimer = useRef<number | null>(null);
 
   const setDetectionTimestamps = useCallback((ts: number[]) => {
     detectionTsRef.current = ts;
@@ -79,6 +80,12 @@ export function usePlaybackController(initialSec: number | null) {
     };
   }, [playing, speed, toSec]);
 
+  useEffect(() => {
+    return () => {
+      if (seekHoldTimer.current != null) window.clearTimeout(seekHoldTimer.current);
+    };
+  }, []);
+
   return {
     playing,
     setPlaying,
@@ -106,6 +113,12 @@ export function usePlaybackController(initialSec: number | null) {
     seek: (sec: number) => {
       positionRef.current = sec;
       setPositionSec(sec);
+      scrubbingRef.current = true;
+      if (seekHoldTimer.current != null) window.clearTimeout(seekHoldTimer.current);
+      seekHoldTimer.current = window.setTimeout(() => {
+        scrubbingRef.current = false;
+        seekHoldTimer.current = null;
+      }, 2000);
     },
     setDetectionTimestamps,
     setSkipEnabled,

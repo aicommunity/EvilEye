@@ -5,11 +5,9 @@ import { prepareOverlayMetadata } from '../overlay/overlayMath';
 import { resolvePlaybackFrameSize } from '../overlay/playbackFrameSize';
 import { useMediaLetterbox } from '../overlay/useMediaLetterbox';
 import { useI18n } from '../../i18n';
-import { hasActiveTrackAt, hasDetectionAt, objectsFromDetectionIndex, shouldShowPlaybackObjects } from './detectionSync';
-import { mergePlaybackMetadata } from './mergePlaybackMetadata';
+import { PlaybackBusyHint } from './PlaybackBusyHint';
+import { usePlaybackCameraMetadata } from './PlaybackCameraView';
 import { seekPlaybackVideo } from './playbackVideoSync';
-import { usePlaybackMetadata } from './usePlaybackMetadata';
-import { usePlaybackStaticMetadata } from './usePlaybackStaticMetadata';
 
 export function SplitPlaybackCell({
   videoUrl,
@@ -17,7 +15,7 @@ export function SplitPlaybackCell({
   label,
   cameraId,
   camera,
-  sourceId,
+  sourceId: _sourceId,
   getPosition,
   positionSec,
   playing,
@@ -29,6 +27,7 @@ export function SplitPlaybackCell({
   scrubbing = false,
   detectionItems = [],
   globalDetectionTs = [],
+  onVideoClock,
   onExpand,
   expanded = false,
   frameSize: frameSizeProp,
@@ -51,6 +50,7 @@ export function SplitPlaybackCell({
   scrubbing?: boolean;
   detectionItems?: PlaybackDetectionItem[];
   globalDetectionTs?: number[];
+  onVideoClock?: (globalSec: number) => void;
   onExpand?: () => void;
   expanded?: boolean;
   frameSize?: FrameSize | null;
@@ -63,54 +63,29 @@ export function SplitPlaybackCell({
   const getPositionRef = useRef(getPosition);
   getPositionRef.current = getPosition;
   const [videoReady, setVideoReady] = useState(0);
+  const [seeking, setSeeking] = useState(false);
   const [localFrameSize, setLocalFrameSize] = useState<FrameSize | null>(null);
   const parentVideoSize = frameSizeProp ?? localFrameSize;
+  const onVideoClockRef = useRef(onVideoClock);
+  onVideoClockRef.current = onVideoClock;
 
   const metadataFrameSize = useMemo(
     () => resolvePlaybackFrameSize(camera, parentVideoSize),
     [camera, parentVideoSize],
   );
 
-  const atCameraDetection = useMemo(
-    () =>
-      hasActiveTrackAt(detectionItems, positionSec) ||
-      objectsFromDetectionIndex(detectionItems, positionSec).length > 0,
-    [detectionItems, positionSec],
-  );
-  const atGlobalDetection = useMemo(
-    () => hasDetectionAt(globalDetectionTs, positionSec),
-    [globalDetectionTs, positionSec],
-  );
-  const showObjects = shouldShowPlaybackObjects({
-    showMetadata,
-    globalTsLength: globalDetectionTs.length,
-    atCameraDetection,
-    atGlobalDetection,
-  });
-
-  const staticMeta = usePlaybackStaticMetadata({
-    camera: cameraId,
-    sourceId,
-    runId,
-    enabled: showMetadata,
-    frameSize: metadataFrameSize,
-  });
-  const { meta: dynamicMeta } = usePlaybackMetadata({
-    camera: cameraId,
-    sourceId,
+  const { meta: mergedMeta, loading: metaLoading } = usePlaybackCameraMetadata({
+    cameraId,
+    camera,
     positionSec,
     runId,
-    enabled: showMetadata && showObjects,
+    showMetadata,
+    hasVideo: Boolean(videoUrl),
     frameSize: metadataFrameSize,
     playing,
-    hasDetectionAtPosition: showObjects,
+    detectionItems,
+    globalDetectionTs,
   });
-  const mergedMeta = useMemo(() => {
-    const merged = mergePlaybackMetadata(staticMeta, dynamicMeta);
-    if (!showMetadata || !merged) return merged;
-    if (showObjects) return merged;
-    return { ...merged, objects: [] };
-  }, [staticMeta, dynamicMeta, showMetadata, showObjects]);
 
   const layoutBox = useMediaLetterbox(
     mediaRef,
@@ -223,11 +198,31 @@ export function SplitPlaybackCell({
 
   useEffect(() => {
     const video = videoRef.current;
+    if (!video) return;
+    const onSeeking = () => setSeeking(true);
+    const onSeeked = () => setSeeking(false);
+    const onTime = () => {
+      if (video.seeking || scrubbing) return;
+      if (playing) onVideoClockRef.current?.(startTs + video.currentTime);
+    };
+    video.addEventListener('seeking', onSeeking);
+    video.addEventListener('seeked', onSeeked);
+    video.addEventListener('timeupdate', onTime);
+    setSeeking(video.seeking);
+    return () => {
+      video.removeEventListener('seeking', onSeeking);
+      video.removeEventListener('seeked', onSeeked);
+      video.removeEventListener('timeupdate', onTime);
+    };
+  }, [videoUrl, playing, scrubbing, startTs]);
+
+  useEffect(() => {
+    const video = videoRef.current;
     if (!video || !videoUrl) return;
     seekPlaybackVideo(video, getPositionRef.current(), startTs, {
       playing,
       scrubbing,
-      thresholdSec: playing && !scrubbing ? 0.35 : 0,
+      thresholdSec: playing && !scrubbing ? 0.35 : undefined,
     });
     const videoWithVfc = video as HTMLVideoElement & {
       requestVideoFrameCallback?: (cb: () => void) => number;
@@ -260,7 +255,7 @@ export function SplitPlaybackCell({
           seekPlaybackVideo(video, getPositionRef.current(), startTs, {
             playing,
             scrubbing,
-            thresholdSec: playing && !scrubbing ? 0.35 : 0,
+            thresholdSec: playing && !scrubbing ? 0.35 : undefined,
           });
         }}
       />
@@ -278,6 +273,11 @@ export function SplitPlaybackCell({
         layoutBox={layoutBox.width > 0 && layoutBox.height > 0 ? layoutBox : undefined}
         density={expanded ? 'full' : 'compact'}
         visible={showMetadata}
+      />
+      <PlaybackBusyHint
+        seeking={seeking}
+        loading={metaLoading}
+        hasObjects={(displayMeta?.objects?.length ?? 0) > 0}
       />
       <div className="camera-card-overlay-top">
         <span className="camera-name">{label}</span>

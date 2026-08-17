@@ -9,7 +9,14 @@ import {
   type StreamMetadata,
 } from '../../api';
 import { useI18n } from '../../i18n';
-import { hasActiveTrackAt, hasDetectionAt, objectsFromDetectionIndex, shouldShowPlaybackObjects } from './detectionSync';
+import {
+  hasActiveTrackAt,
+  objectsFromDetectionIndex,
+  objectsToOverlayFromIndex,
+  overlayTimeLabel,
+  shouldShowPlaybackObjects,
+} from './detectionSync';
+import { PlaybackBusyHint } from './PlaybackBusyHint';
 import { PlaybackMediaWithOverlay } from './PlaybackMediaWithOverlay';
 import { mergePlaybackMetadata } from './mergePlaybackMetadata';
 import { seekPlaybackVideo } from './playbackVideoSync';
@@ -103,9 +110,10 @@ export function usePlaybackCameraSlot(
     if (!v || !current) return;
 
     if (playing && !scrubbingRef.current) {
+      if (v.seeking) return;
       const videoGlobal = current.startTs + v.currentTime;
       if (Math.abs(position - videoGlobal) > 0.35) {
-        seekPlaybackVideo(v, position, current.startTs, { playing: false, scrubbing: true });
+        seekPlaybackVideo(v, position, current.startTs, { playing: true, thresholdSec: 0.35 });
         return;
       }
       onVideoClockRef.current?.(videoGlobal);
@@ -127,6 +135,7 @@ export function usePlaybackCameraSlot(
       if (playing) {
         const v = ref.current;
         const current = slotRef.current;
+        if (v?.seeking) return;
         if (v && current) {
           onVideoClockRef.current?.(current.startTs + v.currentTime);
         }
@@ -185,16 +194,15 @@ export function usePlaybackCameraMetadata({
       objectsFromDetectionIndex(detectionItems, positionSec).length > 0,
     [detectionItems, positionSec],
   );
-  const atGlobalDetection = useMemo(
-    () => hasDetectionAt(globalDetectionTs, positionSec),
-    [globalDetectionTs, positionSec],
-  );
   const showObjects = shouldShowPlaybackObjects({
     showMetadata,
     globalTsLength: globalDetectionTs.length,
     atCameraDetection,
-    atGlobalDetection,
   });
+  const optimisticObjects = useMemo(
+    () => objectsToOverlayFromIndex(detectionItems, positionSec, frameSize),
+    [detectionItems, positionSec, frameSize],
+  );
 
   const staticMeta = usePlaybackStaticMetadata({
     camera: cameraId,
@@ -203,7 +211,7 @@ export function usePlaybackCameraMetadata({
     enabled: showMetadata,
     frameSize,
   });
-  const { meta: dynamicMeta } = usePlaybackMetadata({
+  const { meta: dynamicMeta, loading } = usePlaybackMetadata({
     camera: cameraId,
     sourceId: camera?.source_id,
     positionSec,
@@ -214,12 +222,27 @@ export function usePlaybackCameraMetadata({
     hasDetectionAtPosition: showObjects,
   });
 
-  return useMemo(() => {
+  const meta = useMemo(() => {
     const merged = mergePlaybackMetadata(staticMeta, dynamicMeta);
     if (!showMetadata || !merged) return merged;
-    if (showObjects) return merged;
-    return { ...merged, objects: [] };
-  }, [staticMeta, dynamicMeta, showMetadata, showObjects]);
+    if (!showObjects) return { ...merged, objects: [] };
+    const metaTs = dynamicMeta?.ts;
+    const fresh = metaTs != null && Math.abs(metaTs - positionSec) < 0.3;
+    if (fresh) return merged;
+    if (optimisticObjects.length) {
+      return {
+        ...merged,
+        objects: optimisticObjects,
+        overlay: {
+          ...merged.overlay,
+          time_label: overlayTimeLabel(positionSec),
+        },
+      };
+    }
+    return merged;
+  }, [staticMeta, dynamicMeta, showMetadata, showObjects, optimisticObjects, positionSec]);
+
+  return { meta, loading, showObjects };
 }
 
 export function PlaybackVideoSurface({
@@ -239,6 +262,7 @@ export function PlaybackVideoSurface({
   playing,
   speed,
   playMode = 'normal',
+  loading = false,
 }: {
   videoRef: RefObject<HTMLVideoElement | null>;
   preloadRef: RefObject<HTMLVideoElement | null>;
@@ -256,8 +280,24 @@ export function PlaybackVideoSurface({
   playing: boolean;
   speed: number;
   playMode?: PlaybackPlayMode;
+  loading?: boolean;
 }) {
   const { t } = useI18n();
+  const [seeking, setSeeking] = useState(false);
+
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    const onSeeking = () => setSeeking(true);
+    const onSeeked = () => setSeeking(false);
+    v.addEventListener('seeking', onSeeking);
+    v.addEventListener('seeked', onSeeked);
+    setSeeking(v.seeking);
+    return () => {
+      v.removeEventListener('seeking', onSeeking);
+      v.removeEventListener('seeked', onSeeked);
+    };
+  }, [videoRef, slot?.url]);
 
   useEffect(() => {
     const v = videoRef.current;
@@ -302,6 +342,11 @@ export function PlaybackVideoSurface({
             showMetadata={showMetadata}
             videoReady={videoReady}
             density={expanded ? 'full' : 'compact'}
+          />
+          <PlaybackBusyHint
+            seeking={seeking}
+            loading={loading}
+            hasObjects={(meta?.objects?.length ?? 0) > 0}
           />
         </>
       ) : (

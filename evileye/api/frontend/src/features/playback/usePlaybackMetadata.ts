@@ -2,8 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { isAbortError, playbackApi, PLAYBACK_DETECTION_MATCH_SEC, type FrameSize, type StreamMetadata } from '../../api';
 import { localDateString } from './timelineMath';
 
-const THROTTLE_MS = 80;
+const FETCH_DEBOUNCE_MS = 130;
 const TS_ROUND_SEC = 0.05;
+const APPLY_SLACK_SEC = 0.3;
 
 function roundTs(ts: number): number {
   return Math.round(ts / TS_ROUND_SEC) * TS_ROUND_SEC;
@@ -51,11 +52,18 @@ export function usePlaybackMetadata({
   const [error, setError] = useState<string | null>(null);
   const timerRef = useRef<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const lastFetchKey = useRef<string | null>(null);
-  const lastKeyRef = useRef<string | null>(null);
+  const inflightKeyRef = useRef<string | null>(null);
+  const roundedRef = useRef(0);
+
+  useEffect(() => {
+    roundedRef.current = roundTs(positionSec);
+  }, [positionSec]);
 
   useEffect(() => {
     if (!enabled || !camera || !Number.isFinite(positionSec)) {
+      abortRef.current?.abort();
+      abortRef.current = null;
+      inflightKeyRef.current = null;
       setMeta(null);
       setLoading(false);
       setError(null);
@@ -74,29 +82,23 @@ export function usePlaybackMetadata({
     const rounded = roundTs(positionSec);
     const eventDate = localDateString(positionSec);
     const key = cacheKey(camera, rounded, eventDate, runId, frameSize);
-    if (lastKeyRef.current !== key) {
-      lastKeyRef.current = key;
-      const cached = metadataCache.get(key);
-      if (cached) {
-        setMeta(cached.meta);
-      } else {
-        setMeta((prev) => (prev ? { ...prev, objects: [] } : null));
-      }
-      setError(null);
-    }
-
     const cached = metadataCache.get(key);
     if (cached) {
       setMeta(cached.meta);
+      setLoading(false);
       setError(null);
+      return;
     }
 
+    setLoading(true);
+    setError(null);
+
     const fetchNow = () => {
+      if (inflightKeyRef.current === key) return;
       abortRef.current?.abort();
       const ac = new AbortController();
       abortRef.current = ac;
-      lastFetchKey.current = key;
-      setLoading(true);
+      inflightKeyRef.current = key;
       void playbackApi
         .metadata(camera, rounded, eventDate, runId, {
           signal: ac.signal,
@@ -105,8 +107,10 @@ export function usePlaybackMetadata({
           matchSec: PLAYBACK_DETECTION_MATCH_SEC,
         })
         .then((res) => {
-          if (ac.signal.aborted || lastFetchKey.current !== key) return;
+          if (ac.signal.aborted) return;
           const payload = res.metadata ?? null;
+          const payloadTs = payload?.ts != null ? Number(payload.ts) : rounded;
+          if (Math.abs(payloadTs - roundedRef.current) >= APPLY_SLACK_SEC) return;
           metadataCache.set(key, { ts: rounded, meta: payload });
           setMeta(payload);
           setError(null);
@@ -116,19 +120,18 @@ export function usePlaybackMetadata({
           setError(String(e));
         })
         .finally(() => {
-          if (!ac.signal.aborted && lastFetchKey.current === key) setLoading(false);
+          if (inflightKeyRef.current === key) {
+            inflightKeyRef.current = null;
+            if (!ac.signal.aborted) setLoading(false);
+          }
         });
     };
 
     if (timerRef.current != null) window.clearTimeout(timerRef.current);
-    if (!cached) fetchNow();
-    else if (!playing) {
-      timerRef.current = window.setTimeout(fetchNow, THROTTLE_MS);
-    }
+    timerRef.current = window.setTimeout(fetchNow, FETCH_DEBOUNCE_MS);
 
     return () => {
       if (timerRef.current != null) window.clearTimeout(timerRef.current);
-      abortRef.current?.abort();
     };
   }, [
     camera,

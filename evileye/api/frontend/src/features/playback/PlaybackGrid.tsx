@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, type Dispatch, type RefObject, type SetStateAction } from 'react';
 import type {
   FrameSize,
   PlaybackCamera,
@@ -59,7 +59,7 @@ export function PlaybackGrid({
       className={`camera-group-grid${fitClass}`}
       style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
     >
-      {cameras.map((id) => (
+      {cameras.map((id, index) => (
         <PlaybackCell
           key={id}
           id={id}
@@ -75,7 +75,7 @@ export function PlaybackGrid({
           scrubbing={scrubbing}
           detectionItems={detectionByCamera[id] ?? []}
           globalDetectionTs={globalDetectionTs}
-          onVideoClock={onVideoClock}
+          onVideoClock={index === 0 ? onVideoClock : undefined}
           onExpand={() => onExpand(id)}
         />
       ))}
@@ -128,19 +128,6 @@ function PlaybackCell({
     scrubbing,
     onVideoClock,
   );
-  const meta = usePlaybackCameraMetadata({
-    cameraId: id,
-    camera,
-    positionSec,
-    runId,
-    showMetadata,
-    hasVideo: Boolean(slot?.url),
-    frameSize,
-    playing,
-    detectionItems,
-    globalDetectionTs,
-  });
-
   const split = Boolean(camera?.split && camera?.src_coords && camera.src_coords.length === 4);
 
   if (split && slot?.url && camera?.src_coords) {
@@ -163,6 +150,7 @@ function PlaybackCell({
         scrubbing={scrubbing}
         detectionItems={detectionItems}
         globalDetectionTs={globalDetectionTs}
+        onVideoClock={onVideoClock}
         onExpand={onExpand}
         frameSize={frameSize}
         onFrameSize={setFrameSize}
@@ -171,13 +159,95 @@ function PlaybackCell({
   }
 
   return (
+    <NormalPlaybackCell
+      id={id}
+      camera={camera}
+      mediaRef={mediaRef}
+      videoRef={ref}
+      preloadRef={preloadRef}
+      slot={slot}
+      applySync={applySync}
+      videoReady={videoReady}
+      setVideoReady={setVideoReady}
+      frameSize={frameSize}
+      setFrameSize={setFrameSize}
+      positionSec={positionSec}
+      playing={playing}
+      speed={speed}
+      runId={runId}
+      showMetadata={showMetadata}
+      playMode={playMode}
+      detectionItems={detectionItems}
+      globalDetectionTs={globalDetectionTs}
+      onExpand={onExpand}
+    />
+  );
+}
+
+function NormalPlaybackCell({
+  id,
+  camera,
+  mediaRef,
+  videoRef,
+  preloadRef,
+  slot,
+  applySync,
+  videoReady,
+  setVideoReady,
+  frameSize,
+  setFrameSize,
+  positionSec,
+  playing,
+  speed,
+  runId,
+  showMetadata,
+  playMode,
+  detectionItems,
+  globalDetectionTs,
+  onExpand,
+}: {
+  id: string;
+  camera?: PlaybackCamera;
+  mediaRef: RefObject<HTMLDivElement>;
+  videoRef: RefObject<HTMLVideoElement | null>;
+  preloadRef: RefObject<HTMLVideoElement | null>;
+  slot: ReturnType<typeof usePlaybackCameraSlot>['slot'];
+  applySync: () => void;
+  videoReady: number;
+  setVideoReady: Dispatch<SetStateAction<number>>;
+  frameSize: FrameSize | null;
+  setFrameSize: Dispatch<SetStateAction<FrameSize | null>>;
+  positionSec: number;
+  playing: boolean;
+  speed: number;
+  runId: number | null;
+  showMetadata: boolean;
+  playMode: PlaybackPlayMode;
+  detectionItems: PlaybackDetectionItem[];
+  globalDetectionTs: number[];
+  onExpand: () => void;
+}) {
+  const { meta, loading } = usePlaybackCameraMetadata({
+    cameraId: id,
+    camera,
+    positionSec,
+    runId,
+    showMetadata,
+    hasVideo: Boolean(slot?.url),
+    frameSize,
+    playing,
+    detectionItems,
+    globalDetectionTs,
+  });
+
+  return (
     <article
       className="camera-card camera-card-mini camera-card-grid playback-cell"
       onDoubleClick={onExpand}
     >
       <div className="camera-card-media" ref={mediaRef} style={{ position: 'relative' }}>
         <PlaybackVideoSurface
-          videoRef={ref}
+          videoRef={videoRef}
           preloadRef={preloadRef}
           slot={slot}
           mediaRef={mediaRef}
@@ -192,6 +262,7 @@ function PlaybackCell({
           playing={playing}
           speed={speed}
           playMode={playMode}
+          loading={loading}
         />
       </div>
     </article>

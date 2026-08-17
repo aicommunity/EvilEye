@@ -237,6 +237,8 @@ const en: Dict = {
     timelineNoRecordings: 'No recordings or events for the selected day.',
     timelineHint: 'Wheel zooms, drag pans, click seeks (snaps to a nearby detection mark).',
     noSegment: 'No segment',
+    seekingFrame: 'Seeking frame…',
+    loadingMetadata: 'Loading metadata…',
     showMetadata: 'Show metadata',
     currentTime: 'Current playback time',
     expandCameraHint: '{{id}} · run #{{run}} · source #{{sid}}',

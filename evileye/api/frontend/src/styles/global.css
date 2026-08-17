@@ -2459,30 +2459,29 @@ body {
   z-index: 5;
 }
 
-.timeline-detection-tick {
+.timeline-detection-canvas {
   position: absolute;
-  top: 54%;
-  width: 12px;
-  height: 16px;
-  padding: 0;
-  border: none;
-  background: transparent;
-  transform: translateX(-50%);
-  cursor: pointer;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
   z-index: 2;
 }
 
-.timeline-detection-tick::after {
-  content: '';
+.playback-busy-hint {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: rgba(34, 197, 94, 0.95);
   transform: translate(-50%, -50%);
+  z-index: 6;
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #f8fafc;
+  font-size: 12px;
+  line-height: 1.3;
   pointer-events: none;
+  white-space: nowrap;
 }
 
 .timeline-ticks {

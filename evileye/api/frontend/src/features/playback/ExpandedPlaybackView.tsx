@@ -61,7 +61,7 @@ export function ExpandedPlaybackView({
     scrubbing,
     onVideoClock,
   );
-  const meta = usePlaybackCameraMetadata({
+  const { meta, loading } = usePlaybackCameraMetadata({
     cameraId,
     camera,
     positionSec,
@@ -119,6 +119,7 @@ export function ExpandedPlaybackView({
             scrubbing={scrubbing}
             detectionItems={detectionItems}
             globalDetectionTs={globalDetectionTs}
+            onVideoClock={onVideoClock}
             expanded
             frameSize={frameSize}
             onFrameSize={setFrameSize}
@@ -140,6 +141,7 @@ export function ExpandedPlaybackView({
             playing={playing}
             speed={speed}
             playMode={playMode}
+            loading={loading}
           />
         )}
       </div>

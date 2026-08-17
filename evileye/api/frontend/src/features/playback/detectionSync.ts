@@ -1,23 +1,26 @@
-import type { PlaybackDetectionItem } from '../../api';
+import type { PlaybackDetectionItem, StreamMetadataObject } from '../../api';
 
 export const MATCH_SEC = 0.5;
 export const SKIP_GAP_SEC = 1.0;
+/** Interpolate bbox only when found→lost is at most this long. */
+export const MAX_LERP_SEC = 3.0;
 
-/** Overlay/fetch gate: show API objects unless an index exists and we are off every snapshot. */
+export type FrameSizeLike = { w: number; h: number };
+
+/** Overlay/fetch gate: show API objects unless an index exists and this camera is off-track. */
 export function shouldShowPlaybackObjects({
   showMetadata,
   globalTsLength,
   atCameraDetection,
-  atGlobalDetection,
 }: {
   showMetadata: boolean;
   globalTsLength: number;
   atCameraDetection: boolean;
-  atGlobalDetection: boolean;
+  atGlobalDetection?: boolean;
 }): boolean {
   if (!showMetadata) return false;
   if (globalTsLength === 0) return true;
-  return atCameraDetection || atGlobalDetection;
+  return atCameraDetection;
 }
 
 /** Skip empty frames only when the next snapshot is close (active-track gap). */
@@ -86,35 +89,181 @@ export function hasDetectionAt(
   return detectionTsAtOrNull(sortedTs, positionSec, matchSec) != null;
 }
 
-/** True while playhead is inside a found→lost interval (or on a lone snapshot). */
+type TrackEnds = {
+  foundTs: number | null;
+  lostTs: number | null;
+  found: PlaybackDetectionItem | null;
+  lost: PlaybackDetectionItem | null;
+};
+
+function pairTracks(items: PlaybackDetectionItem[]): Map<number, TrackEnds> {
+  const byOid = new Map<number, TrackEnds>();
+  for (const it of items) {
+    if (!Number.isFinite(it.ts) || it.object_id == null) continue;
+    let row = byOid.get(it.object_id);
+    if (!row) {
+      row = { foundTs: null, lostTs: null, found: null, lost: null };
+      byOid.set(it.object_id, row);
+    }
+    if (it.kind === 'found') {
+      if (row.foundTs == null || it.ts < row.foundTs) {
+        row.foundTs = it.ts;
+        row.found = it;
+      }
+    } else if (row.lostTs == null || it.ts < row.lostTs) {
+      row.lostTs = it.ts;
+      row.lost = it;
+    }
+  }
+  return byOid;
+}
+
+function trackVisibleAt(
+  foundTs: number | null,
+  lostTs: number | null,
+  positionSec: number,
+  matchSec: number,
+  maxLerpSec: number,
+): boolean {
+  if (foundTs != null && Math.abs(foundTs - positionSec) < matchSec) return true;
+  if (lostTs != null && Math.abs(lostTs - positionSec) < matchSec) return true;
+  if (foundTs != null && lostTs != null && foundTs <= positionSec && positionSec <= lostTs) {
+    return lostTs - foundTs <= maxLerpSec;
+  }
+  return false;
+}
+
+/** True on snapshots and inside short found→lost intervals. */
 export function hasActiveTrackAt(
   items: PlaybackDetectionItem[],
   positionSec: number,
   matchSec = MATCH_SEC,
+  maxLerpSec = MAX_LERP_SEC,
 ): boolean {
   if (!Number.isFinite(positionSec)) return false;
-  const found = new Map<number, number>();
-  const lost = new Map<number, number>();
   for (const it of items) {
-    if (!Number.isFinite(it.ts)) continue;
-    if (it.object_id == null) {
-      if (Math.abs(it.ts - positionSec) < matchSec) return true;
-      continue;
-    }
-    if (it.kind === 'found') {
-      const prev = found.get(it.object_id);
-      if (prev == null || it.ts < prev) found.set(it.object_id, it.ts);
-    } else {
-      const prev = lost.get(it.object_id);
-      if (prev == null || it.ts < prev) lost.set(it.object_id, it.ts);
-    }
+    if (!Number.isFinite(it.ts) || it.object_id != null) continue;
+    if (Math.abs(it.ts - positionSec) < matchSec) return true;
   }
-  for (const oid of new Set([...found.keys(), ...lost.keys()])) {
-    const f = found.get(oid);
-    const l = lost.get(oid);
-    if (f != null && l != null && f <= positionSec && positionSec <= l) return true;
-    if (f != null && Math.abs(f - positionSec) < matchSec) return true;
-    if (l != null && Math.abs(l - positionSec) < matchSec) return true;
+  for (const row of pairTracks(items).values()) {
+    if (trackVisibleAt(row.foundTs, row.lostTs, positionSec, matchSec, maxLerpSec)) return true;
   }
   return false;
+}
+
+export function bboxFromIndexBox(
+  box: unknown,
+  frameSize?: FrameSizeLike | null,
+): [number, number, number, number] | null {
+  let a = 0;
+  let b = 0;
+  let c = 0;
+  let d = 0;
+  if (box && typeof box === 'object' && !Array.isArray(box)) {
+    const rec = box as Record<string, unknown>;
+    a = Number(rec.x);
+    b = Number(rec.y);
+    c = Number(rec.width);
+    d = Number(rec.height);
+    if (![a, b, c, d].every(Number.isFinite)) return null;
+    if (Math.max(Math.abs(a), Math.abs(b), Math.abs(c), Math.abs(d)) <= 1.5) {
+      return [a, b, a + c, b + d];
+    }
+    const w = frameSize?.w ?? 0;
+    const h = frameSize?.h ?? 0;
+    if (w > 0 && h > 0) return [a / w, b / h, (a + c) / w, (b + d) / h];
+    return null;
+  }
+  if (Array.isArray(box) && box.length >= 4) {
+    a = Number(box[0]);
+    b = Number(box[1]);
+    c = Number(box[2]);
+    d = Number(box[3]);
+    if (![a, b, c, d].every(Number.isFinite)) return null;
+    const xyxy = c >= a && d >= b;
+    if (Math.max(Math.abs(a), Math.abs(b), Math.abs(c), Math.abs(d)) <= 1.5) {
+      return xyxy ? [a, b, c, d] : [a, b, a + c, b + d];
+    }
+    const w = frameSize?.w ?? 0;
+    const h = frameSize?.h ?? 0;
+    if (w <= 0 || h <= 0) return null;
+    if (xyxy) return [a / w, b / h, c / w, d / h];
+    return [a / w, b / h, (a + c) / w, (b + d) / h];
+  }
+  return null;
+}
+
+function lerpBbox(
+  start: [number, number, number, number],
+  end: [number, number, number, number],
+  t: number,
+): [number, number, number, number] {
+  const u = Math.max(0, Math.min(1, t));
+  return [
+    start[0] + (end[0] - start[0]) * u,
+    start[1] + (end[1] - start[1]) * u,
+    start[2] + (end[2] - start[2]) * u,
+    start[3] + (end[3] - start[3]) * u,
+  ];
+}
+
+function itemToObject(
+  it: PlaybackDetectionItem,
+  bbox: [number, number, number, number],
+): StreamMetadataObject {
+  return {
+    object_id: it.object_id,
+    track_id: it.track_id ?? it.object_id,
+    global_id: it.global_id,
+    class_id: it.class_id ?? undefined,
+    class_name: it.class_name,
+    conf: it.confidence,
+    bbox,
+  };
+}
+
+/** Immediate overlay objects from the found/lost index while metadata API is in flight. */
+export function objectsToOverlayFromIndex(
+  items: PlaybackDetectionItem[],
+  positionSec: number,
+  frameSize?: FrameSizeLike | null,
+  matchSec = MATCH_SEC,
+  maxLerpSec = MAX_LERP_SEC,
+): StreamMetadataObject[] {
+  if (!Number.isFinite(positionSec)) return [];
+  const out: StreamMetadataObject[] = [];
+  const seen = new Set<number | string>();
+
+  const near = objectsFromDetectionIndex(items, positionSec, matchSec);
+  for (const it of near) {
+    const bbox = bboxFromIndexBox(it.bounding_box, frameSize);
+    if (!bbox) continue;
+    const key = it.object_id ?? `anon:${it.ts}:${it.kind}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(itemToObject(it, bbox));
+  }
+
+  for (const [oid, row] of pairTracks(items)) {
+    if (seen.has(oid)) continue;
+    if (row.foundTs == null || row.lostTs == null) continue;
+    if (row.foundTs > positionSec || positionSec > row.lostTs) continue;
+    const span = row.lostTs - row.foundTs;
+    if (span > maxLerpSec || span <= 1e-9) continue;
+    const foundBox = bboxFromIndexBox(row.found?.bounding_box, frameSize);
+    const lostBox = bboxFromIndexBox(row.lost?.bounding_box, frameSize);
+    if (!foundBox) continue;
+    const t = (positionSec - row.foundTs) / span;
+    const bbox = lostBox ? lerpBbox(foundBox, lostBox, t) : foundBox;
+    seen.add(oid);
+    out.push(itemToObject(row.found ?? row.lost!, bbox));
+  }
+  return out;
+}
+
+export function overlayTimeLabel(positionSec: number): string {
+  if (!Number.isFinite(positionSec)) return '';
+  const d = new Date(positionSec * 1000);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
