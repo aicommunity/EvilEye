@@ -1,6 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
-import { playbackApi, type FrameSize, type PlaybackCamera, type PlaybackSegment, type StreamMetadata } from '../../api';
+import {
+  playbackApi,
+  type FrameSize,
+  type PlaybackCamera,
+  type PlaybackDetectionItem,
+  type PlaybackPlayMode,
+  type PlaybackSegment,
+  type StreamMetadata,
+} from '../../api';
 import { useI18n } from '../../i18n';
+import { hasDetectionAt, objectsFromDetectionIndex } from './detectionSync';
 import { PlaybackMediaWithOverlay } from './PlaybackMediaWithOverlay';
 import { mergePlaybackMetadata } from './mergePlaybackMetadata';
 import { seekPlaybackVideo } from './playbackVideoSync';
@@ -26,6 +35,9 @@ export function usePlaybackCameraSlot(
   getPosition: () => number,
   positionSec: number,
   playing: boolean,
+  playMode: PlaybackPlayMode = 'normal',
+  scrubbing = false,
+  onVideoClock?: (globalSec: number) => void,
 ) {
   const ref = useRef<HTMLVideoElement>(null);
   const preloadRef = useRef<HTMLVideoElement>(null);
@@ -36,6 +48,12 @@ export function usePlaybackCameraSlot(
   getPositionRef.current = getPosition;
   const segmentsRef = useRef(segments);
   segmentsRef.current = segments;
+  const playModeRef = useRef(playMode);
+  playModeRef.current = playMode;
+  const scrubbingRef = useRef(scrubbing);
+  scrubbingRef.current = scrubbing;
+  const onVideoClockRef = useRef(onVideoClock);
+  onVideoClockRef.current = onVideoClock;
 
   const applySync = () => {
     const position = getPositionRef.current();
@@ -84,31 +102,34 @@ export function usePlaybackCameraSlot(
 
     const v = ref.current;
     const current = slotRef.current;
-    if (v && current) {
-      seekPlaybackVideo(v, position, current.startTs, { playing });
+    if (!v || !current) return;
+
+    if (playModeRef.current === 'normal' && playing && !scrubbingRef.current) {
+      onVideoClockRef.current?.(current.startTs + v.currentTime);
+      return;
     }
+
+    seekPlaybackVideo(v, position, current.startTs, {
+      playing,
+      playMode: playModeRef.current,
+      scrubbing: scrubbingRef.current,
+    });
   };
 
   useEffect(() => {
-    let cancelled = false;
-    let rafHandle = 0;
-    let vfcHandle: number | null = null;
-
-    const schedule = () => {
-      if (cancelled) return;
-      applySync();
-      const el = ref.current as HTMLVideoElement & {
-        requestVideoFrameCallback?: (cb: () => void) => number;
-        cancelVideoFrameCallback?: (h: number) => void;
-      } | null;
-      if (playing && el?.requestVideoFrameCallback) {
-        vfcHandle = el.requestVideoFrameCallback(() => schedule());
-      } else if (playing) {
-        rafHandle = window.requestAnimationFrame(() => schedule());
+    const onTimeUpdate = () => {
+      if (playModeRef.current === 'detection-sync' || scrubbingRef.current) {
+        applySync();
+        return;
+      }
+      if (playing && playModeRef.current === 'normal') {
+        const v = ref.current;
+        const current = slotRef.current;
+        if (v && current) {
+          onVideoClockRef.current?.(current.startTs + v.currentTime);
+        }
       }
     };
-
-    const onTimeUpdate = () => applySync();
     const onReady = () => applySync();
     const v = ref.current;
     if (!v) return;
@@ -116,29 +137,19 @@ export function usePlaybackCameraSlot(
     v.addEventListener('loadeddata', onReady);
     v.addEventListener('seeked', onReady);
     applySync();
-    if (playing) schedule();
 
     return () => {
-      cancelled = true;
       v.removeEventListener('timeupdate', onTimeUpdate);
       v.removeEventListener('loadeddata', onReady);
       v.removeEventListener('seeked', onReady);
-      if (vfcHandle != null && 'cancelVideoFrameCallback' in v) {
-        try {
-          (v as HTMLVideoElement & { cancelVideoFrameCallback: (h: number) => void }).cancelVideoFrameCallback(vfcHandle);
-        } catch {
-          /* ignore */
-        }
-      }
-      if (rafHandle) window.cancelAnimationFrame(rafHandle);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playing, segments, slot?.url]);
+  }, [playing, segments, slot?.url, playMode, scrubbing]);
 
   useEffect(() => {
     applySync();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [positionSec]);
+  }, [positionSec, playMode, scrubbing]);
 
   return { ref, preloadRef, slot, applySync };
 }
@@ -151,6 +162,9 @@ export function usePlaybackCameraMetadata({
   showMetadata,
   hasVideo,
   frameSize,
+  playing = false,
+  detectionItems = [],
+  globalDetectionTs = [],
 }: {
   cameraId: string;
   camera?: PlaybackCamera;
@@ -159,7 +173,20 @@ export function usePlaybackCameraMetadata({
   showMetadata: boolean;
   hasVideo: boolean;
   frameSize?: FrameSize | null;
-}): StreamMetadata | null {
+  playing?: boolean;
+  detectionItems?: PlaybackDetectionItem[];
+  globalDetectionTs?: number[];
+}) {
+  const atCameraDetection = useMemo(
+    () => objectsFromDetectionIndex(detectionItems, positionSec).length > 0,
+    [detectionItems, positionSec],
+  );
+  const atGlobalDetection = useMemo(
+    () => hasDetectionAt(globalDetectionTs, positionSec),
+    [globalDetectionTs, positionSec],
+  );
+  const hasDetectionAtPosition = !showMetadata || globalDetectionTs.length === 0 || atGlobalDetection;
+
   const staticMeta = usePlaybackStaticMetadata({
     camera: cameraId,
     sourceId: camera?.source_id,
@@ -172,10 +199,18 @@ export function usePlaybackCameraMetadata({
     sourceId: camera?.source_id,
     positionSec,
     runId,
-    enabled: showMetadata && hasVideo,
+    enabled: showMetadata && hasVideo && (atCameraDetection || atGlobalDetection),
     frameSize,
+    playing,
+    hasDetectionAtPosition,
   });
-  return useMemo(() => mergePlaybackMetadata(staticMeta, dynamicMeta), [staticMeta, dynamicMeta]);
+
+  return useMemo(() => {
+    const merged = mergePlaybackMetadata(staticMeta, dynamicMeta);
+    if (!showMetadata || !merged) return merged;
+    if (hasDetectionAtPosition && atGlobalDetection) return merged;
+    return { ...merged, objects: [] };
+  }, [staticMeta, dynamicMeta, showMetadata, hasDetectionAtPosition, atGlobalDetection]);
 }
 
 export function PlaybackVideoSurface({
@@ -194,6 +229,7 @@ export function PlaybackVideoSurface({
   onVideoDimensions,
   playing,
   speed,
+  playMode = 'normal',
 }: {
   videoRef: RefObject<HTMLVideoElement | null>;
   preloadRef: RefObject<HTMLVideoElement | null>;
@@ -210,6 +246,7 @@ export function PlaybackVideoSurface({
   onVideoDimensions?: (size: FrameSize) => void;
   playing: boolean;
   speed: number;
+  playMode?: PlaybackPlayMode;
 }) {
   const { t } = useI18n();
 
@@ -217,9 +254,13 @@ export function PlaybackVideoSurface({
     const v = videoRef.current;
     if (!v) return;
     v.playbackRate = speed;
+    if (playMode === 'detection-sync') {
+      v.pause();
+      return;
+    }
     if (playing) void v.play().catch(() => null);
     else v.pause();
-  }, [playing, speed, slot?.url, videoRef]);
+  }, [playing, speed, slot?.url, videoRef, playMode]);
 
   const previewClass = expanded ? 'expanded-camera-frame' : 'camera-preview';
 

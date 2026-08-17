@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse
 
 from evileye.api.core import playback_service as svc
 from evileye.api.core import playback_metadata_service as metadata_svc
+from evileye.api.core.playback_metadata_service import DEFAULT_MATCH_SEC
 
 router = APIRouter(prefix="/api/v1/playback", tags=["playback"])
 
@@ -72,7 +73,7 @@ async def playback_metadata(
     ts: Optional[float] = Query(None, description="Unix timestamp (seconds); optional for static_only"),
     date: Optional[str] = None,
     run_id: Optional[int] = Query(None),
-    window: float = Query(1.0, ge=0.1, le=10.0),
+    window: float = Query(DEFAULT_MATCH_SEC, ge=0.01, le=10.0),
     source_id: Optional[int] = Query(None),
     static_only: bool = Query(False, description="Return config-only layers (zones, ROI)"),
     frame_w: Optional[int] = Query(None, ge=1, description="Actual video frame width from client"),
@@ -119,6 +120,52 @@ async def playback_metadata(
             frame_h=frame_h,
         )
     return {"metadata": payload}
+
+
+@router.get("/detections")
+async def playback_detections(
+    camera: Optional[str] = Query(None),
+    cameras: Optional[str] = Query(None, description="Comma-separated camera ids for batch"),
+    date: Optional[str] = None,
+    from_ts: Optional[float] = Query(None, alias="from"),
+    to_ts: Optional[float] = Query(None, alias="to"),
+    run_id: Optional[int] = Query(None),
+) -> dict:
+    if not date:
+        if from_ts is not None:
+            from datetime import datetime as dt
+
+            date = dt.fromtimestamp(float(from_ts)).strftime("%Y-%m-%d")
+        elif to_ts is not None:
+            from datetime import datetime as dt
+
+            date = dt.fromtimestamp(float(to_ts)).strftime("%Y-%m-%d")
+        else:
+            from datetime import datetime as dt
+
+            date = dt.now().strftime("%Y-%m-%d")
+    if cameras:
+        cam_list = [c.strip() for c in cameras.split(",") if c.strip()]
+        by_camera = await asyncio.to_thread(
+            metadata_svc.load_detection_index_batch,
+            cameras=cam_list,
+            date_folder=date,
+            run_id=run_id,
+            from_ts=from_ts,
+            to_ts=to_ts,
+        )
+        return {"by_camera": by_camera, "items": [item for items in by_camera.values() for item in items]}
+    if not camera:
+        raise HTTPException(status_code=400, detail="camera or cameras query required")
+    items = await asyncio.to_thread(
+        metadata_svc.load_detection_index,
+        camera=camera,
+        date_folder=date,
+        run_id=run_id,
+        from_ts=from_ts,
+        to_ts=to_ts,
+    )
+    return {"items": items}
 
 
 @router.get("/media")

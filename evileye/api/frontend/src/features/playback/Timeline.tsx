@@ -5,6 +5,7 @@ import { EventMarkers } from './EventMarkers';
 import {
   PAN_CLICK_SLOP_PX,
   buildTimelineTicks,
+  formatPlaybackDateTime,
   unixAtClientX,
   zoomViewAt,
 } from './timelineMath';
@@ -15,20 +16,25 @@ export function Timeline({
   position,
   markers,
   segments = [],
+  detectionTs = [],
   onSeek,
   onViewChange,
+  onScrubbingChange,
 }: {
   viewFrom: number | null;
   viewTo: number | null;
   position: number;
   markers: PlaybackEventMarker[];
   segments?: PlaybackSegment[];
+  detectionTs?: number[];
   onSeek: (sec: number) => void;
   onViewChange: (viewFrom: number, viewTo: number) => void;
+  onScrubbingChange?: (scrubbing: boolean) => void;
 }) {
   const { t, dateLocaleTag } = useI18n();
   const rootRef = useRef<HTMLDivElement>(null);
   const [panning, setPanning] = useState(false);
+  const [hoverSec, setHoverSec] = useState<number | null>(null);
   const dragRef = useRef<{
     pointerId: number;
     startX: number;
@@ -84,6 +90,13 @@ export function Timeline({
     onSeek(unixAtClientX(clientX, rect, viewFrom, viewTo));
   };
 
+  const updateHover = (clientX: number) => {
+    const el = rootRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    setHoverSec(unixAtClientX(clientX, rect, viewFrom, viewTo));
+  };
+
   return (
     <div
       ref={rootRef}
@@ -110,15 +123,23 @@ export function Timeline({
           moved: false,
         };
         setPanning(true);
+        onScrubbingChange?.(true);
       }}
       onPointerMove={(e) => {
         const drag = dragRef.current;
-        if (!drag || drag.pointerId !== e.pointerId) return;
+        if (!drag || drag.pointerId !== e.pointerId) {
+          if (!drag) updateHover(e.clientX);
+          return;
+        }
         const el = rootRef.current;
         if (!el) return;
         const dx = e.clientX - drag.startX;
         if (Math.abs(dx) >= PAN_CLICK_SLOP_PX) drag.moved = true;
-        if (!drag.moved) return;
+        if (!drag.moved) {
+          updateHover(e.clientX);
+          return;
+        }
+        setHoverSec(null);
         const width = el.getBoundingClientRect().width || 1;
         const dragSpan = drag.startViewTo - drag.startViewFrom;
         const deltaSec = -(dx / width) * dragSpan;
@@ -129,6 +150,7 @@ export function Timeline({
         if (!drag || drag.pointerId !== e.pointerId) return;
         dragRef.current = null;
         setPanning(false);
+        onScrubbingChange?.(false);
         try {
           (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
         } catch {
@@ -141,7 +163,9 @@ export function Timeline({
       onPointerCancel={() => {
         dragRef.current = null;
         setPanning(false);
+        onScrubbingChange?.(false);
       }}
+      onPointerLeave={() => setHoverSec(null)}
     >
       <div className="timeline-ticks" aria-hidden>
         {ticks.map((ts) => {
@@ -166,6 +190,18 @@ export function Timeline({
           );
         })}
       </div>
+      {detectionTs.map((ts) => {
+        if (ts < viewFrom || ts > viewTo) return null;
+        const left = ((ts - viewFrom) / span) * 100;
+        return (
+          <div
+            key={`det-${ts}`}
+            className="timeline-detection-tick"
+            style={{ left: `${left}%` }}
+            aria-hidden
+          />
+        );
+      })}
       {segments.map((seg) => {
         const left = ((seg.start_ts - viewFrom) / span) * 100;
         const width = ((seg.end_ts - seg.start_ts) / span) * 100;
@@ -189,6 +225,21 @@ export function Timeline({
           />
         );
       })}
+      {hoverSec != null && !panning ? (
+        <>
+          <div
+            className="timeline-hover-line"
+            style={{ left: `${Math.max(0, Math.min(100, ((hoverSec - viewFrom) / span) * 100))}%` }}
+            aria-hidden
+          />
+          <div
+            className="timeline-hover-tooltip"
+            style={{ left: `${Math.max(0, Math.min(100, ((hoverSec - viewFrom) / span) * 100))}%` }}
+          >
+            {formatPlaybackDateTime(hoverSec)}
+          </div>
+        </>
+      ) : null}
       <div
         className="timeline-playhead"
         style={{

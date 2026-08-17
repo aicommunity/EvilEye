@@ -2407,7 +2407,7 @@ body {
 .playback-timeline {
   touch-action: none;
   overscroll-behavior: contain;
-  cursor: grab;
+  cursor: crosshair;
   user-select: none;
 }
 
@@ -2428,6 +2428,45 @@ body {
 
 .playback-timeline.is-panning {
   cursor: grabbing;
+}
+
+.timeline-hover-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--accent);
+  opacity: 0.55;
+  pointer-events: none;
+  z-index: 4;
+  transform: translateX(-50%);
+}
+
+.timeline-hover-tooltip {
+  position: absolute;
+  bottom: 100%;
+  transform: translateX(-50%);
+  margin-bottom: 4px;
+  padding: 2px 6px;
+  font-size: 0.72rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 5;
+}
+
+.timeline-detection-tick {
+  position: absolute;
+  top: 62%;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: rgba(34, 197, 94, 0.9);
+  transform: translateX(-50%);
+  pointer-events: none;
+  z-index: 2;
 }
 
 .timeline-ticks {

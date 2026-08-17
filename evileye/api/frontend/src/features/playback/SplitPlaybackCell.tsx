@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { FrameSize, PlaybackCamera } from '../../api';
+import type { FrameSize, PlaybackCamera, PlaybackDetectionItem, PlaybackPlayMode } from '../../api';
 import { MetadataOverlayLayer } from '../overlay/MetadataOverlayLayer';
 import { prepareOverlayMetadata } from '../overlay/overlayMath';
 import { resolvePlaybackFrameSize } from '../overlay/playbackFrameSize';
 import { useMediaLetterbox } from '../overlay/useMediaLetterbox';
 import { useI18n } from '../../i18n';
+import { hasDetectionAt, objectsFromDetectionIndex } from './detectionSync';
 import { mergePlaybackMetadata } from './mergePlaybackMetadata';
 import { seekPlaybackVideo } from './playbackVideoSync';
 import { usePlaybackMetadata } from './usePlaybackMetadata';
@@ -24,6 +25,10 @@ export function SplitPlaybackCell({
   startTs,
   runId,
   showMetadata,
+  playMode = 'normal',
+  scrubbing = false,
+  detectionItems = [],
+  globalDetectionTs = [],
   onExpand,
   expanded = false,
   frameSize: frameSizeProp,
@@ -42,6 +47,10 @@ export function SplitPlaybackCell({
   startTs: number;
   runId: number | null;
   showMetadata: boolean;
+  playMode?: PlaybackPlayMode;
+  scrubbing?: boolean;
+  detectionItems?: PlaybackDetectionItem[];
+  globalDetectionTs?: number[];
   onExpand?: () => void;
   expanded?: boolean;
   frameSize?: FrameSize | null;
@@ -62,6 +71,16 @@ export function SplitPlaybackCell({
     [camera, parentVideoSize],
   );
 
+  const atCameraDetection = useMemo(
+    () => objectsFromDetectionIndex(detectionItems, positionSec).length > 0,
+    [detectionItems, positionSec],
+  );
+  const atGlobalDetection = useMemo(
+    () => hasDetectionAt(globalDetectionTs, positionSec),
+    [globalDetectionTs, positionSec],
+  );
+  const hasDetectionAtPosition = !showMetadata || globalDetectionTs.length === 0 || atGlobalDetection;
+
   const staticMeta = usePlaybackStaticMetadata({
     camera: cameraId,
     sourceId,
@@ -74,13 +93,17 @@ export function SplitPlaybackCell({
     sourceId,
     positionSec,
     runId,
-    enabled: showMetadata,
+    enabled: showMetadata && (atCameraDetection || atGlobalDetection),
     frameSize: metadataFrameSize,
+    playing,
+    hasDetectionAtPosition,
   });
-  const mergedMeta = useMemo(
-    () => mergePlaybackMetadata(staticMeta, dynamicMeta),
-    [staticMeta, dynamicMeta],
-  );
+  const mergedMeta = useMemo(() => {
+    const merged = mergePlaybackMetadata(staticMeta, dynamicMeta);
+    if (!showMetadata || !merged) return merged;
+    if (hasDetectionAtPosition && atGlobalDetection) return merged;
+    return { ...merged, objects: [] };
+  }, [staticMeta, dynamicMeta, showMetadata, hasDetectionAtPosition, atGlobalDetection]);
 
   const layoutBox = useMediaLetterbox(
     mediaRef,
@@ -114,16 +137,38 @@ export function SplitPlaybackCell({
       ctx.drawImage(video, sx, sy, sw, sh, 0, 0, cw, ch);
     };
 
-    video.addEventListener('timeupdate', draw);
     video.addEventListener('loadeddata', draw);
     video.addEventListener('seeked', draw);
+
+    let vfcHandle = 0;
+    const videoWithVfc = video as HTMLVideoElement & {
+      requestVideoFrameCallback?: (cb: () => void) => number;
+      cancelVideoFrameCallback?: (h: number) => void;
+    };
+    if (playMode === 'normal' && playing && videoWithVfc.requestVideoFrameCallback) {
+      const onFrame = () => {
+        draw();
+        vfcHandle = videoWithVfc.requestVideoFrameCallback!(onFrame);
+      };
+      vfcHandle = videoWithVfc.requestVideoFrameCallback(onFrame);
+    } else {
+      video.addEventListener('timeupdate', draw);
+    }
+
     draw();
     return () => {
       video.removeEventListener('timeupdate', draw);
       video.removeEventListener('loadeddata', draw);
       video.removeEventListener('seeked', draw);
+      if (vfcHandle && videoWithVfc.cancelVideoFrameCallback) {
+        try {
+          videoWithVfc.cancelVideoFrameCallback(vfcHandle);
+        } catch {
+          /* ignore */
+        }
+      }
     };
-  }, [videoUrl, srcCoords]);
+  }, [videoUrl, srcCoords, playMode, playing]);
 
   useEffect(() => {
     const container = mediaRef.current;
@@ -152,27 +197,19 @@ export function SplitPlaybackCell({
     const video = videoRef.current;
     if (!video) return;
     video.playbackRate = speed;
+    if (playMode === 'detection-sync') {
+      video.pause();
+      return;
+    }
     if (playing) void video.play().catch(() => null);
     else video.pause();
-  }, [playing, speed, videoUrl]);
+  }, [playing, speed, videoUrl, playMode]);
 
   useEffect(() => {
-    let raf = 0;
-    let cancelled = false;
-    const tick = () => {
-      if (cancelled) return;
-      const video = videoRef.current;
-      if (video && videoUrl) {
-        seekPlaybackVideo(video, getPositionRef.current(), startTs, { playing });
-      }
-      if (playing) raf = window.requestAnimationFrame(tick);
-    };
-    tick();
-    return () => {
-      cancelled = true;
-      if (raf) window.cancelAnimationFrame(raf);
-    };
-  }, [playing, videoUrl, startTs, positionSec]);
+    const video = videoRef.current;
+    if (!video || !videoUrl) return;
+    seekPlaybackVideo(video, getPositionRef.current(), startTs, { playing, playMode, scrubbing });
+  }, [positionSec, videoUrl, startTs, playing, playMode, scrubbing]);
 
   const previewClass = expanded ? 'expanded-camera-frame' : 'camera-preview';
 
@@ -193,7 +230,7 @@ export function SplitPlaybackCell({
             onFrameSize?.(size);
           }
           setVideoReady((n) => n + 1);
-          seekPlaybackVideo(video, getPositionRef.current(), startTs, { playing });
+          seekPlaybackVideo(video, getPositionRef.current(), startTs, { playing, playMode, scrubbing });
         }}
       />
       <canvas

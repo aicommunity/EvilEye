@@ -5,6 +5,7 @@ import {
   stateApi,
   type PlaybackCamera,
   type PlaybackEventMarker,
+  type PlaybackPlayMode,
   type PlaybackSegment,
   cacheGet,
   cacheSet,
@@ -18,6 +19,8 @@ import { Timeline } from './Timeline';
 import { PlaybackGrid } from './PlaybackGrid';
 import { ExpandedPlaybackView } from './ExpandedPlaybackView';
 import { usePlaybackController } from './usePlaybackController';
+import { useDetectionIndex } from './useDetectionIndex';
+import { detectionTsAtOrNull, nextDetectionTs } from './detectionSync';
 import { usePlaybackLayout } from './usePlaybackLayout';
 import { useTimelineViewport } from './useTimelineViewport';
 import { fitColsForCount } from '../layout/fitGrid';
@@ -58,10 +61,47 @@ export function PlaybackPage() {
   const [markers, setMarkers] = useState<PlaybackEventMarker[]>([]);
   const [segmentsLoaded, setSegmentsLoaded] = useState(false);
   const [showMetadata, setShowMetadata] = useState(true);
+  const [scrubbing, setScrubbing] = useState(false);
   const [expandedCameraId, setExpandedCameraId] = useState<string | null>(null);
   const initialT = parseDeepLinkTime(params.get('t'));
   const ctrl = usePlaybackController(initialT);
   const viewport = useTimelineViewport();
+  const detectionIndex = useDetectionIndex({
+    cameras: selectedIds,
+    date,
+    runId,
+    fromSec: ctrl.fromSec,
+    toSec: ctrl.toSec,
+    enabled: showMetadata,
+  });
+  const playMode: PlaybackPlayMode =
+    showMetadata && detectionIndex.hasDetections ? 'detection-sync' : 'normal';
+
+  useEffect(() => {
+    ctrl.setPlayMode(playMode);
+    ctrl.setDetectionTimestamps(detectionIndex.globalTs);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- controller methods are stable enough
+  }, [playMode, detectionIndex.globalTs]);
+
+  const togglePlay = useCallback(() => {
+    if (!ctrl.playing && playMode === 'detection-sync' && detectionIndex.globalTs.length) {
+      const pos = ctrl.getPosition();
+      if (detectionTsAtOrNull(detectionIndex.globalTs, pos) == null) {
+        const next = nextDetectionTs(detectionIndex.globalTs, pos);
+        if (next == null) return;
+        ctrl.seek(next);
+      }
+    }
+    ctrl.setPlaying(!ctrl.playing);
+  }, [ctrl, playMode, detectionIndex.globalTs]);
+
+  const seek = useCallback(
+    (sec: number) => {
+      ctrl.seek(sec);
+    },
+    [ctrl],
+  );
+
   const urlCamera = params.get('camera');
   const dateChangeSourceRef = useRef<'user' | 'viewport'>('user');
   const skipHardSegmentReloadRef = useRef(false);
@@ -360,7 +400,7 @@ export function PlaybackPage() {
                   </Button>
                 ))
               : null}
-            <Button size="sm" variant={ctrl.playing ? 'danger' : 'success'} onClick={() => ctrl.setPlaying(!ctrl.playing)}>
+            <Button size="sm" variant={ctrl.playing ? 'danger' : 'success'} onClick={togglePlay}>
               {ctrl.playing ? t('playback.pause') : t('playback.play')}
             </Button>
             {[0.5, 1, 2, 4].map((s) => (
@@ -405,6 +445,11 @@ export function PlaybackPage() {
               speed={ctrl.speed}
               runId={runId}
               showMetadata={showMetadata}
+              playMode={playMode}
+              scrubbing={scrubbing}
+              detectionItems={detectionIndex.byCamera[expandedCamera.id] ?? []}
+              globalDetectionTs={detectionIndex.globalTs}
+              onVideoClock={ctrl.syncPositionFromVideo}
               onClose={() => setExpandedCameraId(null)}
             />
           ) : gridEmpty ? (
@@ -422,6 +467,11 @@ export function PlaybackPage() {
               speed={ctrl.speed}
               runId={runId}
               showMetadata={showMetadata}
+              playMode={playMode}
+              scrubbing={scrubbing}
+              detectionByCamera={detectionIndex.byCamera}
+              globalDetectionTs={detectionIndex.globalTs}
+              onVideoClock={ctrl.syncPositionFromVideo}
               onExpand={setExpandedCameraId}
             />
           )}
@@ -436,8 +486,10 @@ export function PlaybackPage() {
             position={ctrl.positionSec}
             markers={markers}
             segments={allSegments}
-            onSeek={ctrl.seek}
+            detectionTs={detectionIndex.globalTs}
+            onSeek={seek}
             onViewChange={onViewChange}
+            onScrubbingChange={setScrubbing}
           />
         </div>
       </div>

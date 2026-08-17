@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import type { FrameSize, PlaybackCamera, PlaybackSegment } from '../../api';
+import type {
+  FrameSize,
+  PlaybackCamera,
+  PlaybackDetectionItem,
+  PlaybackPlayMode,
+  PlaybackSegment,
+} from '../../api';
 import { Button } from '../../components/ui';
 import { useI18n } from '../../i18n';
 import {
@@ -19,6 +25,11 @@ export function ExpandedPlaybackView({
   speed,
   runId,
   showMetadata,
+  playMode = 'normal',
+  scrubbing = false,
+  detectionItems = [],
+  globalDetectionTs = [],
+  onVideoClock,
   onClose,
 }: {
   cameraId: string;
@@ -30,13 +41,26 @@ export function ExpandedPlaybackView({
   speed: number;
   runId: number | null;
   showMetadata: boolean;
+  playMode?: PlaybackPlayMode;
+  scrubbing?: boolean;
+  detectionItems?: PlaybackDetectionItem[];
+  globalDetectionTs?: number[];
+  onVideoClock?: (globalSec: number) => void;
   onClose: () => void;
 }) {
   const { t } = useI18n();
   const mediaRef = useRef<HTMLDivElement>(null);
   const [videoReady, setVideoReady] = useState(0);
   const [frameSize, setFrameSize] = useState<FrameSize | null>(null);
-  const { ref, preloadRef, slot, applySync } = usePlaybackCameraSlot(segments, getPosition, positionSec, playing);
+  const { ref, preloadRef, slot, applySync } = usePlaybackCameraSlot(
+    segments,
+    getPosition,
+    positionSec,
+    playing,
+    playMode,
+    scrubbing,
+    onVideoClock,
+  );
   const meta = usePlaybackCameraMetadata({
     cameraId,
     camera,
@@ -45,6 +69,9 @@ export function ExpandedPlaybackView({
     showMetadata,
     hasVideo: Boolean(slot?.url),
     frameSize,
+    playing,
+    detectionItems,
+    globalDetectionTs,
   });
 
   useEffect(() => {
@@ -88,6 +115,10 @@ export function ExpandedPlaybackView({
             startTs={slot.startTs}
             runId={runId}
             showMetadata={showMetadata}
+            playMode={playMode}
+            scrubbing={scrubbing}
+            detectionItems={detectionItems}
+            globalDetectionTs={globalDetectionTs}
             expanded
             frameSize={frameSize}
             onFrameSize={setFrameSize}
@@ -108,6 +139,7 @@ export function ExpandedPlaybackView({
             onVideoDimensions={setFrameSize}
             playing={playing}
             speed={speed}
+            playMode={playMode}
           />
         )}
       </div>

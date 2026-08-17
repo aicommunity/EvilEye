@@ -18,6 +18,8 @@ from evileye.visualization_modules.playback_coord import (
 from evileye.visualization_modules.preview_render import PreviewRenderContext, serialize_preview_metadata
 
 _OBJECT_FILES = ("objects_found.json", "objects_lost.json")
+DEFAULT_MATCH_SEC = 0.15
+DETECTION_INDEX_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _EVENT_FILES = {
     "camera_events.json": "camera_events",
     "system_events.json": "system_events",
@@ -181,38 +183,137 @@ def _read_json_objects(filepath: Path) -> list[dict[str, Any]]:
     return [obj for obj in objects_list if isinstance(obj, dict)]
 
 
-def _lost_times_by_object_id(lost_objects: list[dict[str, Any]]) -> dict[Any, datetime]:
-    lost_map: dict[Any, datetime] = {}
-    for obj in lost_objects:
-        oid = obj.get("object_id")
-        if oid is None:
-            continue
-        lost_ts = parse_event_timestamp(obj.get("lost_timestamp") or obj.get("timestamp"))
-        if lost_ts:
-            lost_map[oid] = lost_ts
-    return lost_map
-
-
-def _object_visible_at(
-    found: dict[str, Any],
-    target: datetime,
-    lost_map: dict[Any, datetime],
-    window_sec: float,
-) -> bool:
-    found_ts = parse_event_timestamp(
-        found.get("timestamp") or found.get("detected_timestamp") or found.get("ts") or found.get("time_stamp")
+def _detection_event_ts(raw: dict[str, Any], kind: str) -> datetime | None:
+    if kind == "lost":
+        return parse_event_timestamp(raw.get("lost_timestamp") or raw.get("timestamp"))
+    return parse_event_timestamp(
+        raw.get("timestamp") or raw.get("detected_timestamp") or raw.get("ts") or raw.get("time_stamp")
     )
-    if not found_ts:
-        return False
-    if abs((found_ts - target).total_seconds()) < window_sec:
-        return True
-    if found_ts > target:
-        return False
-    oid = found.get("object_id")
-    lost_ts = lost_map.get(oid) if oid is not None else None
-    if lost_ts is not None:
-        return found_ts <= target <= lost_ts
-    return False
+
+
+def _index_cache_key(base: Path, date_folder: str, camera: str, source_id: int | None) -> str:
+    return f"{base}:{date_folder}:{camera}:{source_id}"
+
+
+def _file_mtime_sum(*paths: Path) -> float:
+    total = 0.0
+    for path in paths:
+        try:
+            if path.is_file():
+                total += path.stat().st_mtime
+        except OSError:
+            continue
+    return total
+
+
+def _detection_index_item(raw: dict[str, Any], kind: str) -> dict[str, Any] | None:
+    event_ts = _detection_event_ts(raw, kind)
+    if not event_ts:
+        return None
+    return {
+        "ts": event_ts.timestamp(),
+        "kind": kind,
+        "object_id": raw.get("object_id"),
+        "source_name": raw.get("source_name") or raw.get("source"),
+        "source_id": raw.get("source_id"),
+        "bounding_box": raw.get("bounding_box") or raw.get("box"),
+        "frame_id": raw.get("frame_id"),
+        "class_name": raw.get("class_name"),
+        "confidence": raw.get("confidence"),
+        "class_id": raw.get("class_id"),
+        "track_id": raw.get("track_id"),
+        "global_id": raw.get("global_id"),
+    }
+
+
+def load_detection_index(
+    *,
+    camera: str,
+    date_folder: str,
+    run_id: int | None = None,
+    source_id: int | None = None,
+    from_ts: float | None = None,
+    to_ts: float | None = None,
+) -> list[dict[str, Any]]:
+    params = _load_params_for_run(run_id)
+    base = _playback_data_dir(params)
+    sid = source_id if source_id is not None else _resolve_source_id(params, camera, source_id)
+    aliases = source_aliases(params, camera, sid)
+    found_path = base / "Detections" / date_folder / "Metadata" / "objects_found.json"
+    lost_path = base / "Detections" / date_folder / "Metadata" / "objects_lost.json"
+    cache_key = _index_cache_key(base, date_folder, camera, sid)
+    mtime_sum = _file_mtime_sum(found_path, lost_path)
+    cached = DETECTION_INDEX_CACHE.get(cache_key)
+    if cached and cached[0] == mtime_sum:
+        items = cached[1]
+    else:
+        items = []
+        for obj in _read_json_objects(found_path):
+            if not _record_matches_camera(obj, aliases=aliases, source_id=sid):
+                continue
+            item = _detection_index_item(obj, "found")
+            if item:
+                items.append(item)
+        for obj in _read_json_objects(lost_path):
+            if not _record_matches_camera(obj, aliases=aliases, source_id=sid):
+                continue
+            item = _detection_index_item(obj, "lost")
+            if item:
+                items.append(item)
+        items.sort(key=lambda row: row["ts"])
+        DETECTION_INDEX_CACHE[cache_key] = (mtime_sum, items)
+
+    filtered = items
+    if from_ts is not None:
+        filtered = [row for row in filtered if row["ts"] >= float(from_ts)]
+    if to_ts is not None:
+        filtered = [row for row in filtered if row["ts"] <= float(to_ts)]
+    return filtered
+
+
+def load_detection_index_batch(
+    *,
+    cameras: list[str],
+    date_folder: str,
+    run_id: int | None = None,
+    from_ts: float | None = None,
+    to_ts: float | None = None,
+) -> dict[str, list[dict[str, Any]]]:
+    by_camera: dict[str, list[dict[str, Any]]] = {}
+    for camera in cameras:
+        cam = str(camera).strip()
+        if not cam:
+            continue
+        by_camera[cam] = load_detection_index(
+            camera=cam,
+            date_folder=date_folder,
+            run_id=run_id,
+            from_ts=from_ts,
+            to_ts=to_ts,
+        )
+    return by_camera
+
+
+def match_detections_at(
+    items: list[dict[str, Any]],
+    target_ts: float,
+    match_sec: float = DEFAULT_MATCH_SEC,
+) -> list[dict[str, Any]]:
+    return [it for it in items if abs(it["ts"] - target_ts) < match_sec]
+
+
+def nearest_detection_ts(items: list[dict[str, Any]], target_ts: float) -> float | None:
+    if not items:
+        return None
+    best: float | None = None
+    best_dist = float("inf")
+    for row in items:
+        ts = float(row["ts"])
+        dist = abs(ts - target_ts)
+        if dist < best_dist:
+            best_dist = dist
+            best = ts
+    return best
 
 
 def _load_objects_from_json(
@@ -222,32 +323,24 @@ def _load_objects_from_json(
     source_id: int | None,
     window_sec: float,
 ) -> list[dict[str, Any]]:
-    """Load archive objects active at ``target`` (found..lost) plus in-window snapshots."""
+    """Load archive object snapshots within ``window_sec`` of ``target`` (no sticky track interval)."""
     found_path = detections_dir / "objects_found.json"
     lost_path = detections_dir / "objects_lost.json"
     found_list = _read_json_objects(found_path)
     lost_list = _read_json_objects(lost_path)
-    lost_map = _lost_times_by_object_id(lost_list)
+    lost_ids = {id(obj) for obj in lost_list}
 
     selected: dict[Any, dict[str, Any]] = {}
-    for obj in found_list:
+    for obj in found_list + lost_list:
+        kind = "lost" if id(obj) in lost_ids else "found"
+        event_ts = _detection_event_ts(obj, kind)
+        if not event_ts or abs((event_ts - target).total_seconds()) >= window_sec:
+            continue
         if not _record_matches_camera(obj, aliases=aliases, source_id=source_id):
             continue
         oid = obj.get("object_id")
-        key = oid if oid is not None else id(obj)
-        if _object_visible_at(obj, target, lost_map, window_sec):
-            selected[key] = obj
-
-    for obj in lost_list:
-        if not _record_matches_camera(obj, aliases=aliases, source_id=source_id):
-            continue
-        lost_ts = parse_event_timestamp(obj.get("lost_timestamp"))
-        if not lost_ts or abs((lost_ts - target).total_seconds()) >= window_sec:
-            continue
-        oid = obj.get("object_id")
-        key = oid if oid is not None else id(obj)
-        if key not in selected:
-            selected[key] = obj
+        key = (kind, oid if oid is not None else id(obj))
+        selected[key] = obj
 
     return list(selected.values())
 
@@ -590,7 +683,7 @@ def build_playback_metadata(
     ts: float,
     date: str | None = None,
     run_id: int | None = None,
-    window_sec: float = 1.0,
+    window_sec: float = DEFAULT_MATCH_SEC,
     source_id: int | None = None,
     frame_w: int | None = None,
     frame_h: int | None = None,
@@ -681,7 +774,7 @@ def build_playback_metadata_batch(
     ts: float,
     date: str | None = None,
     run_id: int | None = None,
-    window_sec: float = 1.0,
+    window_sec: float = DEFAULT_MATCH_SEC,
     static_only: bool = False,
     frame_w: int | None = None,
     frame_h: int | None = None,

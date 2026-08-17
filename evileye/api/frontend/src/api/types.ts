@@ -194,3 +194,20 @@ export interface PlaybackEventMarker {
   camera?: string;
   row_key?: string;
 }
+
+export interface PlaybackDetectionItem {
+  ts: number;
+  kind: 'found' | 'lost';
+  object_id?: number | null;
+  source_name?: string;
+  source_id?: number | null;
+  bounding_box?: unknown;
+  frame_id?: number | null;
+  class_name?: string | null;
+  confidence?: number | null;
+  class_id?: number | null;
+  track_id?: number | null;
+  global_id?: number | null;
+}
+
+export type PlaybackPlayMode = 'normal' | 'detection-sync';

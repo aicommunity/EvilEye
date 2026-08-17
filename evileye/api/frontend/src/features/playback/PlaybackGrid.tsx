@@ -1,5 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
-import type { FrameSize, PlaybackCamera, PlaybackSegment } from '../../api';
+import { useRef, useState } from 'react';
+import type {
+  FrameSize,
+  PlaybackCamera,
+  PlaybackDetectionItem,
+  PlaybackPlayMode,
+  PlaybackSegment,
+} from '../../api';
 import { useI18n } from '../../i18n';
 import {
   PlaybackVideoSurface,
@@ -20,6 +26,11 @@ export function PlaybackGrid({
   mode = 'fixed',
   runId,
   showMetadata,
+  playMode = 'normal',
+  scrubbing = false,
+  detectionByCamera = {},
+  globalDetectionTs = [],
+  onVideoClock,
   onExpand,
 }: {
   cameras: string[];
@@ -33,6 +44,11 @@ export function PlaybackGrid({
   mode?: 'fit' | 'fixed';
   runId: number | null;
   showMetadata: boolean;
+  playMode?: PlaybackPlayMode;
+  scrubbing?: boolean;
+  detectionByCamera?: Record<string, PlaybackDetectionItem[]>;
+  globalDetectionTs?: number[];
+  onVideoClock?: (globalSec: number) => void;
   onExpand: (cameraId: string) => void;
 }) {
   const { t } = useI18n();
@@ -55,6 +71,11 @@ export function PlaybackGrid({
           speed={speed}
           runId={runId}
           showMetadata={showMetadata}
+          playMode={playMode}
+          scrubbing={scrubbing}
+          detectionItems={detectionByCamera[id] ?? []}
+          globalDetectionTs={globalDetectionTs}
+          onVideoClock={onVideoClock}
           onExpand={() => onExpand(id)}
         />
       ))}
@@ -72,6 +93,11 @@ function PlaybackCell({
   speed,
   runId,
   showMetadata,
+  playMode,
+  scrubbing,
+  detectionItems,
+  globalDetectionTs,
+  onVideoClock,
   onExpand,
 }: {
   id: string;
@@ -83,12 +109,25 @@ function PlaybackCell({
   speed: number;
   runId: number | null;
   showMetadata: boolean;
+  playMode: PlaybackPlayMode;
+  scrubbing: boolean;
+  detectionItems: PlaybackDetectionItem[];
+  globalDetectionTs: number[];
+  onVideoClock?: (globalSec: number) => void;
   onExpand: () => void;
 }) {
   const mediaRef = useRef<HTMLDivElement>(null);
   const [videoReady, setVideoReady] = useState(0);
   const [frameSize, setFrameSize] = useState<FrameSize | null>(null);
-  const { ref, preloadRef, slot, applySync } = usePlaybackCameraSlot(segments, getPosition, positionSec, playing);
+  const { ref, preloadRef, slot, applySync } = usePlaybackCameraSlot(
+    segments,
+    getPosition,
+    positionSec,
+    playing,
+    playMode,
+    scrubbing,
+    onVideoClock,
+  );
   const meta = usePlaybackCameraMetadata({
     cameraId: id,
     camera,
@@ -97,6 +136,9 @@ function PlaybackCell({
     showMetadata,
     hasVideo: Boolean(slot?.url),
     frameSize,
+    playing,
+    detectionItems,
+    globalDetectionTs,
   });
 
   const split = Boolean(camera?.split && camera?.src_coords && camera.src_coords.length === 4);
@@ -117,6 +159,10 @@ function PlaybackCell({
         startTs={slot.startTs}
         runId={runId}
         showMetadata={showMetadata}
+        playMode={playMode}
+        scrubbing={scrubbing}
+        detectionItems={detectionItems}
+        globalDetectionTs={globalDetectionTs}
         onExpand={onExpand}
         frameSize={frameSize}
         onFrameSize={setFrameSize}
@@ -145,6 +191,7 @@ function PlaybackCell({
           onVideoDimensions={setFrameSize}
           playing={playing}
           speed={speed}
+          playMode={playMode}
         />
       </div>
     </article>

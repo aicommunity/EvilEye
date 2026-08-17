@@ -1,7 +1,9 @@
 import { API_BASE, request, type RequestOptions } from './client';
-import type { PlaybackCamera, PlaybackEventMarker, PlaybackSegment } from './types';
+import type { PlaybackCamera, PlaybackDetectionItem, PlaybackEventMarker, PlaybackSegment } from './types';
 
 export type FrameSize = { w: number; h: number };
+
+export const PLAYBACK_DETECTION_MATCH_SEC = 0.15;
 
 function appendFrameSize(p: URLSearchParams, frameSize?: FrameSize | null) {
   if (frameSize && frameSize.w > 0 && frameSize.h > 0) {
@@ -68,15 +70,32 @@ export const playbackApi = {
     ts: number,
     date?: string,
     runId?: number | null,
-    opts?: RequestOptions & { window?: number; sourceId?: number | null; frameSize?: FrameSize | null },
+    opts?: RequestOptions & { matchSec?: number; sourceId?: number | null; frameSize?: FrameSize | null },
   ): Promise<{ metadata: import('./types').StreamMetadata }> {
     const p = new URLSearchParams({ camera, ts: String(ts) });
     if (date) p.set('date', date);
     if (runId != null) p.set('run_id', String(runId));
-    if (opts?.window != null) p.set('window', String(opts.window));
+    p.set('window', String(opts?.matchSec ?? PLAYBACK_DETECTION_MATCH_SEC));
     if (opts?.sourceId != null) p.set('source_id', String(opts.sourceId));
     appendFrameSize(p, opts?.frameSize);
     return request(`/playback/metadata?${p}`, opts);
+  },
+  detections(
+    cameras: string[],
+    opts?: {
+      from?: number;
+      to?: number;
+      date?: string;
+      runId?: number | null;
+      signal?: AbortSignal;
+    },
+  ): Promise<{ by_camera: Record<string, PlaybackDetectionItem[]>; items: PlaybackDetectionItem[] }> {
+    const p = new URLSearchParams({ cameras: cameras.join(',') });
+    if (opts?.from != null) p.set('from', String(opts.from));
+    if (opts?.to != null) p.set('to', String(opts.to));
+    if (opts?.date) p.set('date', opts.date);
+    if (opts?.runId != null) p.set('run_id', String(opts.runId));
+    return request(`/playback/detections?${p}`, { signal: opts?.signal });
   },
   metadataStatic(
     camera: string,
