@@ -142,3 +142,34 @@ def test_load_segments_splitmux_same_session_timestamp(tmp_path, monkeypatch):
     assert segs[1]["end_ts"] == segs[2]["start_ts"]
     # Three contiguous 30-min slots (~1.5h coverage from session start).
     assert abs(segs[2]["start_ts"] - segs[0]["start_ts"] - 3600) < 1
+
+
+def test_load_segments_splitmux_uses_mtime_when_media_drifts(tmp_path, monkeypatch):
+    """Real splitmux parts are a few seconds short of segment_length_sec."""
+    from datetime import datetime
+
+    root = tmp_path / "EvilEyeData"
+    cam = root / "Streams" / "2026-08-17" / "Cam4-Cam5"
+    cam.mkdir(parents=True)
+    session = datetime(2026, 8, 17, 1, 49, 11).timestamp()
+    part_len = 1795.0
+    files = []
+    for idx in range(20):
+        path = cam / f"Cam4_20260817_014911_0_{idx:05d}.mp4"
+        path.write_bytes(b"fake")
+        close = session + (idx + 1) * part_len
+        os.utime(path, (close, close))
+        files.append(path)
+    monkeypatch.setenv("EVILEYE_DATA_DIR", str(root))
+    monkeypatch.setattr(svc, "_configured_segment_length_sec", lambda: 1800.0)
+
+    segs = {Path(s["path"]).name: s for s in svc.load_segments("Cam4", date="2026-08-17")}
+    part18 = segs["Cam4_20260817_014911_0_00018.mp4"]
+    part19 = segs["Cam4_20260817_014911_0_00019.mp4"]
+    tick_1059 = datetime(2026, 8, 17, 10, 59, 27).timestamp()
+    tick_1118 = datetime(2026, 8, 17, 11, 18, 15).timestamp()
+    assert part18["start_ts"] <= tick_1059 <= part18["end_ts"]
+    assert part19["start_ts"] <= tick_1118 <= part19["end_ts"]
+    assert tick_1118 - part19["start_ts"] < 60
+    # index*1800 would start part 18 ~66s later and keep 11:18:15 in the previous file.
+    assert part18["start_ts"] < session + 18 * 1800 - 30

@@ -7,7 +7,7 @@ import { useMediaLetterbox } from '../overlay/useMediaLetterbox';
 import { useI18n } from '../../i18n';
 import { PlaybackBusyHint } from './PlaybackBusyHint';
 import { usePlaybackCameraMetadata } from './PlaybackCameraView';
-import { seekPlaybackVideo } from './playbackVideoSync';
+import { seekPlaybackVideo, shouldEmitPlaybackClock } from './playbackVideoSync';
 
 export function SplitPlaybackCell({
   videoUrl,
@@ -203,7 +203,9 @@ export function SplitPlaybackCell({
     const onSeeked = () => setSeeking(false);
     const onTime = () => {
       if (video.seeking || scrubbing) return;
-      if (playing) onVideoClockRef.current?.(startTs + video.currentTime);
+      if (playing && shouldEmitPlaybackClock(cameraId, video)) {
+        onVideoClockRef.current?.(startTs + video.currentTime);
+      }
     };
     video.addEventListener('seeking', onSeeking);
     video.addEventListener('seeked', onSeeked);
@@ -214,7 +216,7 @@ export function SplitPlaybackCell({
       video.removeEventListener('seeked', onSeeked);
       video.removeEventListener('timeupdate', onTime);
     };
-  }, [videoUrl, playing, scrubbing, startTs]);
+  }, [videoUrl, playing, scrubbing, startTs, cameraId]);
 
   useEffect(() => {
     const video = videoRef.current;

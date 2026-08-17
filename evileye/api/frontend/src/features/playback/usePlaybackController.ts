@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { detectionTsAtOrNull, nextDetectionTs, shouldSkipToDetection } from './detectionSync';
+import { resetPlaybackClockOwner } from './playbackVideoSync';
 
 const UI_THROTTLE_MS = 100;
 
@@ -111,6 +112,7 @@ export function usePlaybackController(initialSec: number | null) {
       }
     },
     seek: (sec: number) => {
+      resetPlaybackClockOwner();
       positionRef.current = sec;
       setPositionSec(sec);
       scrubbingRef.current = true;

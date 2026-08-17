@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
-import { seekPlaybackVideo } from './playbackVideoSync';
+import { resetPlaybackClockOwner, seekPlaybackVideo, shouldEmitPlaybackClock } from './playbackVideoSync';
 
-function fakeVideo(currentTime = 10) {
+function fakeVideo(currentTime = 10, extra: Partial<HTMLVideoElement> = {}) {
   return {
     currentTime,
     pause: vi.fn(),
+    seeking: false,
+    readyState: 4,
+    ...extra,
   } as unknown as HTMLVideoElement;
 }
 
@@ -27,5 +30,18 @@ describe('seekPlaybackVideo', () => {
     seekPlaybackVideo(video, 1012, 1000, { playing: true, thresholdSec: 0.35 });
     expect(video.currentTime).toBe(12);
     expect(video.pause).not.toHaveBeenCalled();
+  });
+});
+
+describe('shouldEmitPlaybackClock', () => {
+  it('lets the first ready camera own the clock, then a later one after seek reset', () => {
+    resetPlaybackClockOwner();
+    const cam1 = fakeVideo(0, { seeking: true, readyState: 1 });
+    const cam4 = fakeVideo(0, { seeking: false, readyState: 4 });
+    expect(shouldEmitPlaybackClock('Cam1', cam1)).toBe(false);
+    expect(shouldEmitPlaybackClock('Cam4', cam4)).toBe(true);
+    expect(shouldEmitPlaybackClock('Cam1', fakeVideo(0, { seeking: false, readyState: 4 }))).toBe(false);
+    resetPlaybackClockOwner();
+    expect(shouldEmitPlaybackClock('Cam1', fakeVideo(0, { seeking: false, readyState: 4 }))).toBe(true);
   });
 });

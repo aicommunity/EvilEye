@@ -176,12 +176,26 @@ def _parse_segment_name(path: str) -> tuple[float, int | None] | None:
     return session_start, index
 
 
+def _file_mtime(path: str) -> float | None:
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return None
+
+
 def _resolve_segment_starts(
     parsed: list[tuple[str, float, int | None]],
     *,
     configured_length: float,
 ) -> list[tuple[str, float]]:
-    """Map files to start timestamps, expanding splitmux indices when needed."""
+    """Map files to start timestamps, expanding splitmux indices when needed.
+
+    ``index * segment_length_sec`` drifts: splitmux rotates on media time, which
+    is a few seconds short of the configured wall-clock slot. After many parts
+    the playhead lands in the wrong file (boxes match JSON, the frame does not).
+    When the previous part's mtime is close to the nominal slot, use that close
+    time as the next part's start.
+    """
     if not parsed:
         return []
     by_session: dict[float, list[tuple[str, int | None]]] = {}
@@ -189,6 +203,7 @@ def _resolve_segment_starts(
         by_session.setdefault(session_start, []).append((path, index))
 
     out: list[tuple[str, float]] = []
+    slack = max(60.0, configured_length * 0.5)
     for session_start, items in by_session.items():
         indices = [idx for _, idx in items if idx is not None]
         use_index = (
@@ -196,11 +211,19 @@ def _resolve_segment_starts(
             and len(indices) == len(items)
             and len(set(indices)) == len(items)
         )
-        for path, idx in items:
-            if use_index and idx is not None:
-                out.append((path, session_start + float(idx) * configured_length))
-            else:
+        if not use_index:
+            for path, _idx in items:
                 out.append((path, session_start))
+            continue
+        ordered = sorted(items, key=lambda item: (item[1] if item[1] is not None else 0, item[0]))
+        prev_mtime: float | None = None
+        for path, idx in ordered:
+            nominal = session_start + float(idx or 0) * configured_length
+            start = nominal
+            if prev_mtime is not None and abs(prev_mtime - nominal) <= slack:
+                start = prev_mtime
+            out.append((path, start))
+            prev_mtime = _file_mtime(path)
     return out
 
 

@@ -19,7 +19,7 @@ import {
 import { PlaybackBusyHint } from './PlaybackBusyHint';
 import { PlaybackMediaWithOverlay } from './PlaybackMediaWithOverlay';
 import { mergePlaybackMetadata } from './mergePlaybackMetadata';
-import { seekPlaybackVideo } from './playbackVideoSync';
+import { seekPlaybackVideo, shouldEmitPlaybackClock } from './playbackVideoSync';
 import { usePlaybackMetadata } from './usePlaybackMetadata';
 import { usePlaybackStaticMetadata } from './usePlaybackStaticMetadata';
 import { pickSegmentNear } from './timelineMath';
@@ -45,6 +45,7 @@ export function usePlaybackCameraSlot(
   playMode: PlaybackPlayMode = 'normal',
   scrubbing = false,
   onVideoClock?: (globalSec: number) => void,
+  clockId?: string,
 ) {
   const ref = useRef<HTMLVideoElement>(null);
   const preloadRef = useRef<HTMLVideoElement>(null);
@@ -116,7 +117,9 @@ export function usePlaybackCameraSlot(
         seekPlaybackVideo(v, position, current.startTs, { playing: true, thresholdSec: 0.35 });
         return;
       }
-      onVideoClockRef.current?.(videoGlobal);
+      if (!clockId || shouldEmitPlaybackClock(clockId, v)) {
+        onVideoClockRef.current?.(videoGlobal);
+      }
       return;
     }
 
@@ -136,7 +139,7 @@ export function usePlaybackCameraSlot(
         const v = ref.current;
         const current = slotRef.current;
         if (v?.seeking) return;
-        if (v && current) {
+        if (v && current && (!clockId || shouldEmitPlaybackClock(clockId, v))) {
           onVideoClockRef.current?.(current.startTs + v.currentTime);
         }
       }

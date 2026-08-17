@@ -60,6 +60,7 @@ export function ExpandedPlaybackView({
     playMode,
     scrubbing,
     onVideoClock,
+    cameraId,
   );
   const { meta, loading } = usePlaybackCameraMetadata({
     cameraId,

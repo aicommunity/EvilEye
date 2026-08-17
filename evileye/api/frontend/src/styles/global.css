@@ -2484,6 +2484,14 @@ body {
   white-space: nowrap;
 }
 
+.playback-busy-hint--compact {
+  top: 10px;
+  transform: translate(-50%, 0);
+  padding: 3px 8px;
+  font-size: 11px;
+  background: rgba(15, 23, 42, 0.55);
+}
+
 .timeline-ticks {
   position: absolute;
   inset: 0;

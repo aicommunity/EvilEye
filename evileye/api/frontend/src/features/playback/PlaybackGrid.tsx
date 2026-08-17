@@ -59,7 +59,7 @@ export function PlaybackGrid({
       className={`camera-group-grid${fitClass}`}
       style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
     >
-      {cameras.map((id, index) => (
+      {cameras.map((id) => (
         <PlaybackCell
           key={id}
           id={id}
@@ -75,7 +75,7 @@ export function PlaybackGrid({
           scrubbing={scrubbing}
           detectionItems={detectionByCamera[id] ?? []}
           globalDetectionTs={globalDetectionTs}
-          onVideoClock={index === 0 ? onVideoClock : undefined}
+          onVideoClock={onVideoClock}
           onExpand={() => onExpand(id)}
         />
       ))}
@@ -127,6 +127,7 @@ function PlaybackCell({
     playMode,
     scrubbing,
     onVideoClock,
+    id,
   );
   const split = Boolean(camera?.split && camera?.src_coords && camera.src_coords.length === 4);
 

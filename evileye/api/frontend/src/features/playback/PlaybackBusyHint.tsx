@@ -13,7 +13,7 @@ export function PlaybackBusyHint({
   hasObjects?: boolean;
 }) {
   const { t } = useI18n();
-  const want = (seeking || loading) && !hasObjects;
+  const want = seeking || (loading && !hasObjects);
   const [shown, setShown] = useState(false);
 
   useEffect(() => {
@@ -27,8 +27,13 @@ export function PlaybackBusyHint({
 
   if (!shown) return null;
   const label = seeking ? t('playback.seekingFrame') : t('playback.loadingMetadata');
+  const compact = seeking && hasObjects;
   return (
-    <div className="playback-busy-hint" role="status" aria-live="polite">
+    <div
+      className={`playback-busy-hint${compact ? ' playback-busy-hint--compact' : ''}`}
+      role="status"
+      aria-live="polite"
+    >
       {label}
     </div>
   );
