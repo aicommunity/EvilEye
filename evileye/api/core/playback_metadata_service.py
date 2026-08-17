@@ -162,6 +162,59 @@ def _record_matches_camera(
     return not obj_source
 
 
+def _record_event_time(raw: dict[str, Any]) -> datetime | None:
+    for key in ("timestamp", "detected_timestamp", "ts", "time_stamp", "lost_timestamp"):
+        ts = parse_event_timestamp(raw.get(key))
+        if ts:
+            return ts
+    return None
+
+
+def _read_json_objects(filepath: Path) -> list[dict[str, Any]]:
+    if not filepath.is_file():
+        return []
+    try:
+        data = json.loads(filepath.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    objects_list = data if isinstance(data, list) else data.get("objects", [])
+    return [obj for obj in objects_list if isinstance(obj, dict)]
+
+
+def _lost_times_by_object_id(lost_objects: list[dict[str, Any]]) -> dict[Any, datetime]:
+    lost_map: dict[Any, datetime] = {}
+    for obj in lost_objects:
+        oid = obj.get("object_id")
+        if oid is None:
+            continue
+        lost_ts = parse_event_timestamp(obj.get("lost_timestamp") or obj.get("timestamp"))
+        if lost_ts:
+            lost_map[oid] = lost_ts
+    return lost_map
+
+
+def _object_visible_at(
+    found: dict[str, Any],
+    target: datetime,
+    lost_map: dict[Any, datetime],
+    window_sec: float,
+) -> bool:
+    found_ts = parse_event_timestamp(
+        found.get("timestamp") or found.get("detected_timestamp") or found.get("ts") or found.get("time_stamp")
+    )
+    if not found_ts:
+        return False
+    if abs((found_ts - target).total_seconds()) < window_sec:
+        return True
+    if found_ts > target:
+        return False
+    oid = found.get("object_id")
+    lost_ts = lost_map.get(oid) if oid is not None else None
+    if lost_ts is not None:
+        return found_ts <= target <= lost_ts
+    return False
+
+
 def _load_objects_from_json(
     detections_dir: Path,
     target: datetime,
@@ -169,30 +222,34 @@ def _load_objects_from_json(
     source_id: int | None,
     window_sec: float,
 ) -> list[dict[str, Any]]:
-    objects: list[dict[str, Any]] = []
-    for filename in _OBJECT_FILES:
-        filepath = detections_dir / filename
-        if not filepath.is_file():
+    """Load archive objects active at ``target`` (found..lost) plus in-window snapshots."""
+    found_path = detections_dir / "objects_found.json"
+    lost_path = detections_dir / "objects_lost.json"
+    found_list = _read_json_objects(found_path)
+    lost_list = _read_json_objects(lost_path)
+    lost_map = _lost_times_by_object_id(lost_list)
+
+    selected: dict[Any, dict[str, Any]] = {}
+    for obj in found_list:
+        if not _record_matches_camera(obj, aliases=aliases, source_id=source_id):
             continue
-        try:
-            data = json.loads(filepath.read_text(encoding="utf-8"))
-        except Exception:
+        oid = obj.get("object_id")
+        key = oid if oid is not None else id(obj)
+        if _object_visible_at(obj, target, lost_map, window_sec):
+            selected[key] = obj
+
+    for obj in lost_list:
+        if not _record_matches_camera(obj, aliases=aliases, source_id=source_id):
             continue
-        objects_list = data if isinstance(data, list) else data.get("objects", [])
-        if not isinstance(objects_list, list):
+        lost_ts = parse_event_timestamp(obj.get("lost_timestamp"))
+        if not lost_ts or abs((lost_ts - target).total_seconds()) >= window_sec:
             continue
-        for obj in objects_list:
-            if not isinstance(obj, dict):
-                continue
-            obj_timestamp = parse_event_timestamp(obj.get("ts") or obj.get("time_stamp") or obj.get("timestamp"))
-            if not obj_timestamp:
-                continue
-            if abs((obj_timestamp - target).total_seconds()) >= window_sec:
-                continue
-            if not _record_matches_camera(obj, aliases=aliases, source_id=source_id):
-                continue
-            objects.append(obj)
-    return objects
+        oid = obj.get("object_id")
+        key = oid if oid is not None else id(obj)
+        if key not in selected:
+            selected[key] = obj
+
+    return list(selected.values())
 
 
 def _load_events_from_json(
@@ -398,6 +455,18 @@ def _load_events_from_db(
     return events
 
 
+def _db_available() -> bool:
+    from evileye.api.core.journal_service import _db_controller
+
+    controller = _db_controller()
+    if controller is None:
+        return False
+    try:
+        return bool(controller.is_connected())
+    except Exception:
+        return False
+
+
 def _load_dynamic_records(
     *,
     target: datetime,
@@ -409,7 +478,7 @@ def _load_dynamic_records(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     mode = _playback_storage_mode(params)
     aliases = source_aliases(params, camera, source_id)
-    if mode == "database":
+    if mode == "database" and _db_available():
         return (
             _load_objects_from_db(target, camera, date_folder, window_sec),
             _load_events_from_db(target, camera, date_folder, window_sec),

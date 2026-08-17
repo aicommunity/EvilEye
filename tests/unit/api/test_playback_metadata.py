@@ -183,6 +183,10 @@ def test_load_dynamic_records_db_mode_skips_json(tmp_path, monkeypatch):
     params = {"controller": {"use_database": True}, "record": {"out_dir": str(tmp_path / "EvilEyeData")}}
     monkeypatch.setenv("EVILEYE_DATA_DIR", str(tmp_path / "EvilEyeData"))
     monkeypatch.setattr(
+        "evileye.api.core.playback_metadata_service._db_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
         "evileye.api.core.playback_metadata_service._load_objects_from_db",
         lambda *args, **kwargs: [{"object_id": 9, "bounding_box": [0, 0, 0.1, 0.1]}],
     )
@@ -467,5 +471,117 @@ def test_source_match_by_source_id(tmp_path, monkeypatch):
         source_id=2,
         frame_w=2304,
         frame_h=2592,
+    )
+    assert len(payload["objects"]) == 1
+
+
+def test_json_active_track_between_found_and_lost(tmp_path, monkeypatch):
+    root = tmp_path / "EvilEyeData"
+    date = "2026-08-17"
+    meta = root / "Detections" / date / "Metadata"
+    meta.mkdir(parents=True)
+    (meta / "objects_found.json").write_text(
+        json.dumps(
+            {
+                "objects": [
+                    {
+                        "timestamp": "2026-08-17T11:37:11.682288",
+                        "source_name": "Cam2",
+                        "source_id": 1,
+                        "object_id": 808,
+                        "class_name": "person",
+                        "bounding_box": {"x": 1335, "y": 185, "width": 102, "height": 467},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (meta / "objects_lost.json").write_text(
+        json.dumps(
+            {
+                "objects": [
+                    {
+                        "object_id": 808,
+                        "source_name": "Cam2",
+                        "detected_timestamp": "2026-08-17T11:37:11.682288",
+                        "lost_timestamp": "2026-08-17T11:37:13.316823",
+                        "bounding_box": {"x": 1314, "y": 142, "width": 125, "height": 504},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    cfg = {
+        "controller": {"use_database": False},
+        "record": {"out_dir": str(root)},
+        "pipeline": {
+            "sources": [
+                {
+                    "split": True,
+                    "source_ids": [1, 2],
+                    "source_names": ["Cam2", "Cam3"],
+                    "src_coords": [[0, 0, 2304, 1300], [0, 1300, 2304, 1292]],
+                }
+            ]
+        },
+    }
+    monkeypatch.setattr(svc, "_load_params_for_run", lambda _run_id: cfg)
+
+    active = svc.build_playback_metadata(
+        camera="Cam2",
+        ts=datetime(2026, 8, 17, 11, 37, 12).timestamp(),
+        run_id=1,
+        source_id=1,
+        frame_w=2304,
+        frame_h=1300,
+    )
+    gone = svc.build_playback_metadata(
+        camera="Cam2",
+        ts=datetime(2026, 8, 17, 11, 37, 30).timestamp(),
+        run_id=1,
+        source_id=1,
+        frame_w=2304,
+        frame_h=1300,
+    )
+    assert len(active["objects"]) == 1
+    assert len(gone["objects"]) == 0
+
+
+def test_database_mode_falls_back_to_json_when_db_unavailable(tmp_path, monkeypatch):
+    root = tmp_path / "EvilEyeData"
+    date = "2026-08-17"
+    meta = root / "Detections" / date / "Metadata"
+    meta.mkdir(parents=True)
+    (meta / "objects_found.json").write_text(
+        json.dumps(
+            {
+                "objects": [
+                    {
+                        "timestamp": "2026-08-17T11:37:11.682288",
+                        "source_name": "Cam2",
+                        "object_id": 1,
+                        "bounding_box": [100, 100, 200, 200],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    cfg = {
+        "controller": {"use_database": True},
+        "database": {"image_dir": str(root)},
+        "pipeline": {"sources": [{"source_ids": [1], "source_names": ["Cam2"]}]},
+    }
+    monkeypatch.setattr(svc, "_load_params_for_run", lambda _run_id: cfg)
+    monkeypatch.setattr(svc, "_db_available", lambda: False)
+
+    payload = svc.build_playback_metadata(
+        camera="Cam2",
+        ts=datetime(2026, 8, 17, 11, 37, 11).timestamp(),
+        run_id=1,
+        frame_w=2304,
+        frame_h=1300,
     )
     assert len(payload["objects"]) == 1
