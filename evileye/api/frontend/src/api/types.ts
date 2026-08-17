@@ -127,19 +127,38 @@ export interface OverviewResponse {
 }
 
 export interface StreamMetadataObject {
+  object_id?: number | null;
+  global_id?: number | null;
   track_id?: number | null;
   class_id?: number;
   class_name?: string | null;
-  conf?: number;
+  conf?: number | null;
   bbox?: [number, number, number, number];
+  event_active?: boolean;
+  attributes?: Array<{
+    name: string;
+    state: string;
+    confidence?: number;
+    frames_present?: number;
+    total_time_ms?: number;
+    found_ratio?: number;
+  }>;
+  trail?: [number, number][];
 }
 
 export interface StreamMetadata {
   source_id?: number | null;
   ts?: number;
   objects?: StreamMetadataObject[];
-  zones?: Array<{ name?: string; points: [number, number][] }>;
+  zones?: Array<{ name?: string; kind?: 'poly' | 'rect'; points: [number, number][] }>;
   signalization?: boolean;
+  event_labels?: string[];
+  event_color?: [number, number, number];
+  debug_rois?: [number, number, number, number][];
+  overlay?: {
+    source_name?: string;
+    time_label?: string;
+  };
 }
 
 export interface PlaybackCamera {

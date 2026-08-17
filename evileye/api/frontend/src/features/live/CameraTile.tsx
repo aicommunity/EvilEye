@@ -174,7 +174,11 @@ export function CameraTile({
                 onLoad={onImgLoad}
               />
               {wantOverlay ? (
-                <OverlayCanvas meta={meta as StreamMetadata | null} layoutBox={layoutBox} />
+                <OverlayCanvas
+                  meta={meta as StreamMetadata | null}
+                  layoutBox={layoutBox}
+                  density={gridMode ? 'compact' : 'full'}
+                />
               ) : null}
             </>
           ) : (
@@ -256,7 +260,11 @@ export function CameraTile({
                 onLoad={onImgLoad}
               />
               {wantOverlay ? (
-                <OverlayCanvas meta={meta as StreamMetadata | null} layoutBox={layoutBox} />
+                <OverlayCanvas
+                  meta={meta as StreamMetadata | null}
+                  layoutBox={layoutBox}
+                  density="full"
+                />
               ) : null}
             </>
           ) : (

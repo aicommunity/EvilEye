@@ -158,7 +158,12 @@ async def run_metadata_ws(websocket: WebSocket, rid: int, source_id: Optional[in
             try:
                 meta = q.get_nowait()
             except Exception:
-                meta = broker.latest_metadata(key) or broker.latest_metadata(str(rid))
+                if source_id is None:
+                    meta = broker.latest_metadata(str(rid))
+                else:
+                    # Do not fallback to run-level payload for source-scoped WS:
+                    # this prevents cross-camera overlay leakage.
+                    meta = broker.latest_metadata(key)
             now = asyncio.get_event_loop().time()
             if meta is not None:
                 payload = dict(meta)

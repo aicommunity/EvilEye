@@ -26,6 +26,7 @@ class StreamFrameJob:
     objects: list[dict[str, Any]] | None = None
     zones: list[dict[str, Any]] | None = None
     signalization: bool = False
+    metadata: dict[str, Any] | None = None
     full_frame: bool = False
     alias_source_ids: list[int] | None = None
 
@@ -231,6 +232,7 @@ class StreamingService:
         self,
         frame,
         *,
+        metadata: dict[str, Any] | None = None,
         objects: list[dict[str, Any]] | None = None,
         zones: list[dict[str, Any]] | None = None,
         signalization: bool = False,
@@ -254,10 +256,21 @@ class StreamingService:
             except Exception:
                 image_for_encode = image
 
-        # Prefer explicit args; fall back to attributes attached on the frame.
-        objects_meta = objects if objects is not None else getattr(frame, "_stream_objects", None)
-        zones_meta = zones if zones is not None else getattr(frame, "_stream_zones", None)
-        signal_meta = signalization or bool(getattr(frame, "_stream_signalization", False))
+        # Prefer explicit metadata payload; fallback to legacy args/attrs.
+        metadata_payload = dict(metadata or {})
+        objects_meta = (
+            metadata_payload.get("objects")
+            if "objects" in metadata_payload
+            else (objects if objects is not None else getattr(frame, "_stream_objects", None))
+        )
+        zones_meta = (
+            metadata_payload.get("zones")
+            if "zones" in metadata_payload
+            else (zones if zones is not None else getattr(frame, "_stream_zones", None))
+        )
+        signal_meta = bool(
+            metadata_payload.get("signalization", signalization or bool(getattr(frame, "_stream_signalization", False)))
+        )
 
         job = StreamFrameJob(
             pipeline_id=self._pipeline_id,
@@ -268,6 +281,7 @@ class StreamingService:
             objects=list(objects_meta or []),
             zones=list(zones_meta or []),
             signalization=bool(signal_meta),
+            metadata=metadata_payload,
         )
         with self._condition:
             self._pending_jobs[self._job_key(job)] = job
@@ -307,6 +321,7 @@ class StreamingService:
             objects=[],
             zones=[],
             signalization=False,
+            metadata={},
             full_frame=True,
             alias_source_ids=[int(x) for x in ids],
         )
@@ -501,6 +516,14 @@ class StreamingService:
             "signalization": bool(job.signalization),
             "full_frame": bool(job.full_frame),
         }
+        extra_meta = dict(job.metadata or {})
+        if "objects" not in extra_meta:
+            extra_meta["objects"] = list(job.objects or [])
+        if "zones" not in extra_meta:
+            extra_meta["zones"] = list(job.zones or [])
+        if "signalization" not in extra_meta:
+            extra_meta["signalization"] = bool(job.signalization)
+        metadata.update(extra_meta)
         broker = get_frame_broker()
         if job.full_frame and job.source_id is not None:
             aliases = list(job.alias_source_ids or [job.source_id])

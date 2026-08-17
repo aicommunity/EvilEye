@@ -132,7 +132,7 @@ export function StreamOverlay({
                   onError={onImgError}
                   onLoad={handleImgLoad}
                 />
-                <OverlayCanvas meta={meta as StreamMetadata | null} layoutBox={layoutBox} />
+                <OverlayCanvas meta={meta as StreamMetadata | null} layoutBox={layoutBox} density="full" />
               </>
             ) : (
               <div className="stream-placeholder">

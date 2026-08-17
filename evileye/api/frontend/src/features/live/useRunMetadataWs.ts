@@ -9,6 +9,10 @@ function metadataFingerprint(payload: StreamMetadata): string {
       objects: payload.objects ?? [],
       zones: payload.zones ?? [],
       signalization: payload.signalization ?? false,
+      event_labels: payload.event_labels ?? [],
+      event_color: payload.event_color ?? null,
+      debug_rois: payload.debug_rois ?? [],
+      overlay: payload.overlay ?? null,
     });
   } catch {
     return String(Date.now());

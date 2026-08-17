@@ -129,12 +129,15 @@ class PreviewRenderService:
                 if rendered is not None and self._streaming_service is not None:
                     image = getattr(rendered, "image", None)
                     shape = getattr(image, "shape", None)
-                    meta = serialize_preview_metadata(job.context, shape)
+                    meta = serialize_preview_metadata(
+                        job.context,
+                        shape,
+                        frame_id=getattr(job.frame, "frame_id", None),
+                        frame=job.frame,
+                    )
                     self._streaming_service.submit_frame(
                         rendered,
-                        objects=meta.get("objects"),
-                        zones=meta.get("zones"),
-                        signalization=bool(meta.get("signalization")),
+                        metadata=meta,
                     )
             except Exception as exc:
                 self._stats["render_errors"] += 1

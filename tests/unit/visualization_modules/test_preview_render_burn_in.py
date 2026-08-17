@@ -48,7 +48,7 @@ def test_burn_in_overlay_false_skips_boxes_on_jpeg_but_keeps_metadata():
     )
 
     rendered = render_preview_frame(frame, context)
-    meta = serialize_preview_metadata(context, rendered.image.shape)
+    meta = serialize_preview_metadata(context, rendered.image.shape, frame_id=frame.frame_id, frame=frame)
 
     assert np.count_nonzero(rendered.image) == 0
     assert len(meta["objects"]) == 1
@@ -68,3 +68,28 @@ def test_burn_in_overlay_true_draws_boxes_on_jpeg():
     rendered = render_preview_frame(frame, context)
 
     assert np.count_nonzero(rendered.image) > 0
+
+
+def test_burn_in_overlay_false_skips_event_and_debug_but_keeps_event_metadata():
+    frame = _make_frame()
+    obj = _make_obj()
+    context = PreviewRenderContext(
+        source_name="Cam0",
+        track_info=[obj],
+        show_boxes=True,
+        burn_in_overlay=False,
+        show_debug_info=True,
+        debug_info={"detectors": {"det0": {"source_ids": [0], "roi": [[[10, 10, 20, 20]]]}}},
+        event_signal_enabled=True,
+        event_active_obj_ids={42},
+        active_event_labels=["AttributeEvent [42]"],
+    )
+
+    rendered = render_preview_frame(frame, context)
+    meta = serialize_preview_metadata(context, rendered.image.shape, frame_id=frame.frame_id, frame=frame)
+
+    assert np.count_nonzero(rendered.image) == 0
+    assert meta["signalization"] is True
+    assert meta["event_labels"] == ["AttributeEvent [42]"]
+    assert len(meta["debug_rois"]) == 1
+    assert meta["objects"][0]["event_active"] is True

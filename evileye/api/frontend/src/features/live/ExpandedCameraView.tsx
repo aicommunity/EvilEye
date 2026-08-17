@@ -70,7 +70,7 @@ export function ExpandedCameraView({
                   onError={onImgError}
                   onLoad={handleImgLoad}
                 />
-                <OverlayCanvas meta={meta as StreamMetadata | null} layoutBox={layoutBox} />
+                <OverlayCanvas meta={meta as StreamMetadata | null} layoutBox={layoutBox} density="full" />
               </>
             ) : null}
             {showPlaceholder && !src ? (

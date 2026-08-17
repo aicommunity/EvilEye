@@ -477,12 +477,20 @@ async def stream_metadata(rid: int, source_id: int | None = Query(None)):
     run_info = _resolve_run(rid)
     _require_source_id_if_multi(run_info, source_id)
     key = f"{run_info['id']}:{source_id}" if source_id is not None else str(run_info["id"])
-    meta = get_frame_broker().latest_metadata(key) or get_frame_broker().latest_metadata(str(run_info["id"])) or {}
-    return {
+    broker = get_frame_broker()
+    if source_id is None:
+        meta = broker.latest_metadata(str(run_info["id"])) or {}
+    else:
+        # Never fallback to run-level metadata for source-scoped requests:
+        # it can mix overlays between different cameras.
+        meta = broker.latest_metadata(key) or {}
+    payload = dict(meta or {})
+    payload.update({
         "run_id": rid,
         "source_id": source_id,
         "ts": meta.get("ts") or meta.get("timestamp"),
-        "objects": meta.get("objects") or [],
-        "zones": meta.get("zones") or [],
-        "signalization": bool(meta.get("signalization")),
-    }
+        "objects": payload.get("objects") or [],
+        "zones": payload.get("zones") or [],
+        "signalization": bool(payload.get("signalization")),
+    })
+    return payload
