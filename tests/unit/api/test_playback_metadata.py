@@ -554,8 +554,107 @@ def test_json_active_track_between_found_and_lost(tmp_path, monkeypatch):
         frame_w=2304,
         frame_h=1300,
     )
-    assert len(mid["objects"]) == 0
+    assert len(mid["objects"]) == 1
+    mid_bbox = mid["objects"][0]["bbox"]
+    found_x = 1335 / 2304
+    lost_x = 1314 / 2304
+    assert min(found_x, lost_x) < mid_bbox[0] < max(found_x, lost_x)
     assert len(gone["objects"]) == 0
+
+
+def test_json_found_without_lost_does_not_stick(tmp_path, monkeypatch):
+    root = tmp_path / "EvilEyeData"
+    date = "2026-08-17"
+    meta = root / "Detections" / date / "Metadata"
+    meta.mkdir(parents=True)
+    (meta / "objects_found.json").write_text(
+        json.dumps(
+            {
+                "objects": [
+                    {
+                        "timestamp": "2026-08-17T10:57:08",
+                        "source_name": "Cam4",
+                        "source_id": 3,
+                        "object_id": 456,
+                        "class_name": "person",
+                        "bounding_box": {"x": 10, "y": 20, "width": 30, "height": 40},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (meta / "objects_lost.json").write_text(json.dumps({"objects": []}), encoding="utf-8")
+    cfg = {
+        "controller": {"use_database": False},
+        "record": {"out_dir": str(root)},
+        "pipeline": {"sources": [{"source_ids": [3], "source_names": ["Cam4"]}]},
+    }
+    monkeypatch.setenv("EVILEYE_DATA_DIR", str(root))
+    monkeypatch.setattr(svc, "_load_params_for_run", lambda _run_id: cfg)
+
+    near = svc.build_playback_metadata(
+        camera="Cam4",
+        ts=datetime(2026, 8, 17, 10, 57, 8).timestamp(),
+        run_id=1,
+        source_id=3,
+        frame_w=2304,
+        frame_h=1300,
+    )
+    later = svc.build_playback_metadata(
+        camera="Cam4",
+        ts=datetime(2026, 8, 17, 10, 59, 0).timestamp(),
+        run_id=1,
+        source_id=3,
+        frame_w=2304,
+        frame_h=1300,
+    )
+    assert len(near["objects"]) == 1
+    assert later["objects"] == []
+
+
+def test_database_mode_falls_back_to_json_when_db_empty(tmp_path, monkeypatch):
+    root = tmp_path / "EvilEyeData"
+    date = "2026-08-17"
+    meta = root / "Detections" / date / "Metadata"
+    meta.mkdir(parents=True)
+    (meta / "objects_found.json").write_text(
+        json.dumps(
+            {
+                "objects": [
+                    {
+                        "timestamp": "2026-08-17T10:59:00",
+                        "source_name": "Cam4",
+                        "object_id": 464,
+                        "bounding_box": {"x": 10, "y": 20, "width": 30, "height": 40},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    cfg = {
+        "controller": {"use_database": True},
+        "database": {"image_dir": str(root)},
+        "record": {"out_dir": str(root)},
+        "pipeline": {"sources": [{"source_ids": [3], "source_names": ["Cam4"]}]},
+    }
+    monkeypatch.setenv("EVILEYE_DATA_DIR", str(root))
+    monkeypatch.setattr(svc, "_load_params_for_run", lambda _run_id: cfg)
+    monkeypatch.setattr(svc, "_db_available", lambda: True)
+    monkeypatch.setattr(svc, "_load_objects_from_db", lambda *args, **kwargs: [])
+    monkeypatch.setattr(svc, "_load_events_from_db", lambda *args, **kwargs: [])
+
+    payload = svc.build_playback_metadata(
+        camera="Cam4",
+        ts=datetime(2026, 8, 17, 10, 59, 0).timestamp(),
+        run_id=1,
+        source_id=3,
+        frame_w=2304,
+        frame_h=1300,
+    )
+    assert len(payload["objects"]) == 1
+    assert payload["objects"][0]["object_id"] == 464
 
 
 def test_load_detection_index_found_and_lost(tmp_path, monkeypatch):
@@ -690,3 +789,65 @@ def test_database_mode_falls_back_to_json_when_db_unavailable(tmp_path, monkeypa
         frame_h=1300,
     )
     assert len(payload["objects"]) == 1
+
+
+def test_split_cameras_do_not_share_sibling_detections(tmp_path, monkeypatch):
+    from evileye.visualization_modules.playback_coord import source_aliases
+
+    root = tmp_path / "EvilEyeData"
+    date = "2026-08-17"
+    meta = root / "Detections" / date / "Metadata"
+    meta.mkdir(parents=True)
+    (meta / "objects_found.json").write_text(
+        json.dumps(
+            {
+                "objects": [
+                    {
+                        "timestamp": "2026-08-17T11:18:15.092419",
+                        "source_name": "Cam4",
+                        "source_id": 3,
+                        "object_id": 631,
+                        "bounding_box": {"x": 999, "y": 106, "width": 57, "height": 87},
+                    },
+                    {
+                        "timestamp": "2026-08-17T11:18:56.950308",
+                        "source_name": "Cam5",
+                        "source_id": 4,
+                        "object_id": 634,
+                        "bounding_box": {"x": 2147, "y": 440, "width": 154, "height": 372},
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (meta / "objects_lost.json").write_text(json.dumps({"objects": []}), encoding="utf-8")
+    cfg = {
+        "controller": {"use_database": False},
+        "record": {"out_dir": str(root)},
+        "pipeline": {
+            "sources": [
+                {
+                    "split": True,
+                    "num_split": 2,
+                    "source_ids": [3, 4],
+                    "source_names": ["Cam4", "Cam5"],
+                    "src_coords": [[0, 0, 2304, 1300], [0, 1300, 2304, 1292]],
+                }
+            ]
+        },
+    }
+    monkeypatch.setattr(svc, "_load_params_for_run", lambda _run_id: cfg)
+    svc.DETECTION_INDEX_CACHE.clear()
+
+    assert source_aliases(cfg, "Cam4", 3) == {"Cam4", "Cam4-Cam5"}
+    assert source_aliases(cfg, "Cam5", 4) == {"Cam5", "Cam4-Cam5"}
+
+    cam4 = svc.load_detection_index(camera="Cam4", date_folder=date, run_id=1)
+    cam5 = svc.load_detection_index(camera="Cam5", date_folder=date, run_id=1)
+    assert [row["object_id"] for row in cam4] == [631]
+    assert [row["object_id"] for row in cam5] == [634]
+
+    ts = datetime(2026, 8, 17, 11, 18, 15, 92419).timestamp()
+    payload = svc.build_playback_metadata(camera="Cam4", ts=ts, date=date, run_id=1)
+    assert [obj["object_id"] for obj in payload["objects"]] == [631]

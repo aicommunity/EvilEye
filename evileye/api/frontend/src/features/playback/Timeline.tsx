@@ -6,6 +6,7 @@ import {
   PAN_CLICK_SLOP_PX,
   buildTimelineTicks,
   formatPlaybackDateTime,
+  snapUnixToDetections,
   unixAtClientX,
   zoomViewAt,
 } from './timelineMath';
@@ -87,7 +88,8 @@ export function Timeline({
     const el = rootRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
-    onSeek(unixAtClientX(clientX, rect, viewFrom, viewTo));
+    const raw = unixAtClientX(clientX, rect, viewFrom, viewTo);
+    onSeek(snapUnixToDetections(raw, detectionTs, viewFrom, viewTo, rect.width));
   };
 
   const updateHover = (clientX: number) => {
@@ -113,8 +115,7 @@ export function Timeline({
       onPointerDown={(e) => {
         if (e.button !== 0) return;
         const target = e.target as HTMLElement;
-        if (target.closest('[data-timeline-marker]')) return;
-        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+        if (target.closest('[data-timeline-marker],[data-timeline-detection]')) return;
         dragRef.current = {
           pointerId: e.pointerId,
           startX: e.clientX,
@@ -122,8 +123,6 @@ export function Timeline({
           startViewTo: viewTo,
           moved: false,
         };
-        setPanning(true);
-        onScrubbingChange?.(true);
       }}
       onPointerMove={(e) => {
         const drag = dragRef.current;
@@ -134,7 +133,16 @@ export function Timeline({
         const el = rootRef.current;
         if (!el) return;
         const dx = e.clientX - drag.startX;
-        if (Math.abs(dx) >= PAN_CLICK_SLOP_PX) drag.moved = true;
+        if (!drag.moved && Math.abs(dx) >= PAN_CLICK_SLOP_PX) {
+          drag.moved = true;
+          setPanning(true);
+          onScrubbingChange?.(true);
+          try {
+            (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+          } catch {
+            /* ignore */
+          }
+        }
         if (!drag.moved) {
           updateHover(e.clientX);
           return;
@@ -149,15 +157,16 @@ export function Timeline({
         const drag = dragRef.current;
         if (!drag || drag.pointerId !== e.pointerId) return;
         dragRef.current = null;
+        const wasPan = drag.moved;
         setPanning(false);
-        onScrubbingChange?.(false);
+        if (wasPan) onScrubbingChange?.(false);
         try {
           (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
         } catch {
           /* ignore */
         }
-        if (!drag.moved) {
-          seekAtClientX(e.clientX);
+        if (!wasPan) {
+          seekAtClientX(drag.startX);
         }
       }}
       onPointerCancel={() => {
@@ -194,11 +203,19 @@ export function Timeline({
         if (ts < viewFrom || ts > viewTo) return null;
         const left = ((ts - viewFrom) / span) * 100;
         return (
-          <div
+          <button
             key={`det-${ts}`}
+            type="button"
+            data-timeline-detection
             className="timeline-detection-tick"
             style={{ left: `${left}%` }}
-            aria-hidden
+            title={formatPlaybackDateTime(ts)}
+            aria-label={`detection ${formatPlaybackDateTime(ts)}`}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              onSeek(ts);
+            }}
           />
         );
       })}

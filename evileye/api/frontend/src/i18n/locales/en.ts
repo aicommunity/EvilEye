@@ -235,7 +235,7 @@ const en: Dict = {
     unavailable: 'Playback unavailable',
     timelineEmpty: 'Day timeline. Recordings appear after segments load.',
     timelineNoRecordings: 'No recordings or events for the selected day.',
-    timelineHint: 'Wheel zooms, drag pans, click seeks to a frame.',
+    timelineHint: 'Wheel zooms, drag pans, click seeks (snaps to a nearby detection mark).',
     noSegment: 'No segment',
     showMetadata: 'Show metadata',
     currentTime: 'Current playback time',

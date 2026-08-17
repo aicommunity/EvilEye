@@ -5,7 +5,7 @@ import { prepareOverlayMetadata } from '../overlay/overlayMath';
 import { resolvePlaybackFrameSize } from '../overlay/playbackFrameSize';
 import { useMediaLetterbox } from '../overlay/useMediaLetterbox';
 import { useI18n } from '../../i18n';
-import { hasDetectionAt, objectsFromDetectionIndex } from './detectionSync';
+import { hasActiveTrackAt, hasDetectionAt, objectsFromDetectionIndex, shouldShowPlaybackObjects } from './detectionSync';
 import { mergePlaybackMetadata } from './mergePlaybackMetadata';
 import { seekPlaybackVideo } from './playbackVideoSync';
 import { usePlaybackMetadata } from './usePlaybackMetadata';
@@ -72,14 +72,21 @@ export function SplitPlaybackCell({
   );
 
   const atCameraDetection = useMemo(
-    () => objectsFromDetectionIndex(detectionItems, positionSec).length > 0,
+    () =>
+      hasActiveTrackAt(detectionItems, positionSec) ||
+      objectsFromDetectionIndex(detectionItems, positionSec).length > 0,
     [detectionItems, positionSec],
   );
   const atGlobalDetection = useMemo(
     () => hasDetectionAt(globalDetectionTs, positionSec),
     [globalDetectionTs, positionSec],
   );
-  const hasDetectionAtPosition = !showMetadata || globalDetectionTs.length === 0 || atGlobalDetection;
+  const showObjects = shouldShowPlaybackObjects({
+    showMetadata,
+    globalTsLength: globalDetectionTs.length,
+    atCameraDetection,
+    atGlobalDetection,
+  });
 
   const staticMeta = usePlaybackStaticMetadata({
     camera: cameraId,
@@ -93,17 +100,17 @@ export function SplitPlaybackCell({
     sourceId,
     positionSec,
     runId,
-    enabled: showMetadata && (atCameraDetection || atGlobalDetection),
+    enabled: showMetadata && showObjects,
     frameSize: metadataFrameSize,
     playing,
-    hasDetectionAtPosition,
+    hasDetectionAtPosition: showObjects,
   });
   const mergedMeta = useMemo(() => {
     const merged = mergePlaybackMetadata(staticMeta, dynamicMeta);
     if (!showMetadata || !merged) return merged;
-    if (hasDetectionAtPosition && atGlobalDetection) return merged;
+    if (showObjects) return merged;
     return { ...merged, objects: [] };
-  }, [staticMeta, dynamicMeta, showMetadata, hasDetectionAtPosition, atGlobalDetection]);
+  }, [staticMeta, dynamicMeta, showMetadata, showObjects]);
 
   const layoutBox = useMediaLetterbox(
     mediaRef,
@@ -121,45 +128,55 @@ export function SplitPlaybackCell({
     return prepareOverlayMetadata(mergedMeta, metadataFrameSize);
   }, [mergedMeta, showMetadata, metadataFrameSize]);
 
+  const drawFrame = () => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return;
+    if (video.readyState < 2) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const cw = canvas.width;
+    const ch = canvas.height;
+    if (cw <= 0 || ch <= 0) return;
+    const [sx, sy, sw, sh] = srcCoords;
+    try {
+      ctx.drawImage(video, sx, sy, sw, sh, 0, 0, cw, ch);
+    } catch {
+      /* frame not ready */
+    }
+  };
+
   useEffect(() => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas) return;
 
-    const [sx, sy, sw, sh] = srcCoords;
-    const draw = () => {
-      if (video.readyState < 2) return;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-      const cw = canvas.width;
-      const ch = canvas.height;
-      if (cw <= 0 || ch <= 0) return;
-      ctx.drawImage(video, sx, sy, sw, sh, 0, 0, cw, ch);
-    };
+    const onFrame = () => drawFrame();
+    video.addEventListener('loadeddata', onFrame);
+    video.addEventListener('seeked', onFrame);
+    video.addEventListener('canplay', onFrame);
 
-    video.addEventListener('loadeddata', draw);
-    video.addEventListener('seeked', draw);
-
-    let vfcHandle = 0;
     const videoWithVfc = video as HTMLVideoElement & {
       requestVideoFrameCallback?: (cb: () => void) => number;
       cancelVideoFrameCallback?: (h: number) => void;
     };
-    if (playMode === 'normal' && playing && videoWithVfc.requestVideoFrameCallback) {
-      const onFrame = () => {
-        draw();
-        vfcHandle = videoWithVfc.requestVideoFrameCallback!(onFrame);
+    let vfcHandle = 0;
+    if (playing && videoWithVfc.requestVideoFrameCallback) {
+      const loop = () => {
+        drawFrame();
+        vfcHandle = videoWithVfc.requestVideoFrameCallback!(loop);
       };
-      vfcHandle = videoWithVfc.requestVideoFrameCallback(onFrame);
+      vfcHandle = videoWithVfc.requestVideoFrameCallback(loop);
     } else {
-      video.addEventListener('timeupdate', draw);
+      video.addEventListener('timeupdate', onFrame);
     }
 
-    draw();
+    drawFrame();
     return () => {
-      video.removeEventListener('timeupdate', draw);
-      video.removeEventListener('loadeddata', draw);
-      video.removeEventListener('seeked', draw);
+      video.removeEventListener('timeupdate', onFrame);
+      video.removeEventListener('loadeddata', onFrame);
+      video.removeEventListener('seeked', onFrame);
+      video.removeEventListener('canplay', onFrame);
       if (vfcHandle && videoWithVfc.cancelVideoFrameCallback) {
         try {
           videoWithVfc.cancelVideoFrameCallback(vfcHandle);
@@ -168,7 +185,8 @@ export function SplitPlaybackCell({
         }
       }
     };
-  }, [videoUrl, srcCoords, playMode, playing]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoUrl, srcCoords, playMode, playing, videoReady]);
 
   useEffect(() => {
     const container = mediaRef.current;
@@ -176,7 +194,7 @@ export function SplitPlaybackCell({
     if (!container || !canvas) return;
     const ro = new ResizeObserver(() => {
       const rect = container.getBoundingClientRect();
-      const [,, sw, sh] = srcCoords;
+      const [, , sw, sh] = srcCoords;
       const aspect = sw / sh;
       let w = rect.width;
       let h = w / aspect;
@@ -188,28 +206,37 @@ export function SplitPlaybackCell({
       canvas.style.height = `${h}px`;
       canvas.width = Math.max(1, Math.round(w));
       canvas.height = Math.max(1, Math.round(h));
+      drawFrame();
     });
     ro.observe(container);
     return () => ro.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [srcCoords]);
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
     video.playbackRate = speed;
-    if (playMode === 'detection-sync') {
-      video.pause();
-      return;
-    }
     if (playing) void video.play().catch(() => null);
     else video.pause();
-  }, [playing, speed, videoUrl, playMode]);
+  }, [playing, speed, videoUrl]);
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !videoUrl) return;
-    seekPlaybackVideo(video, getPositionRef.current(), startTs, { playing, playMode, scrubbing });
-  }, [positionSec, videoUrl, startTs, playing, playMode, scrubbing]);
+    seekPlaybackVideo(video, getPositionRef.current(), startTs, {
+      playing,
+      scrubbing,
+      thresholdSec: playing && !scrubbing ? 0.35 : 0,
+    });
+    const videoWithVfc = video as HTMLVideoElement & {
+      requestVideoFrameCallback?: (cb: () => void) => number;
+    };
+    if (!playing && videoWithVfc.requestVideoFrameCallback) {
+      videoWithVfc.requestVideoFrameCallback(() => drawFrame());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [positionSec, videoUrl, startTs, playing, scrubbing]);
 
   const previewClass = expanded ? 'expanded-camera-frame' : 'camera-preview';
 
@@ -219,7 +246,7 @@ export function SplitPlaybackCell({
         ref={videoRef}
         src={videoUrl}
         preload="auto"
-        style={{ display: 'none' }}
+        className="split-playback-video"
         muted
         playsInline
         onLoadedMetadata={() => {
@@ -230,7 +257,11 @@ export function SplitPlaybackCell({
             onFrameSize?.(size);
           }
           setVideoReady((n) => n + 1);
-          seekPlaybackVideo(video, getPositionRef.current(), startTs, { playing, playMode, scrubbing });
+          seekPlaybackVideo(video, getPositionRef.current(), startTs, {
+            playing,
+            scrubbing,
+            thresholdSec: playing && !scrubbing ? 0.35 : 0,
+          });
         }}
       />
       <canvas

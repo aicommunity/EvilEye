@@ -5,7 +5,6 @@ import {
   stateApi,
   type PlaybackCamera,
   type PlaybackEventMarker,
-  type PlaybackPlayMode,
   type PlaybackSegment,
   cacheGet,
   cacheSet,
@@ -20,7 +19,6 @@ import { PlaybackGrid } from './PlaybackGrid';
 import { ExpandedPlaybackView } from './ExpandedPlaybackView';
 import { usePlaybackController } from './usePlaybackController';
 import { useDetectionIndex } from './useDetectionIndex';
-import { detectionTsAtOrNull, nextDetectionTs } from './detectionSync';
 import { usePlaybackLayout } from './usePlaybackLayout';
 import { useTimelineViewport } from './useTimelineViewport';
 import { fitColsForCount } from '../layout/fitGrid';
@@ -74,26 +72,20 @@ export function PlaybackPage() {
     toSec: ctrl.toSec,
     enabled: showMetadata,
   });
-  const playMode: PlaybackPlayMode =
-    showMetadata && detectionIndex.hasDetections ? 'detection-sync' : 'normal';
+  useEffect(() => {
+    ctrl.setDetectionTimestamps(detectionIndex.globalTs);
+    ctrl.setSkipEnabled(showMetadata);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- controller setters are stable
+  }, [detectionIndex.globalTs, showMetadata]);
 
   useEffect(() => {
-    ctrl.setPlayMode(playMode);
-    ctrl.setDetectionTimestamps(detectionIndex.globalTs);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- controller methods are stable enough
-  }, [playMode, detectionIndex.globalTs]);
+    ctrl.setScrubbing(scrubbing);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- controller setters are stable
+  }, [scrubbing]);
 
   const togglePlay = useCallback(() => {
-    if (!ctrl.playing && playMode === 'detection-sync' && detectionIndex.globalTs.length) {
-      const pos = ctrl.getPosition();
-      if (detectionTsAtOrNull(detectionIndex.globalTs, pos) == null) {
-        const next = nextDetectionTs(detectionIndex.globalTs, pos);
-        if (next == null) return;
-        ctrl.seek(next);
-      }
-    }
     ctrl.setPlaying(!ctrl.playing);
-  }, [ctrl, playMode, detectionIndex.globalTs]);
+  }, [ctrl]);
 
   const seek = useCallback(
     (sec: number) => {
@@ -445,7 +437,7 @@ export function PlaybackPage() {
               speed={ctrl.speed}
               runId={runId}
               showMetadata={showMetadata}
-              playMode={playMode}
+              playMode="normal"
               scrubbing={scrubbing}
               detectionItems={detectionIndex.byCamera[expandedCamera.id] ?? []}
               globalDetectionTs={detectionIndex.globalTs}
@@ -467,7 +459,7 @@ export function PlaybackPage() {
               speed={ctrl.speed}
               runId={runId}
               showMetadata={showMetadata}
-              playMode={playMode}
+              playMode="normal"
               scrubbing={scrubbing}
               detectionByCamera={detectionIndex.byCamera}
               globalDetectionTs={detectionIndex.globalTs}

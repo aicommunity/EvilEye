@@ -3,7 +3,10 @@ import type { PlaybackSegment } from '../../api';
 export const MIN_VIEW_SPAN_SEC = 120;
 export const MAX_VIEW_SPAN_SEC = 48 * 3600;
 export const DAY_LOAD_BUFFER_SEC = 3 * 3600;
-export const PAN_CLICK_SLOP_PX = 4;
+export const PAN_CLICK_SLOP_PX = 10;
+export const DETECTION_SNAP_PX = 10;
+/** Do not snap clicks across more than this many seconds (avoids sticky playhead when zoomed out). */
+export const DETECTION_SNAP_MAX_SEC = 1.5;
 
 const TICK_STEPS_SEC = [60, 300, 900, 1800, 3600, 7200, 14400, 21600, 43200, 86400];
 
@@ -97,6 +100,36 @@ export function unixAtClientX(
   if (!(span > 0) || !(rect.width > 0)) return viewFrom;
   const x = (clientX - rect.left) / rect.width;
   return viewFrom + Math.min(1, Math.max(0, x)) * span;
+}
+
+/** Snap a click to the nearest detection tick if it is within snapPx on the timeline. */
+export function snapUnixToDetections(
+  unix: number,
+  detectionTs: number[],
+  viewFrom: number,
+  viewTo: number,
+  widthPx: number,
+  snapPx = DETECTION_SNAP_PX,
+): number {
+  if (!detectionTs.length || !(widthPx > 0) || viewTo <= viewFrom || !Number.isFinite(unix)) {
+    return unix;
+  }
+  const secPerPx = (viewTo - viewFrom) / widthPx;
+  const maxDt = Math.min(snapPx * secPerPx, DETECTION_SNAP_MAX_SEC);
+  let best: number | null = null;
+  let bestDt = Infinity;
+  for (const ts of detectionTs) {
+    if (!Number.isFinite(ts)) continue;
+    const dt = Math.abs(ts - unix);
+    if (dt < bestDt) {
+      bestDt = dt;
+      best = ts;
+    } else if (ts > unix && dt > bestDt) {
+      break;
+    }
+  }
+  if (best != null && bestDt <= maxDt) return best;
+  return unix;
 }
 
 export function localDateString(tsSec: number): string {

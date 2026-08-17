@@ -70,11 +70,10 @@ export function EventMarkers({
               onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => {
                 e.stopPropagation();
+                onSelect?.(primary);
                 if (c.count > 1) {
                   setExpandedKey(expanded ? null : clusterKey);
-                  return;
                 }
-                onSelect?.(primary);
               }}
               style={{
                 minWidth: c.count > 1 ? 12 : 5,

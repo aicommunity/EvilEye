@@ -3,7 +3,7 @@ import type { PlaybackCamera, PlaybackDetectionItem, PlaybackEventMarker, Playba
 
 export type FrameSize = { w: number; h: number };
 
-export const PLAYBACK_DETECTION_MATCH_SEC = 0.15;
+export const PLAYBACK_DETECTION_MATCH_SEC = 0.5;
 
 function appendFrameSize(p: URLSearchParams, frameSize?: FrameSize | null) {
   if (frameSize && frameSize.w > 0 && frameSize.h > 0) {

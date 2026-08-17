@@ -9,7 +9,7 @@ import {
   type StreamMetadata,
 } from '../../api';
 import { useI18n } from '../../i18n';
-import { hasDetectionAt, objectsFromDetectionIndex } from './detectionSync';
+import { hasActiveTrackAt, hasDetectionAt, objectsFromDetectionIndex, shouldShowPlaybackObjects } from './detectionSync';
 import { PlaybackMediaWithOverlay } from './PlaybackMediaWithOverlay';
 import { mergePlaybackMetadata } from './mergePlaybackMetadata';
 import { seekPlaybackVideo } from './playbackVideoSync';
@@ -48,8 +48,6 @@ export function usePlaybackCameraSlot(
   getPositionRef.current = getPosition;
   const segmentsRef = useRef(segments);
   segmentsRef.current = segments;
-  const playModeRef = useRef(playMode);
-  playModeRef.current = playMode;
   const scrubbingRef = useRef(scrubbing);
   scrubbingRef.current = scrubbing;
   const onVideoClockRef = useRef(onVideoClock);
@@ -104,25 +102,29 @@ export function usePlaybackCameraSlot(
     const current = slotRef.current;
     if (!v || !current) return;
 
-    if (playModeRef.current === 'normal' && playing && !scrubbingRef.current) {
-      onVideoClockRef.current?.(current.startTs + v.currentTime);
+    if (playing && !scrubbingRef.current) {
+      const videoGlobal = current.startTs + v.currentTime;
+      if (Math.abs(position - videoGlobal) > 0.35) {
+        seekPlaybackVideo(v, position, current.startTs, { playing: false, scrubbing: true });
+        return;
+      }
+      onVideoClockRef.current?.(videoGlobal);
       return;
     }
 
     seekPlaybackVideo(v, position, current.startTs, {
       playing,
-      playMode: playModeRef.current,
       scrubbing: scrubbingRef.current,
     });
   };
 
   useEffect(() => {
     const onTimeUpdate = () => {
-      if (playModeRef.current === 'detection-sync' || scrubbingRef.current) {
+      if (scrubbingRef.current) {
         applySync();
         return;
       }
-      if (playing && playModeRef.current === 'normal') {
+      if (playing) {
         const v = ref.current;
         const current = slotRef.current;
         if (v && current) {
@@ -178,14 +180,21 @@ export function usePlaybackCameraMetadata({
   globalDetectionTs?: number[];
 }) {
   const atCameraDetection = useMemo(
-    () => objectsFromDetectionIndex(detectionItems, positionSec).length > 0,
+    () =>
+      hasActiveTrackAt(detectionItems, positionSec) ||
+      objectsFromDetectionIndex(detectionItems, positionSec).length > 0,
     [detectionItems, positionSec],
   );
   const atGlobalDetection = useMemo(
     () => hasDetectionAt(globalDetectionTs, positionSec),
     [globalDetectionTs, positionSec],
   );
-  const hasDetectionAtPosition = !showMetadata || globalDetectionTs.length === 0 || atGlobalDetection;
+  const showObjects = shouldShowPlaybackObjects({
+    showMetadata,
+    globalTsLength: globalDetectionTs.length,
+    atCameraDetection,
+    atGlobalDetection,
+  });
 
   const staticMeta = usePlaybackStaticMetadata({
     camera: cameraId,
@@ -199,18 +208,18 @@ export function usePlaybackCameraMetadata({
     sourceId: camera?.source_id,
     positionSec,
     runId,
-    enabled: showMetadata && hasVideo && (atCameraDetection || atGlobalDetection),
+    enabled: showMetadata && hasVideo && showObjects,
     frameSize,
     playing,
-    hasDetectionAtPosition,
+    hasDetectionAtPosition: showObjects,
   });
 
   return useMemo(() => {
     const merged = mergePlaybackMetadata(staticMeta, dynamicMeta);
     if (!showMetadata || !merged) return merged;
-    if (hasDetectionAtPosition && atGlobalDetection) return merged;
+    if (showObjects) return merged;
     return { ...merged, objects: [] };
-  }, [staticMeta, dynamicMeta, showMetadata, hasDetectionAtPosition, atGlobalDetection]);
+  }, [staticMeta, dynamicMeta, showMetadata, showObjects]);
 }
 
 export function PlaybackVideoSurface({
@@ -254,13 +263,9 @@ export function PlaybackVideoSurface({
     const v = videoRef.current;
     if (!v) return;
     v.playbackRate = speed;
-    if (playMode === 'detection-sync') {
-      v.pause();
-      return;
-    }
     if (playing) void v.play().catch(() => null);
     else v.pause();
-  }, [playing, speed, slot?.url, videoRef, playMode]);
+  }, [playing, speed, slot?.url, videoRef]);
 
   const previewClass = expanded ? 'expanded-camera-frame' : 'camera-preview';
 

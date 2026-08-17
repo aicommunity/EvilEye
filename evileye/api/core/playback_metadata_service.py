@@ -18,7 +18,7 @@ from evileye.visualization_modules.playback_coord import (
 from evileye.visualization_modules.preview_render import PreviewRenderContext, serialize_preview_metadata
 
 _OBJECT_FILES = ("objects_found.json", "objects_lost.json")
-DEFAULT_MATCH_SEC = 0.15
+DEFAULT_MATCH_SEC = 0.5
 DETECTION_INDEX_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _EVENT_FILES = {
     "camera_events.json": "camera_events",
@@ -152,15 +152,15 @@ def _record_matches_camera(
     aliases: set[str],
     source_id: int | None,
 ) -> bool:
-    obj_source = raw.get("source_name") or raw.get("source")
-    if obj_source and str(obj_source) in aliases:
-        return True
     raw_sid = raw.get("source_id")
     if source_id is not None and raw_sid is not None:
         try:
             return int(raw_sid) == int(source_id)
         except Exception:
             pass
+    obj_source = raw.get("source_name") or raw.get("source")
+    if obj_source and str(obj_source) in aliases:
+        return True
     return not obj_source
 
 
@@ -316,6 +316,61 @@ def nearest_detection_ts(items: list[dict[str, Any]], target_ts: float) -> float
     return best
 
 
+def _bbox_components(bbox: Any) -> tuple[float, float, float, float] | None:
+    if isinstance(bbox, dict):
+        try:
+            return (
+                float(bbox["x"]),
+                float(bbox["y"]),
+                float(bbox["width"]),
+                float(bbox["height"]),
+            )
+        except (KeyError, TypeError, ValueError):
+            return None
+    if isinstance(bbox, (list, tuple)) and len(bbox) >= 4:
+        try:
+            return (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _lerp_bbox(found_bbox: Any, lost_bbox: Any, t: float) -> Any:
+    start = _bbox_components(found_bbox)
+    end = _bbox_components(lost_bbox)
+    if start is None:
+        return found_bbox
+    if end is None:
+        return found_bbox
+    t = max(0.0, min(1.0, float(t)))
+    vals = [start[i] + (end[i] - start[i]) * t for i in range(4)]
+    if isinstance(found_bbox, dict):
+        return {"x": vals[0], "y": vals[1], "width": vals[2], "height": vals[3]}
+    return vals
+
+
+def _earliest_by_oid(
+    records: list[dict[str, Any]],
+    kind: str,
+    aliases: set[str],
+    source_id: int | None,
+) -> dict[Any, tuple[datetime, dict[str, Any]]]:
+    by_oid: dict[Any, tuple[datetime, dict[str, Any]]] = {}
+    for obj in records:
+        oid = obj.get("object_id")
+        if oid is None:
+            continue
+        if not _record_matches_camera(obj, aliases=aliases, source_id=source_id):
+            continue
+        event_ts = _detection_event_ts(obj, kind)
+        if not event_ts:
+            continue
+        prev = by_oid.get(oid)
+        if prev is None or event_ts < prev[0]:
+            by_oid[oid] = (event_ts, obj)
+    return by_oid
+
+
 def _load_objects_from_json(
     detections_dir: Path,
     target: datetime,
@@ -323,24 +378,52 @@ def _load_objects_from_json(
     source_id: int | None,
     window_sec: float,
 ) -> list[dict[str, Any]]:
-    """Load archive object snapshots within ``window_sec`` of ``target`` (no sticky track interval)."""
+    """Load snapshots near ``target``, plus interpolated tracks between found and lost."""
     found_path = detections_dir / "objects_found.json"
     lost_path = detections_dir / "objects_lost.json"
     found_list = _read_json_objects(found_path)
     lost_list = _read_json_objects(lost_path)
-    lost_ids = {id(obj) for obj in lost_list}
 
     selected: dict[Any, dict[str, Any]] = {}
-    for obj in found_list + lost_list:
-        kind = "lost" if id(obj) in lost_ids else "found"
+    snapshot_oids: set[Any] = set()
+
+    def consider_snapshot(obj: dict[str, Any], kind: str) -> None:
         event_ts = _detection_event_ts(obj, kind)
         if not event_ts or abs((event_ts - target).total_seconds()) >= window_sec:
-            continue
+            return
         if not _record_matches_camera(obj, aliases=aliases, source_id=source_id):
-            continue
+            return
         oid = obj.get("object_id")
         key = (kind, oid if oid is not None else id(obj))
         selected[key] = obj
+        if oid is not None:
+            snapshot_oids.add(oid)
+
+    for obj in found_list:
+        consider_snapshot(obj, "found")
+    for obj in lost_list:
+        consider_snapshot(obj, "lost")
+
+    found_by_oid = _earliest_by_oid(found_list, "found", aliases, source_id)
+    lost_by_oid = _earliest_by_oid(lost_list, "lost", aliases, source_id)
+    for oid, (found_ts, found_obj) in found_by_oid.items():
+        if oid in snapshot_oids:
+            continue
+        lost_entry = lost_by_oid.get(oid)
+        if lost_entry is None:
+            continue
+        lost_ts, lost_obj = lost_entry
+        if not (found_ts <= target <= lost_ts):
+            continue
+        span = (lost_ts - found_ts).total_seconds()
+        t = 0.0 if span <= 1e-9 else (target - found_ts).total_seconds() / span
+        interpolated = dict(found_obj)
+        interpolated["bounding_box"] = _lerp_bbox(
+            found_obj.get("bounding_box") or found_obj.get("box"),
+            lost_obj.get("bounding_box") or lost_obj.get("box"),
+            t,
+        )
+        selected[("interval", oid)] = interpolated
 
     return list(selected.values())
 
@@ -560,22 +643,15 @@ def _db_available() -> bool:
         return False
 
 
-def _load_dynamic_records(
+def _load_json_dynamic_records(
     *,
     target: datetime,
-    camera: str,
     date_folder: str,
     window_sec: float,
     params: dict[str, Any],
+    aliases: set[str],
     source_id: int | None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    mode = _playback_storage_mode(params)
-    aliases = source_aliases(params, camera, source_id)
-    if mode == "database" and _db_available():
-        return (
-            _load_objects_from_db(target, camera, date_folder, window_sec),
-            _load_events_from_db(target, camera, date_folder, window_sec),
-        )
     base = _playback_data_dir(params)
     detections_dir = base / "Detections" / date_folder / "Metadata"
     events_dir = base / "Events" / date_folder / "Metadata"
@@ -590,6 +666,32 @@ def _load_dynamic_records(
             events_dir, target, aliases, source_id, window_sec,
         )
     return raw_objects, raw_events
+
+
+def _load_dynamic_records(
+    *,
+    target: datetime,
+    camera: str,
+    date_folder: str,
+    window_sec: float,
+    params: dict[str, Any],
+    source_id: int | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    mode = _playback_storage_mode(params)
+    aliases = source_aliases(params, camera, source_id)
+    if mode == "database" and _db_available():
+        db_objects = _load_objects_from_db(target, camera, date_folder, window_sec)
+        db_events = _load_events_from_db(target, camera, date_folder, window_sec)
+        if db_objects or db_events:
+            return db_objects, db_events
+    return _load_json_dynamic_records(
+        target=target,
+        date_folder=date_folder,
+        window_sec=window_sec,
+        params=params,
+        aliases=aliases,
+        source_id=source_id,
+    )
 
 
 def _visualizer_cfg(params: dict[str, Any]) -> dict[str, Any]:

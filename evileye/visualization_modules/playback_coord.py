@@ -91,7 +91,12 @@ def source_aliases(
     camera: str,
     source_id: int | None,
 ) -> set[str]:
-    """Acceptable source_name values when filtering archive detection records."""
+    """Acceptable source_name values when filtering archive detection records.
+
+    Sibling split cameras (Cam4 vs Cam5) are not aliases of each other.
+    The parent folder name (Cam4-Cam5) is accepted so records stored under
+    the composite source still match; ``source_id`` then disambiguates.
+    """
     aliases: set[str] = {camera}
     resolved = _resolve_source_id_from_params(params, camera, source_id)
     for source in _pipeline_sources(params):
@@ -99,17 +104,15 @@ def source_aliases(
         ids = source.get("source_ids") or []
         split = bool(source.get("split"))
         num_split = int(source.get("num_split") or len(names) or 0)
-        if camera in names:
-            aliases.update(names)
-            if split and num_split:
-                aliases.add("-".join(names[:num_split]))
+        parent = "-".join(names[:num_split]) if split and num_split else None
+        in_group = camera in names or (parent is not None and camera == parent)
         if resolved is not None and resolved in ids:
             idx = ids.index(resolved)
             if idx < len(names):
                 aliases.add(names[idx])
-            aliases.update(names)
-            if split and num_split:
-                aliases.add("-".join(names[:num_split]))
+            in_group = True
+        if in_group and parent:
+            aliases.add(parent)
     return aliases
 
 

@@ -52,22 +52,24 @@ export function OverlayCanvas({
   return (
     <div style={style} className="live-overlay-root">
       <svg className="journal-preview-overlay" viewBox="0 0 100 100" preserveAspectRatio="none">
-        {(payload.debug_rois ?? []).map((roi, i) => {
-          const [x1, y1, x2, y2] = roi;
-          return (
-            <rect
-              key={`d${i}`}
-              x={x1 * 100}
-              y={y1 * 100}
-              width={(x2 - x1) * 100}
-              height={(y2 - y1) * 100}
-              fill="none"
-              stroke="#3b82f6"
-              strokeWidth="1.5"
-              vectorEffect="non-scaling-stroke"
-            />
-          );
-        })}
+        {density === 'full'
+          ? (payload.debug_rois ?? []).map((roi, i) => {
+              const [x1, y1, x2, y2] = roi;
+              return (
+                <rect
+                  key={`d${i}`}
+                  x={x1 * 100}
+                  y={y1 * 100}
+                  width={(x2 - x1) * 100}
+                  height={(y2 - y1) * 100}
+                  fill="none"
+                  stroke="#3b82f6"
+                  strokeWidth="1.5"
+                  vectorEffect="non-scaling-stroke"
+                />
+              );
+            })
+          : null}
         {(payload.zones ?? []).map((z, i) => {
           if (!z.points?.length) return null;
           const points = z.points.map(([x, y]) => `${x * 100},${y * 100}`).join(' ');
@@ -123,7 +125,7 @@ export function OverlayCanvas({
               height={(y2 - y1) * 100}
               fill="none"
               stroke={o.event_active ? '#ef4444' : '#22c55e'}
-              strokeWidth="1.5"
+              strokeWidth={density === 'compact' ? '2.5' : '1.5'}
               vectorEffect="non-scaling-stroke"
             />
           );
