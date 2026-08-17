@@ -982,3 +982,41 @@ def test_split_cameras_do_not_share_sibling_detections(tmp_path, monkeypatch):
     ts = datetime(2026, 8, 17, 11, 18, 15, 92419).timestamp()
     payload = svc.build_playback_metadata(camera="Cam4", ts=ts, date=date, run_id=1)
     assert [obj["object_id"] for obj in payload["objects"]] == [631]
+
+
+def test_detection_index_uses_media_pts_plus_sidecar(tmp_path, monkeypatch):
+    from evileye.video_recorder.session_sidecar import sidecar_path_for_segment, write_session_sidecar
+
+    root = tmp_path / "EvilEyeData"
+    date = "2026-08-17"
+    cam = root / "Streams" / date / "Cam4"
+    cam.mkdir(parents=True)
+    part0 = cam / "Cam4_20260817_014911_0_00000.mp4"
+    part0.write_bytes(b"fake")
+    filename_start = datetime(2026, 8, 17, 1, 49, 11).timestamp()
+    mux_start = filename_start + 2.5
+    write_session_sidecar(sidecar_path_for_segment(part0), mux_start, first_pts_ns=0)
+
+    detections = root / "Detections" / date / "Metadata"
+    detections.mkdir(parents=True)
+    (detections / "objects_found.json").write_text(
+        json.dumps(
+            [
+                {
+                    "timestamp": "2026-08-17T01:49:11",
+                    "media_pts_sec": 10.0,
+                    "source_name": "Cam4",
+                    "object_id": 7,
+                    "bounding_box": [0, 0, 10, 10],
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("EVILEYE_DATA_DIR", str(root))
+    monkeypatch.setattr(svc, "_load_params_for_run", lambda _run_id: {"pipeline": {"sources": []}})
+    svc.DETECTION_INDEX_CACHE.clear()
+
+    items = svc.load_detection_index(camera="Cam4", date_folder=date)
+    assert items
+    assert abs(items[0]["ts"] - (mux_start + 10.0)) < 0.05

@@ -10,6 +10,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from evileye.video_recorder.session_sidecar import (
+    pick_sidecar_start_ts,
+    read_session_sidecar_for_segment,
+)
+
 _data_dir_cache: tuple[str, float, str] | None = None
 
 
@@ -176,6 +181,29 @@ def _parse_segment_name(path: str) -> tuple[float, int | None] | None:
     idx_m = re.search(r"_(\d{5})$", name)
     index = int(idx_m.group(1)) if idx_m else None
     return session_start, index
+
+
+def _session_start_with_sidecar(path: str, filename_session_start: float) -> float:
+    data = read_session_sidecar_for_segment(path)
+    if not data:
+        return filename_session_start
+    try:
+        return float(data["start_ts"])
+    except (KeyError, TypeError, ValueError):
+        return filename_session_start
+
+
+def session_anchor_ts_for_camera(
+    camera: str,
+    date_folder: str,
+    around_ts: float | None = None,
+) -> float | None:
+    """Wall clock of first muxed frame from sidecar, if present."""
+    date_dir = data_dir() / "Streams" / date_folder
+    folder = resolve_camera_folder(date_dir, camera)
+    if folder is None:
+        return None
+    return pick_sidecar_start_ts(folder, around_ts)
 
 
 def _file_mtime(path: str) -> float | None:
@@ -348,7 +376,7 @@ def _segment_start_ts(path: str) -> float | None:
     parsed = _parse_segment_name(path)
     if parsed is None:
         return None
-    return parsed[0]
+    return _session_start_with_sidecar(path, parsed[0])
 
 
 def _video_duration_sec(path: str) -> float | None:
@@ -662,6 +690,7 @@ def load_segments(
         parsed = _parse_segment_name(path)
         if parsed is not None:
             session_start, index = parsed
+            session_start = _session_start_with_sidecar(path, session_start)
             parsed_named.append((path, session_start, index))
         else:
             undated.append(path)

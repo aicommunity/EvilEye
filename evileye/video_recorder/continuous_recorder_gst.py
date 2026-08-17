@@ -12,6 +12,10 @@ import atexit
 from evileye.core.logger import get_module_logger
 from evileye.video_recorder.recording_params import RecordingParams
 from evileye.video_recorder.recorder_base import VideoRecorderBase, SourceMeta
+from evileye.video_recorder.session_sidecar import (
+    sidecar_path_from_splitmux_location,
+    write_session_sidecar,
+)
 
 
 @dataclass
@@ -113,12 +117,13 @@ class GstContinuousRecorder(VideoRecorderBase):
             except Exception:
                 pass
 
-            # IMPORTANT: bound mux queue to avoid runaway RSS if mux/disk stalls.
+            # Bound mux queue. Do not leak until the first muxed buffer so media t=0
+            # matches the first appsink frame; leaky is enabled in the first-buffer probe.
             try:
                 queue_before_mux.set_property("max-size-buffers", 200)
                 queue_before_mux.set_property("max-size-bytes", 5 * 1024 * 1024)
                 queue_before_mux.set_property("max-size-time", 2_000_000_000)
-                queue_before_mux.set_property("leaky", 2)  # downstream
+                queue_before_mux.set_property("leaky", 0)
             except Exception:
                 pass
 
@@ -178,6 +183,13 @@ class GstContinuousRecorder(VideoRecorderBase):
             if not queue_before_mux.link(splitmuxsink):
                 raise RuntimeError("Failed to link queue_before_mux -> splitmuxsink")
 
+            self._attach_first_mux_probe(
+                Gst,
+                recording_queue_elem=recording_queue_elem,
+                queue_before_mux=queue_before_mux,
+                location=location,
+            )
+
             # Sync state if safe
             try:
                 ret, current_state, _pending = pipeline.get_state(Gst.SECOND)
@@ -201,6 +213,45 @@ class GstContinuousRecorder(VideoRecorderBase):
             self._segments_attached += 1
             self._last_stats_ts = time.time()
             self.logger.info("GstContinuousRecorder branch attached: location=%s", location)
+
+    def _attach_first_mux_probe(self, Gst, *, recording_queue_elem, queue_before_mux, location: str) -> None:
+        sidecar = sidecar_path_from_splitmux_location(location)
+        state = {"written": False}
+
+        def _on_buffer(pad, info):
+            if state["written"]:
+                return Gst.PadProbeReturn.OK
+            buf = info.get_buffer()
+            if buf is None:
+                return Gst.PadProbeReturn.OK
+            pts = getattr(buf, "pts", None)
+            first_pts = None
+            try:
+                clock_none = getattr(Gst, "CLOCK_TIME_NONE", None)
+                if pts is not None and pts >= 0 and (clock_none is None or pts != clock_none):
+                    first_pts = int(pts)
+            except Exception:
+                first_pts = None
+            try:
+                write_session_sidecar(sidecar, time.time(), first_pts)
+                self.logger.info("Wrote recording session sidecar %s", sidecar)
+            except Exception:
+                self.logger.exception("Failed to write session sidecar %s", sidecar)
+            state["written"] = True
+            for elem in (recording_queue_elem, queue_before_mux):
+                try:
+                    elem.set_property("leaky", 2)
+                except Exception:
+                    pass
+            return Gst.PadProbeReturn.REMOVE
+
+        try:
+            srcpad = queue_before_mux.get_static_pad("src")
+            if srcpad is None:
+                return
+            srcpad.add_probe(Gst.PadProbeType.BUFFER, _on_buffer)
+        except Exception:
+            self.logger.exception("Failed to attach first-mux probe")
 
     def _start_check_thread(self) -> None:
         # Best-effort small/invalid file cleanup, similar to previous in-capture implementation.

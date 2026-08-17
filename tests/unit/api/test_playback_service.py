@@ -226,3 +226,26 @@ def test_load_segments_splitmux_ignores_first_file_finalize_delay(tmp_path, monk
     assert part18["start_ts"] <= tick_1059 <= part18["end_ts"]
     assert part19["start_ts"] <= tick_1118 <= part19["end_ts"]
     assert tick_1118 - part19["start_ts"] < 60
+
+
+def test_load_segments_prefers_sidecar_session_start(tmp_path, monkeypatch):
+    """First muxed-frame wall clock beats the pipeline-setup filename."""
+    from datetime import datetime
+
+    from evileye.video_recorder.session_sidecar import sidecar_path_for_segment, write_session_sidecar
+
+    root = tmp_path / "EvilEyeData"
+    cam = root / "Streams" / "2026-08-17" / "Cam4"
+    cam.mkdir(parents=True)
+    filename_start = datetime(2026, 8, 17, 1, 49, 11).timestamp()
+    mux_start = filename_start + 2.5
+    part0 = cam / "Cam4_20260817_014911_0_00000.mp4"
+    part0.write_bytes(_minimal_mp4(1796.353))
+    write_session_sidecar(sidecar_path_for_segment(part0), mux_start, first_pts_ns=0)
+    monkeypatch.setenv("EVILEYE_DATA_DIR", str(root))
+    monkeypatch.setattr(svc, "_configured_segment_length_sec", lambda: 1800.0)
+    svc._MP4_DURATION_CACHE.clear()
+
+    segs = svc.load_segments("Cam4", date="2026-08-17")
+    assert abs(segs[0]["start_ts"] - mux_start) < 0.05
+    assert segs[0]["start_ts"] - filename_start > 2.0

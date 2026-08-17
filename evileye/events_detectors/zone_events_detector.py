@@ -1,9 +1,8 @@
-import datetime
 import time
 from threading import Lock, Event
 from .event_fov import FieldOfViewEvent
 from .events_detector import EventsDetector
-from datetime import datetime
+from evileye.core.event_time import obj_found_datetime, obj_lost_datetime
 from .zone import Zone, ZoneForm
 from ..utils import threading_events
 from queue import Queue
@@ -61,7 +60,6 @@ class ZoneEventsDetector(EventsDetector):
                     continue
 
                 zones = self.sources_zones[source_id]
-                timestamp = datetime.now()
                 # last_image may be None or may not contain an image (it can be cleared to save memory).
                 # In that case, we cannot evaluate zone geometry in pixel space reliably; skip this tick.
                 img_height = None
@@ -79,7 +77,6 @@ class ZoneEventsDetector(EventsDetector):
                     continue
                 for cur_zone in zones:
                     for obj in source_objects.objects:
-                        timestamp = datetime.now()
                         # Если объект ранее не появлялся в зоне
                         if (obj.object_id not in self.obj_ids_zone or
                                 cur_zone.get_zone_id() not in self.obj_ids_zone[obj.object_id]):
@@ -105,7 +102,7 @@ class ZoneEventsDetector(EventsDetector):
                             self.obj_ids_zone[hist_obj.object_id][zone_id] = cur_zone
                             # Передаём текущий объект (с актуальным изображением),
                             # а метку времени берём из истории попадания в зону
-                            event = ZoneEvent(hist_obj.time_stamp, 'Alarm', obj, cur_zone)
+                            event = ZoneEvent(obj_found_datetime(hist_obj), 'Alarm', obj, cur_zone)
                             self.zone_id_people[zone_id] += 1
                             # print(f'New event: {obj.last_image.frame_id}, Event: {event}')
                             events.append(event)
@@ -128,7 +125,7 @@ class ZoneEventsDetector(EventsDetector):
                                 continue
                             # Передаём текущий объект (с актуальным изображением),
                             # а метку времени выхода берём из истории
-                            event = ZoneEvent(hist_obj.time_stamp, 'Alarm', obj, zone, is_finished=True)
+                            event = ZoneEvent(obj_found_datetime(hist_obj), 'Alarm', obj, zone, is_finished=True)
                             if obj.object_id not in self.left_frame_id[source_id]:
                                 self.left_frame_id[source_id][obj.object_id] = {}
                             self.left_frame_id[source_id][obj.object_id][zone_id] = hist_obj.frame_id
@@ -143,7 +140,7 @@ class ZoneEventsDetector(EventsDetector):
                     continue
                 for obj in source_objects.objects:
                     if obj.object_id in self.obj_ids_zone:  # Если объект был в запрещенной зоне
-                        timestamp = datetime.now()
+                        timestamp = obj_lost_datetime(obj)
                         for zone_id in self.obj_ids_zone[obj.object_id]:
                             zone = self.obj_ids_zone[obj.object_id][zone_id]
                             event = ZoneEvent(timestamp, 'Alarm', obj, zone, is_finished=True)

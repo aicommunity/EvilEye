@@ -280,6 +280,8 @@ class MpWorkerCapture(MpWorker):
                 "current_video_position": getattr(frame, "current_video_position", None),
                 "source_video_duration": getattr(frame, "source_video_duration", None),
                 "time_stamp": getattr(frame, "time_stamp", None),
+                "pts_ns": getattr(frame, "pts_ns", None),
+                "media_pts_sec": getattr(frame, "media_pts_sec", None),
             },
         }
 

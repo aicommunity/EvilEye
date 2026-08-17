@@ -192,11 +192,13 @@ class DetectionThreadBase:
         if first is None:
             return None
 
+        event_ts = first.time_stamp if getattr(first, "time_stamp", None) is not None else time.time()
+
         # Important contract: emit a result per input frame (even if empty).
         if not predict_results:
             detection_result_list = DetectionResultList()
             detection_result_list.source_id = first.source_id
-            detection_result_list.time_stamp = time.time()
+            detection_result_list.time_stamp = event_ts
             detection_result_list.frame_id = first.frame_id
             return detection_result_list
 
@@ -206,7 +208,7 @@ class DetectionThreadBase:
         if not bboxes_coords:
             detection_result_list = DetectionResultList()
             detection_result_list.source_id = first.source_id
-            detection_result_list.time_stamp = time.time()
+            detection_result_list.time_stamp = event_ts
             detection_result_list.frame_id = first.frame_id
             return detection_result_list
 
@@ -216,7 +218,7 @@ class DetectionThreadBase:
         if not bboxes_coords:
             detection_result_list = DetectionResultList()
             detection_result_list.source_id = first.source_id
-            detection_result_list.time_stamp = time.time()
+            detection_result_list.time_stamp = event_ts
             detection_result_list.frame_id = first.frame_id
             return detection_result_list
 
@@ -283,8 +285,11 @@ class DetectionThreadBase:
         """Create DetectionResultList from processed detections."""
         detection_result_list = DetectionResultList()
         detection_result_list.source_id = split_image[0][0].source_id
-        detection_result_list.time_stamp = time.time()
-        detection_result_list.frame_id = split_image[0][0].frame_id
+        first = split_image[0][0]
+        detection_result_list.time_stamp = (
+            first.time_stamp if getattr(first, "time_stamp", None) is not None else time.time()
+        )
+        detection_result_list.frame_id = first.frame_id
 
         for bbox, class_id, conf in zip(bboxes_coords, class_ids, confidences):
             detection_result = DetectionResult()

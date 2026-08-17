@@ -166,12 +166,50 @@ def _record_matches_camera(
     return not obj_source
 
 
-def _record_event_time(raw: dict[str, Any]) -> datetime | None:
-    for key in ("timestamp", "detected_timestamp", "ts", "time_stamp", "lost_timestamp"):
+def _wall_event_time(raw: dict[str, Any], kind: str | None = None) -> datetime | None:
+    if kind == "lost":
+        keys = ("lost_timestamp", "timestamp", "ts", "time_stamp")
+    elif kind == "found":
+        keys = ("timestamp", "detected_timestamp", "ts", "time_stamp")
+    else:
+        keys = ("timestamp", "detected_timestamp", "ts", "time_stamp", "lost_timestamp")
+    for key in keys:
         ts = parse_event_timestamp(raw.get(key))
         if ts:
             return ts
     return None
+
+
+def _unix_from_media_pts(raw: dict[str, Any], camera: str, date_folder: str) -> float | None:
+    media = raw.get("media_pts_sec")
+    if media is None:
+        return None
+    try:
+        media_f = float(media)
+    except (TypeError, ValueError):
+        return None
+    wall = _wall_event_time(raw)
+    around = wall.timestamp() if wall else None
+    from evileye.api.core.playback_service import session_anchor_ts_for_camera
+
+    start = session_anchor_ts_for_camera(camera, date_folder, around_ts=around)
+    if start is None:
+        return None
+    return float(start) + media_f
+
+
+def _record_event_time(
+    raw: dict[str, Any],
+    *,
+    camera: str | None = None,
+    date_folder: str | None = None,
+    kind: str | None = None,
+) -> datetime | None:
+    if camera and date_folder:
+        unix = _unix_from_media_pts(raw, camera, date_folder)
+        if unix is not None:
+            return datetime.fromtimestamp(unix)
+    return _wall_event_time(raw, kind)
 
 
 def _read_json_objects(filepath: Path) -> list[dict[str, Any]]:
@@ -195,12 +233,14 @@ def _read_json_objects(filepath: Path) -> list[dict[str, Any]]:
     return parsed
 
 
-def _detection_event_ts(raw: dict[str, Any], kind: str) -> datetime | None:
-    if kind == "lost":
-        return parse_event_timestamp(raw.get("lost_timestamp") or raw.get("timestamp"))
-    return parse_event_timestamp(
-        raw.get("timestamp") or raw.get("detected_timestamp") or raw.get("ts") or raw.get("time_stamp")
-    )
+def _detection_event_ts(
+    raw: dict[str, Any],
+    kind: str,
+    *,
+    camera: str | None = None,
+    date_folder: str | None = None,
+) -> datetime | None:
+    return _record_event_time(raw, camera=camera, date_folder=date_folder, kind=kind)
 
 
 def _index_cache_key(base: Path, date_folder: str, camera: str, source_id: int | None) -> str:
@@ -218,8 +258,25 @@ def _file_mtime_sum(*paths: Path) -> float:
     return total
 
 
-def _detection_index_item(raw: dict[str, Any], kind: str) -> dict[str, Any] | None:
-    event_ts = _detection_event_ts(raw, kind)
+def _sidecar_mtime_sum(base: Path, date_folder: str) -> float:
+    streams = base / "Streams" / date_folder
+    if not streams.is_dir():
+        return 0.0
+    try:
+        paths = list(streams.glob("**/*.session.json"))
+    except OSError:
+        return 0.0
+    return _file_mtime_sum(*paths)
+
+
+def _detection_index_item(
+    raw: dict[str, Any],
+    kind: str,
+    *,
+    camera: str | None = None,
+    date_folder: str | None = None,
+) -> dict[str, Any] | None:
+    event_ts = _detection_event_ts(raw, kind, camera=camera, date_folder=date_folder)
     if not event_ts:
         return None
     return {
@@ -254,7 +311,7 @@ def load_detection_index(
     found_path = base / "Detections" / date_folder / "Metadata" / "objects_found.json"
     lost_path = base / "Detections" / date_folder / "Metadata" / "objects_lost.json"
     cache_key = _index_cache_key(base, date_folder, camera, sid)
-    mtime_sum = _file_mtime_sum(found_path, lost_path)
+    mtime_sum = _file_mtime_sum(found_path, lost_path) + _sidecar_mtime_sum(base, date_folder)
     cached = DETECTION_INDEX_CACHE.get(cache_key)
     if cached and cached[0] == mtime_sum:
         items = cached[1]
@@ -263,13 +320,13 @@ def load_detection_index(
         for obj in _read_json_objects(found_path):
             if not _record_matches_camera(obj, aliases=aliases, source_id=sid):
                 continue
-            item = _detection_index_item(obj, "found")
+            item = _detection_index_item(obj, "found", camera=camera, date_folder=date_folder)
             if item:
                 items.append(item)
         for obj in _read_json_objects(lost_path):
             if not _record_matches_camera(obj, aliases=aliases, source_id=sid):
                 continue
-            item = _detection_index_item(obj, "lost")
+            item = _detection_index_item(obj, "lost", camera=camera, date_folder=date_folder)
             if item:
                 items.append(item)
         items.sort(key=lambda row: row["ts"])
@@ -366,6 +423,9 @@ def _earliest_by_oid(
     kind: str,
     aliases: set[str],
     source_id: int | None,
+    *,
+    camera: str | None = None,
+    date_folder: str | None = None,
 ) -> dict[Any, tuple[datetime, dict[str, Any]]]:
     by_oid: dict[Any, tuple[datetime, dict[str, Any]]] = {}
     for obj in records:
@@ -374,7 +434,7 @@ def _earliest_by_oid(
             continue
         if not _record_matches_camera(obj, aliases=aliases, source_id=source_id):
             continue
-        event_ts = _detection_event_ts(obj, kind)
+        event_ts = _detection_event_ts(obj, kind, camera=camera, date_folder=date_folder)
         if not event_ts:
             continue
         prev = by_oid.get(oid)
@@ -389,6 +449,9 @@ def _load_objects_from_json(
     aliases: set[str],
     source_id: int | None,
     window_sec: float,
+    *,
+    camera: str | None = None,
+    date_folder: str | None = None,
 ) -> list[dict[str, Any]]:
     """Load snapshots near ``target``, plus interpolated tracks between found and lost."""
     found_path = detections_dir / "objects_found.json"
@@ -400,7 +463,7 @@ def _load_objects_from_json(
     snapshot_oids: set[Any] = set()
 
     def consider_snapshot(obj: dict[str, Any], kind: str) -> None:
-        event_ts = _detection_event_ts(obj, kind)
+        event_ts = _detection_event_ts(obj, kind, camera=camera, date_folder=date_folder)
         if not event_ts or abs((event_ts - target).total_seconds()) >= window_sec:
             return
         if not _record_matches_camera(obj, aliases=aliases, source_id=source_id):
@@ -416,8 +479,12 @@ def _load_objects_from_json(
     for obj in lost_list:
         consider_snapshot(obj, "lost")
 
-    found_by_oid = _earliest_by_oid(found_list, "found", aliases, source_id)
-    lost_by_oid = _earliest_by_oid(lost_list, "lost", aliases, source_id)
+    found_by_oid = _earliest_by_oid(
+        found_list, "found", aliases, source_id, camera=camera, date_folder=date_folder
+    )
+    lost_by_oid = _earliest_by_oid(
+        lost_list, "lost", aliases, source_id, camera=camera, date_folder=date_folder
+    )
     for oid, (found_ts, found_obj) in found_by_oid.items():
         if oid in snapshot_oids:
             continue
@@ -660,6 +727,7 @@ def _db_available() -> bool:
 def _load_json_dynamic_records(
     *,
     target: datetime,
+    camera: str,
     date_folder: str,
     window_sec: float,
     params: dict[str, Any],
@@ -673,7 +741,13 @@ def _load_json_dynamic_records(
     raw_events: list[dict[str, Any]] = []
     if detections_dir.is_dir():
         raw_objects = _load_objects_from_json(
-            detections_dir, target, aliases, source_id, window_sec,
+            detections_dir,
+            target,
+            aliases,
+            source_id,
+            window_sec,
+            camera=camera,
+            date_folder=date_folder,
         )
     if events_dir.is_dir():
         raw_events = _load_events_from_json(
@@ -700,6 +774,7 @@ def _load_dynamic_records(
             return db_objects, db_events
         json_objects, json_events = _load_json_dynamic_records(
             target=target,
+            camera=camera,
             date_folder=date_folder,
             window_sec=window_sec,
             params=params,
@@ -711,6 +786,7 @@ def _load_dynamic_records(
         return json_objects, json_events
     return _load_json_dynamic_records(
         target=target,
+        camera=camera,
         date_folder=date_folder,
         window_sec=window_sec,
         params=params,

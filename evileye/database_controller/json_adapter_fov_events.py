@@ -1,5 +1,5 @@
 import os
-import datetime
+from evileye.core.event_time import date_folder_from_ts, require_datetime
 from .json_event_io import append_json_record
 from .event_image_paths import ensure_event_image_dirs
 import copy
@@ -55,20 +55,20 @@ class JsonAdapterFovEvents(DatabaseAdapterBase):
         self._write_event(event, is_update=True)
 
     def _write_event(self, event, is_update: bool):
-        date_folder = datetime.date.today().strftime('%Y-%m-%d')
+        ts = require_datetime(event.time_lost or event.time_obj_detected or event.timestamp)
+        date_folder = date_folder_from_ts(ts)
         day_dir = os.path.join(self.base_dir, date_folder)
         metadata_dir = os.path.join(day_dir, 'Metadata')
         os.makedirs(metadata_dir, exist_ok=True)
         file_name = 'fov_events_lost.json' if is_update else 'fov_events_found.json'
         file_path = os.path.join(metadata_dir, file_name)
 
-        ts = (event.time_lost or event.time_obj_detected or event.timestamp)
         preview_rel, frame_rel = self._save_images(day_dir, event, is_update)
 
         # FOV events do not carry box; keep paths and ids only
         rec = {
             'event_id': event.event_id,
-            'ts': ts.isoformat() if hasattr(ts, 'isoformat') else str(ts),
+            'ts': ts.isoformat(),
             'source_id': event.source_id,
             'object_id': event.object_id,
             'preview_path': preview_rel,
@@ -77,7 +77,7 @@ class JsonAdapterFovEvents(DatabaseAdapterBase):
         append_json_record(file_path, rec)
 
     def _save_images(self, day_dir: str, event, is_update: bool):
-        ts = (event.time_lost if is_update else (event.time_obj_detected or event.timestamp))
+        ts = require_datetime(event.time_lost if is_update else (event.time_obj_detected or event.timestamp))
         ts_str = ts.strftime('%Y-%m-%d_%H-%M-%S-%f') if is_update else ts.strftime('%Y-%m-%d_%H-%M-%S.%f')
         previews_dir, frames_dir = ensure_event_image_dirs(day_dir, is_lost=is_update)
 

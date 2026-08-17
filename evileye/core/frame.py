@@ -6,6 +6,8 @@ class Frame:
         self.current_video_position = None
         self.source_video_duration = None
         self.time_stamp = None
+        self.pts_ns = None
+        self.media_pts_sec = None
         self.image = None
         self.subscribers = []
 

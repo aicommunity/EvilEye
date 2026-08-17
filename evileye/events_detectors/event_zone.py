@@ -1,10 +1,12 @@
 from .event import Event
 import copy
+from evileye.core.event_time import datetime_from_ts
 
 
 class ZoneEvent(Event):
     def __init__(self, timestamp, alarm_type, obj, zone, is_finished=False):
-        super().__init__(timestamp, alarm_type, is_finished)
+        ts = datetime_from_ts(timestamp) or datetime_from_ts(getattr(obj, "time_stamp", None))
+        super().__init__(ts or timestamp, alarm_type, is_finished)
         self.source_id = obj.source_id
         self.zone = zone
         self.object_id = obj.object_id
@@ -19,7 +21,7 @@ class ZoneEvent(Event):
             self.img_left = None
             self.box_entered = obj.track.bounding_box
             self.box_left = None
-            self.time_entered = obj.time_stamp
+            self.time_entered = ts or obj.time_stamp
             self.time_left = None
             self.video_path_entered = None
             self.video_path_left = None
@@ -35,7 +37,7 @@ class ZoneEvent(Event):
             self.box_entered = None
             self.box_left = obj.track.bounding_box
             self.time_entered = None
-            self.time_left = obj.time_stamp
+            self.time_left = ts or obj.time_stamp
             self.video_path_entered = None
             self.video_path_left = None
 

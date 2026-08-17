@@ -206,7 +206,7 @@ class GStreamerCapturePipelineMixin:
             # IMPORTANT: recording branch must be bounded.
             # If encoder/muxer/disk is slower than realtime, an unbounded queue will
             # accumulate raw frames and inflate RSS indefinitely.
-            pipeline += " t. ! queue name=recording_queue max-size-buffers=5 max-size-bytes=0 max-size-time=500000000 leaky=downstream"
+            pipeline += " t. ! queue name=recording_queue max-size-buffers=5 max-size-bytes=0 max-size-time=500000000 leaky=no"
         else:
             # No recording - direct to appsink
             # For VideoFile, no queue needed (no tee)
@@ -252,7 +252,7 @@ class GStreamerCapturePipelineMixin:
             common_tail += " ! tee name=t"
             common_tail += " t. ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync=true max-buffers=3 drop=true"
             # IMPORTANT: recording branch must be bounded to avoid runaway RSS.
-            common_tail += " t. ! queue name=recording_queue max-size-buffers=5 max-size-bytes=0 max-size-time=500000000 leaky=downstream"
+            common_tail += " t. ! queue name=recording_queue max-size-buffers=5 max-size-bytes=0 max-size-time=500000000 leaky=no"
         else:
             common_tail += " ! queue max-size-buffers=10 max-size-bytes=0 max-size-time=0 ! video/x-raw,format=BGR ! appsink name=sink emit-signals=true wait-on-eos=false enable-last-sample=false sync=true max-buffers=3 drop=true"
 
@@ -593,6 +593,7 @@ class GStreamerCapturePipelineMixin:
                 self.logger.info("GStreamer pipeline initialized successfully")
                 # Track initialization time to ignore early EOS messages
                 self._init_time = time.time()
+                self._first_pts_ns = None
                 # Reset performance metrics for new pipeline run
                 self._perf_last_log = self._init_time
                 self._perf_frame_count = 0
