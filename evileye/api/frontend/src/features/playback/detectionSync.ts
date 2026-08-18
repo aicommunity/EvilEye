@@ -9,21 +9,19 @@ export const MAX_LERP_SEC = 600.0;
 
 export type FrameSizeLike = { w: number; h: number };
 
-/** Overlay/fetch gate: show API objects unless an index exists and this camera is off-track. */
+/** Overlay/fetch gate: show objects when this camera has an active/nearby track. */
 export function shouldShowPlaybackObjects({
   showMetadata,
-  globalTsLength,
   atCameraDetection,
   detectionsReady = true,
 }: {
   showMetadata: boolean;
-  globalTsLength: number;
+  globalTsLength?: number;
   atCameraDetection: boolean;
   atGlobalDetection?: boolean;
   detectionsReady?: boolean;
 }): boolean {
   if (!showMetadata || !detectionsReady) return false;
-  if (globalTsLength === 0) return false;
   return atCameraDetection;
 }
 

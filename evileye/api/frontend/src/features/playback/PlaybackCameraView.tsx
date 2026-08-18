@@ -11,7 +11,6 @@ import {
 import { useI18n } from '../../i18n';
 import {
   hasActiveTrackAt,
-  objectsFromDetectionIndex,
   objectsToOverlayFromIndex,
   overlayTimeLabel,
   shouldShowPlaybackObjects,
@@ -194,14 +193,11 @@ export function usePlaybackCameraMetadata({
   detectionsReady?: boolean;
 }) {
   const atCameraDetection = useMemo(
-    () =>
-      hasActiveTrackAt(detectionItems, positionSec) ||
-      objectsFromDetectionIndex(detectionItems, positionSec).length > 0,
+    () => hasActiveTrackAt(detectionItems, positionSec),
     [detectionItems, positionSec],
   );
   const showObjects = shouldShowPlaybackObjects({
     showMetadata,
-    globalTsLength: globalDetectionTs.length,
     atCameraDetection,
     detectionsReady,
   });

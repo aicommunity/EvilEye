@@ -22,7 +22,7 @@ import { useDetectionIndex } from './useDetectionIndex';
 import { usePlaybackLayout } from './usePlaybackLayout';
 import { useTimelineViewport } from './useTimelineViewport';
 import { fitColsForCount } from '../layout/fitGrid';
-import { formatPlaybackDateTime, localDateString, mergeSegments, dayBoundsLocal, clampViewToDayBounds, segmentIntersectsDay } from './timelineMath';
+import { formatPlaybackDateTime, localDateString, mergeSegments, dayBoundsLocal, dayViewUpperBound, clampViewToDayBounds, segmentIntersectsDay } from './timelineMath';
 
 function today(): string {
   const d = new Date();
@@ -81,13 +81,17 @@ export function PlaybackPage() {
   const initialT = parseDeepLinkTime(params.get('t'));
   const ctrl = usePlaybackController(initialT);
   const viewport = useTimelineViewport();
+  const detectionWindow = useMemo(() => {
+    const { start } = dayBoundsLocal(date);
+    return { fromSec: start, toSec: dayViewUpperBound(date) };
+  }, [date]);
   const detectionIndex = useDetectionIndex({
     cameras: selectedIds,
     date,
     runId,
-    fromSec: ctrl.fromSec,
-    toSec: ctrl.toSec,
-    enabled: showMetadata,
+    fromSec: detectionWindow.fromSec,
+    toSec: detectionWindow.toSec,
+    enabled: showMetadata && selectedIds.length > 0,
   });
   useEffect(() => {
     ctrl.setDetectionTimestamps(detectionIndex.globalTs);
@@ -388,8 +392,7 @@ export function PlaybackPage() {
   }, [markers, date]);
   const effectiveCols = mode === 'fit' ? fitColsForCount(selectedIds.length) : cols;
   const positionLabel = formatPlaybackDateTime(ctrl.positionSec);
-  const detectionsReady =
-    !detectionIndex.loading && ctrl.fromSec != null && ctrl.toSec != null;
+  const detectionsReady = !detectionIndex.loading;
 
   let gridEmpty: string | null = null;
   if (camerasLoading) gridEmpty = t('playback.loadingCamerasGrid');

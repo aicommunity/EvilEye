@@ -32,20 +32,28 @@ describe('shouldSkipToDetection', () => {
     expect(
       shouldShowPlaybackObjects({
         showMetadata: true,
-        globalTsLength: 3,
         atCameraDetection: true,
         detectionsReady: true,
       }),
     ).toBe(true);
   });
 
-  it('hides objects when index exists and this camera is off-track', () => {
+  it('shows objects even when the global index is still empty', () => {
     expect(
       shouldShowPlaybackObjects({
         showMetadata: true,
-        globalTsLength: 3,
+        atCameraDetection: true,
+        detectionsReady: true,
+      }),
+    ).toBe(true);
+  });
+
+  it('hides objects when this camera is off-track', () => {
+    expect(
+      shouldShowPlaybackObjects({
+        showMetadata: true,
         atCameraDetection: false,
-        atGlobalDetection: true,
+        detectionsReady: true,
       }),
     ).toBe(false);
   });
@@ -54,9 +62,8 @@ describe('shouldSkipToDetection', () => {
     expect(
       shouldShowPlaybackObjects({
         showMetadata: true,
-        globalTsLength: 3,
         atCameraDetection: true,
-        atGlobalDetection: false,
+        detectionsReady: true,
       }),
     ).toBe(true);
   });
