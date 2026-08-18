@@ -443,6 +443,94 @@ def _earliest_by_oid(
     return by_oid
 
 
+def _index_item_to_raw(item: dict[str, Any]) -> dict[str, Any]:
+    bbox = item.get("bounding_box")
+    return {
+        "object_id": item.get("object_id"),
+        "source_name": item.get("source_name"),
+        "source_id": item.get("source_id"),
+        "bounding_box": bbox,
+        "box": bbox,
+        "frame_id": item.get("frame_id"),
+        "class_name": item.get("class_name"),
+        "confidence": item.get("confidence"),
+        "class_id": item.get("class_id"),
+        "track_id": item.get("track_id"),
+        "global_id": item.get("global_id"),
+    }
+
+
+def _earliest_index_by_oid(
+    items: list[dict[str, Any]],
+    kind: str,
+) -> dict[Any, tuple[float, dict[str, Any]]]:
+    by_oid: dict[Any, tuple[float, dict[str, Any]]] = {}
+    for item in items:
+        if item.get("kind") != kind:
+            continue
+        oid = item.get("object_id")
+        if oid is None:
+            continue
+        ts = float(item["ts"])
+        prev = by_oid.get(oid)
+        if prev is None or ts < prev[0]:
+            by_oid[oid] = (ts, _index_item_to_raw(item))
+    return by_oid
+
+
+def _load_objects_from_detection_index(
+    *,
+    target: datetime,
+    camera: str,
+    date_folder: str,
+    source_id: int | None,
+    window_sec: float,
+) -> list[dict[str, Any]]:
+    """Use cached detection index instead of re-parsing every JSON row."""
+    items = load_detection_index(
+        camera=camera,
+        date_folder=date_folder,
+        source_id=source_id,
+    )
+    target_ts = target.timestamp()
+    matched = match_detections_at(items, target_ts, window_sec)
+
+    selected: dict[Any, dict[str, Any]] = {}
+    snapshot_oids: set[Any] = set()
+    for item in matched:
+        oid = item.get("object_id")
+        kind = str(item.get("kind") or "found")
+        key = (kind, oid if oid is not None else id(item))
+        selected[key] = _index_item_to_raw(item)
+        if oid is not None:
+            snapshot_oids.add(oid)
+
+    found_by_oid = _earliest_index_by_oid(items, "found")
+    lost_by_oid = _earliest_index_by_oid(items, "lost")
+    for oid, (found_ts, found_obj) in found_by_oid.items():
+        if oid in snapshot_oids:
+            continue
+        lost_entry = lost_by_oid.get(oid)
+        if lost_entry is None:
+            continue
+        lost_ts, lost_obj = lost_entry
+        if not (found_ts <= target_ts <= lost_ts):
+            continue
+        span = lost_ts - found_ts
+        if span > MAX_LERP_SEC:
+            continue
+        t = 0.0 if span <= 1e-9 else (target_ts - found_ts) / span
+        interpolated = dict(found_obj)
+        interpolated["bounding_box"] = _lerp_bbox(
+            found_obj.get("bounding_box") or found_obj.get("box"),
+            lost_obj.get("bounding_box") or lost_obj.get("box"),
+            t,
+        )
+        selected[("interval", oid)] = interpolated
+
+    return list(selected.values())
+
+
 def _load_objects_from_json(
     detections_dir: Path,
     target: datetime,
@@ -454,6 +542,15 @@ def _load_objects_from_json(
     date_folder: str | None = None,
 ) -> list[dict[str, Any]]:
     """Load snapshots near ``target``, plus interpolated tracks between found and lost."""
+    if camera and date_folder:
+        return _load_objects_from_detection_index(
+            target=target,
+            camera=camera,
+            date_folder=date_folder,
+            source_id=source_id,
+            window_sec=window_sec,
+        )
+
     found_path = detections_dir / "objects_found.json"
     lost_path = detections_dir / "objects_lost.json"
     found_list = _read_json_objects(found_path)

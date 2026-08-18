@@ -3,7 +3,7 @@ import { isAbortError, playbackApi, PLAYBACK_DETECTION_MATCH_SEC, type FrameSize
 import { localDateString } from './timelineMath';
 
 const FETCH_DEBOUNCE_MS = 130;
-const TS_ROUND_SEC = 0.05;
+const TS_ROUND_SEC = PLAYBACK_DETECTION_MATCH_SEC;
 const APPLY_SLACK_SEC = 0.3;
 
 function roundTs(ts: number): number {
@@ -90,7 +90,6 @@ export function usePlaybackMetadata({
       return;
     }
 
-    setLoading(true);
     setError(null);
 
     const fetchNow = () => {
@@ -99,6 +98,7 @@ export function usePlaybackMetadata({
       const ac = new AbortController();
       abortRef.current = ac;
       inflightKeyRef.current = key;
+      setLoading(true);
       void playbackApi
         .metadata(camera, rounded, eventDate, runId, {
           signal: ac.signal,
@@ -132,11 +132,12 @@ export function usePlaybackMetadata({
 
     return () => {
       if (timerRef.current != null) window.clearTimeout(timerRef.current);
+      timerRef.current = null;
     };
   }, [
     camera,
     sourceId,
-    positionSec,
+    roundTs(positionSec),
     runId,
     enabled,
     frameSize?.w,
