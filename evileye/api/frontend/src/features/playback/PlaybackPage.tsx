@@ -31,6 +31,8 @@ function today(): string {
 
 const INITIAL_WINDOW_SEC = 7200;
 const SEGMENTS_LOAD_TIMEOUT_MS = 15_000;
+/** Half-width of the time range requested when seeking outside loaded data. */
+const SEEK_LOAD_HALF_SEC = 3600;
 
 function initialSegmentWindow(dateStr: string): { from: number; to: number } {
   const { start, end } = dayBoundsLocal(dateStr);
@@ -101,13 +103,6 @@ export function PlaybackPage() {
   const togglePlay = useCallback(() => {
     ctrl.setPlaying(!ctrl.playing);
   }, [ctrl]);
-
-  const seek = useCallback(
-    (sec: number) => {
-      ctrl.seek(sec);
-    },
-    [ctrl],
-  );
 
   const urlCamera = params.get('camera');
   const dateChangeSourceRef = useRef<'user' | 'viewport'>('user');
@@ -334,6 +329,14 @@ export function PlaybackPage() {
       ensureAdjacentLoad(clamped.viewFrom, clamped.viewTo);
     },
     [viewport, ensureAdjacentLoad, date],
+  );
+
+  const seek = useCallback(
+    (sec: number) => {
+      ctrl.seek(sec);
+      ensureAdjacentLoad(sec - SEEK_LOAD_HALF_SEC, sec + SEEK_LOAD_HALF_SEC);
+    },
+    [ctrl, ensureAdjacentLoad],
   );
 
   const toggleCamera = (id: string) => {

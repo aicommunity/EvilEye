@@ -562,7 +562,7 @@ def test_json_active_track_between_found_and_lost(tmp_path, monkeypatch):
     assert len(gone["objects"]) == 0
 
 
-def test_json_long_track_has_no_mid_lerp(tmp_path, monkeypatch):
+def test_json_long_track_has_mid_lerp(tmp_path, monkeypatch):
     root = tmp_path / "EvilEyeData"
     date = "2026-08-17"
     meta = root / "Detections" / date / "Metadata"
@@ -615,9 +615,48 @@ def test_json_long_track_has_no_mid_lerp(tmp_path, monkeypatch):
         ts=datetime(2026, 8, 17, 10, 59, 37).timestamp(),
         run_id=1,
     )
-    assert len(mid["objects"]) == 0
+    assert len(mid["objects"]) == 1
     assert len(found["objects"]) == 1
     assert len(lost["objects"]) == 1
+
+
+def test_json_nearby_detection_before_found(tmp_path, monkeypatch):
+    root = tmp_path / "EvilEyeData"
+    date = "2026-08-18"
+    meta = root / "Detections" / date / "Metadata"
+    meta.mkdir(parents=True)
+    (meta / "objects_found.json").write_text(
+        json.dumps(
+            {
+                "objects": [
+                    {
+                        "object_id": 573,
+                        "source_name": "Cam4",
+                        "timestamp": "2026-08-18T09:55:32.480149",
+                        "bounding_box": {"x": 100, "y": 100, "width": 50, "height": 80},
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (meta / "objects_lost.json").write_text(json.dumps({"objects": []}), encoding="utf-8")
+    cfg = {
+        "controller": {"use_database": False},
+        "record": {"out_dir": str(root)},
+        "pipeline": {"sources": [{"source_ids": [3], "source_names": ["Cam4"]}]},
+    }
+    monkeypatch.setenv("EVILEYE_DATA_DIR", str(root))
+    monkeypatch.setattr(svc, "_load_params_for_run", lambda _run_id: cfg)
+
+    payload = svc.build_playback_metadata(
+        camera="Cam4",
+        ts=datetime(2026, 8, 18, 9, 55, 26).timestamp(),
+        run_id=1,
+        window_sec=10.0,
+    )
+    assert len(payload["objects"]) == 1
+    assert payload["objects"][0]["object_id"] == 573
 
 
 def test_json_objects_cached_by_mtime(tmp_path, monkeypatch):

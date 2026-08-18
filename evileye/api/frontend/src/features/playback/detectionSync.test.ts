@@ -96,14 +96,50 @@ describe('hasActiveTrackAt', () => {
     expect(hasActiveTrackAt(unpaired, 105)).toBe(false);
   });
 
-  it('does not interpolate a long found-to-lost span', () => {
+  it('does not interpolate a span beyond MAX_LERP_SEC', () => {
     const long = [
       { ts: 100, kind: 'found' as const, object_id: 3 },
-      { ts: 229, kind: 'lost' as const, object_id: 3 },
+      { ts: 729, kind: 'lost' as const, object_id: 3 },
     ];
-    expect(hasActiveTrackAt(long, 160)).toBe(false);
+    expect(hasActiveTrackAt(long, 400)).toBe(false);
     expect(hasActiveTrackAt(long, 100)).toBe(true);
-    expect(hasActiveTrackAt(long, 229)).toBe(true);
+    expect(hasActiveTrackAt(long, 729)).toBe(true);
+  });
+
+  it('is true near an upcoming detection snapshot', () => {
+    const found = new Date('2026-08-18T09:55:32+03:00').getTime() / 1000;
+    const items = [
+      {
+        ts: found,
+        kind: 'found' as const,
+        object_id: 573,
+        bounding_box: { x: 10, y: 20, width: 30, height: 40 },
+      },
+    ];
+    const before = found - 6.5;
+    expect(hasActiveTrackAt(items, before)).toBe(true);
+    expect(objectsToOverlayFromIndex(items, before, { w: 100, h: 100 })).toHaveLength(1);
+  });
+
+  it('interpolates bbox on a medium-length track', () => {
+    const found = new Date('2026-08-18T09:55:32+03:00').getTime() / 1000;
+    const lost = new Date('2026-08-18T09:55:46+03:00').getTime() / 1000;
+    const items = [
+      {
+        ts: found,
+        kind: 'found' as const,
+        object_id: 573,
+        bounding_box: { x: 0, y: 0, width: 10, height: 10 },
+      },
+      {
+        ts: lost,
+        kind: 'lost' as const,
+        object_id: 573,
+        bounding_box: { x: 10, y: 0, width: 10, height: 10 },
+      },
+    ];
+    expect(hasActiveTrackAt(items, found + 4)).toBe(true);
+    expect(objectsToOverlayFromIndex(items, found + 4, { w: 100, h: 100 })).toHaveLength(1);
   });
 });
 
@@ -144,7 +180,7 @@ describe('objectsToOverlayFromIndex', () => {
     expect(objs[0].bbox?.[0]).toBeCloseTo(0.05, 5);
   });
 
-  it('does not lerp a long found-to-lost span', () => {
+  it('does not lerp a span beyond MAX_LERP_SEC', () => {
     const items = [
       {
         ts: 100,
@@ -153,13 +189,13 @@ describe('objectsToOverlayFromIndex', () => {
         bounding_box: { x: 0, y: 0, width: 10, height: 10 },
       },
       {
-        ts: 229,
+        ts: 729,
         kind: 'lost' as const,
         object_id: 1,
         bounding_box: { x: 10, y: 0, width: 10, height: 10 },
       },
     ];
-    expect(objectsToOverlayFromIndex(items, 160, { w: 100, h: 100 })).toHaveLength(0);
+    expect(objectsToOverlayFromIndex(items, 400, { w: 100, h: 100 })).toHaveLength(0);
     expect(objectsToOverlayFromIndex(items, 100, { w: 100, h: 100 })).toHaveLength(1);
   });
 });

@@ -19,7 +19,8 @@ from evileye.visualization_modules.preview_render import PreviewRenderContext, s
 
 _OBJECT_FILES = ("objects_found.json", "objects_lost.json")
 DEFAULT_MATCH_SEC = 0.5
-MAX_LERP_SEC = 3.0
+NEARBY_OVERLAY_SEC = 10.0
+MAX_LERP_SEC = 600.0
 DETECTION_INDEX_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 JSON_OBJECTS_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _EVENT_FILES = {
@@ -527,6 +528,25 @@ def _load_objects_from_detection_index(
             t,
         )
         selected[("interval", oid)] = interpolated
+
+    nearby_sec = max(float(window_sec), NEARBY_OVERLAY_SEC)
+    nearby_best: dict[Any, tuple[float, dict[str, Any]]] = {}
+    covered_oids = set(snapshot_oids)
+    for key in selected:
+        if key[0] in ("interval", "nearby") and len(key) > 1:
+            covered_oids.add(key[1])
+    for item in items:
+        oid = item.get("object_id")
+        if oid is None or oid in covered_oids:
+            continue
+        delta = float(item["ts"]) - target_ts
+        if delta < -1e-6 or delta >= nearby_sec:
+            continue
+        prev = nearby_best.get(oid)
+        if prev is None or delta < prev[0]:
+            nearby_best[oid] = (delta, _index_item_to_raw(item))
+    for oid, (_, raw) in nearby_best.items():
+        selected[("nearby", oid)] = raw
 
     return list(selected.values())
 

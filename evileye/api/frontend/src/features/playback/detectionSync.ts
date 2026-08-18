@@ -2,8 +2,10 @@ import type { PlaybackDetectionItem, StreamMetadataObject } from '../../api';
 
 export const MATCH_SEC = 0.5;
 export const SKIP_GAP_SEC = 1.0;
-/** Interpolate bbox only when found→lost is at most this long. */
-export const MAX_LERP_SEC = 3.0;
+/** Show overlay from the nearest snapshot when playhead is within this gap (seconds). */
+export const NEARBY_OVERLAY_SEC = 10.0;
+/** Interpolate bbox across found→lost; cap avoids runaway on bad pairing data. */
+export const MAX_LERP_SEC = 600.0;
 
 export type FrameSizeLike = { w: number; h: number };
 
@@ -130,17 +132,37 @@ function trackVisibleAt(
   if (foundTs != null && Math.abs(foundTs - positionSec) < matchSec) return true;
   if (lostTs != null && Math.abs(lostTs - positionSec) < matchSec) return true;
   if (foundTs != null && lostTs != null && foundTs <= positionSec && positionSec <= lostTs) {
-    return lostTs - foundTs <= maxLerpSec;
+    const span = lostTs - foundTs;
+    return span <= maxLerpSec;
   }
   return false;
 }
 
-/** True on snapshots and inside short found→lost intervals. */
+function nearestDetectionByOid(
+  items: PlaybackDetectionItem[],
+  positionSec: number,
+  maxSec: number,
+): Map<number, PlaybackDetectionItem> {
+  const best = new Map<number, { dist: number; item: PlaybackDetectionItem }>();
+  for (const it of items) {
+    if (!Number.isFinite(it.ts) || it.object_id == null) continue;
+    const delta = it.ts - positionSec;
+    if (delta < -1e-6 || delta > maxSec) continue;
+    const prev = best.get(it.object_id);
+    if (!prev || delta < prev.dist - 1e-9 || (Math.abs(delta - prev.dist) < 1e-9 && it.kind === 'found')) {
+      best.set(it.object_id, { dist: delta, item: it });
+    }
+  }
+  return new Map(Array.from(best.entries()).map(([oid, row]) => [oid, row.item]));
+}
+
+/** True on snapshots, inside found→lost intervals, and near upcoming/recent detections. */
 export function hasActiveTrackAt(
   items: PlaybackDetectionItem[],
   positionSec: number,
   matchSec = MATCH_SEC,
   maxLerpSec = MAX_LERP_SEC,
+  nearbySec = NEARBY_OVERLAY_SEC,
 ): boolean {
   if (!Number.isFinite(positionSec)) return false;
   for (const it of items) {
@@ -150,7 +172,7 @@ export function hasActiveTrackAt(
   for (const row of pairTracks(items).values()) {
     if (trackVisibleAt(row.foundTs, row.lostTs, positionSec, matchSec, maxLerpSec)) return true;
   }
-  return false;
+  return nearestDetectionByOid(items, positionSec, nearbySec).size > 0;
 }
 
 export function bboxFromIndexBox(
@@ -231,6 +253,7 @@ export function objectsToOverlayFromIndex(
   frameSize?: FrameSizeLike | null,
   matchSec = MATCH_SEC,
   maxLerpSec = MAX_LERP_SEC,
+  nearbySec = NEARBY_OVERLAY_SEC,
 ): StreamMetadataObject[] {
   if (!Number.isFinite(positionSec)) return [];
   const out: StreamMetadataObject[] = [];
@@ -259,6 +282,14 @@ export function objectsToOverlayFromIndex(
     const bbox = lostBox ? lerpBbox(foundBox, lostBox, t) : foundBox;
     seen.add(oid);
     out.push(itemToObject(row.found ?? row.lost!, bbox));
+  }
+
+  for (const [oid, it] of nearestDetectionByOid(items, positionSec, nearbySec)) {
+    if (seen.has(oid)) continue;
+    const bbox = bboxFromIndexBox(it.bounding_box, frameSize);
+    if (!bbox) continue;
+    seen.add(oid);
+    out.push(itemToObject(it, bbox));
   }
   return out;
 }

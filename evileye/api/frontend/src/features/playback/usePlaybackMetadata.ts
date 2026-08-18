@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { isAbortError, playbackApi, PLAYBACK_DETECTION_MATCH_SEC, type FrameSize, type StreamMetadata } from '../../api';
+import { isAbortError, playbackApi, type FrameSize, type StreamMetadata } from '../../api';
+import { NEARBY_OVERLAY_SEC } from './detectionSync';
 import { localDateString } from './timelineMath';
 
 const FETCH_DEBOUNCE_MS = 130;
-const TS_ROUND_SEC = PLAYBACK_DETECTION_MATCH_SEC;
+const TS_ROUND_SEC = 0.5;
 const APPLY_SLACK_SEC = 0.3;
 
 function roundTs(ts: number): number {
@@ -104,7 +105,7 @@ export function usePlaybackMetadata({
           signal: ac.signal,
           sourceId: sourceId ?? undefined,
           frameSize,
-          matchSec: PLAYBACK_DETECTION_MATCH_SEC,
+          matchSec: NEARBY_OVERLAY_SEC,
         })
         .then((res) => {
           if (ac.signal.aborted) return;
