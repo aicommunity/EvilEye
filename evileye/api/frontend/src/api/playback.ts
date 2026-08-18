@@ -89,6 +89,7 @@ export const playbackApi = {
       to?: number;
       date?: string;
       runId?: number | null;
+      ticksOnly?: boolean;
       signal?: AbortSignal;
     },
   ): Promise<{ by_camera: Record<string, PlaybackDetectionItem[]>; items: PlaybackDetectionItem[] }> {
@@ -97,6 +98,7 @@ export const playbackApi = {
     if (opts?.to != null) p.set('to', String(opts.to));
     if (opts?.date) p.set('date', opts.date);
     if (opts?.runId != null) p.set('run_id', String(opts.runId));
+    if (opts?.ticksOnly) p.set('ticks_only', '1');
     return request(`/playback/detections?${p}`, { signal: opts?.signal });
   },
   metadataStatic(

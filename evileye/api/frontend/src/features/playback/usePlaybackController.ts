@@ -1,8 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { detectionTsAtOrNull, nextDetectionTs, shouldSkipToDetection } from './detectionSync';
 import { resetPlaybackClockOwner } from './playbackVideoSync';
-
-const UI_THROTTLE_MS = 100;
 
 export function usePlaybackController(initialSec: number | null) {
   const [playing, setPlaying] = useState(false);
@@ -13,11 +10,15 @@ export function usePlaybackController(initialSec: number | null) {
   const positionRef = useRef<number>(initialSec ?? 0);
   const raf = useRef<number | null>(null);
   const last = useRef<number>(0);
-  const lastUi = useRef<number>(0);
   const detectionTsRef = useRef<number[]>([]);
   const skipEnabledRef = useRef(false);
   const scrubbingRef = useRef(false);
+  const playingRef = useRef(false);
+  const toSecRef = useRef<number | null>(null);
   const seekHoldTimer = useRef<number | null>(null);
+
+  playingRef.current = playing;
+  toSecRef.current = toSec;
 
   const setDetectionTimestamps = useCallback((ts: number[]) => {
     detectionTsRef.current = ts;
@@ -33,11 +34,14 @@ export function usePlaybackController(initialSec: number | null) {
 
   const syncPositionFromVideo = useCallback((sec: number) => {
     if (!Number.isFinite(sec) || scrubbingRef.current) return;
-    positionRef.current = sec;
-    if (Date.now() - lastUi.current >= UI_THROTTLE_MS) {
-      lastUi.current = Date.now();
-      setPositionSec(sec);
+    let next = sec;
+    const upper = toSecRef.current;
+    if (playingRef.current && upper != null && next > upper) {
+      next = upper;
+      setPlaying(false);
     }
+    positionRef.current = next;
+    setPositionSec(next);
   }, []);
 
   useEffect(() => {
@@ -46,40 +50,11 @@ export function usePlaybackController(initialSec: number | null) {
       setPositionSec(positionRef.current);
       return;
     }
-    last.current = performance.now();
-    lastUi.current = last.current;
-    const tick = (now: number) => {
-      const dt = ((now - last.current) / 1000) * speed;
-      last.current = now;
-      let next = positionRef.current + dt;
-      if (!scrubbingRef.current && skipEnabledRef.current) {
-        const pos = positionRef.current;
-        if (detectionTsAtOrNull(detectionTsRef.current, pos) == null) {
-          const nextDet = nextDetectionTs(detectionTsRef.current, pos);
-          if (shouldSkipToDetection(pos, nextDet)) {
-            next = nextDet as number;
-          }
-        }
-      }
-      if (toSec != null && next > toSec) {
-        next = toSec;
-        positionRef.current = next;
-        setPlaying(false);
-        setPositionSec(next);
-        return;
-      }
-      positionRef.current = next;
-      if (now - lastUi.current >= UI_THROTTLE_MS) {
-        lastUi.current = now;
-        setPositionSec(next);
-      }
-      raf.current = requestAnimationFrame(tick);
-    };
-    raf.current = requestAnimationFrame(tick);
+    resetPlaybackClockOwner();
     return () => {
       if (raf.current) cancelAnimationFrame(raf.current);
     };
-  }, [playing, speed, toSec]);
+  }, [playing]);
 
   useEffect(() => {
     return () => {

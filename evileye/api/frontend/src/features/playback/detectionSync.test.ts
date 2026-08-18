@@ -3,6 +3,7 @@ import {
   bboxFromIndexBox,
   hasActiveTrackAt,
   objectsToOverlayFromIndex,
+  pairTrackIntervals,
   shouldSkipToDetection,
   shouldShowPlaybackObjects,
   SKIP_GAP_SEC,
@@ -58,16 +59,6 @@ describe('shouldSkipToDetection', () => {
     ).toBe(false);
   });
 
-  it('shows objects at a camera snapshot even if global gate missed', () => {
-    expect(
-      shouldShowPlaybackObjects({
-        showMetadata: true,
-        atCameraDetection: true,
-        detectionsReady: true,
-      }),
-    ).toBe(true);
-  });
-
   it('does not skip when there is no next snapshot', () => {
     expect(shouldSkipToDetection(100, null, SKIP_GAP_SEC)).toBe(false);
   });
@@ -75,6 +66,23 @@ describe('shouldSkipToDetection', () => {
   it('does not skip when next is behind or equal', () => {
     expect(shouldSkipToDetection(100, 100, SKIP_GAP_SEC)).toBe(false);
     expect(shouldSkipToDetection(100, 99.5, SKIP_GAP_SEC)).toBe(false);
+  });
+});
+
+describe('pairTrackIntervals', () => {
+  it('pairs consecutive found and lost for the same object', () => {
+    const items = [
+      { ts: 100, kind: 'found' as const, object_id: 1 },
+      { ts: 102, kind: 'lost' as const, object_id: 1 },
+      { ts: 110, kind: 'found' as const, object_id: 1 },
+      { ts: 115, kind: 'lost' as const, object_id: 1 },
+    ];
+    const intervals = pairTrackIntervals(items);
+    expect(intervals).toHaveLength(2);
+    expect(intervals[0].foundTs).toBe(100);
+    expect(intervals[0].lostTs).toBe(102);
+    expect(intervals[1].foundTs).toBe(110);
+    expect(intervals[1].lostTs).toBe(115);
   });
 });
 
@@ -113,7 +121,7 @@ describe('hasActiveTrackAt', () => {
     expect(hasActiveTrackAt(long, 729)).toBe(true);
   });
 
-  it('is true near an upcoming detection snapshot', () => {
+  it('is false before an upcoming detection snapshot', () => {
     const found = new Date('2026-08-18T09:55:32+03:00').getTime() / 1000;
     const items = [
       {
@@ -124,8 +132,8 @@ describe('hasActiveTrackAt', () => {
       },
     ];
     const before = found - 6.5;
-    expect(hasActiveTrackAt(items, before)).toBe(true);
-    expect(objectsToOverlayFromIndex(items, before, { w: 100, h: 100 })).toHaveLength(1);
+    expect(hasActiveTrackAt(items, before)).toBe(false);
+    expect(objectsToOverlayFromIndex(items, before, { w: 100, h: 100 })).toHaveLength(0);
   });
 
   it('interpolates bbox on a medium-length track', () => {

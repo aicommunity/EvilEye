@@ -55,6 +55,8 @@ function parseDeepLinkTime(raw: string | null): number | null {
 
 const CAMERAS_TTL_MS = 30_000;
 const SEGMENTS_TTL_MS = 15_000;
+/** Padding around viewport/position for the priority detection fetch. */
+const DETECTION_PRIORITY_PAD_SEC = 900;
 
 function camerasCacheKey(date: string, runId: number | null): string {
   return `playback:cameras:${date}:${runId ?? 'none'}`;
@@ -81,16 +83,40 @@ export function PlaybackPage() {
   const initialT = parseDeepLinkTime(params.get('t'));
   const ctrl = usePlaybackController(initialT);
   const viewport = useTimelineViewport();
-  const detectionWindow = useMemo(() => {
+  const dayBounds = useMemo(() => {
     const { start } = dayBoundsLocal(date);
     return { fromSec: start, toSec: dayViewUpperBound(date) };
   }, [date]);
+
+  const priorityDetectionWindow = useMemo(() => {
+    const { start } = dayBoundsLocal(date);
+    const upper = dayViewUpperBound(date);
+    const anchors: number[] = [
+      ctrl.positionSec - SEEK_LOAD_HALF_SEC,
+      ctrl.positionSec + SEEK_LOAD_HALF_SEC,
+    ];
+    if (ctrl.fromSec != null) {
+      anchors.push(ctrl.fromSec);
+      anchors.push(ctrl.toSec ?? ctrl.fromSec);
+    }
+    if (viewport.viewFrom != null) anchors.push(viewport.viewFrom - DETECTION_PRIORITY_PAD_SEC);
+    if (viewport.viewTo != null) anchors.push(viewport.viewTo + DETECTION_PRIORITY_PAD_SEC);
+    const finite = anchors.filter((v) => Number.isFinite(v));
+    if (!finite.length) return null;
+    return {
+      fromSec: Math.max(start, Math.min(...finite)),
+      toSec: Math.min(upper, Math.max(...finite)),
+    };
+  }, [date, ctrl.fromSec, ctrl.toSec, ctrl.positionSec, viewport.viewFrom, viewport.viewTo]);
+
   const detectionIndex = useDetectionIndex({
     cameras: selectedIds,
     date,
     runId,
-    fromSec: detectionWindow.fromSec,
-    toSec: detectionWindow.toSec,
+    priorityFromSec: priorityDetectionWindow?.fromSec ?? null,
+    priorityToSec: priorityDetectionWindow?.toSec ?? null,
+    backgroundFromSec: dayBounds.fromSec,
+    backgroundToSec: dayBounds.toSec,
     enabled: showMetadata && selectedIds.length > 0,
   });
   useEffect(() => {
@@ -393,6 +419,12 @@ export function PlaybackPage() {
   const effectiveCols = mode === 'fit' ? fitColsForCount(selectedIds.length) : cols;
   const positionLabel = formatPlaybackDateTime(ctrl.positionSec);
   const detectionsReady = !detectionIndex.loading;
+  const timelineDetectionTs = useMemo(() => {
+    if (viewport.viewFrom == null || viewport.viewTo == null) return detectionIndex.globalTs;
+    return detectionIndex.globalTs.filter(
+      (ts) => ts >= viewport.viewFrom! && ts <= viewport.viewTo!,
+    );
+  }, [detectionIndex.globalTs, viewport.viewFrom, viewport.viewTo]);
 
   let gridEmpty: string | null = null;
   if (camerasLoading) gridEmpty = t('playback.loadingCamerasGrid');
@@ -522,7 +554,7 @@ export function PlaybackPage() {
             position={ctrl.positionSec}
             markers={timelineMarkers}
             segments={allSegments}
-            detectionTs={detectionIndex.globalTs}
+            detectionTs={timelineDetectionTs}
             onSeek={seek}
             onViewChange={onViewChange}
             onScrubbingChange={setScrubbing}

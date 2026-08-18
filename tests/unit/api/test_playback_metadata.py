@@ -165,6 +165,7 @@ def test_load_dynamic_records_json_mode(tmp_path, monkeypatch):
     )
     params = {"controller": {"use_database": False}, "record": {"out_dir": str(root)}}
     monkeypatch.setenv("EVILEYE_DATA_DIR", str(root))
+    monkeypatch.setattr(svc, "_load_params_for_run", lambda _run_id: params)
     from evileye.api.core.playback_metadata_service import _load_dynamic_records
 
     objects, events = _load_dynamic_records(
@@ -620,7 +621,7 @@ def test_json_long_track_has_mid_lerp(tmp_path, monkeypatch):
     assert len(lost["objects"]) == 1
 
 
-def test_json_nearby_detection_before_found(tmp_path, monkeypatch):
+def test_json_no_nearby_detection_before_found(tmp_path, monkeypatch):
     root = tmp_path / "EvilEyeData"
     date = "2026-08-18"
     meta = root / "Detections" / date / "Metadata"
@@ -653,10 +654,9 @@ def test_json_nearby_detection_before_found(tmp_path, monkeypatch):
         camera="Cam4",
         ts=datetime(2026, 8, 18, 9, 55, 26).timestamp(),
         run_id=1,
-        window_sec=10.0,
+        window_sec=0.5,
     )
-    assert len(payload["objects"]) == 1
-    assert payload["objects"][0]["object_id"] == 573
+    assert payload["objects"] == []
 
 
 def test_json_objects_cached_by_mtime(tmp_path, monkeypatch):

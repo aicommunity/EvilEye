@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -19,9 +20,10 @@ from evileye.visualization_modules.preview_render import PreviewRenderContext, s
 
 _OBJECT_FILES = ("objects_found.json", "objects_lost.json")
 DEFAULT_MATCH_SEC = 0.5
-NEARBY_OVERLAY_SEC = 10.0
 MAX_LERP_SEC = 600.0
-DETECTION_INDEX_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+INDEX_TTL_SEC = 45.0
+DETECTION_INDEX_CACHE: dict[str, tuple[float, float, list[dict[str, Any]]]] = {}
+DAY_CAMERA_INDEX_CACHE: dict[str, tuple[float, float, dict[str, list[dict[str, Any]]]]] = {}
 JSON_OBJECTS_CACHE: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _EVENT_FILES = {
     "camera_events.json": "camera_events",
@@ -244,8 +246,47 @@ def _detection_event_ts(
     return _record_event_time(raw, camera=camera, date_folder=date_folder, kind=kind)
 
 
+def _is_today_folder(date_folder: str) -> bool:
+    return date_folder == datetime.now().strftime("%Y-%m-%d")
+
+
+def _index_cache_valid(cached_mtime: float, cached_at: float, json_mtime: float, date_folder: str) -> bool:
+    if cached_mtime == json_mtime:
+        return True
+    return _is_today_folder(date_folder) and (time.time() - cached_at) < INDEX_TTL_SEC
+
+
+def _tick_only_item(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "ts": item["ts"],
+        "kind": item.get("kind"),
+        "object_id": item.get("object_id"),
+    }
+
+
+def _filter_index_window(
+    items: list[dict[str, Any]],
+    from_ts: float | None,
+    to_ts: float | None,
+    *,
+    ticks_only: bool = False,
+) -> list[dict[str, Any]]:
+    filtered = items
+    if from_ts is not None:
+        filtered = [row for row in filtered if row["ts"] >= float(from_ts)]
+    if to_ts is not None:
+        filtered = [row for row in filtered if row["ts"] <= float(to_ts)]
+    if ticks_only:
+        return [_tick_only_item(row) for row in filtered]
+    return filtered
+
+
 def _index_cache_key(base: Path, date_folder: str, camera: str, source_id: int | None) -> str:
     return f"{base}:{date_folder}:{camera}:{source_id}"
+
+
+def _day_cache_key(base: Path, date_folder: str, run_id: int | None) -> str:
+    return f"{base}:{date_folder}:{run_id if run_id is not None else 'none'}"
 
 
 def _file_mtime_sum(*paths: Path) -> float:
@@ -296,6 +337,110 @@ def _detection_index_item(
     }
 
 
+def _build_camera_index_items(
+    *,
+    found_path: Path,
+    lost_path: Path,
+    camera: str,
+    date_folder: str,
+    aliases: set[str],
+    source_id: int | None,
+) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for obj in _read_json_objects(found_path):
+        if not _record_matches_camera(obj, aliases=aliases, source_id=source_id):
+            continue
+        item = _detection_index_item(obj, "found", camera=camera, date_folder=date_folder)
+        if item:
+            items.append(item)
+    for obj in _read_json_objects(lost_path):
+        if not _record_matches_camera(obj, aliases=aliases, source_id=source_id):
+            continue
+        item = _detection_index_item(obj, "lost", camera=camera, date_folder=date_folder)
+        if item:
+            items.append(item)
+    items.sort(key=lambda row: row["ts"])
+    return items
+
+
+def _load_camera_index_items(
+    *,
+    base: Path,
+    date_folder: str,
+    camera: str,
+    params: dict[str, Any],
+    source_id: int | None,
+) -> list[dict[str, Any]]:
+    sid = source_id if source_id is not None else _resolve_source_id(params, camera, source_id)
+    aliases = source_aliases(params, camera, sid)
+    found_path = base / "Detections" / date_folder / "Metadata" / "objects_found.json"
+    lost_path = base / "Detections" / date_folder / "Metadata" / "objects_lost.json"
+    json_mtime = _file_mtime_sum(found_path, lost_path)
+    cache_key = _index_cache_key(base, date_folder, camera, sid)
+    cached = DETECTION_INDEX_CACHE.get(cache_key)
+    if cached and _index_cache_valid(cached[0], cached[1], json_mtime, date_folder):
+        return cached[2]
+    items = _build_camera_index_items(
+        found_path=found_path,
+        lost_path=lost_path,
+        camera=camera,
+        date_folder=date_folder,
+        aliases=aliases,
+        source_id=sid,
+    )
+    DETECTION_INDEX_CACHE[cache_key] = (json_mtime, time.time(), items)
+    return items
+
+
+def _load_day_index_by_camera(
+    *,
+    base: Path,
+    date_folder: str,
+    run_id: int | None,
+    params: dict[str, Any],
+    cameras: list[str],
+) -> dict[str, list[dict[str, Any]]]:
+    found_path = base / "Detections" / date_folder / "Metadata" / "objects_found.json"
+    lost_path = base / "Detections" / date_folder / "Metadata" / "objects_lost.json"
+    json_mtime = _file_mtime_sum(found_path, lost_path)
+    day_key = _day_cache_key(base, date_folder, run_id)
+    cached = DAY_CAMERA_INDEX_CACHE.get(day_key)
+    if cached and _index_cache_valid(cached[0], cached[1], json_mtime, date_folder):
+        return cached[2]
+
+    camera_meta: dict[str, tuple[int | None, set[str]]] = {}
+    for camera in cameras:
+        cam = str(camera).strip()
+        if not cam:
+            continue
+        sid = _resolve_source_id(params, cam, None)
+        camera_meta[cam] = (sid, source_aliases(params, cam, sid))
+
+    by_camera: dict[str, list[dict[str, Any]]] = {cam: [] for cam in camera_meta}
+    for obj in _read_json_objects(found_path):
+        for cam, (sid, aliases) in camera_meta.items():
+            if not _record_matches_camera(obj, aliases=aliases, source_id=sid):
+                continue
+            item = _detection_index_item(obj, "found", camera=cam, date_folder=date_folder)
+            if item:
+                by_camera[cam].append(item)
+    for obj in _read_json_objects(lost_path):
+        for cam, (sid, aliases) in camera_meta.items():
+            if not _record_matches_camera(obj, aliases=aliases, source_id=sid):
+                continue
+            item = _detection_index_item(obj, "lost", camera=cam, date_folder=date_folder)
+            if item:
+                by_camera[cam].append(item)
+    for cam in by_camera:
+        by_camera[cam].sort(key=lambda row: row["ts"])
+        sid = camera_meta[cam][0]
+        per_cam_key = _index_cache_key(base, date_folder, cam, sid)
+        DETECTION_INDEX_CACHE[per_cam_key] = (json_mtime, time.time(), by_camera[cam])
+
+    DAY_CAMERA_INDEX_CACHE[day_key] = (json_mtime, time.time(), by_camera)
+    return by_camera
+
+
 def load_detection_index(
     *,
     camera: str,
@@ -304,41 +449,18 @@ def load_detection_index(
     source_id: int | None = None,
     from_ts: float | None = None,
     to_ts: float | None = None,
+    ticks_only: bool = False,
 ) -> list[dict[str, Any]]:
     params = _load_params_for_run(run_id)
     base = _playback_data_dir(params)
-    sid = source_id if source_id is not None else _resolve_source_id(params, camera, source_id)
-    aliases = source_aliases(params, camera, sid)
-    found_path = base / "Detections" / date_folder / "Metadata" / "objects_found.json"
-    lost_path = base / "Detections" / date_folder / "Metadata" / "objects_lost.json"
-    cache_key = _index_cache_key(base, date_folder, camera, sid)
-    mtime_sum = _file_mtime_sum(found_path, lost_path) + _sidecar_mtime_sum(base, date_folder)
-    cached = DETECTION_INDEX_CACHE.get(cache_key)
-    if cached and cached[0] == mtime_sum:
-        items = cached[1]
-    else:
-        items = []
-        for obj in _read_json_objects(found_path):
-            if not _record_matches_camera(obj, aliases=aliases, source_id=sid):
-                continue
-            item = _detection_index_item(obj, "found", camera=camera, date_folder=date_folder)
-            if item:
-                items.append(item)
-        for obj in _read_json_objects(lost_path):
-            if not _record_matches_camera(obj, aliases=aliases, source_id=sid):
-                continue
-            item = _detection_index_item(obj, "lost", camera=camera, date_folder=date_folder)
-            if item:
-                items.append(item)
-        items.sort(key=lambda row: row["ts"])
-        DETECTION_INDEX_CACHE[cache_key] = (mtime_sum, items)
-
-    filtered = items
-    if from_ts is not None:
-        filtered = [row for row in filtered if row["ts"] >= float(from_ts)]
-    if to_ts is not None:
-        filtered = [row for row in filtered if row["ts"] <= float(to_ts)]
-    return filtered
+    items = _load_camera_index_items(
+        base=base,
+        date_folder=date_folder,
+        camera=camera,
+        params=params,
+        source_id=source_id,
+    )
+    return _filter_index_window(items, from_ts, to_ts, ticks_only=ticks_only)
 
 
 def load_detection_index_batch(
@@ -348,18 +470,27 @@ def load_detection_index_batch(
     run_id: int | None = None,
     from_ts: float | None = None,
     to_ts: float | None = None,
+    ticks_only: bool = False,
 ) -> dict[str, list[dict[str, Any]]]:
+    params = _load_params_for_run(run_id)
+    base = _playback_data_dir(params)
+    cam_list = [str(camera).strip() for camera in cameras if str(camera).strip()]
+    if not cam_list:
+        return {}
+    all_by_camera = _load_day_index_by_camera(
+        base=base,
+        date_folder=date_folder,
+        run_id=run_id,
+        params=params,
+        cameras=cam_list,
+    )
     by_camera: dict[str, list[dict[str, Any]]] = {}
-    for camera in cameras:
-        cam = str(camera).strip()
-        if not cam:
-            continue
-        by_camera[cam] = load_detection_index(
-            camera=cam,
-            date_folder=date_folder,
-            run_id=run_id,
-            from_ts=from_ts,
-            to_ts=to_ts,
+    for cam in cam_list:
+        by_camera[cam] = _filter_index_window(
+            all_by_camera.get(cam, []),
+            from_ts,
+            to_ts,
+            ticks_only=ticks_only,
         )
     return by_camera
 
@@ -461,6 +592,33 @@ def _index_item_to_raw(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _pair_track_intervals(items: list[dict[str, Any]]) -> list[tuple[float, float, dict[str, Any], dict[str, Any]]]:
+    by_oid: dict[Any, list[dict[str, Any]]] = {}
+    for item in items:
+        oid = item.get("object_id")
+        if oid is None:
+            continue
+        by_oid.setdefault(oid, []).append(item)
+
+    intervals: list[tuple[float, float, dict[str, Any], dict[str, Any]]] = []
+    for events in by_oid.values():
+        events.sort(key=lambda row: float(row["ts"]))
+        pending_found: tuple[float, dict[str, Any]] | None = None
+        for ev in events:
+            kind = str(ev.get("kind") or "")
+            if kind == "found":
+                pending_found = (float(ev["ts"]), ev)
+            elif kind == "lost" and pending_found is not None:
+                found_ts, found_ev = pending_found
+                lost_ts = float(ev["ts"])
+                if lost_ts >= found_ts:
+                    intervals.append(
+                        (found_ts, lost_ts, _index_item_to_raw(found_ev), _index_item_to_raw(ev))
+                    )
+                pending_found = None
+    return intervals
+
+
 def _earliest_index_by_oid(
     items: list[dict[str, Any]],
     kind: str,
@@ -506,15 +664,10 @@ def _load_objects_from_detection_index(
         if oid is not None:
             snapshot_oids.add(oid)
 
-    found_by_oid = _earliest_index_by_oid(items, "found")
-    lost_by_oid = _earliest_index_by_oid(items, "lost")
-    for oid, (found_ts, found_obj) in found_by_oid.items():
-        if oid in snapshot_oids:
+    for found_ts, lost_ts, found_obj, lost_obj in _pair_track_intervals(items):
+        oid = found_obj.get("object_id")
+        if oid is None or oid in snapshot_oids:
             continue
-        lost_entry = lost_by_oid.get(oid)
-        if lost_entry is None:
-            continue
-        lost_ts, lost_obj = lost_entry
         if not (found_ts <= target_ts <= lost_ts):
             continue
         span = lost_ts - found_ts
@@ -528,25 +681,6 @@ def _load_objects_from_detection_index(
             t,
         )
         selected[("interval", oid)] = interpolated
-
-    nearby_sec = max(float(window_sec), NEARBY_OVERLAY_SEC)
-    nearby_best: dict[Any, tuple[float, dict[str, Any]]] = {}
-    covered_oids = set(snapshot_oids)
-    for key in selected:
-        if key[0] in ("interval", "nearby") and len(key) > 1:
-            covered_oids.add(key[1])
-    for item in items:
-        oid = item.get("object_id")
-        if oid is None or oid in covered_oids:
-            continue
-        delta = float(item["ts"]) - target_ts
-        if delta < -1e-6 or delta >= nearby_sec:
-            continue
-        prev = nearby_best.get(oid)
-        if prev is None or delta < prev[0]:
-            nearby_best[oid] = (delta, _index_item_to_raw(item))
-    for oid, (_, raw) in nearby_best.items():
-        selected[("nearby", oid)] = raw
 
     return list(selected.values())
 

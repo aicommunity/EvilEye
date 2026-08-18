@@ -294,9 +294,10 @@ function DetectionTicksCanvas({
       ctx.clearRect(0, 0, w, h);
       const span = viewTo - viewFrom;
       if (!(span > 0) || !detectionTs.length) return;
+      const visibleTs = detectionTs.filter((ts) => ts >= viewFrom && ts <= viewTo);
+      if (!visibleTs.length) return;
       ctx.fillStyle = 'rgba(34, 197, 94, 0.95)';
-      for (const ts of detectionTs) {
-        if (ts < viewFrom || ts > viewTo) continue;
+      for (const ts of visibleTs) {
         const x = ((ts - viewFrom) / span) * w;
         ctx.beginPath();
         ctx.arc(x, h * 0.62, 3, 0, Math.PI * 2);

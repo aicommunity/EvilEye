@@ -130,6 +130,7 @@ async def playback_detections(
     from_ts: Optional[float] = Query(None, alias="from"),
     to_ts: Optional[float] = Query(None, alias="to"),
     run_id: Optional[int] = Query(None),
+    ticks_only: bool = Query(False, description="Return lightweight ts/kind/object_id rows only"),
 ) -> dict:
     if not date:
         if from_ts is not None:
@@ -153,6 +154,7 @@ async def playback_detections(
             run_id=run_id,
             from_ts=from_ts,
             to_ts=to_ts,
+            ticks_only=ticks_only,
         )
         return {"by_camera": by_camera, "items": [item for items in by_camera.values() for item in items]}
     if not camera:
@@ -164,6 +166,7 @@ async def playback_detections(
         run_id=run_id,
         from_ts=from_ts,
         to_ts=to_ts,
+        ticks_only=ticks_only,
     )
     return {"items": items}
 
