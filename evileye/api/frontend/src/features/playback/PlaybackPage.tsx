@@ -105,14 +105,12 @@ export function PlaybackPage() {
   const priorityDetectionWindow = useMemo(() => {
     const { start } = dayBoundsLocal(date);
     const upper = dayViewUpperBound(date);
+    // Keep priority fetch local to playhead/viewport — do not expand to ctrl.fromSec/toSec
+    // (loaded segment bounds span the whole day and would force a full-day rebuild).
     const anchors: number[] = [
       ctrl.positionSec - SEEK_LOAD_HALF_SEC,
       ctrl.positionSec + SEEK_LOAD_HALF_SEC,
     ];
-    if (ctrl.fromSec != null) {
-      anchors.push(ctrl.fromSec);
-      anchors.push(ctrl.toSec ?? ctrl.fromSec);
-    }
     if (debouncedViewFrom != null) anchors.push(debouncedViewFrom - DETECTION_PRIORITY_PAD_SEC);
     if (debouncedViewTo != null) anchors.push(debouncedViewTo + DETECTION_PRIORITY_PAD_SEC);
     const finite = anchors.filter((v) => Number.isFinite(v));
@@ -121,7 +119,7 @@ export function PlaybackPage() {
       fromSec: Math.max(start, Math.min(...finite)),
       toSec: Math.min(upper, Math.max(...finite)),
     };
-  }, [date, ctrl.fromSec, ctrl.toSec, ctrl.positionSec, debouncedViewFrom, debouncedViewTo]);
+  }, [date, ctrl.positionSec, debouncedViewFrom, debouncedViewTo]);
 
   const detectionIndex = useDetectionIndex({
     cameras: selectedIds,
