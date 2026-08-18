@@ -2,6 +2,7 @@ import type { PlaybackSegment } from '../../api';
 
 export const MIN_VIEW_SPAN_SEC = 120;
 export const MAX_VIEW_SPAN_SEC = 48 * 3600;
+export const DEFAULT_TIMELINE_WINDOW_SEC = 7200;
 export const DAY_LOAD_BUFFER_SEC = 3 * 3600;
 export const PAN_CLICK_SLOP_PX = 10;
 export const DETECTION_SNAP_PX = 10;
@@ -167,6 +168,46 @@ export function dayBoundsLocal(dateStr: string): { start: number; end: number } 
 /** Inclusive upper bound for timeline pan/zoom (avoids labelling the next calendar day at 00:00). */
 export function dayViewUpperBound(dateStr: string): number {
   return dayBoundsLocal(dateStr).end - 1;
+}
+
+/** Default zoomed timeline window — never the full calendar day (pan/zoom need headroom). */
+export function defaultTimelineView(
+  dateStr: string,
+  opts?: {
+    dataFrom?: number | null;
+    dataTo?: number | null;
+    nowSec?: number;
+    windowSec?: number;
+  },
+): { viewFrom: number; viewTo: number } {
+  const { start } = dayBoundsLocal(dateStr);
+  const upper = dayViewUpperBound(dateStr);
+  const windowSec = opts?.windowSec ?? DEFAULT_TIMELINE_WINDOW_SEC;
+  const nowSec = opts?.nowSec ?? Date.now() / 1000;
+  const dataFrom = opts?.dataFrom;
+  const dataTo = opts?.dataTo;
+
+  if (dataFrom != null && dataTo != null && dataTo > dataFrom) {
+    const dataSpan = dataTo - dataFrom;
+    const daySpan = upper - start + 1;
+    if (dataSpan < daySpan * 0.85) {
+      const pad = Math.max(900, dataSpan * 0.12);
+      const vf = Math.max(start, dataFrom - pad);
+      const vt = Math.min(upper, dataTo + pad);
+      return { viewFrom: vf, viewTo: Math.max(vf + MIN_VIEW_SPAN_SEC, vt) };
+    }
+    const end = Math.min(upper, dataTo);
+    const vf = Math.max(start, end - windowSec);
+    return { viewFrom: vf, viewTo: Math.max(vf + MIN_VIEW_SPAN_SEC, end) };
+  }
+
+  if (localDateString(nowSec) === dateStr) {
+    const to = Math.min(upper, nowSec);
+    const vf = Math.max(start, to - windowSec);
+    return { viewFrom: vf, viewTo: Math.max(vf + MIN_VIEW_SPAN_SEC, to) };
+  }
+  const vf = Math.max(start, upper - windowSec);
+  return { viewFrom: vf, viewTo: upper };
 }
 
 export function segmentIntersectsDay(seg: PlaybackSegment, dateStr: string): boolean {

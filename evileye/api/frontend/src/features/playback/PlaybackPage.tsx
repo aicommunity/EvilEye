@@ -57,6 +57,17 @@ const CAMERAS_TTL_MS = 30_000;
 const SEGMENTS_TTL_MS = 15_000;
 /** Padding around viewport/position for the priority detection fetch. */
 const DETECTION_PRIORITY_PAD_SEC = 900;
+const VIEWPORT_DEBOUNCE_MS = 350;
+const SEEK_SCRUB_HOLD_MS = 800;
+
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const id = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(id);
+  }, [value, delayMs]);
+  return debounced;
+}
 
 function camerasCacheKey(date: string, runId: number | null): string {
   return `playback:cameras:${date}:${runId ?? 'none'}`;
@@ -83,6 +94,9 @@ export function PlaybackPage() {
   const initialT = parseDeepLinkTime(params.get('t'));
   const ctrl = usePlaybackController(initialT);
   const viewport = useTimelineViewport();
+  const debouncedViewFrom = useDebouncedValue(viewport.viewFrom, VIEWPORT_DEBOUNCE_MS);
+  const debouncedViewTo = useDebouncedValue(viewport.viewTo, VIEWPORT_DEBOUNCE_MS);
+  const seekScrubTimerRef = useRef<number | null>(null);
   const dayBounds = useMemo(() => {
     const { start } = dayBoundsLocal(date);
     return { fromSec: start, toSec: dayViewUpperBound(date) };
@@ -99,15 +113,15 @@ export function PlaybackPage() {
       anchors.push(ctrl.fromSec);
       anchors.push(ctrl.toSec ?? ctrl.fromSec);
     }
-    if (viewport.viewFrom != null) anchors.push(viewport.viewFrom - DETECTION_PRIORITY_PAD_SEC);
-    if (viewport.viewTo != null) anchors.push(viewport.viewTo + DETECTION_PRIORITY_PAD_SEC);
+    if (debouncedViewFrom != null) anchors.push(debouncedViewFrom - DETECTION_PRIORITY_PAD_SEC);
+    if (debouncedViewTo != null) anchors.push(debouncedViewTo + DETECTION_PRIORITY_PAD_SEC);
     const finite = anchors.filter((v) => Number.isFinite(v));
     if (!finite.length) return null;
     return {
       fromSec: Math.max(start, Math.min(...finite)),
       toSec: Math.min(upper, Math.max(...finite)),
     };
-  }, [date, ctrl.fromSec, ctrl.toSec, ctrl.positionSec, viewport.viewFrom, viewport.viewTo]);
+  }, [date, ctrl.fromSec, ctrl.toSec, ctrl.positionSec, debouncedViewFrom, debouncedViewTo]);
 
   const detectionIndex = useDetectionIndex({
     cameras: selectedIds,
@@ -364,10 +378,22 @@ export function PlaybackPage() {
   const seek = useCallback(
     (sec: number) => {
       ctrl.seek(sec);
+      setScrubbing(true);
+      if (seekScrubTimerRef.current != null) window.clearTimeout(seekScrubTimerRef.current);
+      seekScrubTimerRef.current = window.setTimeout(() => {
+        setScrubbing(false);
+        seekScrubTimerRef.current = null;
+      }, SEEK_SCRUB_HOLD_MS);
       ensureAdjacentLoad(sec - SEEK_LOAD_HALF_SEC, sec + SEEK_LOAD_HALF_SEC);
     },
     [ctrl, ensureAdjacentLoad],
   );
+
+  useEffect(() => {
+    return () => {
+      if (seekScrubTimerRef.current != null) window.clearTimeout(seekScrubTimerRef.current);
+    };
+  }, []);
 
   const toggleCamera = (id: string) => {
     const on = selectedIds.includes(id);
@@ -419,12 +445,6 @@ export function PlaybackPage() {
   const effectiveCols = mode === 'fit' ? fitColsForCount(selectedIds.length) : cols;
   const positionLabel = formatPlaybackDateTime(ctrl.positionSec);
   const detectionsReady = !detectionIndex.loading;
-  const timelineDetectionTs = useMemo(() => {
-    if (viewport.viewFrom == null || viewport.viewTo == null) return detectionIndex.globalTs;
-    return detectionIndex.globalTs.filter(
-      (ts) => ts >= viewport.viewFrom! && ts <= viewport.viewTo!,
-    );
-  }, [detectionIndex.globalTs, viewport.viewFrom, viewport.viewTo]);
 
   let gridEmpty: string | null = null;
   if (camerasLoading) gridEmpty = t('playback.loadingCamerasGrid');
@@ -554,7 +574,7 @@ export function PlaybackPage() {
             position={ctrl.positionSec}
             markers={timelineMarkers}
             segments={allSegments}
-            detectionTs={timelineDetectionTs}
+            detectionTs={detectionIndex.globalTs}
             onSeek={seek}
             onViewChange={onViewChange}
             onScrubbingChange={setScrubbing}

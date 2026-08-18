@@ -15,7 +15,6 @@ export function usePlaybackController(initialSec: number | null) {
   const scrubbingRef = useRef(false);
   const playingRef = useRef(false);
   const toSecRef = useRef<number | null>(null);
-  const seekHoldTimer = useRef<number | null>(null);
 
   playingRef.current = playing;
   toSecRef.current = toSec;
@@ -56,12 +55,6 @@ export function usePlaybackController(initialSec: number | null) {
     };
   }, [playing]);
 
-  useEffect(() => {
-    return () => {
-      if (seekHoldTimer.current != null) window.clearTimeout(seekHoldTimer.current);
-    };
-  }, []);
-
   return {
     playing,
     setPlaying,
@@ -90,12 +83,6 @@ export function usePlaybackController(initialSec: number | null) {
       resetPlaybackClockOwner();
       positionRef.current = sec;
       setPositionSec(sec);
-      scrubbingRef.current = true;
-      if (seekHoldTimer.current != null) window.clearTimeout(seekHoldTimer.current);
-      seekHoldTimer.current = window.setTimeout(() => {
-        scrubbingRef.current = false;
-        seekHoldTimer.current = null;
-      }, 2000);
     },
     setDetectionTimestamps,
     setSkipEnabled,

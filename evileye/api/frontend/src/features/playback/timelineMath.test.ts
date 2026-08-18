@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { DETECTION_SNAP_MAX_SEC, clampViewToDayBounds, dayBoundsLocal, snapTimelineSeek, snapUnixToDetections } from './timelineMath';
+import {
+  DEFAULT_TIMELINE_WINDOW_SEC,
+  DETECTION_SNAP_MAX_SEC,
+  clampViewToDayBounds,
+  dayBoundsLocal,
+  defaultTimelineView,
+  snapTimelineSeek,
+  snapUnixToDetections,
+} from './timelineMath';
 
 describe('snapUnixToDetections', () => {
   const viewFrom = 1000;
@@ -30,6 +38,32 @@ describe('snapUnixToDetections', () => {
 
   it('returns the click time when there are no detections', () => {
     expect(snapUnixToDetections(1500, [], viewFrom, viewTo, widthPx)).toBe(1500);
+  });
+});
+
+describe('defaultTimelineView', () => {
+  it('uses a trailing window for all-day recordings instead of the full day', () => {
+    const date = '2026-08-18';
+    const { start } = dayBoundsLocal(date);
+    const upper = start + 86400 - 1;
+    const view = defaultTimelineView(date, {
+      dataFrom: start + 3600,
+      dataTo: upper - 3600,
+      nowSec: upper - 1800,
+    });
+    expect(view.viewTo - view.viewFrom).toBeLessThan(upper - start);
+    expect(view.viewTo).toBeGreaterThan(view.viewFrom);
+    expect(view.viewTo).toBeLessThanOrEqual(upper);
+  });
+
+  it('shows a recent window before segment data arrives', () => {
+    const date = '2026-08-18';
+    const { start } = dayBoundsLocal(date);
+    const noon = start + 12 * 3600;
+    const view = defaultTimelineView(date, { nowSec: noon });
+    expect(view.viewTo).toBe(noon);
+    expect(view.viewFrom).toBeGreaterThanOrEqual(start);
+    expect(view.viewTo - view.viewFrom).toBeLessThanOrEqual(DEFAULT_TIMELINE_WINDOW_SEC + 1);
   });
 });
 

@@ -6,6 +6,7 @@ import {
   clampView,
   dayBoundsLocal,
   dayViewUpperBound,
+  defaultTimelineView,
   panView,
   zoomViewAt,
 } from './timelineMath';
@@ -28,22 +29,13 @@ export function useTimelineViewport() {
     if (dataFrom != null && dataTo != null && dataTo > dataFrom) {
       setLoadedFrom(dataFrom);
       setLoadedTo(dataTo);
-      const dataSpan = dataTo - dataFrom;
-      const daySpan = bounds.end - bounds.start;
-      if (dataSpan < daySpan * 0.85) {
-        const pad = Math.max(900, dataSpan * 0.12);
-        const vf = Math.max(bounds.start, dataFrom - pad);
-        const vt = Math.min(upper, dataTo + pad);
-        setViewFrom(vf);
-        setViewTo(Math.max(vf + MIN_VIEW_SPAN_SEC, vt));
-        return;
-      }
     } else {
       setLoadedFrom(bounds.start);
       setLoadedTo(upper);
     }
-    setViewFrom(bounds.start);
-    setViewTo(upper);
+    const next = defaultTimelineView(date, { dataFrom, dataTo });
+    setViewFrom(next.viewFrom);
+    setViewTo(next.viewTo);
   }, []);
 
   const expandLoaded = useCallback((from: number, to: number) => {
