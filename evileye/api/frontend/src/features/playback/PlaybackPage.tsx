@@ -22,7 +22,7 @@ import { useDetectionIndex } from './useDetectionIndex';
 import { usePlaybackLayout } from './usePlaybackLayout';
 import { useTimelineViewport } from './useTimelineViewport';
 import { fitColsForCount } from '../layout/fitGrid';
-import { formatPlaybackDateTime, localDateString, mergeSegments, dayBoundsLocal } from './timelineMath';
+import { formatPlaybackDateTime, localDateString, mergeSegments, dayBoundsLocal, clampViewToDayBounds, segmentIntersectsDay } from './timelineMath';
 
 function today(): string {
   const d = new Date();
@@ -31,7 +31,6 @@ function today(): string {
 
 const INITIAL_WINDOW_SEC = 7200;
 const SEGMENTS_LOAD_TIMEOUT_MS = 15_000;
-const VIEWPORT_DATE_SLACK_SEC = 30 * 60;
 
 function initialSegmentWindow(dateStr: string): { from: number; to: number } {
   const { start, end } = dayBoundsLocal(dateStr);
@@ -224,7 +223,7 @@ export function PlaybackPage() {
           }
           return;
         }
-        const useDate = opts?.merge ? undefined : (opts?.date ?? date);
+        const useDate = opts?.date ?? date;
         const segKey = `playback:segments:${useDate ?? ''}:${opts?.from ?? ''}:${opts?.to ?? ''}:${nextSelected.join(',')}`;
         const evKey = `playback:events:${useDate ?? ''}:${opts?.from ?? ''}:${opts?.to ?? ''}:${nextSelected.join(',')}`;
 
@@ -233,7 +232,7 @@ export function PlaybackPage() {
             signal: ac.signal,
             runId,
           }),
-          playbackApi.events(opts?.from, opts?.to, undefined, opts?.merge ? undefined : useDate, nextSelected, {
+          playbackApi.events(opts?.from, opts?.to, undefined, useDate, nextSelected, {
             signal: ac.signal,
           }),
         ]);
@@ -313,7 +312,7 @@ export function PlaybackPage() {
 
   const ensureAdjacentLoad = useCallback(
     (vf: number, vt: number) => {
-      const { needFrom, needTo, needed } = viewport.needsLoad(vf, vt);
+      const { needFrom, needTo, needed } = viewport.needsLoad(vf, vt, date);
       if (!needed) return;
       if (loadTimerRef.current) window.clearTimeout(loadTimerRef.current);
       loadTimerRef.current = window.setTimeout(() => {
@@ -321,26 +320,18 @@ export function PlaybackPage() {
           from: needFrom,
           to: needTo,
           merge: true,
+          date,
         });
       }, 250);
     },
-    [loadSegments, viewport],
+    [loadSegments, viewport, date],
   );
 
   const onViewChange = useCallback(
     (vf: number, vt: number) => {
-      viewport.setView(vf, vt);
-      ensureAdjacentLoad(vf, vt);
-      const center = (vf + vt) / 2;
-      const { start, end } = dayBoundsLocal(date);
-      if (center >= start - VIEWPORT_DATE_SLACK_SEC && center <= end + VIEWPORT_DATE_SLACK_SEC) {
-        return;
-      }
-      const centerDate = localDateString(center);
-      if (centerDate !== date) {
-        dateChangeSourceRef.current = 'viewport';
-        setDate(centerDate);
-      }
+      const clamped = clampViewToDayBounds(vf, vt, date);
+      viewport.setView(clamped.viewFrom, clamped.viewTo);
+      ensureAdjacentLoad(clamped.viewFrom, clamped.viewTo);
     },
     [viewport, ensureAdjacentLoad, date],
   );
@@ -384,7 +375,14 @@ export function PlaybackPage() {
     setExpandedCameraId(null);
   }, [date]);
 
-  const allSegments = useMemo(() => Object.values(segmentsByCam).flat(), [segmentsByCam]);
+  const allSegments = useMemo(
+    () => Object.values(segmentsByCam).flat().filter((s) => segmentIntersectsDay(s, date)),
+    [segmentsByCam, date],
+  );
+  const timelineMarkers = useMemo(() => {
+    const { start, end } = dayBoundsLocal(date);
+    return markers.filter((m) => m.ts >= start && m.ts < end);
+  }, [markers, date]);
   const effectiveCols = mode === 'fit' ? fitColsForCount(selectedIds.length) : cols;
   const positionLabel = formatPlaybackDateTime(ctrl.positionSec);
   const detectionsReady =
@@ -516,7 +514,7 @@ export function PlaybackPage() {
             viewFrom={viewport.viewFrom}
             viewTo={viewport.viewTo}
             position={ctrl.positionSec}
-            markers={markers}
+            markers={timelineMarkers}
             segments={allSegments}
             detectionTs={detectionIndex.globalTs}
             onSeek={seek}

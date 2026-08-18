@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DETECTION_SNAP_MAX_SEC, snapTimelineSeek, snapUnixToDetections } from './timelineMath';
+import { DETECTION_SNAP_MAX_SEC, clampViewToDayBounds, dayBoundsLocal, snapTimelineSeek, snapUnixToDetections } from './timelineMath';
 
 describe('snapUnixToDetections', () => {
   const viewFrom = 1000;
@@ -30,6 +30,18 @@ describe('snapUnixToDetections', () => {
 
   it('returns the click time when there are no detections', () => {
     expect(snapUnixToDetections(1500, [], viewFrom, viewTo, widthPx)).toBe(1500);
+  });
+});
+
+describe('clampViewToDayBounds', () => {
+  it('keeps pan/zoom inside the selected calendar day', () => {
+    const date = '2026-08-18';
+    const { start } = dayBoundsLocal(date);
+    const upper = start + 86400 - 1;
+    const shifted = clampViewToDayBounds(start + 20 * 3600, upper + 6 * 3600, date);
+    expect(shifted.viewFrom).toBeGreaterThanOrEqual(start);
+    expect(shifted.viewTo).toBeLessThanOrEqual(upper);
+    expect(shifted.viewTo - shifted.viewFrom).toBeGreaterThan(0);
   });
 });
 

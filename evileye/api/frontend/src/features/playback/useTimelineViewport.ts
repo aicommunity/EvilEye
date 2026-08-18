@@ -5,6 +5,7 @@ import {
   MIN_VIEW_SPAN_SEC,
   clampView,
   dayBoundsLocal,
+  dayViewUpperBound,
   panView,
   zoomViewAt,
 } from './timelineMath';
@@ -23,26 +24,26 @@ export function useTimelineViewport() {
 
   const resetToData = useCallback((dataFrom: number | null, dataTo: number | null, date: string) => {
     const bounds = dayBoundsLocal(date);
-    let from = bounds.start;
-    let to = bounds.end;
+    const upper = dayViewUpperBound(date);
     if (dataFrom != null && dataTo != null && dataTo > dataFrom) {
-      from = Math.min(bounds.start, dataFrom);
-      to = Math.max(bounds.end, dataTo);
       setLoadedFrom(dataFrom);
       setLoadedTo(dataTo);
+      const dataSpan = dataTo - dataFrom;
+      const daySpan = bounds.end - bounds.start;
+      if (dataSpan < daySpan * 0.85) {
+        const pad = Math.max(900, dataSpan * 0.12);
+        const vf = Math.max(bounds.start, dataFrom - pad);
+        const vt = Math.min(upper, dataTo + pad);
+        setViewFrom(vf);
+        setViewTo(Math.max(vf + MIN_VIEW_SPAN_SEC, vt));
+        return;
+      }
     } else {
       setLoadedFrom(bounds.start);
-      setLoadedTo(bounds.end);
+      setLoadedTo(upper);
     }
-    const next = clampView(from, to, { minSpan: MIN_VIEW_SPAN_SEC, maxSpan: MAX_VIEW_SPAN_SEC });
-    // Prefer calendar day window when data fits inside it
-    if (dataFrom == null || dataTo == null || (dataFrom >= bounds.start && dataTo <= bounds.end)) {
-      setViewFrom(bounds.start);
-      setViewTo(bounds.end);
-    } else {
-      setViewFrom(next.viewFrom);
-      setViewTo(next.viewTo);
-    }
+    setViewFrom(bounds.start);
+    setViewTo(upper);
   }, []);
 
   const expandLoaded = useCallback((from: number, to: number) => {
@@ -51,9 +52,11 @@ export function useTimelineViewport() {
   }, []);
 
   const needsLoad = useCallback(
-    (vf: number, vt: number) => {
-      const needFrom = vf - DAY_LOAD_BUFFER_SEC;
-      const needTo = vt + DAY_LOAD_BUFFER_SEC;
+    (vf: number, vt: number, dateStr: string) => {
+      const { start } = dayBoundsLocal(dateStr);
+      const upper = dayViewUpperBound(dateStr);
+      const needFrom = Math.max(start, vf - DAY_LOAD_BUFFER_SEC);
+      const needTo = Math.min(upper, vt + DAY_LOAD_BUFFER_SEC);
       if (loadedFrom == null || loadedTo == null) return { needFrom, needTo, needed: true };
       const margin = 600;
       const needed = needFrom < loadedFrom - margin || needTo > loadedTo + margin;

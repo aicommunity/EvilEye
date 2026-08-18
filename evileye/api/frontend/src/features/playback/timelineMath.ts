@@ -164,6 +164,41 @@ export function dayBoundsLocal(dateStr: string): { start: number; end: number } 
   return { start, end };
 }
 
+/** Inclusive upper bound for timeline pan/zoom (avoids labelling the next calendar day at 00:00). */
+export function dayViewUpperBound(dateStr: string): number {
+  return dayBoundsLocal(dateStr).end - 1;
+}
+
+export function segmentIntersectsDay(seg: PlaybackSegment, dateStr: string): boolean {
+  const { start, end } = dayBoundsLocal(dateStr);
+  return seg.end_ts >= start && seg.start_ts < end;
+}
+
+export function clampViewToDayBounds(
+  viewFrom: number,
+  viewTo: number,
+  dateStr: string,
+): { viewFrom: number; viewTo: number } {
+  const { start } = dayBoundsLocal(dateStr);
+  const upper = dayViewUpperBound(dateStr);
+  const daySpan = upper - start + 1;
+  let { viewFrom: from, viewTo: to } = clampView(viewFrom, viewTo, {
+    minSpan: MIN_VIEW_SPAN_SEC,
+    maxSpan: Math.min(MAX_VIEW_SPAN_SEC, daySpan),
+  });
+  const span = to - from;
+  if (from < start) {
+    from = start;
+    to = start + span;
+  }
+  if (to > upper) {
+    to = upper;
+    from = upper - span;
+  }
+  if (from < start) from = start;
+  return { viewFrom: from, viewTo: to };
+}
+
 export function mergeSegments(prev: PlaybackSegment[], next: PlaybackSegment[]): PlaybackSegment[] {
   const byPath = new Map<string, PlaybackSegment>();
   for (const s of prev) byPath.set(s.path, s);

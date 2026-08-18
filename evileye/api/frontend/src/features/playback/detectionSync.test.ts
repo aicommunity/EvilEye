@@ -17,13 +17,24 @@ describe('shouldSkipToDetection', () => {
     expect(shouldSkipToDetection(100, 105, 1.0)).toBe(false);
   });
 
-  it('shows objects when index is empty (metadata API fallback)', () => {
+  it('waits for detections before showing overlay objects when index is empty', () => {
     expect(
       shouldShowPlaybackObjects({
         showMetadata: true,
         globalTsLength: 0,
         atCameraDetection: false,
         atGlobalDetection: true,
+      }),
+    ).toBe(false);
+  });
+
+  it('shows objects at camera detections once the index is ready', () => {
+    expect(
+      shouldShowPlaybackObjects({
+        showMetadata: true,
+        globalTsLength: 3,
+        atCameraDetection: true,
+        detectionsReady: true,
       }),
     ).toBe(true);
   });
