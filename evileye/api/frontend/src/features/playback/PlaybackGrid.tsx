@@ -33,6 +33,7 @@ export function PlaybackGrid({
   onVideoClock,
   onExpand,
   segmentsLoading = false,
+  detectionsReady = true,
 }: {
   cameras: string[];
   cameraDefs: Record<string, PlaybackCamera>;
@@ -52,6 +53,7 @@ export function PlaybackGrid({
   onVideoClock?: (globalSec: number) => void;
   onExpand: (cameraId: string) => void;
   segmentsLoading?: boolean;
+  detectionsReady?: boolean;
 }) {
   const { t } = useI18n();
   if (!cameras.length) return <p className="empty">{t('playback.selectCameras')}</p>;
@@ -80,6 +82,7 @@ export function PlaybackGrid({
           onVideoClock={onVideoClock}
           onExpand={() => onExpand(id)}
           segmentsLoading={segmentsLoading && !(segmentsByCam[id]?.length)}
+          detectionsReady={detectionsReady}
         />
       ))}
     </div>
@@ -103,6 +106,7 @@ function PlaybackCell({
   onVideoClock,
   onExpand,
   segmentsLoading = false,
+  detectionsReady = true,
 }: {
   id: string;
   camera?: PlaybackCamera;
@@ -120,6 +124,7 @@ function PlaybackCell({
   onVideoClock?: (globalSec: number) => void;
   onExpand: () => void;
   segmentsLoading?: boolean;
+  detectionsReady?: boolean;
 }) {
   const mediaRef = useRef<HTMLDivElement>(null);
   const [videoReady, setVideoReady] = useState(0);
@@ -160,6 +165,7 @@ function PlaybackCell({
         onExpand={onExpand}
         frameSize={frameSize}
         onFrameSize={setFrameSize}
+        detectionsReady={detectionsReady}
       />
     );
   }
@@ -187,6 +193,7 @@ function PlaybackCell({
       globalDetectionTs={globalDetectionTs}
       onExpand={onExpand}
       segmentsLoading={segmentsLoading}
+      detectionsReady={detectionsReady}
     />
   );
 }
@@ -213,6 +220,7 @@ function NormalPlaybackCell({
   globalDetectionTs,
   onExpand,
   segmentsLoading = false,
+  detectionsReady = true,
 }: {
   id: string;
   camera?: PlaybackCamera;
@@ -235,6 +243,7 @@ function NormalPlaybackCell({
   globalDetectionTs: number[];
   onExpand: () => void;
   segmentsLoading?: boolean;
+  detectionsReady?: boolean;
 }) {
   const { meta, loading } = usePlaybackCameraMetadata({
     cameraId: id,
@@ -247,6 +256,7 @@ function NormalPlaybackCell({
     playing,
     detectionItems,
     globalDetectionTs,
+    detectionsReady,
   });
 
   return (

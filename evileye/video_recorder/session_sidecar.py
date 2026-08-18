@@ -26,6 +26,9 @@ def sidecar_path_from_splitmux_location(location: str) -> Path:
     return Path(location).with_suffix(".session.json")
 
 
+_SIDECAR_STARTS_CACHE: dict[str, list[float]] = {}
+
+
 def write_session_sidecar(path: Path, start_ts: float, first_pts_ns: int | None = None) -> None:
     payload: dict[str, Any] = {"start_ts": float(start_ts)}
     if first_pts_ns is not None:
@@ -34,6 +37,7 @@ def write_session_sidecar(path: Path, start_ts: float, first_pts_ns: int | None 
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(json.dumps(payload) + "\n", encoding="utf-8")
     tmp.replace(path)
+    _SIDECAR_STARTS_CACHE.pop(str(path.parent.resolve()), None)
 
 
 def read_session_sidecar(path: Path) -> dict[str, Any] | None:
@@ -50,12 +54,17 @@ def read_session_sidecar_for_segment(video_path: str | Path) -> dict[str, Any] |
     return read_session_sidecar(sidecar_path_for_segment(video_path))
 
 
-def pick_sidecar_start_ts(folder: Path, around_ts: float | None = None) -> float | None:
+def _sidecar_starts_for_folder(folder: Path) -> list[float]:
+    key = str(folder.resolve())
+    cached = _SIDECAR_STARTS_CACHE.get(key)
+    if cached is not None:
+        return cached
+
     starts: list[float] = []
     try:
         paths = list(folder.glob("*.session.json"))
     except OSError:
-        return None
+        paths = []
     for sidecar in paths:
         data = read_session_sidecar(sidecar)
         if not data:
@@ -64,6 +73,12 @@ def pick_sidecar_start_ts(folder: Path, around_ts: float | None = None) -> float
             starts.append(float(data["start_ts"]))
         except (KeyError, TypeError, ValueError):
             continue
+    _SIDECAR_STARTS_CACHE[key] = starts
+    return starts
+
+
+def pick_sidecar_start_ts(folder: Path, around_ts: float | None = None) -> float | None:
+    starts = _sidecar_starts_for_folder(folder)
     if not starts:
         return None
     if around_ts is None:

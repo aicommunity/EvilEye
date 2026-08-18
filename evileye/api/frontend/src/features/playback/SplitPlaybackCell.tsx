@@ -32,6 +32,7 @@ export function SplitPlaybackCell({
   expanded = false,
   frameSize: frameSizeProp,
   onFrameSize,
+  detectionsReady = true,
 }: {
   videoUrl: string;
   srcCoords: [number, number, number, number];
@@ -55,6 +56,7 @@ export function SplitPlaybackCell({
   expanded?: boolean;
   frameSize?: FrameSize | null;
   onFrameSize?: (size: FrameSize) => void;
+  detectionsReady?: boolean;
 }) {
   const { t } = useI18n();
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -85,6 +87,7 @@ export function SplitPlaybackCell({
     playing,
     detectionItems,
     globalDetectionTs,
+    detectionsReady,
   });
 
   const layoutBox = useMediaLetterbox(

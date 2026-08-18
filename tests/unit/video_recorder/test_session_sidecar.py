@@ -28,3 +28,16 @@ def test_write_read_sidecar(tmp_path):
     assert data["start_ts"] == 1000.5
     assert data["first_pts_ns"] == 123
     assert pick_sidecar_start_ts(tmp_path) == 1000.5
+
+
+def test_sidecar_starts_cached_until_rewrite(tmp_path):
+    from evileye.video_recorder import session_sidecar as sc
+
+    sc._SIDECAR_STARTS_CACHE.clear()
+    sidecar = tmp_path / "Cam4_20260817_014911_0.session.json"
+    write_session_sidecar(sidecar, 1000.0)
+    assert pick_sidecar_start_ts(tmp_path) == 1000.0
+    sidecar.write_text('{"start_ts": 2000.0}\n', encoding="utf-8")
+    assert pick_sidecar_start_ts(tmp_path) == 1000.0
+    write_session_sidecar(sidecar, 2000.0)
+    assert pick_sidecar_start_ts(tmp_path) == 2000.0

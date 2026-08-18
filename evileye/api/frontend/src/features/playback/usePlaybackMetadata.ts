@@ -122,7 +122,7 @@ export function usePlaybackMetadata({
         .finally(() => {
           if (inflightKeyRef.current === key) {
             inflightKeyRef.current = null;
-            if (!ac.signal.aborted) setLoading(false);
+            setLoading(false);
           }
         });
     };

@@ -12,14 +12,16 @@ export function shouldShowPlaybackObjects({
   showMetadata,
   globalTsLength,
   atCameraDetection,
+  detectionsReady = true,
 }: {
   showMetadata: boolean;
   globalTsLength: number;
   atCameraDetection: boolean;
   atGlobalDetection?: boolean;
+  detectionsReady?: boolean;
 }): boolean {
-  if (!showMetadata) return false;
-  if (globalTsLength === 0) return true;
+  if (!showMetadata || !detectionsReady) return false;
+  if (globalTsLength === 0) return false;
   return atCameraDetection;
 }
 

@@ -387,6 +387,8 @@ export function PlaybackPage() {
   const allSegments = useMemo(() => Object.values(segmentsByCam).flat(), [segmentsByCam]);
   const effectiveCols = mode === 'fit' ? fitColsForCount(selectedIds.length) : cols;
   const positionLabel = formatPlaybackDateTime(ctrl.positionSec);
+  const detectionsReady =
+    !detectionIndex.loading && ctrl.fromSec != null && ctrl.toSec != null;
 
   let gridEmpty: string | null = null;
   if (camerasLoading) gridEmpty = t('playback.loadingCamerasGrid');
@@ -478,6 +480,7 @@ export function PlaybackPage() {
               globalDetectionTs={detectionIndex.globalTs}
               onVideoClock={ctrl.syncPositionFromVideo}
               onClose={() => setExpandedCameraId(null)}
+              detectionsReady={detectionsReady}
             />
           ) : gridEmpty ? (
             <p className="empty">{gridEmpty}</p>
@@ -501,6 +504,7 @@ export function PlaybackPage() {
               onVideoClock={ctrl.syncPositionFromVideo}
               onExpand={setExpandedCameraId}
               segmentsLoading={segmentsLoading}
+              detectionsReady={detectionsReady}
             />
           )}
         </div>

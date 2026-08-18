@@ -179,6 +179,7 @@ export function usePlaybackCameraMetadata({
   playing = false,
   detectionItems = [],
   globalDetectionTs = [],
+  detectionsReady = true,
 }: {
   cameraId: string;
   camera?: PlaybackCamera;
@@ -190,6 +191,7 @@ export function usePlaybackCameraMetadata({
   playing?: boolean;
   detectionItems?: PlaybackDetectionItem[];
   globalDetectionTs?: number[];
+  detectionsReady?: boolean;
 }) {
   const atCameraDetection = useMemo(
     () =>
@@ -201,6 +203,7 @@ export function usePlaybackCameraMetadata({
     showMetadata,
     globalTsLength: globalDetectionTs.length,
     atCameraDetection,
+    detectionsReady,
   });
   const optimisticObjects = useMemo(
     () => objectsToOverlayFromIndex(detectionItems, positionSec, frameSize),

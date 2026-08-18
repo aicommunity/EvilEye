@@ -31,6 +31,7 @@ export function ExpandedPlaybackView({
   globalDetectionTs = [],
   onVideoClock,
   onClose,
+  detectionsReady = true,
 }: {
   cameraId: string;
   camera?: PlaybackCamera;
@@ -47,6 +48,7 @@ export function ExpandedPlaybackView({
   globalDetectionTs?: number[];
   onVideoClock?: (globalSec: number) => void;
   onClose: () => void;
+  detectionsReady?: boolean;
 }) {
   const { t } = useI18n();
   const mediaRef = useRef<HTMLDivElement>(null);
@@ -73,6 +75,7 @@ export function ExpandedPlaybackView({
     playing,
     detectionItems,
     globalDetectionTs,
+    detectionsReady,
   });
 
   useEffect(() => {
@@ -124,6 +127,7 @@ export function ExpandedPlaybackView({
             expanded
             frameSize={frameSize}
             onFrameSize={setFrameSize}
+            detectionsReady={detectionsReady}
           />
         ) : (
           <PlaybackVideoSurface
